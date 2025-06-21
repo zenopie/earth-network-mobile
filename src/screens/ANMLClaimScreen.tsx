@@ -1,5 +1,4 @@
-// src/screens/more/ANMLClaimScreen.tsx
-import React, {useState} from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -9,20 +8,44 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  TextInput,
 } from 'react-native';
-
-// TODO: Import a QR code scanning library (e.g., 'react-native-camera')
-// TODO: Import an NFC library (e.g., 'react-native-nfc-manager')
+import { BACKEND_URL } from '../config/api';
+import NfcManager, { NfcTech, NfcEvents } from 'react-native-nfc-manager';
 
 const ANMLClaimScreen = () => {
-  // State to hold the data from the QR code and passport
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
-  const [passportData, setPassportData] = useState<any | null>(null); // Use a more specific type later
-
-  // State to manage the loading/submission process
+  const [passportData, setPassportData] = useState<any | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isScanningNFC, setIsScanningNFC] = useState(false);
 
-  // Placeholder function for scanning a QR code
+  // State for BAC keys (for backend use)
+  const [passportNumber, setPassportNumber] = useState('');
+  const [dateOfBirth, setDateOfBirth] = useState(''); // Format: YYMMDD
+  const [dateOfExpiry, setDateOfExpiry] = useState(''); // Format: YYMMDD
+
+  // Initialize NFC Manager
+  useEffect(() => {
+    const initNfc = async () => {
+      try {
+        const supported = await NfcManager.isSupported();
+        if (supported) {
+          await NfcManager.start();
+        } else {
+          Alert.alert('Error', 'NFC is not supported on this device');
+        }
+      } catch (ex) {
+        console.warn('NFC Init Error:', ex);
+        Alert.alert('Error', 'Failed to initialize NFC');
+      }
+    };
+    initNfc();
+
+    return () => {
+      NfcManager.cancelTechnologyRequest().catch(() => {});
+    };
+  }, []);
+
   const handleScanQRCode = () => {
     Alert.alert(
       'QR Scanner',
@@ -31,59 +54,96 @@ const ANMLClaimScreen = () => {
         {
           text: 'Simulate Scan',
           onPress: () => {
-            // For development: simulate a successful scan
             const simulatedAddress =
               'secret1pjt7zgdjfsf4f24gcnvs5qtnp5a2ftx9k89f3g';
             setWalletAddress(simulatedAddress);
             Alert.alert('Scan Simulated', `Address found: ${simulatedAddress}`);
           },
         },
-        {text: 'Cancel', style: 'cancel'},
+        { text: 'Cancel', style: 'cancel' },
       ],
     );
-    // TODO: Replace with actual QR scanner implementation
   };
 
-  // Placeholder function for scanning a passport's NFC chip
-  const handleScanPassport = () => {
-    Alert.alert(
-      'NFC Scanner',
-      "Hold your phone near your passport's NFC chip to read the data.",
-      [
-        {
-          text: 'Simulate Scan',
-          onPress: () => {
-            // For development: simulate a successful scan
-            const simulatedData = {name: 'JANE DOE', passportNumber: 'P123456'};
-            setPassportData(simulatedData);
-            Alert.alert(
-              'Scan Simulated',
-              `Passport data found for ${simulatedData.name}`,
-            );
-          },
-        },
-        {text: 'Cancel', style: 'cancel'},
-      ],
-    );
-    // TODO: Replace with actual NFC implementation
+  const handleScanPassport = async () => {
+    if (!passportNumber || dateOfBirth.length !== 6 || dateOfExpiry.length !== 6) {
+      Alert.alert(
+        'Missing Information',
+        'Please enter your Passport Number, and use the format YYMMDD for dates.',
+      );
+      return;
+    }
+
+    setIsScanningNFC(true);
+
+    try {
+      // Start NFC scan
+      await NfcManager.requestTechnology(NfcTech.IsoDep);
+      const tag = await NfcManager.getTag();
+
+      // Send SELECT AID command to initiate e-passport communication
+      const selectAidApdu = [
+        0x00, 0xa4, 0x04, 0x00, 0x07, 0xa0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01,
+      ];
+      const response = await NfcManager.isoDepHandler.transceive(selectAidApdu);
+
+      // Convert raw data to hex string
+      const hexData = response
+        .map((byte: number) => ('0' + (byte & 0xFF).toString(16)).slice(-2))
+        .join('');
+
+      // Prepare data for backend (include BAC keys for authentication)
+      const extractedData = {
+        tagId: tag.id,
+        rawNfcData: hexData,
+        passportNumber,
+        dateOfBirth,
+        dateOfExpiry,
+      };
+
+      setPassportData(extractedData);
+      Alert.alert(
+        'Scan Successful',
+        `Raw NFC data captured for passport ${passportNumber}.`,
+      );
+    } catch (e: any) {
+      console.error('NFC Scan Error:', e);
+      Alert.alert('Scan Failed', e.message || 'Failed to read NFC tag');
+    } finally {
+      setIsScanningNFC(false);
+      NfcManager.cancelTechnologyRequest().catch(() => {});
+    }
   };
 
-  // Placeholder for the final submission to your backend
   const handleSubmitVerification = async () => {
     if (!walletAddress || !passportData) {
       Alert.alert('Incomplete', 'Please complete both steps before submitting.');
       return;
     }
     setIsSubmitting(true);
-    try {
-      // Simulate a successful API call
-      await new Promise(resolve => setTimeout(resolve, 2000));
 
+    try {
+      const requestBody = {
+        wallet_address: walletAddress,
+        passport_data: passportData,
+      };
+
+      const response = await fetch(`${BACKEND_URL}/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+      });
+
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.message || 'An error occurred on the server.');
+      }
       Alert.alert(
-        'Submission Sent',
-        'Your verification data has been sent to the backend for processing.',
+        'Success!',
+        result.message || 'Your verification data has been processed.',
       );
     } catch (error: any) {
+      console.error('Submission Error:', error);
       Alert.alert('Submission Failed', error.message);
     } finally {
       setIsSubmitting(false);
@@ -95,25 +155,22 @@ const ANMLClaimScreen = () => {
       <View style={styles.header}>
         <Text style={styles.title}>Passport Verification</Text>
         <Text style={styles.subtitle}>
-          Complete the steps below to register your identity and start claiming
-          ANML.
+          Complete the steps below to register your identity and start claiming ANML.
         </Text>
       </View>
 
-      {/* --- Step 1: Scan QR Code --- */}
       <View style={styles.stepContainer}>
         <View style={styles.stepHeader}>
           <Text style={styles.stepNumber}>1</Text>
           <Text style={styles.stepTitle}>Link Your Wallet</Text>
         </View>
         <Text style={styles.stepDescription}>
-          Scan the QR code displayed on the desktop application to link your
-          wallet address.
+          Scan the QR code displayed on the desktop application to link your wallet address.
         </Text>
         <TouchableOpacity
           style={[styles.button, walletAddress ? styles.buttonCompleted : {}]}
-          onPress={handleScanQRCode}>
-          {/* --- CORRECTED ICON --- */}
+          onPress={handleScanQRCode}
+        >
           <Text style={styles.buttonIcon}>📷</Text>
           <Text style={styles.buttonText}>
             {walletAddress ? 'Wallet Linked' : 'Scan QR Code'}
@@ -126,30 +183,73 @@ const ANMLClaimScreen = () => {
         )}
       </View>
 
-      {/* --- Step 2: Scan Passport --- */}
       <View style={styles.stepContainer}>
         <View style={styles.stepHeader}>
           <Text style={styles.stepNumber}>2</Text>
           <Text style={styles.stepTitle}>Read Passport Chip</Text>
         </View>
         <Text style={styles.stepDescription}>
-          Use your phone's NFC reader to securely scan the electronic chip in
-          your passport.
+          First, enter the details exactly as they appear on your passport's photo
+          page. Then, tap the button to scan.
         </Text>
+        <TextInput
+          style={styles.input}
+          placeholder="Passport Number (e.g., P12345678)"
+          value={passportNumber}
+          onChangeText={setPassportNumber}
+          autoCapitalize="characters"
+          placeholderTextColor="#8e8e93"
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="Date of Birth (YYMMDD, e.g., 800101)"
+          value={dateOfBirth}
+          onChangeText={setDateOfBirth}
+          keyboardType="number-pad"
+          maxLength={6}
+          placeholderTextColor="#8e8e93"
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="Date of Expiry (YYMMDD, e.g., 301231)"
+          value={dateOfExpiry}
+          onChangeText={setDateOfExpiry}
+          keyboardType="number-pad"
+          maxLength={6}
+          placeholderTextColor="#8e8e93"
+        />
         <TouchableOpacity
-          style={[styles.button, passportData ? styles.buttonCompleted : {}]}
-          onPress={handleScanPassport}>
-          <Image
-            source={require('../../images/passport.png')} // This uses your existing passport icon
-            style={styles.imageIcon}
-          />
+          style={[
+            styles.button,
+            passportData ? styles.buttonCompleted : {},
+            isScanningNFC ? styles.buttonDisabled : {},
+          ]}
+          onPress={handleScanPassport}
+          disabled={isScanningNFC}
+        >
+          {isScanningNFC ? (
+            <ActivityIndicator color="#fff" style={{ marginRight: 10 }} />
+          ) : (
+            <Image
+              source={require('../../images/passport.png')}
+              style={styles.imageIcon}
+            />
+          )}
           <Text style={styles.buttonText}>
-            {passportData ? 'Passport Scanned' : 'Scan Passport (NFC)'}
+            {isScanningNFC
+              ? 'Scanning...'
+              : passportData
+              ? 'Passport Scanned'
+              : 'Scan Passport (NFC)'}
           </Text>
         </TouchableOpacity>
+        {passportData && (
+          <Text style={styles.successText}>
+            Success! NFC data captured for: {passportData.passportNumber}
+          </Text>
+        )}
       </View>
 
-      {/* --- Step 3: Submit --- */}
       <View style={styles.submitSection}>
         <TouchableOpacity
           style={
@@ -158,7 +258,8 @@ const ANMLClaimScreen = () => {
               : styles.submitButton
           }
           onPress={handleSubmitVerification}
-          disabled={!walletAddress || !passportData || isSubmitting}>
+          disabled={!walletAddress || !passportData || isSubmitting}
+        >
           {isSubmitting ? (
             <ActivityIndicator color="#fff" />
           ) : (
@@ -197,7 +298,7 @@ const styles = StyleSheet.create({
     padding: 20,
     marginBottom: 20,
     shadowColor: '#000',
-    shadowOffset: {width: 0, height: 2},
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
@@ -230,6 +331,15 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     lineHeight: 22,
   },
+  input: {
+    backgroundColor: '#f0f0f0',
+    borderRadius: 8,
+    paddingHorizontal: 15,
+    paddingVertical: 12,
+    fontSize: 16,
+    marginBottom: 12,
+    color: '#000',
+  },
   button: {
     flexDirection: 'row',
     backgroundColor: '#007AFF',
@@ -237,16 +347,18 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
+    marginTop: 10,
   },
   buttonCompleted: {
-    backgroundColor: '#34C759', // Green for completed steps
+    backgroundColor: '#34C759',
   },
-  // Style for the text-based emoji icon
+  buttonDisabled: {
+    backgroundColor: '#a9a9a9',
+  },
   buttonIcon: {
     fontSize: 20,
     marginRight: 10,
   },
-  // Style for the image-based icon
   imageIcon: {
     width: 22,
     height: 22,
@@ -267,6 +379,16 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     marginTop: 15,
     textAlign: 'center',
+  },
+  successText: {
+    fontSize: 14,
+    color: '#2b872b',
+    backgroundColor: '#e6f7e6',
+    padding: 10,
+    borderRadius: 4,
+    marginTop: 15,
+    textAlign: 'center',
+    fontWeight: '500',
   },
   submitSection: {
     marginTop: 10,
