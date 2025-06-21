@@ -1,28 +1,43 @@
-/**
- * Sample React Native App
- * https://github.com/facebook/react-native
- *
- * @format
- */
+// App.tsx
+import React from 'react';
+import {NavigationContainer} from '@react-navigation/native';
+import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
+import Icon from 'react-native-vector-icons/Ionicons';
 
-import { NewAppScreen } from '@react-native/new-app-screen';
-import { StatusBar, StyleSheet, useColorScheme, View } from 'react-native';
+// Import our two main navigation components
+import WalletScreen from './src/screens/WalletScreen';
+import ActionStackNavigator from './src/navigation/ActionStackNavigator';
 
-function App() {
-  const isDarkMode = useColorScheme() === 'dark';
+const Tab = createBottomTabNavigator();
 
+const App = () => {
   return (
-    <View style={styles.container}>
-      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-      <NewAppScreen templateFileName="App.tsx" />
-    </View>
-  );
-}
+    <NavigationContainer>
+      <Tab.Navigator
+        initialRouteName="Actions"
+        screenOptions={({ route }) => ({
+          headerShown: false, // Hides the header on top of the tabs
+          tabBarIcon: ({ focused, color, size }) => {
+            let iconName;
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-});
+            if (route.name === 'Wallet') {
+              iconName = focused ? 'wallet' : 'wallet-outline';
+            } else if (route.name === 'Actions') {
+              iconName = focused ? 'apps' : 'apps-outline';
+            }
+
+            // This component renders the icon for the tab
+            return <Icon name={iconName} size={size} color={color} />;
+          },
+          tabBarActiveTintColor: '#003366', // Color for the active tab
+          tabBarInactiveTintColor: 'gray',   // Color for inactive tabs
+        })}
+      >
+        <Tab.Screen name="Wallet" component={WalletScreen} />
+        <Tab.Screen name="Actions" component={ActionStackNavigator} />
+      </Tab.Navigator>
+    </NavigationContainer>
+  );
+};
 
 export default App;
