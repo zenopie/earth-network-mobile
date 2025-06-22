@@ -91,7 +91,7 @@ const ANMLClaimScreen = () => {
 
       // Step 3: Build the authentication command ON THE DEVICE
       console.log('Building BAC command on-device...');
-      const commandToSend = buildBacCommand(
+      const { command } = buildBacCommand(
         passportNumber,
         dateOfBirth,
         dateOfExpiry,
@@ -100,7 +100,7 @@ const ANMLClaimScreen = () => {
       console.log('Command built. Sending to chip...');
 
       // Step 4: Send the command and authenticate
-      const externalAuthCommand = Array.from(commandToSend); // Convert Buffer to byte array for transceive
+      const externalAuthCommand = Array.from(command); // Convert Buffer to byte array for transceive
       response = await NfcManager.isoDepHandler.transceive(externalAuthCommand);
       responseHex = Buffer.from(response).toString('hex');
       console.log('Authentication Response:', responseHex);

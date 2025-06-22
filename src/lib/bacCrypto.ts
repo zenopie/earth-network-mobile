@@ -148,10 +148,27 @@ export function buildBacCommand(
   const { kEnc, kMac } = deriveBacKeys(passportNumber, dateOfBirth, dateOfExpiry);
 
   const rndIcc = Buffer.from(challengeHex, 'hex');
-  const rndIfd = testData.rndIfd;
-  const kIfd = testData.kIfd;
+    // --- THIS IS THE CRITICAL CHANGE ---
+    let rndIfd: Buffer;
+    let kIfd: Buffer;
+  
+    if (testData) {
+      // TEST MODE: Use the static values provided
+      console.log('Running in TEST mode, using provided RND_IFD and K_IFD.');
+      rndIfd = testData.rndIfd;
+      kIfd = testData.kIfd;
+    } else {
+      // LIVE MODE: Generate new random values for this session
+      console.log('Running in LIVE mode, generating new RND_IFD and K_IFD.');
+      // RND.IFD must be 8 bytes long.
+        const rndIfdBytes = crypto.getRandomValues(new Uint8Array(8)); 
+        rndIfd = Buffer.from(rndIfdBytes);
+        
+        // K.IFD is correct at 16 bytes.
+        const kIfdBytes = crypto.getRandomValues(new Uint8Array(16));
+        kIfd = Buffer.from(kIfdBytes);
+    }
 
-  // **RESTORED**: Use the concatenation order that PRODUCED THE CORRECT E_IFD.
   const s = Buffer.concat([rndIcc, rndIfd, kIfd]);
   console.log('Concatenated S (RND.ICC | RND.IFD | K.IFD):', s.toString('hex').toUpperCase());
 
