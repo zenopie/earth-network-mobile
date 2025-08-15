@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<incidents format="6" by="lint 8.0.0" type="conditional_incidents">
+
+    <incident
+        id="ObsoleteSdkInt"
+        severity="warning"
+        message="Unnecessary; SDK_INT is always >= 31">
+        <fix-replace
+            description="Delete tools:targetApi"
+            replacement="">
+            <range
+                file="${:app*debug*sourceProvider*0*manifest*0}"
+                startOffset="1073"
+                endOffset="1093"/>
+        </fix-replace>
+        <location
+            file="${:app*debug*sourceProvider*0*manifest*0}"
+            line="28"
+            column="9"
+            startOffset="1073"
+            endLine="28"
+            endColumn="29"
+            endOffset="1093"/>
+        <map>
+            <condition minGE="ffffffffc0000000"/>
+        </map>
+    </incident>
+
+    <incident
+        id="VectorRaster"
+        severity="warning"
+        message="">
+        <location
+            file="${:app*debug*sourceProvider*0*resDir*0}/drawable/ic_nfc.xml"
+            line="6"
+            column="19"
+            startOffset="199"
+            endLine="6"
+            endColumn="43"
+            endOffset="223"/>
+        <map>
+            <entry
+                name="folderVersion"
+                int="-1"/>
+            <entry
+                name="containsFillType"
+                boolean="false"/>
+            <entry
+                name="message"
+                string="Resource references will not work correctly in images generated for this vector icon for API &lt; %1$d; check generated icon to make sure it looks acceptable"/>
+            <entry
+                name="containsGradient"
+                boolean="false"/>
+        </map>
+    </incident>
+
+    <incident
+        id="VectorRaster"
+        severity="warning"
+        message="">
+        <location
+            file="${:app*debug*sourceProvider*0*resDir*0}/drawable/ic_nfc.xml"
+            line="8"
+            column="26"
+            startOffset="259"
+            endLine="8"
+            endColumn="46"
+            endOffset="279"/>
+        <map>
+            <entry
+                name="folderVersion"
+                int="-1"/>
+            <entry
+                name="containsFillType"
+                boolean="false"/>
+            <entry
+                name="message"
+                string="Resource references will not work correctly in images generated for this vector icon for API &lt; %1$d; check generated icon to make sure it looks acceptable"/>
+            <entry
+                name="containsGradient"
+                boolean="false"/>
+        </map>
+    </incident>
+
+    <incident
+        id="ObsoleteSdkInt"
+        severity="warning"
+        message="Unnecessary; SDK_INT is always >= 21">
+        <fix-replace
+            description="Delete tools:targetApi"
+            replacement="">
+            <range
+                file="${:app*debug*sourceProvider*0*resDir*0}/values/styles.xml"
+                startOffset="695"
+                endOffset="714"/>
+        </fix-replace>
+        <location
+            file="${:app*debug*sourceProvider*0*resDir*0}/values/styles.xml"
+            line="13"
+            column="45"
+            startOffset="695"
+            endLine="13"
+            endColumn="64"
+            endOffset="714"/>
+        <map>
+            <condition minGE="fffffffffff00000"/>
+        </map>
+    </incident>
+
+</incidents>

@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<incidents format="6" by="lint 8.0.0" type="partial_results">
+    <map id="UnusedResources">
+        <location id="R.string.document_code"
+            file="${:app*debug*sourceProvider*0*resDir*0}/values/strings.xml"
+            line="14"
+            column="13"
+            startOffset="695"
+            endLine="14"
+            endColumn="33"
+            endOffset="715"/>
+        <location id="R.string.issuing_state"
+            file="${:app*debug*sourceProvider*0*resDir*0}/values/strings.xml"
+            line="15"
+            column="13"
+            startOffset="751"
+            endLine="15"
+            endColumn="33"
+            endOffset="771"/>
+        <location id="R.string.enter_mrz_data"
+            file="${:app*debug*sourceProvider*0*resDir*0}/values/strings.xml"
+            line="19"
+            column="13"
+            startOffset="1001"
+            endLine="19"
+            endColumn="34"
+            endOffset="1022"/>
+        <entry
+            name="model"
+            string="attr[colorControlNormal(R),colorPrimaryVariant(R)],drawable[ic_nfc(U),ic_launcher_foreground(U),ic_launcher_background(U)],id[dob_text(U),result_container(U),gender_text(U),passport_number_text(U),instruction_text(U),date_of_birth(U),name_text(U),progress_bar(U),result_title(D),scan_button(U),nfc_icon(U),nationality_text(U),date_of_expiry(U),passport_number(U),title_text(U),country_text(U),status_text(U),expiry_text(U)],layout[activity_mrz_input(U),activity_main(U)],mipmap[ic_launcher(U)],string[scan_passport(U),gender(U),enter_mrz_data(D),scanning(U),date_of_birth(U),expiry_date(U),document_code(D),app_name(U),scan_complete(U),nationality(U),secondary_identifier(D),issuing_country(U),date_of_expiry(D),passport_number(U),name(U),issuing_state(D),primary_identifier(D),place_passport(U)],style[Theme_PassportScanner(U),Theme_MaterialComponents_DayNight_DarkActionBar(R)],xml[data_extraction_rules(U),nfc_tech_filter(U),backup_rules(U)];2^0,18^1a^13^2^f^2b^9^c^1d^22^27^28^23^1e^1b^1f^25,19^4^3,2c^2d^1;;;"/>
+        <location id="R.string.date_of_expiry"
+            file="${:app*debug*sourceProvider*0*resDir*0}/values/strings.xml"
+            line="18"
+            column="13"
+            startOffset="943"
+            endLine="18"
+            endColumn="34"
+            endOffset="964"/>
+        <location id="R.string.secondary_identifier"
+            file="${:app*debug*sourceProvider*0*resDir*0}/values/strings.xml"
+            line="17"
+            column="13"
+            startOffset="873"
+            endLine="17"
+            endColumn="40"
+            endOffset="900"/>
+        <location id="R.string.primary_identifier"
+            file="${:app*debug*sourceProvider*0*resDir*0}/values/strings.xml"
+            line="16"
+            column="13"
+            startOffset="807"
+            endLine="16"
+            endColumn="38"
+            endOffset="832"/>
+    </map>
+
+</incidents>
