@@ -27,16 +27,25 @@ import org.jmrtd.lds.icao.MRZInfo;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.OutputStream;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.List;
 import java.util.Locale;
+import java.net.HttpURLConnection;
+import java.net.URL;
+
+import org.json.JSONObject;
 
 import net.sf.scuba.smartcards.CardService;
 
 public class MainActivity extends AppCompatActivity {
     private static final String TAG = "PassportScanner";
-    
+    // Change this URL to point to your backend endpoint that will verify the DG1 and SOD.
+    private static final String BACKEND_URL = "https://example.com/verify";
+
     private NfcAdapter nfcAdapter;
     private PendingIntent pendingIntent;
     private IntentFilter[] intentFilters;
@@ -286,56 +295,67 @@ public class MainActivity extends AppCompatActivity {
             Log.d(TAG, "Connecting to passport");
             isoDep.connect();
             isoDep.setTimeout(5000);
-            
+
             // Create card service
             Log.d(TAG, "Creating card service");
             CardService cardService = CardService.getInstance(isoDep);
             cardService.open();
-            
+
             // Create passport service with correct parameters
             Log.d(TAG, "Creating passport service");
             PassportService passportService = new PassportService(cardService,
-                PassportService.NORMAL_MAX_TRANCEIVE_LENGTH,
-                PassportService.DEFAULT_MAX_BLOCKSIZE,
-                false,
-                false);
+                    PassportService.NORMAL_MAX_TRANCEIVE_LENGTH,
+                    PassportService.DEFAULT_MAX_BLOCKSIZE,
+                    false,
+                    false);
             passportService.open();
-            
+
             // Select passport application with correct parameter
             Log.d(TAG, "Selecting passport application");
             passportService.sendSelectApplet(false);
-            
+
             // Create BAC key from user-provided MRZ data
             Log.d(TAG, "Creating BAC key with documentNumber=" + passportNumber +
-                ", dateOfBirth=" + dateOfBirth + ", dateOfExpiry=" + dateOfExpiry);
-            
+                    ", dateOfBirth=" + dateOfBirth + ", dateOfExpiry=" + dateOfExpiry);
+
             // Validate MRZ data before creating BAC key
             if (isEmpty(passportNumber) || isEmpty(dateOfBirth) || isEmpty(dateOfExpiry)) {
                 Log.e(TAG, "MRZ data is incomplete, cannot create BAC key");
                 return null;
             }
-            
+
             String documentNumber = passportNumber;
             String birthDate = dateOfBirth;
             String expiryDate = dateOfExpiry;
-            
+
             BACKeySpec bacKey = new BACKey(documentNumber, birthDate, expiryDate);
-            
+
             // Perform BAC
             Log.d(TAG, "Performing BAC");
             passportService.doBAC(bacKey);
-            
-            // Read DG1 (basic information) - using the correct method
+
+            // Read DG1 (basic information) - capture raw bytes so we can send them to backend
             Log.d(TAG, "Reading DG1");
             InputStream dg1In = passportService.getInputStream(PassportService.EF_DG1);
             if (dg1In == null) {
                 Log.d(TAG, "dg1In is null");
                 return null;
             }
-            DG1File dg1File = new DG1File(dg1In);
+            byte[] dg1Bytes = readAllBytes(dg1In);
+            DG1File dg1File = new DG1File(new ByteArrayInputStream(dg1Bytes));
             MRZInfo mrzInfo = dg1File.getMRZInfo();
             Log.d(TAG, "MRZ info retrieved: " + mrzInfo);
-            
+
+            // Read SOD (to verify signatures server-side)
+            Log.d(TAG, "Reading SOD");
+            InputStream sodIn = passportService.getInputStream(PassportService.EF_SOD);
+            byte[] sodBytes = null;
+            if (sodIn != null) {
+                sodBytes = readAllBytes(sodIn);
+            } else {
+                Log.d(TAG, "sodIn is null");
+            }
+
             // Create passport data object
             PassportData passportData = new PassportData();
             if (mrzInfo != null) {
@@ -351,7 +371,16 @@ public class MainActivity extends AppCompatActivity {
             } else {
                 Log.d(TAG, "mrzInfo is null");
             }
-            
+
+            // Send DG1 and SOD to backend for signature verification (this is run on background thread)
+            try {
+                Log.d(TAG, "Sending DG1 and SOD to backend for verification");
+                String verificationResponse = sendToBackend(dg1Bytes, sodBytes);
+                Log.d(TAG, "Backend verification response: " + verificationResponse);
+            } catch (Exception e) {
+                Log.e(TAG, "Error sending data to backend", e);
+            }
+
             // Close connections
             try {
                 Log.d(TAG, "Closing passport service");
@@ -371,12 +400,77 @@ public class MainActivity extends AppCompatActivity {
             } catch (Exception e) {
                 Log.e(TAG, "Error closing ISO-DEP", e);
             }
-            
+
             Log.d(TAG, "Passport reading completed successfully");
             return passportData;
         } catch (Exception e) {
             Log.e(TAG, "Error reading passport", e);
             return null;
+        }
+    }
+
+    /**
+     * Helper to read all bytes from an InputStream.
+     */
+    private byte[] readAllBytes(InputStream in) throws IOException {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        byte[] tmp = new byte[4096];
+        int n;
+        while ((n = in.read(tmp)) != -1) {
+            buffer.write(tmp, 0, n);
+        }
+        try {
+            in.close();
+        } catch (Exception ignored) {}
+        return buffer.toByteArray();
+    }
+
+    /**
+     * Sends DG1 and SOD to the backend as a JSON POST request with base64-encoded fields:
+     * { "dg1": "...", "sod": "..." }
+     *
+     * Runs synchronously (this method is called from doInBackground), and returns the backend response as string.
+     */
+    private String sendToBackend(byte[] dg1Bytes, byte[] sodBytes) throws Exception {
+        if (dg1Bytes == null) {
+            throw new IllegalArgumentException("dg1Bytes is required");
+        }
+
+        String dg1B64 = android.util.Base64.encodeToString(dg1Bytes, android.util.Base64.NO_WRAP);
+        String sodB64 = sodBytes != null ? android.util.Base64.encodeToString(sodBytes, android.util.Base64.NO_WRAP) : "";
+
+        JSONObject payload = new JSONObject();
+        payload.put("dg1", dg1B64);
+        payload.put("sod", sodB64);
+
+        URL url = new URL(BACKEND_URL);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        try {
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(15000);
+            conn.setDoOutput(true);
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+
+            byte[] out = payload.toString().getBytes("UTF-8");
+            conn.setFixedLengthStreamingMode(out.length);
+            conn.connect();
+
+            OutputStream os = conn.getOutputStream();
+            os.write(out);
+            os.flush();
+            os.close();
+
+            int responseCode = conn.getResponseCode();
+            InputStream responseStream = responseCode >= 400 ? conn.getErrorStream() : conn.getInputStream();
+            String responseBody = "";
+            if (responseStream != null) {
+                byte[] respBytes = readAllBytes(responseStream);
+                responseBody = new String(respBytes, "UTF-8");
+            }
+            return "HTTP " + responseCode + ": " + responseBody;
+        } finally {
+            conn.disconnect();
         }
     }
     
