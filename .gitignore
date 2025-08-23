@@ -75,4 +75,6 @@ Thumbs.db
 lint-results.*
 
 # Android build outputs often placed under module dirs; already covered by **/build/
+# Ignore example app folder
+erth-network-app/
 # End
