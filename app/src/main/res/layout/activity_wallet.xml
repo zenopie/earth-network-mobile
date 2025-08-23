@@ -1,150 +1,166 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:padding="16dp"
     tools:context="com.example.passportscanner.wallet.WalletActivity">
 
-    <LinearLayout
+    <ScrollView
+        android:id="@+id/content_scroll"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical">
+        android:layout_height="match_parent"
+        android:layout_above="@+id/bottom_nav">
 
-        <TextView
-            android:id="@+id/wallet_title"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal"
-            android:layout_marginBottom="16dp"
-            android:text="@string/wallet_title"
-            android:textSize="24sp"
-            android:textStyle="bold" />
-
-        <!-- Mnemonic input -->
-        <EditText
-            android:id="@+id/mnemonic_input"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="@string/mnemonic_hint"
-            android:minLines="2"
-            android:maxLines="5"
-            android:inputType="textMultiLine"
-            android:scrollbars="vertical"
-            android:gravity="top|start"
-            android:layout_marginBottom="12dp" />
-
-        <!-- Actions row -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginBottom="12dp">
-
-            <Button
-                android:id="@+id/btn_generate"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/generate_mnemonic" />
-
-            <View
-                android:layout_width="8dp"
-                android:layout_height="1dp" />
-
-            <Button
-                android:id="@+id/btn_derive"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/derive_address" />
-        </LinearLayout>
-
-        <!-- Save row -->
-        <Button
-            android:id="@+id/btn_save"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/save_securely"
-            android:layout_marginBottom="16dp" />
-
-        <!-- LCD URL -->
-        <EditText
-            android:id="@+id/lcd_input"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="@string/lcd_url_hint"
-            android:inputType="textUri"
-            android:layout_marginBottom="16dp" />
-
-        <!-- Address row -->
-        <LinearLayout
-            android:id="@+id/address_row"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginBottom="12dp">
+            android:orientation="vertical">
 
             <TextView
+                android:id="@+id/wallet_title"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/address_label"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginBottom="16dp"
+                android:text="@string/wallet_title"
+                android:textSize="24sp"
                 android:textStyle="bold" />
 
-            <TextView
-                android:id="@+id/address_text"
-                android:layout_width="0dp"
+            <!-- Mnemonic input -->
+            <EditText
+                android:id="@+id/mnemonic_input"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:layout_weight="1"
-                android:textIsSelectable="true"
-                android:text="" />
+                android:hint="@string/mnemonic_hint"
+                android:minLines="2"
+                android:maxLines="5"
+                android:inputType="textMultiLine"
+                android:scrollbars="vertical"
+                android:gravity="top|start"
+                android:layout_marginBottom="12dp" />
 
+            <!-- Actions row -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="12dp">
+
+                <Button
+                    android:id="@+id/btn_generate"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/generate_mnemonic" />
+
+                <View
+                    android:layout_width="8dp"
+                    android:layout_height="1dp" />
+
+                <Button
+                    android:id="@+id/btn_derive"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/derive_address" />
+            </LinearLayout>
+
+            <!-- Save row -->
             <Button
-                android:id="@+id/btn_copy"
-                android:layout_width="wrap_content"
+                android:id="@+id/btn_save"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/copy" />
-        </LinearLayout>
+                android:text="@string/save_securely"
+                android:layout_marginBottom="16dp" />
 
-        <!-- Balance row -->
-        <LinearLayout
-            android:id="@+id/balance_row"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
+            <!-- LCD URL -->
+            <EditText
+                android:id="@+id/lcd_input"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="@string/lcd_url_hint"
+                android:inputType="textUri"
+                android:layout_marginBottom="16dp" />
 
+            <!-- Address row -->
+            <LinearLayout
+                android:id="@+id/address_row"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="12dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/address_label"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/address_text"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:textIsSelectable="true"
+                    android:text="" />
+
+                <Button
+                    android:id="@+id/btn_copy"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/copy" />
+            </LinearLayout>
+
+            <!-- Balance row -->
+            <LinearLayout
+                android:id="@+id/balance_row"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/balance_label"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/balance_text"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:text="" />
+
+                <Button
+                    android:id="@+id/btn_refresh"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/refresh" />
+            </LinearLayout>
+
+            <!-- Note -->
             <TextView
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/balance_label"
-                android:textStyle="bold" />
+                android:layout_marginTop="16dp"
+                android:text="@string/wallet_note"
+                android:textSize="12sp" />
 
-            <TextView
-                android:id="@+id/balance_text"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:layout_weight="1"
-                android:text="" />
-
-            <Button
-                android:id="@+id/btn_refresh"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/refresh" />
         </LinearLayout>
+    </ScrollView>
 
-        <!-- Note -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="@string/wallet_note"
-            android:textSize="12sp" />
+    <!-- Bottom navigation -->
+    <include
+        android:id="@+id/bottom_nav"
+        layout="@layout/view_bottom_nav"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_alignParentBottom="true" />
 
-    </LinearLayout>
-</ScrollView>
+</RelativeLayout>

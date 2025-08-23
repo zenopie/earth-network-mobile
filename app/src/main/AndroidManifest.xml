@@ -57,6 +57,12 @@
             android:name=".wallet.WalletActivity"
             android:exported="false"
             android:theme="@style/Theme.PassportScanner" />
+
+        <!-- Actions Navigator Activity -->
+        <activity
+            android:name=".ActionsActivity"
+            android:exported="false"
+            android:theme="@style/Theme.PassportScanner" />
     </application>
 
 </manifest>

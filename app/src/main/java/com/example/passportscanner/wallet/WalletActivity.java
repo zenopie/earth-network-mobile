@@ -4,6 +4,7 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.Intent;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.text.TextUtils;
@@ -18,6 +19,7 @@ import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
 
 import com.example.passportscanner.R;
+import com.example.passportscanner.ActionsActivity;
 
 import org.bitcoinj.core.ECKey;
 
@@ -147,6 +149,20 @@ public class WalletActivity extends AppCompatActivity {
             String lcd = getLcdUrl();
             new FetchBalanceTask().execute(lcd, address);
         });
+
+        // Bottom navigation wiring
+        View navWallet = findViewById(R.id.btn_nav_wallet);
+        if (navWallet != null) {
+            // Already on Wallet
+            navWallet.setEnabled(false);
+        }
+        View navActions = findViewById(R.id.btn_nav_actions);
+        if (navActions != null) {
+            navActions.setOnClickListener(v -> {
+                Intent a = new Intent(WalletActivity.this, ActionsActivity.class);
+                startActivity(a);
+            });
+        }
     }
 
     private String getMnemonic() {

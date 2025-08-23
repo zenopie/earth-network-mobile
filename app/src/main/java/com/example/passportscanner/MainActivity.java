@@ -202,6 +202,22 @@ public class MainActivity extends AppCompatActivity {
         // Leave intentFilters null (we'll rely on tech lists instead).
         intentFilters = null;
         techLists = new String[][] { new String[] { IsoDep.class.getName() } };
+
+        // Bottom navigation wiring
+        View navWallet = findViewById(R.id.btn_nav_wallet);
+        if (navWallet != null) {
+            navWallet.setOnClickListener(v -> {
+                Intent w = new Intent(MainActivity.this, com.example.passportscanner.wallet.WalletActivity.class);
+                startActivity(w);
+            });
+        }
+        View navActions = findViewById(R.id.btn_nav_actions);
+        if (navActions != null) {
+            navActions.setOnClickListener(v -> {
+                Intent a = new Intent(MainActivity.this, ActionsActivity.class);
+                startActivity(a);
+            });
+        }
     }
     
     @Override

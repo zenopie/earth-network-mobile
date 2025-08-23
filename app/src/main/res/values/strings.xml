@@ -21,7 +21,7 @@
     <!-- Added for backend verification UI/config -->
     <string name="verification_results">Verification Results</string>
     <string name="backend_url">http://192.168.1.145:8000/api/verify</string>
-
+    
     <!-- Wallet strings -->
     <string name="wallet_title">Secret Wallet</string>
     <string name="mnemonic_hint">Mnemonic (12/24 words)</string>
@@ -35,4 +35,12 @@
     <string name="refresh">Refresh</string>
     <string name="wallet_note">This minimal wallet derives a Secret address and fetches SCRT balance. Transactions and viewing keys are not included.</string>
     <string name="open_wallet">Open Secret Wallet</string>
+
+    <!-- Bottom navigation -->
+    <string name="nav_wallet">Wallet</string>
+    <string name="nav_actions">Actions</string>
+
+    <!-- Actions navigator -->
+    <string name="actions_title">Actions</string>
+    <string name="passport_scan">Passport Scan</string>
 </resources>

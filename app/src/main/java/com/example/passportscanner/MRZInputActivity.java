@@ -76,6 +76,22 @@ public class MRZInputActivity extends AppCompatActivity {
                 startActivity(w);
             });
         }
+
+        // Bottom navigation wiring
+        View navWallet = findViewById(R.id.btn_nav_wallet);
+        if (navWallet != null) {
+            navWallet.setOnClickListener(v -> {
+                Intent w = new Intent(MRZInputActivity.this, WalletActivity.class);
+                startActivity(w);
+            });
+        }
+        View navActions = findViewById(R.id.btn_nav_actions);
+        if (navActions != null) {
+            navActions.setOnClickListener(v -> {
+                Intent a = new Intent(MRZInputActivity.this, ActionsActivity.class);
+                startActivity(a);
+            });
+        }
     }
     
     private String getTextFromEditText(TextInputEditText editText) {
