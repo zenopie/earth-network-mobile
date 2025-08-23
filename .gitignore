@@ -1,0 +1,78 @@
+# Android/Gradle/IDE gitignore
+
+# Built application files
+*.apk
+*.aar
+*.ap_
+*.aab
+
+# ART/Dalvik VM files
+*.dex
+
+# Java/Kotlin class files
+*.class
+
+# Generated directories
+bin/
+gen/
+out/
+
+# Gradle
+.gradle/
+build/
+**/build/
+
+# Local configuration (SDK path, etc.)
+local.properties
+
+# Android Studio/IntelliJ IDEA
+.idea/
+*.iml
+
+# Android NDK / CMake
+.externalNativeBuild/
+.cxx/
+
+# Android Studio artifacts
+captures/
+.navigation/
+
+# Logs and profiling
+*.log
+*.hprof
+*.trace
+
+# Keystores and signing configs (DO NOT COMMIT SECRETS)
+*.jks
+*.keystore
+keystore.properties
+*.keystore.properties
+signing.properties
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# VS Code
+.vscode/
+
+# Misc local env/config files
+*.local
+.env
+.env.*
+
+# Cache directories
+.gradletasknamecache
+
+# Keep Gradle wrapper in VCS (do not ignore these)
+!gradlew
+!gradlew.bat
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+!gradle/wrapper/
+
+# Ignore lint/analysis reports if not under build (most are in build already)
+lint-results.*
+
+# Android build outputs often placed under module dirs; already covered by **/build/
+# End

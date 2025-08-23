@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:padding="16dp"
@@ -28,43 +29,52 @@
             android:textSize="16sp"
             android:textStyle="bold" />
 
+        <!-- Passport number: masked by default with reveal eye -->
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp">
+            android:layout_marginBottom="16dp"
+            app:endIconMode="password_toggle">
 
             <com.google.android.material.textfield.TextInputEditText
                 android:id="@+id/passport_number"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:hint="Passport Number"
-                android:maxLength="9" />
+                android:maxLength="9"
+                android:inputType="textPassword" />
         </com.google.android.material.textfield.TextInputLayout>
 
+        <!-- Date of birth: numeric masked with reveal eye -->
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp">
+            android:layout_marginBottom="16dp"
+            app:endIconMode="password_toggle">
 
             <com.google.android.material.textfield.TextInputEditText
                 android:id="@+id/date_of_birth"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:hint="Date of Birth (YYMMDD, e.g., 901231)"
-                android:maxLength="6" />
+                android:maxLength="6"
+                android:inputType="numberPassword" />
         </com.google.android.material.textfield.TextInputLayout>
 
+        <!-- Date of expiry: numeric masked with reveal eye -->
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="24dp">
+            android:layout_marginBottom="24dp"
+            app:endIconMode="password_toggle">
 
             <com.google.android.material.textfield.TextInputEditText
                 android:id="@+id/date_of_expiry"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:hint="Date of Expiry (YYMMDD, e.g., 251231)"
-                android:maxLength="6" />
+                android:maxLength="6"
+                android:inputType="numberPassword" />
         </com.google.android.material.textfield.TextInputLayout>
 
         <Button
@@ -75,6 +85,13 @@
             android:text="Scan Passport"
             android:textSize="18sp" />
 
+<Button
+            android:id="@+id/open_wallet_button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/open_wallet"
+            android:textSize="18sp"
+            android:layout_marginBottom="12dp" />
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"

@@ -3072,6 +3072,8 @@ id action_text
 id actions
 id activity_chooser_view_content
 id add
+id address_row
+id address_text
 id alertTitle
 id aligned
 id all
@@ -3088,6 +3090,8 @@ id auto
 id autoComplete
 id autoCompleteToEnd
 id autoCompleteToStart
+id balance_row
+id balance_text
 id barrier
 id baseline
 id beginOnFirstDraw
@@ -3099,6 +3103,11 @@ id bounce
 id bounceBoth
 id bounceEnd
 id bounceStart
+id btn_copy
+id btn_derive
+id btn_generate
+id btn_refresh
+id btn_save
 id buttonPanel
 id cache_measures
 id callMeasure
@@ -3153,6 +3162,7 @@ id design_menu_item_action_area
 id design_menu_item_action_area_stub
 id design_menu_item_text
 id design_navigation_view
+id dg1_status_text
 id dialog_button
 id dimensions
 id direct
@@ -3161,6 +3171,7 @@ id disableIntraAutoTransition
 id disablePostScroll
 id disableScroll
 id disjoint
+id dob_row
 id dob_text
 id dragAnticlockwise
 id dragClockwise
@@ -3186,6 +3197,7 @@ id enterAlwaysCollapsed
 id exitUntilCollapsed
 id expand_activities_button
 id expanded_menu
+id expiry_row
 id expiry_text
 id fade
 id fill
@@ -3204,6 +3216,7 @@ id forever
 id fragment_container_view_tag
 id frost
 id fullscreen_header
+id gender_row
 id gender_text
 id ghost_view
 id ghost_view_holder
@@ -3232,12 +3245,14 @@ id info
 id instruction_text
 id invisible
 id inward
+id issuing_country_row
 id italic
 id item_touch_helper_previous_elevation
 id jumpToEnd
 id jumpToStart
 id labeled
 id layout
+id lcd_input
 id left
 id leftToRight
 id legacy
@@ -3275,6 +3290,7 @@ id matrix
 id message
 id middle
 id mini
+id mnemonic_input
 id month_grid
 id month_navigation_bar
 id month_navigation_fragment_toggle
@@ -3306,7 +3322,9 @@ id mtrl_picker_text_input_range_start
 id mtrl_picker_title_text
 id mtrl_view_tag_bottom_padding
 id multiply
+id name_row
 id name_text
+id nationality_row
 id nationality_text
 id navigation_bar_item_active_indicator_view
 id navigation_bar_item_icon_container
@@ -3330,6 +3348,7 @@ id notification_main_column_container
 id off
 id on
 id onInterceptTouchReturnSwipe
+id open_wallet_button
 id outline
 id outward
 id overshoot
@@ -3339,8 +3358,10 @@ id parent
 id parentPanel
 id parentRelative
 id parent_matrix
+id passport_info_table
 id passport_number
 id passport_number_text
+id passport_row
 id password_toggle
 id path
 id pathRelative
@@ -3355,6 +3376,7 @@ id progress_circular
 id progress_horizontal
 id radio
 id ratio
+id raw_response_text
 id rectangles
 id result_container
 id result_title
@@ -3417,6 +3439,7 @@ id snackbar_action
 id snackbar_text
 id snap
 id snapMargins
+id sod_status_text
 id south
 id spacer
 id special_effects_controller_view_tag
@@ -3489,11 +3512,15 @@ id transition_position
 id transition_scene_layoutid_cache
 id transition_transform
 id triangle
+id trust_reason_text
+id trust_status_text
 id unchecked
 id uniform
 id unlabeled
 id up
 id useLogo
+id verify_section_title
+id verify_status_text
 id vertical_only
 id view_offset_helper
 id view_transition
@@ -3503,6 +3530,7 @@ id view_tree_saved_state_registry_owner
 id view_tree_view_model_store_owner
 id visible
 id visible_removing_fragment_view_tag
+id wallet_title
 id west
 id withText
 id with_icon
@@ -3627,6 +3655,7 @@ layout abc_select_dialog_material
 layout abc_tooltip
 layout activity_main
 layout activity_mrz_input
+layout activity_wallet
 layout custom_dialog
 layout design_bottom_navigation_item
 layout design_bottom_sheet_dialog
@@ -3733,9 +3762,12 @@ string abc_searchview_description_voice
 string abc_shareactionprovider_share_with
 string abc_shareactionprovider_share_with_application
 string abc_toolbar_collapse_description
+string address_label
 string androidx_startup
 string app_name
 string appbar_scrolling_view_behavior
+string backend_url
+string balance_label
 string bottom_sheet_behavior
 string bottomsheet_action_collapse
 string bottomsheet_action_expand
@@ -3746,8 +3778,10 @@ string character_counter_content_description
 string character_counter_overflowed_content_description
 string character_counter_pattern
 string clear_text_end_icon_content_description
+string copy
 string date_of_birth
 string date_of_expiry
+string derive_address
 string document_code
 string enter_mrz_data
 string error_a11y_label
@@ -3757,11 +3791,13 @@ string exposed_dropdown_menu_content_description
 string fab_transformation_scrim_behavior
 string fab_transformation_sheet_behavior
 string gender
+string generate_mnemonic
 string hide_bottom_view_on_scroll_behavior
 string icon_content_description
 string issuing_country
 string issuing_state
 string item_view_role_description
+string lcd_url_hint
 string m3_ref_typeface_brand_medium
 string m3_ref_typeface_brand_regular
 string m3_ref_typeface_plain_medium
@@ -3799,6 +3835,7 @@ string material_timepicker_minute
 string material_timepicker_pm
 string material_timepicker_select_time
 string material_timepicker_text_input_mode_description
+string mnemonic_hint
 string mtrl_badge_numberless_content_description
 string mtrl_checkbox_button_icon_path_checked
 string mtrl_checkbox_button_icon_path_group_name
@@ -3863,6 +3900,7 @@ string mtrl_timepicker_cancel
 string mtrl_timepicker_confirm
 string name
 string nationality
+string open_wallet
 string passport_number
 string password_toggle_content_description
 string path_password_eye
@@ -3871,6 +3909,8 @@ string path_password_eye_mask_visible
 string path_password_strike_through
 string place_passport
 string primary_identifier
+string refresh
+string save_securely
 string scan_complete
 string scan_passport
 string scanning
@@ -3882,6 +3922,9 @@ string secondary_identifier
 string side_sheet_accessibility_pane_title
 string side_sheet_behavior
 string status_bar_notification_info_overflow
+string verification_results
+string wallet_note
+string wallet_title
 style AlertDialog_AppCompat
 style AlertDialog_AppCompat_Light
 style Animation_AppCompat_Dialog

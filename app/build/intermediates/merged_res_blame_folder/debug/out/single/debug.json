@@ -12,6 +12,10 @@
         "source": "com.example.passportscanner.app-main-30:/drawable/ic_launcher_background.xml"
     },
     {
+        "merged": "com.example.passportscanner.app-merged_res-28:/layout_activity_wallet.xml.flat",
+        "source": "com.example.passportscanner.app-main-30:/layout/activity_wallet.xml"
+    },
+    {
         "merged": "com.example.passportscanner.app-merged_res-28:/layout_activity_main.xml.flat",
         "source": "com.example.passportscanner.app-main-30:/layout/activity_main.xml"
     },

@@ -1,23 +1,37 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:ns1="http://schemas.android.com/tools">
+    <string name="address_label">Address</string>
     <string name="app_name">Passport Scanner</string>
+    <string name="backend_url">http://192.168.1.145:8000/api/verify</string>
+    <string name="balance_label">Balance</string>
+    <string name="copy">Copy</string>
     <string name="date_of_birth">Date of Birth</string>
     <string name="date_of_expiry">Date of Expiry</string>
+    <string name="derive_address">Derive</string>
     <string name="document_code">Document Code</string>
     <string name="enter_mrz_data">Enter MRZ Data</string>
     <string name="expiry_date">Expiry Date</string>
     <string name="gender">Gender</string>
+    <string name="generate_mnemonic">Generate</string>
     <string name="issuing_country">Issuing Country</string>
     <string name="issuing_state">Issuing State</string>
+    <string name="lcd_url_hint">LCD REST URL (optional)</string>
+    <string name="mnemonic_hint">Mnemonic (12/24 words)</string>
     <string name="name">Name</string>
     <string name="nationality">Nationality</string>
+    <string name="open_wallet">Open Secret Wallet</string>
     <string name="passport_number">Passport Number</string>
     <string name="place_passport">Place your passport on the back of the device</string>
     <string name="primary_identifier">Primary Identifier</string>
+    <string name="refresh">Refresh</string>
+    <string name="save_securely">Save Securely</string>
     <string name="scan_complete">Scan Complete</string>
     <string name="scan_passport">Scan Passport</string>
     <string name="scanning">Scanning passport…</string>
     <string name="secondary_identifier">Secondary Identifier</string>
+    <string name="verification_results">Verification Results</string>
+    <string name="wallet_note">This minimal wallet derives a Secret address and fetches SCRT balance. Transactions and viewing keys are not included.</string>
+    <string name="wallet_title">Secret Wallet</string>
     <style name="Theme.PassportScanner" parent="Theme.MaterialComponents.DayNight.DarkActionBar">
         
         <item name="colorPrimary">#2196F3</item>

@@ -1,13 +1,14 @@
 -- Merging decision tree log ---
 manifest
-ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:2:1-55:12
-INJECTED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:2:1-55:12
-INJECTED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:2:1-55:12
-INJECTED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:2:1-55:12
+ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:2:1-62:12
+INJECTED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:2:1-62:12
+INJECTED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:2:1-62:12
+INJECTED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:2:1-62:12
 MERGED from [com.google.android.material:material:1.9.0] /Users/zenopie/.gradle/caches/8.12/transforms/ccddb21bfcf65e4b07203691d0718b07/transformed/material-1.9.0/AndroidManifest.xml:17:1-26:12
 MERGED from [androidx.constraintlayout:constraintlayout:2.1.4] /Users/zenopie/.gradle/caches/8.12/transforms/3d15e3a34dabc7be87a3aa0fa0535df4/transformed/constraintlayout-2.1.4/AndroidManifest.xml:2:1-11:12
 MERGED from [androidx.appcompat:appcompat-resources:1.6.1] /Users/zenopie/.gradle/caches/8.12/transforms/a98288ac6bc02d6f5c24ac0c053d8d61/transformed/jetified-appcompat-resources-1.6.1/AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.appcompat:appcompat:1.6.1] /Users/zenopie/.gradle/caches/8.12/transforms/264759d7017deb9b5776379f23ecb12d/transformed/appcompat-1.6.1/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.security:security-crypto:1.0.0] /Users/zenopie/.gradle/caches/8.12/transforms/0d894b54bc754387a6ac2ee737bc8ff5/transformed/jetified-security-crypto-1.0.0/AndroidManifest.xml:17:1-24:12
 MERGED from [net.sf.scuba:scuba-sc-android:0.0.23] /Users/zenopie/.gradle/caches/8.12/transforms/ad874a724de9a686649e19f1b4fb1495/transformed/jetified-scuba-sc-android-0.0.23/AndroidManifest.xml:2:1-13:12
 MERGED from [androidx.viewpager2:viewpager2:1.0.0] /Users/zenopie/.gradle/caches/8.12/transforms/f4eef59509b3973ba7c049a839bf8f96/transformed/jetified-viewpager2-1.0.0/AndroidManifest.xml:17:1-24:12
 MERGED from [androidx.fragment:fragment:1.3.6] /Users/zenopie/.gradle/caches/8.12/transforms/98ecd8f7919c68eff27b3113361d8544/transformed/fragment-1.3.6/AndroidManifest.xml:17:1-24:12
@@ -45,22 +46,22 @@ MERGED from [androidx.documentfile:documentfile:1.0.0] /Users/zenopie/.gradle/ca
 MERGED from [androidx.localbroadcastmanager:localbroadcastmanager:1.0.0] /Users/zenopie/.gradle/caches/8.12/transforms/2d8152a39ef8662a606cb55347ed8aaf/transformed/localbroadcastmanager-1.0.0/AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.print:print:1.0.0] /Users/zenopie/.gradle/caches/8.12/transforms/6be175c2822e60e18f4f0873e337f98f/transformed/print-1.0.0/AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.annotation:annotation-experimental:1.3.0] /Users/zenopie/.gradle/caches/8.12/transforms/57f0f84a7cda4195e61ec7110899c572/transformed/jetified-annotation-experimental-1.3.0/AndroidManifest.xml:17:1-22:12
-INJECTED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:2:1-55:12
-INJECTED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:2:1-55:12
-INJECTED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:2:1-55:12
+INJECTED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:2:1-62:12
+INJECTED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:2:1-62:12
+INJECTED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:2:1-62:12
 	package
 		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:4:5-42
 		INJECTED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml
 		INJECTED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml
 	android:versionName
 		INJECTED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml
-		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:2:1-55:12
+		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:2:1-62:12
 		INJECTED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml
 	xmlns:tools
 		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:3:5-51
 	android:versionCode
 		INJECTED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml
-		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:2:1-55:12
+		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:2:1-62:12
 		INJECTED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml
 	xmlns:android
 		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:2:11-69
@@ -91,7 +92,7 @@ ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/A
 	android:name
 		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:18:9-47
 application
-ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:21:5-53:19
+ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:21:5-60:19
 MERGED from [com.google.android.material:material:1.9.0] /Users/zenopie/.gradle/caches/8.12/transforms/ccddb21bfcf65e4b07203691d0718b07/transformed/material-1.9.0/AndroidManifest.xml:24:5-20
 MERGED from [com.google.android.material:material:1.9.0] /Users/zenopie/.gradle/caches/8.12/transforms/ccddb21bfcf65e4b07203691d0718b07/transformed/material-1.9.0/AndroidManifest.xml:24:5-20
 MERGED from [androidx.constraintlayout:constraintlayout:2.1.4] /Users/zenopie/.gradle/caches/8.12/transforms/3d15e3a34dabc7be87a3aa0fa0535df4/transformed/constraintlayout-2.1.4/AndroidManifest.xml:9:5-20
@@ -113,7 +114,7 @@ MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] /Users/zeno
 	android:fullBackupContent
 		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:24:9-54
 	tools:targetApi
-		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:28:9-29
+		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:29:9-29
 	android:icon
 		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:25:9-43
 	android:allowBackup
@@ -122,44 +123,54 @@ MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] /Users/zeno
 		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:27:9-53
 	android:dataExtractionRules
 		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:23:9-65
+	android:usesCleartextTraffic
+		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:28:9-44
 activity#com.example.passportscanner.MRZInputActivity
-ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:30:9-38:20
+ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:31:9-39:20
 	android:exported
-		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:32:13-36
+		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:33:13-36
 	android:theme
-		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:33:13-57
+		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:34:13-57
 	android:name
-		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:31:13-45
+		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:32:13-45
 intent-filter#action:name:android.intent.action.MAIN+category:name:android.intent.category.LAUNCHER
-ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:34:13-37:29
+ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:35:13-38:29
 action#android.intent.action.MAIN
-ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:35:17-69
+ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:36:17-69
 	android:name
-		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:35:25-66
+		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:36:25-66
 category#android.intent.category.LAUNCHER
-ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:36:17-77
+ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:37:17-77
 	android:name
-		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:36:27-74
+		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:37:27-74
 activity#com.example.passportscanner.MainActivity
-ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:40:9-52:20
+ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:41:9-53:20
 	android:exported
-		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:42:13-36
+		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:43:13-36
 	android:theme
-		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:43:13-57
+		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:44:13-57
 	android:name
-		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:41:13-41
+		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:42:13-41
 intent-filter#action:name:android.nfc.action.TECH_DISCOVERED
-ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:45:13-47:29
+ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:46:13-48:29
 action#android.nfc.action.TECH_DISCOVERED
-ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:46:17-77
+ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:47:17-77
 	android:name
-		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:46:25-74
+		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:47:25-74
 meta-data#android.nfc.action.TECH_DISCOVERED
-ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:49:13-51:59
+ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:50:13-52:59
 	android:resource
-		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:51:17-56
+		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:52:17-56
 	android:name
-		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:50:17-66
+		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:51:17-66
+activity#com.example.passportscanner.wallet.WalletActivity
+ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:56:9-59:60
+	android:exported
+		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:58:13-37
+	android:theme
+		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:59:13-57
+	android:name
+		ADDED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml:57:13-50
 uses-sdk
 INJECTED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml reason: use-sdk injection requested
 INJECTED from /Users/zenopie/Documents/projects/earth-network-mobile/app/src/main/AndroidManifest.xml
@@ -172,6 +183,8 @@ MERGED from [androidx.appcompat:appcompat-resources:1.6.1] /Users/zenopie/.gradl
 MERGED from [androidx.appcompat:appcompat-resources:1.6.1] /Users/zenopie/.gradle/caches/8.12/transforms/a98288ac6bc02d6f5c24ac0c053d8d61/transformed/jetified-appcompat-resources-1.6.1/AndroidManifest.xml:20:5-44
 MERGED from [androidx.appcompat:appcompat:1.6.1] /Users/zenopie/.gradle/caches/8.12/transforms/264759d7017deb9b5776379f23ecb12d/transformed/appcompat-1.6.1/AndroidManifest.xml:20:5-44
 MERGED from [androidx.appcompat:appcompat:1.6.1] /Users/zenopie/.gradle/caches/8.12/transforms/264759d7017deb9b5776379f23ecb12d/transformed/appcompat-1.6.1/AndroidManifest.xml:20:5-44
+MERGED from [androidx.security:security-crypto:1.0.0] /Users/zenopie/.gradle/caches/8.12/transforms/0d894b54bc754387a6ac2ee737bc8ff5/transformed/jetified-security-crypto-1.0.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.security:security-crypto:1.0.0] /Users/zenopie/.gradle/caches/8.12/transforms/0d894b54bc754387a6ac2ee737bc8ff5/transformed/jetified-security-crypto-1.0.0/AndroidManifest.xml:20:5-22:41
 MERGED from [net.sf.scuba:scuba-sc-android:0.0.23] /Users/zenopie/.gradle/caches/8.12/transforms/ad874a724de9a686649e19f1b4fb1495/transformed/jetified-scuba-sc-android-0.0.23/AndroidManifest.xml:7:5-9:41
 MERGED from [net.sf.scuba:scuba-sc-android:0.0.23] /Users/zenopie/.gradle/caches/8.12/transforms/ad874a724de9a686649e19f1b4fb1495/transformed/jetified-scuba-sc-android-0.0.23/AndroidManifest.xml:7:5-9:41
 MERGED from [androidx.viewpager2:viewpager2:1.0.0] /Users/zenopie/.gradle/caches/8.12/transforms/f4eef59509b3973ba7c049a839bf8f96/transformed/jetified-viewpager2-1.0.0/AndroidManifest.xml:20:5-22:41
