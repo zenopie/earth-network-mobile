@@ -17,9 +17,13 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.EditText;
 import android.text.InputType;
+import android.content.SharedPreferences;
+import android.text.TextUtils;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.app.AlertDialog;
+import androidx.security.crypto.EncryptedSharedPreferences;
+import androidx.security.crypto.MasterKeys;
 
 import org.jmrtd.BACKey;
 import org.jmrtd.BACKeySpec;
@@ -82,7 +86,7 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-        
+
         // First, try to retrieve MRZ data from SharedPreferences
         android.content.SharedPreferences prefs = getSharedPreferences("mrz_data", MODE_PRIVATE);
         String savedPassportNumber = prefs.getString("passportNumber", null);

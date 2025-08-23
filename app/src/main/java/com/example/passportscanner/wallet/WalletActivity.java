@@ -22,6 +22,7 @@ import com.example.passportscanner.R;
 import com.example.passportscanner.ActionsActivity;
 
 import org.bitcoinj.core.ECKey;
+import android.util.Log;
 
 /**
  * Simple Secret Network wallet screen:
@@ -50,6 +51,17 @@ public class WalletActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_wallet);
 
+        // Initialize SecretWallet
+        try {
+            SecretWallet.initialize(this);
+        } catch (Exception e) {
+            Log.e("WalletActivity", "Failed to initialize SecretWallet", e);
+            Toast.makeText(this, "Wallet initialization failed", Toast.LENGTH_LONG).show();
+            // We might want to finish the activity here since core functionality is broken
+            // finish();
+            // return;
+        }
+
         mnemonicInput = findViewById(R.id.mnemonic_input);
         lcdInput = findViewById(R.id.lcd_input);
         addressText = findViewById(R.id.address_text);
@@ -58,7 +70,6 @@ public class WalletActivity extends AppCompatActivity {
         balanceRow = findViewById(R.id.balance_row);
 
         Button btnGenerate = findViewById(R.id.btn_generate);
-        Button btnDerive = findViewById(R.id.btn_derive);
         Button btnSave = findViewById(R.id.btn_save);
         Button btnCopy = findViewById(R.id.btn_copy);
         Button btnRefresh = findViewById(R.id.btn_refresh);
@@ -98,19 +109,13 @@ public class WalletActivity extends AppCompatActivity {
             try {
                 String mnemonic = SecretWallet.generateMnemonic();
                 mnemonicInput.setText(mnemonic);
+                // Do NOT log or print the mnemonic anywhere for privacy
                 Toast.makeText(this, "Mnemonic generated", Toast.LENGTH_SHORT).show();
+                deriveAndDisplayAddress(mnemonic); // Automatically derive after generating
             } catch (Exception e) {
+                android.util.Log.e("WalletActivity", "Failed to generate mnemonic", e);
                 Toast.makeText(this, "Failed to generate mnemonic", Toast.LENGTH_LONG).show();
             }
-        });
-
-        btnDerive.setOnClickListener(v -> {
-            String mnemonic = getMnemonic();
-            if (TextUtils.isEmpty(mnemonic)) {
-                Toast.makeText(this, "Enter mnemonic", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            deriveAndDisplayAddress(mnemonic);
         });
 
         btnSave.setOnClickListener(v -> {
@@ -150,14 +155,18 @@ public class WalletActivity extends AppCompatActivity {
             new FetchBalanceTask().execute(lcd, address);
         });
 
-        // Bottom navigation wiring
+        // Bottom navigation wiring - use selected state instead of disabling to avoid default button borders
         View navWallet = findViewById(R.id.btn_nav_wallet);
         if (navWallet != null) {
-            // Already on Wallet
-            navWallet.setEnabled(false);
+            // Mark wallet as selected for styling and prevent redundant clicks
+            navWallet.setSelected(true);
+            navWallet.setOnClickListener(v -> {
+                // no-op: already on Wallet screen
+            });
         }
         View navActions = findViewById(R.id.btn_nav_actions);
         if (navActions != null) {
+            navActions.setSelected(false);
             navActions.setOnClickListener(v -> {
                 Intent a = new Intent(WalletActivity.this, ActionsActivity.class);
                 startActivity(a);

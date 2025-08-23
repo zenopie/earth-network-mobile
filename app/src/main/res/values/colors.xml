@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="sidebar_bg">#FFFFFF</color>
+    <color name="brand_blue">#4056A1</color>
+    <color name="sidebar_hover">#F1F2F7</color>
+    <color name="sidebar_text">#4056A1</color>
+    <color name="sidebar_icon">#4056A1</color>
+    <color name="sidebar_divider">#EEEEEE</color>
+</resources>

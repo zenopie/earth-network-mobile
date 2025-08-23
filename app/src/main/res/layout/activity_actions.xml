@@ -3,35 +3,105 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:padding="16dp"
+    android:background="@color/sidebar_bg"
     tools:context=".ActionsActivity">
 
-    <TextView
-        android:id="@+id/actions_title"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/actions_title"
-        android:textSize="24sp"
-        android:textStyle="bold"
-        android:layout_alignParentTop="true"
-        android:layout_centerHorizontal="true"
-        android:layout_marginTop="24dp" />
-
-    <Button
-        android:id="@+id/btn_passport_scan"
+    <!-- Top logo section (matches desktop sidebar logo placement) -->
+    <LinearLayout
+        android:id="@+id/logo_section"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/passport_scan"
-        android:textSize="18sp"
-        android:layout_below="@id/actions_title"
-        android:layout_marginTop="24dp"
-        android:layout_above="@+id/bottom_nav" />
+        android:orientation="vertical"
+        android:paddingTop="36dp"
+        android:paddingBottom="20dp"
+        android:gravity="center"
+        android:layout_alignParentTop="true">
 
-    <include
-        android:id="@+id/bottom_nav"
-        layout="@layout/view_bottom_nav"
+        <ImageView
+            android:id="@+id/action_logo"
+            android:layout_width="120dp"
+            android:layout_height="wrap_content"
+            android:adjustViewBounds="true"
+            android:src="@drawable/logo"
+            android:contentDescription="@string/app_name" />
+    </LinearLayout>
+
+    <!-- Actions list styled like the desktop sidebar -->
+    <ScrollView
+        android:id="@+id/actions_scroll"
         android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:layout_alignParentBottom="true" />
+        android:layout_height="match_parent"
+        android:layout_below="@id/logo_section"
+        android:layout_marginBottom="56dp"
+        android:fillViewport="true"
+        android:paddingLeft="12dp"
+        android:paddingRight="12dp"
+        android:paddingTop="12dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- Passport Scan action (keeps existing behavior but restyled) -->
+            <Button
+                android:id="@+id/btn_passport_scan"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:layout_marginTop="8dp"
+                android:layout_marginBottom="8dp"
+                android:paddingLeft="16dp"
+                android:paddingRight="16dp"
+                android:backgroundTint="@color/sidebar_bg"
+                android:drawableLeft="@drawable/ic_nfc"
+                android:drawablePadding="12dp"
+                android:text="@string/passport_scan"
+                android:textColor="@color/sidebar_text"
+                android:textAllCaps="false"
+                android:textSize="18sp"
+                android:gravity="center_vertical"
+                android:stateListAnimator="@null" />
+
+            <!-- Placeholder for additional actions — styled consistently -->
+            <Button
+                android:id="@+id/btn_other_action"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:layout_marginTop="8dp"
+                android:layout_marginBottom="8dp"
+                android:paddingLeft="16dp"
+                android:paddingRight="16dp"
+                android:backgroundTint="@color/sidebar_bg"
+                android:drawableLeft="@drawable/ic_launcher_foreground"
+                android:drawablePadding="12dp"
+                android:text="Other Action"
+                android:textColor="@color/sidebar_text"
+                android:textAllCaps="false"
+                android:textSize="18sp"
+                android:gravity="center_vertical"
+                android:visibility="gone"
+                android:stateListAnimator="@null" />
+
+            <!-- Divider -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="12dp"
+                android:layout_marginBottom="12dp"
+                android:background="@color/sidebar_divider" />
+
+            <!-- Additional descriptive area (optional) -->
+            <TextView
+                android:id="@+id/actions_subtitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Select an action from above"
+                android:textColor="@color/sidebar_text"
+                android:textSize="14sp"
+                android:paddingBottom="24dp" />
+
+        </LinearLayout>
+    </ScrollView>
+
 
 </RelativeLayout>

@@ -18,7 +18,13 @@
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"
-            android:text="@string/nav_wallet" />
+            android:background="?attr/selectableItemBackground"
+            android:text="@string/nav_wallet"
+            android:textAllCaps="false"
+            android:textColor="@color/nav_text_color"
+            android:paddingLeft="8dp"
+            android:paddingRight="8dp"
+            android:minHeight="48dp" />
 
         <View
             android:layout_width="8dp"
@@ -29,15 +35,14 @@
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"
-            android:text="@string/nav_actions" />
+            android:background="?attr/selectableItemBackground"
+            android:text="@string/nav_actions"
+            android:textAllCaps="false"
+            android:textColor="@color/nav_text_color"
+            android:paddingLeft="8dp"
+            android:paddingRight="8dp"
+            android:minHeight="48dp" />
     </LinearLayout>
 
-    <!-- Top divider line -->
-    <View
-        android:id="@+id/top_divider"
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:layout_alignParentTop="true"
-        android:background="#1F000000" />
 
 </RelativeLayout>

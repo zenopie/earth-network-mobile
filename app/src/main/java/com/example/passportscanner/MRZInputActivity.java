@@ -12,7 +12,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import android.util.Log;
 
 import com.google.android.material.textfield.TextInputEditText;
-import com.example.passportscanner.wallet.WalletActivity;
+import com.example.passportscanner.wallet.WalletFragment;
 
 public class MRZInputActivity extends AppCompatActivity {
     
@@ -25,8 +25,10 @@ public class MRZInputActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+
         setContentView(R.layout.activity_mrz_input);
-        
+
         // Initialize UI elements
         passportNumberEditText = findViewById(R.id.passport_number);
         dateOfBirthEditText = findViewById(R.id.date_of_birth);
@@ -68,30 +70,18 @@ public class MRZInputActivity extends AppCompatActivity {
             });
         }
 
-        // Open Secret Wallet screen
+        // Open Secret Wallet screen (now handled by HostActivity)
         Button openWallet = findViewById(R.id.open_wallet_button);
         if (openWallet != null) {
             openWallet.setOnClickListener(v -> {
-                Intent w = new Intent(MRZInputActivity.this, WalletActivity.class);
+                // Instead of starting WalletActivity, we now navigate to the WalletFragment within HostActivity
+                Intent w = new Intent(MRZInputActivity.this, HostActivity.class);
+                w.putExtra("fragment_to_show", "wallet");
                 startActivity(w);
             });
         }
 
-        // Bottom navigation wiring
-        View navWallet = findViewById(R.id.btn_nav_wallet);
-        if (navWallet != null) {
-            navWallet.setOnClickListener(v -> {
-                Intent w = new Intent(MRZInputActivity.this, WalletActivity.class);
-                startActivity(w);
-            });
-        }
-        View navActions = findViewById(R.id.btn_nav_actions);
-        if (navActions != null) {
-            navActions.setOnClickListener(v -> {
-                Intent a = new Intent(MRZInputActivity.this, ActionsActivity.class);
-                startActivity(a);
-            });
-        }
+        // Bottom navigation wiring (removed as HostActivity now manages this)
     }
     
     private String getTextFromEditText(TextInputEditText editText) {

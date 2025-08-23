@@ -7,6 +7,7 @@ import org.bitcoinj.crypto.HDUtils;
 import org.bitcoinj.wallet.DeterministicKeyChain;
 import org.bitcoinj.wallet.DeterministicSeed;
 import org.bitcoinj.crypto.MnemonicCode;
+import org.bitcoinj.crypto.MnemonicException;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -18,6 +19,10 @@ import java.net.URL;
 import java.security.SecureRandom;
 import java.util.Arrays;
 import java.util.List;
+import java.io.IOException;
+import android.util.Log;
+import android.content.Context;
+import android.content.res.AssetManager;
 
 /**
  * Minimal Secret Network wallet helper.
@@ -33,18 +38,53 @@ public final class SecretWallet {
 
     private SecretWallet() {}
 
+    // Lazy initialization flag
+    private static volatile boolean isInitialized = false;
+    private static final Object lock = new Object();
+
+    /**
+     * Initialize MnemonicCode with the English word list from assets.
+     * Must be called before any mnemonic operations.
+     */
+    public static void initialize(Context context) {
+        if (isInitialized) return;
+        synchronized (lock) {
+            if (isInitialized) return;
+            try {
+                AssetManager assetManager = context.getAssets();
+                InputStream is = assetManager.open("org/bitcoinj/crypto/wordlist/english.txt");
+                MnemonicCode.INSTANCE = new MnemonicCode(is, null);
+                is.close();
+                Log.d("SecretWallet", "MnemonicCode initialized with English word list from assets.");
+                isInitialized = true;
+            } catch (Exception e) {
+                Log.e("SecretWallet", "Failed to initialize MnemonicCode from assets: " + e.getMessage(), e);
+                throw new RuntimeException("Failed to initialize MnemonicCode", e);
+            }
+        }
+    }
+
     public static String generateMnemonic() {
-        // 128 bits entropy (12 words)
-        byte[] entropy = new byte[16];
-        new SecureRandom().nextBytes(entropy);
         try {
-            // Use bitcoinj's MnemonicCode to convert entropy to mnemonic words
+            // 128 bits entropy (12 words)
+            byte[] entropy = new byte[16];
+            SecureRandom secureRandom = new SecureRandom();
+            secureRandom.nextBytes(entropy);
+
             List<String> words = MnemonicCode.INSTANCE.toMnemonic(entropy);
             if (words == null || words.isEmpty()) {
-                throw new IllegalStateException("Failed to generate mnemonic");
+                Log.e("SecretWallet", "MnemonicCode.toMnemonic returned null or empty list");
+                // Zero sensitive entropy before throwing
+                Arrays.fill(entropy, (byte)0);
+                throw new IllegalStateException("Failed to generate mnemonic: word list issue?");
             }
-            return String.join(" ", words);
+            String mnemonic = String.join(" ", words);
+
+            // Zero sensitive entropy after use
+            Arrays.fill(entropy, (byte)0);
+            return mnemonic;
         } catch (Exception e) {
+            Log.e("SecretWallet", "Mnemonic generation failed", e);
             throw new RuntimeException("Mnemonic generation failed", e);
         }
     }

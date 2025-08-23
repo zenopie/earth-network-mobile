@@ -23,9 +23,10 @@ public class ActionsActivity extends AppCompatActivity {
             });
         }
 
-        // Bottom navigation
+        // Bottom navigation - use selected state instead of disabling buttons
         View navWallet = findViewById(R.id.btn_nav_wallet);
         if (navWallet != null) {
+            navWallet.setSelected(false);
             navWallet.setOnClickListener(v -> {
                 Intent w = new Intent(ActionsActivity.this, WalletActivity.class);
                 startActivity(w);
@@ -33,8 +34,11 @@ public class ActionsActivity extends AppCompatActivity {
         }
         View navActions = findViewById(R.id.btn_nav_actions);
         if (navActions != null) {
-            // Already on Actions
-            navActions.setEnabled(false);
+            // Mark Actions as selected for styling and prevent redundant clicks
+            navActions.setSelected(true);
+            navActions.setOnClickListener(v -> {
+                // no-op: already on Actions screen
+            });
         }
     }
 }
