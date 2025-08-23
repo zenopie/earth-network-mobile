@@ -17,4 +17,22 @@
     <string name="secondary_identifier">Secondary Identifier</string>
     <string name="date_of_expiry">Date of Expiry</string>
     <string name="enter_mrz_data">Enter MRZ Data</string>
+
+    <!-- Added for backend verification UI/config -->
+    <string name="verification_results">Verification Results</string>
+    <string name="backend_url">http://192.168.1.145:8000/api/verify</string>
+
+    <!-- Wallet strings -->
+    <string name="wallet_title">Secret Wallet</string>
+    <string name="mnemonic_hint">Mnemonic (12/24 words)</string>
+    <string name="generate_mnemonic">Generate</string>
+    <string name="derive_address">Derive</string>
+    <string name="save_securely">Save Securely</string>
+    <string name="lcd_url_hint">LCD REST URL (optional)</string>
+    <string name="address_label">Address</string>
+    <string name="copy">Copy</string>
+    <string name="balance_label">Balance</string>
+    <string name="refresh">Refresh</string>
+    <string name="wallet_note">This minimal wallet derives a Secret address and fetches SCRT balance. Transactions and viewing keys are not included.</string>
+    <string name="open_wallet">Open Secret Wallet</string>
 </resources>

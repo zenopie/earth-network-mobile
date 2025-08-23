@@ -12,6 +12,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import android.util.Log;
 
 import com.google.android.material.textfield.TextInputEditText;
+import com.example.passportscanner.wallet.WalletActivity;
 
 public class MRZInputActivity extends AppCompatActivity {
     
@@ -54,8 +55,8 @@ public class MRZInputActivity extends AppCompatActivity {
                         String dateOfBirth = getTextFromEditText(dateOfBirthEditText);
                         String dateOfExpiry = getTextFromEditText(dateOfExpiryEditText);
                         
-                        Log.d("MRZInputActivity", "Sending MRZ data: passportNumber=" + passportNumber +
-                            ", dateOfBirth=" + dateOfBirth + ", dateOfExpiry=" + dateOfExpiry);
+                        // Do not log sensitive MRZ values in cleartext during demos
+                        Log.d("MRZInputActivity", "Sending MRZ data to MainActivity (values suppressed in logs)");
                         
                         Intent intent = new Intent(MRZInputActivity.this, MainActivity.class);
                         intent.putExtra("passportNumber", passportNumber);
@@ -64,6 +65,15 @@ public class MRZInputActivity extends AppCompatActivity {
                         startActivity(intent);
                     }
                 }
+            });
+        }
+
+        // Open Secret Wallet screen
+        Button openWallet = findViewById(R.id.open_wallet_button);
+        if (openWallet != null) {
+            openWallet.setOnClickListener(v -> {
+                Intent w = new Intent(MRZInputActivity.this, WalletActivity.class);
+                startActivity(w);
             });
         }
     }

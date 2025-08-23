@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:padding="16dp"
@@ -78,118 +79,283 @@
                 android:text="@string/scan_complete"
                 android:textSize="20sp"
                 android:textStyle="bold" />
-
+    
+            <!-- Passport info table hidden for demo: do NOT show MRZ/DG1 fields or their labels -->
             <TableLayout
+                android:id="@+id/passport_info_table"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="16dp"
                 android:stretchColumns="1">
 
-                <TableRow>
+                <TableRow
+                    android:id="@+id/passport_row">
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:padding="8dp"
                         android:text="@string/passport_number"
                         android:textStyle="bold" />
-
-                    <TextView
-                        android:id="@+id/passport_number_text"
+    
+                    <com.google.android.material.textfield.TextInputLayout
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:padding="8dp" />
+                        app:endIconMode="password_toggle">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/passport_number_text"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:padding="8dp"
+                            android:inputType="textPassword"
+                            android:focusable="false"
+                            android:focusableInTouchMode="false"
+                            android:cursorVisible="false"
+                            android:clickable="false" />
+                    </com.google.android.material.textfield.TextInputLayout>
                 </TableRow>
-
-                <TableRow>
+    
+                <TableRow
+                    android:id="@+id/name_row">
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:padding="8dp"
                         android:text="@string/name"
                         android:textStyle="bold" />
-
-                    <TextView
-                        android:id="@+id/name_text"
+    
+                    <com.google.android.material.textfield.TextInputLayout
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:padding="8dp" />
+                        app:endIconMode="password_toggle">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/name_text"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:padding="8dp"
+                            android:inputType="textPassword"
+                            android:focusable="false"
+                            android:focusableInTouchMode="false"
+                            android:cursorVisible="false"
+                            android:clickable="false" />
+                    </com.google.android.material.textfield.TextInputLayout>
                 </TableRow>
-
-                <TableRow>
+    
+                <TableRow
+                    android:id="@+id/nationality_row">
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:padding="8dp"
                         android:text="@string/nationality"
                         android:textStyle="bold" />
-
-                    <TextView
-                        android:id="@+id/nationality_text"
+    
+                    <com.google.android.material.textfield.TextInputLayout
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:padding="8dp" />
+                        app:endIconMode="password_toggle">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/nationality_text"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:padding="8dp"
+                            android:inputType="textPassword"
+                            android:focusable="false"
+                            android:focusableInTouchMode="false"
+                            android:cursorVisible="false"
+                            android:clickable="false" />
+                    </com.google.android.material.textfield.TextInputLayout>
                 </TableRow>
-
-                <TableRow>
+    
+                <TableRow
+                    android:id="@+id/dob_row">
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:padding="8dp"
                         android:text="@string/date_of_birth"
                         android:textStyle="bold" />
-
-                    <TextView
-                        android:id="@+id/dob_text"
+    
+                    <com.google.android.material.textfield.TextInputLayout
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:padding="8dp" />
+                        app:endIconMode="password_toggle">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/dob_text"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:padding="8dp"
+                            android:inputType="numberPassword"
+                            android:focusable="false"
+                            android:focusableInTouchMode="false"
+                            android:cursorVisible="false"
+                            android:clickable="false" />
+                    </com.google.android.material.textfield.TextInputLayout>
                 </TableRow>
-
-                <TableRow>
+    
+                <TableRow
+                    android:id="@+id/gender_row">
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:padding="8dp"
                         android:text="@string/gender"
                         android:textStyle="bold" />
-
-                    <TextView
-                        android:id="@+id/gender_text"
+    
+                    <com.google.android.material.textfield.TextInputLayout
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:padding="8dp" />
+                        app:endIconMode="password_toggle">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/gender_text"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:padding="8dp"
+                            android:inputType="textPassword"
+                            android:focusable="false"
+                            android:focusableInTouchMode="false"
+                            android:cursorVisible="false"
+                            android:clickable="false" />
+                    </com.google.android.material.textfield.TextInputLayout>
                 </TableRow>
-
-                <TableRow>
+    
+                <TableRow
+                    android:id="@+id/expiry_row">
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:padding="8dp"
                         android:text="@string/expiry_date"
                         android:textStyle="bold" />
-
-                    <TextView
-                        android:id="@+id/expiry_text"
+    
+                    <com.google.android.material.textfield.TextInputLayout
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:padding="8dp" />
+                        app:endIconMode="password_toggle">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/expiry_text"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:padding="8dp"
+                            android:inputType="numberPassword"
+                            android:focusable="false"
+                            android:focusableInTouchMode="false"
+                            android:cursorVisible="false"
+                            android:clickable="false" />
+                    </com.google.android.material.textfield.TextInputLayout>
                 </TableRow>
-
-                <TableRow>
+    
+                <TableRow
+                    android:id="@+id/issuing_country_row">
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:padding="8dp"
                         android:text="@string/issuing_country"
                         android:textStyle="bold" />
-
-                    <TextView
-                        android:id="@+id/country_text"
+    
+                    <com.google.android.material.textfield.TextInputLayout
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:padding="8dp" />
+                        app:endIconMode="password_toggle">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/country_text"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:padding="8dp"
+                            android:inputType="textPassword"
+                            android:focusable="false"
+                            android:focusableInTouchMode="false"
+                            android:cursorVisible="false"
+                            android:clickable="false" />
+                    </com.google.android.material.textfield.TextInputLayout>
                 </TableRow>
             </TableLayout>
+
+            <!-- Verification Results Section -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="16dp"
+                android:background="#DDDDDD" />
+
+            <TextView
+                android:id="@+id/verify_section_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:layout_gravity="center_horizontal"
+                android:text="@string/verification_results"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginTop="8dp">
+
+                <TextView
+                    android:id="@+id/verify_status_text"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Passive Authentication: N/A"
+                    android:textSize="16sp"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp" />
+
+                <TextView
+                    android:id="@+id/trust_status_text"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Trust Chain: N/A"
+                    android:textSize="16sp"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp" />
+
+                <TextView
+                    android:id="@+id/trust_reason_text"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Trust Failure Reason: None"
+                    android:textSize="14sp"
+                    android:paddingTop="2dp"
+                    android:paddingBottom="2dp" />
+
+                <TextView
+                    android:id="@+id/sod_status_text"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="SOD Signature: N/A"
+                    android:textSize="16sp"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp" />
+
+                <TextView
+                    android:id="@+id/dg1_status_text"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="DG1 Hash Integrity: N/A"
+                    android:textSize="16sp"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Raw Response:"
+                    android:textStyle="bold"
+                    android:layout_marginTop="8dp" />
+
+                <TextView
+                    android:id="@+id/raw_response_text"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textIsSelectable="true"
+                    android:padding="8dp"
+                    android:background="#0D000000"
+                    android:minHeight="48dp" />
+            </LinearLayout>
         </LinearLayout>
     </ScrollView>
 

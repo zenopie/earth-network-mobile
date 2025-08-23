@@ -8,7 +8,7 @@ android {
 
     defaultConfig {
         applicationId "com.example.passportscanner"
-        minSdk 21
+        minSdk 23
         targetSdk 34
         versionCode 1
         versionName "1.0"
@@ -26,12 +26,29 @@ android {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
+
+    packaging {
+        resources {
+            excludes += ['META-INF/LICENSE*', 'META-INF/NOTICE*', 'META-INF/DEPENDENCIES', 'META-INF/INDEX.LIST']
+        }
+    }
+}
+
+// Dependency resolution to avoid BouncyCastle duplicates
+configurations.all {
+    exclude group: 'org.bouncycastle', module: 'bcprov-jdk15to18'
+    resolutionStrategy {
+        force 'org.bouncycastle:bcprov-jdk15on:1.70'
+        force 'org.bouncycastle:bcpkix-jdk15on:1.70'
+    }
 }
 
 dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.9.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'androidx.security:security-crypto:1.0.0'
+    implementation('org.bitcoinj:bitcoinj-core:0.16.3') { exclude group: 'org.bouncycastle' }
     
     // JMRTD library for reading ePassports
     implementation ('org.jmrtd:jmrtd:0.7.18') {
@@ -42,8 +59,8 @@ dependencies {
     }
     
     // Required dependencies for JMRTD
-    implementation 'org.bouncycastle:bcprov-jdk15on:1.68'
-    implementation 'org.bouncycastle:bcpkix-jdk15on:1.68'
+    implementation 'org.bouncycastle:bcprov-jdk15on:1.70'
+    implementation 'org.bouncycastle:bcpkix-jdk15on:1.70'
     implementation 'net.sf.scuba:scuba-sc-android:0.0.23'
     
     // For handling images in passport

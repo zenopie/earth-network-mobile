@@ -15,6 +15,8 @@ import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.widget.EditText;
+import android.text.InputType;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.app.AlertDialog;
@@ -43,8 +45,8 @@ import net.sf.scuba.smartcards.CardService;
 
 public class MainActivity extends AppCompatActivity {
     private static final String TAG = "PassportScanner";
-    // Change this URL to point to your backend endpoint that will verify the DG1 and SOD.
-    private static final String BACKEND_URL = "https://example.com/verify";
+    // Backend URL loaded at runtime from SharedPreferences or resources
+    private String backendUrl;
 
     private NfcAdapter nfcAdapter;
     private PendingIntent pendingIntent;
@@ -62,6 +64,14 @@ public class MainActivity extends AppCompatActivity {
     private TextView genderText;
     private TextView expiryText;
     private TextView countryText;
+
+    // Verification result UI
+    private TextView verifyStatusText;
+    private TextView trustStatusText;
+    private TextView trustReasonText;
+    private TextView sodStatusText;
+    private TextView dg1StatusText;
+    private TextView rawResponseText;
     
     // MRZ data from intent
     private String passportNumber;
@@ -151,6 +161,29 @@ public class MainActivity extends AppCompatActivity {
         genderText = findViewById(R.id.gender_text);
         expiryText = findViewById(R.id.expiry_text);
         countryText = findViewById(R.id.country_text);
+
+        // Verification results UI
+        verifyStatusText = findViewById(R.id.verify_status_text);
+        trustStatusText = findViewById(R.id.trust_status_text);
+        trustReasonText = findViewById(R.id.trust_reason_text);
+        sodStatusText = findViewById(R.id.sod_status_text);
+        dg1StatusText = findViewById(R.id.dg1_status_text);
+        rawResponseText = findViewById(R.id.raw_response_text);
+
+        // Load backend URL preference or fallback to resource
+        android.content.SharedPreferences appPrefs = getSharedPreferences("app_prefs", MODE_PRIVATE);
+        String savedBackendUrl = appPrefs.getString("backend_url", null);
+        backendUrl = savedBackendUrl != null ? savedBackendUrl : getString(R.string.backend_url);
+        Log.d(TAG, "Backend URL = " + backendUrl);
+
+        // Long-press title to configure backend URL
+        TextView title = findViewById(R.id.title_text);
+        if (title != null) {
+            title.setOnLongClickListener(v -> {
+                showBackendUrlDialog();
+                return true;
+            });
+        }
         
         // Initialize NFC
         nfcAdapter = NfcAdapter.getDefaultAdapter(this);
@@ -271,11 +304,15 @@ public class MainActivity extends AppCompatActivity {
             
             if (passportData != null) {
                 Log.d(TAG, "Passport data read successfully");
-                // Display passport data
+                // Ensure the result container is visible
+                if (resultContainer != null) {
+                    resultContainer.setVisibility(View.VISIBLE);
+                }
+                // Update the result rows (this will hide any empty rows)
                 displayPassportData(passportData);
-                // Also show raw DG1 / MRZ fields in a simple dialog for debugging/inspection
-                Log.d(TAG, "Showing raw DG1/MRZ dialog");
-                showRawDG1Dialog(passportData);
+                // Then display verification and raw response (DG1/MRZ fields remain suppressed)
+                displayVerification(passportData);
+                Log.d(TAG, "Displayed verification and adjusted result rows (DG1/MRZ suppressed)");
             } else {
                 Log.d(TAG, "Failed to read passport data");
                 Toast.makeText(MainActivity.this, "Failed to read passport", Toast.LENGTH_LONG).show();
@@ -375,8 +412,13 @@ public class MainActivity extends AppCompatActivity {
             // Send DG1 and SOD to backend for signature verification (this is run on background thread)
             try {
                 Log.d(TAG, "Sending DG1 and SOD to backend for verification");
-                String verificationResponse = sendToBackend(dg1Bytes, sodBytes);
-                Log.d(TAG, "Backend verification response: " + verificationResponse);
+                BackendResult verification = sendToBackend(dg1Bytes, sodBytes);
+                if (verification != null) {
+                    Log.d(TAG, "Backend verification response: HTTP " + verification.code + ": " + verification.body);
+                    passportData.setBackendHttpCode(verification.code);
+                    passportData.setBackendRawResponse(verification.body);
+                    parseAndAttachVerification(passportData, verification.body);
+                }
             } catch (Exception e) {
                 Log.e(TAG, "Error sending data to backend", e);
             }
@@ -431,9 +473,13 @@ public class MainActivity extends AppCompatActivity {
      *
      * Runs synchronously (this method is called from doInBackground), and returns the backend response as string.
      */
-    private String sendToBackend(byte[] dg1Bytes, byte[] sodBytes) throws Exception {
+    private BackendResult sendToBackend(byte[] dg1Bytes, byte[] sodBytes) throws Exception {
         if (dg1Bytes == null) {
             throw new IllegalArgumentException("dg1Bytes is required");
+        }
+        if (backendUrl == null || backendUrl.trim().isEmpty()) {
+            Log.w(TAG, "Backend URL not set. Skipping verification call.");
+            return null;
         }
 
         String dg1B64 = android.util.Base64.encodeToString(dg1Bytes, android.util.Base64.NO_WRAP);
@@ -443,11 +489,11 @@ public class MainActivity extends AppCompatActivity {
         payload.put("dg1", dg1B64);
         payload.put("sod", sodB64);
 
-        URL url = new URL(BACKEND_URL);
+        URL url = new URL(backendUrl);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         try {
-            conn.setConnectTimeout(15000);
-            conn.setReadTimeout(15000);
+            conn.setConnectTimeout(20000);
+            conn.setReadTimeout(30000);
             conn.setDoOutput(true);
             conn.setRequestMethod("POST");
             conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
@@ -468,7 +514,11 @@ public class MainActivity extends AppCompatActivity {
                 byte[] respBytes = readAllBytes(responseStream);
                 responseBody = new String(respBytes, "UTF-8");
             }
-            return "HTTP " + responseCode + ": " + responseBody;
+            BackendResult result = new BackendResult();
+            result.code = responseCode;
+            result.body = responseBody;
+            result.ok = responseCode >= 200 && responseCode < 300;
+            return result;
         } finally {
             conn.disconnect();
         }
@@ -478,27 +528,86 @@ public class MainActivity extends AppCompatActivity {
         if (resultContainer != null) {
             resultContainer.setVisibility(View.VISIBLE);
         }
-        
-        if (passportNumberText != null && passportData.getDocumentNumber() != null) {
-            passportNumberText.setText(passportData.getDocumentNumber());
+        Log.d(TAG, "displayPassportData: doc=" + passportData.getDocumentNumber() +
+                " primary=" + passportData.getPrimaryIdentifier() +
+                " secondary=" + passportData.getSecondaryIdentifier() +
+                " nat=" + passportData.getNationality() +
+                " dob=" + passportData.getDateOfBirth() +
+                " gender=" + passportData.getGender() +
+                " expiry=" + passportData.getDateOfExpiry() +
+                " issuing=" + passportData.getIssuingState());
+
+        // Locate rows so we can hide empty ones
+        android.widget.TableRow passportRow = findViewById(R.id.passport_row);
+        android.widget.TableRow nameRow = findViewById(R.id.name_row);
+        android.widget.TableRow nationalityRow = findViewById(R.id.nationality_row);
+        android.widget.TableRow dobRow = findViewById(R.id.dob_row);
+        android.widget.TableRow genderRow = findViewById(R.id.gender_row);
+        android.widget.TableRow expiryRow = findViewById(R.id.expiry_row);
+        android.widget.TableRow issuingCountryRow = findViewById(R.id.issuing_country_row);
+
+        // Passport number
+        if (passportData.getDocumentNumber() != null && !passportData.getDocumentNumber().trim().isEmpty()) {
+            if (passportNumberText != null) passportNumberText.setText(passportData.getDocumentNumber());
+            if (passportRow != null) passportRow.setVisibility(View.VISIBLE);
+        } else {
+            if (passportRow != null) passportRow.setVisibility(View.GONE);
         }
-        if (nameText != null && passportData.getPrimaryIdentifier() != null && passportData.getSecondaryIdentifier() != null) {
-            nameText.setText(passportData.getPrimaryIdentifier() + " " + passportData.getSecondaryIdentifier());
+
+        // Name (primary + secondary)
+        String fullName = null;
+        if (passportData.getPrimaryIdentifier() != null && passportData.getSecondaryIdentifier() != null) {
+            fullName = (passportData.getPrimaryIdentifier() + " " + passportData.getSecondaryIdentifier()).trim();
+        } else if (passportData.getPrimaryIdentifier() != null) {
+            fullName = passportData.getPrimaryIdentifier();
+        } else if (passportData.getSecondaryIdentifier() != null) {
+            fullName = passportData.getSecondaryIdentifier();
         }
-        if (nationalityText != null && passportData.getNationality() != null) {
-            nationalityText.setText(passportData.getNationality());
+        if (fullName != null && !fullName.isEmpty()) {
+            if (nameText != null) nameText.setText(fullName);
+            if (nameRow != null) nameRow.setVisibility(View.VISIBLE);
+        } else {
+            if (nameRow != null) nameRow.setVisibility(View.GONE);
         }
-        if (dobText != null && passportData.getDateOfBirth() != null) {
-            dobText.setText(formatDate(passportData.getDateOfBirth()));
+
+        // Nationality
+        if (passportData.getNationality() != null && !passportData.getNationality().trim().isEmpty()) {
+            if (nationalityText != null) nationalityText.setText(passportData.getNationality());
+            if (nationalityRow != null) nationalityRow.setVisibility(View.VISIBLE);
+        } else {
+            if (nationalityRow != null) nationalityRow.setVisibility(View.GONE);
         }
-        if (genderText != null && passportData.getGender() != null) {
-            genderText.setText(passportData.getGender());
+
+        // Date of birth
+        if (passportData.getDateOfBirth() != null && !passportData.getDateOfBirth().trim().isEmpty()) {
+            if (dobText != null) dobText.setText(formatDate(passportData.getDateOfBirth()));
+            if (dobRow != null) dobRow.setVisibility(View.VISIBLE);
+        } else {
+            if (dobRow != null) dobRow.setVisibility(View.GONE);
         }
-        if (expiryText != null && passportData.getDateOfExpiry() != null) {
-            expiryText.setText(formatDate(passportData.getDateOfExpiry()));
+
+        // Gender
+        if (passportData.getGender() != null && !passportData.getGender().trim().isEmpty()) {
+            if (genderText != null) genderText.setText(passportData.getGender());
+            if (genderRow != null) genderRow.setVisibility(View.VISIBLE);
+        } else {
+            if (genderRow != null) genderRow.setVisibility(View.GONE);
         }
-        if (countryText != null && passportData.getIssuingState() != null) {
-            countryText.setText(passportData.getIssuingState());
+
+        // Expiry
+        if (passportData.getDateOfExpiry() != null && !passportData.getDateOfExpiry().trim().isEmpty()) {
+            if (expiryText != null) expiryText.setText(formatDate(passportData.getDateOfExpiry()));
+            if (expiryRow != null) expiryRow.setVisibility(View.VISIBLE);
+        } else {
+            if (expiryRow != null) expiryRow.setVisibility(View.GONE);
+        }
+
+        // Issuing country/state
+        if (passportData.getIssuingState() != null && !passportData.getIssuingState().trim().isEmpty()) {
+            if (countryText != null) countryText.setText(passportData.getIssuingState());
+            if (issuingCountryRow != null) issuingCountryRow.setVisibility(View.VISIBLE);
+        } else {
+            if (issuingCountryRow != null) issuingCountryRow.setVisibility(View.GONE);
         }
     }
 
@@ -528,6 +637,93 @@ public class MainActivity extends AppCompatActivity {
                 .show();
     }
     
+    private void parseAndAttachVerification(PassportData pd, String jsonBody) {
+        if (pd == null || jsonBody == null) return;
+        try {
+            JSONObject root = new JSONObject(jsonBody);
+            pd.setPassiveAuthenticationPassed(root.optBoolean("passive_authentication_passed", false));
+            JSONObject details = root.optJSONObject("details");
+            if (details != null) {
+                JSONObject trust = details.optJSONObject("trust_chain");
+                if (trust != null) {
+                    pd.setTrustChainStatus(trust.optString("status", null));
+                    pd.setTrustChainFailureReason(trust.optString("failure_reason", null));
+                }
+                JSONObject sodSig = details.optJSONObject("sod_signature");
+                if (sodSig != null) {
+                    pd.setSodSignatureStatus(sodSig.optString("status", null));
+                }
+                JSONObject dg1 = details.optJSONObject("dg1_hash_integrity");
+                if (dg1 != null) {
+                    pd.setDg1IntegrityStatus(dg1.optString("status", null));
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to parse backend JSON", e);
+        }
+    }
+
+    private void displayVerification(PassportData pd) {
+        if (pd == null) return;
+        if (verifyStatusText != null) {
+            String status = (pd.getPassiveAuthenticationPassed() != null && pd.getPassiveAuthenticationPassed()) ? "VALID" : "INVALID";
+            verifyStatusText.setText("Passive Authentication: " + status);
+        }
+        if (trustStatusText != null) {
+            String s = pd.getTrustChainStatus();
+            trustStatusText.setText("Trust Chain: " + (s != null ? s : "N/A"));
+        }
+        if (trustReasonText != null) {
+            String r = pd.getTrustChainFailureReason();
+            trustReasonText.setText("Trust Failure Reason: " + (r != null && !r.isEmpty() ? r : "None"));
+        }
+        if (sodStatusText != null) {
+            String s = pd.getSodSignatureStatus();
+            sodStatusText.setText("SOD Signature: " + (s != null ? s : "N/A"));
+        }
+
+        // Hide DG1 status (we don't show DG1/MRZ info in the UI)
+        if (dg1StatusText != null) {
+            dg1StatusText.setVisibility(View.GONE);
+        }
+
+        // Show backend raw response if available; otherwise hide that block entirely
+        if (rawResponseText != null) {
+            String raw = pd.getBackendRawResponse();
+            if (raw != null && !raw.trim().isEmpty()) {
+                // Limit size for display but include most content for demo
+                String display = raw.length() > 4000 ? raw.substring(0, 4000) + " …" : raw;
+                rawResponseText.setText(display);
+                rawResponseText.setVisibility(View.VISIBLE);
+            } else {
+                rawResponseText.setText("");
+                rawResponseText.setVisibility(View.GONE);
+            }
+        }
+
+        Log.d(TAG, "Verification displayed (DG1 suppressed, raw response handled)");
+    }
+
+    private void showBackendUrlDialog() {
+        final EditText input = new EditText(this);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        input.setHint("https://host/verify or http://<LAN>:<port>/verify");
+        input.setText(backendUrl != null ? backendUrl : "");
+
+        new AlertDialog.Builder(this)
+                .setTitle("Set Backend URL")
+                .setMessage("This app will POST DG1 and SOD Base64 to this endpoint.")
+                .setView(input)
+                .setPositiveButton("Save", (d, w) -> {
+                    backendUrl = input.getText() != null ? input.getText().toString().trim() : "";
+                    android.content.SharedPreferences appPrefs = getSharedPreferences("app_prefs", MODE_PRIVATE);
+                    appPrefs.edit().putString("backend_url", backendUrl).apply();
+                    Toast.makeText(this, "Backend URL saved", Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
     private String formatDate(String date) {
         if (date == null) {
             return "";
@@ -549,6 +745,13 @@ public class MainActivity extends AppCompatActivity {
         return !isEmpty(passportNumber) && !isEmpty(dateOfBirth) && !isEmpty(dateOfExpiry);
     }
     
+    // Backend HTTP result holder
+    private static class BackendResult {
+        int code;
+        String body;
+        boolean ok;
+    }
+
     // Simple class to hold passport data
     private static class PassportData {
         private String documentNumber;
@@ -559,70 +762,59 @@ public class MainActivity extends AppCompatActivity {
         private String gender;
         private String dateOfExpiry;
         private String issuingState;
-        
-        // Getters and setters
-        public String getDocumentNumber() {
-            return documentNumber;
-        }
-        
-        public void setDocumentNumber(String documentNumber) {
-            this.documentNumber = documentNumber;
-        }
-        
-        public String getPrimaryIdentifier() {
-            return primaryIdentifier;
-        }
-        
-        public void setPrimaryIdentifier(String primaryIdentifier) {
-            this.primaryIdentifier = primaryIdentifier;
-        }
-        
-        public String getSecondaryIdentifier() {
-            return secondaryIdentifier;
-        }
-        
-        public void setSecondaryIdentifier(String secondaryIdentifier) {
-            this.secondaryIdentifier = secondaryIdentifier;
-        }
-        
-        public String getNationality() {
-            return nationality;
-        }
-        
-        public void setNationality(String nationality) {
-            this.nationality = nationality;
-        }
-        
-        public String getDateOfBirth() {
-            return dateOfBirth;
-        }
-        
-        public void setDateOfBirth(String dateOfBirth) {
-            this.dateOfBirth = dateOfBirth;
-        }
-        
-        public String getGender() {
-            return gender;
-        }
-        
-        public void setGender(String gender) {
-            this.gender = gender;
-        }
-        
-        public String getDateOfExpiry() {
-            return dateOfExpiry;
-        }
-        
-        public void setDateOfExpiry(String dateOfExpiry) {
-            this.dateOfExpiry = dateOfExpiry;
-        }
-        
-        public String getIssuingState() {
-            return issuingState;
-        }
-        
-        public void setIssuingState(String issuingState) {
-            this.issuingState = issuingState;
-        }
+
+        // Backend verification fields
+        private Integer backendHttpCode;
+        private String backendRawResponse;
+        private Boolean passiveAuthenticationPassed;
+        private String trustChainStatus;
+        private String trustChainFailureReason;
+        private String sodSignatureStatus;
+        private String dg1IntegrityStatus;
+
+        public String getDocumentNumber() { return documentNumber; }
+        public void setDocumentNumber(String documentNumber) { this.documentNumber = documentNumber; }
+
+        public String getPrimaryIdentifier() { return primaryIdentifier; }
+        public void setPrimaryIdentifier(String primaryIdentifier) { this.primaryIdentifier = primaryIdentifier; }
+
+        public String getSecondaryIdentifier() { return secondaryIdentifier; }
+        public void setSecondaryIdentifier(String secondaryIdentifier) { this.secondaryIdentifier = secondaryIdentifier; }
+
+        public String getNationality() { return nationality; }
+        public void setNationality(String nationality) { this.nationality = nationality; }
+
+        public String getDateOfBirth() { return dateOfBirth; }
+        public void setDateOfBirth(String dateOfBirth) { this.dateOfBirth = dateOfBirth; }
+
+        public String getGender() { return gender; }
+        public void setGender(String gender) { this.gender = gender; }
+
+        public String getDateOfExpiry() { return dateOfExpiry; }
+        public void setDateOfExpiry(String dateOfExpiry) { this.dateOfExpiry = dateOfExpiry; }
+
+        public String getIssuingState() { return issuingState; }
+        public void setIssuingState(String issuingState) { this.issuingState = issuingState; }
+
+        public Integer getBackendHttpCode() { return backendHttpCode; }
+        public void setBackendHttpCode(Integer backendHttpCode) { this.backendHttpCode = backendHttpCode; }
+
+        public String getBackendRawResponse() { return backendRawResponse; }
+        public void setBackendRawResponse(String backendRawResponse) { this.backendRawResponse = backendRawResponse; }
+
+        public Boolean getPassiveAuthenticationPassed() { return passiveAuthenticationPassed; }
+        public void setPassiveAuthenticationPassed(Boolean passiveAuthenticationPassed) { this.passiveAuthenticationPassed = passiveAuthenticationPassed; }
+
+        public String getTrustChainStatus() { return trustChainStatus; }
+        public void setTrustChainStatus(String trustChainStatus) { this.trustChainStatus = trustChainStatus; }
+
+        public String getTrustChainFailureReason() { return trustChainFailureReason; }
+        public void setTrustChainFailureReason(String trustChainFailureReason) { this.trustChainFailureReason = trustChainFailureReason; }
+
+        public String getSodSignatureStatus() { return sodSignatureStatus; }
+        public void setSodSignatureStatus(String sodSignatureStatus) { this.sodSignatureStatus = sodSignatureStatus; }
+
+        public String getDg1IntegrityStatus() { return dg1IntegrityStatus; }
+        public void setDg1IntegrityStatus(String dg1IntegrityStatus) { this.dg1IntegrityStatus = dg1IntegrityStatus; }
     }
 }
