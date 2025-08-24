@@ -6,4 +6,10 @@
     <color name="sidebar_text">#4056A1</color>
     <color name="sidebar_icon">#4056A1</color>
     <color name="sidebar_divider">#EEEEEE</color>
+    <!-- Desktop/background colors from the web app -->
+    <color name="desktop_bg">#F1F0EA</color>
+    <!-- ANML / desktop-specific colors -->
+    <color name="anml_button_text">#293462</color>
+    <!-- reverted border color to original brand blue -->
+    <color name="anml_button_border">#4056A1</color>
 </resources>

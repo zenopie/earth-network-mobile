@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Passport Scanner</string>
+    <string name="app_name">Earth Network</string>
     <string name="scan_passport">Scan Passport</string>
     <string name="place_passport">Place your passport on the back of the device</string>
     <string name="scanning">Scanning passport…</string>

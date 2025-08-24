@@ -3,7 +3,7 @@
     android:id="@+id/anml_frame"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/sidebar_bg">
+    android:background="@color/desktop_bg">
 
     <ScrollView
         android:id="@+id/anml_scroll"
@@ -45,19 +45,20 @@
                     android:scaleType="centerInside"
                     android:importantForAccessibility="yes" />
     
-                <!-- Make Register button match desktop Actions button styling exactly -->
+                <!-- Desktop-styled ANML Register button (matches .anml-claim-button CSS) -->
                 <Button
                     android:id="@+id/btn_open_wallet"
-                    android:layout_width="match_parent"
-                    android:layout_height="56dp"
-                    android:layout_marginTop="12dp"
-                    android:paddingLeft="16dp"
-                    android:paddingRight="16dp"
-                    android:background="@drawable/btn_desktop"
+                    android:layout_width="220dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="20dp"
+                    android:layout_gravity="center"
+                    android:paddingLeft="20dp"
+                    android:paddingRight="20dp"
+                    android:background="@drawable/btn_anml_desktop"
                     android:text="Register"
-                    android:textColor="@color/brand_blue"
+                    android:textColor="@color/anml_button_text"
                     android:textAllCaps="false"
-                    android:textSize="18sp"
+                    android:textSize="25sp"
                     android:gravity="center"
                     android:stateListAnimator="@null" />
             </LinearLayout>

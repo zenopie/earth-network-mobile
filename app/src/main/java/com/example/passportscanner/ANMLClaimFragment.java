@@ -75,6 +75,14 @@ public class ANMLClaimFragment extends Fragment {
         btnOpenWallet = view.findViewById(R.id.btn_open_wallet);
         btnClaim = view.findViewById(R.id.btn_claim);
 
+        // Ensure any theme tinting is cleared so the drawable renders as-designed
+        try {
+            if (btnOpenWallet != null) {
+                btnOpenWallet.setBackgroundTintList(null);
+                btnOpenWallet.setTextColor(getResources().getColor(R.color.anml_button_text));
+            }
+        } catch (Exception ignored) {}
+
         btnOpenWallet.setOnClickListener(v -> {
             // Launch existing passport scan flow
             Intent i = new Intent(requireActivity(), MRZInputActivity.class);

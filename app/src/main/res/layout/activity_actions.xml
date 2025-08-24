@@ -72,8 +72,6 @@
                 android:paddingLeft="16dp"
                 android:paddingRight="16dp"
                 android:backgroundTint="@color/sidebar_bg"
-                android:drawableLeft="@drawable/ic_launcher_foreground"
-                android:drawablePadding="12dp"
                 android:text="ANML Claim"
                 android:textColor="@color/sidebar_text"
                 android:textAllCaps="false"

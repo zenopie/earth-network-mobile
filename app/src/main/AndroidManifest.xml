@@ -31,7 +31,8 @@
         <activity
             android:name=".HostActivity"
             android:exported="true"
-            android:theme="@style/Theme.PassportScanner">
+            android:theme="@style/Theme.PassportScanner"
+            android:screenOrientation="portrait">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -41,12 +42,14 @@
         <activity
             android:name=".MRZInputActivity"
             android:exported="true"
-            android:theme="@style/Theme.PassportScanner" />
+            android:theme="@style/Theme.PassportScanner"
+            android:screenOrientation="portrait" />
         
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.PassportScanner">
+            android:theme="@style/Theme.PassportScanner"
+            android:screenOrientation="portrait">
             <!-- Intent filter for NFC tag discovery -->
             <intent-filter>
                 <action android:name="android.nfc.action.TECH_DISCOVERED" />
@@ -61,19 +64,22 @@
         <activity
             android:name=".wallet.WalletActivity"
             android:exported="false"
-            android:theme="@style/Theme.PassportScanner" />
+            android:theme="@style/Theme.PassportScanner"
+            android:screenOrientation="portrait" />
 
         <!-- ANML Claim Activity -->
         <activity
             android:name=".ANMLClaimActivity"
             android:exported="false"
-            android:theme="@style/Theme.PassportScanner" />
+            android:theme="@style/Theme.PassportScanner"
+            android:screenOrientation="portrait" />
 
         <!-- Actions Navigator Activity -->
         <activity
             android:name=".ActionsActivity"
             android:exported="false"
-            android:theme="@style/Theme.PassportScanner" />
+            android:theme="@style/Theme.PassportScanner"
+            android:screenOrientation="portrait" />
     </application>
 
 </manifest>
