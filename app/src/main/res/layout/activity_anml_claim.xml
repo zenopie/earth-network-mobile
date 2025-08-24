@@ -170,20 +170,14 @@
             android:orientation="vertical"
             android:gravity="center">
 
-            <ProgressBar
-                android:id="@+id/anml_progress"
-                style="?android:attr/progressBarStyleLarge"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:visibility="visible" />
-
-            <TextView
-                android:id="@+id/anml_status_text"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Checking ANML status..."
-                android:textColor="@color/sidebar_text"
-                android:paddingTop="12dp"
+            <ImageView
+                android:id="@+id/anml_loading_gif"
+                android:layout_width="720dp"
+                android:layout_height="720dp"
+                android:src="@drawable/loading"
+                android:scaleType="centerCrop"
+                android:adjustViewBounds="false"
+                android:contentDescription="Loading"
                 android:visibility="gone" />
         </LinearLayout>
     </FrameLayout>

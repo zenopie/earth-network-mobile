@@ -25,20 +25,6 @@ public class ActionsFragment extends Fragment {
     @Override
     public void onViewCreated(View view, Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
-        // Wire up the passport scan button to start the MRZ input flow (keeps previous behavior)
-        Button scan = view.findViewById(R.id.btn_passport_scan);
-        if (scan != null) {
-            scan.setOnClickListener(v -> {
-                try {
-                    Intent i = new Intent(getActivity(), MRZInputActivity.class);
-                    startActivity(i);
-                } catch (Exception e) {
-                    // Fail gracefully and surface a helpful message instead of closing the app
-                    android.util.Log.e("ActionsFragment", "Failed to start MRZInputActivity", e);
-                    android.widget.Toast.makeText(getContext(), "Unable to open passport scan (see logs)", android.widget.Toast.LENGTH_SHORT).show();
-                }
-            });
-        }
 
         // Wire up ANML Claim button - in HostActivity we want this to load the fragment into the host
         Button anml = view.findViewById(R.id.btn_anml_claim);
@@ -46,7 +32,6 @@ public class ActionsFragment extends Fragment {
             anml.setOnClickListener(v -> {
                 try {
                     android.util.Log.d("ActionsFragment", "ANML Claim button clicked (fragment -> host)");
-                    android.widget.Toast.makeText(getContext(), "Opening ANML Claim...", android.widget.Toast.LENGTH_SHORT).show();
                     if (getActivity() instanceof HostActivity) {
                         ((HostActivity) getActivity()).showFragment("anml");
                     } else {

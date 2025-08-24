@@ -38,24 +38,15 @@
         android:text="@string/place_passport"
         android:textSize="18sp" />
 
-    <ProgressBar
+    <ImageView
         android:id="@+id/progress_bar"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+        android:layout_width="192dp"
+        android:layout_height="192dp"
         android:layout_below="@id/instruction_text"
         android:layout_centerHorizontal="true"
         android:layout_marginTop="32dp"
-        android:visibility="gone" />
-
-    <TextView
-        android:id="@+id/status_text"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_below="@id/progress_bar"
-        android:layout_centerHorizontal="true"
-        android:layout_marginTop="16dp"
-        android:text="@string/scanning"
-        android:textSize="16sp"
+        android:src="@drawable/loading"
+        android:contentDescription="@string/scanning"
         android:visibility="gone" />
 
     <ScrollView

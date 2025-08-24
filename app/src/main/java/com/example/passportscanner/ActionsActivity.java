@@ -17,20 +17,12 @@ public class ActionsActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_actions);
 
-        Button scan = findViewById(R.id.btn_passport_scan);
-        if (scan != null) {
-            scan.setOnClickListener(v -> {
-                Intent i = new Intent(ActionsActivity.this, MRZInputActivity.class);
-                startActivity(i);
-            });
-        }
     
         // ANML Claim button - open the ANML fragment inside the HostActivity (single shared bottom nav)
         Button anml = findViewById(R.id.btn_anml_claim);
         if (anml != null) {
             anml.setOnClickListener(v -> {
                 Log.d("ActionsActivity", "ANML Claim button clicked (route to HostActivity)");
-                Toast.makeText(ActionsActivity.this, "Opening ANML Claim...", Toast.LENGTH_SHORT).show();
                 Intent a = new Intent(ActionsActivity.this, HostActivity.class);
                 a.putExtra("fragment_to_show", "anml");
                 startActivity(a);

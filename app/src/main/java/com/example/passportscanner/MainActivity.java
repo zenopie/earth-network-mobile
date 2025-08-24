@@ -11,7 +11,7 @@ import android.os.AsyncTask;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
-import android.widget.ProgressBar;
+import android.widget.ImageView;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -19,6 +19,8 @@ import android.widget.EditText;
 import android.text.InputType;
 import android.content.SharedPreferences;
 import android.text.TextUtils;
+import com.bumptech.glide.Glide;
+import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.app.AlertDialog;
@@ -58,7 +60,7 @@ public class MainActivity extends AppCompatActivity {
     private String[][] techLists;
     
     // UI elements
-    private ProgressBar progressBar;
+    private ImageView progressBar;
     private TextView statusText;
     private ScrollView resultContainer;
     private TextView passportNumberText;
@@ -156,7 +158,6 @@ public class MainActivity extends AppCompatActivity {
         
         // Initialize UI elements
         progressBar = findViewById(R.id.progress_bar);
-        statusText = findViewById(R.id.status_text);
         resultContainer = findViewById(R.id.result_container);
         passportNumberText = findViewById(R.id.passport_number_text);
         nameText = findViewById(R.id.name_text);
@@ -165,6 +166,16 @@ public class MainActivity extends AppCompatActivity {
         genderText = findViewById(R.id.gender_text);
         expiryText = findViewById(R.id.expiry_text);
         countryText = findViewById(R.id.country_text);
+ 
+        // Load GIF into the ImageView using Glide and keep it hidden until needed
+        if (progressBar != null) {
+            Glide.with(this)
+                    .asGif()
+                    .load(R.drawable.loading)
+                    .transition(DrawableTransitionOptions.withCrossFade())
+                    .into(progressBar);
+            progressBar.setVisibility(View.GONE);
+        }
 
         // Verification results UI
         verifyStatusText = findViewById(R.id.verify_status_text);
@@ -290,15 +301,8 @@ public class MainActivity extends AppCompatActivity {
         protected void onPreExecute() {
             super.onPreExecute();
             // Show progress UI
-            if (progressBar != null) {
-                progressBar.setVisibility(View.VISIBLE);
-            }
-            if (statusText != null) {
-                statusText.setVisibility(View.VISIBLE);
-            }
-            if (resultContainer != null) {
-                resultContainer.setVisibility(View.GONE);
-            }
+            if (progressBar != null) progressBar.setVisibility(View.VISIBLE);
+            if (resultContainer != null) resultContainer.setVisibility(View.GONE);
         }
         
         @Override
@@ -315,12 +319,7 @@ public class MainActivity extends AppCompatActivity {
             super.onPostExecute(passportData);
             Log.d(TAG, "onPostExecute called with passportData=" + passportData);
             // Hide progress UI
-            if (progressBar != null) {
-                progressBar.setVisibility(View.GONE);
-            }
-            if (statusText != null) {
-                statusText.setVisibility(View.GONE);
-            }
+            if (progressBar != null) progressBar.setVisibility(View.GONE);
             
             if (passportData != null) {
                 Log.d(TAG, "Passport data read successfully");

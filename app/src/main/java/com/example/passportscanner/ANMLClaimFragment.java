@@ -10,9 +10,11 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
-import android.widget.ProgressBar;
+import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
+import com.bumptech.glide.Glide;
+import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions;
 
 import androidx.fragment.app.Fragment;
 import androidx.security.crypto.EncryptedSharedPreferences;
@@ -37,8 +39,7 @@ public class ANMLClaimFragment extends Fragment {
     private static final String PROXY_URL = "http://10.135.34.13:8000/api/contract_query";
     private static final long ONE_DAY_MILLIS = 24L * 60L * 60L * 1000L;
 
-    private ProgressBar progress;
-    private TextView statusText;
+    private ImageView loadingGif;
     private View registerBox;
     private View claimBox;
     private View completeBox;
@@ -65,12 +66,20 @@ public class ANMLClaimFragment extends Fragment {
             Log.e(TAG, "Failed to initialize SecretWallet", e);
         }
 
-        progress = view.findViewById(R.id.anml_progress);
-        statusText = view.findViewById(R.id.anml_status_text);
+        loadingGif = view.findViewById(R.id.anml_loading_gif);
         registerBox = view.findViewById(R.id.register_box);
         claimBox = view.findViewById(R.id.claim_box);
         completeBox = view.findViewById(R.id.complete_box);
         errorText = view.findViewById(R.id.anml_error_text);
+ 
+        if (loadingGif != null) {
+            Glide.with(requireContext())
+                    .asGif()
+                    .load(R.drawable.loading)
+                    .transition(DrawableTransitionOptions.withCrossFade())
+                    .into(loadingGif);
+            loadingGif.setVisibility(View.GONE);
+        }
 
         btnOpenWallet = view.findViewById(R.id.btn_open_wallet);
         btnClaim = view.findViewById(R.id.btn_claim);
@@ -116,10 +125,8 @@ public class ANMLClaimFragment extends Fragment {
     }
 
     private void showLoading(boolean loading) {
-        if (progress != null) progress.setVisibility(loading ? View.VISIBLE : View.GONE);
-        if (statusText != null) statusText.setVisibility(loading ? View.VISIBLE : View.GONE);
+        if (loadingGif != null) loadingGif.setVisibility(loading ? View.VISIBLE : View.GONE);
         if (loading) {
-            if (statusText != null) statusText.setText("Checking ANML status...");
             if (errorText != null) errorText.setVisibility(View.GONE);
             if (registerBox != null) registerBox.setVisibility(View.GONE);
             if (claimBox != null) claimBox.setVisibility(View.GONE);

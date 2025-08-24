@@ -8,10 +8,12 @@ import android.text.TextUtils;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
-import android.widget.ProgressBar;
+import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
-
+import com.bumptech.glide.Glide;
+import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions;
+ 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
@@ -49,8 +51,7 @@ public class ANMLClaimActivity extends AppCompatActivity {
     private static final String PROXY_URL = "http://10.135.34.13:8000/api/contract_query";
     private static final long ONE_DAY_MILLIS = 24L * 60L * 60L * 1000L;
 
-    private ProgressBar progress;
-    private TextView statusText;
+    private ImageView loadingGif;
     private View registerBox;
     private View claimBox;
     private View completeBox;
@@ -73,13 +74,22 @@ public class ANMLClaimActivity extends AppCompatActivity {
             Log.e(TAG, "Failed to initialize SecretWallet", e);
         }
 
-        progress = findViewById(R.id.anml_progress);
-        statusText = findViewById(R.id.anml_status_text);
+        loadingGif = findViewById(R.id.anml_loading_gif);
         registerBox = findViewById(R.id.register_box);
         claimBox = findViewById(R.id.claim_box);
         completeBox = findViewById(R.id.complete_box);
         errorText = findViewById(R.id.anml_error_text);
         loadingOverlay = findViewById(R.id.loading_overlay);
+ 
+        if (loadingGif != null) {
+            // Load GIF using Glide (from drawable resource)
+            Glide.with(this)
+                    .asGif()
+                    .load(R.drawable.loading)
+                    .transition(DrawableTransitionOptions.withCrossFade())
+                    .into(loadingGif);
+            loadingGif.setVisibility(View.GONE);
+        }
 
         btnOpenWallet = findViewById(R.id.btn_open_wallet);
         btnClaim = findViewById(R.id.btn_claim);
@@ -143,15 +153,11 @@ public class ANMLClaimActivity extends AppCompatActivity {
             loadingOverlay.setVisibility(loading ? View.VISIBLE : View.GONE);
         }
 
-        if (progress != null) {
-            progress.setVisibility(loading ? View.VISIBLE : View.GONE);
-        }
-        if (statusText != null) {
-            statusText.setVisibility(loading ? View.VISIBLE : View.GONE);
+        if (loadingGif != null) {
+            loadingGif.setVisibility(loading ? View.VISIBLE : View.GONE);
         }
 
         if (loading) {
-            if (statusText != null) statusText.setText("Checking ANML status...");
             if (errorText != null) errorText.setVisibility(View.GONE);
             if (registerBox != null) registerBox.setVisibility(View.GONE);
             if (claimBox != null) claimBox.setVisibility(View.GONE);

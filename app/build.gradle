@@ -65,6 +65,9 @@ dependencies {
     
     // For handling images in passport
     implementation 'com.github.mhshams:jnbis:1.1.0'
+    // GIF rendering (Glide)
+    implementation 'com.github.bumptech.glide:glide:4.15.1'
+    annotationProcessor 'com.github.bumptech.glide:compiler:4.15.1'
     
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'

@@ -84,6 +84,7 @@ public class HostActivity extends AppCompatActivity {
         other.setSelected(false);
     }
     
+    
     // Make this public so fragments can request navigation without creating a second bottom nav.
     public void showFragment(String tag) {
         FragmentManager fm = getSupportFragmentManager();
