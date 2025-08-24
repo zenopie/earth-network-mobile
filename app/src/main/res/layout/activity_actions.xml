@@ -62,9 +62,9 @@
                 android:gravity="center_vertical"
                 android:stateListAnimator="@null" />
 
-            <!-- Placeholder for additional actions — styled consistently -->
+            <!-- ANML Claim action -->
             <Button
-                android:id="@+id/btn_other_action"
+                android:id="@+id/btn_anml_claim"
                 android:layout_width="match_parent"
                 android:layout_height="56dp"
                 android:layout_marginTop="8dp"
@@ -74,12 +74,11 @@
                 android:backgroundTint="@color/sidebar_bg"
                 android:drawableLeft="@drawable/ic_launcher_foreground"
                 android:drawablePadding="12dp"
-                android:text="Other Action"
+                android:text="ANML Claim"
                 android:textColor="@color/sidebar_text"
                 android:textAllCaps="false"
                 android:textSize="18sp"
                 android:gravity="center_vertical"
-                android:visibility="gone"
                 android:stateListAnimator="@null" />
 
             <!-- Divider -->

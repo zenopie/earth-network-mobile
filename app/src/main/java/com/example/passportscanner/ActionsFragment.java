@@ -39,5 +39,26 @@ public class ActionsFragment extends Fragment {
                 }
             });
         }
+
+        // Wire up ANML Claim button - in HostActivity we want this to load the fragment into the host
+        Button anml = view.findViewById(R.id.btn_anml_claim);
+        if (anml != null) {
+            anml.setOnClickListener(v -> {
+                try {
+                    android.util.Log.d("ActionsFragment", "ANML Claim button clicked (fragment -> host)");
+                    android.widget.Toast.makeText(getContext(), "Opening ANML Claim...", android.widget.Toast.LENGTH_SHORT).show();
+                    if (getActivity() instanceof HostActivity) {
+                        ((HostActivity) getActivity()).showFragment("anml");
+                    } else {
+                        // Fallback: start activity if host is not present
+                        Intent it = new Intent(getActivity(), ANMLClaimActivity.class);
+                        startActivity(it);
+                    }
+                } catch (Exception e) {
+                    android.util.Log.e("ActionsFragment", "Failed to open ANML Claim", e);
+                    android.widget.Toast.makeText(getContext(), "Unable to open ANML Claim (see logs)", android.widget.Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
     }
 }

@@ -83,11 +83,12 @@ public class HostActivity extends AppCompatActivity {
         selected.setSelected(true);
         other.setSelected(false);
     }
-
-    private void showFragment(String tag) {
+    
+    // Make this public so fragments can request navigation without creating a second bottom nav.
+    public void showFragment(String tag) {
         FragmentManager fm = getSupportFragmentManager();
         FragmentTransaction ft = fm.beginTransaction();
-
+    
         Fragment fragment;
         switch (tag) {
             case "wallet":
@@ -99,12 +100,18 @@ public class HostActivity extends AppCompatActivity {
             case "scanner":
                 fragment = new com.example.passportscanner.ScannerFragment();
                 break;
+            case "anml":
+                // Show ANML UI inside the HostActivity so bottom nav remains the single shared nav
+                fragment = new com.example.passportscanner.ANMLClaimFragment();
+                // Ensure Actions nav is selected when showing ANML
+                setSelectedNav(navActions, navWallet);
+                break;
             default:
                 // Default to scanner if an unknown tag is passed
                 fragment = new com.example.passportscanner.ScannerFragment();
                 break;
         }
-
+    
         ft.replace(R.id.host_content, fragment, tag);
         ft.commitAllowingStateLoss();
     }

@@ -1,0 +1,197 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/anml_frame"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/sidebar_bg">
+
+    <ScrollView
+        android:id="@+id/anml_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fillViewport="true"
+        android:clipToPadding="false"
+        android:layout_marginBottom="56dp"
+        android:padding="16dp">
+
+        <LinearLayout
+            android:id="@+id/anml_root"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:paddingLeft="24dp"
+            android:paddingRight="24dp">
+
+
+            <!-- REGISTER box: large passport image and a single full-width 'Register' button -->
+            <LinearLayout
+                android:id="@+id/register_box"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone"
+                android:padding="12dp"
+                android:gravity="center">
+
+                <ImageView
+                    android:id="@+id/register_passport_image"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="24dp"
+                    android:src="@drawable/passport_image"
+                    android:contentDescription="@string/passport_scan"
+                    android:adjustViewBounds="true"
+                    android:scaleType="centerInside"
+                    android:importantForAccessibility="yes" />
+    
+                <!-- Make Register button match desktop Actions button styling exactly -->
+                <Button
+                    android:id="@+id/btn_open_wallet"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:layout_marginTop="12dp"
+                    android:paddingLeft="16dp"
+                    android:paddingRight="16dp"
+                    android:background="@drawable/btn_desktop"
+                    android:text="Register"
+                    android:textColor="@color/brand_blue"
+                    android:textAllCaps="false"
+                    android:textSize="18sp"
+                    android:gravity="center"
+                    android:stateListAnimator="@null" />
+            </LinearLayout>
+
+            <!-- CLAIM box -->
+            <LinearLayout
+                android:id="@+id/claim_box"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone"
+                android:padding="12dp"
+                android:layout_marginTop="12dp">
+
+                <TextView
+                    android:id="@+id/claim_title"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="ANML Claim"
+                    android:textColor="@color/sidebar_text"
+                    android:textSize="18sp"
+                    android:paddingBottom="8dp"
+                    android:gravity="center" />
+
+                <TextView
+                    android:id="@+id/claim_subtitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="You are eligible to claim ANML."
+                    android:textColor="@color/sidebar_text"
+                    android:textSize="14sp"
+                    android:gravity="center" />
+
+                <Button
+                    android:id="@+id/btn_claim"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:layout_marginTop="12dp"
+                    android:paddingLeft="16dp"
+                    android:paddingRight="16dp"
+                    android:backgroundTint="@color/sidebar_bg"
+                    android:drawableLeft="@drawable/ic_nfc"
+                    android:drawablePadding="12dp"
+                    android:text="Claim"
+                    android:textColor="@color/sidebar_text"
+                    android:textAllCaps="false"
+                    android:textSize="18sp"
+                    android:gravity="center_vertical"
+                    android:stateListAnimator="@null" />
+            </LinearLayout>
+
+            <!-- COMPLETE box -->
+            <LinearLayout
+                android:id="@+id/complete_box"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone"
+                android:padding="12dp"
+                android:layout_marginTop="12dp">
+
+                <TextView
+                    android:id="@+id/complete_title"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Already claimed"
+                    android:textColor="@color/sidebar_text"
+                    android:textSize="18sp"
+                    android:paddingBottom="8dp"
+                    android:gravity="center" />
+
+                <TextView
+                    android:id="@+id/complete_subtitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="You've already claimed ANML for today. Come back tomorrow."
+                    android:textColor="@color/sidebar_text"
+                    android:textSize="14sp"
+                    android:gravity="center" />
+
+            </LinearLayout>
+
+            <!-- Fallback / error -->
+            <TextView
+                android:id="@+id/anml_error_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="#ff6666"
+                android:textSize="14sp"
+                android:paddingTop="12dp"
+                android:visibility="gone" />
+
+        </LinearLayout>
+
+    </ScrollView>
+
+    <!-- Overlay loading container so bottom nav stays visible while querying -->
+    <FrameLayout
+        android:id="@+id/loading_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone"
+        android:clickable="false"
+        android:focusable="false">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center">
+
+            <ProgressBar
+                android:id="@+id/anml_progress"
+                style="?android:attr/progressBarStyleLarge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:visibility="visible" />
+
+            <TextView
+                android:id="@+id/anml_status_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Checking ANML status..."
+                android:textColor="@color/sidebar_text"
+                android:paddingTop="12dp"
+                android:visibility="gone" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- Include persistent bottom navigation used across the app -->
+    <include
+        layout="@layout/view_bottom_nav"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_gravity="bottom" />
+
+</FrameLayout>

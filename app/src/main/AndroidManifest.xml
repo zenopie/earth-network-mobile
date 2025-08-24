@@ -63,6 +63,12 @@
             android:exported="false"
             android:theme="@style/Theme.PassportScanner" />
 
+        <!-- ANML Claim Activity -->
+        <activity
+            android:name=".ANMLClaimActivity"
+            android:exported="false"
+            android:theme="@style/Theme.PassportScanner" />
+
         <!-- Actions Navigator Activity -->
         <activity
             android:name=".ActionsActivity"
