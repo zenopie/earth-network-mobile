@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Earth Network</string>
+    <string name="app_name">Earth Wallet</string>
     <string name="scan_passport">Scan Passport</string>
     <string name="place_passport">Place your passport on the back of the device</string>
     <string name="scanning">Scanning passport…</string>
@@ -23,7 +23,7 @@
     <string name="backend_url">http://192.168.1.145:8000/api/verify</string>
     
     <!-- Wallet strings -->
-    <string name="wallet_title">Secret Wallet</string>
+    <string name="wallet_title">Earth Wallet</string>
     <string name="mnemonic_hint">Mnemonic (12/24 words)</string>
     <string name="generate_mnemonic">Generate</string>
     <string name="derive_address">Derive</string>
@@ -34,7 +34,7 @@
     <string name="balance_label">Balance</string>
     <string name="refresh">Refresh</string>
     <string name="wallet_note">This minimal wallet derives a Secret address and fetches SCRT balance. Transactions and viewing keys are not included.</string>
-    <string name="open_wallet">Open Secret Wallet</string>
+    <string name="open_wallet">Open Earth Wallet</string>
 
     <!-- Bottom navigation -->
     <string name="nav_wallet">Wallet</string>

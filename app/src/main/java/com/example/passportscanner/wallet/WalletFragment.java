@@ -78,10 +78,10 @@ public class WalletFragment extends Fragment {
  
         // Initialize wallet selector + buttons
         final android.widget.TextView currentWalletName = view.findViewById(R.id.current_wallet_name);
-        Button btnAddWallet = view.findViewById(R.id.btn_add_wallet);
+        View btnAddWallet = null; // Add now handled in WalletListFragment
         Button btnCopy = view.findViewById(R.id.btn_copy);
         Button btnRefresh = view.findViewById(R.id.btn_refresh);
-        Button btnShowMnemonic = view.findViewById(R.id.btn_show_mnemonic);
+        View btnShowMnemonic = null; // Show moved to wallet list
 
         // Start hidden like WalletActivity
         if (addressRow != null) addressRow.setVisibility(View.GONE);
@@ -103,87 +103,56 @@ public class WalletFragment extends Fragment {
             securePrefs = requireActivity().getSharedPreferences(PREF_FILE, Context.MODE_PRIVATE);
         }
 
-        // Restore saved values
-        String savedMnemonic = securePrefs.getString(KEY_MNEMONIC, "");
-        String savedWalletName = securePrefs.getString("wallet_name", "");
- 
-        // Update current wallet name label if present
-        if (!TextUtils.isEmpty(savedWalletName) && currentWalletName != null) {
-            currentWalletName.setText(savedWalletName);
-        }
- 
-        // Derive and display address if mnemonic exists
-        if (!TextUtils.isEmpty(savedMnemonic)) {
-            deriveAndDisplayAddress(savedMnemonic);
+        // Restore saved wallets array (preferred) and top-level wallet_name for compatibility.
+        try {
+            String walletsJson = securePrefs.getString("wallets", "[]");
+            org.json.JSONArray arr = new org.json.JSONArray(walletsJson);
+            int sel = securePrefs.getInt("selected_wallet_index", -1);
+            String savedWalletName = securePrefs.getString("wallet_name", "");
+            if (arr.length() == 0) {
+                // fall back to top-level mnemonic if present (legacy)
+                String savedMnemonic = securePrefs.getString(KEY_MNEMONIC, "");
+                if (!TextUtils.isEmpty(savedWalletName) && currentWalletName != null) {
+                    currentWalletName.setText(savedWalletName);
+                }
+                if (!TextUtils.isEmpty(savedMnemonic)) {
+                    deriveAndDisplayAddress(savedMnemonic);
+                }
+            } else {
+                if (sel < 0 || sel >= arr.length()) sel = 0;
+                org.json.JSONObject obj = arr.getJSONObject(sel);
+                String name = obj.optString("name", "Wallet");
+                String mn = obj.optString("mnemonic", "");
+                if (currentWalletName != null) currentWalletName.setText(name);
+                if (!TextUtils.isEmpty(mn)) {
+                    deriveAndDisplayAddress(mn);
+                }
+            }
+        } catch (Exception e) {
+            Log.e("WalletFragment", "Failed to restore wallets", e);
         }
   
         // Set up button click listeners
-        if (btnAddWallet != null) {
-            btnAddWallet.setOnClickListener(v -> {
-                Intent i = new Intent(requireContext(), CreateWalletActivity.class);
-                startActivity(i);
-            });
+        // Add wallet removed from fragment UI - use WalletListFragment to add wallets
+  
+        // If hosted inside HostActivity, use its shared bottom nav by showing the wallet_list fragment.
+        // Otherwise fall back to starting the standalone WalletListActivity.
+        View arrow = view.findViewById(R.id.current_wallet_arrow);
+        View[] triggers = new View[] { currentWalletName, arrow };
+        for (View t : triggers) {
+            if (t != null) {
+                t.setOnClickListener(v -> {
+                    if (getActivity() != null && getActivity() instanceof com.example.passportscanner.HostActivity) {
+                        ((com.example.passportscanner.HostActivity) getActivity()).showFragment("wallet_list");
+                    } else {
+                        Intent i = new Intent(requireContext(), com.example.passportscanner.wallet.WalletListActivity.class);
+                        startActivity(i);
+                    }
+                });
+            }
         }
   
-        if (currentWalletName != null) {
-            currentWalletName.setOnClickListener(v -> showWalletPicker());
-        }
-  
-        if (btnShowMnemonic != null) {
-            btnShowMnemonic.setOnClickListener(v -> {
-                final android.widget.EditText pinField = new android.widget.EditText(requireContext());
-                pinField.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
-                pinField.setHint("PIN");
-                new androidx.appcompat.app.AlertDialog.Builder(requireContext())
-                        .setTitle("Enter PIN")
-                        .setView(pinField)
-                        .setPositiveButton("OK", (dlg, which) -> {
-                            String pin = pinField.getText() != null ? pinField.getText().toString().trim() : "";
-                            if (android.text.TextUtils.isEmpty(pin)) {
-                                Toast.makeText(requireContext(), "Enter PIN", Toast.LENGTH_SHORT).show();
-                                return;
-                            }
-                            try {
-                                java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
-                                byte[] digest = md.digest(pin.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                                StringBuilder sb = new StringBuilder();
-                                for (byte b : digest) sb.append(String.format("%02x", b));
-                                String pinHash = sb.toString();
-                                String stored = securePrefs.getString("pin_hash", "");
-                                if (stored != null && stored.equals(pinHash)) {
-                                    String walletsJson = securePrefs.getString("wallets", "[]");
-                                    org.json.JSONArray arr = new org.json.JSONArray(walletsJson);
-                                    int sel = securePrefs.getInt("selected_wallet_index", -1);
-                                    String mnem = null;
-                                    if (sel >=0 && sel < arr.length()) {
-                                        mnem = arr.getJSONObject(sel).optString("mnemonic", "");
-                                    }
-                                    if (mnem == null || mnem.isEmpty()) {
-                                        Toast.makeText(requireContext(), "No mnemonic stored", Toast.LENGTH_SHORT).show();
-                                        return;
-                                    }
-                                    android.widget.TextView tv = new android.widget.TextView(requireContext());
-                                    tv.setText(mnem);
-                                    int pad = (int)(12 * getResources().getDisplayMetrics().density);
-                                    tv.setPadding(pad, pad, pad, pad);
-                                    tv.setTextIsSelectable(true);
-                                    new androidx.appcompat.app.AlertDialog.Builder(requireContext())
-                                            .setTitle("Recovery Phrase")
-                                            .setView(tv)
-                                            .setPositiveButton("Close", null)
-                                            .show();
-                                } else {
-                                    Toast.makeText(requireContext(), "Invalid PIN", Toast.LENGTH_SHORT).show();
-                                }
-                            } catch (Exception e) {
-                                Log.e("WalletFragment", "PIN check failed", e);
-                                Toast.makeText(requireContext(), "Error checking PIN", Toast.LENGTH_SHORT).show();
-                            }
-                        })
-                        .setNegativeButton("Cancel", null)
-                        .show();
-            });
-        }
+        // "Show mnemonic" removed from fragment UI. Use WalletListActivity to show/delete wallets.
  
         if (btnCopy != null) {
             btnCopy.setOnClickListener(v -> {
@@ -216,11 +185,8 @@ public class WalletFragment extends Fragment {
     @Override
     public void onResume() {
         super.onResume();
-        // Reload mnemonic from securePrefs in case CreateWalletActivity saved it
-        String savedMnemonic = securePrefs.getString(KEY_MNEMONIC, "");
-        if (!TextUtils.isEmpty(savedMnemonic)) {
-            deriveAndDisplayAddress(savedMnemonic);
-        }
+        // Refresh UI from wallets array in secure prefs in case CreateWalletActivity or WalletListActivity changed data
+        refreshWalletsUI();
     }
 
     private String getMnemonic() {

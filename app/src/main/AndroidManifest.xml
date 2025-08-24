@@ -73,6 +73,13 @@
             android:exported="false"
             android:theme="@style/Theme.PassportScanner"
             android:screenOrientation="portrait" />
+        
+        <!-- Wallet list activity (manage multiple wallets) -->
+        <activity
+            android:name=".wallet.WalletListActivity"
+            android:exported="false"
+            android:theme="@style/Theme.PassportScanner"
+            android:screenOrientation="portrait" />
 
         <!-- ANML Claim Activity -->
         <activity

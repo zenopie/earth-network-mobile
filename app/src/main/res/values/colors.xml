@@ -12,4 +12,8 @@
     <color name="anml_button_text">#293462</color>
     <!-- reverted border color to original brand blue -->
     <color name="anml_button_border">#4056A1</color>
+
+    <!-- Wallet row colors -->
+    <color name="wallet_row_name">@color/sidebar_text</color>
+    <color name="wallet_row_address">#666666</color>
 </resources>

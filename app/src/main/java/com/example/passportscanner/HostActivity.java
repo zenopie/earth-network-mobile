@@ -95,6 +95,12 @@ public class HostActivity extends AppCompatActivity {
             case "wallet":
                 fragment = new com.example.passportscanner.wallet.WalletFragment();
                 break;
+            case "wallet_list":
+                // New fragment that shows the wallet management UI while keeping the HostActivity bottom nav
+                fragment = new com.example.passportscanner.wallet.WalletListFragment();
+                // When showing the wallet list, mark Wallet nav selected
+                setSelectedNav(navWallet, navActions);
+                break;
             case "actions":
                 fragment = new com.example.passportscanner.ActionsFragment();
                 break;

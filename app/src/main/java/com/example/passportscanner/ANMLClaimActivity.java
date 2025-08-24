@@ -177,7 +177,24 @@ public class ANMLClaimActivity extends AppCompatActivity {
         @Override
         protected JSONObject doInBackground(Void... voids) {
             try {
-                String mnemonic = securePrefs.getString(KEY_MNEMONIC, "");
+                // Prefer wallets array (multi-wallet support). Fall back to legacy top-level mnemonic.
+                String mnemonic = "";
+                try {
+                    String walletsJson = securePrefs.getString("wallets", "[]");
+                    org.json.JSONArray arr = new org.json.JSONArray(walletsJson);
+                    int sel = securePrefs.getInt("selected_wallet_index", -1);
+                    if (arr.length() > 0) {
+                        if (sel >= 0 && sel < arr.length()) {
+                            mnemonic = arr.getJSONObject(sel).optString("mnemonic", "");
+                        } else if (arr.length() == 1) {
+                            // if only one wallet exists, use it
+                            mnemonic = arr.getJSONObject(0).optString("mnemonic", "");
+                        }
+                    }
+                } catch (Exception ignored) {}
+                if (TextUtils.isEmpty(mnemonic)) {
+                    mnemonic = securePrefs.getString(KEY_MNEMONIC, "");
+                }
                 if (TextUtils.isEmpty(mnemonic)) {
                     // No wallet configured
                     JSONObject res = new JSONObject();

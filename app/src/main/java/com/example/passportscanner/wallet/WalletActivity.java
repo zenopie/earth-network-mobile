@@ -13,6 +13,9 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.widget.ImageView;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.security.crypto.EncryptedSharedPreferences;
@@ -71,10 +74,11 @@ public class WalletActivity extends AppCompatActivity {
         balanceRow = findViewById(R.id.balance_row);
  
         currentWalletName = findViewById(R.id.current_wallet_name);
-        btnAddWallet = findViewById(R.id.btn_add_wallet);
+        // Add button moved into the WalletListFragment; keep the reference null here to avoid missing-id crashes.
+        btnAddWallet = null;
         Button btnCopy = findViewById(R.id.btn_copy);
         Button btnRefresh = findViewById(R.id.btn_refresh);
-        Button btnShowMnemonic = findViewById(R.id.btn_show_mnemonic);
+        // Show mnemonic moved into WalletListFragment; no local button reference needed.
 
         addressRow.setVisibility(View.GONE);
         balanceRow.setVisibility(View.GONE);
@@ -98,17 +102,40 @@ public class WalletActivity extends AppCompatActivity {
         // Restore saved wallets and selected index
         refreshWalletsUI();
 
-        // Add wallet button -> start create flow
+        // Add wallet button -> open the wallet list which contains the Add flow
         if (btnAddWallet != null) {
             btnAddWallet.setOnClickListener(v -> {
-                Intent i = new Intent(WalletActivity.this, CreateWalletActivity.class);
+                // If HostActivity is present, ask it to show the wallet_list fragment so bottom nav remains consistent.
+                try {
+                    android.app.Activity a = WalletActivity.this;
+                    if (a instanceof com.example.passportscanner.HostActivity) {
+                        ((com.example.passportscanner.HostActivity)a).showFragment("wallet_list");
+                        return;
+                    }
+                } catch (Exception ignored) {}
+                Intent i = new Intent(WalletActivity.this, com.example.passportscanner.wallet.WalletListActivity.class);
                 startActivity(i);
             });
         }
  
-        // Tap wallet name -> pick from list
-        if (currentWalletName != null) {
-            currentWalletName.setOnClickListener(v -> showWalletPicker());
+        // Tap wallet name or arrow -> open wallet list screen (hosted fragment if possible)
+        View arrow = findViewById(R.id.current_wallet_arrow);
+        View[] triggers = new View[] { currentWalletName, arrow };
+        for (View t : triggers) {
+            if (t != null) {
+                t.setOnClickListener(v -> {
+                    // Prefer HostActivity fragment if available
+                    try {
+                        android.app.Activity a = WalletActivity.this;
+                        if (a instanceof com.example.passportscanner.HostActivity) {
+                            ((com.example.passportscanner.HostActivity)a).showFragment("wallet_list");
+                            return;
+                        }
+                    } catch (Exception ignored) {}
+                    Intent i = new Intent(WalletActivity.this, com.example.passportscanner.wallet.WalletListActivity.class);
+                    startActivity(i);
+                });
+            }
         }
 
         btnCopy.setOnClickListener(v -> {
@@ -124,59 +151,7 @@ public class WalletActivity extends AppCompatActivity {
             }
         });
  
-        // Show mnemonic button: requires entering the PIN
-        if (btnShowMnemonic != null) {
-            btnShowMnemonic.setOnClickListener(v -> {
-                // PIN input
-                android.widget.EditText pinField = new android.widget.EditText(this);
-                pinField.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
-                pinField.setHint("PIN");
- 
-                new androidx.appcompat.app.AlertDialog.Builder(this)
-                        .setTitle("Enter PIN")
-                        .setView(pinField)
-                        .setPositiveButton("OK", (dlg, which) -> {
-                            String pin = pinField.getText() != null ? pinField.getText().toString().trim() : "";
-                            if (android.text.TextUtils.isEmpty(pin)) {
-                                android.widget.Toast.makeText(this, "Enter PIN", android.widget.Toast.LENGTH_SHORT).show();
-                                return;
-                            }
-                            try {
-                                java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
-                                byte[] digest = md.digest(pin.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                                StringBuilder sb = new StringBuilder();
-                                for (byte b : digest) sb.append(String.format("%02x", b));
-                                String pinHash = sb.toString();
-                                String stored = securePrefs.getString("pin_hash", "");
-                                if (stored != null && stored.equals(pinHash)) {
-                                    String mnem = securePrefs.getString(KEY_MNEMONIC, "");
-                                    if (android.text.TextUtils.isEmpty(mnem)) {
-                                        android.widget.Toast.makeText(this, "No mnemonic stored", android.widget.Toast.LENGTH_SHORT).show();
-                                        return;
-                                    }
-                                    // Show mnemonic securely
-                                    android.widget.TextView tv = new android.widget.TextView(this);
-                                    tv.setText(mnem);
-                                    int pad = (int)(12 * getResources().getDisplayMetrics().density);
-                                    tv.setPadding(pad, pad, pad, pad);
-                                    tv.setTextIsSelectable(true);
-                                    androidx.appcompat.app.AlertDialog.Builder b = new androidx.appcompat.app.AlertDialog.Builder(this);
-                                    b.setTitle("Recovery Phrase");
-                                    b.setView(tv);
-                                    b.setPositiveButton("Close", null);
-                                    b.show();
-                                } else {
-                                    android.widget.Toast.makeText(this, "Invalid PIN", android.widget.Toast.LENGTH_SHORT).show();
-                                }
-                            } catch (Exception e) {
-                                android.util.Log.e("WalletActivity", "PIN check failed", e);
-                                android.widget.Toast.makeText(this, "Error checking PIN", android.widget.Toast.LENGTH_SHORT).show();
-                            }
-                        })
-                        .setNegativeButton("Cancel", null)
-                        .show();
-            });
-        }
+        // Removed "Show mnemonic" button here — replaced by WalletListActivity which handles show/delete.
  
         btnRefresh.setOnClickListener(v -> {
             String address = addressText.getText() != null ? addressText.getText().toString().trim() : "";

@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/wallet_row_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:paddingTop="8dp"
+    android:paddingBottom="8dp">
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:paddingEnd="8dp">
+
+        <TextView
+            android:id="@+id/wallet_row_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Wallet name"
+            android:textStyle="bold"
+            android:textSize="16sp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="@color/wallet_row_name"/>
+
+        <TextView
+            android:id="@+id/wallet_row_address"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="secret1..."
+            android:textSize="14sp"
+            android:ellipsize="middle"
+            android:maxLines="1"
+            android:textColor="@color/wallet_row_address"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="match_parent"
+        android:orientation="horizontal">
+
+        <ImageButton
+            android:id="@+id/wallet_row_show"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_eye"
+            android:contentDescription="Show mnemonic"
+            android:tint="@color/sidebar_icon"
+            android:padding="8dp" />
+
+        <ImageButton
+            android:id="@+id/wallet_row_delete"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_trash"
+            android:contentDescription="Delete wallet"
+            android:tint="@color/sidebar_icon"
+            android:layout_marginStart="8dp"
+            android:padding="8dp" />
+    </LinearLayout>
+</LinearLayout>

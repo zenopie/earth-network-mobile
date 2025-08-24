@@ -18,16 +18,25 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
-            <TextView
-                android:id="@+id/wallet_title"
-                android:layout_width="wrap_content"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_gravity="center_horizontal"
+                android:orientation="horizontal"
+                android:gravity="center"
                 android:layout_marginBottom="24dp"
-                android:text="@string/wallet_title"
-                android:textSize="28sp"
-                android:textStyle="bold"
-                android:textColor="@color/brand_blue" />
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp">
+ 
+                <TextView
+                    android:id="@+id/wallet_title_text"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/wallet_title"
+                    android:textSize="24sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/brand_blue"
+                    android:gravity="center" />
+            </LinearLayout>
 
             <!-- Mnemonic input removed: creation/import handled in dedicated flow -->
 
@@ -39,31 +48,36 @@
                 android:orientation="horizontal"
                 android:layout_marginBottom="16dp">
 
-                <TextView
-                    android:id="@+id/current_wallet_name"
-                    android:layout_width="0dp"
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="No wallet"
-                    android:textSize="16sp"
-                    android:textColor="@color/sidebar_text"
-                    android:padding="12dp"
-                    android:background="@drawable/card_rounded_bg"
-                    android:gravity="center_vertical"
-                    android:clickable="true"
-                    android:focusable="true" />
+                    android:orientation="horizontal"
+                    android:gravity="center">
 
-                <Button
-                    android:id="@+id/btn_add_wallet"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="+"
-                    android:layout_marginStart="8dp"
-                    android:backgroundTint="@color/brand_blue"
-                    android:textColor="@android:color/white"
-                    android:paddingLeft="12dp"
-                    android:paddingRight="12dp"
-                    android:textSize="20sp" />
+                    <TextView
+                        android:id="@+id/current_wallet_name"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="No wallet"
+                        android:textSize="26sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/sidebar_text"
+                        android:gravity="center"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="4dp"/>
+
+                    <ImageView
+                        android:id="@+id/current_wallet_arrow"
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_arrow_down"
+                        android:tint="@color/sidebar_text"
+                        android:layout_marginStart="8dp"
+                        android:contentDescription="Open wallets" />
+                </LinearLayout>
+
             </LinearLayout>
 
             <!-- Save button removed: wallet is saved by the Create Wallet flow -->
@@ -128,18 +142,6 @@
                         android:textSize="14sp"
                         android:layout_marginEnd="8dp" />
 
-                    <Button
-                        android:id="@+id/btn_show_mnemonic"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Show"
-                        android:contentDescription="Show recovery phrase"
-                        android:backgroundTint="@color/brand_blue"
-                        android:textColor="@android:color/white"
-                        android:minWidth="0dp"
-                        android:paddingLeft="12dp"
-                        android:paddingRight="12dp"
-                        android:textSize="14sp" />
                 </LinearLayout>
             </LinearLayout>
 

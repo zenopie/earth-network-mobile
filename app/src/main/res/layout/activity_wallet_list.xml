@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Use a vertical LinearLayout so the bottom navigation is always visible and the scroll area
+     sits above it. This avoids RelativeLayout id-resolution/layout_above issues. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/wallet_list_root"
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <!-- Scrollable area — use weight to reserve space above the persistent bottom nav -->
+    <ScrollView
+        android:id="@+id/wallet_list_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true"
+        android:padding="16dp">
+
+        <LinearLayout
+            android:id="@+id/wallet_list_container"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/wallet_list_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Wallets"
+                android:textSize="20sp"
+                android:textStyle="bold"
+                android:paddingBottom="12dp" />
+
+            <!-- Rows will be added programmatically into this container -->
+        </LinearLayout>
+    </ScrollView>
+
+    <!-- Reuse the existing bottom navigation view so it matches the app's other screens.
+         This stays visible because it's placed after the scroll area in a vertical layout. -->
+    <include
+        android:id="@+id/bottom_nav"
+        layout="@layout/view_bottom_nav"
+        android:layout_width="match_parent"
+        android:layout_height="56dp" />
+
+</LinearLayout>
