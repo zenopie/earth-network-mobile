@@ -3,6 +3,7 @@ package com.example.passportscanner.wallet;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.AsyncTask;
 import android.os.Bundle;
@@ -34,8 +35,6 @@ public class WalletFragment extends Fragment {
     private static final String KEY_MNEMONIC = "mnemonic";
     private static final String KEY_LCD_URL = "lcd_url";
 
-    private EditText mnemonicInput;
-    private EditText lcdInput;
     private TextView addressText;
     private TextView balanceText;
     private View addressRow;
@@ -72,18 +71,16 @@ public class WalletFragment extends Fragment {
         }
         
         // Initialize UI elements
-        mnemonicInput = view.findViewById(R.id.mnemonic_input);
-        lcdInput = view.findViewById(R.id.lcd_input);
         addressText = view.findViewById(R.id.address_text);
         balanceText = view.findViewById(R.id.balance_text);
         addressRow = view.findViewById(R.id.address_row);
         balanceRow = view.findViewById(R.id.balance_row);
-
+ 
         // Initialize buttons
         Button btnGenerate = view.findViewById(R.id.btn_generate);
-        Button btnSave = view.findViewById(R.id.btn_save);
         Button btnCopy = view.findViewById(R.id.btn_copy);
         Button btnRefresh = view.findViewById(R.id.btn_refresh);
+        Button btnShowMnemonic = view.findViewById(R.id.btn_show_mnemonic);
 
         // Start hidden like WalletActivity
         if (addressRow != null) addressRow.setVisibility(View.GONE);
@@ -107,53 +104,76 @@ public class WalletFragment extends Fragment {
 
         // Restore saved values
         String savedMnemonic = securePrefs.getString(KEY_MNEMONIC, "");
-        String savedLcd = securePrefs.getString(KEY_LCD_URL, SecretWallet.DEFAULT_LCD_URL);
-        if (!TextUtils.isEmpty(savedMnemonic)) {
-            mnemonicInput.setText(savedMnemonic);
+        String savedWalletName = securePrefs.getString("wallet_name", "");
+ 
+        // Update generate button label to wallet name if present
+        if (!TextUtils.isEmpty(savedWalletName) && btnGenerate != null) {
+            btnGenerate.setText(savedWalletName);
         }
-        lcdInput.setText(TextUtils.isEmpty(savedLcd) ? SecretWallet.DEFAULT_LCD_URL : savedLcd);
-
+ 
         // Derive and display address if mnemonic exists
         if (!TextUtils.isEmpty(savedMnemonic)) {
             deriveAndDisplayAddress(savedMnemonic);
         }
-
+ 
         // Set up button click listeners
         if (btnGenerate != null) {
             btnGenerate.setOnClickListener(v -> {
-                try {
-                    String mnemonic = SecretWallet.generateMnemonic();
-                    if (mnemonicInput != null) mnemonicInput.setText(mnemonic);
-
-                    // Do NOT log or persist the mnemonic here
-                    Toast.makeText(requireContext(), "Mnemonic generated", Toast.LENGTH_SHORT).show();
-
-                    // Derive and display address
-                    deriveAndDisplayAddress(mnemonic);
-                } catch (Exception e) {
-                    // Keep logs free of mnemonic contents
-                    Log.e("WalletFragment", "Failed to generate mnemonic", e);
-                    Toast.makeText(requireContext(), "Failed to generate mnemonic", Toast.LENGTH_LONG).show();
-                }
+                Intent i = new Intent(requireContext(), CreateWalletActivity.class);
+                startActivity(i);
             });
         }
-
-        if (btnSave != null) {
-            btnSave.setOnClickListener(v -> {
-                String mnemonic = getMnemonic();
-                String lcd = getLcdUrl();
-                if (TextUtils.isEmpty(mnemonic)) {
-                    Toast.makeText(requireContext(), "Enter mnemonic to save", Toast.LENGTH_SHORT).show();
-                    return;
-                }
-                securePrefs.edit()
-                        .putString(KEY_MNEMONIC, mnemonic)
-                        .putString(KEY_LCD_URL, lcd)
-                        .apply();
-                Toast.makeText(requireContext(), "Saved", Toast.LENGTH_SHORT).show();
+ 
+        if (btnShowMnemonic != null) {
+            btnShowMnemonic.setOnClickListener(v -> {
+                final android.widget.EditText pinField = new android.widget.EditText(requireContext());
+                pinField.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+                pinField.setHint("PIN");
+                new androidx.appcompat.app.AlertDialog.Builder(requireContext())
+                        .setTitle("Enter PIN")
+                        .setView(pinField)
+                        .setPositiveButton("OK", (dlg, which) -> {
+                            String pin = pinField.getText() != null ? pinField.getText().toString().trim() : "";
+                            if (android.text.TextUtils.isEmpty(pin)) {
+                                Toast.makeText(requireContext(), "Enter PIN", Toast.LENGTH_SHORT).show();
+                                return;
+                            }
+                            try {
+                                java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+                                byte[] digest = md.digest(pin.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                                StringBuilder sb = new StringBuilder();
+                                for (byte b : digest) sb.append(String.format("%02x", b));
+                                String pinHash = sb.toString();
+                                String stored = securePrefs.getString("pin_hash", "");
+                                if (stored != null && stored.equals(pinHash)) {
+                                    String mnem = securePrefs.getString(KEY_MNEMONIC, "");
+                                    if (android.text.TextUtils.isEmpty(mnem)) {
+                                        Toast.makeText(requireContext(), "No mnemonic stored", Toast.LENGTH_SHORT).show();
+                                        return;
+                                    }
+                                    android.widget.TextView tv = new android.widget.TextView(requireContext());
+                                    tv.setText(mnem);
+                                    int pad = (int)(12 * getResources().getDisplayMetrics().density);
+                                    tv.setPadding(pad, pad, pad, pad);
+                                    tv.setTextIsSelectable(true);
+                                    new androidx.appcompat.app.AlertDialog.Builder(requireContext())
+                                            .setTitle("Recovery Phrase")
+                                            .setView(tv)
+                                            .setPositiveButton("Close", null)
+                                            .show();
+                                } else {
+                                    Toast.makeText(requireContext(), "Invalid PIN", Toast.LENGTH_SHORT).show();
+                                }
+                            } catch (Exception e) {
+                                Log.e("WalletFragment", "PIN check failed", e);
+                                Toast.makeText(requireContext(), "Error checking PIN", Toast.LENGTH_SHORT).show();
+                            }
+                        })
+                        .setNegativeButton("Cancel", null)
+                        .show();
             });
         }
-
+ 
         if (btnCopy != null) {
             btnCopy.setOnClickListener(v -> {
                 CharSequence addr = addressText.getText();
@@ -168,7 +188,7 @@ public class WalletFragment extends Fragment {
                 }
             });
         }
-
+ 
         if (btnRefresh != null) {
             btnRefresh.setOnClickListener(v -> {
                 String address = addressText.getText() != null ? addressText.getText().toString().trim() : "";
@@ -181,14 +201,25 @@ public class WalletFragment extends Fragment {
             });
         }
     }
+ 
+    @Override
+    public void onResume() {
+        super.onResume();
+        // Reload mnemonic from securePrefs in case CreateWalletActivity saved it
+        String savedMnemonic = securePrefs.getString(KEY_MNEMONIC, "");
+        if (!TextUtils.isEmpty(savedMnemonic)) {
+            deriveAndDisplayAddress(savedMnemonic);
+        }
+    }
 
     private String getMnemonic() {
-        return mnemonicInput.getText() != null ? mnemonicInput.getText().toString().trim() : "";
+        String saved = securePrefs != null ? securePrefs.getString(KEY_MNEMONIC, "") : "";
+        return TextUtils.isEmpty(saved) ? "" : saved;
     }
 
     private String getLcdUrl() {
-        String lcd = lcdInput.getText() != null ? lcdInput.getText().toString().trim() : "";
-        return TextUtils.isEmpty(lcd) ? SecretWallet.DEFAULT_LCD_URL : lcd;
+        // Endpoint fixed to project default
+        return SecretWallet.DEFAULT_LCD_URL;
     }
 
     private void deriveAndDisplayAddress(String mnemonic) {

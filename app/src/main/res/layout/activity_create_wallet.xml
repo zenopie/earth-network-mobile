@@ -1,0 +1,280 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/create_wallet_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="16dp"
+    android:background="@color/sidebar_bg">
+
+    <ScrollView
+        android:id="@+id/create_wallet_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <LinearLayout
+            android:id="@+id/create_wallet_container"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- Intro step -->
+            <LinearLayout
+                android:id="@+id/step_intro"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Create Wallet"
+                    android:textSize="22sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/brand_blue"
+                    android:layout_marginBottom="12dp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Create a new Secret Network wallet or import an existing one."
+                    android:textSize="14sp"
+                    android:textColor="@color/sidebar_text"
+                    android:layout_marginBottom="16dp" />
+
+                <Button
+                    android:id="@+id/btn_create_new"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Create New Wallet"
+                    android:backgroundTint="@color/brand_blue"
+                    android:textColor="@android:color/white"
+                    android:layout_marginBottom="8dp" />
+
+                <Button
+                    android:id="@+id/btn_import"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Import Existing Wallet"
+                    android:backgroundTint="@color/brand_blue"
+                    android:textColor="@android:color/white" />
+
+            </LinearLayout>
+
+            <!-- Reveal step -->
+            <LinearLayout
+                android:id="@+id/step_reveal"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="12dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Your Recovery Phrase"
+                    android:textSize="20sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/brand_blue"
+                    android:layout_marginBottom="8dp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Write down these words in order and keep them safe. You'll be asked to confirm them in the next step."
+                    android:textSize="14sp"
+                    android:textColor="@color/sidebar_text"
+                    android:layout_marginBottom="12dp" />
+
+                <!-- Editable area for reveal and import -->
+                <EditText
+                    android:id="@+id/reveal_mnemonic_text"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minLines="2"
+                    android:maxLines="6"
+                    android:background="@drawable/edittext_rounded_bg"
+                    android:padding="12dp"
+                    android:textColor="@color/sidebar_text"
+                    android:textColorHint="#AAAAAA"
+                    android:hint="Press Reveal to generate your mnemonic or paste your mnemonic here to import"
+                    android:inputType="textMultiLine"
+                    android:layout_marginBottom="12dp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/btn_reveal"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Reveal"
+                        android:backgroundTint="@color/brand_blue"
+                        android:textColor="@android:color/white"
+                        android:layout_marginEnd="8dp" />
+
+                    <Button
+                        android:id="@+id/btn_reveal_next"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Next"
+                        android:enabled="false"
+                        android:backgroundTint="@color/brand_blue"
+                        android:textColor="@android:color/white" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Confirm backup step (simple acknowledgement instead of word-order verification) -->
+            <LinearLayout
+                android:id="@+id/step_verify"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="12dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Confirm Backup"
+                    android:textSize="20sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/brand_blue"
+                    android:layout_marginBottom="8dp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Please confirm that you have written down and securely stored your recovery phrase. This device does not retain a copy outside secure storage."
+                    android:textSize="14sp"
+                    android:textColor="@color/sidebar_text"
+                    android:layout_marginBottom="12dp" />
+
+                <CheckBox
+                    android:id="@+id/confirm_backup_check"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="I have safely backed up my recovery phrase"
+                    android:textSize="16sp"
+                    android:layout_marginBottom="12dp" />
+
+                <Button
+                    android:id="@+id/btn_confirm_next"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Next"
+                    android:enabled="false"
+                    android:backgroundTint="@color/brand_blue"
+                    android:textColor="@android:color/white" />
+            </LinearLayout>
+
+            <!-- PIN step -->
+            <LinearLayout
+                android:id="@+id/step_pin"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="12dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Create a PIN"
+                    android:textSize="20sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/brand_blue"
+                    android:layout_marginBottom="8dp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="You will use this PIN to unlock your wallet on this device."
+                    android:textSize="14sp"
+                    android:textColor="@color/sidebar_text"
+                    android:layout_marginBottom="12dp" />
+ 
+                <!-- Wallet name input: user provides a friendly name for this wallet -->
+                <EditText
+                    android:id="@+id/wallet_name_input"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="Wallet name (e.g. My Wallet)"
+                    android:background="@drawable/edittext_rounded_bg"
+                    android:padding="12dp"
+                    android:layout_marginBottom="12dp"
+                    android:textColor="@color/sidebar_text"
+                    android:textColorHint="#AAAAAA" />
+ 
+                <EditText
+                    android:id="@+id/pin_input"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="numberPassword"
+                    android:hint="Enter PIN"
+                    android:background="@drawable/edittext_rounded_bg"
+                    android:padding="12dp"
+                    android:layout_marginBottom="8dp" />
+
+                <EditText
+                    android:id="@+id/pin_confirm_input"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="numberPassword"
+                    android:hint="Confirm PIN"
+                    android:background="@drawable/edittext_rounded_bg"
+                    android:padding="12dp"
+                    android:layout_marginBottom="12dp" />
+
+                <Button
+                    android:id="@+id/btn_pin_next"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Finish"
+                    android:backgroundTint="@color/brand_blue"
+                    android:textColor="@android:color/white" />
+            </LinearLayout>
+
+            <!-- Done step -->
+            <LinearLayout
+                android:id="@+id/step_done"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="12dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Backup Complete"
+                    android:textSize="20sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/brand_blue"
+                    android:layout_marginBottom="8dp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Your wallet is ready. Your recovery phrase is saved securely on this device."
+                    android:textSize="14sp"
+                    android:textColor="@color/sidebar_text"
+                    android:layout_marginBottom="16dp" />
+
+                <Button
+                    android:id="@+id/btn_done"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Return to Wallet"
+                    android:backgroundTint="@color/brand_blue"
+                    android:textColor="@android:color/white" />
+            </LinearLayout>
+
+        </LinearLayout>
+    </ScrollView>
+</RelativeLayout>

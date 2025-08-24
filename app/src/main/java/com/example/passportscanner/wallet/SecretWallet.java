@@ -34,7 +34,8 @@ import android.content.res.AssetManager;
 public final class SecretWallet {
 
     public static final String HRP = "secret";
-    public static final String DEFAULT_LCD_URL = "https://rest.cosmos.directory/secretnetwork";
+    // Use fixed LCD endpoint per project requirement
+    public static final String DEFAULT_LCD_URL = "https://lcd.erth.network";
 
     private SecretWallet() {}
 

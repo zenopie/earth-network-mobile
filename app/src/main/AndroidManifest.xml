@@ -66,6 +66,13 @@
             android:exported="false"
             android:theme="@style/Theme.PassportScanner"
             android:screenOrientation="portrait" />
+        
+        <!-- Create Wallet Activity (Keplr-style flow) -->
+        <activity
+            android:name=".wallet.CreateWalletActivity"
+            android:exported="false"
+            android:theme="@style/Theme.PassportScanner"
+            android:screenOrientation="portrait" />
 
         <!-- ANML Claim Activity -->
         <activity

@@ -29,22 +29,7 @@
                 android:textStyle="bold"
                 android:textColor="@color/brand_blue" />
 
-            <!-- Mnemonic input -->
-            <EditText
-                android:id="@+id/mnemonic_input"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="@string/mnemonic_hint"
-                android:minLines="2"
-                android:maxLines="5"
-                android:inputType="textMultiLine"
-                android:scrollbars="vertical"
-                android:gravity="top|start"
-                android:layout_marginBottom="16dp"
-                android:background="@drawable/edittext_rounded_bg"
-                android:padding="12dp"
-                android:textColor="@color/sidebar_text"
-                android:textColorHint="#AAAAAA" />
+            <!-- Mnemonic input removed: creation/import handled in dedicated flow -->
 
             <!-- Actions row -->
             <Button
@@ -58,32 +43,11 @@
                 android:textSize="16sp"
                 android:layout_marginBottom="16dp" />
 
-            <!-- Save row -->
-            <Button
-                android:id="@+id/btn_save"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/save_securely"
-                android:layout_marginBottom="24dp"
-                android:backgroundTint="@color/brand_blue"
-                android:textColor="@android:color/white"
-                android:padding="12dp"
-                android:textSize="16sp" />
+            <!-- Save button removed: wallet is saved by the Create Wallet flow -->
 
-            <!-- LCD URL -->
-            <EditText
-                android:id="@+id/lcd_input"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="@string/lcd_url_hint"
-                android:inputType="textUri"
-                android:layout_marginBottom="24dp"
-                android:background="@drawable/edittext_rounded_bg"
-                android:padding="12dp"
-                android:textColor="@color/sidebar_text"
-                android:textColorHint="#AAAAAA" />
+            <!-- LCD URL removed - endpoint fixed to https://lcd.erth.network -->
 
-            <!-- Address row -->
+            <!-- Address row (label + address stacked; actions aligned right) -->
             <LinearLayout
                 android:id="@+id/address_row"
                 android:layout_width="match_parent"
@@ -94,36 +58,66 @@
                 android:background="@drawable/card_rounded_bg"
                 android:padding="12dp">
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/address_label"
-                    android:textStyle="bold"
-                    android:textColor="@color/brand_blue"
-                    android:textSize="16sp" />
-
-                <TextView
-                    android:id="@+id/address_text"
+                <!-- Left: label and address (stacked) -->
+                <LinearLayout
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
                     android:layout_weight="1"
-                    android:textIsSelectable="true"
-                    android:text=""
-                    android:textColor="@color/sidebar_text"
-                    android:textSize="16sp" />
+                    android:orientation="vertical">
 
-                <Button
-                    android:id="@+id/btn_copy"
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/address_label"
+                        android:textStyle="bold"
+                        android:textColor="@color/brand_blue"
+                        android:textSize="14sp" />
+
+                    <TextView
+                        android:id="@+id/address_text"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:textIsSelectable="true"
+                        android:text=""
+                        android:textColor="@color/sidebar_text"
+                        android:textSize="16sp" />
+                </LinearLayout>
+
+                <!-- Right: compact action buttons -->
+                <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="@string/copy"
-                    android:backgroundTint="@color/brand_blue"
-                    android:textColor="@android:color/white"
-                    android:minWidth="0dp"
-                    android:paddingLeft="16dp"
-                    android:paddingRight="16dp"
-                    android:textSize="14sp" />
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginStart="8dp">
+
+                    <Button
+                        android:id="@+id/btn_copy"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/copy"
+                        android:backgroundTint="@color/brand_blue"
+                        android:textColor="@android:color/white"
+                        android:minWidth="0dp"
+                        android:paddingLeft="12dp"
+                        android:paddingRight="12dp"
+                        android:textSize="14sp"
+                        android:layout_marginEnd="8dp" />
+
+                    <Button
+                        android:id="@+id/btn_show_mnemonic"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Show"
+                        android:contentDescription="Show recovery phrase"
+                        android:backgroundTint="@color/brand_blue"
+                        android:textColor="@android:color/white"
+                        android:minWidth="0dp"
+                        android:paddingLeft="12dp"
+                        android:paddingRight="12dp"
+                        android:textSize="14sp" />
+                </LinearLayout>
             </LinearLayout>
 
             <!-- Balance row -->
