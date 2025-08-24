@@ -183,6 +183,7 @@
                 android:visibility="gone">
 
                 <TextView
+                    android:id="@+id/pin_heading"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Create a PIN"
@@ -190,8 +191,9 @@
                     android:textStyle="bold"
                     android:textColor="@color/brand_blue"
                     android:layout_marginBottom="8dp" />
-
+    
                 <TextView
+                    android:id="@+id/pin_desc"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="You will use this PIN to unlock your wallet on this device."

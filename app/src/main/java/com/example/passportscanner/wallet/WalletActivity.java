@@ -37,7 +37,9 @@ public class WalletActivity extends AppCompatActivity {
     private static final String KEY_MNEMONIC = "mnemonic";
     private static final String KEY_LCD_URL = "lcd_url";
 
-    private EditText mnemonicInput;
+    // UI
+    private TextView currentWalletName;
+    private Button btnAddWallet;
     private TextView addressText;
     private TextView balanceText;
     private View addressRow;
@@ -68,7 +70,8 @@ public class WalletActivity extends AppCompatActivity {
         addressRow = findViewById(R.id.address_row);
         balanceRow = findViewById(R.id.balance_row);
  
-        Button btnGenerate = findViewById(R.id.btn_generate);
+        currentWalletName = findViewById(R.id.current_wallet_name);
+        btnAddWallet = findViewById(R.id.btn_add_wallet);
         Button btnCopy = findViewById(R.id.btn_copy);
         Button btnRefresh = findViewById(R.id.btn_refresh);
         Button btnShowMnemonic = findViewById(R.id.btn_show_mnemonic);
@@ -92,28 +95,21 @@ public class WalletActivity extends AppCompatActivity {
             securePrefs = getSharedPreferences(PREF_FILE, MODE_PRIVATE);
         }
 
-        // Restore saved values
-        String savedMnemonic = securePrefs.getString(KEY_MNEMONIC, "");
-        String savedWalletName = securePrefs.getString("wallet_name", "");
-        // If the mnemonic input view still exists, populate it; otherwise rely on securePrefs
-        if (mnemonicInput != null && !TextUtils.isEmpty(savedMnemonic)) {
-            mnemonicInput.setText(savedMnemonic);
-        }
-        // Update generate button label to wallet name if present
-        if (!TextUtils.isEmpty(savedWalletName)) {
-            btnGenerate.setText(savedWalletName);
+        // Restore saved wallets and selected index
+        refreshWalletsUI();
+
+        // Add wallet button -> start create flow
+        if (btnAddWallet != null) {
+            btnAddWallet.setOnClickListener(v -> {
+                Intent i = new Intent(WalletActivity.this, CreateWalletActivity.class);
+                startActivity(i);
+            });
         }
  
-        // Always derive address when a mnemonic exists so returning from the Create flow updates immediately
-        if (!TextUtils.isEmpty(savedMnemonic)) {
-            deriveAndDisplayAddress(savedMnemonic);
+        // Tap wallet name -> pick from list
+        if (currentWalletName != null) {
+            currentWalletName.setOnClickListener(v -> showWalletPicker());
         }
-
-        btnGenerate.setOnClickListener(v -> {
-            // Launch the full Create Wallet flow (Keplr-style)
-            Intent i = new Intent(WalletActivity.this, CreateWalletActivity.class);
-            startActivity(i);
-        });
 
         btnCopy.setOnClickListener(v -> {
             CharSequence addr = addressText.getText();
@@ -214,24 +210,73 @@ public class WalletActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        // Reload mnemonic from securePrefs in case CreateWalletActivity saved it
-        String savedMnemonic = securePrefs.getString(KEY_MNEMONIC, "");
-        if (!TextUtils.isEmpty(savedMnemonic)) {
-            String current = mnemonicInput.getText() != null ? mnemonicInput.getText().toString().trim() : "";
-            if (!current.equals(savedMnemonic)) {
-                mnemonicInput.setText(savedMnemonic);
-                deriveAndDisplayAddress(savedMnemonic);
-            }
-        }
+        // Refresh wallets UI in case CreateWalletActivity added a wallet
+        refreshWalletsUI();
     }
  
     private String getMnemonic() {
-        // If the mnemonic input view exists use it; otherwise read from securePrefs
-        if (mnemonicInput != null) {
-            return mnemonicInput.getText() != null ? mnemonicInput.getText().toString().trim() : "";
+        // Return the mnemonic for the selected wallet (wallets stored as JSON array)
+        try {
+            String walletsJson = securePrefs.getString("wallets", "[]");
+            org.json.JSONArray arr = new org.json.JSONArray(walletsJson);
+            int sel = securePrefs.getInt("selected_wallet_index", -1);
+            if (sel >= 0 && sel < arr.length()) {
+                return arr.getJSONObject(sel).optString("mnemonic", "");
+            }
+        } catch (Exception ignored) {}
+        return securePrefs.getString(KEY_MNEMONIC, "");
+    }
+ 
+    private void refreshWalletsUI() {
+        try {
+            String walletsJson = securePrefs.getString("wallets", "[]");
+            org.json.JSONArray arr = new org.json.JSONArray(walletsJson);
+            int sel = securePrefs.getInt("selected_wallet_index", -1);
+            if (arr.length() == 0) {
+                if (currentWalletName != null) currentWalletName.setText("No wallet");
+                addressRow.setVisibility(View.GONE);
+                balanceRow.setVisibility(View.GONE);
+                return;
+            }
+            if (sel < 0 || sel >= arr.length()) {
+                sel = 0;
+                securePrefs.edit().putInt("selected_wallet_index", sel).apply();
+            }
+            org.json.JSONObject obj = arr.getJSONObject(sel);
+            String name = obj.optString("name", "Wallet");
+            String mn = obj.optString("mnemonic", "");
+            if (currentWalletName != null) currentWalletName.setText(name);
+            if (!TextUtils.isEmpty(mn)) {
+                deriveAndDisplayAddress(mn);
+            } else {
+                addressRow.setVisibility(View.GONE);
+                balanceRow.setVisibility(View.GONE);
+            }
+        } catch (Exception e) {
+            Log.e("WalletActivity", "Failed to refresh wallets UI", e);
         }
-        String saved = securePrefs != null ? securePrefs.getString(KEY_MNEMONIC, "") : "";
-        return TextUtils.isEmpty(saved) ? "" : saved;
+    }
+ 
+    private void showWalletPicker() {
+        try {
+            String walletsJson = securePrefs.getString("wallets", "[]");
+            org.json.JSONArray arr = new org.json.JSONArray(walletsJson);
+            if (arr.length() == 0) {
+                Toast.makeText(this, "No wallets", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            String[] names = new String[arr.length()];
+            for (int i = 0; i < arr.length(); i++) names[i] = arr.getJSONObject(i).optString("name", "Wallet " + i);
+            new androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle("Select wallet")
+                    .setItems(names, (dlg, which) -> {
+                        securePrefs.edit().putInt("selected_wallet_index", which).apply();
+                        refreshWalletsUI();
+                    })
+                    .show();
+        } catch (Exception e) {
+            Log.e("WalletActivity", "Failed to show wallet picker", e);
+        }
     }
 
     private String getLcdUrl() {

@@ -31,17 +31,40 @@
 
             <!-- Mnemonic input removed: creation/import handled in dedicated flow -->
 
-            <!-- Actions row -->
-            <Button
-                android:id="@+id/btn_generate"
+            <!-- Wallet selector + Add button -->
+            <LinearLayout
+                android:id="@+id/wallet_selector_row"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/generate_mnemonic"
-                android:backgroundTint="@color/brand_blue"
-                android:textColor="@android:color/white"
-                android:padding="12dp"
-                android:textSize="16sp"
-                android:layout_marginBottom="16dp" />
+                android:orientation="horizontal"
+                android:layout_marginBottom="16dp">
+
+                <TextView
+                    android:id="@+id/current_wallet_name"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="No wallet"
+                    android:textSize="16sp"
+                    android:textColor="@color/sidebar_text"
+                    android:padding="12dp"
+                    android:background="@drawable/card_rounded_bg"
+                    android:gravity="center_vertical"
+                    android:clickable="true"
+                    android:focusable="true" />
+
+                <Button
+                    android:id="@+id/btn_add_wallet"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="+"
+                    android:layout_marginStart="8dp"
+                    android:backgroundTint="@color/brand_blue"
+                    android:textColor="@android:color/white"
+                    android:paddingLeft="12dp"
+                    android:paddingRight="12dp"
+                    android:textSize="20sp" />
+            </LinearLayout>
 
             <!-- Save button removed: wallet is saved by the Create Wallet flow -->
 

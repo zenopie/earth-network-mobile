@@ -76,8 +76,9 @@ public class WalletFragment extends Fragment {
         addressRow = view.findViewById(R.id.address_row);
         balanceRow = view.findViewById(R.id.balance_row);
  
-        // Initialize buttons
-        Button btnGenerate = view.findViewById(R.id.btn_generate);
+        // Initialize wallet selector + buttons
+        final android.widget.TextView currentWalletName = view.findViewById(R.id.current_wallet_name);
+        Button btnAddWallet = view.findViewById(R.id.btn_add_wallet);
         Button btnCopy = view.findViewById(R.id.btn_copy);
         Button btnRefresh = view.findViewById(R.id.btn_refresh);
         Button btnShowMnemonic = view.findViewById(R.id.btn_show_mnemonic);
@@ -106,24 +107,28 @@ public class WalletFragment extends Fragment {
         String savedMnemonic = securePrefs.getString(KEY_MNEMONIC, "");
         String savedWalletName = securePrefs.getString("wallet_name", "");
  
-        // Update generate button label to wallet name if present
-        if (!TextUtils.isEmpty(savedWalletName) && btnGenerate != null) {
-            btnGenerate.setText(savedWalletName);
+        // Update current wallet name label if present
+        if (!TextUtils.isEmpty(savedWalletName) && currentWalletName != null) {
+            currentWalletName.setText(savedWalletName);
         }
  
         // Derive and display address if mnemonic exists
         if (!TextUtils.isEmpty(savedMnemonic)) {
             deriveAndDisplayAddress(savedMnemonic);
         }
- 
+  
         // Set up button click listeners
-        if (btnGenerate != null) {
-            btnGenerate.setOnClickListener(v -> {
+        if (btnAddWallet != null) {
+            btnAddWallet.setOnClickListener(v -> {
                 Intent i = new Intent(requireContext(), CreateWalletActivity.class);
                 startActivity(i);
             });
         }
- 
+  
+        if (currentWalletName != null) {
+            currentWalletName.setOnClickListener(v -> showWalletPicker());
+        }
+  
         if (btnShowMnemonic != null) {
             btnShowMnemonic.setOnClickListener(v -> {
                 final android.widget.EditText pinField = new android.widget.EditText(requireContext());
@@ -146,8 +151,14 @@ public class WalletFragment extends Fragment {
                                 String pinHash = sb.toString();
                                 String stored = securePrefs.getString("pin_hash", "");
                                 if (stored != null && stored.equals(pinHash)) {
-                                    String mnem = securePrefs.getString(KEY_MNEMONIC, "");
-                                    if (android.text.TextUtils.isEmpty(mnem)) {
+                                    String walletsJson = securePrefs.getString("wallets", "[]");
+                                    org.json.JSONArray arr = new org.json.JSONArray(walletsJson);
+                                    int sel = securePrefs.getInt("selected_wallet_index", -1);
+                                    String mnem = null;
+                                    if (sel >=0 && sel < arr.length()) {
+                                        mnem = arr.getJSONObject(sel).optString("mnemonic", "");
+                                    }
+                                    if (mnem == null || mnem.isEmpty()) {
                                         Toast.makeText(requireContext(), "No mnemonic stored", Toast.LENGTH_SHORT).show();
                                         return;
                                     }
@@ -216,12 +227,12 @@ public class WalletFragment extends Fragment {
         String saved = securePrefs != null ? securePrefs.getString(KEY_MNEMONIC, "") : "";
         return TextUtils.isEmpty(saved) ? "" : saved;
     }
-
+ 
     private String getLcdUrl() {
         // Endpoint fixed to project default
         return SecretWallet.DEFAULT_LCD_URL;
     }
-
+ 
     private void deriveAndDisplayAddress(String mnemonic) {
         try {
             ECKey key = SecretWallet.deriveKeyFromMnemonic(mnemonic);
@@ -233,7 +244,65 @@ public class WalletFragment extends Fragment {
             Toast.makeText(requireContext(), "Derivation failed", Toast.LENGTH_LONG).show();
         }
     }
-
+ 
+    private void refreshWalletsUI() {
+        try {
+            String walletsJson = securePrefs.getString("wallets", "[]");
+            org.json.JSONArray arr = new org.json.JSONArray(walletsJson);
+            int sel = securePrefs.getInt("selected_wallet_index", -1);
+            if (arr.length() == 0) {
+                if (getView() != null) {
+                    TextView current = getView().findViewById(R.id.current_wallet_name);
+                    if (current != null) current.setText("No wallet");
+                }
+                addressRow.setVisibility(View.GONE);
+                balanceRow.setVisibility(View.GONE);
+                return;
+            }
+            if (sel < 0 || sel >= arr.length()) {
+                sel = 0;
+                securePrefs.edit().putInt("selected_wallet_index", sel).apply();
+            }
+            org.json.JSONObject obj = arr.getJSONObject(sel);
+            String name = obj.optString("name", "Wallet");
+            String mn = obj.optString("mnemonic", "");
+            if (getView() != null) {
+                TextView current = getView().findViewById(R.id.current_wallet_name);
+                if (current != null) current.setText(name);
+            }
+            if (!TextUtils.isEmpty(mn)) {
+                deriveAndDisplayAddress(mn);
+            } else {
+                addressRow.setVisibility(View.GONE);
+                balanceRow.setVisibility(View.GONE);
+            }
+        } catch (Exception e) {
+            Log.e("WalletFragment", "Failed to refresh wallets UI", e);
+        }
+    }
+ 
+    private void showWalletPicker() {
+        try {
+            String walletsJson = securePrefs.getString("wallets", "[]");
+            org.json.JSONArray arr = new org.json.JSONArray(walletsJson);
+            if (arr.length() == 0) {
+                Toast.makeText(requireContext(), "No wallets", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            String[] names = new String[arr.length()];
+            for (int i = 0; i < arr.length(); i++) names[i] = arr.getJSONObject(i).optString("name", "Wallet " + i);
+            new androidx.appcompat.app.AlertDialog.Builder(requireContext())
+                    .setTitle("Select wallet")
+                    .setItems(names, (dlg, which) -> {
+                        securePrefs.edit().putInt("selected_wallet_index", which).apply();
+                        refreshWalletsUI();
+                    })
+                    .show();
+        } catch (Exception e) {
+            Log.e("WalletFragment", "Failed to show wallet picker", e);
+        }
+    }
+ 
     private class FetchBalanceTask extends AsyncTask<String, Void, Long> {
         private Exception error;
 

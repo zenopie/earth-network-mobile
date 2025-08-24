@@ -18,6 +18,9 @@ import android.widget.Toast;
 import android.widget.CheckBox;
 import android.widget.CompoundButton;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
@@ -278,23 +281,41 @@ public class CreateWalletActivity extends AppCompatActivity {
 
     private void saveMnemonicAndPin(String pin, String walletName) {
         try {
-            // Hash PIN with SHA-256 (simple & acceptable for this context; real apps should use stronger KDF)
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] digest = md.digest(pin.getBytes(StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder();
-            for (byte b : digest) {
-                sb.append(String.format("%02x", b));
+            // Determine if a PIN already exists (shared across all wallets)
+            String existingPinHash = securePrefs.getString(KEY_PIN_HASH, "");
+            String pinHash = existingPinHash;
+
+            if (TextUtils.isEmpty(existingPinHash)) {
+                // Hash PIN with SHA-256 (use a proper KDF in production)
+                MessageDigest md = MessageDigest.getInstance("SHA-256");
+                byte[] digest = md.digest(pin.getBytes(StandardCharsets.UTF_8));
+                StringBuilder sb = new StringBuilder();
+                for (byte b : digest) {
+                    sb.append(String.format("%02x", b));
+                }
+                pinHash = sb.toString();
             }
-            String pinHash = sb.toString();
- 
-            // Save securely including wallet name
-            securePrefs.edit()
-                    .putString(KEY_MNEMONIC, mnemonic)
-                    .putString(KEY_PIN_HASH, pinHash)
-                    .putString(KEY_WALLET_NAME, walletName)
-                    .putString(KEY_LCD_URL, SecretWallet.DEFAULT_LCD_URL)
-                    .apply();
- 
+
+            // Load existing wallets array (stored as JSON string)
+            String walletsJson = securePrefs.getString("wallets", "[]");
+            JSONArray arr = new JSONArray(walletsJson);
+
+            // Append new wallet object { name, mnemonic }
+            JSONObject obj = new JSONObject();
+            obj.put("name", walletName);
+            obj.put("mnemonic", mnemonic);
+            arr.put(obj);
+
+            // Save updated wallets and other data
+            SharedPreferences.Editor ed = securePrefs.edit();
+            ed.putString("wallets", arr.toString());
+            ed.putInt("selected_wallet_index", arr.length() - 1);
+            ed.putString(KEY_LCD_URL, SecretWallet.DEFAULT_LCD_URL);
+            if (TextUtils.isEmpty(existingPinHash)) {
+                ed.putString(KEY_PIN_HASH, pinHash);
+            }
+            ed.apply();
+
             Toast.makeText(this, "Wallet created and saved securely", Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
             Toast.makeText(this, "Failed to save wallet", Toast.LENGTH_LONG).show();
