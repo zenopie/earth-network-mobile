@@ -36,7 +36,7 @@ public class ANMLClaimFragment extends Fragment {
 
     private static final String REGISTRATION_CONTRACT = "secret12q72eas34u8fyg68k6wnerk2nd6l5gaqppld6p";
     private static final String REGISTRATION_HASH = "12fad89bbc7f4c9051b7b5fa1c7af1c17480dcdee4b962cf6cb6ff668da02667";
-    private static final String PROXY_URL = "http://10.135.34.13:8000/api/contract_query";
+    private static final String PROXY_URL = "http://192.168.1.145:8000/api/contract_query";
     private static final long ONE_DAY_MILLIS = 24L * 60L * 60L * 1000L;
 
     private ImageView loadingGif;
