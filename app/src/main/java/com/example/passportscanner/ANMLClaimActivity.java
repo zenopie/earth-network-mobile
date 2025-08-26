@@ -94,6 +94,18 @@ public class ANMLClaimActivity extends AppCompatActivity {
         btnOpenWallet = findViewById(R.id.btn_open_wallet);
         btnClaim = findViewById(R.id.btn_claim);
         
+        // Ensure any theme tinting is cleared so the drawable renders as-designed
+        try {
+            if (btnOpenWallet != null) {
+                btnOpenWallet.setBackgroundTintList(null);
+                btnOpenWallet.setTextColor(getResources().getColor(R.color.anml_button_text));
+            }
+            if (btnClaim != null) {
+                btnClaim.setBackgroundTintList(null);
+                btnClaim.setTextColor(getResources().getColor(R.color.anml_button_text));
+            }
+        } catch (Exception ignored) {}
+        
         btnOpenWallet.setOnClickListener(v -> {
             // Open the existing passport scan flow (MRZInputActivity) for registration
             Intent i = new Intent(ANMLClaimActivity.this, MRZInputActivity.class);

@@ -65,7 +65,7 @@
                 android:stateListAnimator="@null" />
         </LinearLayout>
 
-        <!-- CLAIM -->
+        <!-- CLAIM (mirrors REGISTER UI but shows ANML image and 'Claim' action) -->
         <LinearLayout
             android:id="@+id/claim_box"
             android:layout_width="match_parent"
@@ -73,42 +73,34 @@
             android:orientation="vertical"
             android:visibility="gone"
             android:padding="12dp"
-            android:layout_marginTop="12dp">
-
-            <TextView
-                android:id="@+id/claim_title"
+            android:gravity="center">
+    
+            <ImageView
+                android:id="@+id/claim_anml_image"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="ANML Claim"
-                android:textColor="@color/sidebar_text"
-                android:textSize="18sp"
-                android:paddingBottom="8dp"
-                android:gravity="center" />
-
-            <TextView
-                android:id="@+id/claim_subtitle"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="You are eligible to claim ANML."
-                android:textColor="@color/sidebar_text"
-                android:textSize="14sp"
-                android:gravity="center" />
-
+                android:layout_marginBottom="24dp"
+                android:src="@drawable/anml"
+                android:contentDescription="@string/passport_scan"
+                android:adjustViewBounds="true"
+                android:scaleType="centerInside"
+                android:importantForAccessibility="yes" />
+    
             <Button
                 android:id="@+id/btn_claim"
-                android:layout_width="match_parent"
-                android:layout_height="56dp"
-                android:layout_marginTop="12dp"
-                android:paddingLeft="16dp"
-                android:paddingRight="16dp"
-                android:backgroundTint="@color/sidebar_bg"
-                android:drawableLeft="@drawable/ic_nfc"
-                android:drawablePadding="12dp"
+                android:layout_width="220dp"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:layout_gravity="center"
+                android:paddingLeft="20dp"
+                android:paddingRight="20dp"
+                android:background="@drawable/btn_anml_desktop"
+                android:backgroundTint="@null"
                 android:text="Claim"
-                android:textColor="@color/sidebar_text"
+                android:textColor="@color/anml_button_text"
                 android:textAllCaps="false"
-                android:textSize="18sp"
-                android:gravity="center_vertical"
+                android:textSize="25sp"
+                android:gravity="center"
                 android:stateListAnimator="@null" />
         </LinearLayout>
 

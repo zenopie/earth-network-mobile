@@ -105,6 +105,10 @@ public class ANMLClaimFragment extends Fragment {
                 btnOpenWallet.setBackgroundTintList(null);
                 btnOpenWallet.setTextColor(getResources().getColor(R.color.anml_button_text));
             }
+            if (btnClaim != null) {
+                btnClaim.setBackgroundTintList(null);
+                btnClaim.setTextColor(getResources().getColor(R.color.anml_button_text));
+            }
         } catch (Exception ignored) {}
 
         btnOpenWallet.setOnClickListener(v -> {
