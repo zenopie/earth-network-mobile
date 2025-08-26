@@ -38,6 +38,9 @@ import android.webkit.ConsoleMessage;
 import android.webkit.WebViewClient;
 import android.os.Handler;
 import android.os.Looper;
+// UI helpers for showing response and a tappable action
+import com.google.android.material.snackbar.Snackbar;
+import androidx.appcompat.app.AlertDialog;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -136,6 +139,23 @@ public class ANMLClaimFragment extends Fragment {
             securePrefs = requireActivity().getSharedPreferences(PREF_FILE, requireActivity().MODE_PRIVATE);
         }
     }
+// Helper: return mnemonic for the currently-selected wallet (if any), otherwise fall back to legacy KEY_MNEMONIC.
+private String getSelectedMnemonic() {
+    try {
+        if (securePrefs == null) return "";
+        String walletsJson = securePrefs.getString("wallets", "[]");
+        org.json.JSONArray arr = new org.json.JSONArray(walletsJson);
+        int sel = securePrefs.getInt("selected_wallet_index", -1);
+        if (arr.length() > 0 && sel >= 0 && sel < arr.length()) {
+            return arr.getJSONObject(sel).optString("mnemonic", "");
+        }
+    } catch (Exception e) {
+        Log.w(TAG, "getSelectedMnemonic failed", e);
+    }
+    // fallback to legacy top-level mnemonic key
+    return securePrefs != null ? securePrefs.getString(KEY_MNEMONIC, "") : "";
+}
+
 // Invisible WebView used to run SecretJS (or the bridge HTML) for contract queries.
 private WebView hiddenWebView;
 // Shared state used when issuing a synchronous query through the WebView bridge.
@@ -149,6 +169,29 @@ private class JSBridge {
     @JavascriptInterface
     public void onQueryResult(String json) {
         webViewResult.set(json);
+
+        // Show a Snackbar with an action to view the full response.
+        try {
+            Handler h = new Handler(Looper.getMainLooper());
+            h.post(() -> {
+                try {
+                    String shortJson = (json != null && json.length() > 200) ? json.substring(0, 200) + "..." : json;
+                    // Attach to the activity content view so it's visible even if fragment view changes
+                    View root = requireActivity().findViewById(android.R.id.content);
+                    Snackbar.make(root, "SecretJS result: " + shortJson, Snackbar.LENGTH_LONG)
+                            .setAction("View", v -> {
+                                try {
+                                    new AlertDialog.Builder(requireContext())
+                                            .setTitle("SecretJS response")
+                                            .setMessage(json != null ? json : "(empty)")
+                                            .setPositiveButton("OK", null)
+                                            .show();
+                                } catch (Exception ignored) {}
+                            }).show();
+                } catch (Exception ignored) {}
+            });
+        } catch (Exception ignored) {}
+
         CountDownLatch l = webViewLatch;
         if (l != null) l.countDown();
     }
@@ -156,6 +199,28 @@ private class JSBridge {
     @JavascriptInterface
     public void onQueryError(String err) {
         webViewError.set(err);
+
+        // Show a Snackbar for the error with action to view full error text.
+        try {
+            Handler h = new Handler(Looper.getMainLooper());
+            h.post(() -> {
+                try {
+                    String shortErr = (err != null && err.length() > 200) ? err.substring(0, 200) + "..." : err;
+                    View root = requireActivity().findViewById(android.R.id.content);
+                    Snackbar.make(root, "SecretJS error: " + shortErr, Snackbar.LENGTH_LONG)
+                            .setAction("View", v -> {
+                                try {
+                                    new AlertDialog.Builder(requireContext())
+                                            .setTitle("SecretJS error")
+                                            .setMessage(err != null ? err : "(empty)")
+                                            .setPositiveButton("OK", null)
+                                            .show();
+                                } catch (Exception ignored) {}
+                            }).show();
+                } catch (Exception ignored) {}
+            });
+        } catch (Exception ignored) {}
+
         CountDownLatch l = webViewLatch;
         if (l != null) l.countDown();
     }
@@ -287,7 +352,7 @@ private JSONObject runQueryViaWebView(final JSONObject payload) throws Exception
         @Override
         protected JSONObject doInBackground(Void... voids) {
             try {
-                String mnemonic = securePrefs.getString(KEY_MNEMONIC, "");
+                String mnemonic = getSelectedMnemonic();
                 if (TextUtils.isEmpty(mnemonic)) {
                     JSONObject res = new JSONObject();
                     res.put("status", "no_wallet");
