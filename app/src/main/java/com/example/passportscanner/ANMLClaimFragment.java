@@ -29,6 +29,18 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 
+// WebView + JS bridge imports
+import android.webkit.WebView;
+import android.webkit.WebSettings;
+import android.webkit.JavascriptInterface;
+import android.webkit.WebChromeClient;
+import android.webkit.ConsoleMessage;
+import android.webkit.WebViewClient;
+import android.os.Handler;
+import android.os.Looper;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 public class ANMLClaimFragment extends Fragment {
     private static final String TAG = "ANMLClaimFragment";
     private static final String PREF_FILE = "secret_wallet_prefs";
@@ -36,7 +48,7 @@ public class ANMLClaimFragment extends Fragment {
 
     private static final String REGISTRATION_CONTRACT = "secret12q72eas34u8fyg68k6wnerk2nd6l5gaqppld6p";
     private static final String REGISTRATION_HASH = "12fad89bbc7f4c9051b7b5fa1c7af1c17480dcdee4b962cf6cb6ff668da02667";
-    private static final String PROXY_URL = "http://192.168.1.145:8000/api/contract_query";
+    
     private static final long ONE_DAY_MILLIS = 24L * 60L * 60L * 1000L;
 
     private ImageView loadingGif;
@@ -105,6 +117,7 @@ public class ANMLClaimFragment extends Fragment {
         });
 
         initSecurePrefs();
+        initHiddenWebView(requireContext());
         new CheckStatusTask().execute();
     }
 
@@ -123,6 +136,134 @@ public class ANMLClaimFragment extends Fragment {
             securePrefs = requireActivity().getSharedPreferences(PREF_FILE, requireActivity().MODE_PRIVATE);
         }
     }
+// Invisible WebView used to run SecretJS (or the bridge HTML) for contract queries.
+private WebView hiddenWebView;
+// Shared state used when issuing a synchronous query through the WebView bridge.
+private final AtomicReference<String> webViewResult = new AtomicReference<>();
+private final AtomicReference<String> webViewError = new AtomicReference<>();
+private volatile CountDownLatch webViewLatch;
+// Latch that signals when the bridge HTML has finished loading in the WebView.
+private volatile CountDownLatch pageLoadLatch;
+
+private class JSBridge {
+    @JavascriptInterface
+    public void onQueryResult(String json) {
+        webViewResult.set(json);
+        CountDownLatch l = webViewLatch;
+        if (l != null) l.countDown();
+    }
+
+    @JavascriptInterface
+    public void onQueryError(String err) {
+        webViewError.set(err);
+        CountDownLatch l = webViewLatch;
+        if (l != null) l.countDown();
+    }
+}
+
+private void initHiddenWebView(android.content.Context ctx) {
+    try {
+        if (hiddenWebView != null) return;
+        hiddenWebView = new WebView(ctx);
+        WebSettings ws = hiddenWebView.getSettings();
+        ws.setJavaScriptEnabled(true);
+        // Allow loading local asset and cross-origin if needed by proxy (fetch will go to proxy URL)
+        ws.setAllowUniversalAccessFromFileURLs(true);
+
+        // Reset and create a page-load latch so callers can wait until the bridge is ready.
+        pageLoadLatch = new CountDownLatch(1);
+
+        hiddenWebView.addJavascriptInterface(new JSBridge(), "AndroidBridge");
+        hiddenWebView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                try {
+                    CountDownLatch l = pageLoadLatch;
+                    if (l != null) l.countDown();
+                } catch (Exception ignored) {}
+            }
+        });
+        // Load the bridge HTML from assets (created earlier)
+        hiddenWebView.loadUrl("file:///android_asset/secret_bridge.html");
+    } catch (Exception e) {
+        Log.w(TAG, "Failed to initialize hidden WebView: " + e.getMessage(), e);
+        hiddenWebView = null;
+        pageLoadLatch = null;
+    }
+}
+
+/**
+ * Attempt to run a contract query via the hidden WebView bridge.
+ * This method posts the JS call on the main thread and waits (with timeout) for a JS callback.
+ * Returns parsed JSONObject on success, null if no result and no error (caller may fallback).
+ * Throws Exception when a JS error callback is received.
+ */
+private JSONObject runQueryViaWebView(final JSONObject payload) throws Exception {
+    if (hiddenWebView == null) return null;
+    // prepare callback state
+    webViewResult.set(null);
+    webViewError.set(null);
+    webViewLatch = new CountDownLatch(1);
+
+    final String contract = payload.optString("contract_address", "");
+    final String codeHash = payload.optString("code_hash", "");
+    final JSONObject queryObj = payload.optJSONObject("query");
+    final String queryJson = (queryObj == null) ? "{}" : queryObj.toString();
+
+    // Build JS expression safely using JSONObject.quote to produce JS string literals
+    final String jsExpr = "(function(){try{ if(typeof window.runQuery==='function'){ window.runQuery(" +
+            JSONObject.quote(contract) + "," +
+            JSONObject.quote(codeHash) + ",JSON.parse(" + JSONObject.quote(queryJson) + ")," +
+            JSONObject.quote("") + "," +
+            JSONObject.quote(com.example.passportscanner.wallet.SecretWallet.DEFAULT_LCD_URL) + "); } else { if(window.AndroidBridge && window.AndroidBridge.onQueryError) window.AndroidBridge.onQueryError('runQuery not defined'); } }catch(e){ if(window.AndroidBridge && window.AndroidBridge.onQueryError) window.AndroidBridge.onQueryError(String(e)); }})();";
+
+    // Wait for the bridge page to finish loading (avoid calling JS before runQuery is defined)
+    try {
+        CountDownLatch l = pageLoadLatch;
+        if (l != null) {
+            boolean loaded = l.await(5, TimeUnit.SECONDS);
+            if (!loaded) {
+                Log.w(TAG, "Hidden WebView bridge page did not finish loading before JS call");
+            }
+        }
+    } catch (InterruptedException ie) {
+        Thread.currentThread().interrupt();
+    }
+
+    Handler mainHandler = new Handler(Looper.getMainLooper());
+    try {
+        mainHandler.post(() -> {
+            try {
+                hiddenWebView.evaluateJavascript(jsExpr, null);
+            } catch (Exception e) {
+                // If evaluate fails, set error and count down so caller doesn't block forever
+                webViewError.set("evaluateJavascript failed: " + e.getMessage());
+                CountDownLatch l = webViewLatch;
+                if (l != null) l.countDown();
+            }
+        });
+
+        // Wait up to 15 seconds for JS to respond
+        boolean ok = webViewLatch.await(15, TimeUnit.SECONDS);
+        webViewLatch = null;
+        if (!ok) {
+            // timeout - no result from JS
+            return null;
+        }
+        if (webViewError.get() != null) {
+            throw new Exception("WebView error: " + webViewError.get());
+        }
+        String res = webViewResult.get();
+        if (res == null || res.isEmpty()) return null;
+        return new JSONObject(res);
+    } catch (InterruptedException ie) {
+        Thread.currentThread().interrupt();
+        throw new Exception("Interrupted waiting for WebView result", ie);
+    } finally {
+        webViewLatch = null;
+    }
+}
 
     private void showLoading(boolean loading) {
         if (loadingGif != null) loadingGif.setVisibility(loading ? View.VISIBLE : View.GONE);
@@ -169,45 +310,22 @@ public class ANMLClaimFragment extends Fragment {
                 payload.put("query", q);
                 payload.put("code_hash", REGISTRATION_HASH);
 
-                URL url = new URL(PROXY_URL);
-                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                try {
-                    conn.setConnectTimeout(15000);
-                    conn.setReadTimeout(20000);
-                    conn.setDoOutput(true);
-                    conn.setRequestMethod("POST");
-                    conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-
-                    byte[] out = payload.toString().getBytes("UTF-8");
-                    conn.setFixedLengthStreamingMode(out.length);
-                    conn.connect();
-
-                    OutputStream os = conn.getOutputStream();
-                    os.write(out);
-                    os.flush();
-                    os.close();
-
-                    InputStream in = (conn.getResponseCode() >= 400) ? conn.getErrorStream() : conn.getInputStream();
-                    if (in == null) throw new Exception("Empty response from proxy");
-                    java.util.Scanner s = new java.util.Scanner(in).useDelimiter("\\A");
-                    String respBody = s.hasNext() ? s.next() : "";
-                    in.close();
-
-                    JSONObject root = new JSONObject(respBody);
-                    boolean success = root.optBoolean("success", false);
-                    if (!success) {
-                        throw new Exception("Proxy returned error: " + root.toString());
-                    }
-
-                    JSONObject result = root.optJSONObject("result");
-                    if (result == null) {
-                        return root;
-                    }
-                    result.put("queried_address", address);
-                    return result;
-                } finally {
-                    conn.disconnect();
+                // Run the query through the hidden WebView (SecretJS). No proxy fallback.
+                JSONObject root = runQueryViaWebView(payload);
+                if (root == null) {
+                    throw new Exception("No response from WebView bridge (SecretJS).");
                 }
+                boolean success = root.optBoolean("success", false);
+                if (!success) {
+                    throw new Exception("Bridge returned error: " + root.toString());
+                }
+                JSONObject result = root.optJSONObject("result");
+                if (result == null) {
+                    // return root as-is if no result object
+                    return root;
+                }
+                result.put("queried_address", address);
+                return result;
             } catch (Exception e) {
                 error = e;
                 Log.e(TAG, "CheckStatusTask failed", e);
