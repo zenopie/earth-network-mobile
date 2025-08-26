@@ -140,6 +140,16 @@ public class WalletListActivity extends AppCompatActivity {
                     return true;
                 });
  
+                // Allow tapping the row to select it as the active wallet
+                row.setOnClickListener(v -> {
+                    try {
+                        securePrefs.edit().putInt("selected_wallet_index", index).apply();
+                        Toast.makeText(WalletListActivity.this, "Selected wallet: " + walletName, Toast.LENGTH_SHORT).show();
+                    } catch (Exception ignored) {}
+                    // Finish the activity so callers return to the previous screen showing the selected wallet
+                    finish();
+                });
+ 
                 container.addView(row);
             }
         } catch (Exception e) {

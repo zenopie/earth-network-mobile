@@ -156,6 +156,23 @@ public class WalletListFragment extends Fragment {
                     return true;
                 });
  
+                // Allow tapping the row to select it as the active wallet
+                row.setOnClickListener(v -> {
+                    try {
+                        securePrefs.edit().putInt("selected_wallet_index", index).apply();
+                        Toast.makeText(requireContext(), "Selected wallet: " + walletName, Toast.LENGTH_SHORT).show();
+                    } catch (Exception ignored) {}
+                    // If hosted inside HostActivity, switch back to the Wallet fragment to show the selected wallet
+                    if (getActivity() != null) {
+                        if (getActivity() instanceof com.example.passportscanner.HostActivity) {
+                            ((com.example.passportscanner.HostActivity) getActivity()).showFragment("wallet");
+                        } else {
+                            // Standalone activity case: finish so caller refreshes UI
+                            getActivity().finish();
+                        }
+                    }
+                });
+ 
                 container.addView(row);
             }
         } catch (Exception e) {
