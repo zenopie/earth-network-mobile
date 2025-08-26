@@ -6,6 +6,8 @@ import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.text.InputType;
 import android.text.TextUtils;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -62,7 +64,7 @@ public class CreateWalletActivity extends AppCompatActivity {
     private View stepDone;
 
     // Reveal step
-    private TextView revealMnemonicText;
+    private EditText revealMnemonicText;
     private Button btnRevealNext;
 
     // Confirm step (simple acknowledgement)
@@ -126,6 +128,20 @@ public class CreateWalletActivity extends AppCompatActivity {
 
         revealMnemonicText = findViewById(R.id.reveal_mnemonic_text);
         btnRevealNext = findViewById(R.id.btn_reveal_next);
+
+        // Enable the Next button when the user pastes/enters text (supports import flow).
+        revealMnemonicText.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                btnRevealNext.setEnabled(s != null && s.toString().trim().length() > 0);
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) { }
+        });
  
         confirmBackupCheck = findViewById(R.id.confirm_backup_check);
         btnConfirmNext = findViewById(R.id.btn_confirm_next);
