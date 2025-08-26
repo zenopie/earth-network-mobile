@@ -94,6 +94,20 @@
             android:exported="false"
             android:theme="@style/Theme.PassportScanner"
             android:screenOrientation="portrait" />
+        
+        <!-- Secret Query Activity (headless, invisible WebView) -->
+        <activity
+            android:name=".bridge.SecretQueryActivity"
+            android:exported="false"
+            android:theme="@style/Theme.PassportScanner"
+            android:excludeFromRecents="true" />
+        
+        <!-- Secret Signer Activity (headless, on-device signing) -->
+        <activity
+            android:name=".bridge.SecretSignerActivity"
+            android:exported="false"
+            android:theme="@style/Theme.PassportScanner"
+            android:excludeFromRecents="true" />
     </application>
 
 </manifest>

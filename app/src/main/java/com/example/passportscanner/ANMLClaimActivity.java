@@ -2,7 +2,7 @@ package com.example.passportscanner;
 
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.os.AsyncTask;
+
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.util.Log;
@@ -21,18 +21,18 @@ import androidx.security.crypto.MasterKeys;
 import com.example.passportscanner.wallet.SecretWallet;
 
 import org.json.JSONObject;
-import org.json.JSONException;
 
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
+
+
+
+
+
 
 /**
  * ANML Claim activity:
  * - Reads saved mnemonic (EncryptedSharedPreferences fallback)
  * - Derives secret address
- * - Calls the contract query proxy to determine registration/claim status
+ * - Uses SecretQueryActivity to run a contract query via an invisible WebView (SecretJS)
  * - Shows the appropriate UI box: register / claim / complete
  *
  * Note: executing the claim transaction from mobile is out-of-scope for this change;
@@ -47,8 +47,6 @@ public class ANMLClaimActivity extends AppCompatActivity {
     private static final String REGISTRATION_CONTRACT = "secret12q72eas34u8fyg68k6wnerk2nd6l5gaqppld6p";
     private static final String REGISTRATION_HASH = "12fad89bbc7f4c9051b7b5fa1c7af1c17480dcdee4b962cf6cb6ff668da02667";
 
-    // Proxy endpoint
-    private static final String PROXY_URL = "http://192.168.1.145:8000/api/contract_query";
     private static final long ONE_DAY_MILLIS = 24L * 60L * 60L * 1000L;
 
     private ImageView loadingGif;
@@ -140,7 +138,7 @@ public class ANMLClaimActivity extends AppCompatActivity {
         }
 
         // Start status check
-        new CheckStatusTask().execute();
+        checkStatus();
     }
 
     private void initSecurePrefs() {
@@ -177,134 +175,107 @@ public class ANMLClaimActivity extends AppCompatActivity {
         }
     }
 
-    private class CheckStatusTask extends AsyncTask<Void, Void, JSONObject> {
-        private Exception error;
+    // Request code for launching SecretQueryActivity
+    private static final int REQ_QUERY = 1001;
 
-        @Override
-        protected void onPreExecute() {
-            super.onPreExecute();
+    // Launch the reusable query activity to check registration/claim status
+    private void checkStatus() {
+        try {
             showLoading(true);
-        }
 
-        @Override
-        protected JSONObject doInBackground(Void... voids) {
+            // Prefer wallets array (multi-wallet support). Fall back to legacy top-level mnemonic.
+            String mnemonic = "";
             try {
-                // Prefer wallets array (multi-wallet support). Fall back to legacy top-level mnemonic.
-                String mnemonic = "";
-                try {
-                    String walletsJson = securePrefs.getString("wallets", "[]");
-                    org.json.JSONArray arr = new org.json.JSONArray(walletsJson);
-                    int sel = securePrefs.getInt("selected_wallet_index", -1);
-                    if (arr.length() > 0) {
-                        if (sel >= 0 && sel < arr.length()) {
-                            mnemonic = arr.getJSONObject(sel).optString("mnemonic", "");
-                        } else if (arr.length() == 1) {
-                            // if only one wallet exists, use it
-                            mnemonic = arr.getJSONObject(0).optString("mnemonic", "");
-                        }
+                String walletsJson = securePrefs.getString("wallets", "[]");
+                org.json.JSONArray arr = new org.json.JSONArray(walletsJson);
+                int sel = securePrefs.getInt("selected_wallet_index", -1);
+                if (arr.length() > 0) {
+                    if (sel >= 0 && sel < arr.length()) {
+                        mnemonic = arr.getJSONObject(sel).optString("mnemonic", "");
+                    } else if (arr.length() == 1) {
+                        mnemonic = arr.getJSONObject(0).optString("mnemonic", "");
                     }
-                } catch (Exception ignored) {}
-                if (TextUtils.isEmpty(mnemonic)) {
-                    mnemonic = securePrefs.getString(KEY_MNEMONIC, "");
                 }
-                if (TextUtils.isEmpty(mnemonic)) {
-                    // No wallet configured
-                    JSONObject res = new JSONObject();
-                    res.put("status", "no_wallet");
-                    return res;
-                }
-
-                String address = SecretWallet.getAddressFromMnemonic(mnemonic);
-                if (TextUtils.isEmpty(address)) {
-                    JSONObject res = new JSONObject();
-                    res.put("status", "no_wallet");
-                    return res;
-                }
-
-                // Build proxy payload
-                JSONObject payload = new JSONObject();
-                payload.put("contract_address", REGISTRATION_CONTRACT);
-                JSONObject q = new JSONObject();
-                JSONObject inner = new JSONObject();
-                inner.put("address", address);
-                q.put("query_registration_status", inner);
-                payload.put("query", q);
-                payload.put("code_hash", REGISTRATION_HASH);
-
-                // POST to proxy
-                URL url = new URL(PROXY_URL);
-                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                try {
-                    conn.setConnectTimeout(15000);
-                    conn.setReadTimeout(20000);
-                    conn.setDoOutput(true);
-                    conn.setRequestMethod("POST");
-                    conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-
-                    byte[] out = payload.toString().getBytes("UTF-8");
-                    conn.setFixedLengthStreamingMode(out.length);
-                    conn.connect();
-
-                    OutputStream os = conn.getOutputStream();
-                    os.write(out);
-                    os.flush();
-                    os.close();
-
-                    InputStream in = (conn.getResponseCode() >= 400) ? conn.getErrorStream() : conn.getInputStream();
-                    if (in == null) throw new Exception("Empty response from proxy");
-                    java.util.Scanner s = new java.util.Scanner(in).useDelimiter("\\A");
-                    String respBody = s.hasNext() ? s.next() : "";
-                    in.close();
-
-                    JSONObject root = new JSONObject(respBody);
-                    boolean success = root.optBoolean("success", false);
-                    if (!success) {
-                        throw new Exception("Proxy returned error: " + root.toString());
-                    }
-
-                    JSONObject result = root.optJSONObject("result");
-                    if (result == null) {
-                        // Some proxies might return the raw value directly
-                        // Return root as fallback
-                        return root;
-                    }
-                    // attach address for logging/debug
-                    result.put("queried_address", address);
-                    return result;
-                } finally {
-                    conn.disconnect();
-                }
-            } catch (Exception e) {
-                error = e;
-                Log.e(TAG, "CheckStatusTask failed", e);
-                return null;
+            } catch (Exception ignored) {}
+            if (TextUtils.isEmpty(mnemonic)) {
+                showLoading(false);
+                if (registerBox != null) registerBox.setVisibility(View.VISIBLE);
+                return;
             }
-        }
 
-        @Override
-        protected void onPostExecute(JSONObject result) {
+            String address = SecretWallet.getAddressFromMnemonic(mnemonic);
+            if (TextUtils.isEmpty(address)) {
+                showLoading(false);
+                if (registerBox != null) registerBox.setVisibility(View.VISIBLE);
+                return;
+            }
+
+            // Build query object for the bridge (no proxy)
+            JSONObject q = new JSONObject();
+            JSONObject inner = new JSONObject();
+            inner.put("address", address);
+            q.put("query_registration_status", inner);
+
+            Intent qi = new Intent(ANMLClaimActivity.this, com.example.passportscanner.bridge.SecretQueryActivity.class);
+            qi.putExtra(com.example.passportscanner.bridge.SecretQueryActivity.EXTRA_CONTRACT_ADDRESS, REGISTRATION_CONTRACT);
+            qi.putExtra(com.example.passportscanner.bridge.SecretQueryActivity.EXTRA_CODE_HASH, REGISTRATION_HASH);
+            qi.putExtra(com.example.passportscanner.bridge.SecretQueryActivity.EXTRA_QUERY_JSON, q.toString());
+            startActivityForResult(qi, REQ_QUERY);
+        } catch (Exception e) {
+            Log.e(TAG, "checkStatus failed", e);
             showLoading(false);
-            if (error != null) {
-                errorText.setText("Failed to check status: " + error.getMessage());
+            if (errorText != null) {
+                errorText.setText("Failed to check status: " + e.getMessage());
                 errorText.setVisibility(View.VISIBLE);
+            }
+        }
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_QUERY) {
+            showLoading(false);
+            if (resultCode != RESULT_OK) {
+                String err = (data != null) ? data.getStringExtra(com.example.passportscanner.bridge.SecretQueryActivity.EXTRA_ERROR) : "Query canceled";
+                if (errorText != null) {
+                    errorText.setText("Failed to check status: " + err);
+                    errorText.setVisibility(View.VISIBLE);
+                }
                 return;
             }
-
-            if (result == null) {
-                errorText.setText("No response from server.");
-                errorText.setVisibility(View.VISIBLE);
-                return;
-            }
-
             try {
+                String json = (data != null) ? data.getStringExtra(com.example.passportscanner.bridge.SecretQueryActivity.EXTRA_RESULT_JSON) : null;
+                if (TextUtils.isEmpty(json)) {
+                    if (errorText != null) {
+                        errorText.setText("No response from bridge.");
+                        errorText.setVisibility(View.VISIBLE);
+                    }
+                    return;
+                }
+                JSONObject root = new JSONObject(json);
+                boolean success = root.optBoolean("success", false);
+                if (!success) {
+                    if (errorText != null) {
+                        errorText.setText("Bridge returned error.");
+                        errorText.setVisibility(View.VISIBLE);
+                    }
+                    return;
+                }
+                JSONObject result = root.optJSONObject("result");
+                if (result == null) {
+                    result = root;
+                }
+
                 if ("no_wallet".equals(result.optString("status", ""))) {
-                    registerBox.setVisibility(View.VISIBLE);
+                    if (registerBox != null) registerBox.setVisibility(View.VISIBLE);
                     return;
                 }
 
                 boolean registered = result.optBoolean("registration_status", false);
                 if (!registered) {
-                    registerBox.setVisibility(View.VISIBLE);
+                    if (registerBox != null) registerBox.setVisibility(View.VISIBLE);
                     return;
                 }
 
@@ -312,14 +283,16 @@ public class ANMLClaimActivity extends AppCompatActivity {
                 long nextClaimMillis = (lastClaim / 1000000L) + ONE_DAY_MILLIS;
                 long now = System.currentTimeMillis();
                 if (now > nextClaimMillis) {
-                    claimBox.setVisibility(View.VISIBLE);
+                    if (claimBox != null) claimBox.setVisibility(View.VISIBLE);
                 } else {
-                    completeBox.setVisibility(View.VISIBLE);
+                    if (completeBox != null) completeBox.setVisibility(View.VISIBLE);
                 }
             } catch (Exception e) {
-                Log.e(TAG, "Failed to parse result", e);
-                errorText.setText("Invalid result from server.");
-                errorText.setVisibility(View.VISIBLE);
+                Log.e(TAG, "Failed to parse bridge result", e);
+                if (errorText != null) {
+                    errorText.setText("Invalid result from bridge.");
+                    errorText.setVisibility(View.VISIBLE);
+                }
             }
         }
     }
