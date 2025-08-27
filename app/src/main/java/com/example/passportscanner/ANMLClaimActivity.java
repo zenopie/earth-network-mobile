@@ -15,6 +15,7 @@ import com.bumptech.glide.Glide;
 import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions;
  
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.app.AlertDialog;
 import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
 
@@ -60,6 +61,7 @@ public class ANMLClaimActivity extends AppCompatActivity {
     private Button btnClaim;
 
     private SharedPreferences securePrefs;
+    private boolean suppressNextQueryDialog = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -111,10 +113,20 @@ public class ANMLClaimActivity extends AppCompatActivity {
         });
 
         btnClaim.setOnClickListener(v -> {
-            // For now open Wallet to perform claim (claim execution is not implemented in mobile)
-            Intent i = new Intent(ANMLClaimActivity.this, com.example.passportscanner.wallet.WalletActivity.class);
-            startActivity(i);
-            Toast.makeText(ANMLClaimActivity.this, "Open Wallet to perform claim", Toast.LENGTH_SHORT).show();
+            try {
+                org.json.JSONObject exec = new org.json.JSONObject();
+                exec.put("claim_anml", new org.json.JSONObject());
+
+                Intent ei = new Intent(ANMLClaimActivity.this, com.example.passportscanner.bridge.SecretExecuteActivity.class);
+                ei.putExtra(com.example.passportscanner.bridge.SecretExecuteActivity.EXTRA_CONTRACT_ADDRESS, REGISTRATION_CONTRACT);
+                ei.putExtra(com.example.passportscanner.bridge.SecretExecuteActivity.EXTRA_CODE_HASH, REGISTRATION_HASH);
+                ei.putExtra(com.example.passportscanner.bridge.SecretExecuteActivity.EXTRA_EXECUTE_JSON, exec.toString());
+                // Funds/memo/lcd are optional; default LCD is used in the bridge
+                showLoading(true);
+                startActivityForResult(ei, REQ_EXECUTE);
+            } catch (Exception e) {
+                Toast.makeText(ANMLClaimActivity.this, "Failed to start claim: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+            }
         });
 
         initSecurePrefs();
@@ -175,8 +187,41 @@ public class ANMLClaimActivity extends AppCompatActivity {
         }
     }
 
-    // Request code for launching SecretQueryActivity
+    // Debug helpers to surface responses in-app
+    private void showAlert(String title, String json) {
+        try {
+            showJsonDialog(title != null ? title : "Response", json);
+        } catch (Exception ignored) {}
+    }
+
+    private void showJsonDialog(String title, String json) {
+        try {
+            new AlertDialog.Builder(ANMLClaimActivity.this)
+                    .setTitle(title != null ? title : "Response")
+                    .setMessage(json != null ? json : "(empty)")
+                    .setPositiveButton("OK", null)
+                    .show();
+        } catch (Exception ignored) {}
+    }
+
+    // Show dialog and run a callback after it's dismissed (used to defer follow-up actions)
+    private void showJsonDialogThen(String title, String json, Runnable then) {
+        try {
+            AlertDialog dialog = new AlertDialog.Builder(ANMLClaimActivity.this)
+                    .setTitle(title != null ? title : "Response")
+                    .setMessage(json != null ? json : "(empty)")
+                    .setPositiveButton("OK", null)
+                    .create();
+            dialog.setOnDismissListener(d -> {
+                try { if (then != null) then.run(); } catch (Exception ignored) {}
+            });
+            dialog.show();
+        } catch (Exception ignored) {}
+    }
+
+    // Request codes for launching bridge Activities
     private static final int REQ_QUERY = 1001;
+    private static final int REQ_EXECUTE = 1002;
 
     // Launch the reusable query activity to check registration/claim status
     private void checkStatus() {
@@ -237,12 +282,15 @@ public class ANMLClaimActivity extends AppCompatActivity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQ_QUERY) {
             showLoading(false);
+            boolean wasSuppressed = suppressNextQueryDialog;
+            suppressNextQueryDialog = false;
             if (resultCode != RESULT_OK) {
                 String err = (data != null) ? data.getStringExtra(com.example.passportscanner.bridge.SecretQueryActivity.EXTRA_ERROR) : "Query canceled";
                 if (errorText != null) {
                     errorText.setText("Failed to check status: " + err);
                     errorText.setVisibility(View.VISIBLE);
                 }
+                if (!wasSuppressed) { try { showAlert("Query error", err); } catch (Exception ignored) {} }
                 return;
             }
             try {
@@ -254,6 +302,8 @@ public class ANMLClaimActivity extends AppCompatActivity {
                     }
                     return;
                 }
+                // Surface raw JSON in-app for debugging
+                if (!wasSuppressed) { try { showAlert("Query", json); } catch (Exception ignored) {} }
                 JSONObject root = new JSONObject(json);
                 boolean success = root.optBoolean("success", false);
                 if (!success) {
@@ -293,6 +343,34 @@ public class ANMLClaimActivity extends AppCompatActivity {
                     errorText.setText("Invalid result from bridge.");
                     errorText.setVisibility(View.VISIBLE);
                 }
+            }
+        } else if (requestCode == REQ_EXECUTE) {
+            showLoading(false);
+            if (resultCode != RESULT_OK) {
+                String err = (data != null) ? data.getStringExtra(com.example.passportscanner.bridge.SecretExecuteActivity.EXTRA_ERROR) : "Execution canceled";
+                if (errorText != null) {
+                    errorText.setText("Claim failed: " + err);
+                    errorText.setVisibility(View.VISIBLE);
+                }
+                try { showAlert("Execute error", err); } catch (Exception ignored) {}
+                return;
+            }
+            try {
+                String json = (data != null) ? data.getStringExtra(com.example.passportscanner.bridge.SecretExecuteActivity.EXTRA_RESULT_JSON) : null;
+                String txhash = null;
+                if (!TextUtils.isEmpty(json)) {
+                    JSONObject root = new JSONObject(json);
+                    txhash = root.optString("txhash", null);
+                }
+                try { showAlert("Execute", json); } catch (Exception ignored) {}
+                Toast.makeText(ANMLClaimActivity.this, txhash != null ? "Claim submitted: " + txhash : "Claim submitted", Toast.LENGTH_LONG).show();
+                suppressNextQueryDialog = true;
+                // Refresh status to update UI after claim
+                checkStatus();
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to parse execute result", e);
+                Toast.makeText(ANMLClaimActivity.this, "Claim submitted", Toast.LENGTH_LONG).show();
+                checkStatus();
             }
         }
     }

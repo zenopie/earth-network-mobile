@@ -99,7 +99,7 @@
         <activity
             android:name=".bridge.SecretQueryActivity"
             android:exported="false"
-            android:theme="@style/Theme.PassportScanner"
+            android:theme="@style/Theme.PassportScanner.NoDisplay"
             android:excludeFromRecents="true" />
         
         <!-- Secret Signer Activity (headless, on-device signing) -->
@@ -107,6 +107,13 @@
             android:name=".bridge.SecretSignerActivity"
             android:exported="false"
             android:theme="@style/Theme.PassportScanner"
+            android:excludeFromRecents="true" />
+        
+        <!-- Secret Execute Activity (headless, invisible WebView signer) -->
+        <activity
+            android:name=".bridge.SecretExecuteActivity"
+            android:exported="false"
+            android:theme="@style/Theme.PassportScanner.NoDisplay"
             android:excludeFromRecents="true" />
     </application>
 

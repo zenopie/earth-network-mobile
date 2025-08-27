@@ -8,6 +8,8 @@ import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.WebChromeClient;
+import android.webkit.ConsoleMessage;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
@@ -56,6 +58,7 @@ public class SecretQueryActivity extends AppCompatActivity {
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        try { WebView.setWebContentsDebuggingEnabled(true); } catch (Throwable ignored) {}
 
         // Initialize word list (harmless even if already initialized)
         try {
@@ -97,6 +100,12 @@ public class SecretQueryActivity extends AppCompatActivity {
                     finishWithError("Invalid query JSON: " + e.getMessage());
                 }
             }
+
+            @Override
+            @SuppressWarnings("deprecation")
+            public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
+                finishWithError("WebView load error: " + description);
+            }
         });
 
         hiddenWebView.loadUrl("file:///android_asset/secret_bridge.html");
@@ -118,8 +127,17 @@ public class SecretQueryActivity extends AppCompatActivity {
         hiddenWebView = new WebView(this);
         WebSettings ws = hiddenWebView.getSettings();
         ws.setJavaScriptEnabled(true);
+        ws.setDomStorageEnabled(true);
         ws.setAllowUniversalAccessFromFileURLs(true);
         hiddenWebView.addJavascriptInterface(new JSBridge(), "AndroidBridge");
+
+        hiddenWebView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onConsoleMessage(ConsoleMessage msg) {
+                Log.d(TAG, "JS " + msg.messageLevel() + ": " + msg.message() + " @" + msg.sourceId() + ":" + msg.lineNumber());
+                return true;
+            }
+        });
     }
 
     private class JSBridge {

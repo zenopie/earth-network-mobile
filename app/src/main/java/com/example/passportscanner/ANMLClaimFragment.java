@@ -38,8 +38,7 @@ import android.webkit.ConsoleMessage;
 import android.webkit.WebViewClient;
 import android.os.Handler;
 import android.os.Looper;
-// UI helpers for showing response and a tappable action
-import com.google.android.material.snackbar.Snackbar;
+// UI helpers for showing response
 import androidx.appcompat.app.AlertDialog;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -53,6 +52,7 @@ public class ANMLClaimFragment extends Fragment {
     private static final String REGISTRATION_HASH = "12fad89bbc7f4c9051b7b5fa1c7af1c17480dcdee4b962cf6cb6ff668da02667";
     
     private static final long ONE_DAY_MILLIS = 24L * 60L * 60L * 1000L;
+    private static final int REQ_EXECUTE = 2002;
 
     private ImageView loadingGif;
     private View registerBox;
@@ -118,9 +118,19 @@ public class ANMLClaimFragment extends Fragment {
         });
 
         btnClaim.setOnClickListener(v -> {
-            Intent i = new Intent(requireActivity(), com.example.passportscanner.wallet.WalletActivity.class);
-            startActivity(i);
-            Toast.makeText(requireContext(), "Open Wallet to perform claim", Toast.LENGTH_SHORT).show();
+            try {
+                org.json.JSONObject exec = new org.json.JSONObject();
+                exec.put("claim_anml", new org.json.JSONObject());
+
+                Intent ei = new Intent(requireActivity(), com.example.passportscanner.bridge.SecretExecuteActivity.class);
+                ei.putExtra(com.example.passportscanner.bridge.SecretExecuteActivity.EXTRA_CONTRACT_ADDRESS, REGISTRATION_CONTRACT);
+                ei.putExtra(com.example.passportscanner.bridge.SecretExecuteActivity.EXTRA_CODE_HASH, REGISTRATION_HASH);
+                ei.putExtra(com.example.passportscanner.bridge.SecretExecuteActivity.EXTRA_EXECUTE_JSON, exec.toString());
+                showLoading(true);
+                startActivityForResult(ei, REQ_EXECUTE);
+            } catch (Exception e) {
+                Toast.makeText(requireContext(), "Failed to start claim: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+            }
         });
 
         initSecurePrefs();
@@ -174,24 +184,16 @@ private class JSBridge {
     public void onQueryResult(String json) {
         webViewResult.set(json);
 
-        // Show a Snackbar with an action to view the full response.
+        // Show full response in an alert dialog on the main thread.
         try {
             Handler h = new Handler(Looper.getMainLooper());
             h.post(() -> {
                 try {
-                    String shortJson = (json != null && json.length() > 200) ? json.substring(0, 200) + "..." : json;
-                    // Attach to the activity content view so it's visible even if fragment view changes
-                    View root = requireActivity().findViewById(android.R.id.content);
-                    Snackbar.make(root, "SecretJS result: " + shortJson, Snackbar.LENGTH_LONG)
-                            .setAction("View", v -> {
-                                try {
-                                    new AlertDialog.Builder(requireContext())
-                                            .setTitle("SecretJS response")
-                                            .setMessage(json != null ? json : "(empty)")
-                                            .setPositiveButton("OK", null)
-                                            .show();
-                                } catch (Exception ignored) {}
-                            }).show();
+                    new AlertDialog.Builder(requireContext())
+                            .setTitle("SecretJS response")
+                            .setMessage(json != null ? json : "(empty)")
+                            .setPositiveButton("OK", null)
+                            .show();
                 } catch (Exception ignored) {}
             });
         } catch (Exception ignored) {}
@@ -204,23 +206,16 @@ private class JSBridge {
     public void onQueryError(String err) {
         webViewError.set(err);
 
-        // Show a Snackbar for the error with action to view full error text.
+        // Show full error in an alert dialog on the main thread.
         try {
             Handler h = new Handler(Looper.getMainLooper());
             h.post(() -> {
                 try {
-                    String shortErr = (err != null && err.length() > 200) ? err.substring(0, 200) + "..." : err;
-                    View root = requireActivity().findViewById(android.R.id.content);
-                    Snackbar.make(root, "SecretJS error: " + shortErr, Snackbar.LENGTH_LONG)
-                            .setAction("View", v -> {
-                                try {
-                                    new AlertDialog.Builder(requireContext())
-                                            .setTitle("SecretJS error")
-                                            .setMessage(err != null ? err : "(empty)")
-                                            .setPositiveButton("OK", null)
-                                            .show();
-                                } catch (Exception ignored) {}
-                            }).show();
+                    new AlertDialog.Builder(requireContext())
+                            .setTitle("SecretJS error")
+                            .setMessage(err != null ? err : "(empty)")
+                            .setPositiveButton("OK", null)
+                            .show();
                 } catch (Exception ignored) {}
             });
         } catch (Exception ignored) {}
@@ -447,6 +442,60 @@ private JSONObject runQueryViaWebView(final JSONObject payload) throws Exception
                     errorText.setText("Invalid result from server.");
                     errorText.setVisibility(View.VISIBLE);
                 }
+            }
+        }
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_EXECUTE) {
+            showLoading(false);
+            if (resultCode != android.app.Activity.RESULT_OK) {
+                String err = (data != null) ? data.getStringExtra(com.example.passportscanner.bridge.SecretExecuteActivity.EXTRA_ERROR) : "Execution canceled";
+                try {
+                    new AlertDialog.Builder(requireContext())
+                            .setTitle("Execute error")
+                            .setMessage(err != null ? err : "(empty)")
+                            .setPositiveButton("OK", null)
+                            .show();
+                } catch (Exception ignored) {
+                    Toast.makeText(requireContext(), "Execute error: " + (err != null ? err : "(empty)"), Toast.LENGTH_LONG).show();
+                }
+                return;
+            }
+            try {
+                String json = (data != null) ? data.getStringExtra(com.example.passportscanner.bridge.SecretExecuteActivity.EXTRA_RESULT_JSON) : null;
+                String txhash = null;
+                if (!android.text.TextUtils.isEmpty(json)) {
+                    org.json.JSONObject root = new org.json.JSONObject(json);
+                    txhash = root.optString("txhash", null);
+                }
+                try {
+                    new AlertDialog.Builder(requireContext())
+                            .setTitle("Execute response")
+                            .setMessage(json != null ? json : "(empty)")
+                            .setPositiveButton("OK", null)
+                            .show();
+                } catch (Exception ignored) {
+                    String msg = txhash != null ? "Claim submitted: " + txhash : "Claim submitted";
+                    Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show();
+                }
+                // Re-check status to refresh UI after claim
+                new CheckStatusTask().execute();
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to parse execute result", e);
+                try {
+                    new AlertDialog.Builder(requireContext())
+                            .setTitle("Execute response")
+                            .setMessage("Claim submitted")
+                            .setPositiveButton("OK", null)
+                            .show();
+                } catch (Exception ignored) {
+                    Toast.makeText(requireContext(), "Claim submitted", Toast.LENGTH_LONG).show();
+                }
+                new CheckStatusTask().execute();
             }
         }
     }
