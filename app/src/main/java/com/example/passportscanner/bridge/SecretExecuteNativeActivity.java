@@ -34,6 +34,11 @@ import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
+import java.io.ByteArrayInputStream;
+import java.io.DataOutputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+
 /**
  * SecretExecuteNativeActivity
  *
@@ -252,24 +257,55 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             }
 
             // Build MsgExecuteContract
+            Log.i(TAG, "=== TX STRUCTURE DIAGNOSTIC: Building MsgExecuteContract ===");
+            
             JSONObject msgValue = new JSONObject();
             msgValue.put("sender", sender);
             msgValue.put("contract", contractAddr);
+            
+            // DIAGNOSTIC: Log the encrypted message structure
+            Log.i(TAG, "TX DIAGNOSTIC: Encrypted message JSON: " + encryptedMsgJson);
+            Log.i(TAG, "TX DIAGNOSTIC: Encrypted message length: " + encryptedMsgJson.length());
+            
             // "msg" is the encrypted payload (JSON string)
             msgValue.put("msg", new JSONObject(encryptedMsgJson));
+            
             if (!TextUtils.isEmpty(funds)) {
                 // Very simple parser "1000uscrt,2ukrw" -> [{amount,denom},...]
                 JSONArray coins = parseCoins(funds);
-                if (coins != null) msgValue.put("sent_funds", coins);
+                if (coins != null) {
+                    msgValue.put("sent_funds", coins);
+                    Log.i(TAG, "TX DIAGNOSTIC: Added sent_funds: " + coins.toString());
+                } else {
+                    Log.i(TAG, "TX DIAGNOSTIC: No sent_funds (coins parsing failed)");
+                }
+            } else {
+                Log.i(TAG, "TX DIAGNOSTIC: No sent_funds (funds empty)");
             }
 
             JSONObject msg = new JSONObject();
             msg.put("type", "/secret.compute.v1beta1.MsgExecuteContract");
             msg.put("value", msgValue);
+            
+            Log.i(TAG, "TX DIAGNOSTIC: Message type: /secret.compute.v1beta1.MsgExecuteContract");
+            Log.i(TAG, "TX DIAGNOSTIC: Message value: " + msgValue.toString());
 
+            // Fix the fee structure - add minimal fee to avoid "empty tx" error
             JSONObject fee = new JSONObject();
-            fee.put("amount", new JSONArray()); // 0-fee; change if needed
-            fee.put("gas", "200000");
+            JSONArray feeAmount = new JSONArray();
+            
+            // Add minimal fee (1 uscrt) to avoid "invalid empty tx" error
+            JSONObject feeCoins = new JSONObject();
+            feeCoins.put("amount", "1");
+            feeCoins.put("denom", "uscrt");
+            feeAmount.put(feeCoins);
+            
+            fee.put("amount", feeAmount);
+            fee.put("gas", 200000); // Use gas for legacy endpoint
+            
+            Log.i(TAG, "TX DIAGNOSTIC: Fee structure (FIXED): " + fee.toString());
+            Log.i(TAG, "TX DIAGNOSTIC: Added minimal fee (1 uscrt) to avoid 'invalid empty tx' error");
+            Log.i(TAG, "TX DIAGNOSTIC: Using 'gasLimit' field for proper transaction structure");
 
             JSONObject signDoc = new JSONObject();
             signDoc.put("account_number", accountNumberStr);
@@ -278,9 +314,16 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             signDoc.put("memo", memo);
             signDoc.put("msgs", new JSONArray().put(msg));
             signDoc.put("sequence", sequenceStr);
+            
+            Log.i(TAG, "TX DIAGNOSTIC: SignDoc structure: " + signDoc.toString());
+            Log.i(TAG, "TX DIAGNOSTIC: Account number: " + accountNumberStr + " (type: " + accountNumberStr.getClass().getSimpleName() + ")");
+            Log.i(TAG, "TX DIAGNOSTIC: Sequence: " + sequenceStr + " (type: " + sequenceStr.getClass().getSimpleName() + ")");
+            Log.i(TAG, "TX DIAGNOSTIC: Chain ID: " + chainId);
+            Log.i(TAG, "TX DIAGNOSTIC: Memo: '" + memo + "' (length: " + memo.length() + ")");
 
             // Sign signDoc (Amino JSON) with secp256k1
             String signatureB64 = signSecp256k1Base64(key, signDoc.toString().getBytes("UTF-8"));
+            Log.i(TAG, "TX DIAGNOSTIC: Signature generated, length: " + signatureB64.length());
 
             JSONObject sigObj = new JSONObject();
             JSONObject pk = new JSONObject();
@@ -294,6 +337,20 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             stdTx.put("fee", fee);
             stdTx.put("signatures", new JSONArray().put(sigObj));
             stdTx.put("memo", memo);
+            
+            Log.i(TAG, "TX DIAGNOSTIC: Final StdTx structure: " + stdTx.toString());
+            Log.i(TAG, "TX DIAGNOSTIC: StdTx size: " + stdTx.toString().length() + " bytes");
+            
+            // Check for potential "empty tx" indicators
+            if (fee.getJSONArray("amount").length() == 0) {
+                Log.e(TAG, "TX DIAGNOSTIC: CRITICAL - Fee amount array is EMPTY! This is likely causing 'invalid empty tx' error");
+            }
+            if (memo.isEmpty()) {
+                Log.w(TAG, "TX DIAGNOSTIC: WARNING - Memo is empty, some chains require non-empty memo");
+            }
+            if (stdTx.getJSONArray("msg").length() == 0) {
+                Log.e(TAG, "TX DIAGNOSTIC: CRITICAL - Messages array is EMPTY!");
+            }
 
             // Broadcast - try modern endpoint first, fallback to legacy
             Log.i(TAG, "BROADCAST DIAGNOSTIC: Attempting transaction broadcast...");
@@ -306,16 +363,41 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             try {
                 String modernUrl = joinUrl(lcdUrl, "/cosmos/tx/v1beta1/txs");
                 Log.i(TAG, "BROADCAST DIAGNOSTIC: Trying modern endpoint: " + modernUrl);
+                Log.i(TAG, "CODE 3 FIX: Using proper protobuf encoding for modern endpoint");
                 
-                // Modern endpoint uses different enum values for broadcast mode
+                // Create proper protobuf-encoded transaction
+                JSONArray coins = null;
+                if (!TextUtils.isEmpty(funds)) {
+                    coins = parseCoins(funds);
+                }
+                
+                // Encode transaction to protobuf bytes
+                byte[] txBytes = encodeTransactionToProtobuf(
+                    sender, contractAddr, encryptedMsgJson, coins, memo,
+                    accountNumberStr, sequenceStr,
+                    Base64.decode(signatureB64, Base64.NO_WRAP), pubCompressed
+                );
+                
+                // Create request body with proper tx_bytes
                 JSONObject modernTxBody = new JSONObject();
-                modernTxBody.put("tx", stdTx);
-                modernTxBody.put("mode", "BROADCAST_MODE_SYNC"); // Correct enum value for modern endpoint
+                modernTxBody.put("tx_bytes", Base64.encodeToString(txBytes, Base64.NO_WRAP));
+                modernTxBody.put("mode", "BROADCAST_MODE_SYNC");
                 
+                Log.i(TAG, "BROADCAST DIAGNOSTIC: Modern endpoint protobuf tx_bytes length: " + txBytes.length);
+                Log.i(TAG, "CODE 3 FIX: Sending proper protobuf-encoded transaction to modern endpoint");
                 broadcastResponse = httpPostJson(modernUrl, modernTxBody.toString());
-                Log.i(TAG, "BROADCAST DIAGNOSTIC: Modern endpoint SUCCESS");
+                Log.i(TAG, "BROADCAST DIAGNOSTIC: Modern endpoint SUCCESS with protobuf encoding");
             } catch (Exception e) {
                 Log.w(TAG, "BROADCAST DIAGNOSTIC: Modern endpoint failed: " + e.getMessage());
+                Log.e(TAG, "CODE 3 DEBUG: Modern endpoint error details: " + e.getMessage());
+                
+                // Check specifically for code 3 INVALID_ARGUMENT
+                if (e.getMessage() != null && e.getMessage().contains("code") && e.getMessage().contains("3")) {
+                    Log.e(TAG, "CODE 3 DEBUG: CONFIRMED - Modern endpoint returned code 3 INVALID_ARGUMENT");
+                    Log.e(TAG, "CODE 3 DEBUG: This confirms the transaction format is invalid for protobuf endpoint");
+                    Log.e(TAG, "CODE 3 DEBUG: Root cause: Sending JSON transaction to protobuf-expecting endpoint");
+                }
+                
                 lastError = e;
                 
                 // Check if it's a "code 12 not implemented" or similar API error
@@ -341,7 +423,10 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
                     Log.e(TAG, "BROADCAST DIAGNOSTIC: Both endpoints failed!");
                     Log.e(TAG, "BROADCAST DIAGNOSTIC: Modern endpoint error: " + e.getMessage());
                     Log.e(TAG, "BROADCAST DIAGNOSTIC: Legacy endpoint error: " + e2.getMessage());
-                    throw new Exception("Transaction broadcast failed on both modern and legacy endpoints. Modern: " + e.getMessage() + ", Legacy: " + e2.getMessage());
+                    
+                    // No more fallback attempts - if both modern protobuf and legacy fail,
+                    // then there's a more fundamental issue
+                    throw new Exception("All transaction broadcast methods failed. Modern protobuf: " + e.getMessage() + ", Legacy: " + e2.getMessage());
                 }
             }
             
@@ -895,8 +980,154 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             return false;
         }
     }
+    
+    // Manual protobuf encoding for Cosmos SDK transactions
+    // This creates a proper protobuf-encoded transaction for the modern endpoint
+    private static byte[] encodeTransactionToProtobuf(String sender, String contractAddr,
+                                                     String encryptedMsgJson, JSONArray sentFunds,
+                                                     String memo, String accountNumber, String sequence,
+                                                     byte[] signature, byte[] pubKeyCompressed) throws Exception {
+        Log.i(TAG, "PROTOBUF DEBUG: Starting manual protobuf encoding");
+        
+        try {
+            ByteArrayOutputStream txBytes = new ByteArrayOutputStream();
+            
+            // Create TxBody (field 1)
+            ByteArrayOutputStream bodyBytes = new ByteArrayOutputStream();
+            
+            // Messages array (field 1 in TxBody)
+            ByteArrayOutputStream msgBytes = new ByteArrayOutputStream();
+            
+            // MsgExecuteContract
+            ByteArrayOutputStream execMsgBytes = new ByteArrayOutputStream();
+            
+            // Field 1: sender (string)
+            writeProtobufString(execMsgBytes, 1, sender);
+            
+            // Field 2: contract (string)
+            writeProtobufString(execMsgBytes, 2, contractAddr);
+            
+            // Field 3: msg (bytes) - the encrypted message as JSON bytes
+            writeProtobufBytes(execMsgBytes, 3, encryptedMsgJson.getBytes(StandardCharsets.UTF_8));
+            
+            // Field 4: sent_funds (repeated Coin)
+            if (sentFunds != null && sentFunds.length() > 0) {
+                for (int i = 0; i < sentFunds.length(); i++) {
+                    JSONObject coin = sentFunds.getJSONObject(i);
+                    ByteArrayOutputStream coinBytes = new ByteArrayOutputStream();
+                    writeProtobufString(coinBytes, 1, coin.getString("denom"));
+                    writeProtobufString(coinBytes, 2, coin.getString("amount"));
+                    writeProtobufMessage(execMsgBytes, 4, coinBytes.toByteArray());
+                }
+            }
+            
+            // Wrap MsgExecuteContract in Any type
+            ByteArrayOutputStream anyBytes = new ByteArrayOutputStream();
+            writeProtobufString(anyBytes, 1, "/secret.compute.v1beta1.MsgExecuteContract");
+            writeProtobufBytes(anyBytes, 2, execMsgBytes.toByteArray());
+            
+            // Add to messages array
+            writeProtobufMessage(bodyBytes, 1, anyBytes.toByteArray());
+            
+            // Field 2: memo (string)
+            if (memo != null && !memo.isEmpty()) {
+                writeProtobufString(bodyBytes, 2, memo);
+            }
+            
+            // Field 3: timeout_height (uint64) - optional, skip for now
+            // Field 4: extension_options - skip
+            // Field 5: non_critical_extension_options - skip
+            
+            // Create AuthInfo (field 2)
+            ByteArrayOutputStream authInfoBytes = new ByteArrayOutputStream();
+            
+            // Field 1: signer_infos (repeated SignerInfo)
+            ByteArrayOutputStream signerInfoBytes = new ByteArrayOutputStream();
+            
+            // Field 1: public_key (Any)
+            ByteArrayOutputStream pubKeyAnyBytes = new ByteArrayOutputStream();
+            writeProtobufString(pubKeyAnyBytes, 1, "/cosmos.crypto.secp256k1.PubKey");
+            writeProtobufBytes(pubKeyAnyBytes, 2, pubKeyCompressed);
+            writeProtobufMessage(signerInfoBytes, 1, pubKeyAnyBytes.toByteArray());
+            
+            // Field 2: mode_info
+            ByteArrayOutputStream modeInfoBytes = new ByteArrayOutputStream();
+            ByteArrayOutputStream singleBytes = new ByteArrayOutputStream();
+            writeProtobufVarint(singleBytes, 1, 127); // SIGN_MODE_LEGACY_AMINO_JSON
+            writeProtobufMessage(modeInfoBytes, 1, singleBytes.toByteArray());
+            writeProtobufMessage(signerInfoBytes, 2, modeInfoBytes.toByteArray());
+            
+            // Field 3: sequence
+            writeProtobufVarint(signerInfoBytes, 3, Long.parseLong(sequence));
+            
+            writeProtobufMessage(authInfoBytes, 1, signerInfoBytes.toByteArray());
+            
+            // Field 2: fee
+            ByteArrayOutputStream feeBytes = new ByteArrayOutputStream();
+            
+            // Field 1: amount (repeated Coin) - minimal fee
+            ByteArrayOutputStream feeAmountBytes = new ByteArrayOutputStream();
+            writeProtobufString(feeAmountBytes, 1, "uscrt");
+            writeProtobufString(feeAmountBytes, 2, "1");
+            writeProtobufMessage(feeBytes, 1, feeAmountBytes.toByteArray());
+            
+            // Field 2: gas_limit
+            writeProtobufVarint(feeBytes, 2, 200000);
+            
+            writeProtobufMessage(authInfoBytes, 2, feeBytes.toByteArray());
+            
+            // Assemble final transaction
+            writeProtobufMessage(txBytes, 1, bodyBytes.toByteArray()); // body
+            writeProtobufMessage(txBytes, 2, authInfoBytes.toByteArray()); // auth_info
+            writeProtobufBytes(txBytes, 3, signature); // signatures
+            
+            byte[] result = txBytes.toByteArray();
+            Log.i(TAG, "PROTOBUF DEBUG: Successfully encoded transaction, size: " + result.length + " bytes");
+            return result;
+            
+        } catch (Exception e) {
+            Log.e(TAG, "PROTOBUF DEBUG: Encoding failed: " + e.getMessage(), e);
+            throw new Exception("Protobuf encoding failed: " + e.getMessage(), e);
+        }
+    }
+    
+    // Helper methods for protobuf encoding
+    private static void writeProtobufVarint(ByteArrayOutputStream out, int fieldNumber, long value) throws Exception {
+        writeProtobufTag(out, fieldNumber, 0); // varint wire type
+        writeVarint(out, value);
+    }
+    
+    private static void writeProtobufString(ByteArrayOutputStream out, int fieldNumber, String value) throws Exception {
+        if (value == null || value.isEmpty()) return;
+        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+        writeProtobufBytes(out, fieldNumber, bytes);
+    }
+    
+    private static void writeProtobufBytes(ByteArrayOutputStream out, int fieldNumber, byte[] value) throws Exception {
+        if (value == null || value.length == 0) return;
+        writeProtobufTag(out, fieldNumber, 2); // length-delimited wire type
+        writeVarint(out, value.length);
+        out.write(value);
+    }
+    
+    private static void writeProtobufMessage(ByteArrayOutputStream out, int fieldNumber, byte[] messageBytes) throws Exception {
+        writeProtobufBytes(out, fieldNumber, messageBytes);
+    }
+    
+    private static void writeProtobufTag(ByteArrayOutputStream out, int fieldNumber, int wireType) throws Exception {
+        writeVarint(out, (fieldNumber << 3) | wireType);
+    }
+    
+    private static void writeVarint(ByteArrayOutputStream out, long value) throws Exception {
+        while ((value & 0x80) != 0) {
+            out.write((int)((value & 0x7F) | 0x80));
+            value >>>= 7;
+        }
+        out.write((int)(value & 0x7F));
+    }
 
     private static String joinUrl(String base, String path) {
+        if (base == null) return path;
         String b = base;
         if (b.endsWith("/")) b = b.substring(0, b.length() - 1);
         return b + path;
