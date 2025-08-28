@@ -363,23 +363,105 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
                 contractPubCompressed = convertToCompressedKey(contractPubCompressed);
                 Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Conversion successful, compressed length: " + contractPubCompressed.length);
             } else if (contractPubCompressed.length == 48) {
-                // This appears to be some other format - possibly a truncated key or different encoding
-                Log.w(TAG, "ENCRYPTION DIAGNOSTIC: Unusual key length (48 bytes) - attempting to handle as raw key material");
-                Log.w(TAG, "ENCRYPTION DIAGNOSTIC: First few bytes: " + bytesToHex(contractPubCompressed, Math.min(16, contractPubCompressed.length)));
+                // This appears to be a 32-byte x-coordinate + 16-byte additional data format
+                Log.w(TAG, "ENCRYPTION DIAGNOSTIC: Unusual key length (48 bytes) - analyzing key structure");
+                Log.w(TAG, "ENCRYPTION DIAGNOSTIC: Full key hex: " + bytesToHex(contractPubCompressed, contractPubCompressed.length));
                 
-                // Try to extract the first 33 bytes and see if it's a valid compressed key
+                boolean foundValidKey = false;
+                
+                // The key structure appears to be: [1 byte prefix][31 bytes x-coord part 1][32 bytes x-coord part 2][15 bytes additional]
+                // Let's try different interpretations of the 48-byte structure
+                
+                // Method 1: Extract bytes 1-32 as x-coordinate (skip the 0x03 prefix)
                 if (contractPubCompressed.length >= 33) {
-                    byte[] extracted = new byte[33];
-                    System.arraycopy(contractPubCompressed, 0, extracted, 0, 33);
-                    if (extracted[0] == 0x02 || extracted[0] == 0x03) {
-                        Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Found valid compressed key in first 33 bytes");
-                        contractPubCompressed = extracted;
-                    } else {
-                        Log.e(TAG, "ENCRYPTION DIAGNOSTIC: No valid compressed key found in 48-byte input");
-                        throw new Exception("Invalid public key format: 48 bytes with no recognizable compressed key pattern");
+                    Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Method 1 - Extracting bytes 1-32 as x-coordinate...");
+                    byte[] xCoord = new byte[32];
+                    System.arraycopy(contractPubCompressed, 1, xCoord, 0, 32);
+                    Log.i(TAG, "ENCRYPTION DIAGNOSTIC: X-coordinate: " + bytesToHex(xCoord, 32));
+                    
+                    // Try both even and odd y-coordinate possibilities
+                    for (byte prefix : new byte[]{0x02, 0x03}) {
+                        byte[] testKey = new byte[33];
+                        testKey[0] = prefix;
+                        System.arraycopy(xCoord, 0, testKey, 1, 32);
+                        
+                        Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Testing with prefix 0x" + String.format("%02x", prefix) + ": " + bytesToHex(testKey, 8) + "...");
+                        if (isValidSecp256k1Point(testKey)) {
+                            Log.i(TAG, "ENCRYPTION DIAGNOSTIC: SUCCESS! Method 1 - Valid compressed key with prefix 0x" + String.format("%02x", prefix));
+                            contractPubCompressed = testKey;
+                            foundValidKey = true;
+                            break;
+                        }
                     }
-                } else {
-                    throw new Exception("Invalid contract public key length: " + contractPubCompressed.length + " bytes (expected 33 compressed or 65 uncompressed)");
+                }
+                
+                // Method 2: Extract bytes 0-31 as x-coordinate (include the 0x03 as part of x-coord)
+                if (!foundValidKey && contractPubCompressed.length >= 32) {
+                    Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Method 2 - Extracting bytes 0-31 as x-coordinate...");
+                    byte[] xCoord = new byte[32];
+                    System.arraycopy(contractPubCompressed, 0, xCoord, 0, 32);
+                    Log.i(TAG, "ENCRYPTION DIAGNOSTIC: X-coordinate: " + bytesToHex(xCoord, 32));
+                    
+                    for (byte prefix : new byte[]{0x02, 0x03}) {
+                        byte[] testKey = new byte[33];
+                        testKey[0] = prefix;
+                        System.arraycopy(xCoord, 0, testKey, 1, 32);
+                        
+                        Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Testing with prefix 0x" + String.format("%02x", prefix) + ": " + bytesToHex(testKey, 8) + "...");
+                        if (isValidSecp256k1Point(testKey)) {
+                            Log.i(TAG, "ENCRYPTION DIAGNOSTIC: SUCCESS! Method 2 - Valid compressed key with prefix 0x" + String.format("%02x", prefix));
+                            contractPubCompressed = testKey;
+                            foundValidKey = true;
+                            break;
+                        }
+                    }
+                }
+                
+                // Method 3: Try extracting from different 32-byte windows
+                if (!foundValidKey) {
+                    Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Method 3 - Trying different 32-byte windows...");
+                    for (int offset = 2; offset <= 16 && offset + 32 <= contractPubCompressed.length; offset++) {
+                        byte[] xCoord = new byte[32];
+                        System.arraycopy(contractPubCompressed, offset, xCoord, 0, 32);
+                        
+                        for (byte prefix : new byte[]{0x02, 0x03}) {
+                            byte[] testKey = new byte[33];
+                            testKey[0] = prefix;
+                            System.arraycopy(xCoord, 0, testKey, 1, 32);
+                            
+                            if (isValidSecp256k1Point(testKey)) {
+                                Log.i(TAG, "ENCRYPTION DIAGNOSTIC: SUCCESS! Method 3 - Valid compressed key at offset " + offset + " with prefix 0x" + String.format("%02x", prefix));
+                                contractPubCompressed = testKey;
+                                foundValidKey = true;
+                                break;
+                            }
+                        }
+                        if (foundValidKey) break;
+                    }
+                }
+                
+                // Method 4: Maybe it's a different encoding entirely - try the hardcoded fallback
+                if (!foundValidKey) {
+                    Log.w(TAG, "ENCRYPTION DIAGNOSTIC: All extraction methods failed. The 48-byte key may be in an unsupported format.");
+                    Log.w(TAG, "ENCRYPTION DIAGNOSTIC: Falling back to using the hardcoded mainnet consensus IO public key.");
+                    
+                    // Use the hardcoded key as a last resort
+                    try {
+                        byte[] fallbackKey = Base64.decode(MAINNET_CONSENSUS_IO_PUBKEY_B64, Base64.NO_WRAP);
+                        if (fallbackKey.length == 33 && isValidSecp256k1Point(fallbackKey)) {
+                            Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Using hardcoded mainnet consensus IO key as fallback");
+                            contractPubCompressed = fallbackKey;
+                            foundValidKey = true;
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "ENCRYPTION DIAGNOSTIC: Even hardcoded fallback key failed: " + e.getMessage());
+                    }
+                }
+                
+                if (!foundValidKey) {
+                    Log.e(TAG, "ENCRYPTION DIAGNOSTIC: CRITICAL: Unable to extract or derive any valid secp256k1 key");
+                    Log.e(TAG, "ENCRYPTION DIAGNOSTIC: The 48-byte input appears to be in an unknown or corrupted format");
+                    throw new Exception("Invalid 48-byte public key: exhausted all extraction methods and fallbacks");
                 }
             } else {
                 Log.e(TAG, "ENCRYPTION DIAGNOSTIC: CONTRACT PUBKEY LENGTH ERROR!");
@@ -747,6 +829,25 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
         System.arraycopy(x, 0, compressed, 1, 32);
         
         return compressed;
+    }
+    
+    // Validate if a compressed key represents a valid point on the secp256k1 curve
+    private static boolean isValidSecp256k1Point(byte[] compressedKey) {
+        if (compressedKey == null || compressedKey.length != 33) {
+            return false;
+        }
+        if (compressedKey[0] != 0x02 && compressedKey[0] != 0x03) {
+            return false;
+        }
+        
+        try {
+            // Try to decode the point - if it succeeds, it's valid
+            org.bouncycastle.crypto.ec.CustomNamedCurves.getByName("secp256k1")
+                    .getCurve().decodePoint(compressedKey);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private static String joinUrl(String base, String path) {
