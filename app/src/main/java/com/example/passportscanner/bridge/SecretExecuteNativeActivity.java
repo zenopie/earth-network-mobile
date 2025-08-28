@@ -326,22 +326,127 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
     // Uses wallet private key + contract pubkey ECDH with better key derivation
     // Includes codeHash in plaintext as per SecretJS implementation
     private String encryptContractMsg(String contractPubKeyB64, String codeHash, String msgJson) throws Exception {
+        Log.i(TAG, "=== ENCRYPTION DIAGNOSTIC: Starting contract message encryption ===");
+        Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Contract pubkey B64 input: " + (contractPubKeyB64 != null ? contractPubKeyB64.substring(0, Math.min(20, contractPubKeyB64.length())) + "..." : "null"));
+        Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Contract pubkey B64 length: " + (contractPubKeyB64 != null ? contractPubKeyB64.length() : 0));
+        
         // Generate random nonce (12 bytes for AES-GCM)
         byte[] nonce = new byte[12];
         new SecureRandom().nextBytes(nonce);
+        Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Generated nonce length: " + nonce.length);
         
         // Decode contract public key
-        byte[] contractPubCompressed = Base64.decode(contractPubKeyB64, Base64.NO_WRAP);
+        byte[] contractPubCompressed;
+        try {
+            contractPubCompressed = Base64.decode(contractPubKeyB64, Base64.NO_WRAP);
+            Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Decoded contract pubkey length: " + contractPubCompressed.length + " bytes");
+            Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Expected length: 33 bytes (compressed secp256k1)");
+            Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Length match: " + (contractPubCompressed.length == 33 ? "VALID" : "INVALID"));
+            
+            // Handle different public key formats
+            if (contractPubCompressed.length == 33) {
+                // Already compressed format
+                if (contractPubCompressed[0] != 0x02 && contractPubCompressed[0] != 0x03) {
+                    Log.e(TAG, "ENCRYPTION DIAGNOSTIC: CONTRACT PUBKEY FORMAT ERROR!");
+                    Log.e(TAG, "ENCRYPTION DIAGNOSTIC: First byte: 0x" + String.format("%02x", contractPubCompressed[0]));
+                    Log.e(TAG, "ENCRYPTION DIAGNOSTIC: Expected: 0x02 or 0x03 for compressed secp256k1");
+                    throw new Exception("Invalid compressed public key format: first byte should be 0x02 or 0x03, got 0x" + String.format("%02x", contractPubCompressed[0]));
+                }
+                Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Contract pubkey is already in compressed format (33 bytes)");
+            } else if (contractPubCompressed.length == 65) {
+                // Uncompressed format - convert to compressed
+                if (contractPubCompressed[0] != 0x04) {
+                    Log.e(TAG, "ENCRYPTION DIAGNOSTIC: Invalid uncompressed public key format: first byte should be 0x04, got 0x" + String.format("%02x", contractPubCompressed[0]));
+                    throw new Exception("Invalid uncompressed public key format: first byte should be 0x04, got 0x" + String.format("%02x", contractPubCompressed[0]));
+                }
+                Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Converting uncompressed pubkey (65 bytes) to compressed format...");
+                contractPubCompressed = convertToCompressedKey(contractPubCompressed);
+                Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Conversion successful, compressed length: " + contractPubCompressed.length);
+            } else if (contractPubCompressed.length == 48) {
+                // This appears to be some other format - possibly a truncated key or different encoding
+                Log.w(TAG, "ENCRYPTION DIAGNOSTIC: Unusual key length (48 bytes) - attempting to handle as raw key material");
+                Log.w(TAG, "ENCRYPTION DIAGNOSTIC: First few bytes: " + bytesToHex(contractPubCompressed, Math.min(16, contractPubCompressed.length)));
+                
+                // Try to extract the first 33 bytes and see if it's a valid compressed key
+                if (contractPubCompressed.length >= 33) {
+                    byte[] extracted = new byte[33];
+                    System.arraycopy(contractPubCompressed, 0, extracted, 0, 33);
+                    if (extracted[0] == 0x02 || extracted[0] == 0x03) {
+                        Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Found valid compressed key in first 33 bytes");
+                        contractPubCompressed = extracted;
+                    } else {
+                        Log.e(TAG, "ENCRYPTION DIAGNOSTIC: No valid compressed key found in 48-byte input");
+                        throw new Exception("Invalid public key format: 48 bytes with no recognizable compressed key pattern");
+                    }
+                } else {
+                    throw new Exception("Invalid contract public key length: " + contractPubCompressed.length + " bytes (expected 33 compressed or 65 uncompressed)");
+                }
+            } else {
+                Log.e(TAG, "ENCRYPTION DIAGNOSTIC: CONTRACT PUBKEY LENGTH ERROR!");
+                Log.e(TAG, "ENCRYPTION DIAGNOSTIC: Got " + contractPubCompressed.length + " bytes, expected 33 (compressed) or 65 (uncompressed)");
+                Log.e(TAG, "ENCRYPTION DIAGNOSTIC: First few bytes: " + bytesToHex(contractPubCompressed, Math.min(8, contractPubCompressed.length)));
+                throw new Exception("Invalid contract public key length: " + contractPubCompressed.length + " bytes (expected 33 compressed or 65 uncompressed secp256k1)");
+            }
+            
+            Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Contract pubkey format validation PASSED");
+        } catch (IllegalArgumentException e) {
+            Log.e(TAG, "ENCRYPTION DIAGNOSTIC: BASE64 DECODE ERROR!", e);
+            Log.e(TAG, "ENCRYPTION DIAGNOSTIC: Input B64 string: " + contractPubKeyB64);
+            throw new Exception("Failed to decode contract public key from Base64: " + e.getMessage(), e);
+        }
         
         // Get wallet private key (not ephemeral - this was the key issue!)
         String mnemonic = getSelectedMnemonic();
-        ECKey walletKey = SecretWallet.deriveKeyFromMnemonic(mnemonic);
+        ECKey walletKey;
+        try {
+            walletKey = SecretWallet.deriveKeyFromMnemonic(mnemonic);
+            Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Wallet key derivation successful");
+        } catch (Exception e) {
+            Log.e(TAG, "ENCRYPTION DIAGNOSTIC: WALLET KEY DERIVATION ERROR!", e);
+            throw new Exception("Failed to derive wallet key from mnemonic: " + e.getMessage(), e);
+        }
+        
+        // Get wallet public key and validate
+        byte[] walletPubCompressed;
+        try {
+            walletPubCompressed = walletKey.getPubKeyPoint().getEncoded(true);
+            Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Wallet pubkey length: " + walletPubCompressed.length + " bytes");
+            Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Wallet pubkey format: 0x" + String.format("%02x", walletPubCompressed[0]));
+            
+            if (walletPubCompressed.length != 33) {
+                Log.e(TAG, "ENCRYPTION DIAGNOSTIC: WALLET PUBKEY LENGTH ERROR!");
+                throw new Exception("Invalid wallet public key length: " + walletPubCompressed.length + " bytes (expected 33)");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "ENCRYPTION DIAGNOSTIC: WALLET PUBKEY ENCODING ERROR!", e);
+            throw new Exception("Failed to encode wallet public key: " + e.getMessage(), e);
+        }
         
         // Compute ECDH shared secret using wallet key (not ephemeral)
-        org.bouncycastle.math.ec.ECPoint contractPoint = org.bouncycastle.crypto.ec.CustomNamedCurves.getByName("secp256k1")
-                .getCurve().decodePoint(contractPubCompressed);
-        org.bouncycastle.math.ec.ECPoint shared = contractPoint.multiply(walletKey.getPrivKey()).normalize();
-        byte[] sharedSecret = shared.getXCoord().getEncoded();
+        org.bouncycastle.math.ec.ECPoint contractPoint;
+        try {
+            Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Attempting to decode contract point from compressed key...");
+            contractPoint = org.bouncycastle.crypto.ec.CustomNamedCurves.getByName("secp256k1")
+                    .getCurve().decodePoint(contractPubCompressed);
+            Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Contract point decode successful");
+        } catch (Exception e) {
+            Log.e(TAG, "ENCRYPTION DIAGNOSTIC: CONTRACT POINT DECODE ERROR!", e);
+            Log.e(TAG, "ENCRYPTION DIAGNOSTIC: This is likely the source of 'incorrect length for compressed encoding'");
+            Log.e(TAG, "ENCRYPTION DIAGNOSTIC: Contract pubkey hex: " + bytesToHex(contractPubCompressed, contractPubCompressed.length));
+            throw new Exception("Failed to decode contract public key point (this is likely the 'incorrect length for compressed encoding' error): " + e.getMessage(), e);
+        }
+        
+        org.bouncycastle.math.ec.ECPoint shared;
+        byte[] sharedSecret;
+        try {
+            Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Computing ECDH shared secret...");
+            shared = contractPoint.multiply(walletKey.getPrivKey()).normalize();
+            sharedSecret = shared.getXCoord().getEncoded();
+            Log.i(TAG, "ENCRYPTION DIAGNOSTIC: ECDH computation successful, shared secret length: " + sharedSecret.length);
+        } catch (Exception e) {
+            Log.e(TAG, "ENCRYPTION DIAGNOSTIC: ECDH COMPUTATION ERROR!", e);
+            throw new Exception("Failed to compute ECDH shared secret: " + e.getMessage(), e);
+        }
         
         // Improved key derivation: combine shared secret with nonce (HKDF-like)
         byte[] keyMaterial = new byte[sharedSecret.length + nonce.length];
@@ -368,14 +473,18 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
         // Encrypt the plaintext
         byte[] ciphertext = cipher.doFinal(plaintext.getBytes("UTF-8"));
         
-        // Get wallet public key for output (not ephemeral!)
-        byte[] walletPubCompressed = walletKey.getPubKeyPoint().getEncoded(true);
-        
         // Create output in expected format
         JSONObject payload = new JSONObject();
         payload.put("nonce", base64(nonce));
         payload.put("ephemeral_pubkey", base64(walletPubCompressed));
         payload.put("ciphertext", base64(ciphertext));
+        
+        Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Encryption completed successfully");
+        Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Output nonce length: " + nonce.length);
+        Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Output ephemeral_pubkey length: " + walletPubCompressed.length);
+        Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Output ciphertext length: " + ciphertext.length);
+        Log.i(TAG, "=== ENCRYPTION DIAGNOSTIC: Contract message encryption completed ===");
+        
         return payload.toString();
     }
 
@@ -602,6 +711,42 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
 
     private static String base64(byte[] b) {
         return Base64.encodeToString(b, Base64.NO_WRAP);
+    }
+    
+    // Helper method for diagnostic hex output
+    private static String bytesToHex(byte[] bytes, int maxLength) {
+        if (bytes == null) return "null";
+        StringBuilder sb = new StringBuilder();
+        int len = Math.min(bytes.length, maxLength);
+        for (int i = 0; i < len; i++) {
+            sb.append(String.format("%02x", bytes[i]));
+            if (i < len - 1) sb.append(" ");
+        }
+        if (bytes.length > maxLength) sb.append("...");
+        return sb.toString();
+    }
+    
+    // Convert uncompressed public key (65 bytes) to compressed format (33 bytes)
+    private static byte[] convertToCompressedKey(byte[] uncompressed) throws Exception {
+        if (uncompressed.length != 65 || uncompressed[0] != 0x04) {
+            throw new Exception("Invalid uncompressed key format");
+        }
+        
+        // Extract x and y coordinates (32 bytes each after the 0x04 prefix)
+        byte[] x = new byte[32];
+        byte[] y = new byte[32];
+        System.arraycopy(uncompressed, 1, x, 0, 32);
+        System.arraycopy(uncompressed, 33, y, 0, 32);
+        
+        // Determine if y is even or odd (for compression prefix)
+        boolean yIsEven = (y[31] & 1) == 0;
+        
+        // Create compressed key: prefix (0x02 for even y, 0x03 for odd y) + x coordinate
+        byte[] compressed = new byte[33];
+        compressed[0] = yIsEven ? (byte) 0x02 : (byte) 0x03;
+        System.arraycopy(x, 0, compressed, 1, 32);
+        
+        return compressed;
     }
 
     private static String joinUrl(String base, String path) {
