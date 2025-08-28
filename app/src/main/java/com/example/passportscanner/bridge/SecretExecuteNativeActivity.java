@@ -295,19 +295,65 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             stdTx.put("signatures", new JSONArray().put(sigObj));
             stdTx.put("memo", memo);
 
-            JSONObject txBody = new JSONObject();
-            txBody.put("tx", stdTx);
-            txBody.put("mode", "sync");
-
-            // Broadcast
-            String resp = httpPostJson(joinUrl(lcdUrl, "/txs"), txBody.toString());
+            // Broadcast - try modern endpoint first, fallback to legacy
+            Log.i(TAG, "BROADCAST DIAGNOSTIC: Attempting transaction broadcast...");
+            Log.i(TAG, "BROADCAST DIAGNOSTIC: LCD URL: " + lcdUrl);
+            
+            String broadcastResponse = null;
+            Exception lastError = null;
+            
+            // Try modern endpoint first (/cosmos/tx/v1beta1/txs)
+            try {
+                String modernUrl = joinUrl(lcdUrl, "/cosmos/tx/v1beta1/txs");
+                Log.i(TAG, "BROADCAST DIAGNOSTIC: Trying modern endpoint: " + modernUrl);
+                
+                // Modern endpoint uses different enum values for broadcast mode
+                JSONObject modernTxBody = new JSONObject();
+                modernTxBody.put("tx", stdTx);
+                modernTxBody.put("mode", "BROADCAST_MODE_SYNC"); // Correct enum value for modern endpoint
+                
+                broadcastResponse = httpPostJson(modernUrl, modernTxBody.toString());
+                Log.i(TAG, "BROADCAST DIAGNOSTIC: Modern endpoint SUCCESS");
+            } catch (Exception e) {
+                Log.w(TAG, "BROADCAST DIAGNOSTIC: Modern endpoint failed: " + e.getMessage());
+                lastError = e;
+                
+                // Check if it's a "code 12 not implemented" or similar API error
+                if (e.getMessage() != null && (e.getMessage().contains("code") || e.getMessage().contains("not implemented"))) {
+                    Log.w(TAG, "BROADCAST DIAGNOSTIC: Modern endpoint returned API error, trying legacy endpoint");
+                } else {
+                    Log.w(TAG, "BROADCAST DIAGNOSTIC: Modern endpoint network error, trying legacy endpoint");
+                }
+                
+                // Try legacy endpoint as fallback (/txs)
+                try {
+                    String legacyUrl = joinUrl(lcdUrl, "/txs");
+                    Log.i(TAG, "BROADCAST DIAGNOSTIC: Trying legacy endpoint: " + legacyUrl);
+                    
+                    // Legacy endpoint uses "sync" mode
+                    JSONObject legacyTxBody = new JSONObject();
+                    legacyTxBody.put("tx", stdTx);
+                    legacyTxBody.put("mode", "sync");
+                    
+                    broadcastResponse = httpPostJson(legacyUrl, legacyTxBody.toString());
+                    Log.i(TAG, "BROADCAST DIAGNOSTIC: Legacy endpoint SUCCESS");
+                } catch (Exception e2) {
+                    Log.e(TAG, "BROADCAST DIAGNOSTIC: Both endpoints failed!");
+                    Log.e(TAG, "BROADCAST DIAGNOSTIC: Modern endpoint error: " + e.getMessage());
+                    Log.e(TAG, "BROADCAST DIAGNOSTIC: Legacy endpoint error: " + e2.getMessage());
+                    throw new Exception("Transaction broadcast failed on both modern and legacy endpoints. Modern: " + e.getMessage() + ", Legacy: " + e2.getMessage());
+                }
+            }
+            
+            // Make final for use in inner class
+            final String finalResponse = broadcastResponse;
             
             // Return to UI thread for result
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
                     Intent out = new Intent();
-                    out.putExtra(EXTRA_RESULT_JSON, resp != null ? resp : "{}");
+                    out.putExtra(EXTRA_RESULT_JSON, finalResponse != null ? finalResponse : "{}");
                     setResult(Activity.RESULT_OK, out);
                     finish();
                 }
@@ -930,6 +976,9 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
     private static String httpPostJson(String urlStr, String jsonBody) throws Exception {
         HttpURLConnection conn = null;
         try {
+            Log.d(TAG, "BROADCAST DIAGNOSTIC: HTTP POST to: " + urlStr);
+            Log.d(TAG, "BROADCAST DIAGNOSTIC: Request body length: " + jsonBody.length() + " bytes");
+            
             URL url = new URL(urlStr);
             conn = (HttpURLConnection) url.openConnection();
             conn.setConnectTimeout(20000);
@@ -938,15 +987,64 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             conn.setDoOutput(true);
             conn.setRequestProperty("Content-Type", "application/json");
             conn.setRequestProperty("Accept", "application/json");
+            conn.setRequestProperty("User-Agent", "SecretExecuteNative/1.0");
             conn.connect();
+            
             try (OutputStream os = conn.getOutputStream()) {
                 byte[] data = jsonBody.getBytes("UTF-8");
                 os.write(data);
             }
-            InputStream in = (conn.getResponseCode() >= 400) ? conn.getErrorStream() : conn.getInputStream();
-            if (in == null) return "";
+            
+            int responseCode = conn.getResponseCode();
+            String responseMessage = conn.getResponseMessage();
+            Log.i(TAG, "BROADCAST DIAGNOSTIC: HTTP Response: " + responseCode + " " + responseMessage);
+            
+            InputStream in = (responseCode >= 400) ? conn.getErrorStream() : conn.getInputStream();
+            if (in == null) {
+                Log.w(TAG, "BROADCAST DIAGNOSTIC: No response body for code: " + responseCode);
+                if (responseCode >= 400) {
+                    throw new Exception("HTTP " + responseCode + " " + responseMessage + " (no response body)");
+                }
+                return "";
+            }
+            
             byte[] bytes = readAllBytes(in);
-            return new String(bytes, "UTF-8");
+            String response = new String(bytes, "UTF-8");
+            Log.d(TAG, "BROADCAST DIAGNOSTIC: Response length: " + response.length() + " bytes");
+            Log.d(TAG, "BROADCAST DIAGNOSTIC: Response preview: " + (response.length() > 300 ? response.substring(0, 300) + "..." : response));
+            
+            // Check for API-level errors in the response body (like {"code": 12, "message": "Not Implemented"})
+            if (responseCode >= 400 || (response.contains("\"code\"") && response.contains("\"message\""))) {
+                try {
+                    JSONObject errorObj = new JSONObject(response);
+                    if (errorObj.has("code") && errorObj.optInt("code", 0) != 0) {
+                        int errorCode = errorObj.optInt("code");
+                        String errorMessage = errorObj.optString("message", "Unknown API error");
+                        Log.e(TAG, "BROADCAST DIAGNOSTIC: API Error - Code: " + errorCode + ", Message: " + errorMessage);
+                        
+                        if (errorCode == 12) {
+                            Log.e(TAG, "BROADCAST DIAGNOSTIC: ERROR CODE 12 DETECTED - 'Not Implemented'");
+                            Log.e(TAG, "BROADCAST DIAGNOSTIC: This indicates the endpoint " + urlStr + " is not supported by this node");
+                            Log.e(TAG, "BROADCAST DIAGNOSTIC: Modern nodes typically don't support legacy /txs endpoint");
+                        }
+                        
+                        throw new Exception("API Error " + errorCode + ": " + errorMessage + " (endpoint: " + urlStr + ")");
+                    }
+                } catch (Exception jsonError) {
+                    Log.w(TAG, "BROADCAST DIAGNOSTIC: Could not parse error response as JSON: " + jsonError.getMessage());
+                }
+                
+                // If we can't parse as JSON but got an HTTP error, still throw
+                if (responseCode >= 400) {
+                    throw new Exception("HTTP " + responseCode + " " + responseMessage + ": " + response);
+                }
+            }
+            
+            return response;
+        } catch (Exception e) {
+            Log.e(TAG, "BROADCAST DIAGNOSTIC: HTTP POST failed for " + urlStr, e);
+            Log.e(TAG, "BROADCAST DIAGNOSTIC: Exception type: " + e.getClass().getSimpleName());
+            throw e;
         } finally {
             if (conn != null) conn.disconnect();
         }
