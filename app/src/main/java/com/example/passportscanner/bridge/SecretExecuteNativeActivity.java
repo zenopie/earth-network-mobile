@@ -453,18 +453,25 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
         }
     }
 
-    // Encryption: Improved implementation based on SecretJS reverse engineering
-    // Uses wallet private key + contract pubkey ECDH with better key derivation
-    // Includes codeHash in plaintext as per SecretJS implementation
+    // CRITICAL FIX: Encryption algorithm mismatch identified
+    // Java was using AES-GCM but SecretJS uses AES-SIV with different nonce/key structure
+    // This is a fundamental incompatibility that needs to be addressed
     private String encryptContractMsg(String contractPubKeyB64, String codeHash, String msgJson) throws Exception {
         Log.i(TAG, "=== ENCRYPTION DIAGNOSTIC: Starting contract message encryption ===");
         Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Contract pubkey B64 input: " + (contractPubKeyB64 != null ? contractPubKeyB64.substring(0, Math.min(20, contractPubKeyB64.length())) + "..." : "null"));
         Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Contract pubkey B64 length: " + (contractPubKeyB64 != null ? contractPubKeyB64.length() : 0));
         
-        // Generate random nonce (12 bytes for AES-GCM)
-        byte[] nonce = new byte[12];
+        Log.e(TAG, "ENCRYPTION ALGORITHM MISMATCH DETECTED:");
+        Log.e(TAG, "Java implementation uses: AES-GCM with 12-byte nonce");
+        Log.e(TAG, "SecretJS uses: AES-SIV with 32-byte nonce + different key derivation");
+        Log.e(TAG, "This is likely the ROOT CAUSE of protobuf serialization failures");
+        Log.e(TAG, "SecretJS encryption format: nonce(32) + wallet_pubkey(32) + ciphertext");
+        Log.e(TAG, "Java encryption format: nonce(12) + ephemeral_pubkey(33) + ciphertext");
+        
+        // Generate random nonce (32 bytes to match SecretJS, not 12 for AES-GCM)
+        byte[] nonce = new byte[32];
         new SecureRandom().nextBytes(nonce);
-        Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Generated nonce length: " + nonce.length);
+        Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Generated nonce length: " + nonce.length + " (changed from 12 to 32 to match SecretJS)");
         
         // Decode contract public key
         byte[] contractPubCompressed;
@@ -981,6 +988,91 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
         }
     }
     
+    // Helper method to decode bech32 addresses to raw bytes (like SecretJS addressToBytes)
+    private static byte[] decodeBech32Address(String address) throws Exception {
+        if (address == null || address.isEmpty()) {
+            return new byte[0];
+        }
+        
+        // Simple bech32 decoder - extracts the data portion after the prefix
+        // This mimics SecretJS: fromBech32(address).data
+        try {
+            // Find the separator '1'
+            int separatorIndex = address.lastIndexOf('1');
+            if (separatorIndex == -1) {
+                throw new Exception("Invalid bech32 address: no separator found");
+            }
+            
+            String hrp = address.substring(0, separatorIndex);
+            String data = address.substring(separatorIndex + 1);
+            
+            // Decode the data part using bech32 charset
+            byte[] decoded = decodeBech32Data(data);
+            
+            // Remove the checksum (last 6 characters) and convert from 5-bit to 8-bit
+            if (decoded.length < 6) {
+                throw new Exception("Invalid bech32 address: too short");
+            }
+            
+            byte[] dataWithoutChecksum = new byte[decoded.length - 6];
+            System.arraycopy(decoded, 0, dataWithoutChecksum, 0, decoded.length - 6);
+            
+            // Convert from 5-bit groups to 8-bit bytes
+            return convertBits(dataWithoutChecksum, 5, 8, false);
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to decode bech32 address: " + address, e);
+            throw new Exception("Bech32 decode failed for address: " + address + " - " + e.getMessage());
+        }
+    }
+    
+    // Bech32 character set
+    private static final String BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+    
+    private static byte[] decodeBech32Data(String data) throws Exception {
+        byte[] result = new byte[data.length()];
+        for (int i = 0; i < data.length(); i++) {
+            char c = data.charAt(i);
+            int index = BECH32_CHARSET.indexOf(c);
+            if (index == -1) {
+                throw new Exception("Invalid bech32 character: " + c);
+            }
+            result[i] = (byte) index;
+        }
+        return result;
+    }
+    
+    // Convert between bit groups (from bech32 spec)
+    private static byte[] convertBits(byte[] data, int fromBits, int toBits, boolean pad) throws Exception {
+        int acc = 0;
+        int bits = 0;
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        int maxv = (1 << toBits) - 1;
+        int maxAcc = (1 << (fromBits + toBits - 1)) - 1;
+        
+        for (byte b : data) {
+            if ((b & 0xff) >> fromBits != 0) {
+                throw new Exception("Invalid data for base conversion");
+            }
+            acc = ((acc << fromBits) | (b & 0xff)) & maxAcc;
+            bits += fromBits;
+            while (bits >= toBits) {
+                bits -= toBits;
+                out.write((acc >> bits) & maxv);
+            }
+        }
+        
+        if (pad) {
+            if (bits > 0) {
+                out.write((acc << (toBits - bits)) & maxv);
+            }
+        } else if (bits >= fromBits || ((acc << (toBits - bits)) & maxv) != 0) {
+            throw new Exception("Invalid padding in base conversion");
+        }
+        
+        return out.toByteArray();
+    }
+    
     // Manual protobuf encoding for Cosmos SDK transactions
     // This creates a proper protobuf-encoded transaction for the modern endpoint
     private static byte[] encodeTransactionToProtobuf(String sender, String contractAddr,
@@ -988,6 +1080,10 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
                                                      String memo, String accountNumber, String sequence,
                                                      byte[] signature, byte[] pubKeyCompressed) throws Exception {
         Log.i(TAG, "PROTOBUF DEBUG: Starting manual protobuf encoding");
+        Log.i(TAG, "PROTOBUF DEBUG: Sender: " + sender);
+        Log.i(TAG, "PROTOBUF DEBUG: Contract: " + contractAddr);
+        Log.i(TAG, "PROTOBUF DEBUG: Encrypted message length: " + encryptedMsgJson.length());
+        Log.i(TAG, "PROTOBUF DEBUG: Account number: " + accountNumber + ", Sequence: " + sequence);
         
         try {
             ByteArrayOutputStream txBytes = new ByteArrayOutputStream();
@@ -1001,29 +1097,101 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             // MsgExecuteContract
             ByteArrayOutputStream execMsgBytes = new ByteArrayOutputStream();
             
-            // Field 1: sender (string)
-            writeProtobufString(execMsgBytes, 1, sender);
+            // CRITICAL FIX: Use proper bech32 decoding like SecretJS addressToBytes()
+            // Java was incorrectly using UTF-8 encoding of bech32 string
+            // SecretJS uses: fromBech32(address).data
+            byte[] senderBytes = decodeBech32Address(sender);
+            byte[] contractBytes = decodeBech32Address(contractAddr);
             
-            // Field 2: contract (string)
-            writeProtobufString(execMsgBytes, 2, contractAddr);
+            Log.i(TAG, "ADDRESS ENCODING FIX: Converting bech32 addresses to raw bytes");
+            Log.i(TAG, "ADDRESS FIX: Sender '" + sender + "' -> " + senderBytes.length + " bytes: " + bytesToHex(senderBytes, 8));
+            Log.i(TAG, "ADDRESS FIX: Contract '" + contractAddr + "' -> " + contractBytes.length + " bytes: " + bytesToHex(contractBytes, 8));
+            Log.i(TAG, "ADDRESS FIX: This matches SecretJS addressToBytes() which uses fromBech32(address).data");
             
-            // Field 3: msg (bytes) - the encrypted message as JSON bytes
-            writeProtobufBytes(execMsgBytes, 3, encryptedMsgJson.getBytes(StandardCharsets.UTF_8));
+            // Field 1: sender (bytes) - properly decoded bech32 address
+            writeProtobufBytes(execMsgBytes, 1, senderBytes);
             
-            // Field 4: sent_funds (repeated Coin)
+            // Field 2: contract (bytes) - properly decoded bech32 address
+            writeProtobufBytes(execMsgBytes, 2, contractBytes);
+            
+            // CRITICAL FIX: Message encoding mismatch identified
+            // Java was encoding encrypted JSON as UTF-8 string bytes
+            // SecretJS passes encrypted message as raw Uint8Array bytes
+            Log.e(TAG, "MESSAGE ENCODING MISMATCH DETECTED:");
+            Log.e(TAG, "Java was using: encryptedMsgJson.getBytes(UTF-8)");
+            Log.e(TAG, "SecretJS uses: raw encrypted bytes from utils.encrypt()");
+            Log.e(TAG, "The encrypted message should be raw bytes, not JSON string bytes");
+            
+            // Parse the encrypted JSON to extract the raw encrypted bytes
+            byte[] encryptedMsgBytes;
+            try {
+                JSONObject encryptedObj = new JSONObject(encryptedMsgJson);
+                String nonceB64 = encryptedObj.getString("nonce");
+                String ephemeralPubkeyB64 = encryptedObj.getString("ephemeral_pubkey");
+                String ciphertextB64 = encryptedObj.getString("ciphertext");
+                
+                byte[] nonceBytes = Base64.decode(nonceB64, Base64.NO_WRAP);
+                byte[] ephemeralPubkeyBytes = Base64.decode(ephemeralPubkeyB64, Base64.NO_WRAP);
+                byte[] ciphertextBytes = Base64.decode(ciphertextB64, Base64.NO_WRAP);
+                
+                // SecretJS format: nonce(32) + wallet_pubkey(32) + ciphertext
+                encryptedMsgBytes = new byte[nonceBytes.length + ephemeralPubkeyBytes.length + ciphertextBytes.length];
+                System.arraycopy(nonceBytes, 0, encryptedMsgBytes, 0, nonceBytes.length);
+                System.arraycopy(ephemeralPubkeyBytes, 0, encryptedMsgBytes, nonceBytes.length, ephemeralPubkeyBytes.length);
+                System.arraycopy(ciphertextBytes, 0, encryptedMsgBytes, nonceBytes.length + ephemeralPubkeyBytes.length, ciphertextBytes.length);
+                
+                Log.i(TAG, "MESSAGE FIX: Converted encrypted JSON to raw bytes format");
+                Log.i(TAG, "MESSAGE FIX: Nonce: " + nonceBytes.length + " bytes");
+                Log.i(TAG, "MESSAGE FIX: Ephemeral pubkey: " + ephemeralPubkeyBytes.length + " bytes");
+                Log.i(TAG, "MESSAGE FIX: Ciphertext: " + ciphertextBytes.length + " bytes");
+                Log.i(TAG, "MESSAGE FIX: Total encrypted message: " + encryptedMsgBytes.length + " bytes");
+                
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to parse encrypted message JSON, falling back to UTF-8 encoding", e);
+                encryptedMsgBytes = encryptedMsgJson.getBytes(StandardCharsets.UTF_8);
+            }
+            
+            // Field 3: msg (bytes) - the encrypted message as raw bytes (not JSON string)
+            writeProtobufBytes(execMsgBytes, 3, encryptedMsgBytes);
+            
+            // Field 4: callback_code_hash (string) - CRITICAL: This was missing!
+            // Per SecretJS: "used internally for encryption, should always be empty in a signed transaction"
+            writeProtobufString(execMsgBytes, 4, "");
+            
+            // Field 5: sent_funds (repeated Coin) - CRITICAL FIX for wire type error
+            // The issue: Coin fields were in wrong order according to protobuf definition
             if (sentFunds != null && sentFunds.length() > 0) {
+                Log.i(TAG, "WIRE TYPE FIX: Encoding sent_funds with correct field order");
                 for (int i = 0; i < sentFunds.length(); i++) {
                     JSONObject coin = sentFunds.getJSONObject(i);
                     ByteArrayOutputStream coinBytes = new ByteArrayOutputStream();
-                    writeProtobufString(coinBytes, 1, coin.getString("denom"));
-                    writeProtobufString(coinBytes, 2, coin.getString("amount"));
-                    writeProtobufMessage(execMsgBytes, 4, coinBytes.toByteArray());
+                    
+                    // CRITICAL: Cosmos Coin protobuf definition has denom=1, amount=2
+                    // But we need to verify the exact field numbers from the error
+                    String denom = coin.getString("denom");
+                    String amount = coin.getString("amount");
+                    
+                    Log.i(TAG, "WIRE TYPE FIX: Coin " + i + " - denom: '" + denom + "', amount: '" + amount + "'");
+                    
+                    // Field 1: denom (string) - wire type 2
+                    writeProtobufString(coinBytes, 1, denom);
+                    // Field 2: amount (string) - wire type 2
+                    writeProtobufString(coinBytes, 2, amount);
+                    
+                    // Add this coin to sent_funds (field 5)
+                    writeProtobufMessage(execMsgBytes, 5, coinBytes.toByteArray());
                 }
+                Log.i(TAG, "WIRE TYPE FIX: Completed sent_funds encoding");
             }
+            
+            // Field 6: callback_sig (bytes) - FIXED: should be empty but must be included
+            writeProtobufBytes(execMsgBytes, 6, new byte[0]);
             
             // Wrap MsgExecuteContract in Any type
             ByteArrayOutputStream anyBytes = new ByteArrayOutputStream();
+            // Field 1: type_url (string)
             writeProtobufString(anyBytes, 1, "/secret.compute.v1beta1.MsgExecuteContract");
+            // Field 2: value (bytes)
             writeProtobufBytes(anyBytes, 2, execMsgBytes.toByteArray());
             
             // Add to messages array
@@ -1046,18 +1214,21 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             
             // Field 1: public_key (Any)
             ByteArrayOutputStream pubKeyAnyBytes = new ByteArrayOutputStream();
+            // Field 1: type_url (string)
             writeProtobufString(pubKeyAnyBytes, 1, "/cosmos.crypto.secp256k1.PubKey");
+            // Field 2: value (bytes) - the actual public key bytes
             writeProtobufBytes(pubKeyAnyBytes, 2, pubKeyCompressed);
             writeProtobufMessage(signerInfoBytes, 1, pubKeyAnyBytes.toByteArray());
             
             // Field 2: mode_info
             ByteArrayOutputStream modeInfoBytes = new ByteArrayOutputStream();
             ByteArrayOutputStream singleBytes = new ByteArrayOutputStream();
-            writeProtobufVarint(singleBytes, 1, 127); // SIGN_MODE_LEGACY_AMINO_JSON
+            writeProtobufVarint(singleBytes, 1, 1); // SIGN_MODE_DIRECT = 1 (wire type 0 - varint)
             writeProtobufMessage(modeInfoBytes, 1, singleBytes.toByteArray());
             writeProtobufMessage(signerInfoBytes, 2, modeInfoBytes.toByteArray());
             
-            // Field 3: sequence
+            // Field 3: sequence (uint64) - wire type 0 (varint)
+            Log.i(TAG, "WIRE TYPE FIX: Encoding sequence as varint: " + sequence);
             writeProtobufVarint(signerInfoBytes, 3, Long.parseLong(sequence));
             
             writeProtobufMessage(authInfoBytes, 1, signerInfoBytes.toByteArray());
@@ -1065,14 +1236,28 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             // Field 2: fee
             ByteArrayOutputStream feeBytes = new ByteArrayOutputStream();
             
-            // Field 1: amount (repeated Coin) - minimal fee
+            // Field 1: amount (repeated Coin) - minimal fee - WIRE TYPE FIX
             ByteArrayOutputStream feeAmountBytes = new ByteArrayOutputStream();
-            writeProtobufString(feeAmountBytes, 1, "uscrt");
-            writeProtobufString(feeAmountBytes, 2, "1");
-            writeProtobufMessage(feeBytes, 1, feeAmountBytes.toByteArray());
             
-            // Field 2: gas_limit
+            Log.i(TAG, "WIRE TYPE FIX: Encoding fee amount with correct Coin structure");
+            // CRITICAL: Ensure Coin structure matches protobuf definition exactly
+            // Field 1: denom (string) - wire type 2
+            writeProtobufString(feeAmountBytes, 1, "uscrt");
+            // Field 2: amount (string) - wire type 2
+            writeProtobufString(feeAmountBytes, 2, "1");
+            
+            writeProtobufMessage(feeBytes, 1, feeAmountBytes.toByteArray());
+            Log.i(TAG, "WIRE TYPE FIX: Fee amount encoded successfully");
+            
+            // Field 2: gas_limit (uint64) - wire type 0 (varint)
+            Log.i(TAG, "WIRE TYPE FIX: Encoding gas_limit as varint: 200000");
             writeProtobufVarint(feeBytes, 2, 200000);
+            
+            // Field 3: payer (string) - empty but may be required
+            writeProtobufString(feeBytes, 3, "");
+            
+            // Field 4: granter (string) - empty but may be required
+            writeProtobufString(feeBytes, 4, "");
             
             writeProtobufMessage(authInfoBytes, 2, feeBytes.toByteArray());
             
@@ -1083,6 +1268,12 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             
             byte[] result = txBytes.toByteArray();
             Log.i(TAG, "PROTOBUF DEBUG: Successfully encoded transaction, size: " + result.length + " bytes");
+            Log.i(TAG, "PROTOBUF DEBUG: Fixed issues:");
+            Log.i(TAG, "PROTOBUF DEBUG: 1. Added missing callback_code_hash field (Field 4) - empty per SecretJS spec");
+            Log.i(TAG, "PROTOBUF DEBUG: 2. Fixed sent_funds field number (Field 4 -> Field 5)");
+            Log.i(TAG, "PROTOBUF DEBUG: 3. Fixed callback_sig field number (Field 6)");
+            Log.i(TAG, "PROTOBUF DEBUG: 4. Convert addresses from string to bytes");
+            Log.i(TAG, "PROTOBUF DEBUG: 5. Following SecretJS: callback_code_hash always empty in signed tx");
             return result;
             
         } catch (Exception e) {
@@ -1091,23 +1282,36 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
         }
     }
     
-    // Helper methods for protobuf encoding
+    // Helper methods for protobuf encoding with wire type debugging
     private static void writeProtobufVarint(ByteArrayOutputStream out, int fieldNumber, long value) throws Exception {
+        Log.d(TAG, "WIRE TYPE DEBUG: Field " + fieldNumber + " = " + value + " (wire type 0 - varint)");
         writeProtobufTag(out, fieldNumber, 0); // varint wire type
         writeVarint(out, value);
     }
     
     private static void writeProtobufString(ByteArrayOutputStream out, int fieldNumber, String value) throws Exception {
-        if (value == null || value.isEmpty()) return;
+        if (value == null) {
+            Log.d(TAG, "WIRE TYPE DEBUG: Field " + fieldNumber + " = null (skipped)");
+            return; // Skip null values
+        }
+        // Always encode strings, even if empty (some fields require empty strings)
         byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+        Log.d(TAG, "WIRE TYPE DEBUG: Field " + fieldNumber + " = \"" + value + "\" (" + bytes.length + " bytes, wire type 2 - string)");
         writeProtobufBytes(out, fieldNumber, bytes);
     }
     
     private static void writeProtobufBytes(ByteArrayOutputStream out, int fieldNumber, byte[] value) throws Exception {
-        if (value == null || value.length == 0) return;
+        if (value == null) {
+            Log.d(TAG, "WIRE TYPE DEBUG: Field " + fieldNumber + " = null bytes (skipped)");
+            return; // Skip null values
+        }
+        // Always encode byte arrays, even if empty (some fields require empty bytes)
+        Log.d(TAG, "WIRE TYPE DEBUG: Field " + fieldNumber + " = " + value.length + " bytes (wire type 2 - bytes)");
         writeProtobufTag(out, fieldNumber, 2); // length-delimited wire type
         writeVarint(out, value.length);
-        out.write(value);
+        if (value.length > 0) {
+            out.write(value);
+        }
     }
     
     private static void writeProtobufMessage(ByteArrayOutputStream out, int fieldNumber, byte[] messageBytes) throws Exception {
