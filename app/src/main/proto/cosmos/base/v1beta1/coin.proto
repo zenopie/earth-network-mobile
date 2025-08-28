@@ -1,0 +1,24 @@
+syntax = "proto3";
+package cosmos.base.v1beta1;
+
+// Coin defines a token with a denomination and an amount.
+message Coin {
+  string denom = 1;
+  string amount = 2;
+}
+
+// DecCoin defines a token with a denomination and a decimal amount.
+message DecCoin {
+  string denom = 1;
+  string amount = 2;
+}
+
+// IntProto defines a Protobuf wrapper around an Int object.
+message IntProto {
+  string int = 1;
+}
+
+// DecProto defines a Protobuf wrapper around a Dec object.
+message DecProto {
+  string dec = 1;
+}

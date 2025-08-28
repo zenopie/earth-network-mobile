@@ -38,6 +38,8 @@ import java.io.ByteArrayInputStream;
 import java.io.DataOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import com.google.protobuf.ByteString;
+import cosmos.tx.v1beta1.Tx;
 
 /**
  * SecretExecuteNativeActivity
@@ -451,7 +453,7 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
                     finish();
                 }
             });
-        } catch (Throwable t) {
+        } catch (final Throwable t) {
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
@@ -703,13 +705,35 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
         
         // Create output in expected format
         JSONObject payload = new JSONObject();
+        // SecretJS expects the ephemeral/public key in a 32-byte (x-only) form.
+        // Our walletPubCompressed is the standard compressed secp256k1 (33 bytes, 0x02/0x03 prefix + 32-byte X).
+        // Convert to 32-byte x-only if necessary so the encrypted payload matches SecretJS exactly.
+        byte[] ephemeralPubkey32;
+        if (walletPubCompressed != null && walletPubCompressed.length == 33) {
+            ephemeralPubkey32 = new byte[32];
+            System.arraycopy(walletPubCompressed, 1, ephemeralPubkey32, 0, 32);
+            Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Stripped compressed prefix from wallet pubkey -> 32-byte x-only ephemeral key");
+        } else if (walletPubCompressed != null && walletPubCompressed.length == 32) {
+            ephemeralPubkey32 = walletPubCompressed;
+            Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Wallet pubkey already 32 bytes (x-only)");
+        } else {
+            // Fallback: try to salvage last 32 bytes (best-effort) to avoid breaking existing flows.
+            if (walletPubCompressed != null && walletPubCompressed.length > 32) {
+                ephemeralPubkey32 = java.util.Arrays.copyOfRange(walletPubCompressed, walletPubCompressed.length - 32, walletPubCompressed.length);
+                Log.w(TAG, "ENCRYPTION DIAGNOSTIC: Unexpected wallet pubkey length (" + walletPubCompressed.length + "), using last 32 bytes as fallback");
+            } else {
+                // As a last resort, use an empty 32-byte array (this will likely fail encryption on the contract side)
+                ephemeralPubkey32 = new byte[32];
+                Log.e(TAG, "ENCRYPTION DIAGNOSTIC: Wallet pubkey missing or too short; using zeroed 32-byte fallback (will likely fail)");
+            }
+        }
         payload.put("nonce", base64(nonce));
-        payload.put("ephemeral_pubkey", base64(walletPubCompressed));
+        payload.put("ephemeral_pubkey", base64(ephemeralPubkey32));
         payload.put("ciphertext", base64(ciphertext));
         
         Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Encryption completed successfully");
         Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Output nonce length: " + nonce.length);
-        Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Output ephemeral_pubkey length: " + walletPubCompressed.length);
+        Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Output ephemeral_pubkey length: " + ephemeralPubkey32.length);
         Log.i(TAG, "ENCRYPTION DIAGNOSTIC: Output ciphertext length: " + ciphertext.length);
         Log.i(TAG, "=== ENCRYPTION DIAGNOSTIC: Contract message encryption completed ===");
         
@@ -1087,6 +1111,7 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
                                                      String encryptedMsgJson, JSONArray sentFunds,
                                                      String memo, String accountNumber, String sequence,
                                                      byte[] signature, byte[] pubKeyCompressed) throws Exception {
+        byte[] result = null; // Initialize result variable
         Log.i(TAG, "PROTOBUF DEBUG: Starting manual protobuf encoding");
         Log.i(TAG, "PROTOBUF DEBUG: Sender: " + sender);
         Log.i(TAG, "PROTOBUF DEBUG: Contract: " + contractAddr);
@@ -1257,9 +1282,29 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             // Add to messages array
             writeProtobufMessage(bodyBytes, 1, anyBytes.toByteArray());
             
+            // Diagnostic dump: inspect serialized Any (MsgExecuteContract) for unexpected wire types
+            try {
+                byte[] anySerialized = anyBytes.toByteArray();
+                Log.i(TAG, "PROTOBUF DIAG: Any (MsgExecuteContract) hex preview: " + bytesToHex(anySerialized, Math.min(anySerialized.length, 120)));
+                Log.i(TAG, "PROTOBUF DIAG: Any (MsgExecuteContract) length: " + anySerialized.length);
+                debugAnnotateProtobuf(anySerialized);
+            } catch (Exception e) {
+                Log.w(TAG, "PROTOBUF DIAG: Failed to annotate Any bytes: " + e.getMessage());
+            }
+            
             // Field 2: memo (string)
             if (memo != null && !memo.isEmpty()) {
                 writeProtobufString(bodyBytes, 2, memo);
+            }
+            
+            // Diagnostic dump: inspect TxBody bytes after adding messages (and memo) to ensure tags/lengths look correct
+            try {
+                byte[] bodySerialized = bodyBytes.toByteArray();
+                Log.i(TAG, "PROTOBUF DIAG: TxBody hex preview: " + bytesToHex(bodySerialized, Math.min(bodySerialized.length, 200)));
+                Log.i(TAG, "PROTOBUF DIAG: TxBody length: " + bodySerialized.length);
+                debugAnnotateProtobuf(bodySerialized);
+            } catch (Exception e) {
+                Log.w(TAG, "PROTOBUF DIAG: Failed to annotate TxBody bytes: " + e.getMessage());
             }
             
             // Field 3: timeout_height (uint64) - optional, skip for now
@@ -1343,34 +1388,45 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             Log.e(TAG, "CRITICAL FIX: Assembling as TxRaw format for modern endpoint");
             Log.e(TAG, "CRITICAL FIX: TxRaw uses body_bytes and auth_info_bytes (pre-serialized)");
             
-            // Field 1: body_bytes (bytes) - pre-serialized TxBody
-            writeProtobufBytes(txBytes, 1, bodyBytes.toByteArray());
-            
-            // Field 2: auth_info_bytes (bytes) - pre-serialized AuthInfo
-            writeProtobufBytes(txBytes, 2, authInfoBytes.toByteArray());
-            
-            // Field 3: signatures (repeated bytes) - signature array
-            writeProtobufBytes(txBytes, 3, signature);
-            
-            byte[] result = txBytes.toByteArray();
-            Log.i(TAG, "CRITICAL FIX: Successfully encoded TxRaw transaction, size: " + result.length + " bytes");
-            Log.i(TAG, "CRITICAL FIX: Using TxRaw format (body_bytes + auth_info_bytes + signatures)");
-            Log.i(TAG, "CRITICAL FIX: This matches SecretJS TxRaw.encode() structure exactly");
-            // Extra diagnostics: dump a short hex preview and Base64 for remote comparison / copy-paste
-            Log.i(TAG, "PROTOBUF DEBUG: TxRaw hex (preview): " + bytesToHex(result, Math.min(result.length, 150)));
-            Log.i(TAG, "PROTOBUF DEBUG: TxRaw base64: " + Base64.encodeToString(result, Base64.NO_WRAP));
-            // Annotate the protobuf tags in the TxRaw to find any incorrectly-typed fields
-            debugAnnotateProtobuf(result);
-            
-            Log.i(TAG, "PROTOBUF DEBUG: Fixed issues:");
-            Log.i(TAG, "PROTOBUF DEBUG: 1. Added missing callback_code_hash field (Field 4) - empty per SecretJS spec");
-            Log.i(TAG, "PROTOBUF DEBUG: 2. Fixed sent_funds field number (Field 4 -> Field 5)");
-            Log.i(TAG, "PROTOBUF DEBUG: 3. Fixed callback_sig field number (Field 6)");
-            Log.i(TAG, "PROTOBUF DEBUG: 4. Convert addresses from string to bytes");
-            Log.i(TAG, "PROTOBUF DEBUG: 5. Following SecretJS: callback_code_hash always empty in signed tx");
-            Log.i(TAG, "PROTOBUF DEBUG: 6. CRITICAL: Using TxRaw format instead of Tx format");
-            return result;
-            
+            // Use generated TxRaw message to avoid manual tag/length mistakes
+            try {
+                byte[] bodySerialized = bodyBytes.toByteArray();
+                byte[] authSerialized = authInfoBytes.toByteArray();
+                Log.i(TAG, "PROTOBUF ASSERT: body_bytes length = " + bodySerialized.length);
+                Log.i(TAG, "PROTOBUF ASSERT: auth_info_bytes length = " + authSerialized.length);
+                
+                // Build TxRaw via generated protobuf classes (requires running Gradle to generate sources)
+                Tx.TxRaw.Builder txRawBuilder = Tx.TxRaw.newBuilder();
+                txRawBuilder.setBodyBytes(ByteString.copyFrom(bodySerialized));
+                txRawBuilder.setAuthInfoBytes(ByteString.copyFrom(authSerialized));
+                txRawBuilder.addSignatures(ByteString.copyFrom(signature));
+                
+                result = txRawBuilder.build().toByteArray();
+                Log.i(TAG, "CRITICAL FIX: Successfully encoded TxRaw transaction, size: " + result.length + " bytes");
+                Log.i(TAG, "CRITICAL FIX: Using TxRaw format (body_bytes + auth_info_bytes + signatures)");
+                Log.i(TAG, "CRITICAL FIX: This matches SecretJS TxRaw.encode() structure exactly");
+                // Extra diagnostics: dump a short hex preview and Base64 for remote comparison / copy-paste
+                Log.i(TAG, "PROTOBUF DEBUG: TxRaw hex (preview): " + bytesToHex(result, Math.min(result.length, 150)));
+                Log.i(TAG, "PROTOBUF DEBUG: TxRaw base64: " + Base64.encodeToString(result, Base64.NO_WRAP));
+                // Annotate the protobuf tags in the TxRaw to find any incorrectly-typed fields
+                debugAnnotateProtobuf(result);
+                return result;
+            } catch (Exception e) {
+                Log.e(TAG, "PROTOBUF DEBUG: TxRaw build via generated classes failed: " + e.getMessage(), e);
+                // Fallback to prior manual assembly for diagnostics (keep original behavior)
+                // Field 1: body_bytes (bytes) - pre-serialized TxBody
+                writeProtobufBytes(txBytes, 1, bodyBytes.toByteArray());
+                // Field 2: auth_info_bytes (bytes) - pre-serialized AuthInfo
+                writeProtobufBytes(txBytes, 2, authInfoBytes.toByteArray());
+                // Field 3: signatures (repeated bytes) - signature array
+                writeProtobufBytes(txBytes, 3, signature);
+                result = txBytes.toByteArray();
+                Log.i(TAG, "CRITICAL FIX: (fallback) encoded TxRaw transaction, size: " + result.length + " bytes");
+                Log.i(TAG, "PROTOBUF DEBUG: TxRaw hex (preview): " + bytesToHex(result, Math.min(result.length, 150)));
+                Log.i(TAG, "PROTOBUF DEBUG: TxRaw base64: " + Base64.encodeToString(result, Base64.NO_WRAP));
+                debugAnnotateProtobuf(result);
+                return result;
+            }
         } catch (Exception e) {
             Log.e(TAG, "PROTOBUF DEBUG: Encoding failed: " + e.getMessage(), e);
             throw new Exception("Protobuf encoding failed: " + e.getMessage(), e);

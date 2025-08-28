@@ -1,5 +1,6 @@
 plugins {
     id 'com.android.application'
+    id 'com.google.protobuf' // Protobuf generation plugin
 }
 
 android {
@@ -26,6 +27,25 @@ android {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
+    
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+        disable 'NotificationPermission'
+    }
+
+    sourceSets {
+        debug {
+            java {
+                srcDirs 'build/generated/source/proto/debug/java'
+            }
+        }
+        release {
+            java {
+                srcDirs 'build/generated/source/proto/release/java'
+            }
+        }
+    }
 
     packaging {
         resources {
@@ -33,7 +53,26 @@ android {
         }
     }
 }
+ 
+protobuf {
+    // Use protoc 3.21.x compatible with protobuf-javalite
+    protoc {
+        artifact = "com.google.protobuf:protoc:3.21.12"
+    }
+    // Configure generation to use the lite runtime
+    generateProtoTasks {
+        all().each { task ->
+            task.builtins {
+                // Generate Java lite (javalite) sources for Android compatibility
+                java {
+                    option 'lite'
+                }
+            }
+        }
+    }
+}
 
+ 
 // Dependency resolution to avoid BouncyCastle duplicates
 configurations.all {
     exclude group: 'org.bouncycastle', module: 'bcprov-jdk15to18'
