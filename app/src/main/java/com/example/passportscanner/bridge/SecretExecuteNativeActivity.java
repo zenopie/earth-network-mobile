@@ -565,6 +565,11 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
                         Log.w(TAG, "TRANSACTION ENHANCEMENT: Legacy failed to enhance response with execution data: " + e2.getMessage());
                         // Continue with original response if enhancement fails
                     }
+
+                    // DEBUG: Print the full enhanced response for user to see
+                    Log.i(TAG, "=== FULL ENHANCED RESPONSE FOR USER ===");
+                    Log.i(TAG, "Enhanced Response JSON: " + enhancedResponse.toString());
+                    Log.i(TAG, "==========================================");
                 } catch (Exception e2) {
                     Log.e(TAG, "BROADCAST DIAGNOSTIC: Both endpoints failed!");
                     Log.e(TAG, "BROADCAST DIAGNOSTIC: Modern endpoint error: " + e.getMessage());
@@ -575,6 +580,11 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
                     throw new Exception("All transaction broadcast methods failed. Modern protobuf: " + e.getMessage() + ", Legacy: " + e2.getMessage());
                 }
             }
+
+            // DEBUG: Print the final response that will be returned to user
+            Log.i(TAG, "=== FINAL RESPONSE BEING RETURNED TO USER ===");
+            Log.i(TAG, "Final Response JSON: " + (broadcastResponse != null ? broadcastResponse : "null"));
+            Log.i(TAG, "==============================================");
 
             // Make final for use in inner class
             final String finalResponse = broadcastResponse;
