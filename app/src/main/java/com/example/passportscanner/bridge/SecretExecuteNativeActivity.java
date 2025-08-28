@@ -89,6 +89,12 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
     private static final String TAG = "SecretExecuteNative";
     private static final String PREF_FILE = "secret_wallet_prefs";
     private static final String KEY_MNEMONIC = "mnemonic";
+
+    // Transaction query constants
+    private static final int TRANSACTION_QUERY_DELAY_MS = 5000; // 5 seconds initial delay
+    private static final int TRANSACTION_QUERY_TIMEOUT_MS = 60000; // 60 seconds total timeout
+    private static final int TRANSACTION_QUERY_MAX_RETRIES = 5; // Maximum retry attempts
+    private static final int TRANSACTION_QUERY_RETRY_DELAY_MS = 3000; // 3 seconds between retries
     
     // Hardcoded consensus IO public key from SecretJS (mainnetConsensusIoPubKey)
     // This is the public key used for contract encryption on Secret Network mainnet
@@ -332,6 +338,77 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
                 Log.i(TAG, "CODE 3 FIX: Sending proper protobuf-encoded transaction to modern endpoint");
                 broadcastResponse = httpPostJson(modernUrl, modernTxBody.toString());
                 Log.i(TAG, "BROADCAST DIAGNOSTIC: Modern endpoint SUCCESS with protobuf encoding");
+
+                // SECRETJS-STYLE ENHANCEMENT: Query for complete transaction data
+                try {
+                    JSONObject initialResponse = new JSONObject(broadcastResponse);
+                    if (initialResponse.has("tx_response")) {
+                        JSONObject txResponse = initialResponse.getJSONObject("tx_response");
+                        int code = txResponse.optInt("code", -1);
+                        String txHash = txResponse.optString("txhash", "");
+
+                        Log.i(TAG, "TRANSACTION ENHANCEMENT: Initial response code: " + code + ", txhash: " + txHash);
+
+                        // If transaction was accepted (code 0), query for complete execution data
+                        if (code == 0 && !txHash.isEmpty()) {
+                            Log.i(TAG, "TRANSACTION ENHANCEMENT: Transaction accepted, querying for execution data...");
+
+                            // Wait for initial transaction processing
+                            try {
+                                Log.i(TAG, "TRANSACTION ENHANCEMENT: Legacy waiting " + TRANSACTION_QUERY_DELAY_MS + "ms for initial transaction processing...");
+                                Thread.sleep(TRANSACTION_QUERY_DELAY_MS);
+                            } catch (InterruptedException ie) {
+                                Thread.currentThread().interrupt();
+                                Log.w(TAG, "TRANSACTION ENHANCEMENT: Legacy sleep interrupted, proceeding with query");
+                            }
+
+                            // Query for complete transaction data
+                            String detailedResponse = queryTransactionByHash(lcdUrl, txHash);
+
+                            if (detailedResponse != null && !detailedResponse.isEmpty()) {
+                                JSONObject detailedObj = new JSONObject(detailedResponse);
+                                if (detailedObj.has("tx_response")) {
+                                    JSONObject detailedTxResponse = detailedObj.getJSONObject("tx_response");
+
+                                    // Check if we got the execution data
+                                    String rawLog = detailedTxResponse.optString("raw_log", "");
+                                    JSONArray logs = detailedTxResponse.optJSONArray("logs");
+                                    String data = detailedTxResponse.optString("data", "");
+                                    JSONArray events = detailedTxResponse.optJSONArray("events");
+
+                                    Log.i(TAG, "TRANSACTION ENHANCEMENT: Retrieved execution data:");
+                                    Log.i(TAG, "TRANSACTION ENHANCEMENT: - raw_log length: " + rawLog.length());
+                                    Log.i(TAG, "TRANSACTION ENHANCEMENT: - logs count: " + (logs != null ? logs.length() : 0));
+                                    Log.i(TAG, "TRANSACTION ENHANCEMENT: - data length: " + data.length());
+                                    Log.i(TAG, "TRANSACTION ENHANCEMENT: - events count: " + (events != null ? events.length() : 0));
+
+                                    // Use the detailed response if it has execution data
+                                    if ((rawLog.length() > 0 || (logs != null && logs.length() > 0) ||
+                                         data.length() > 0 || (events != null && events.length() > 0))) {
+                                        broadcastResponse = detailedResponse;
+                                        Log.i(TAG, "TRANSACTION ENHANCEMENT: SUCCESS - Using detailed response with execution data");
+                                        Log.i(TAG, "TRANSACTION ENHANCEMENT: ==========================================");
+                                        Log.i(TAG, "TRANSACTION ENHANCEMENT: SECRETJS-STYLE RESPONSE SUMMARY:");
+                                        Log.i(TAG, "TRANSACTION ENHANCEMENT: - Transaction Hash: " + txHash);
+                                        Log.i(TAG, "TRANSACTION ENHANCEMENT: - Raw Log: " + (rawLog.length() > 0 ? "PRESENT (" + rawLog.length() + " chars)" : "EMPTY"));
+                                        Log.i(TAG, "TRANSACTION ENHANCEMENT: - Logs: " + (logs != null && logs.length() > 0 ? logs.length() + " entries" : "EMPTY"));
+                                        Log.i(TAG, "TRANSACTION ENHANCEMENT: - Data: " + (data.length() > 0 ? "PRESENT (" + data.length() + " chars)" : "EMPTY"));
+                                        Log.i(TAG, "TRANSACTION ENHANCEMENT: - Events: " + (events != null && events.length() > 0 ? events.length() + " entries" : "EMPTY"));
+                                        Log.i(TAG, "TRANSACTION ENHANCEMENT: ==========================================");
+                                    } else {
+                                        Log.i(TAG, "TRANSACTION ENHANCEMENT: Detailed response lacks execution data, keeping initial response");
+                                        Log.w(TAG, "TRANSACTION ENHANCEMENT: Transaction may still be processing or node doesn't have execution data yet");
+                                    }
+                                }
+                            }
+                        } else if (code != 0) {
+                            Log.i(TAG, "TRANSACTION ENHANCEMENT: Transaction failed with code " + code + ", skipping detailed query");
+                        }
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "TRANSACTION ENHANCEMENT: Failed to enhance response with execution data: " + e.getMessage());
+                    // Continue with original response if enhancement fails
+                }
             } catch (Exception e) {
                 Log.w(TAG, "BROADCAST DIAGNOSTIC: Modern endpoint failed: " + e.getMessage());
                 Log.e(TAG, "CODE 3 DEBUG: Modern endpoint error details: " + e.getMessage());
@@ -418,6 +495,76 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
 
                     broadcastResponse = httpPostJson(legacyUrl, legacyTxBody.toString());
                     Log.i(TAG, "BROADCAST DIAGNOSTIC: Legacy endpoint SUCCESS");
+
+                    // SECRETJS-STYLE ENHANCEMENT: Query for complete transaction data (legacy endpoint)
+                    try {
+                        JSONObject initialResponse = new JSONObject(broadcastResponse);
+                        String txHash = "";
+
+                        // Extract txhash from legacy response format
+                        if (initialResponse.has("txhash")) {
+                            txHash = initialResponse.optString("txhash", "");
+                        }
+
+                        Log.i(TAG, "TRANSACTION ENHANCEMENT: Legacy response txhash: " + txHash);
+
+                        // If we have a txhash, query for complete execution data
+                        if (!txHash.isEmpty()) {
+                            Log.i(TAG, "TRANSACTION ENHANCEMENT: Legacy transaction accepted, querying for execution data...");
+
+                            // Wait for initial transaction processing
+                            try {
+                                Log.i(TAG, "TRANSACTION ENHANCEMENT: Waiting " + TRANSACTION_QUERY_DELAY_MS + "ms for initial transaction processing...");
+                                Thread.sleep(TRANSACTION_QUERY_DELAY_MS);
+                            } catch (InterruptedException ie) {
+                                Thread.currentThread().interrupt();
+                                Log.w(TAG, "TRANSACTION ENHANCEMENT: Sleep interrupted, proceeding with query");
+                            }
+
+                            // Query for complete transaction data
+                            String detailedResponse = queryTransactionByHash(lcdUrl, txHash);
+
+                            if (detailedResponse != null && !detailedResponse.isEmpty()) {
+                                JSONObject detailedObj = new JSONObject(detailedResponse);
+                                if (detailedObj.has("tx_response")) {
+                                    JSONObject detailedTxResponse = detailedObj.getJSONObject("tx_response");
+
+                                    // Check if we got the execution data
+                                    String rawLog = detailedTxResponse.optString("raw_log", "");
+                                    JSONArray logs = detailedTxResponse.optJSONArray("logs");
+                                    String data = detailedTxResponse.optString("data", "");
+                                    JSONArray events = detailedTxResponse.optJSONArray("events");
+
+                                    Log.i(TAG, "TRANSACTION ENHANCEMENT: Legacy retrieved execution data:");
+                                    Log.i(TAG, "TRANSACTION ENHANCEMENT: - raw_log length: " + rawLog.length());
+                                    Log.i(TAG, "TRANSACTION ENHANCEMENT: - logs count: " + (logs != null ? logs.length() : 0));
+                                    Log.i(TAG, "TRANSACTION ENHANCEMENT: - data length: " + data.length());
+                                    Log.i(TAG, "TRANSACTION ENHANCEMENT: - events count: " + (events != null ? events.length() : 0));
+
+                                    // Use the detailed response if it has execution data
+                                    if ((rawLog.length() > 0 || (logs != null && logs.length() > 0) ||
+                                         data.length() > 0 || (events != null && events.length() > 0))) {
+                                        broadcastResponse = detailedResponse;
+                                        Log.i(TAG, "TRANSACTION ENHANCEMENT: LEGACY SUCCESS - Using detailed response with execution data");
+                                        Log.i(TAG, "TRANSACTION ENHANCEMENT: ==========================================");
+                                        Log.i(TAG, "TRANSACTION ENHANCEMENT: SECRETJS-STYLE RESPONSE SUMMARY (LEGACY):");
+                                        Log.i(TAG, "TRANSACTION ENHANCEMENT: - Transaction Hash: " + txHash);
+                                        Log.i(TAG, "TRANSACTION ENHANCEMENT: - Raw Log: " + (rawLog.length() > 0 ? "PRESENT (" + rawLog.length() + " chars)" : "EMPTY"));
+                                        Log.i(TAG, "TRANSACTION ENHANCEMENT: - Logs: " + (logs != null && logs.length() > 0 ? logs.length() + " entries" : "EMPTY"));
+                                        Log.i(TAG, "TRANSACTION ENHANCEMENT: - Data: " + (data.length() > 0 ? "PRESENT (" + data.length() + " chars)" : "EMPTY"));
+                                        Log.i(TAG, "TRANSACTION ENHANCEMENT: - Events: " + (events != null && events.length() > 0 ? events.length() + " entries" : "EMPTY"));
+                                        Log.i(TAG, "TRANSACTION ENHANCEMENT: ==========================================");
+                                    } else {
+                                        Log.i(TAG, "TRANSACTION ENHANCEMENT: Legacy detailed response lacks execution data, keeping initial response");
+                                        Log.w(TAG, "TRANSACTION ENHANCEMENT: Legacy transaction may still be processing or node doesn't have execution data yet");
+                                    }
+                                }
+                            }
+                        }
+                    } catch (Exception e2) {
+                        Log.w(TAG, "TRANSACTION ENHANCEMENT: Legacy failed to enhance response with execution data: " + e2.getMessage());
+                        // Continue with original response if enhancement fails
+                    }
                 } catch (Exception e2) {
                     Log.e(TAG, "BROADCAST DIAGNOSTIC: Both endpoints failed!");
                     Log.e(TAG, "BROADCAST DIAGNOSTIC: Modern endpoint error: " + e.getMessage());
@@ -1195,7 +1342,7 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             // Field 1: denom (string) - wire type 2
             writeProtobufString(feeAmountBytes, 1, "uscrt");
             // Field 2: amount (string) - wire type 2
-            writeProtobufString(feeAmountBytes, 2, "2500");
+            writeProtobufString(feeAmountBytes, 2, "100000");
             
             writeProtobufMessage(feeBytes, 1, feeAmountBytes.toByteArray());
             Log.i(TAG, "WIRE TYPE FIX: Fee amount encoded successfully");
@@ -1662,12 +1809,142 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
         }
     }
 
+    // Query transaction by hash to get complete execution data (like SecretJS) with retry logic
+    private static String queryTransactionByHash(String lcdBase, String txHash) throws Exception {
+        Log.i(TAG, "TRANSACTION QUERY: Starting transaction query for hash: " + txHash);
+        Log.i(TAG, "TRANSACTION QUERY: Will retry up to " + TRANSACTION_QUERY_MAX_RETRIES + " times with " + TRANSACTION_QUERY_RETRY_DELAY_MS + "ms delays");
+
+        long startTime = System.currentTimeMillis();
+        Exception lastException = null;
+
+        for (int attempt = 1; attempt <= TRANSACTION_QUERY_MAX_RETRIES; attempt++) {
+            Log.i(TAG, "TRANSACTION QUERY: Attempt " + attempt + "/" + TRANSACTION_QUERY_MAX_RETRIES);
+
+            // Try modern endpoint first
+            String modernResponse = tryQueryEndpoint(lcdBase, txHash, true);
+            if (modernResponse != null) {
+                Log.i(TAG, "TRANSACTION QUERY: SUCCESS on attempt " + attempt + " using modern endpoint");
+                return modernResponse;
+            }
+
+            // Try legacy endpoint as fallback
+            String legacyResponse = tryQueryEndpoint(lcdBase, txHash, false);
+            if (legacyResponse != null) {
+                Log.i(TAG, "TRANSACTION QUERY: SUCCESS on attempt " + attempt + " using legacy endpoint");
+                return legacyResponse;
+            }
+
+            // Check if we've exceeded timeout
+            long elapsed = System.currentTimeMillis() - startTime;
+            if (elapsed >= TRANSACTION_QUERY_TIMEOUT_MS) {
+                Log.w(TAG, "TRANSACTION QUERY: Timeout exceeded (" + elapsed + "ms), giving up");
+                break;
+            }
+
+            // Wait before retry (except on last attempt)
+            if (attempt < TRANSACTION_QUERY_MAX_RETRIES) {
+                try {
+                    Log.i(TAG, "TRANSACTION QUERY: Waiting " + TRANSACTION_QUERY_RETRY_DELAY_MS + "ms before retry...");
+                    Thread.sleep(TRANSACTION_QUERY_RETRY_DELAY_MS);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    Log.w(TAG, "TRANSACTION QUERY: Sleep interrupted, proceeding with next attempt");
+                }
+            }
+        }
+
+        Log.e(TAG, "TRANSACTION QUERY: All " + TRANSACTION_QUERY_MAX_RETRIES + " attempts failed");
+        Log.e(TAG, "TRANSACTION QUERY: Transaction may still be processing or LCD may not support transaction queries");
+        throw new Exception("Failed to query transaction after " + TRANSACTION_QUERY_MAX_RETRIES + " attempts: " + txHash);
+    }
+
+    // Helper method to try querying a specific endpoint
+    private static String tryQueryEndpoint(String lcdBase, String txHash, boolean useModern) throws Exception {
+        String endpointType = useModern ? "modern" : "legacy";
+        String endpointPath = useModern ? "/cosmos/tx/v1beta1/txs/" : "/txs/";
+        String url = joinUrl(lcdBase, endpointPath) + txHash;
+
+        try {
+            Log.d(TAG, "TRANSACTION QUERY: Trying " + endpointType + " endpoint: " + url);
+            String response = httpGet(url);
+
+            if (response != null && !response.isEmpty()) {
+                JSONObject root = new JSONObject(response);
+
+                // Check for API errors first
+                if (root.has("code") && root.optInt("code", 0) != 0) {
+                    String errorMsg = root.optString("message", "Unknown API error");
+                    Log.w(TAG, "TRANSACTION QUERY: " + endpointType + " endpoint returned API error: " + errorMsg);
+
+                    // If it's "Not Implemented" or similar, don't retry this endpoint
+                    if (errorMsg.contains("Not Implemented") || errorMsg.contains("not implemented")) {
+                        Log.i(TAG, "TRANSACTION QUERY: " + endpointType + " endpoint not supported, skipping future attempts");
+                        return null; // Don't retry this endpoint
+                    }
+
+                    // If it's "tx not found", the transaction might not be processed yet
+                    if (errorMsg.contains("not found") || errorMsg.contains("key not found")) {
+                        Log.i(TAG, "TRANSACTION QUERY: Transaction not found yet, will retry");
+                        return null; // Will retry
+                    }
+
+                    // Other API errors should not be retried
+                    return null;
+                }
+
+                // Validate response structure and execution data
+                JSONObject txResponse = null;
+                if (useModern && root.has("tx_response")) {
+                    txResponse = root.getJSONObject("tx_response");
+                } else if (!useModern) {
+                    // Legacy response has data at root level
+                    txResponse = root;
+                }
+
+                if (txResponse != null) {
+                    // Check if we have meaningful execution data
+                    String rawLog = txResponse.optString("raw_log", "");
+                    JSONArray logs = txResponse.optJSONArray("logs");
+                    String data = txResponse.optString("data", "");
+                    JSONArray events = txResponse.optJSONArray("events");
+
+                    // Log what we found
+                    Log.i(TAG, "TRANSACTION QUERY: " + endpointType + " endpoint response validation:");
+                    Log.i(TAG, "TRANSACTION QUERY: - raw_log: '" + (rawLog.length() > 50 ? rawLog.substring(0, 50) + "..." : rawLog) + "'");
+                    Log.i(TAG, "TRANSACTION QUERY: - logs: " + (logs != null ? logs.length() + " entries" : "null"));
+                    Log.i(TAG, "TRANSACTION QUERY: - data: '" + (data.length() > 20 ? data.substring(0, 20) + "..." : data) + "'");
+                    Log.i(TAG, "TRANSACTION QUERY: - events: " + (events != null ? events.length() + " entries" : "null"));
+
+                    // Consider it successful if we have any execution data
+                    boolean hasExecutionData = rawLog.length() > 0 || (logs != null && logs.length() > 0) ||
+                                             data.length() > 0 || (events != null && events.length() > 0);
+
+                    if (hasExecutionData) {
+                        Log.i(TAG, "TRANSACTION QUERY: Found execution data on " + endpointType + " endpoint");
+                        return response;
+                    } else {
+                        Log.i(TAG, "TRANSACTION QUERY: No execution data yet, transaction may still be processing");
+                        return null; // Will retry
+                    }
+                } else {
+                    Log.w(TAG, "TRANSACTION QUERY: " + endpointType + " endpoint response missing tx_response field");
+                }
+            } else {
+                Log.w(TAG, "TRANSACTION QUERY: " + endpointType + " endpoint returned empty/null response");
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "TRANSACTION QUERY: " + endpointType + " endpoint failed: " + e.getMessage());
+        }
+
+        return null; // Will retry
+    }
+
     private static String httpPostJson(String urlStr, String jsonBody) throws Exception {
         HttpURLConnection conn = null;
         try {
             Log.d(TAG, "BROADCAST DIAGNOSTIC: HTTP POST to: " + urlStr);
             Log.d(TAG, "BROADCAST DIAGNOSTIC: Request body length: " + jsonBody.length() + " bytes");
-            
+
             URL url = new URL(urlStr);
             conn = (HttpURLConnection) url.openConnection();
             conn.setConnectTimeout(20000);
@@ -1678,16 +1955,16 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             conn.setRequestProperty("Accept", "application/json");
             conn.setRequestProperty("User-Agent", "SecretExecuteNative/1.0");
             conn.connect();
-            
+
             try (OutputStream os = conn.getOutputStream()) {
                 byte[] data = jsonBody.getBytes("UTF-8");
                 os.write(data);
             }
-            
+
             int responseCode = conn.getResponseCode();
             String responseMessage = conn.getResponseMessage();
             Log.i(TAG, "BROADCAST DIAGNOSTIC: HTTP Response: " + responseCode + " " + responseMessage);
-            
+
             InputStream in = (responseCode >= 400) ? conn.getErrorStream() : conn.getInputStream();
             if (in == null) {
                 Log.w(TAG, "BROADCAST DIAGNOSTIC: No response body for code: " + responseCode);
@@ -1696,12 +1973,12 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
                 }
                 return "";
             }
-            
+
             byte[] bytes = readAllBytes(in);
             String response = new String(bytes, "UTF-8");
             Log.d(TAG, "BROADCAST DIAGNOSTIC: Response length: " + response.length() + " bytes");
             Log.d(TAG, "BROADCAST DIAGNOSTIC: Response preview: " + (response.length() > 300 ? response.substring(0, 300) + "..." : response));
-            
+
             // Check for API-level errors in the response body (like {"code": 12, "message": "Not Implemented"})
             if (responseCode >= 400 || (response.contains("\"code\"") && response.contains("\"message\""))) {
                 try {
@@ -1710,25 +1987,25 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
                         int errorCode = errorObj.optInt("code");
                         String errorMessage = errorObj.optString("message", "Unknown API error");
                         Log.e(TAG, "BROADCAST DIAGNOSTIC: API Error - Code: " + errorCode + ", Message: " + errorMessage);
-                        
+
                         if (errorCode == 12) {
                             Log.e(TAG, "BROADCAST DIAGNOSTIC: ERROR CODE 12 DETECTED - 'Not Implemented'");
                             Log.e(TAG, "BROADCAST DIAGNOSTIC: This indicates the endpoint " + urlStr + " is not supported by this node");
                             Log.e(TAG, "BROADCAST DIAGNOSTIC: Modern nodes typically don't support legacy /txs endpoint");
                         }
-                        
+
                         throw new Exception("API Error " + errorCode + ": " + errorMessage + " (endpoint: " + urlStr + ")");
                     }
                 } catch (Exception jsonError) {
                     Log.w(TAG, "BROADCAST DIAGNOSTIC: Could not parse error response as JSON: " + jsonError.getMessage());
                 }
-                
+
                 // If we can't parse as JSON but got an HTTP error, still throw
                 if (responseCode >= 400) {
                     throw new Exception("HTTP " + responseCode + " " + responseMessage + ": " + response);
                 }
             }
-            
+
             return response;
         } catch (Exception e) {
             Log.e(TAG, "BROADCAST DIAGNOSTIC: HTTP POST failed for " + urlStr, e);
