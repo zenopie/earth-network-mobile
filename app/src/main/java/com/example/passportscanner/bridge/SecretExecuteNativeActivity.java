@@ -149,45 +149,109 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             return;
         }
 
-        // Resolve chain_id, account_number, sequence
-        String chainId = "unknown";
-        String accountNumberStr = "0";
-        String sequenceStr = "0";
-        try {
-            Log.d(TAG, "Fetching chain ID from: " + lcdUrl);
-            chainId = fetchChainId(lcdUrl);
-            Log.d(TAG, "Chain ID: " + chainId);
-            
-            Log.d(TAG, "Fetching account info for: " + sender);
-            JSONObject acct = fetchAccount(lcdUrl, sender);
-            Log.d(TAG, "Account response: " + (acct != null ? acct.toString() : "null"));
-            
-            if (acct == null) {
-                throw new Exception("Account response is null - account may not exist or be funded");
+        // Resolve chain_id, account_number, sequence on background thread
+        Log.i(TAG, "=== DIAGNOSTIC: Starting account/chain fetch ===");
+        Log.i(TAG, "DIAGNOSTIC: LCD URL: " + lcdUrl);
+        Log.i(TAG, "DIAGNOSTIC: Wallet address: " + sender);
+        Log.i(TAG, "DIAGNOSTIC: Expected address format: " + (sender.startsWith("secret1") ? "VALID" : "INVALID"));
+        
+        // Move network operations to background thread to avoid NetworkOnMainThreadException
+        final String finalLcdUrl = lcdUrl;
+        final String finalSender = sender;
+        final ECKey finalKey = key;
+        final byte[] finalPubCompressed = pubCompressed;
+        final String finalContractAddr = contractAddr;
+        final String finalContractPubKeyB64 = contractPubKeyB64;
+        final String finalCodeHash = codeHash;
+        final String finalExecJson = execJson;
+        final String finalFunds = funds;
+        final String finalMemo = memo;
+        
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                String chainId = "unknown";
+                String accountNumberStr = "0";
+                String sequenceStr = "0";
+                try {
+                    Log.d(TAG, "DIAGNOSTIC: Testing network connectivity to LCD endpoint...");
+                    chainId = fetchChainId(finalLcdUrl);
+                    Log.i(TAG, "DIAGNOSTIC: Successfully connected to network. Chain ID: " + chainId);
+                    Log.i(TAG, "DIAGNOSTIC: Expected chain: secret-4, Actual chain: " + chainId + " (Match: " + "secret-4".equals(chainId) + ")");
+                    
+                    Log.d(TAG, "DIAGNOSTIC: Attempting to fetch account info for: " + finalSender);
+                    JSONObject acct = fetchAccount(finalLcdUrl, finalSender);
+                    Log.i(TAG, "DIAGNOSTIC: Raw account response: " + (acct != null ? acct.toString() : "null"));
+                    
+                    if (acct == null) {
+                        Log.e(TAG, "DIAGNOSTIC: Account fetch returned null - this indicates:");
+                        Log.e(TAG, "DIAGNOSTIC: 1. Account does not exist on chain: " + chainId);
+                        Log.e(TAG, "DIAGNOSTIC: 2. Account is not funded (some chains require funding for existence)");
+                        Log.e(TAG, "DIAGNOSTIC: 3. Network/endpoint issue with: " + finalLcdUrl);
+                        throw new Exception("Account response is null - account may not exist or be funded on chain " + chainId);
+                    }
+                    
+                    String[] acctFields = parseAccountFields(acct);
+                    accountNumberStr = acctFields[0];
+                    sequenceStr = acctFields[1];
+                    Log.i(TAG, "DIAGNOSTIC: Successfully parsed account - Number: " + accountNumberStr + ", Sequence: " + sequenceStr);
+                    Log.i(TAG, "=== DIAGNOSTIC: Account/chain fetch completed successfully ===");
+                    
+                    // Continue with transaction building on background thread
+                    continueWithTransaction(finalKey, finalPubCompressed, finalSender, finalContractAddr,
+                                          finalContractPubKeyB64, finalCodeHash, finalExecJson, finalFunds,
+                                          finalMemo, finalLcdUrl, chainId, accountNumberStr, sequenceStr);
+                    
+                } catch (Throwable t) {
+                    final String finalChainId = chainId; // Make effectively final for inner class
+                    Log.e(TAG, "=== DIAGNOSTIC: Account/chain fetch FAILED ===", t);
+                    Log.e(TAG, "DIAGNOSTIC: Error type: " + t.getClass().getSimpleName());
+                    Log.e(TAG, "DIAGNOSTIC: Error message: " + t.getMessage());
+                    Log.e(TAG, "DIAGNOSTIC: LCD URL used: " + finalLcdUrl);
+                    Log.e(TAG, "DIAGNOSTIC: Chain ID: " + finalChainId);
+                    Log.e(TAG, "DIAGNOSTIC: Address: " + finalSender);
+                    Log.e(TAG, "DIAGNOSTIC: Possible causes:");
+                    Log.e(TAG, "DIAGNOSTIC: 1. Network connectivity issue to " + finalLcdUrl);
+                    Log.e(TAG, "DIAGNOSTIC: 2. Account " + finalSender + " does not exist on " + finalChainId);
+                    Log.e(TAG, "DIAGNOSTIC: 3. Account exists but is not funded");
+                    Log.e(TAG, "DIAGNOSTIC: 4. Wrong network - address may be for different chain");
+                    Log.e(TAG, "DIAGNOSTIC: 5. LCD endpoint configuration issue");
+                    Log.e(TAG, "DIAGNOSTIC: 6. NetworkOnMainThreadException - fixed by using background thread");
+                    
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            finishWithError("Account/chain fetch failed: " + t.getMessage() +
+                                " (Ensure wallet address " + finalSender + " exists and is funded on " + finalChainId + ")");
+                        }
+                    });
+                }
             }
-            
-            String[] acctFields = parseAccountFields(acct);
-            accountNumberStr = acctFields[0];
-            sequenceStr = acctFields[1];
-            Log.d(TAG, "Account number: " + accountNumberStr + ", Sequence: " + sequenceStr);
-        } catch (Throwable t) {
-            Log.e(TAG, "Account/chain fetch failed", t);
-            finishWithError("Account/chain fetch failed: " + t.getMessage() +
-                " (Ensure wallet address " + sender + " exists and is funded on " + chainId + ")");
-            return;
-        }
-
-        // Encrypt execute msg per Secret contract scheme (AES-GCM with ECDH-derived key)
-        final String encryptedMsgJson;
+        }).start();
+        
+        // Return early - completion will happen in background thread
+        return;
+    }
+    
+    private void continueWithTransaction(ECKey key, byte[] pubCompressed, String sender, String contractAddr,
+                                       String contractPubKeyB64, String codeHash, String execJson, String funds,
+                                       String memo, String lcdUrl, String chainId, String accountNumberStr, String sequenceStr) {
         try {
-            encryptedMsgJson = encryptContractMsg(contractPubKeyB64, codeHash, execJson);
-        } catch (Throwable t) {
-            finishWithError("Encryption failed: " + t.getMessage());
-            return;
-        }
+            // Encrypt execute msg per Secret contract scheme (AES-GCM with ECDH-derived key)
+            final String encryptedMsgJson;
+            try {
+                encryptedMsgJson = encryptContractMsg(contractPubKeyB64, codeHash, execJson);
+            } catch (Throwable t) {
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        finishWithError("Encryption failed: " + t.getMessage());
+                    }
+                });
+                return;
+            }
 
-        // Build MsgExecuteContract
-        try {
+            // Build MsgExecuteContract
             JSONObject msgValue = new JSONObject();
             msgValue.put("sender", sender);
             msgValue.put("contract", contractAddr);
@@ -237,12 +301,24 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
 
             // Broadcast
             String resp = httpPostJson(joinUrl(lcdUrl, "/txs"), txBody.toString());
-            Intent out = new Intent();
-            out.putExtra(EXTRA_RESULT_JSON, resp != null ? resp : "{}");
-            setResult(Activity.RESULT_OK, out);
-            finish();
+            
+            // Return to UI thread for result
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    Intent out = new Intent();
+                    out.putExtra(EXTRA_RESULT_JSON, resp != null ? resp : "{}");
+                    setResult(Activity.RESULT_OK, out);
+                    finish();
+                }
+            });
         } catch (Throwable t) {
-            finishWithError("Build/broadcast failed: " + t.getMessage());
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    finishWithError("Build/broadcast failed: " + t.getMessage());
+                }
+            });
         }
     }
 
@@ -395,23 +471,74 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
     }
 
     private static JSONObject fetchAccount(String lcdBase, String address) throws Exception {
-        // Try new endpoint
+        Log.i(TAG, "DIAGNOSTIC: Attempting to fetch account via multiple endpoints...");
+        Log.i(TAG, "DIAGNOSTIC: Target address: " + address);
+        
+        // Try new endpoint first
         try {
             String url = joinUrl(lcdBase, "/cosmos/auth/v1beta1/accounts/") + address;
+            Log.d(TAG, "DIAGNOSTIC: Trying modern endpoint: " + url);
             String body = httpGet(url);
             if (body != null && !body.isEmpty()) {
-                return new JSONObject(body);
+                Log.i(TAG, "DIAGNOSTIC: Modern endpoint returned response");
+                Log.d(TAG, "DIAGNOSTIC: Response body: " + body);
+                JSONObject result = new JSONObject(body);
+                
+                // Check for API error responses (like {"code": 12, "message": "Not Implemented"})
+                if (result.has("code") && result.optInt("code", 0) != 0) {
+                    String errorMsg = result.optString("message", "Unknown API error");
+                    Log.w(TAG, "DIAGNOSTIC: Modern endpoint returned API error - Code: " + result.optInt("code") + ", Message: " + errorMsg);
+                    // Don't throw here, try legacy endpoint
+                } else if (result.has("account")) {
+                    // Success case - we have valid account data
+                    JSONObject account = result.getJSONObject("account");
+                    String accountNumber = account.optString("account_number", "");
+                    String sequence = account.optString("sequence", "");
+                    Log.i(TAG, "DIAGNOSTIC: Modern endpoint SUCCESS - Account: " + accountNumber + ", Sequence: " + sequence);
+                    return result;
+                } else {
+                    Log.w(TAG, "DIAGNOSTIC: Modern endpoint response missing 'account' field");
+                }
+            } else {
+                Log.w(TAG, "DIAGNOSTIC: Modern endpoint returned empty/null response");
             }
-        } catch (Throwable ignored) {}
-        // Legacy endpoint
-        {
-            String url = joinUrl(lcdBase, "/auth/accounts/") + address;
-            String body = httpGet(url);
-            if (body != null && !body.isEmpty()) {
-                return new JSONObject(body);
-            }
+        } catch (Exception e) {
+            Log.w(TAG, "DIAGNOSTIC: Modern endpoint exception: " + e.getMessage());
         }
-        throw new Exception("Account not found via LCD");
+        
+        // Try legacy endpoint as fallback
+        try {
+            String url = joinUrl(lcdBase, "/auth/accounts/") + address;
+            Log.d(TAG, "DIAGNOSTIC: Trying legacy endpoint: " + url);
+            String body = httpGet(url);
+            if (body != null && !body.isEmpty()) {
+                Log.i(TAG, "DIAGNOSTIC: Legacy endpoint returned response");
+                Log.d(TAG, "DIAGNOSTIC: Response body: " + body);
+                JSONObject result = new JSONObject(body);
+                
+                // Check for API error responses
+                if (result.has("code") && result.optInt("code", 0) != 0) {
+                    String errorMsg = result.optString("message", "Unknown API error");
+                    Log.w(TAG, "DIAGNOSTIC: Legacy endpoint returned API error - Code: " + result.optInt("code") + ", Message: " + errorMsg);
+                } else if (result.has("account_number") || result.has("address")) {
+                    // Success case - we have account data at root level
+                    String accountNumber = result.optString("account_number", "");
+                    String sequence = result.optString("sequence", "");
+                    Log.i(TAG, "DIAGNOSTIC: Legacy endpoint SUCCESS - Account: " + accountNumber + ", Sequence: " + sequence);
+                    return result;
+                } else {
+                    Log.w(TAG, "DIAGNOSTIC: Legacy endpoint response missing account fields");
+                }
+            } else {
+                Log.w(TAG, "DIAGNOSTIC: Legacy endpoint returned empty/null response");
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "DIAGNOSTIC: Legacy endpoint exception: " + e.getMessage());
+        }
+        
+        Log.e(TAG, "DIAGNOSTIC: Both account endpoints failed for address: " + address);
+        Log.e(TAG, "DIAGNOSTIC: This indicates the account does not exist on the network or LCD is misconfigured");
+        throw new Exception("Account not found via LCD - tried both modern and legacy endpoints");
     }
 
     // Attempt to fetch the contract's encryption public key (compressed secp256k1, Base64) from LCD.
@@ -486,7 +613,7 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
     private static String httpGet(String urlStr) throws Exception {
         HttpURLConnection conn = null;
         try {
-            Log.d(TAG, "HTTP GET: " + urlStr);
+            Log.d(TAG, "DIAGNOSTIC: HTTP GET: " + urlStr);
             URL url = new URL(urlStr);
             conn = (HttpURLConnection) url.openConnection();
             conn.setConnectTimeout(20000);
@@ -494,22 +621,60 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             conn.setRequestMethod("GET");
             conn.setRequestProperty("Accept", "application/json");
             conn.setRequestProperty("User-Agent", "SecretExecuteNative/1.0");
+            
+            Log.d(TAG, "DIAGNOSTIC: Connecting to: " + url.getHost() + ":" + url.getPort());
             conn.connect();
             
             int responseCode = conn.getResponseCode();
-            Log.d(TAG, "HTTP Response Code: " + responseCode);
+            String responseMessage = conn.getResponseMessage();
+            Log.i(TAG, "DIAGNOSTIC: HTTP Response: " + responseCode + " " + responseMessage);
             
+            // Read response body regardless of status code
             InputStream in = (responseCode >= 400) ? conn.getErrorStream() : conn.getInputStream();
             if (in == null) {
-                Log.w(TAG, "HTTP Response stream is null");
+                Log.w(TAG, "DIAGNOSTIC: HTTP Response stream is null for code: " + responseCode);
+                // For some error codes, still throw exception if no response body
+                if (responseCode >= 400) {
+                    throw new Exception("HTTP " + responseCode + " " + responseMessage + " (no response body)");
+                }
                 return "";
             }
+            
             byte[] bytes = readAllBytes(in);
             String response = new String(bytes, "UTF-8");
-            Log.d(TAG, "HTTP Response: " + (response.length() > 200 ? response.substring(0, 200) + "..." : response));
+            Log.d(TAG, "DIAGNOSTIC: HTTP Response length: " + response.length() + " bytes");
+            Log.d(TAG, "DIAGNOSTIC: HTTP Response preview: " + (response.length() > 200 ? response.substring(0, 200) + "..." : response));
+            
+            // For HTTP errors, log but don't throw exception - let caller handle API error responses
+            if (responseCode >= 400) {
+                Log.w(TAG, "DIAGNOSTIC: HTTP Error " + responseCode + " but got response body: " + response);
+                if (responseCode == 404) {
+                    Log.w(TAG, "DIAGNOSTIC: 404 Not Found - endpoint or resource does not exist");
+                } else if (responseCode == 500) {
+                    Log.w(TAG, "DIAGNOSTIC: 500 Server Error - LCD server issue");
+                } else if (responseCode >= 400 && responseCode < 500) {
+                    Log.w(TAG, "DIAGNOSTIC: 4xx Client Error - request issue");
+                }
+                // Return the response body so caller can parse API error messages
+                // Only throw if it's a network-level error without useful response
+                if (response.trim().isEmpty()) {
+                    throw new Exception("HTTP " + responseCode + " " + responseMessage + " (empty response)");
+                }
+            }
+            
             return response;
         } catch (Exception e) {
-            Log.e(TAG, "HTTP GET failed for " + urlStr + ": " + e.getMessage(), e);
+            // Only log and rethrow for actual network/connection errors
+            if (!(e.getMessage() != null && e.getMessage().startsWith("HTTP "))) {
+                Log.e(TAG, "DIAGNOSTIC: HTTP GET failed for " + urlStr, e);
+                Log.e(TAG, "DIAGNOSTIC: Exception type: " + e.getClass().getSimpleName());
+                Log.e(TAG, "DIAGNOSTIC: This could indicate:");
+                Log.e(TAG, "DIAGNOSTIC: 1. Network connectivity issue");
+                Log.e(TAG, "DIAGNOSTIC: 2. DNS resolution failure");
+                Log.e(TAG, "DIAGNOSTIC: 3. SSL/TLS certificate issue");
+                Log.e(TAG, "DIAGNOSTIC: 4. Server is down or unreachable");
+                Log.e(TAG, "DIAGNOSTIC: 5. Firewall blocking the request");
+            }
             throw e;
         } finally {
             if (conn != null) conn.disconnect();
