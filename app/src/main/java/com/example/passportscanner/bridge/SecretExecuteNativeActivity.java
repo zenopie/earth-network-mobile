@@ -258,8 +258,8 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
     }
     
     private void continueWithTransaction(ECKey key, byte[] pubCompressed, String sender, String contractAddr,
-                                       String contractPubKeyB64, String codeHash, String execJson, String funds,
-                                       String memo, String lcdUrl, String chainId, String accountNumberStr, String sequenceStr) {
+                                        String contractPubKeyB64, String codeHash, String execJson, String funds,
+                                        String memo, String lcdUrl, String chainId, String accountNumberStr, String sequenceStr) {
         try {
             // Encrypt execute msg per Secret contract scheme (AES-SIV with HKDF key derivation)
             final byte[] encryptedMsgBytes;
@@ -275,188 +275,59 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
                 return;
             }
 
-            // Build MsgExecuteContract
-            Log.i(TAG, "=== TX STRUCTURE DIAGNOSTIC: Building MsgExecuteContract ===");
-            
-            JSONObject msgValue = new JSONObject();
-            msgValue.put("sender", sender);
-            msgValue.put("contract", contractAddr);
-            
-            // DIAGNOSTIC: Log the encrypted message structure
-            Log.i(TAG, "TX DIAGNOSTIC: Encrypted message bytes length: " + encryptedMsgBytes.length);
-            Log.i(TAG, "TX DIAGNOSTIC: Encrypted message format: nonce(32) + wallet_pubkey(32) + ciphertext");
-            
-            // "msg" is the encrypted payload (raw bytes, not JSON)
-            msgValue.put("msg", Base64.encodeToString(encryptedMsgBytes, Base64.NO_WRAP));
-            
-            if (!TextUtils.isEmpty(funds)) {
-                // Very simple parser "1000uscrt,2ukrw" -> [{amount,denom},...]
-                JSONArray coins = parseCoins(funds);
-                if (coins != null) {
-                    msgValue.put("sent_funds", coins);
-                    Log.i(TAG, "TX DIAGNOSTIC: Added sent_funds: " + coins.toString());
-                } else {
-                    Log.i(TAG, "TX DIAGNOSTIC: No sent_funds (coins parsing failed)");
-                }
-            } else {
-                Log.i(TAG, "TX DIAGNOSTIC: No sent_funds (funds empty)");
-            }
-
-            JSONObject msg = new JSONObject();
-            msg.put("type", "/secret.compute.v1beta1.MsgExecuteContract");
-            msg.put("value", msgValue);
-            
-            Log.i(TAG, "TX DIAGNOSTIC: Message type: /secret.compute.v1beta1.MsgExecuteContract");
-            Log.i(TAG, "TX DIAGNOSTIC: Message value: " + msgValue.toString());
-
-            // Fix the fee structure - add minimal fee to avoid "empty tx" error
-            JSONObject fee = new JSONObject();
-            JSONArray feeAmount = new JSONArray();
-            
-            // Add minimal fee (1 uscrt) to avoid "invalid empty tx" error
-            JSONObject feeCoins = new JSONObject();
-            feeCoins.put("amount", "2500");
-            feeCoins.put("denom", "uscrt");
-            feeAmount.put(feeCoins);
-            
-            fee.put("amount", feeAmount);
-            fee.put("gas", 200000); // Use gas for legacy endpoint
-            
-            Log.i(TAG, "TX DIAGNOSTIC: Fee structure (FIXED): " + fee.toString());
-            Log.i(TAG, "TX DIAGNOSTIC: Added minimal fee (1 uscrt) to avoid 'invalid empty tx' error");
-            Log.i(TAG, "TX DIAGNOSTIC: Using 'gasLimit' field for proper transaction structure");
-
-            JSONObject signDoc = new JSONObject();
-            signDoc.put("account_number", accountNumberStr);
-            signDoc.put("chain_id", chainId);
-            signDoc.put("fee", fee);
-            signDoc.put("memo", memo);
-            signDoc.put("msgs", new JSONArray().put(msg));
-            signDoc.put("sequence", sequenceStr);
-            
-            Log.i(TAG, "TX DIAGNOSTIC: SignDoc structure: " + signDoc.toString());
-            Log.i(TAG, "TX DIAGNOSTIC: Account number: " + accountNumberStr + " (type: " + accountNumberStr.getClass().getSimpleName() + ")");
-            Log.i(TAG, "TX DIAGNOSTIC: Sequence: " + sequenceStr + " (type: " + sequenceStr.getClass().getSimpleName() + ")");
-            Log.i(TAG, "TX DIAGNOSTIC: Chain ID: " + chainId);
-            Log.i(TAG, "TX DIAGNOSTIC: Memo: '" + memo + "' (length: " + memo.length() + ")");
-
-            // Sign signDoc (Amino JSON) with secp256k1
-            String signatureB64 = signSecp256k1Base64(key, signDoc.toString().getBytes("UTF-8"));
-            Log.i(TAG, "TX DIAGNOSTIC: Signature generated, length: " + signatureB64.length());
-
-            JSONObject sigObj = new JSONObject();
-            JSONObject pk = new JSONObject();
-            pk.put("type", "tendermint/PubKeySecp256k1");
-            pk.put("value", Base64.encodeToString(pubCompressed, Base64.NO_WRAP));
-            sigObj.put("pub_key", pk);
-            sigObj.put("signature", signatureB64);
-
-            JSONObject stdTx = new JSONObject();
-            stdTx.put("msg", new JSONArray().put(msg));
-            stdTx.put("fee", fee);
-            stdTx.put("signatures", new JSONArray().put(sigObj));
-            stdTx.put("memo", memo);
-            
-            Log.i(TAG, "TX DIAGNOSTIC: Final StdTx structure: " + stdTx.toString());
-            Log.i(TAG, "TX DIAGNOSTIC: StdTx size: " + stdTx.toString().length() + " bytes");
-            
-            // Check for potential "empty tx" indicators
-            if (fee.getJSONArray("amount").length() == 0) {
-                Log.e(TAG, "TX DIAGNOSTIC: CRITICAL - Fee amount array is EMPTY! This is likely causing 'invalid empty tx' error");
-            }
-            if (memo.isEmpty()) {
-                Log.w(TAG, "TX DIAGNOSTIC: WARNING - Memo is empty, some chains require non-empty memo");
-            }
-            if (stdTx.getJSONArray("msg").length() == 0) {
-                Log.e(TAG, "TX DIAGNOSTIC: CRITICAL - Messages array is EMPTY!");
-            }
-
             // Broadcast - try modern endpoint first, fallback to legacy
             Log.i(TAG, "BROADCAST DIAGNOSTIC: Attempting transaction broadcast...");
             Log.i(TAG, "BROADCAST DIAGNOSTIC: LCD URL: " + lcdUrl);
-            
+
             String broadcastResponse = null;
             Exception lastError = null;
-            
+
             // Try modern endpoint first (/cosmos/tx/v1beta1/txs)
             try {
                 String modernUrl = joinUrl(lcdUrl, "/cosmos/tx/v1beta1/txs");
                 Log.i(TAG, "BROADCAST DIAGNOSTIC: Trying modern endpoint: " + modernUrl);
                 Log.i(TAG, "CODE 3 FIX: Using proper protobuf encoding for modern endpoint");
-                
+
                 // Create proper protobuf-encoded transaction
                 JSONArray coins = null;
                 if (!TextUtils.isEmpty(funds)) {
                     coins = parseCoins(funds);
                 }
-                
-                // CRITICAL DIAGNOSIS: The wire type error suggests our transaction format is wrong
-                // Let's try encoding as TxRaw (the format expected by modern endpoint)
-                Log.e(TAG, "CRITICAL DIAGNOSIS: Encoding transaction as TxRaw for modern endpoint");
-                Log.e(TAG, "CRITICAL DIAGNOSIS: Modern endpoint expects TxRaw format, not legacy Tx format");
-                
-                // DIAGNOSTIC: Analyze transaction size before encoding
-                Log.e(TAG, "=== DIAGNOSTIC: TRANSACTION SIZE ANALYSIS ===");
-                Log.e(TAG, "DIAGNOSTIC: Expected transaction size: 448 bytes (from SecretJS)");
-                Log.e(TAG, "DIAGNOSTIC: Current Android produces: 436 bytes (12 bytes short)");
-                Log.e(TAG, "DIAGNOSTIC: Size discrepancy analysis:");
-                Log.e(TAG, "DIAGNOSTIC: - Encrypted message length: " + encryptedMsgBytes.length + " bytes");
-                Log.e(TAG, "DIAGNOSTIC: - Expected encrypted message: ~173 bytes");
-                Log.e(TAG, "DIAGNOSTIC: - Difference: " + (encryptedMsgBytes.length - 173) + " bytes");
-                Log.e(TAG, "DIAGNOSTIC: Root cause: AES-GCM vs AES-SIV ciphertext length difference");
-                
+
+                // CRITICAL FIX: Move signing logic into encodeTransactionToProtobuf
+                // The signing will now happen INSIDE this method using the protobuf SignDoc
+                Log.i(TAG, "SIGNATURE FIX: Moving signing logic into encodeTransactionToProtobuf");
+                Log.i(TAG, "SIGNATURE FIX: Will create protobuf SignDoc and sign it there");
+
                 // Encode transaction to protobuf bytes (TxRaw format)
+                // The signing will now happen INSIDE this method
                 byte[] txBytes = encodeTransactionToProtobuf(
                     sender, contractAddr, encryptedMsgBytes, coins, memo,
                     accountNumberStr, sequenceStr,
-                    Base64.decode(signatureB64, Base64.NO_WRAP), pubCompressed
+                    key, // Pass the ECKey object for signing
+                    pubCompressed
                 );
-                
-                Log.e(TAG, "CRITICAL DIAGNOSIS: TxRaw encoded, size: " + txBytes.length + " bytes");
-                Log.e(TAG, "CRITICAL DIAGNOSIS: Expected size: 448 bytes, Actual: " + txBytes.length + " bytes");
-                Log.e(TAG, "CRITICAL DIAGNOSIS: Size difference: " + (txBytes.length - 448) + " bytes");
-                
-                if (txBytes.length != 448) {
-                    Log.e(TAG, "TRANSACTION SIZE MISMATCH CONFIRMED!");
-                    Log.e(TAG, "This is the SECONDARY cause of 'invalid length: tx parse error'");
-                    Log.e(TAG, "The transaction structure doesn't match SecretJS exactly");
-                }
-                
-                Log.e(TAG, "CRITICAL DIAGNOSIS: If wire type error persists, issue is in TxRaw encoding");
-                
+
+                Log.i(TAG, "SIGNATURE FIX: TxRaw encoded with proper protobuf SignDoc signature");
+                Log.i(TAG, "SIGNATURE FIX: This should resolve the signature verification failed error");
+
                 // DIAGNOSTIC VALIDATION: Check transaction length consistency
                 String txBytesBase64 = Base64.encodeToString(txBytes, Base64.NO_WRAP);
                 byte[] decodedCheck = Base64.decode(txBytesBase64, Base64.NO_WRAP);
-                Log.e(TAG, "LENGTH VALIDATION: Original txBytes length: " + txBytes.length);
-                Log.e(TAG, "LENGTH VALIDATION: Base64 encoded length: " + txBytesBase64.length());
-                Log.e(TAG, "LENGTH VALIDATION: Base64 decoded length: " + decodedCheck.length);
-                Log.e(TAG, "LENGTH VALIDATION: Round-trip consistency: " + (txBytes.length == decodedCheck.length));
-                
-                // DIAGNOSTIC VALIDATION: Compare with SecretJS expected structure
-                Log.e(TAG, "SECRETJS COMPARISON: Expected MsgExecuteContract fields:");
-                Log.e(TAG, "SECRETJS COMPARISON: 1. sender (bytes) - addressToBytes(sender)");
-                Log.e(TAG, "SECRETJS COMPARISON: 2. contract (bytes) - addressToBytes(contractAddress)");
-                Log.e(TAG, "SECRETJS COMPARISON: 3. msg (bytes) - encrypted Uint8Array");
-                Log.e(TAG, "SECRETJS COMPARISON: 4. sent_funds (repeated Coin) - array of {denom, amount}");
-                Log.e(TAG, "SECRETJS COMPARISON: 5. callback_sig (bytes) - empty Uint8Array()");
-                Log.e(TAG, "SECRETJS COMPARISON: 6. callback_code_hash (string) - empty string");
-                
+                Log.i(TAG, "LENGTH VALIDATION: Original txBytes length: " + txBytes.length);
+                Log.i(TAG, "LENGTH VALIDATION: Base64 encoded length: " + txBytesBase64.length());
+                Log.i(TAG, "LENGTH VALIDATION: Base64 decoded length: " + decodedCheck.length);
+                Log.i(TAG, "LENGTH VALIDATION: Round-trip consistency: " + (txBytes.length == decodedCheck.length));
+
                 // DIAGNOSTIC VALIDATION: Check JSON request structure
                 JSONObject modernTxBody = new JSONObject();
                 modernTxBody.put("tx_bytes", txBytesBase64);
                 modernTxBody.put("mode", "BROADCAST_MODE_SYNC");
-                
+
                 String requestJson = modernTxBody.toString();
-                Log.e(TAG, "REQUEST VALIDATION: JSON request length: " + requestJson.length());
-                Log.e(TAG, "REQUEST VALIDATION: tx_bytes field length: " + txBytesBase64.length());
-                Log.e(TAG, "REQUEST VALIDATION: Expected vs actual ratio: " + (txBytesBase64.length() / (double)txBytes.length));
-                
-                // DIAGNOSTIC VALIDATION: Verify protobuf structure matches SecretJS
-                if (txBytes.length != 448) {
-                    Log.e(TAG, "LENGTH MISMATCH: Expected 448 bytes (from previous logs), got " + txBytes.length);
-                    Log.e(TAG, "LENGTH MISMATCH: This suggests protobuf encoding differences from SecretJS");
-                }
-                
+                Log.i(TAG, "REQUEST VALIDATION: JSON request length: " + requestJson.length());
+                Log.i(TAG, "REQUEST VALIDATION: tx_bytes field length: " + txBytesBase64.length());
+
                 Log.i(TAG, "BROADCAST DIAGNOSTIC: Modern endpoint protobuf tx_bytes length: " + txBytes.length);
                 Log.i(TAG, "CODE 3 FIX: Sending proper protobuf-encoded transaction to modern endpoint");
                 broadcastResponse = httpPostJson(modernUrl, modernTxBody.toString());
@@ -464,46 +335,100 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             } catch (Exception e) {
                 Log.w(TAG, "BROADCAST DIAGNOSTIC: Modern endpoint failed: " + e.getMessage());
                 Log.e(TAG, "CODE 3 DEBUG: Modern endpoint error details: " + e.getMessage());
-                
-                // Check specifically for code 3 INVALID_ARGUMENT
-                if (e.getMessage() != null && e.getMessage().contains("code") && e.getMessage().contains("3")) {
-                    Log.e(TAG, "CODE 3 DEBUG: CONFIRMED - Modern endpoint returned code 3 INVALID_ARGUMENT");
-                    Log.e(TAG, "CODE 3 DEBUG: This confirms the transaction format is invalid for protobuf endpoint");
-                    Log.e(TAG, "CODE 3 DEBUG: Root cause: Sending JSON transaction to protobuf-expecting endpoint");
+
+                // Check specifically for signature verification failed
+                if (e.getMessage() != null && e.getMessage().contains("signature verification failed")) {
+                    Log.e(TAG, "SIGNATURE VERIFICATION FAILED: This confirms the signature format issue");
+                    Log.e(TAG, "SIGNATURE VERIFICATION FAILED: The fix should resolve this by using protobuf SignDoc");
                 }
-                
+
                 lastError = e;
-                
+
                 // Check if it's a "code 12 not implemented" or similar API error
                 if (e.getMessage() != null && (e.getMessage().contains("code") || e.getMessage().contains("not implemented"))) {
                     Log.w(TAG, "BROADCAST DIAGNOSTIC: Modern endpoint returned API error, trying legacy endpoint");
                 } else {
                     Log.w(TAG, "BROADCAST DIAGNOSTIC: Modern endpoint network error, trying legacy endpoint");
                 }
-                
-                // Try legacy endpoint as fallback (/txs)
+
+                // Try legacy endpoint as fallback (/txs) - but this will fail due to signature format mismatch
                 try {
                     String legacyUrl = joinUrl(lcdUrl, "/txs");
                     Log.i(TAG, "BROADCAST DIAGNOSTIC: Trying legacy endpoint: " + legacyUrl);
-                    
+                    Log.w(TAG, "LEGACY FALLBACK: Legacy endpoint expects Amino JSON signature, but we now use protobuf signature");
+                    Log.w(TAG, "LEGACY FALLBACK: This fallback will likely fail with signature verification error");
+
+                    // For legacy endpoint, we need to create the old JSON format
+                    // Build MsgExecuteContract for legacy
+                    JSONObject msgValue = new JSONObject();
+                    msgValue.put("sender", sender);
+                    msgValue.put("contract", contractAddr);
+                    msgValue.put("msg", Base64.encodeToString(encryptedMsgBytes, Base64.NO_WRAP));
+
+                    if (!TextUtils.isEmpty(funds)) {
+                        JSONArray legacyCoins = parseCoins(funds);
+                        if (legacyCoins != null) {
+                            msgValue.put("sent_funds", legacyCoins);
+                        }
+                    }
+
+                    JSONObject msg = new JSONObject();
+                    msg.put("type", "/secret.compute.v1beta1.MsgExecuteContract");
+                    msg.put("value", msgValue);
+
+                    // Legacy fee structure
+                    JSONObject fee = new JSONObject();
+                    JSONArray feeAmount = new JSONArray();
+                    JSONObject feeCoins = new JSONObject();
+                    feeCoins.put("amount", "2500");
+                    feeCoins.put("denom", "uscrt");
+                    feeAmount.put(feeCoins);
+                    fee.put("amount", feeAmount);
+                    fee.put("gas", 200000);
+
+                    // Create legacy SignDoc and sign it
+                    JSONObject signDoc = new JSONObject();
+                    signDoc.put("account_number", accountNumberStr);
+                    signDoc.put("chain_id", chainId);
+                    signDoc.put("fee", fee);
+                    signDoc.put("memo", memo);
+                    signDoc.put("msgs", new JSONArray().put(msg));
+                    signDoc.put("sequence", sequenceStr);
+
+                    // Sign legacy SignDoc (Amino JSON) with secp256k1
+                    String signatureB64 = signSecp256k1Base64(key, signDoc.toString().getBytes("UTF-8"));
+
+                    JSONObject sigObj = new JSONObject();
+                    JSONObject pk = new JSONObject();
+                    pk.put("type", "tendermint/PubKeySecp256k1");
+                    pk.put("value", Base64.encodeToString(pubCompressed, Base64.NO_WRAP));
+                    sigObj.put("pub_key", pk);
+                    sigObj.put("signature", signatureB64);
+
+                    JSONObject stdTx = new JSONObject();
+                    stdTx.put("msg", new JSONArray().put(msg));
+                    stdTx.put("fee", fee);
+                    stdTx.put("signatures", new JSONArray().put(sigObj));
+                    stdTx.put("memo", memo);
+
                     // Legacy endpoint uses "sync" mode
                     JSONObject legacyTxBody = new JSONObject();
                     legacyTxBody.put("tx", stdTx);
                     legacyTxBody.put("mode", "sync");
-                    
+
                     broadcastResponse = httpPostJson(legacyUrl, legacyTxBody.toString());
                     Log.i(TAG, "BROADCAST DIAGNOSTIC: Legacy endpoint SUCCESS");
                 } catch (Exception e2) {
                     Log.e(TAG, "BROADCAST DIAGNOSTIC: Both endpoints failed!");
                     Log.e(TAG, "BROADCAST DIAGNOSTIC: Modern endpoint error: " + e.getMessage());
                     Log.e(TAG, "BROADCAST DIAGNOSTIC: Legacy endpoint error: " + e2.getMessage());
-                    
+
                     // No more fallback attempts - if both modern protobuf and legacy fail,
                     // then there's a more fundamental issue
                     throw new Exception("All transaction broadcast methods failed. Modern protobuf: " + e.getMessage() + ", Legacy: " + e2.getMessage());
                 }
             }
-            
+
             // Make final for use in inner class
             final String finalResponse = broadcastResponse;
             final String finalSenderAddress = sender;
@@ -1020,10 +945,11 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
     
     // Manual protobuf encoding for Cosmos SDK transactions
     // This creates a proper protobuf-encoded transaction for the modern endpoint
+    // CRITICAL FIX: Modified to accept ECKey for signing and create protobuf SignDoc internally
     private static byte[] encodeTransactionToProtobuf(String sender, String contractAddr,
-                                                     byte[] encryptedMsgBytes, JSONArray sentFunds,
-                                                     String memo, String accountNumber, String sequence,
-                                                     byte[] signature, byte[] pubKeyCompressed) throws Exception {
+                                                      byte[] encryptedMsgBytes, JSONArray sentFunds,
+                                                      String memo, String accountNumber, String sequence,
+                                                      ECKey keyForSigning, byte[] pubKeyCompressed) throws Exception {
         byte[] result = null; // Initialize result variable
         Log.i(TAG, "PROTOBUF DEBUG: Starting manual protobuf encoding");
         Log.i(TAG, "PROTOBUF DEBUG: Sender: " + sender);
@@ -1293,6 +1219,46 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             
             writeProtobufMessage(authInfoBytes, 2, feeBytes.toByteArray());
             
+            // =================================================================
+            // CRITICAL FIX: Create and sign the Protobuf SignDoc
+            // =================================================================
+            Log.i(TAG, "SIGNATURE FIX: Creating protobuf SignDoc for proper signature verification");
+
+            // Get the serialized body and auth info bytes
+            byte[] bodySerialized = bodyBytes.toByteArray();
+            byte[] authSerialized = authInfoBytes.toByteArray();
+            Log.i(TAG, "PROTOBUF ASSERT: body_bytes length = " + bodySerialized.length);
+            Log.i(TAG, "PROTOBUF ASSERT: auth_info_bytes length = " + authSerialized.length);
+
+            // 1. Create the SignDoc protobuf message
+            Tx.SignDoc.Builder signDocBuilder = Tx.SignDoc.newBuilder();
+            signDocBuilder.setBodyBytes(com.google.protobuf.ByteString.copyFrom(bodySerialized));
+            signDocBuilder.setAuthInfoBytes(com.google.protobuf.ByteString.copyFrom(authSerialized));
+            signDocBuilder.setChainId("secret-4"); // Use the correct chain ID
+            signDocBuilder.setAccountNumber(Long.parseLong(accountNumber));
+
+            Tx.SignDoc signDoc = signDocBuilder.build();
+            byte[] bytesToSign = signDoc.toByteArray();
+
+            Log.i(TAG, "SIGNATURE DEBUG: Signing " + bytesToSign.length + " bytes for protobuf SignDoc");
+            Log.i(TAG, "SIGNATURE DEBUG: SignDoc structure matches SecretJS Tx.SignDoc.newBuilder()");
+
+            // 2. Sign the serialized SignDoc bytes
+            Sha256Hash digest = Sha256Hash.of(bytesToSign);
+            ECKey.ECDSASignature sig = keyForSigning.sign(digest).toCanonicalised();
+            byte[] r = bigIntToFixed(sig.r, 32);
+            byte[] s = bigIntToFixed(sig.s, 32);
+            byte[] signatureBytes = new byte[64];
+            System.arraycopy(r, 0, signatureBytes, 0, 32);
+            System.arraycopy(s, 0, signatureBytes, 32, 32);
+
+            Log.i(TAG, "SIGNATURE DEBUG: Generated 64-byte signature over protobuf SignDoc");
+            Log.i(TAG, "SIGNATURE DEBUG: This signature will match what the node expects for verification");
+
+            // =================================================================
+            // Assemble the final TxRaw with the CORRECT signature
+            // =================================================================
+
             // CRITICAL FIX: Assemble as TxRaw (not Tx) for modern endpoint
             // TxRaw format: body_bytes, auth_info_bytes, signatures (all as bytes)
             // This matches SecretJS TxRaw.encode() lines 420-429
@@ -1301,20 +1267,15 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
 
             // Use generated TxRaw message to match SecretJS exactly
             try {
-                byte[] bodySerialized = bodyBytes.toByteArray();
-                byte[] authSerialized = authInfoBytes.toByteArray();
-                Log.i(TAG, "PROTOBUF ASSERT: body_bytes length = " + bodySerialized.length);
-                Log.i(TAG, "PROTOBUF ASSERT: auth_info_bytes length = " + authSerialized.length);
-
                 // Build TxRaw via generated protobuf classes - matches SecretJS TxRaw.newBuilder()
                 Tx.TxRaw.Builder txRawBuilder = Tx.TxRaw.newBuilder();
                 txRawBuilder.setBodyBytes(com.google.protobuf.ByteString.copyFrom(bodySerialized));
                 txRawBuilder.setAuthInfoBytes(com.google.protobuf.ByteString.copyFrom(authSerialized));
-                txRawBuilder.addSignatures(com.google.protobuf.ByteString.copyFrom(signature));
+                txRawBuilder.addSignatures(com.google.protobuf.ByteString.copyFrom(signatureBytes));
 
                 Tx.TxRaw txRaw = txRawBuilder.build();
                 result = txRaw.toByteArray();
-                Log.i(TAG, "SECRETJS MATCH: Successfully encoded TxRaw transaction, size: " + result.length + " bytes");
+                Log.i(TAG, "SECRETJS MATCH: Successfully encoded TxRaw transaction with correct signature, size: " + result.length + " bytes");
                 Log.i(TAG, "SECRETJS MATCH: Using TxRaw format (body_bytes + auth_info_bytes + signatures)");
                 Log.i(TAG, "SECRETJS MATCH: This matches SecretJS TxRaw.encode() structure exactly");
 
@@ -1322,12 +1283,12 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
                 Log.i(TAG, "FINAL VALIDATION: TxRaw structure check");
                 Log.i(TAG, "FINAL VALIDATION: body_bytes length: " + bodySerialized.length);
                 Log.i(TAG, "FINAL VALIDATION: auth_info_bytes length: " + authSerialized.length);
-                Log.i(TAG, "FINAL VALIDATION: signature length: " + signature.length);
-                Log.i(TAG, "FINAL VALIDATION: Total expected: " + (bodySerialized.length + authSerialized.length + signature.length + 20)); // +20 for protobuf overhead
+                Log.i(TAG, "FINAL VALIDATION: signature length: " + signatureBytes.length);
+                Log.i(TAG, "FINAL VALIDATION: Total expected: " + (bodySerialized.length + authSerialized.length + signatureBytes.length + 20)); // +20 for protobuf overhead
                 Log.i(TAG, "FINAL VALIDATION: Actual TxRaw length: " + result.length);
 
                 // FINAL VALIDATION: Check for common length calculation errors
-                int expectedMinLength = bodySerialized.length + authSerialized.length + signature.length;
+                int expectedMinLength = bodySerialized.length + authSerialized.length + signatureBytes.length;
                 if (result.length < expectedMinLength) {
                     Log.e(TAG, "LENGTH ERROR: TxRaw too short! Missing " + (expectedMinLength - result.length) + " bytes");
                 } else if (result.length > expectedMinLength + 50) {
@@ -1352,9 +1313,9 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
                 // Field 2: auth_info_bytes (bytes) - pre-serialized AuthInfo
                 writeProtobufBytes(txBytes, 2, authInfoBytes.toByteArray());
                 // Field 3: signatures (repeated bytes) - signature array
-                writeProtobufBytes(txBytes, 3, signature);
+                writeProtobufBytes(txBytes, 3, signatureBytes);
                 result = txBytes.toByteArray();
-                Log.i(TAG, "PROTOBUF FALLBACK: Manual TxRaw encoding, size: " + result.length + " bytes");
+                Log.i(TAG, "PROTOBUF FALLBACK: Manual TxRaw encoding with correct signature, size: " + result.length + " bytes");
                 Log.i(TAG, "PROTOBUF DEBUG: TxRaw hex (preview): " + bytesToHex(result, Math.min(result.length, 150)));
                 Log.i(TAG, "PROTOBUF DEBUG: TxRaw base64: " + Base64.encodeToString(result, Base64.NO_WRAP));
                 debugAnnotateProtobuf(result);

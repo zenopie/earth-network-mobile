@@ -42,3 +42,10 @@ message Fee {
   string payer = 3;
   string granter = 4;
 }
+
+message SignDoc {
+  bytes  body_bytes = 1;
+  bytes  auth_info_bytes = 2;
+  string chain_id = 3;
+  uint64 account_number = 4;
+}
