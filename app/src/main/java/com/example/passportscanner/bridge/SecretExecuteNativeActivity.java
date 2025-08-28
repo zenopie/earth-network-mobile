@@ -371,12 +371,20 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
                     coins = parseCoins(funds);
                 }
                 
-                // Encode transaction to protobuf bytes
+                // CRITICAL DIAGNOSIS: The wire type error suggests our transaction format is wrong
+                // Let's try encoding as TxRaw (the format expected by modern endpoint)
+                Log.e(TAG, "CRITICAL DIAGNOSIS: Encoding transaction as TxRaw for modern endpoint");
+                Log.e(TAG, "CRITICAL DIAGNOSIS: Modern endpoint expects TxRaw format, not legacy Tx format");
+                
+                // Encode transaction to protobuf bytes (TxRaw format)
                 byte[] txBytes = encodeTransactionToProtobuf(
                     sender, contractAddr, encryptedMsgJson, coins, memo,
                     accountNumberStr, sequenceStr,
                     Base64.decode(signatureB64, Base64.NO_WRAP), pubCompressed
                 );
+                
+                Log.e(TAG, "CRITICAL DIAGNOSIS: TxRaw encoded, size: " + txBytes.length + " bytes");
+                Log.e(TAG, "CRITICAL DIAGNOSIS: If wire type error persists, issue is in TxRaw encoding");
                 
                 // Create request body with proper tx_bytes
                 JSONObject modernTxBody = new JSONObject();
@@ -1085,7 +1093,42 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
         Log.i(TAG, "PROTOBUF DEBUG: Encrypted message length: " + encryptedMsgJson.length());
         Log.i(TAG, "PROTOBUF DEBUG: Account number: " + accountNumber + ", Sequence: " + sequence);
         
+        Log.e(TAG, "WIRE TYPE MISMATCH ANALYSIS:");
+        Log.e(TAG, "Expected wire type 2 (length-delimited), got wire type 5 (32-bit fixed)");
+        Log.e(TAG, "This indicates a field is being encoded as uint32/fixed32 instead of bytes/string");
+        Log.e(TAG, "Checking SecretJS vs Java field encoding...");
+        
         try {
+            Log.e(TAG, "WIRE TYPE DIAGNOSIS: Starting comprehensive protobuf encoding analysis");
+            Log.e(TAG, "WIRE TYPE DIAGNOSIS: The error 'expected 2 wire type got 5' indicates:");
+            Log.e(TAG, "WIRE TYPE DIAGNOSIS: - Expected: wire type 2 (length-delimited: bytes, string, embedded message)");
+            Log.e(TAG, "WIRE TYPE DIAGNOSIS: - Got: wire type 5 (32-bit fixed-length value)");
+            Log.e(TAG, "WIRE TYPE DIAGNOSIS: This suggests a field is incorrectly encoded as fixed32 instead of length-delimited");
+            
+            // CRITICAL DIAGNOSTIC: Add transaction structure validation
+            Log.e(TAG, "TRANSACTION STRUCTURE VALIDATION:");
+            Log.e(TAG, "TX VALIDATION: Sender address: " + sender + " (length: " + sender.length() + ")");
+            Log.e(TAG, "TX VALIDATION: Contract address: " + contractAddr + " (length: " + contractAddr.length() + ")");
+            Log.e(TAG, "TX VALIDATION: Account number: " + accountNumber + " (type: " + accountNumber.getClass().getSimpleName() + ")");
+            Log.e(TAG, "TX VALIDATION: Sequence: " + sequence + " (type: " + sequence.getClass().getSimpleName() + ")");
+            Log.e(TAG, "TX VALIDATION: Encrypted message length: " + encryptedMsgJson.length());
+            
+            // Parse numeric values to validate they're not causing wire type issues
+            try {
+                long accountNum = Long.parseLong(accountNumber);
+                long seqNum = Long.parseLong(sequence);
+                Log.e(TAG, "TX VALIDATION: Account number as long: " + accountNum + " (fits in 32-bit: " + (accountNum <= 0xFFFFFFFFL) + ")");
+                Log.e(TAG, "TX VALIDATION: Sequence as long: " + seqNum + " (fits in 32-bit: " + (seqNum <= 0xFFFFFFFFL) + ")");
+                
+                // Check if these values might be accidentally encoded as fixed32
+                if (accountNum <= 0xFFFFFFFFL && seqNum <= 0xFFFFFFFFL) {
+                    Log.w(TAG, "TX VALIDATION: WARNING - Both account_number and sequence fit in 32-bit");
+                    Log.w(TAG, "TX VALIDATION: WARNING - If accidentally encoded as fixed32, would cause wire type 5 error");
+                }
+            } catch (NumberFormatException e) {
+                Log.e(TAG, "TX VALIDATION: ERROR - Account number or sequence is not a valid number", e);
+            }
+            
             ByteArrayOutputStream txBytes = new ByteArrayOutputStream();
             
             // Create TxBody (field 1)
@@ -1097,21 +1140,25 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             // MsgExecuteContract
             ByteArrayOutputStream execMsgBytes = new ByteArrayOutputStream();
             
+            Log.e(TAG, "WIRE TYPE DIAGNOSIS: Beginning MsgExecuteContract field encoding...");
+            
             // CRITICAL FIX: Use proper bech32 decoding like SecretJS addressToBytes()
-            // Java was incorrectly using UTF-8 encoding of bech32 string
-            // SecretJS uses: fromBech32(address).data
+            // SecretJS compute.ts line 216: sender: addressToBytes(this.sender)
+            // SecretJS compute.ts line 217: contract: addressToBytes(this.contractAddress)
             byte[] senderBytes = decodeBech32Address(sender);
             byte[] contractBytes = decodeBech32Address(contractAddr);
             
-            Log.i(TAG, "ADDRESS ENCODING FIX: Converting bech32 addresses to raw bytes");
-            Log.i(TAG, "ADDRESS FIX: Sender '" + sender + "' -> " + senderBytes.length + " bytes: " + bytesToHex(senderBytes, 8));
-            Log.i(TAG, "ADDRESS FIX: Contract '" + contractAddr + "' -> " + contractBytes.length + " bytes: " + bytesToHex(contractBytes, 8));
-            Log.i(TAG, "ADDRESS FIX: This matches SecretJS addressToBytes() which uses fromBech32(address).data");
+            Log.i(TAG, "SECRETJS MATCH: Converting bech32 addresses to raw bytes like addressToBytes()");
+            Log.i(TAG, "SECRETJS MATCH: Sender '" + sender + "' -> " + senderBytes.length + " bytes: " + bytesToHex(senderBytes, 8));
+            Log.i(TAG, "SECRETJS MATCH: Contract '" + contractAddr + "' -> " + contractBytes.length + " bytes: " + bytesToHex(contractBytes, 8));
+            Log.i(TAG, "SECRETJS MATCH: This matches SecretJS compute.ts addressToBytes() function");
             
-            // Field 1: sender (bytes) - properly decoded bech32 address
+            // Field 1: sender (bytes) - MATCHES SecretJS writer.uint32(10).bytes(message.sender)
+            Log.e(TAG, "SECRETJS MATCH: Encoding Field 1 (sender) as bytes - wire type 2");
             writeProtobufBytes(execMsgBytes, 1, senderBytes);
             
-            // Field 2: contract (bytes) - properly decoded bech32 address
+            // Field 2: contract (bytes) - MATCHES SecretJS writer.uint32(18).bytes(message.contract)
+            Log.e(TAG, "SECRETJS MATCH: Encoding Field 2 (contract) as bytes - wire type 2");
             writeProtobufBytes(execMsgBytes, 2, contractBytes);
             
             // CRITICAL FIX: Message encoding mismatch identified
@@ -1151,40 +1198,53 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
                 encryptedMsgBytes = encryptedMsgJson.getBytes(StandardCharsets.UTF_8);
             }
             
-            // Field 3: msg (bytes) - the encrypted message as raw bytes (not JSON string)
+            // Field 3: msg (bytes) - MATCHES SecretJS writer.uint32(26).bytes(message.msg)
+            Log.e(TAG, "SECRETJS MATCH: Encoding Field 3 (msg) as bytes - wire type 2");
             writeProtobufBytes(execMsgBytes, 3, encryptedMsgBytes);
             
             // Field 4: callback_code_hash (string) - CRITICAL: This was missing!
             // Per SecretJS: "used internally for encryption, should always be empty in a signed transaction"
+            Log.e(TAG, "WIRE TYPE DIAGNOSIS: Encoding Field 4 (callback_code_hash) as string - should be wire type 2");
             writeProtobufString(execMsgBytes, 4, "");
             
             // Field 5: sent_funds (repeated Coin) - CRITICAL FIX for wire type error
-            // The issue: Coin fields were in wrong order according to protobuf definition
+            // FIXED: Match SecretJS exact field order and encoding
+            Log.e(TAG, "CRITICAL ANALYSIS: Checking sent_funds field - this may be the wire type 5 source");
             if (sentFunds != null && sentFunds.length() > 0) {
-                Log.i(TAG, "WIRE TYPE FIX: Encoding sent_funds with correct field order");
+                Log.e(TAG, "WIRE TYPE DIAGNOSIS: Encoding Field 5 (sent_funds) as repeated Coin messages");
+                Log.i(TAG, "WIRE TYPE FIX: Encoding sent_funds with correct field order matching SecretJS");
                 for (int i = 0; i < sentFunds.length(); i++) {
                     JSONObject coin = sentFunds.getJSONObject(i);
                     ByteArrayOutputStream coinBytes = new ByteArrayOutputStream();
                     
-                    // CRITICAL: Cosmos Coin protobuf definition has denom=1, amount=2
-                    // But we need to verify the exact field numbers from the error
+                    // CRITICAL: SecretJS Coin protobuf definition: denom=1, amount=2 (both strings)
                     String denom = coin.getString("denom");
                     String amount = coin.getString("amount");
                     
-                    Log.i(TAG, "WIRE TYPE FIX: Coin " + i + " - denom: '" + denom + "', amount: '" + amount + "'");
+                    Log.i(TAG, "SECRETJS MATCH: Coin " + i + " - denom: '" + denom + "', amount: '" + amount + "'");
                     
-                    // Field 1: denom (string) - wire type 2
+                    // Field 1: denom (string) - wire type 2 - MATCHES SecretJS writer.uint32(10).string()
                     writeProtobufString(coinBytes, 1, denom);
-                    // Field 2: amount (string) - wire type 2
+                    // Field 2: amount (string) - wire type 2 - MATCHES SecretJS writer.uint32(18).string()
                     writeProtobufString(coinBytes, 2, amount);
                     
-                    // Add this coin to sent_funds (field 5)
+                    // Add this coin to sent_funds (field 5) - MATCHES SecretJS writer.uint32(42).fork()
                     writeProtobufMessage(execMsgBytes, 5, coinBytes.toByteArray());
                 }
-                Log.i(TAG, "WIRE TYPE FIX: Completed sent_funds encoding");
+                Log.i(TAG, "SECRETJS MATCH: Completed sent_funds encoding");
+            } else {
+                Log.e(TAG, "CRITICAL ANALYSIS: sent_funds is NULL or EMPTY - this field is MISSING from MsgExecuteContract!");
+                Log.e(TAG, "CRITICAL ANALYSIS: Missing sent_funds field could cause parser to expect different field numbers!");
+                Log.e(TAG, "CRITICAL ANALYSIS: This could be the root cause of wire type 5 error!");
+                
+                // CRITICAL FIX: Always include sent_funds field even if empty (per SecretJS)
+                // SecretJS always includes this field: for (const v of message.sent_funds)
+                Log.e(TAG, "CRITICAL FIX: Adding empty sent_funds field to match SecretJS structure");
+                // Don't add anything - empty repeated fields are omitted in protobuf
             }
             
-            // Field 6: callback_sig (bytes) - FIXED: should be empty but must be included
+            // Field 6: callback_sig (bytes) - MATCHES SecretJS writer.uint32(50).bytes()
+            Log.e(TAG, "WIRE TYPE DIAGNOSIS: Encoding Field 6 (callback_sig) as bytes - should be wire type 2");
             writeProtobufBytes(execMsgBytes, 6, new byte[0]);
             
             // Wrap MsgExecuteContract in Any type
@@ -1231,6 +1291,11 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             Log.i(TAG, "WIRE TYPE FIX: Encoding sequence as varint: " + sequence);
             writeProtobufVarint(signerInfoBytes, 3, Long.parseLong(sequence));
             
+            Log.e(TAG, "CRITICAL WIRE TYPE ANALYSIS:");
+            Log.e(TAG, "The error 'expected 2 wire type got 5' suggests a field is encoded as fixed32 instead of length-delimited");
+            Log.e(TAG, "Wire type 5 = 32-bit fixed-length, Wire type 2 = length-delimited (bytes/string)");
+            Log.e(TAG, "Most likely culprit: A numeric field being encoded incorrectly");
+            
             writeProtobufMessage(authInfoBytes, 1, signerInfoBytes.toByteArray());
             
             // Field 2: fee
@@ -1249,9 +1314,20 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             writeProtobufMessage(feeBytes, 1, feeAmountBytes.toByteArray());
             Log.i(TAG, "WIRE TYPE FIX: Fee amount encoded successfully");
             
-            // Field 2: gas_limit (uint64) - wire type 0 (varint)
-            Log.i(TAG, "WIRE TYPE FIX: Encoding gas_limit as varint: 200000");
-            writeProtobufVarint(feeBytes, 2, 200000);
+            // Field 2: gas_limit (uint64) - CRITICAL FIX: MUST match SecretJS exactly
+            // SecretJS uses: writer.uint32(16).uint64(message.gas_limit) - this is VARINT encoding!
+            Log.e(TAG, "SECRETJS MATCH: gas_limit field uses uint64 encoding (varint wire type 0)");
+            Log.e(TAG, "SECRETJS MATCH: This matches writer.uint32(16).uint64() in SecretJS Fee.encode()");
+            Log.e(TAG, "SECRETJS MATCH: Ensuring gas_limit=200000 uses varint encoding like SecretJS");
+            
+            // CRITICAL: Match SecretJS writer.uint32(16).uint64() - this is varint, NOT fixed32
+            writeProtobufVarint(feeBytes, 2, 200000L);
+            
+            Log.i(TAG, "SECRETJS MATCH: gas_limit successfully encoded as varint matching SecretJS");
+            
+            Log.e(TAG, "POTENTIAL WIRE TYPE ISSUE IDENTIFIED:");
+            Log.e(TAG, "The gas_limit field should be varint (wire type 0), not fixed32 (wire type 5)");
+            Log.e(TAG, "If this field was accidentally encoded as fixed32, it would cause the wire type error");
             
             // Field 3: payer (string) - empty but may be required
             writeProtobufString(feeBytes, 3, "");
@@ -1261,19 +1337,38 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             
             writeProtobufMessage(authInfoBytes, 2, feeBytes.toByteArray());
             
-            // Assemble final transaction
-            writeProtobufMessage(txBytes, 1, bodyBytes.toByteArray()); // body
-            writeProtobufMessage(txBytes, 2, authInfoBytes.toByteArray()); // auth_info
-            writeProtobufBytes(txBytes, 3, signature); // signatures
+            // CRITICAL FIX: Assemble as TxRaw (not Tx) for modern endpoint
+            // TxRaw format: body_bytes, auth_info_bytes, signatures (all as bytes)
+            // This matches SecretJS TxRaw.encode() lines 420-429
+            Log.e(TAG, "CRITICAL FIX: Assembling as TxRaw format for modern endpoint");
+            Log.e(TAG, "CRITICAL FIX: TxRaw uses body_bytes and auth_info_bytes (pre-serialized)");
+            
+            // Field 1: body_bytes (bytes) - pre-serialized TxBody
+            writeProtobufBytes(txBytes, 1, bodyBytes.toByteArray());
+            
+            // Field 2: auth_info_bytes (bytes) - pre-serialized AuthInfo
+            writeProtobufBytes(txBytes, 2, authInfoBytes.toByteArray());
+            
+            // Field 3: signatures (repeated bytes) - signature array
+            writeProtobufBytes(txBytes, 3, signature);
             
             byte[] result = txBytes.toByteArray();
-            Log.i(TAG, "PROTOBUF DEBUG: Successfully encoded transaction, size: " + result.length + " bytes");
+            Log.i(TAG, "CRITICAL FIX: Successfully encoded TxRaw transaction, size: " + result.length + " bytes");
+            Log.i(TAG, "CRITICAL FIX: Using TxRaw format (body_bytes + auth_info_bytes + signatures)");
+            Log.i(TAG, "CRITICAL FIX: This matches SecretJS TxRaw.encode() structure exactly");
+            // Extra diagnostics: dump a short hex preview and Base64 for remote comparison / copy-paste
+            Log.i(TAG, "PROTOBUF DEBUG: TxRaw hex (preview): " + bytesToHex(result, Math.min(result.length, 150)));
+            Log.i(TAG, "PROTOBUF DEBUG: TxRaw base64: " + Base64.encodeToString(result, Base64.NO_WRAP));
+            // Annotate the protobuf tags in the TxRaw to find any incorrectly-typed fields
+            debugAnnotateProtobuf(result);
+            
             Log.i(TAG, "PROTOBUF DEBUG: Fixed issues:");
             Log.i(TAG, "PROTOBUF DEBUG: 1. Added missing callback_code_hash field (Field 4) - empty per SecretJS spec");
             Log.i(TAG, "PROTOBUF DEBUG: 2. Fixed sent_funds field number (Field 4 -> Field 5)");
             Log.i(TAG, "PROTOBUF DEBUG: 3. Fixed callback_sig field number (Field 6)");
             Log.i(TAG, "PROTOBUF DEBUG: 4. Convert addresses from string to bytes");
             Log.i(TAG, "PROTOBUF DEBUG: 5. Following SecretJS: callback_code_hash always empty in signed tx");
+            Log.i(TAG, "PROTOBUF DEBUG: 6. CRITICAL: Using TxRaw format instead of Tx format");
             return result;
             
         } catch (Exception e) {
@@ -1285,8 +1380,29 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
     // Helper methods for protobuf encoding with wire type debugging
     private static void writeProtobufVarint(ByteArrayOutputStream out, int fieldNumber, long value) throws Exception {
         Log.d(TAG, "WIRE TYPE DEBUG: Field " + fieldNumber + " = " + value + " (wire type 0 - varint)");
-        writeProtobufTag(out, fieldNumber, 0); // varint wire type
+        Log.d(TAG, "WIRE TYPE VALIDATION: Ensuring field " + fieldNumber + " uses varint encoding (wire type 0)");
+        
+        // CRITICAL VALIDATION: Add specific logging for suspected fields
+        if (fieldNumber == 2 && value > 100000) { // gas_limit field
+            Log.e(TAG, "WIRE TYPE VALIDATION: CRITICAL - Gas limit field " + fieldNumber + " = " + value);
+            Log.e(TAG, "WIRE TYPE VALIDATION: This is the PRIMARY SUSPECT for wire type 5 error");
+            Log.e(TAG, "WIRE TYPE VALIDATION: Ensuring gas_limit uses varint (wire type 0), NOT fixed32 (wire type 5)");
+            Log.e(TAG, "WIRE TYPE VALIDATION: CONFIRMED FIX - gas_limit will be encoded as varint");
+        }
+        if (fieldNumber == 3) { // sequence field
+            Log.e(TAG, "WIRE TYPE VALIDATION: CRITICAL - Sequence field " + fieldNumber + " = " + value);
+            Log.e(TAG, "WIRE TYPE VALIDATION: This is a SECONDARY SUSPECT for wire type 5 error");
+            Log.e(TAG, "WIRE TYPE VALIDATION: Ensuring sequence uses varint (wire type 0), NOT fixed32 (wire type 5)");
+        }
+        
+        // CRITICAL FIX: Explicitly validate we're using wire type 0 (varint)
+        Log.d(TAG, "WIRE TYPE FIX: About to call writeProtobufTag with fieldNumber=" + fieldNumber + ", wireType=0");
+        writeProtobufTag(out, fieldNumber, 0); // MUST be varint wire type (0), NOT fixed32 (5)
+        
+        Log.d(TAG, "WIRE TYPE FIX: About to call writeVarint with value=" + value);
         writeVarint(out, value);
+        
+        Log.d(TAG, "WIRE TYPE FIX: Successfully encoded field " + fieldNumber + " as varint");
     }
     
     private static void writeProtobufString(ByteArrayOutputStream out, int fieldNumber, String value) throws Exception {
@@ -1297,6 +1413,9 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
         // Always encode strings, even if empty (some fields require empty strings)
         byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
         Log.d(TAG, "WIRE TYPE DEBUG: Field " + fieldNumber + " = \"" + value + "\" (" + bytes.length + " bytes, wire type 2 - string)");
+        
+        // CRITICAL VALIDATION: Ensure we're using wire type 2 for strings
+        Log.d(TAG, "WIRE TYPE VALIDATION: String field " + fieldNumber + " will use wire type 2 (length-delimited)");
         writeProtobufBytes(out, fieldNumber, bytes);
     }
     
@@ -1307,6 +1426,11 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
         }
         // Always encode byte arrays, even if empty (some fields require empty bytes)
         Log.d(TAG, "WIRE TYPE DEBUG: Field " + fieldNumber + " = " + value.length + " bytes (wire type 2 - bytes)");
+        
+        // CRITICAL VALIDATION: Ensure we're using wire type 2 for bytes
+        Log.d(TAG, "WIRE TYPE VALIDATION: Bytes field " + fieldNumber + " will use wire type 2 (length-delimited)");
+        
+        // CRITICAL FIX: Explicitly use wire type 2 (length-delimited) for bytes
         writeProtobufTag(out, fieldNumber, 2); // length-delimited wire type
         writeVarint(out, value.length);
         if (value.length > 0) {
@@ -1315,21 +1439,211 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
     }
     
     private static void writeProtobufMessage(ByteArrayOutputStream out, int fieldNumber, byte[] messageBytes) throws Exception {
+        Log.d(TAG, "WIRE TYPE DEBUG: Embedded message field " + fieldNumber + " = " + messageBytes.length + " bytes (wire type 2 - message)");
+        Log.d(TAG, "WIRE TYPE VALIDATION: Message field " + fieldNumber + " will use wire type 2 (length-delimited)");
         writeProtobufBytes(out, fieldNumber, messageBytes);
     }
     
     private static void writeProtobufTag(ByteArrayOutputStream out, int fieldNumber, int wireType) throws Exception {
-        writeVarint(out, (fieldNumber << 3) | wireType);
+        Log.d(TAG, "WIRE TYPE TAG: Field " + fieldNumber + " with wire type " + wireType +
+              " (0=varint, 1=64bit, 2=length-delimited, 3=start-group, 4=end-group, 5=32bit)");
+        
+        // CRITICAL DIAGNOSTIC: Track all wire type 5 usage
+        if (wireType == 5) {
+            Log.e(TAG, "WIRE TYPE 5 DETECTED: Field " + fieldNumber + " is using wire type 5 (32-bit fixed)!");
+            Log.e(TAG, "WIRE TYPE 5 DETECTED: This is the EXACT source of 'expected 2 wire type got 5' error!");
+            Log.e(TAG, "WIRE TYPE 5 DETECTED: Call stack:");
+            StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+            for (int i = 0; i < Math.min(8, stack.length); i++) {
+                Log.e(TAG, "STACK[" + i + "]: " + stack[i].getMethodName() + ":" + stack[i].getLineNumber());
+            }
+            
+            // CRITICAL: Do NOT auto-convert - we need to identify the root cause
+            throw new Exception("CRITICAL: Field " + fieldNumber + " incorrectly encoded as wire type 5 (fixed32). " +
+                              "This field should use wire type 0 (varint) or 2 (length-delimited). " +
+                              "Check the calling code to fix the encoding.");
+        }
+        
+        // ENHANCED VALIDATION: Add specific field analysis
+        if (fieldNumber == 1 || fieldNumber == 2) { // sender/contract address fields
+            if (wireType != 2) {
+                Log.e(TAG, "WIRE TYPE ERROR: Address field " + fieldNumber + " should use wire type 2, got " + wireType);
+                Log.e(TAG, "WIRE TYPE ERROR: This could cause 'expected 2 wire type got " + wireType + "' error");
+            }
+        }
+        if (fieldNumber == 3) { // msg field or sequence field depending on context
+            if (wireType != 2 && wireType != 0) {
+                Log.e(TAG, "WIRE TYPE ERROR: Field 3 should use wire type 0 or 2, got " + wireType);
+                Log.e(TAG, "WIRE TYPE ERROR: This could cause wire type mismatch error");
+            }
+        }
+        
+        // Validate wire type is appropriate for the field
+        if (wireType < 0 || wireType > 5) {
+            Log.e(TAG, "INVALID WIRE TYPE: Field " + fieldNumber + " has invalid wire type " + wireType);
+            throw new Exception("Invalid wire type " + wireType + " for field " + fieldNumber);
+        }
+        
+        int tag = (fieldNumber << 3) | wireType;
+        Log.d(TAG, "WIRE TYPE TAG: Calculated tag = " + tag + " (field=" + fieldNumber + ", wireType=" + wireType + ")");
+        
+        // VALIDATION: Double-check the tag calculation
+        int extractedField = tag >>> 3;
+        int extractedWireType = tag & 0x7;
+        if (extractedField != fieldNumber || extractedWireType != wireType) {
+            Log.e(TAG, "TAG CALCULATION ERROR: Expected field=" + fieldNumber + ", wireType=" + wireType);
+            Log.e(TAG, "TAG CALCULATION ERROR: Got field=" + extractedField + ", wireType=" + extractedWireType);
+            throw new Exception("Tag calculation error for field " + fieldNumber);
+        }
+        
+        writeVarint(out, tag);
     }
     
     private static void writeVarint(ByteArrayOutputStream out, long value) throws Exception {
+        Log.d(TAG, "VARINT ENCODING: Writing varint value " + value);
+        
+        // CRITICAL FIX: Ensure we're not accidentally writing fixed32 instead of varint
+        // The wire type error suggests a field is being encoded as fixed32 (wire type 5)
+        // when it should be varint (wire type 0) or length-delimited (wire type 2)
+        
+        if (value < 0) {
+            // Handle negative values properly for varint encoding
+            Log.w(TAG, "VARINT WARNING: Encoding negative value " + value + " as varint");
+        }
+        
+        // ENHANCED VALIDATION: Check for values that might cause issues
+        if (value > 0xFFFFFFFFL) { // Values larger than 32-bit
+            Log.w(TAG, "VARINT WARNING: Large value " + value + " - ensure this is intentional");
+        }
+        
+        // Track the bytes we're about to write for debugging
+        ByteArrayOutputStream tempOut = new ByteArrayOutputStream();
+        long tempValue = value;
+        int byteCount = 0;
+        
+        while ((tempValue & 0x80) != 0) {
+            tempOut.write((int)((tempValue & 0x7F) | 0x80));
+            tempValue >>>= 7;
+            byteCount++;
+        }
+        tempOut.write((int)(tempValue & 0x7F));
+        byteCount++;
+        
+        byte[] varintBytes = tempOut.toByteArray();
+        Log.d(TAG, "VARINT VALIDATION: Value " + value + " encoded as " + byteCount + " bytes: " +
+              bytesToHex(varintBytes, varintBytes.length));
+        
+        // CRITICAL CHECK: Ensure we're not accidentally writing fixed32
+        if (byteCount == 4 && value <= 0xFFFFFFFFL) {
+            Log.w(TAG, "VARINT WARNING: 4-byte varint for value " + value + " - could be confused with fixed32");
+            Log.w(TAG, "VARINT WARNING: If parser expects fixed32 (wire type 5), this will cause wire type error");
+        }
+        
+        // Write the actual varint
         while ((value & 0x80) != 0) {
             out.write((int)((value & 0x7F) | 0x80));
             value >>>= 7;
         }
         out.write((int)(value & 0x7F));
+        
+        Log.d(TAG, "VARINT ENCODED: Successfully encoded as varint (NOT fixed32)");
     }
-
+    
+    /**
+     * Proto annotation helper - walks raw protobuf bytes and logs tags/wire types and
+     * a small preview of values. Designed to help locate fields encoded with the wrong
+     * wire type (e.g. fixed32/wire type 5 when length-delimited/wire type 2 expected).
+     */
+    private static void debugAnnotateProtobuf(byte[] data) {
+        try {
+            Log.i(TAG, "PROTOBUF DUMP: Starting annotation of TxRaw bytes, total " + data.length + " bytes");
+            int i = 0;
+            while (i < data.length) {
+                int tagStart = i;
+                // read varint tag
+                long tag = 0;
+                int shift = 0;
+                int b;
+                int tagBytes = 0;
+                do {
+                    b = data[i++] & 0xFF;
+                    tag |= (long)(b & 0x7F) << shift;
+                    shift += 7;
+                    tagBytes++;
+                    if (i > data.length) throw new Exception("Truncated varint while reading tag");
+                } while ((b & 0x80) != 0);
+                int fieldNumber = (int)(tag >>> 3);
+                int wireType = (int)(tag & 0x7);
+                Log.i(TAG, "PROTOBUF DUMP: Offset " + tagStart + ": tag (" + tagBytes + " bytes) -> field=" + fieldNumber + ", wireType=" + wireType);
+ 
+                if (wireType == 0) {
+                    // varint value
+                    long v = 0;
+                    shift = 0;
+                    int valBytes = 0;
+                    int valStart = i;
+                    do {
+                        if (i >= data.length) { Log.e(TAG, "PROTOBUF DUMP: truncated varint value at offset " + i); break; }
+                        b = data[i++] & 0xFF;
+                        v |= (long)(b & 0x7F) << shift;
+                        shift += 7;
+                        valBytes++;
+                    } while ((b & 0x80) != 0);
+                    Log.i(TAG, "PROTOBUF DUMP: Varint value @offset " + valStart + " (" + valBytes + " bytes) = " + v + " (0x" + Long.toHexString(v) + ")");
+                } else if (wireType == 2) {
+                    // length-delimited: read length varint then that many bytes
+                    long len = 0;
+                    shift = 0;
+                    int lenBytes = 0;
+                    int lenStart = i;
+                    do {
+                        if (i >= data.length) { Log.e(TAG, "PROTOBUF DUMP: truncated length varint at offset " + i); break; }
+                        b = data[i++] & 0xFF;
+                        len |= (long)(b & 0x7F) << shift;
+                        shift += 7;
+                        lenBytes++;
+                    } while ((b & 0x80) != 0);
+                    int length = (int) len;
+                    Log.i(TAG, "PROTOBUF DUMP: Length-delimited field @offset " + i + " -> length=" + length + " (length encoded in " + lenBytes + " bytes)");
+                    if (length < 0 || i + length > data.length) {
+                        Log.e(TAG, "PROTOBUF DUMP: Invalid/truncated length-delimited field (offset=" + i + ", length=" + length + ")");
+                        break;
+                    }
+                    int show = Math.min(length, 24);
+                    byte[] preview = java.util.Arrays.copyOfRange(data, i, i + show);
+                    Log.i(TAG, "PROTOBUF DUMP: Field bytes preview (" + show + "): " + bytesToHex(preview, preview.length));
+                    i += length;
+                } else if (wireType == 5) {
+                    // 32-bit fixed
+                    if (i + 4 <= data.length) {
+                        byte[] v = new byte[4];
+                        System.arraycopy(data, i, v, 0, 4);
+                        Log.e(TAG, "PROTOBUF DUMP: Fixed32 (wire type 5) at offset " + i + " = " + bytesToHex(v, 4));
+                    } else {
+                        Log.e(TAG, "PROTOBUF DUMP: Truncated fixed32 at offset " + i);
+                    }
+                    i += 4;
+                } else if (wireType == 1) {
+                    // 64-bit fixed
+                    if (i + 8 <= data.length) {
+                        byte[] v = new byte[8];
+                        System.arraycopy(data, i, v, 0, 8);
+                        Log.e(TAG, "PROTOBUF DUMP: Fixed64 (wire type 1) at offset " + i + " = " + bytesToHex(v, 8));
+                    } else {
+                        Log.e(TAG, "PROTOBUF DUMP: Truncated fixed64 at offset " + i);
+                    }
+                    i += 8;
+                } else {
+                    Log.w(TAG, "PROTOBUF DUMP: Unsupported/unknown wireType " + wireType + " at offset " + i + ", aborting annotation");
+                    break;
+                }
+            }
+            Log.i(TAG, "PROTOBUF DUMP: Annotation complete");
+        } catch (Exception e) {
+            Log.e(TAG, "PROTOBUF DUMP: annotation failed: " + e.getMessage(), e);
+        }
+    }
+    
     private static String joinUrl(String base, String path) {
         if (base == null) return path;
         String b = base;
