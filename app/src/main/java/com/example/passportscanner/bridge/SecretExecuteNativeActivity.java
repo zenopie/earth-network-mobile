@@ -387,6 +387,12 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
                                          data.length() > 0 || (events != null && events.length() > 0))) {
                                         broadcastResponse = detailedResponse;
                                         Log.i(TAG, "TRANSACTION ENHANCEMENT: SUCCESS - Using detailed response with execution data");
+
+                                        // DEBUG: Print the full enhanced response for user to see
+                                        Log.i(TAG, "=== FULL ENHANCED RESPONSE FOR USER ===");
+                                        Log.i(TAG, "Enhanced Response JSON: " + detailedResponse);
+                                        Log.i(TAG, "==========================================");
+
                                         Log.i(TAG, "TRANSACTION ENHANCEMENT: ==========================================");
                                         Log.i(TAG, "TRANSACTION ENHANCEMENT: SECRETJS-STYLE RESPONSE SUMMARY:");
                                         Log.i(TAG, "TRANSACTION ENHANCEMENT: - Transaction Hash: " + txHash);
@@ -565,11 +571,6 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
                         Log.w(TAG, "TRANSACTION ENHANCEMENT: Legacy failed to enhance response with execution data: " + e2.getMessage());
                         // Continue with original response if enhancement fails
                     }
-
-                    // DEBUG: Print the full enhanced response for user to see
-                    Log.i(TAG, "=== FULL ENHANCED RESPONSE FOR USER ===");
-                    Log.i(TAG, "Enhanced Response JSON: " + enhancedResponse.toString());
-                    Log.i(TAG, "==========================================");
                 } catch (Exception e2) {
                     Log.e(TAG, "BROADCAST DIAGNOSTIC: Both endpoints failed!");
                     Log.e(TAG, "BROADCAST DIAGNOSTIC: Modern endpoint error: " + e.getMessage());
