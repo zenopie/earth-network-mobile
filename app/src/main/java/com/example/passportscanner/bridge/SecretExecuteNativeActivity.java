@@ -84,6 +84,7 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
 
     public static final String EXTRA_RESULT_JSON = "com.example.passportscanner.EXTRA_RESULT_JSON";
     public static final String EXTRA_ERROR = "com.example.passportscanner.EXTRA_ERROR";
+    public static final String EXTRA_SENDER_ADDRESS = "com.example.passportscanner.EXTRA_SENDER_ADDRESS";
 
     private static final String TAG = "SecretExecuteNative";
     private static final String PREF_FILE = "secret_wallet_prefs";
@@ -159,6 +160,14 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             key = SecretWallet.deriveKeyFromMnemonic(mnemonic);
             sender = SecretWallet.getAddress(key);
             pubCompressed = key.getPubKeyPoint().getEncoded(true);
+
+            // Log the selected wallet information for debugging
+            Log.i(TAG, "=== WALLET SELECTION CONFIRMED ===");
+            Log.i(TAG, "Selected sender address: " + sender);
+            Log.i(TAG, "Address format validation: " + (sender.startsWith("secret1") ? "VALID" : "INVALID"));
+            Log.i(TAG, "This address will be used for the transaction");
+            Log.i(TAG, "==================================");
+
         } catch (Throwable t) {
             finishWithError("Key derivation failed: " + t.getMessage());
             return;
@@ -306,7 +315,7 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             
             // Add minimal fee (1 uscrt) to avoid "invalid empty tx" error
             JSONObject feeCoins = new JSONObject();
-            feeCoins.put("amount", "1");
+            feeCoins.put("amount", "2500");
             feeCoins.put("denom", "uscrt");
             feeAmount.put(feeCoins);
             
@@ -497,13 +506,16 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             
             // Make final for use in inner class
             final String finalResponse = broadcastResponse;
-            
+            final String finalSenderAddress = sender;
+
             // Return to UI thread for result
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
                     Intent out = new Intent();
                     out.putExtra(EXTRA_RESULT_JSON, finalResponse != null ? finalResponse : "{}");
+                    // Add sender address to result for debugging
+                    out.putExtra(EXTRA_SENDER_ADDRESS, finalSenderAddress);
                     setResult(Activity.RESULT_OK, out);
                     finish();
                 }
@@ -1257,7 +1269,7 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
             // Field 1: denom (string) - wire type 2
             writeProtobufString(feeAmountBytes, 1, "uscrt");
             // Field 2: amount (string) - wire type 2
-            writeProtobufString(feeAmountBytes, 2, "1");
+            writeProtobufString(feeAmountBytes, 2, "2500");
             
             writeProtobufMessage(feeBytes, 1, feeAmountBytes.toByteArray());
             Log.i(TAG, "WIRE TYPE FIX: Fee amount encoded successfully");
@@ -1798,17 +1810,65 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
 
     private String getSelectedMnemonic() {
         try {
-            if (securePrefs == null) return "";
+            if (securePrefs == null) {
+                Log.w(TAG, "WALLET DEBUG: securePrefs is null");
+                return "";
+            }
+
             String walletsJson = securePrefs.getString("wallets", "[]");
             JSONArray arr = new JSONArray(walletsJson);
             int sel = securePrefs.getInt("selected_wallet_index", -1);
+
+            Log.i(TAG, "WALLET DEBUG: Found " + arr.length() + " wallets, selected index: " + sel);
+
             if (arr.length() > 0 && sel >= 0 && sel < arr.length()) {
-                return arr.getJSONObject(sel).optString("mnemonic", "");
+                JSONObject selectedWallet = arr.getJSONObject(sel);
+                String walletName = selectedWallet.optString("name", "unnamed");
+                String mnemonic = selectedWallet.optString("mnemonic", "");
+
+                Log.i(TAG, "WALLET DEBUG: Using wallet '" + walletName + "' at index " + sel);
+
+                // Derive and log the address for verification
+                try {
+                    ECKey key = SecretWallet.deriveKeyFromMnemonic(mnemonic);
+                    String address = SecretWallet.getAddress(key);
+                    Log.i(TAG, "WALLET DEBUG: Selected wallet address: " + address);
+                    Log.i(TAG, "WALLET DEBUG: This should match the transaction sender address");
+                } catch (Exception e) {
+                    Log.w(TAG, "WALLET DEBUG: Could not derive address from selected wallet", e);
+                }
+
+                return mnemonic;
+            } else {
+                Log.w(TAG, "WALLET DEBUG: No valid wallet selection found");
+                if (arr.length() == 0) {
+                    Log.w(TAG, "WALLET DEBUG: No wallets found in storage");
+                } else if (sel < 0) {
+                    Log.w(TAG, "WALLET DEBUG: No wallet selected (selected_wallet_index = " + sel + ")");
+                } else if (sel >= arr.length()) {
+                    Log.w(TAG, "WALLET DEBUG: Selected index " + sel + " is out of bounds (max: " + (arr.length() - 1) + ")");
+                }
             }
         } catch (Throwable t) {
             Log.w(TAG, "getSelectedMnemonic failed", t);
         }
-        return securePrefs != null ? securePrefs.getString(KEY_MNEMONIC, "") : "";
+
+        // Fallback to legacy mnemonic
+        String legacyMnemonic = securePrefs != null ? securePrefs.getString(KEY_MNEMONIC, "") : "";
+        if (!legacyMnemonic.isEmpty()) {
+            Log.i(TAG, "WALLET DEBUG: Using legacy mnemonic as fallback");
+            try {
+                ECKey key = SecretWallet.deriveKeyFromMnemonic(legacyMnemonic);
+                String address = SecretWallet.getAddress(key);
+                Log.i(TAG, "WALLET DEBUG: Legacy wallet address: " + address);
+            } catch (Exception e) {
+                Log.w(TAG, "WALLET DEBUG: Could not derive address from legacy mnemonic", e);
+            }
+        } else {
+            Log.w(TAG, "WALLET DEBUG: No legacy mnemonic found either");
+        }
+
+        return legacyMnemonic;
     }
     
     // Helper method to convert hex string to bytes
@@ -2069,6 +2129,17 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
         try {
             Intent data = new Intent();
             data.putExtra(EXTRA_ERROR, message != null ? message : "Unknown error");
+            // Try to include sender address in error for debugging
+            String mnemonic = getSelectedMnemonic();
+            if (!TextUtils.isEmpty(mnemonic)) {
+                try {
+                    ECKey key = SecretWallet.deriveKeyFromMnemonic(mnemonic);
+                    String address = SecretWallet.getAddress(key);
+                    data.putExtra(EXTRA_SENDER_ADDRESS, address);
+                } catch (Exception e) {
+                    Log.w(TAG, "Could not derive address for error response", e);
+                }
+            }
             setResult(Activity.RESULT_CANCELED, data);
         } catch (Throwable ignored) {
             setResult(Activity.RESULT_CANCELED);
