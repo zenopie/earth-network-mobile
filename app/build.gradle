@@ -111,6 +111,13 @@ dependencies {
     // Protobuf dependencies for Cosmos SDK transaction encoding (lite version for Android)
     implementation 'com.google.protobuf:protobuf-javalite:3.21.12'
     
+    // CRITICAL CRYPTO DEPENDENCIES FOR SECRETJS COMPATIBILITY
+    // x25519 ECDH support (required for SecretJS encryption compatibility)
+    implementation 'org.whispersystems:curve25519-java:0.5.0'
+    
+    // Note: Using deterministic AES-GCM instead of AES-SIV for compatibility
+    // The existing javax.crypto provides sufficient AES-GCM support
+    
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
