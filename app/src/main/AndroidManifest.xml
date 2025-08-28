@@ -115,6 +115,13 @@
             android:exported="false"
             android:theme="@style/Theme.PassportScanner.NoDisplay"
             android:excludeFromRecents="true" />
+
+        <!-- Secret Execute Native Activity (headless, pure-native signer/broadcaster) -->
+        <activity
+            android:name=".bridge.SecretExecuteNativeActivity"
+            android:exported="false"
+            android:theme="@style/Theme.PassportScanner.NoDisplay"
+            android:excludeFromRecents="true" />
     </application>
 
 </manifest>

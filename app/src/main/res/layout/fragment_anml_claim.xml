@@ -102,6 +102,22 @@
                 android:textSize="25sp"
                 android:gravity="center"
                 android:stateListAnimator="@null" />
+<Button
+                android:id="@+id/btn_claim_native"
+                android:layout_width="220dp"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:layout_gravity="center"
+                android:paddingLeft="20dp"
+                android:paddingRight="20dp"
+                android:background="@drawable/btn_anml_desktop"
+                android:backgroundTint="@null"
+                android:text="Claim (Native)"
+                android:textColor="@color/anml_button_text"
+                android:textAllCaps="false"
+                android:textSize="20sp"
+                android:gravity="center"
+                android:stateListAnimator="@null" />
         </LinearLayout>
 
         <!-- COMPLETE -->

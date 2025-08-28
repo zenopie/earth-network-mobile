@@ -47,6 +47,8 @@ public class ANMLClaimActivity extends AppCompatActivity {
     // Registration contract details (from desktop app)
     private static final String REGISTRATION_CONTRACT = "secret12q72eas34u8fyg68k6wnerk2nd6l5gaqppld6p";
     private static final String REGISTRATION_HASH = "12fad89bbc7f4c9051b7b5fa1c7af1c17480dcdee4b962cf6cb6ff668da02667";
+    // TODO: Provide the contract's encryption public key (compressed secp256k1, Base64). Fetch from LCD or configure here.
+    private static final String REGISTRATION_ENC_KEY_B64 = "";
 
     private static final long ONE_DAY_MILLIS = 24L * 60L * 60L * 1000L;
 
@@ -59,7 +61,8 @@ public class ANMLClaimActivity extends AppCompatActivity {
 
     private Button btnOpenWallet;
     private Button btnClaim;
-
+    private Button btnClaimNative;
+    
     private SharedPreferences securePrefs;
     private boolean suppressNextQueryDialog = false;
 
@@ -93,6 +96,7 @@ public class ANMLClaimActivity extends AppCompatActivity {
 
         btnOpenWallet = findViewById(R.id.btn_open_wallet);
         btnClaim = findViewById(R.id.btn_claim);
+        btnClaimNative = findViewById(R.id.btn_claim_native);
         
         // Ensure any theme tinting is cleared so the drawable renders as-designed
         try {
@@ -103,6 +107,10 @@ public class ANMLClaimActivity extends AppCompatActivity {
             if (btnClaim != null) {
                 btnClaim.setBackgroundTintList(null);
                 btnClaim.setTextColor(getResources().getColor(R.color.anml_button_text));
+            }
+            if (btnClaimNative != null) {
+                btnClaimNative.setBackgroundTintList(null);
+                btnClaimNative.setTextColor(getResources().getColor(R.color.anml_button_text));
             }
         } catch (Exception ignored) {}
         
@@ -128,6 +136,30 @@ public class ANMLClaimActivity extends AppCompatActivity {
                 Toast.makeText(ANMLClaimActivity.this, "Failed to start claim: " + e.getMessage(), Toast.LENGTH_SHORT).show();
             }
         });
+
+        if (btnClaimNative != null) {
+            btnClaimNative.setOnClickListener(v -> {
+                try {
+                    org.json.JSONObject exec = new org.json.JSONObject();
+                    exec.put("claim_anml", new org.json.JSONObject());
+
+                    Intent ni = new Intent(ANMLClaimActivity.this, com.example.passportscanner.bridge.SecretExecuteNativeActivity.class);
+                    ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_CONTRACT_ADDRESS, REGISTRATION_CONTRACT);
+                    ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_CODE_HASH, REGISTRATION_HASH);
+                    ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_EXECUTE_JSON, exec.toString());
+                    // Optional: lcd/funds/memo
+                    // ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_LCD_URL, com.example.passportscanner.wallet.SecretWallet.DEFAULT_LCD_URL);
+                    // ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_FUNDS, "");
+                    // ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_MEMO, "");
+                    ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_CONTRACT_ENCRYPTION_KEY_B64, REGISTRATION_ENC_KEY_B64);
+
+                    showLoading(true);
+                    startActivityForResult(ni, REQ_EXECUTE_NATIVE);
+                } catch (Exception e) {
+                    Toast.makeText(ANMLClaimActivity.this, "Failed to start native claim: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
 
         initSecurePrefs();
         
@@ -222,6 +254,7 @@ public class ANMLClaimActivity extends AppCompatActivity {
     // Request codes for launching bridge Activities
     private static final int REQ_QUERY = 1001;
     private static final int REQ_EXECUTE = 1002;
+    private static final int REQ_EXECUTE_NATIVE = 1003;
 
     // Launch the reusable query activity to check registration/claim status
     private void checkStatus() {
@@ -369,6 +402,33 @@ public class ANMLClaimActivity extends AppCompatActivity {
                 checkStatus();
             } catch (Exception e) {
                 Log.e(TAG, "Failed to parse execute result", e);
+                Toast.makeText(ANMLClaimActivity.this, "Claim submitted", Toast.LENGTH_LONG).show();
+                checkStatus();
+            }
+        } else if (requestCode == REQ_EXECUTE_NATIVE) {
+            showLoading(false);
+            if (resultCode != RESULT_OK) {
+                String err = (data != null) ? data.getStringExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_ERROR) : "Execution canceled";
+                if (errorText != null) {
+                    errorText.setText("Claim failed: " + err);
+                    errorText.setVisibility(View.VISIBLE);
+                }
+                try { showAlert("Execute (Native) error", err); } catch (Exception ignored) {}
+                return;
+            }
+            try {
+                String json = (data != null) ? data.getStringExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_RESULT_JSON) : null;
+                String txhash = null;
+                if (!TextUtils.isEmpty(json)) {
+                    JSONObject root = new JSONObject(json);
+                    txhash = root.optString("txhash", null);
+                }
+                try { showAlert("Execute (Native)", json); } catch (Exception ignored) {}
+                Toast.makeText(ANMLClaimActivity.this, txhash != null ? "Claim submitted: " + txhash : "Claim submitted", Toast.LENGTH_LONG).show();
+                suppressNextQueryDialog = true;
+                checkStatus();
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to parse native execute result", e);
                 Toast.makeText(ANMLClaimActivity.this, "Claim submitted", Toast.LENGTH_LONG).show();
                 checkStatus();
             }

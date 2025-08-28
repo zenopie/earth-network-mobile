@@ -50,9 +50,12 @@ public class ANMLClaimFragment extends Fragment {
 
     private static final String REGISTRATION_CONTRACT = "secret12q72eas34u8fyg68k6wnerk2nd6l5gaqppld6p";
     private static final String REGISTRATION_HASH = "12fad89bbc7f4c9051b7b5fa1c7af1c17480dcdee4b962cf6cb6ff668da02667";
+    // Optional: provide contract encryption pubkey (compressed secp256k1, Base64). If empty, native flow will try LCD fetch.
+    private static final String REGISTRATION_ENC_KEY_B64 = "";
     
     private static final long ONE_DAY_MILLIS = 24L * 60L * 60L * 1000L;
     private static final int REQ_EXECUTE = 2002;
+    private static final int REQ_EXECUTE_NATIVE = 2003;
 
     private ImageView loadingGif;
     private View registerBox;
@@ -62,6 +65,7 @@ public class ANMLClaimFragment extends Fragment {
 
     private Button btnOpenWallet;
     private Button btnClaim;
+    private Button btnClaimNative;
 
     private SharedPreferences securePrefs;
 
@@ -98,6 +102,7 @@ public class ANMLClaimFragment extends Fragment {
 
         btnOpenWallet = view.findViewById(R.id.btn_open_wallet);
         btnClaim = view.findViewById(R.id.btn_claim);
+        btnClaimNative = view.findViewById(R.id.btn_claim_native);
 
         // Ensure any theme tinting is cleared so the drawable renders as-designed
         try {
@@ -108,6 +113,10 @@ public class ANMLClaimFragment extends Fragment {
             if (btnClaim != null) {
                 btnClaim.setBackgroundTintList(null);
                 btnClaim.setTextColor(getResources().getColor(R.color.anml_button_text));
+            }
+            if (btnClaimNative != null) {
+                btnClaimNative.setBackgroundTintList(null);
+                btnClaimNative.setTextColor(getResources().getColor(R.color.anml_button_text));
             }
         } catch (Exception ignored) {}
 
@@ -121,7 +130,7 @@ public class ANMLClaimFragment extends Fragment {
             try {
                 org.json.JSONObject exec = new org.json.JSONObject();
                 exec.put("claim_anml", new org.json.JSONObject());
-
+ 
                 Intent ei = new Intent(requireActivity(), com.example.passportscanner.bridge.SecretExecuteActivity.class);
                 ei.putExtra(com.example.passportscanner.bridge.SecretExecuteActivity.EXTRA_CONTRACT_ADDRESS, REGISTRATION_CONTRACT);
                 ei.putExtra(com.example.passportscanner.bridge.SecretExecuteActivity.EXTRA_CODE_HASH, REGISTRATION_HASH);
@@ -132,6 +141,31 @@ public class ANMLClaimFragment extends Fragment {
                 Toast.makeText(requireContext(), "Failed to start claim: " + e.getMessage(), Toast.LENGTH_SHORT).show();
             }
         });
+        
+        if (btnClaimNative != null) {
+            btnClaimNative.setOnClickListener(v -> {
+                try {
+                    org.json.JSONObject exec = new org.json.JSONObject();
+                    exec.put("claim_anml", new org.json.JSONObject());
+ 
+                    Intent ni = new Intent(requireActivity(), com.example.passportscanner.bridge.SecretExecuteNativeActivity.class);
+                    ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_CONTRACT_ADDRESS, REGISTRATION_CONTRACT);
+                    ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_CODE_HASH, REGISTRATION_HASH);
+                    ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_EXECUTE_JSON, exec.toString());
+                    // Optionally pass lcd/funds/memo if desired
+                    // ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_LCD_URL, com.example.passportscanner.wallet.SecretWallet.DEFAULT_LCD_URL);
+                    // ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_FUNDS, "");
+                    // ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_MEMO, "");
+                    if (!android.text.TextUtils.isEmpty(REGISTRATION_ENC_KEY_B64)) {
+                        ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_CONTRACT_ENCRYPTION_KEY_B64, REGISTRATION_ENC_KEY_B64);
+                    }
+                    showLoading(true);
+                    startActivityForResult(ni, REQ_EXECUTE_NATIVE);
+                } catch (Exception e) {
+                    Toast.makeText(requireContext(), "Failed to start native claim: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
 
         initSecurePrefs();
         initHiddenWebView(requireContext());
@@ -489,6 +523,53 @@ private JSONObject runQueryViaWebView(final JSONObject payload) throws Exception
                 try {
                     new AlertDialog.Builder(requireContext())
                             .setTitle("Execute response")
+                            .setMessage("Claim submitted")
+                            .setPositiveButton("OK", null)
+                            .show();
+                } catch (Exception ignored) {
+                    Toast.makeText(requireContext(), "Claim submitted", Toast.LENGTH_LONG).show();
+                }
+                new CheckStatusTask().execute();
+            }
+        } else if (requestCode == REQ_EXECUTE_NATIVE) {
+            showLoading(false);
+            if (resultCode != android.app.Activity.RESULT_OK) {
+                String err = (data != null) ? data.getStringExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_ERROR) : "Execution canceled";
+                try {
+                    new AlertDialog.Builder(requireContext())
+                            .setTitle("Execute (Native) error")
+                            .setMessage(err != null ? err : "(empty)")
+                            .setPositiveButton("OK", null)
+                            .show();
+                } catch (Exception ignored) {
+                    Toast.makeText(requireContext(), "Execute (Native) error: " + (err != null ? err : "(empty)"), Toast.LENGTH_LONG).show();
+                }
+                return;
+            }
+            try {
+                String json = (data != null) ? data.getStringExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_RESULT_JSON) : null;
+                String txhash = null;
+                if (!android.text.TextUtils.isEmpty(json)) {
+                    org.json.JSONObject root = new org.json.JSONObject(json);
+                    txhash = root.optString("txhash", null);
+                }
+                try {
+                    new AlertDialog.Builder(requireContext())
+                            .setTitle("Execute (Native) response")
+                            .setMessage(json != null ? json : "(empty)")
+                            .setPositiveButton("OK", null)
+                            .show();
+                } catch (Exception ignored) {
+                    String msg = txhash != null ? "Claim submitted: " + txhash : "Claim submitted";
+                    Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show();
+                }
+                // Re-check status to refresh UI after claim
+                new CheckStatusTask().execute();
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to parse native execute result", e);
+                try {
+                    new AlertDialog.Builder(requireContext())
+                            .setTitle("Execute (Native) response")
                             .setMessage("Claim submitted")
                             .setPositiveButton("OK", null)
                             .show();
