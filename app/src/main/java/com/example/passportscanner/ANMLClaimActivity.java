@@ -143,16 +143,14 @@ public class ANMLClaimActivity extends AppCompatActivity {
                     org.json.JSONObject exec = new org.json.JSONObject();
                     exec.put("claim_anml", new org.json.JSONObject());
 
-                    Intent ni = new Intent(ANMLClaimActivity.this, com.example.passportscanner.bridge.SecretExecuteNativeActivityRefactored.class);
-                    ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivityRefactored.EXTRA_CONTRACT_ADDRESS, REGISTRATION_CONTRACT);
-                    ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivityRefactored.EXTRA_CODE_HASH, REGISTRATION_HASH);
-                    ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivityRefactored.EXTRA_EXECUTE_JSON, exec.toString());
-                    // Provide LCD URL so the refactored activity can fetch consensus IO key
-                    ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivityRefactored.EXTRA_LCD_URL, com.example.passportscanner.wallet.SecretWallet.DEFAULT_LCD_URL);
-                    // ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivityRefactored.EXTRA_FUNDS, "");
-                    // ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivityRefactored.EXTRA_MEMO, "");
-                    // Let the refactored activity fetch the consensus IO key via SecretNetworkService (now matches SecretJS)
-                    // ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivityRefactored.EXTRA_CONTRACT_ENCRYPTION_KEY_B64, REGISTRATION_ENC_KEY_B64);
+                    Intent ni = new Intent(ANMLClaimActivity.this, com.example.passportscanner.bridge.SecretExecuteNativeActivity.class);
+                    ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_CONTRACT_ADDRESS, REGISTRATION_CONTRACT);
+                    ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_CODE_HASH, REGISTRATION_HASH);
+                    ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_EXECUTE_JSON, exec.toString());
+                    // Provide LCD URL 
+                    ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_LCD_URL, com.example.passportscanner.wallet.SecretWallet.DEFAULT_LCD_URL);
+                    // Provide the consensus IO key directly (matches SecretJS)
+                    ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_CONTRACT_ENCRYPTION_KEY_B64, "79++5YOHfm0SwhlpUDClv7cuCjq9xBZlWqSjDJWkRG8=");
 
                     showLoading(true);
                     startActivityForResult(ni, REQ_EXECUTE_NATIVE);

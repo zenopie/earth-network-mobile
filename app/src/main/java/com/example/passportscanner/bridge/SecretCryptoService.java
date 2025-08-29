@@ -14,8 +14,10 @@ import java.security.SecureRandom;
 
 import javax.crypto.Cipher;
 import javax.crypto.Mac;
-import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
+
+import org.whispersystems.curve25519.Curve25519;
+import org.whispersystems.curve25519.Curve25519KeyPair;
 
 /**
  * SecretCryptoService
@@ -55,24 +57,39 @@ public class SecretCryptoService {
         new SecureRandom().nextBytes(nonce);
         Log.i(TAG, "Generated 32-byte nonce");
         
-        // Get wallet private key for x25519 ECDH
-        ECKey walletKey = SecretWallet.deriveKeyFromMnemonic(mnemonic);
+        // Get the curve25519 provider (use BEST for native fallback to pure Java)
+        Curve25519 curve25519 = Curve25519.getInstance(Curve25519.BEST);
         
-        // Get wallet public key in proper format for SecretJS compatibility
-        byte[] walletPubCompressed = walletKey.getPubKeyPoint().getEncoded(true);
-        Log.d(TAG, "Wallet compressed pubkey (33 bytes): " + bytesToHex(walletPubCompressed));
+        // Generate a separate encryption seed like SecretJS does
+        // SecretJS uses EncryptionUtilsImpl.GenerateNewSeed() - a random 32-byte seed
+        // For deterministic behavior, we'll derive it from the wallet mnemonic
+        MessageDigest sha256 = MessageDigest.getInstance("SHA-256");
+        sha256.update("secretjs-encryption-seed".getBytes(StandardCharsets.UTF_8));
+        sha256.update(mnemonic.getBytes(StandardCharsets.UTF_8));
+        byte[] encryptionSeed = sha256.digest();
         
-        // For the encrypted message, we need the 32-byte x-coordinate (SecretJS format)
-        byte[] walletPubkey32 = new byte[32];
-        System.arraycopy(walletPubCompressed, 1, walletPubkey32, 0, 32); // Strip 0x02/0x03 prefix
-        Log.d(TAG, "Wallet x-coordinate (32 bytes): " + bytesToHex(walletPubkey32));
+        // For now, generate a random keypair (SecretJS approach)
+        // In production, this should be stored/retrieved consistently per wallet
+        Curve25519KeyPair keyPair = curve25519.generateKeyPair();
+        byte[] x25519PrivKey = keyPair.getPrivateKey();
+        byte[] encryptionPubKey = keyPair.getPublicKey();
+        
+        Log.d(TAG, "Generated curve25519 encryption keypair");
+        Log.d(TAG, "Encryption public key (32 bytes): " + bytesToHex(encryptionPubKey));
+        Log.w(TAG, "WARNING: Using random keypair - in production this should be deterministic");
+        
+        // This is the public key that goes in the encrypted message (SecretJS format)
+        byte[] walletPubkey32 = encryptionPubKey;
+        Log.d(TAG, "Using encryption pubkey for message format: " + bytesToHex(walletPubkey32));
         
         // Use consensus IO public key (matches SecretJS encryption.ts line 89)
         byte[] consensusIoPubKey = Base64.decode(MAINNET_CONSENSUS_IO_PUBKEY_B64, Base64.NO_WRAP);
         Log.i(TAG, "Using consensus IO public key for ECDH");
         
-        // Compute x25519 ECDH shared secret (matches SecretJS encryption.ts line 91)
-        byte[] txEncryptionIkm = computeX25519ECDH(walletKey.getPrivKeyBytes(), consensusIoPubKey);
+        // Compute x25519 ECDH shared secret using encryption private key (matches SecretJS encryption.ts line 91)
+        byte[] txEncryptionIkm = curve25519.calculateAgreement(consensusIoPubKey, x25519PrivKey);
+        Log.i(TAG, "Computed x25519 shared secret directly using curve25519 library");
+        Log.d(TAG, "Shared secret (32 bytes): " + bytesToHex(txEncryptionIkm));
         
         // Derive encryption key using HKDF (matches SecretJS encryption.ts lines 92-98)
         byte[] keyMaterial = new byte[txEncryptionIkm.length + nonce.length];
@@ -92,8 +109,15 @@ public class SecretCryptoService {
         byte[] plaintextBytes = plaintext.getBytes(StandardCharsets.UTF_8);
         
         // Encrypt using AES-SIV (matches SecretJS encryption.ts lines 110-118)
-        Log.i(TAG, "Using AES-SIV encryption (matches SecretJS)");
-        byte[] ciphertext = aesSivEncrypt(txEncryptionKey, plaintextBytes);
+        // CRITICAL: We must match SecretJS miscreant library exactly - no fallbacks allowed
+        Log.i(TAG, "Using AES-SIV encryption (must match SecretJS miscreant library exactly)");
+        byte[] ciphertext;
+        try {
+            ciphertext = aesSivEncrypt(txEncryptionKey, plaintextBytes);
+        } catch (Exception e) {
+            Log.e(TAG, "AES-SIV encryption failed - cannot proceed with non-matching encryption", e);
+            throw new Exception("AES-SIV encryption failed - must match SecretJS exactly: " + e.getMessage());
+        }
         
         // Create encrypted message format: nonce(32) + wallet_pubkey(32) + siv_ciphertext
         byte[] encryptedMsg = new byte[32 + 32 + ciphertext.length];
@@ -123,52 +147,7 @@ public class SecretCryptoService {
 
     // Private helper methods
 
-    private byte[] computeX25519ECDH(byte[] privateKeyBytes, byte[] consensusIoPubKey) throws Exception {
-        // Proper x25519 ECDH computation matching SecretJS curve25519-js library
-        Log.i(TAG, "Computing x25519 ECDH shared secret");
-        
-        // The consensus IO public key from SecretJS is already 32 bytes (x25519 format)
-        if (consensusIoPubKey.length != 32) {
-            throw new IllegalArgumentException("Consensus IO public key must be 32 bytes for x25519");
-        }
-        
-        // For secp256k1 private key -> x25519 private key conversion
-        // We use the private key bytes directly (simplified approach)
-        // In production, proper curve conversion would be needed
-        byte[] x25519PrivKey = new byte[32];
-        if (privateKeyBytes.length >= 32) {
-            System.arraycopy(privateKeyBytes, 0, x25519PrivKey, 0, 32);
-        } else {
-            // Pad with leading zeros if shorter
-            System.arraycopy(privateKeyBytes, 0, x25519PrivKey, 32 - privateKeyBytes.length, privateKeyBytes.length);
-        }
-        
-        // Clamp the private key for x25519 (standard curve25519 clamping)
-        x25519PrivKey[0] &= 248;
-        x25519PrivKey[31] &= 127;
-        x25519PrivKey[31] |= 64;
-        
-        // Compute x25519 shared secret: privateKey * publicKey
-        // This is a simplified scalar multiplication
-        // In production, use a proper x25519 library like curve25519-java
-        byte[] sharedSecret = scalarMult(x25519PrivKey, consensusIoPubKey);
-        
-        Log.d(TAG, "Computed x25519 shared secret (32 bytes): " + bytesToHex(sharedSecret));
-        return sharedSecret;
-    }
     
-    private byte[] scalarMult(byte[] privateKey, byte[] publicKey) throws Exception {
-        // Simplified x25519 scalar multiplication
-        // This is a placeholder - in production use curve25519-java or similar
-        Log.w(TAG, "Using simplified x25519 scalar multiplication");
-        
-        // For now, use a cryptographic hash as approximation
-        MessageDigest sha256 = MessageDigest.getInstance("SHA-256");
-        sha256.update("x25519-scalar-mult".getBytes(StandardCharsets.UTF_8));
-        sha256.update(privateKey);
-        sha256.update(publicKey);
-        return sha256.digest();
-    }
 
     private byte[] hkdf(byte[] keyMaterial, byte[] salt, String info, int outputLength) throws Exception {
         // Simplified HKDF implementation using HMAC-SHA256
@@ -200,25 +179,6 @@ public class SecretCryptoService {
         return output;
     }
 
-    private byte[] aesGcmEncrypt(byte[] key, byte[] plaintext) throws Exception {
-        // Generate random 12-byte IV for GCM
-        byte[] iv = new byte[12];
-        new SecureRandom().nextBytes(iv);
-        
-        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        SecretKeySpec keySpec = new SecretKeySpec(key, "AES");
-        GCMParameterSpec gcmSpec = new GCMParameterSpec(128, iv); // 128-bit auth tag
-        
-        cipher.init(Cipher.ENCRYPT_MODE, keySpec, gcmSpec);
-        byte[] encryptedData = cipher.doFinal(plaintext);
-        
-        // Combine IV + encrypted data (encrypted data already includes auth tag)
-        byte[] result = new byte[iv.length + encryptedData.length];
-        System.arraycopy(iv, 0, result, 0, iv.length);
-        System.arraycopy(encryptedData, 0, result, iv.length, encryptedData.length);
-        
-        return result;
-    }
 
     private byte[] aesSivEncrypt(byte[] key, byte[] plaintext) throws Exception {
         // AES-SIV encryption that matches SecretJS miscreant library behavior
