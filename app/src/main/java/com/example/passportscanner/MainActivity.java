@@ -49,6 +49,8 @@ import org.json.JSONObject;
 
 import net.sf.scuba.smartcards.CardService;
 
+import com.example.passportscanner.wallet.SecretWallet;
+
 public class MainActivity extends AppCompatActivity {
     private static final String TAG = "PassportScanner";
     // Backend URL loaded at runtime from SharedPreferences or resources
@@ -428,10 +430,12 @@ public class MainActivity extends AppCompatActivity {
                 Log.d(TAG, "mrzInfo is null");
             }
 
-            // Send DG1 and SOD to backend for signature verification (this is run on background thread)
+            // Send DG1, SOD, and address to backend for signature verification (this is run on background thread)
             try {
-                Log.d(TAG, "Sending DG1 and SOD to backend for verification");
-                BackendResult verification = sendToBackend(dg1Bytes, sodBytes);
+                Log.d(TAG, "Sending DG1, SOD, and address to backend for verification");
+                String walletAddress = getCurrentWalletAddress();
+                Log.d(TAG, "Using wallet address: " + walletAddress);
+                BackendResult verification = sendToBackend(dg1Bytes, sodBytes, walletAddress);
                 if (verification != null) {
                     Log.d(TAG, "Backend verification response: HTTP " + verification.code + ": " + verification.body);
                     passportData.setBackendHttpCode(verification.code);
@@ -487,12 +491,12 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * Sends DG1 and SOD to the backend as a JSON POST request with base64-encoded fields:
-     * { "dg1": "...", "sod": "..." }
+     * Sends DG1, SOD, and address to the backend as a JSON POST request with base64-encoded fields:
+     * { "dg1": "...", "sod": "...", "address": "..." }
      *
      * Runs synchronously (this method is called from doInBackground), and returns the backend response as string.
      */
-    private BackendResult sendToBackend(byte[] dg1Bytes, byte[] sodBytes) throws Exception {
+    private BackendResult sendToBackend(byte[] dg1Bytes, byte[] sodBytes, String address) throws Exception {
         if (dg1Bytes == null) {
             throw new IllegalArgumentException("dg1Bytes is required");
         }
@@ -507,6 +511,13 @@ public class MainActivity extends AppCompatActivity {
         JSONObject payload = new JSONObject();
         payload.put("dg1", dg1B64);
         payload.put("sod", sodB64);
+        payload.put("address", address != null ? address : "");
+        
+        Log.d(TAG, "BACKEND REQUEST: URL = " + backendUrl);
+        Log.d(TAG, "BACKEND REQUEST: DG1 size = " + dg1Bytes.length + " bytes");
+        Log.d(TAG, "BACKEND REQUEST: SOD size = " + (sodBytes != null ? sodBytes.length : 0) + " bytes");
+        Log.d(TAG, "BACKEND REQUEST: Address = " + (address != null ? address : "null"));
+        Log.d(TAG, "BACKEND REQUEST: Full payload = " + payload.toString());
 
         URL url = new URL(backendUrl);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
@@ -527,12 +538,18 @@ public class MainActivity extends AppCompatActivity {
             os.close();
 
             int responseCode = conn.getResponseCode();
+            Log.d(TAG, "BACKEND RESPONSE: HTTP status = " + responseCode);
+            
             InputStream responseStream = responseCode >= 400 ? conn.getErrorStream() : conn.getInputStream();
             String responseBody = "";
             if (responseStream != null) {
                 byte[] respBytes = readAllBytes(responseStream);
                 responseBody = new String(respBytes, "UTF-8");
             }
+            
+            Log.d(TAG, "BACKEND RESPONSE: Body length = " + responseBody.length());
+            Log.d(TAG, "BACKEND RESPONSE: Body = " + responseBody);
+            
             BackendResult result = new BackendResult();
             result.code = responseCode;
             result.body = responseBody;
@@ -731,7 +748,7 @@ public class MainActivity extends AppCompatActivity {
 
         new AlertDialog.Builder(this)
                 .setTitle("Set Backend URL")
-                .setMessage("This app will POST DG1 and SOD Base64 to this endpoint.")
+                .setMessage("This app will POST DG1, SOD Base64, and wallet address to this endpoint.")
                 .setView(input)
                 .setPositiveButton("Save", (d, w) -> {
                     backendUrl = input.getText() != null ? input.getText().toString().trim() : "";
@@ -762,6 +779,67 @@ public class MainActivity extends AppCompatActivity {
     
     private boolean isMRZDataValid() {
         return !isEmpty(passportNumber) && !isEmpty(dateOfBirth) && !isEmpty(dateOfExpiry);
+    }
+    
+    /**
+     * Get the current wallet address from encrypted shared preferences.
+     * Returns null if no wallet is available.
+     */
+    private String getCurrentWalletAddress() {
+        Log.d(TAG, "WALLET: Getting current wallet address...");
+        try {
+            // Initialize SecretWallet if needed
+            SecretWallet.initialize(this);
+            Log.d(TAG, "WALLET: SecretWallet initialized");
+            
+            // Try to get the address from encrypted shared preferences
+            String masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC);
+            SharedPreferences securePrefs = EncryptedSharedPreferences.create(
+                    "secret_wallet_prefs",
+                    masterKeyAlias,
+                    this,
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            );
+            Log.d(TAG, "WALLET: Encrypted preferences accessed");
+            
+            // Prefer wallets array (multi-wallet support). Fall back to legacy top-level mnemonic.
+            String mnemonic = "";
+            try {
+                String walletsJson = securePrefs.getString("wallets", "[]");
+                Log.d(TAG, "WALLET: Retrieved wallets JSON: " + walletsJson);
+                
+                org.json.JSONArray arr = new org.json.JSONArray(walletsJson);
+                int sel = securePrefs.getInt("selected_wallet_index", -1);
+                Log.d(TAG, "WALLET: Found " + arr.length() + " wallets, selected index: " + sel);
+                
+                if (arr.length() > 0) {
+                    if (sel >= 0 && sel < arr.length()) {
+                        mnemonic = arr.getJSONObject(sel).optString("mnemonic", "");
+                        Log.d(TAG, "WALLET: Using selected wallet at index " + sel);
+                    } else if (arr.length() == 1) {
+                        mnemonic = arr.getJSONObject(0).optString("mnemonic", "");
+                        Log.d(TAG, "WALLET: Using single wallet (no selection)");
+                    }
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "WALLET: Error reading wallet JSON", e);
+            }
+            
+            if (!TextUtils.isEmpty(mnemonic)) {
+                Log.d(TAG, "WALLET: Mnemonic found, deriving address...");
+                String address = SecretWallet.getAddressFromMnemonic(mnemonic);
+                Log.d(TAG, "WALLET: Derived address: " + address);
+                return address;
+            } else {
+                Log.w(TAG, "WALLET: No mnemonic found");
+            }
+            
+            return null;
+        } catch (Exception e) {
+            Log.w(TAG, "WALLET: Failed to get wallet address", e);
+            return null;
+        }
     }
     
     // Backend HTTP result holder

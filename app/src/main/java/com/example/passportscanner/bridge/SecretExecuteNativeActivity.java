@@ -17,17 +17,27 @@ import androidx.security.crypto.MasterKeys;
 import com.example.passportscanner.wallet.SecretWallet;
 
 import org.bitcoinj.core.ECKey;
+import org.bitcoinj.core.Sha256Hash;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.math.BigInteger;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
+import javax.crypto.Cipher;
+import javax.crypto.spec.SecretKeySpec;
+import javax.crypto.spec.IvParameterSpec;
 
 import java.io.ByteArrayInputStream;
 import java.io.DataOutputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import javax.crypto.Mac;
 import com.google.protobuf.ByteString;
 import cosmos.tx.v1beta1.Tx;
 
@@ -79,6 +89,20 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
     private static final String TAG = "SecretExecuteNative";
     private static final String PREF_FILE = "secret_wallet_prefs";
     private static final String KEY_MNEMONIC = "mnemonic";
+    
+    // Transaction query delay for enhanced transaction processing
+    private static final long TRANSACTION_QUERY_DELAY_MS = 2000L;
+    
+    // Secret Network mainnet consensus IO public key (base64 encoded)
+    private static final String MAINNET_CONSENSUS_IO_PUBKEY_B64 = "A20KrD7xDmkFXpNMqJn1CLpRaDLcdKpO8F5pjVRTe6o2";
+    
+    // HKDF salt for key derivation
+    private static final byte[] HKDF_SALT = "".getBytes();
+    
+    // Transaction query constants for enhanced transaction processing
+    private static final int TRANSACTION_QUERY_MAX_RETRIES = 5;
+    private static final long TRANSACTION_QUERY_RETRY_DELAY_MS = 1000L;
+    private static final long TRANSACTION_QUERY_TIMEOUT_MS = 30000L;
 
     private SharedPreferences securePrefs;
     private SecretNetworkService networkService;

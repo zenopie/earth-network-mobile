@@ -32,19 +32,19 @@ public class SecretNetworkService {
     private static final int TRANSACTION_QUERY_MAX_RETRIES = 5; // Maximum retry attempts
     private static final int TRANSACTION_QUERY_RETRY_DELAY_MS = 3000; // 3 seconds between retries
 
+
     /**
      * Fetches the chain ID from the LCD endpoint
      */
     public String fetchChainId(String lcdUrl) throws Exception {
         Log.d(TAG, "Fetching chain ID from: " + lcdUrl);
         
-        String url = joinUrl(lcdUrl, "/node_info");
+        String url = joinUrl(lcdUrl, "/cosmos/base/tendermint/v1beta1/node_info");
         String response = httpGet(url);
         
         JSONObject obj = new JSONObject(response);
-        JSONObject nodeInfo = obj.getJSONObject("node_info");
-        JSONObject network = nodeInfo.getJSONObject("network");
-        String chainId = network.getString("chain_id");
+        JSONObject defaultNodeInfo = obj.getJSONObject("default_node_info");
+        String chainId = defaultNodeInfo.getString("network");
         
         Log.i(TAG, "Retrieved chain ID: " + chainId);
         return chainId;
@@ -110,25 +110,18 @@ public class SecretNetworkService {
     }
 
     /**
-     * Fetches contract encryption key (if needed)
+     * Fetches encryption key for Secret Network contracts (matches SecretJS behavior)
+     * SecretJS uses the consensus IO public key for all contracts on mainnet
      */
     public String fetchContractEncryptionKey(String lcdUrl, String contractAddr) throws Exception {
-        Log.d(TAG, "Fetching contract encryption key for: " + contractAddr);
+        Log.d(TAG, "Getting consensus IO public key (matches SecretJS behavior)");
         
-        String url = joinUrl(lcdUrl, "/compute/v1beta1/contract_info/" + contractAddr);
-        String response = httpGet(url);
+        // SecretJS hardcodes the mainnet consensus IO key instead of fetching contract-specific keys
+        // This is the exact same key used in SecretJS encryption.ts
+        String consensusIoKey = "79++5YOHfm0SwhlpUDClv7cuCjq9xBZlWqSjDJWkRG8=";
         
-        JSONObject obj = new JSONObject(response);
-        if (obj.has("contract_info")) {
-            JSONObject contractInfo = obj.getJSONObject("contract_info");
-            if (contractInfo.has("encryption_key")) {
-                String key = contractInfo.getString("encryption_key");
-                Log.i(TAG, "Retrieved contract encryption key");
-                return key;
-            }
-        }
-        
-        throw new Exception("No encryption key found for contract: " + contractAddr);
+        Log.i(TAG, "Using hardcoded mainnet consensus IO key (matches SecretJS exactly)");
+        return consensusIoKey;
     }
 
     /**

@@ -103,16 +103,6 @@ public class SecretExecuteNativeActivityRefactored extends AppCompatActivity {
         if (funds == null) funds = "";
         if (memo == null) memo = "";
 
-        // Get contract encryption key if not provided
-        if (TextUtils.isEmpty(contractPubKeyB64)) {
-            try {
-                contractPubKeyB64 = networkService.fetchContractEncryptionKey(lcdUrl, contractAddr);
-            } catch (Exception e) {
-                finishWithError("Contract encryption key required but could not be fetched: " + e.getMessage());
-                return;
-            }
-        }
-
         // Get wallet mnemonic and derive key
         String mnemonic = getSelectedMnemonic();
         if (TextUtils.isEmpty(mnemonic)) {
@@ -120,7 +110,7 @@ public class SecretExecuteNativeActivityRefactored extends AppCompatActivity {
             return;
         }
 
-        // Execute on background thread
+        // Execute on background thread (including encryption key fetch if needed)
         final String finalLcdUrl = lcdUrl;
         final String finalContractAddr = contractAddr;
         final String finalCodeHash = codeHash;
@@ -132,9 +122,16 @@ public class SecretExecuteNativeActivityRefactored extends AppCompatActivity {
 
         new Thread(() -> {
             try {
+                // Get contract encryption key if not provided (on background thread)
+                String encryptionKey = finalContractPubKeyB64;
+                if (TextUtils.isEmpty(encryptionKey)) {
+                    Log.d(TAG, "Fetching contract encryption key on background thread");
+                    encryptionKey = networkService.fetchContractEncryptionKey(finalLcdUrl, finalContractAddr);
+                }
+                
                 performTransaction(finalLcdUrl, finalContractAddr, finalCodeHash, 
                                  finalExecJson, finalFunds, finalMemo, 
-                                 finalContractPubKeyB64, finalMnemonic);
+                                 encryptionKey, finalMnemonic);
             } catch (Exception e) {
                 Log.e(TAG, "Transaction failed", e);
                 runOnUiThread(() -> finishWithError("Transaction failed: " + e.getMessage()));
@@ -156,14 +153,39 @@ public class SecretExecuteNativeActivityRefactored extends AppCompatActivity {
         Log.i(TAG, "Wallet address: " + senderAddress);
 
         // 2. Fetch chain and account information
-        String chainId = networkService.fetchChainId(lcdUrl);
-        JSONObject accountData = networkService.fetchAccount(lcdUrl, senderAddress);
-        
-        if (accountData == null) {
-            throw new Exception("Account not found or not funded: " + senderAddress);
+        Log.i(TAG, "Fetching chain ID from: " + lcdUrl);
+        String chainId;
+        try {
+            chainId = networkService.fetchChainId(lcdUrl);
+            Log.i(TAG, "Successfully retrieved chain ID: " + chainId);
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to fetch chain ID", e);
+            throw new Exception("Chain fetch failed: " + e.getMessage());
         }
         
-        String[] accountFields = networkService.parseAccountFields(accountData);
+        Log.i(TAG, "Fetching account data for: " + senderAddress);
+        JSONObject accountData;
+        try {
+            accountData = networkService.fetchAccount(lcdUrl, senderAddress);
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to fetch account data", e);
+            throw new Exception("Account fetch failed: " + e.getMessage());
+        }
+        
+        if (accountData == null) {
+            Log.w(TAG, "Account data is null - account may not exist or be funded");
+            throw new Exception("Account not found or not funded: " + senderAddress + 
+                              ". Make sure the wallet has been used on-chain.");
+        }
+        
+        String[] accountFields;
+        try {
+            accountFields = networkService.parseAccountFields(accountData);
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to parse account fields", e);
+            throw new Exception("Account parsing failed: " + e.getMessage());
+        }
+        
         String accountNumber = accountFields[0];
         String sequence = accountFields[1];
         
