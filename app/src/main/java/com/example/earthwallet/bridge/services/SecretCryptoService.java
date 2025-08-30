@@ -179,6 +179,78 @@ public class SecretCryptoService {
         return key.getPubKeyPoint().getEncoded(true);
     }
 
+    /**
+     * Decrypts a Secret Network query response using SecretJS-compatible decryption
+     * 
+     * @param encryptedResponse The encrypted response bytes from the network
+     * @param nonce The 32-byte nonce used in the original query encryption 
+     * @param mnemonic Wallet mnemonic for key derivation
+     * @return Decrypted plaintext as raw bytes (matches SecretJS decrypt() return)
+     */
+    public byte[] decryptQueryResponse(byte[] encryptedResponse, byte[] nonce, String mnemonic) throws Exception {
+        Log.i(TAG, "Starting SecretJS-compatible response decryption");
+        Log.i(TAG, "Encrypted response length: " + encryptedResponse.length + " bytes");
+        Log.i(TAG, "Nonce length: " + nonce.length + " bytes");
+        
+        // Get the curve25519 provider  
+        Curve25519 curve25519 = Curve25519.getInstance(Curve25519.BEST);
+        
+        // Regenerate the same encryption seed and keypair as used for encryption
+        MessageDigest sha256 = MessageDigest.getInstance("SHA-256");
+        sha256.update("secretjs-encryption-seed".getBytes(StandardCharsets.UTF_8));
+        sha256.update(mnemonic.getBytes(StandardCharsets.UTF_8));
+        byte[] encryptionSeed = sha256.digest();
+        
+        // Generate deterministic keypair from wallet mnemonic (same as encryption)
+        byte[] x25519PrivKey = new byte[32];
+        System.arraycopy(encryptionSeed, 0, x25519PrivKey, 0, 32);
+        
+        // Clamp the private key according to curve25519 spec
+        x25519PrivKey[0] &= 248;  
+        x25519PrivKey[31] &= 127; 
+        x25519PrivKey[31] |= 64;  
+        
+        // Use consensus IO public key (same as encryption)
+        byte[] consensusIoPubKey = Base64.decode(MAINNET_CONSENSUS_IO_PUBKEY_B64, Base64.NO_WRAP);
+        
+        // Compute the same x25519 ECDH shared secret as encryption
+        byte[] txEncryptionIkm = curve25519.calculateAgreement(consensusIoPubKey, x25519PrivKey);
+        Log.i(TAG, "Recomputed x25519 shared secret for decryption");
+        
+        // Derive the same encryption key using HKDF (same as encryption)
+        byte[] keyMaterial = new byte[txEncryptionIkm.length + nonce.length];
+        System.arraycopy(txEncryptionIkm, 0, keyMaterial, 0, txEncryptionIkm.length);
+        System.arraycopy(nonce, 0, keyMaterial, txEncryptionIkm.length, nonce.length);
+        
+        byte[] txEncryptionKey = hkdf(keyMaterial, HKDF_SALT, "", 32);
+        Log.i(TAG, "Derived same decryption key using HKDF");
+        
+        // Decrypt using RFC 5297 AES-SIV (reverse of encryption)
+        byte[] plaintextBytes;
+        try {
+            // Split the 32-byte key in half like AES-SIV RFC 5297 standard (same as encryption)
+            byte[] macKey = new byte[16];
+            byte[] encKey = new byte[16];
+            System.arraycopy(txEncryptionKey, 0, macKey, 0, 16);    // First 16 bytes for MAC
+            System.arraycopy(txEncryptionKey, 16, encKey, 0, 16);   // Second 16 bytes for ENC
+            
+            // Use AES-SIV decryption (reverse of encryption) - returns raw bytes like SecretJS
+            SivMode sivMode = new SivMode();
+            plaintextBytes = sivMode.decrypt(encKey, macKey, encryptedResponse, new byte[0]);
+            
+            Log.i(TAG, "AES-SIV decryption successful, got " + plaintextBytes.length + " plaintext bytes");
+            Log.i(TAG, "Decrypted plaintext (UTF-8): " + new String(plaintextBytes, StandardCharsets.UTF_8));
+        } catch (UnauthenticCiphertextException e) {
+            Log.e(TAG, "AES-SIV authentication failed - ciphertext may be corrupted", e);
+            throw new Exception("Decryption authentication failed: " + e.getMessage());
+        } catch (Exception e) {
+            Log.e(TAG, "AES-SIV decryption failed", e);
+            throw new Exception("Decryption failed: " + e.getMessage());
+        }
+        
+        return plaintextBytes;
+    }
+
     // Private helper methods
 
     

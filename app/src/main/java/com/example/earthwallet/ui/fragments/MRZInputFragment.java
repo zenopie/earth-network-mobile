@@ -86,13 +86,13 @@ public class MRZInputFragment extends Fragment {
             });
         }
 
-        // Open Secret Wallet screen - remove this as it should be handled by parent activity
+        // Open Secret Wallet screen - navigate through parent HostActivity
         Button openWallet = view.findViewById(R.id.open_wallet_button);
         if (openWallet != null) {
             openWallet.setOnClickListener(v -> {
-                // Navigate to wallet through parent activity
-                Intent w = new Intent(requireActivity(), com.example.earthwallet.ui.activities.WalletActivity.class);
-                startActivity(w);
+                if (getActivity() instanceof com.example.earthwallet.ui.activities.HostActivity) {
+                    ((com.example.earthwallet.ui.activities.HostActivity) getActivity()).showFragment("wallet");
+                }
             });
         }
     }

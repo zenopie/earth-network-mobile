@@ -55,13 +55,12 @@
 
 
         
-        <!-- Secret Query Activity (headless, invisible WebView) -->
+        <!-- Secret Query Activity (headless, native queries without webview) -->
         <activity
             android:name=".bridge.activities.SecretQueryActivity"
             android:exported="false"
             android:theme="@style/Theme.EarthWallet.NoDisplay"
             android:excludeFromRecents="true" />
-        
         
         <!-- Secret Execute Activity (headless, pure-native execution) -->
         <activity

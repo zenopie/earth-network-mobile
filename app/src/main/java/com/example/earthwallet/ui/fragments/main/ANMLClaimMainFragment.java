@@ -295,8 +295,6 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
                     }
                     return;
                 }
-                // Surface raw JSON in-app for debugging
-                if (!wasSuppressed) { try { showAlert("Query", json); } catch (Exception ignored) {} }
                 JSONObject root = new JSONObject(json);
                 boolean success = root.optBoolean("success", false);
                 if (!success) {
@@ -355,7 +353,6 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
                     JSONObject root = new JSONObject(json);
                     txhash = root.optString("txhash", null);
                 }
-                try { showAlert("Execute", json); } catch (Exception ignored) {}
                 Toast.makeText(getContext(), txhash != null ? "Claim submitted: " + txhash : "Claim submitted", Toast.LENGTH_LONG).show();
                 suppressNextQueryDialog = true;
                 // Refresh status to update UI after claim

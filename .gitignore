@@ -78,4 +78,5 @@ lint-results.*
 # Ignore example app folder
 erth-network-app/
 scripts/
+secretjs-source/
 # End
