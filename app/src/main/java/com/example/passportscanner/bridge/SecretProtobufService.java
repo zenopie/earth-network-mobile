@@ -11,6 +11,10 @@ import org.json.JSONObject;
 import com.google.protobuf.ByteString;
 import cosmos.tx.v1beta1.Tx;
 
+import java.security.MessageDigest;
+import com.example.passportscanner.wallet.SecretWallet;
+import com.example.passportscanner.wallet.TransactionSigner;
+
 /**
  * SecretProtobufService
  * 
@@ -67,13 +71,21 @@ public class SecretProtobufService {
         
         Log.i(TAG, "Creating clean protobuf transaction");
         
-        // 1. Create MsgExecuteContract message
+        // 1. Create MsgExecuteContract message with binary addresses (like SecretJS)
+        // Convert bech32 addresses to 20-byte binary format
+        byte[] senderBytes = decodeBech32Address(sender);
+        byte[] contractBytes = decodeBech32Address(contractAddr);
+        
+        Log.d(TAG, "Encoded sender from " + sender.length() + " chars to " + senderBytes.length + " bytes");
+        Log.d(TAG, "Encoded contract from " + contractAddr.length() + " chars to " + contractBytes.length + " bytes");
+        
         secret.compute.v1beta1.MsgExecuteContract.Builder msgBuilder = 
             secret.compute.v1beta1.MsgExecuteContract.newBuilder()
-                .setSender(sender)
-                .setContract(contractAddr)
-                .setCodeHash(codeHash != null ? codeHash : "")
-                .setMsg(ByteString.copyFrom(encryptedMsg));
+                .setSender(ByteString.copyFrom(senderBytes))      // Binary address
+                .setContract(ByteString.copyFrom(contractBytes))  // Binary address
+                .setMsg(ByteString.copyFrom(encryptedMsg))
+                .setCallbackCodeHash("")  // Empty string, not null - matches SecretJS
+                .setCallbackSig(ByteString.EMPTY);  // Empty bytes, not null - matches SecretJS
         
         // Add funds if provided
         if (coins != null && coins.length() > 0) {
@@ -100,13 +112,14 @@ public class SecretProtobufService {
         cosmos.tx.v1beta1.Tx.TxBody txBody = txBodyBuilder.build();
         
         // 3. Create AuthInfo with fee and signature info
+        // Completely omit payer and granter fields to match CosmJS protobuf encoding
         cosmos.tx.v1beta1.Tx.Fee fee = cosmos.tx.v1beta1.Tx.Fee.newBuilder()
             .setGasLimit(200000)
             .addAmount(cosmos.base.v1beta1.CoinOuterClass.Coin.newBuilder()
                 .setDenom("uscrt")
                 .setAmount("100000")
                 .build())
-            // Don't set payer field at all - let it default to empty
+            // Don't set payer or granter at all - let protobuf omit these fields entirely
             .build();
         
         cosmos.tx.v1beta1.Tx.SignerInfo signerInfo = cosmos.tx.v1beta1.Tx.SignerInfo.newBuilder()
@@ -130,7 +143,7 @@ public class SecretProtobufService {
             .setFee(fee)
             .build();
         
-        // 4. Create SignDoc and sign it
+        // 4. Create SignDoc and sign it using TransactionSigner
         cosmos.tx.v1beta1.Tx.SignDoc signDoc = cosmos.tx.v1beta1.Tx.SignDoc.newBuilder()
             .setBodyBytes(txBody.toByteString())
             .setAuthInfoBytes(authInfo.toByteString())
@@ -138,23 +151,120 @@ public class SecretProtobufService {
             .setAccountNumber(Long.parseLong(accountNumber))
             .build();
         
-        // Sign the transaction
-        byte[] signDocBytes = signDoc.toByteArray();
-        Sha256Hash hash = Sha256Hash.of(signDocBytes);
-        ECKey.ECDSASignature signature = walletKey.sign(hash);
-        byte[] signatureBytes = signature.encodeToDER();
+        Log.d(TAG, "SignDoc created, delegating to TransactionSigner...");
         
-        // 5. Create final TxRaw
-        cosmos.tx.v1beta1.Tx.TxRaw txRaw = cosmos.tx.v1beta1.Tx.TxRaw.newBuilder()
-            .setBodyBytes(txBody.toByteString())
-            .setAuthInfoBytes(authInfo.toByteString())
-            .addSignatures(ByteString.copyFrom(signatureBytes))
-            .build();
-        
-        byte[] txBytes = txRaw.toByteArray();
+        // Use the general purpose signer
+        byte[] txBytes = TransactionSigner.signTransaction(signDoc, walletKey);
         Log.i(TAG, "Clean protobuf transaction created, size: " + txBytes.length + " bytes");
         
+        // Debug: Log raw transaction bytes in hex for comparison
+        StringBuilder hex = new StringBuilder();
+        for (byte b : txBytes) {
+            hex.append(String.format("%02x", b));
+        }
+        Log.i(TAG, "Raw transaction hex: " + hex.toString());
+        
         return txBytes;
+    }
+
+
+    /**
+     * Decode bech32 address to 20-byte binary format (like SecretJS does)
+     */
+    private byte[] decodeBech32Address(String bech32Address) throws Exception {
+        if (!bech32Address.startsWith("secret1")) {
+            throw new IllegalArgumentException("Invalid secret address: " + bech32Address);
+        }
+        
+        // Extract the data part after "secret1"
+        String datapart = bech32Address.substring(7);
+        
+        // Decode bech32 data part to binary
+        byte[] decoded = bech32Decode(datapart);
+        
+        // Cosmos addresses are 20 bytes
+        if (decoded.length != 20) {
+            throw new IllegalArgumentException("Invalid address length: " + decoded.length + " (expected 20)");
+        }
+        
+        Log.d(TAG, "Decoded " + bech32Address + " to " + decoded.length + " bytes");
+        return decoded;
+    }
+    
+    /**
+     * Simple bech32 decoder implementation
+     * Based on the bech32 specification for Cosmos addresses
+     */
+    private byte[] bech32Decode(String data) throws Exception {
+        // Bech32 character set
+        String charset = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+        
+        // Convert characters to 5-bit values
+        int[] values = new int[data.length()];
+        for (int i = 0; i < data.length(); i++) {
+            char c = data.charAt(i);
+            int index = charset.indexOf(c);
+            if (index < 0) {
+                throw new IllegalArgumentException("Invalid bech32 character: " + c);
+            }
+            values[i] = index;
+        }
+        
+        // Remove checksum (last 6 characters)
+        int dataLength = values.length - 6;
+        int[] dataValues = new int[dataLength];
+        System.arraycopy(values, 0, dataValues, 0, dataLength);
+        
+        // Convert from 5-bit to 8-bit groups
+        return convertBits(dataValues, 5, 8, false);
+    }
+    
+    /**
+     * Convert between different bit group sizes
+     */
+    private byte[] convertBits(int[] data, int fromBits, int toBits, boolean pad) {
+        int acc = 0;
+        int bits = 0;
+        java.util.ArrayList<Byte> ret = new java.util.ArrayList<>();
+        int maxv = (1 << toBits) - 1;
+        int maxAcc = (1 << (fromBits + toBits - 1)) - 1;
+        
+        for (int value : data) {
+            if (value < 0 || (value >> fromBits) != 0) {
+                return null;
+            }
+            acc = ((acc << fromBits) | value) & maxAcc;
+            bits += fromBits;
+            while (bits >= toBits) {
+                bits -= toBits;
+                ret.add((byte) ((acc >> bits) & maxv));
+            }
+        }
+        
+        if (pad) {
+            if (bits > 0) {
+                ret.add((byte) ((acc << (toBits - bits)) & maxv));
+            }
+        } else if (bits >= fromBits || ((acc << (toBits - bits)) & maxv) != 0) {
+            return null;
+        }
+        
+        byte[] result = new byte[ret.size()];
+        for (int i = 0; i < ret.size(); i++) {
+            result[i] = ret.get(i);
+        }
+        return result;
+    }
+
+    /**
+     * Convert bytes to hex string for logging
+     */
+    private String bytesToHex(byte[] bytes) {
+        StringBuilder result = new StringBuilder();
+        for (byte b : bytes) {
+            result.append(String.format("%02x", b));
+        }
+        return result.toString();
     }
 
     /**
@@ -192,5 +302,43 @@ public class SecretProtobufService {
         
         Log.d(TAG, "Parsed funds '" + funds + "' into " + coins.length() + " coins");
         return coins;
+    }
+
+    /**
+     * CRITICAL VALIDATION: Verify wallet key derives to the sender address
+     * This prevents signature verification failures due to key/address mismatch
+     */
+    private void validateWalletMatchesSender(String sender, ECKey walletKey) throws Exception {
+        Log.d(TAG, "Validating wallet key matches sender address...");
+        
+        try {
+            // Use the SAME address derivation method as the app uses
+            String walletAddress = SecretWallet.getAddress(walletKey);
+            
+            // Log comparison for debugging
+            Log.w(TAG, "=== WALLET/SENDER VALIDATION ===");
+            Log.w(TAG, "Provided sender: " + sender);
+            Log.w(TAG, "Wallet address:  " + walletAddress);
+            Log.w(TAG, "MATCH: " + walletAddress.equals(sender));
+            
+            if (!walletAddress.equals(sender)) {
+                String errorMsg = "SIGNATURE WILL FAIL: Wallet key doesn't match sender address!\n" +
+                                "Provided sender: " + sender + "\n" +
+                                "Wallet derives to: " + walletAddress + "\n" +
+                                "Solution: Use the correct sender address that matches your wallet";
+                
+                Log.e(TAG, errorMsg);
+                throw new Exception(errorMsg);
+            }
+            
+            Log.i(TAG, "✅ Wallet validation passed - addresses match perfectly");
+            
+        } catch (Exception e) {
+            if (e.getMessage().contains("SIGNATURE WILL FAIL")) {
+                throw e; // Re-throw our validation error
+            } else {
+                throw new Exception("Wallet validation failed: " + e.getMessage());
+            }
+        }
     }
 }

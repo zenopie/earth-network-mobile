@@ -76,7 +76,6 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
         String contractAddr = intent.getStringExtra(EXTRA_CONTRACT_ADDRESS);
         String codeHash = intent.getStringExtra(EXTRA_CODE_HASH);
         String execJson = intent.getStringExtra(EXTRA_EXECUTE_JSON);
-        String lcdUrl = intent.getStringExtra(EXTRA_LCD_URL);
         String funds = intent.getStringExtra(EXTRA_FUNDS);
         String memo = intent.getStringExtra(EXTRA_MEMO);
         String contractPubKeyB64 = intent.getStringExtra(EXTRA_CONTRACT_ENCRYPTION_KEY_B64);
@@ -88,7 +87,6 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
         }
 
         // Set defaults
-        if (TextUtils.isEmpty(lcdUrl)) lcdUrl = SecretWallet.DEFAULT_LCD_URL;
         if (funds == null) funds = "";
         if (memo == null) memo = "";
 
@@ -100,7 +98,6 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
         }
 
         // Execute on background thread
-        final String finalLcdUrl = lcdUrl;
         final String finalContractAddr = contractAddr;
         final String finalCodeHash = codeHash;
         final String finalExecJson = execJson;
@@ -111,7 +108,7 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
 
         new Thread(() -> {
             try {
-                performTransaction(finalLcdUrl, finalContractAddr, finalCodeHash, 
+                performTransaction(SecretWallet.DEFAULT_LCD_URL, finalContractAddr, finalCodeHash, 
                                  finalExecJson, finalFunds, finalMemo, 
                                  finalContractPubKeyB64, finalMnemonic);
             } catch (Exception e) {
