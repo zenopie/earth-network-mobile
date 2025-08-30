@@ -191,6 +191,44 @@
                     android:textSize="14sp" />
             </LinearLayout>
 
+            <!-- Token Balances Section -->
+            <LinearLayout
+                android:id="@+id/token_balances_section"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginBottom="24dp"
+                android:visibility="gone">
+                
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Token Balances"
+                    android:textStyle="bold"
+                    android:textColor="@color/brand_blue"
+                    android:textSize="18sp"
+                    android:layout_marginBottom="12dp" />
+                
+                <!-- Token balances will be added dynamically -->
+                <LinearLayout
+                    android:id="@+id/token_balances_container"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+                    
+                <!-- Viewing Key Management -->
+                <Button
+                    android:id="@+id/btn_manage_viewing_keys"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Manage Viewing Keys"
+                    android:backgroundTint="@color/brand_blue"
+                    android:textColor="@android:color/white"
+                    android:layout_marginTop="12dp"
+                    android:textSize="14sp" />
+            
+            </LinearLayout>
+
             <!-- Note -->
             <TextView
                 android:layout_width="match_parent"
