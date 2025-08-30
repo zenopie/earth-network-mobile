@@ -1,4 +1,4 @@
-package com.example.passportscanner.bridge;
+package com.example.earthwallet.bridge.services;
 
 import android.util.Base64;
 import android.util.Log;
@@ -37,7 +37,6 @@ public class SecretNetworkService {
      * Fetches the chain ID from the LCD endpoint
      */
     public String fetchChainId(String lcdUrl) throws Exception {
-        Log.d(TAG, "Fetching chain ID from: " + lcdUrl);
         
         String url = joinUrl(lcdUrl, "/cosmos/base/tendermint/v1beta1/node_info");
         String response = httpGet(url);
@@ -54,7 +53,6 @@ public class SecretNetworkService {
      * Fetches account information from the LCD endpoint
      */
     public JSONObject fetchAccount(String lcdUrl, String address) throws Exception {
-        Log.d(TAG, "Fetching account info for: " + address);
         
         String url = joinUrl(lcdUrl, "/cosmos/auth/v1beta1/accounts/" + address);
         
@@ -105,7 +103,6 @@ public class SecretNetworkService {
             }
         }
         
-        Log.d(TAG, "Parsed account - Number: " + accountNumber + ", Sequence: " + sequence);
         return new String[]{accountNumber, sequence};
     }
 
@@ -114,7 +111,6 @@ public class SecretNetworkService {
      * SecretJS uses the consensus IO public key for all contracts on mainnet
      */
     public String fetchContractEncryptionKey(String lcdUrl, String contractAddr) throws Exception {
-        Log.d(TAG, "Getting consensus IO public key (matches SecretJS behavior)");
         
         // SecretJS hardcodes the mainnet consensus IO key instead of fetching contract-specific keys
         // This is the exact same key used in SecretJS encryption.ts
@@ -137,7 +133,6 @@ public class SecretNetworkService {
         txBody.put("tx_bytes", txBytesBase64);
         txBody.put("mode", "BROADCAST_MODE_SYNC");
         
-        Log.d(TAG, "Transaction size: " + txBytes.length + " bytes");
         return httpPostJson(modernUrl, txBody.toString());
     }
 
@@ -233,10 +228,9 @@ public class SecretNetworkService {
         conn.setConnectTimeout(30000);
         conn.setReadTimeout(30000);
         conn.setRequestProperty("Accept", "application/json");
-        conn.setRequestProperty("User-Agent", "SecretExecuteNative/1.0");
+        conn.setRequestProperty("User-Agent", "SecretExecute/1.0");
         
         int responseCode = conn.getResponseCode();
-        Log.d(TAG, "HTTP GET " + urlStr + " -> " + responseCode);
         
         InputStream inputStream;
         if (responseCode >= 200 && responseCode < 300) {
@@ -269,7 +263,7 @@ public class SecretNetworkService {
         conn.setReadTimeout(60000);
         conn.setRequestProperty("Content-Type", "application/json");
         conn.setRequestProperty("Accept", "application/json");
-        conn.setRequestProperty("User-Agent", "SecretExecuteNative/1.0");
+        conn.setRequestProperty("User-Agent", "SecretExecute/1.0");
         conn.setDoOutput(true);
         
         // Send request body
@@ -279,8 +273,6 @@ public class SecretNetworkService {
         }
         
         int responseCode = conn.getResponseCode();
-        Log.d(TAG, "HTTP POST " + urlStr + " -> " + responseCode + 
-                   " (body length: " + jsonBody.length() + ")");
         
         InputStream inputStream;
         if (responseCode >= 200 && responseCode < 300) {

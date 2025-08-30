@@ -1,4 +1,6 @@
-package com.example.passportscanner;
+package com.example.earthwallet.ui.fragments;
+
+import com.example.earthwallet.R;
 
 import android.os.Bundle;
 import android.view.LayoutInflater;

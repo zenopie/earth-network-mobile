@@ -5,7 +5,7 @@
     android:layout_height="match_parent"
     android:background="@color/sidebar_bg"
     android:padding="16dp"
-    tools:context="com.example.passportscanner.wallet.WalletActivity">
+    tools:context="com.example.earthwallet.ui.activities.WalletActivity">
 
     <ScrollView
         android:id="@+id/content_scroll"

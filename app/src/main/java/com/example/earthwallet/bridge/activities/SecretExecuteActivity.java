@@ -1,4 +1,8 @@
-package com.example.passportscanner.bridge;
+package com.example.earthwallet.bridge.activities;
+
+import com.example.earthwallet.bridge.services.SecretCryptoService;
+import com.example.earthwallet.bridge.services.SecretNetworkService;
+import com.example.earthwallet.bridge.services.SecretProtobufService;
 
 import android.app.AlertDialog;
 import android.content.Context;
@@ -13,35 +17,35 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
 
-import com.example.passportscanner.wallet.SecretWallet;
+import com.example.earthwallet.wallet.services.SecretWallet;
 
 import org.bitcoinj.core.ECKey;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
- * SecretExecuteNativeActivity (Clean Version)
+ * SecretExecuteActivity
  *
- * Minimal, clean implementation using our SecretCryptoService and SecretNetworkService.
- * Builds protobuf transactions for Secret Network contract execution.
+ * Handles Secret Network contract execution using integrated crypto and network services.
+ * Builds protobuf transactions for secure contract interaction.
  */
-public class SecretExecuteNativeActivity extends AppCompatActivity {
+public class SecretExecuteActivity extends AppCompatActivity {
 
     // Intent extras
-    public static final String EXTRA_CONTRACT_ADDRESS = "com.example.passportscanner.EXTRA_CONTRACT_ADDRESS";
-    public static final String EXTRA_CODE_HASH = "com.example.passportscanner.EXTRA_CODE_HASH";
-    public static final String EXTRA_EXECUTE_JSON = "com.example.passportscanner.EXTRA_EXECUTE_JSON";
-    public static final String EXTRA_FUNDS = "com.example.passportscanner.EXTRA_FUNDS";
-    public static final String EXTRA_MEMO = "com.example.passportscanner.EXTRA_MEMO";
-    public static final String EXTRA_LCD_URL = "com.example.passportscanner.EXTRA_LCD_URL";
-    public static final String EXTRA_CONTRACT_ENCRYPTION_KEY_B64 = "com.example.passportscanner.EXTRA_CONTRACT_ENCRYPTION_KEY_B64";
+    public static final String EXTRA_CONTRACT_ADDRESS = "com.example.earthwallet.EXTRA_CONTRACT_ADDRESS";
+    public static final String EXTRA_CODE_HASH = "com.example.earthwallet.EXTRA_CODE_HASH";
+    public static final String EXTRA_EXECUTE_JSON = "com.example.earthwallet.EXTRA_EXECUTE_JSON";
+    public static final String EXTRA_FUNDS = "com.example.earthwallet.EXTRA_FUNDS";
+    public static final String EXTRA_MEMO = "com.example.earthwallet.EXTRA_MEMO";
+    public static final String EXTRA_LCD_URL = "com.example.earthwallet.EXTRA_LCD_URL";
+    public static final String EXTRA_CONTRACT_ENCRYPTION_KEY_B64 = "com.example.earthwallet.EXTRA_CONTRACT_ENCRYPTION_KEY_B64";
 
     // Result extras
-    public static final String EXTRA_RESULT_JSON = "com.example.passportscanner.EXTRA_RESULT_JSON";
-    public static final String EXTRA_ERROR = "com.example.passportscanner.EXTRA_ERROR";
-    public static final String EXTRA_SENDER_ADDRESS = "com.example.passportscanner.EXTRA_SENDER_ADDRESS";
+    public static final String EXTRA_RESULT_JSON = "com.example.earthwallet.EXTRA_RESULT_JSON";
+    public static final String EXTRA_ERROR = "com.example.earthwallet.EXTRA_ERROR";
+    public static final String EXTRA_SENDER_ADDRESS = "com.example.earthwallet.EXTRA_SENDER_ADDRESS";
 
-    private static final String TAG = "SecretExecuteClean";
+    private static final String TAG = "SecretExecuteActivity";
     private static final String PREF_FILE = "secret_wallet_prefs";
 
     private SharedPreferences securePrefs;
@@ -54,43 +58,28 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
 
         try {
-            // Initialize services
-            SecretWallet.initialize(this);
-            securePrefs = createSecurePrefs(this);
-            networkService = new SecretNetworkService();
-            cryptoService = new SecretCryptoService();
-            protobufService = new SecretProtobufService();
-            
-            // Execute transaction on background thread
+            initializeServices();
             executeTransaction();
-            
         } catch (Exception e) {
             Log.e(TAG, "Initialization failed", e);
             finishWithError("Initialization failed: " + e.getMessage());
         }
     }
 
-    private void executeTransaction() {
-        // Parse intent parameters
-        Intent intent = getIntent();
-        String contractAddr = intent.getStringExtra(EXTRA_CONTRACT_ADDRESS);
-        String codeHash = intent.getStringExtra(EXTRA_CODE_HASH);
-        String execJson = intent.getStringExtra(EXTRA_EXECUTE_JSON);
-        String funds = intent.getStringExtra(EXTRA_FUNDS);
-        String memo = intent.getStringExtra(EXTRA_MEMO);
-        String contractPubKeyB64 = intent.getStringExtra(EXTRA_CONTRACT_ENCRYPTION_KEY_B64);
+    private void initializeServices() throws Exception {
+        SecretWallet.initialize(this);
+        securePrefs = createSecurePrefs(this);
+        networkService = new SecretNetworkService();
+        cryptoService = new SecretCryptoService();
+        protobufService = new SecretProtobufService();
+    }
 
-        // Validate required parameters
-        if (TextUtils.isEmpty(contractAddr) || TextUtils.isEmpty(execJson)) {
-            finishWithError("Missing required parameters");
+    private void executeTransaction() {
+        TransactionParams params = parseIntentParameters();
+        if (!validateParameters(params)) {
             return;
         }
 
-        // Set defaults
-        if (funds == null) funds = "";
-        if (memo == null) memo = "";
-
-        // Get wallet mnemonic
         String mnemonic = getSelectedMnemonic();
         if (TextUtils.isEmpty(mnemonic)) {
             finishWithError("No wallet mnemonic found");
@@ -98,19 +87,9 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
         }
 
         // Execute on background thread
-        final String finalContractAddr = contractAddr;
-        final String finalCodeHash = codeHash;
-        final String finalExecJson = execJson;
-        final String finalFunds = funds;
-        final String finalMemo = memo;
-        final String finalContractPubKeyB64 = contractPubKeyB64;
-        final String finalMnemonic = mnemonic;
-
         new Thread(() -> {
             try {
-                performTransaction(SecretWallet.DEFAULT_LCD_URL, finalContractAddr, finalCodeHash, 
-                                 finalExecJson, finalFunds, finalMemo, 
-                                 finalContractPubKeyB64, finalMnemonic);
+                performTransaction(params, mnemonic);
             } catch (Exception e) {
                 Log.e(TAG, "Transaction failed", e);
                 runOnUiThread(() -> finishWithError("Transaction failed: " + e.getMessage()));
@@ -118,22 +97,34 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
         }).start();
     }
 
-    private void performTransaction(String lcdUrl, String contractAddr, String codeHash,
-                                  String execJson, String funds, String memo,
-                                  String contractPubKeyB64, String mnemonic) throws Exception {
-        
-        Log.i(TAG, "Starting clean Secret Network transaction");
-        
-        // 1. Get wallet information
+    private TransactionParams parseIntentParameters() {
+        Intent intent = getIntent();
+        return new TransactionParams(
+            intent.getStringExtra(EXTRA_CONTRACT_ADDRESS),
+            intent.getStringExtra(EXTRA_CODE_HASH),
+            intent.getStringExtra(EXTRA_EXECUTE_JSON),
+            intent.getStringExtra(EXTRA_FUNDS),
+            intent.getStringExtra(EXTRA_MEMO),
+            intent.getStringExtra(EXTRA_CONTRACT_ENCRYPTION_KEY_B64)
+        );
+    }
+
+    private boolean validateParameters(TransactionParams params) {
+        if (TextUtils.isEmpty(params.contractAddr) || TextUtils.isEmpty(params.execJson)) {
+            finishWithError("Missing required parameters");
+            return false;
+        }
+        return true;
+    }
+
+    private void performTransaction(TransactionParams params, String mnemonic) throws Exception {
+        // Get wallet information
         ECKey walletKey = SecretWallet.deriveKeyFromMnemonic(mnemonic);
         String senderAddress = SecretWallet.getAddress(walletKey);
-        
-        Log.i(TAG, "Sender address: " + senderAddress);
 
-        // 2. Fetch chain and account information using clean network service
+        // Fetch chain and account information
+        String lcdUrl = SecretWallet.DEFAULT_LCD_URL;
         String chainId = networkService.fetchChainId(lcdUrl);
-        Log.i(TAG, "Chain ID: " + chainId);
-        
         JSONObject accountData = networkService.fetchAccount(lcdUrl, senderAddress);
         if (accountData == null) {
             throw new Exception("Account not found: " + senderAddress);
@@ -142,36 +133,29 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
         String[] accountFields = networkService.parseAccountFields(accountData);
         String accountNumber = accountFields[0];
         String sequence = accountFields[1];
-        
-        Log.i(TAG, "Account: " + accountNumber + ", Sequence: " + sequence);
 
-        // 3. Encrypt contract message using clean crypto service (no contract pubkey needed)
+        // Encrypt contract message
         byte[] encryptedMessage = cryptoService.encryptContractMessage(
-            codeHash, execJson, mnemonic);
-        
-        Log.i(TAG, "Message encrypted, size: " + encryptedMessage.length + " bytes");
+            params.codeHash, params.execJson, mnemonic);
 
-        // 4. Build protobuf transaction using clean service
-        byte[] txBytes = protobufService.buildTransaction(senderAddress, contractAddr, codeHash, 
-                                                        encryptedMessage, funds, memo, accountNumber, 
+        // Build protobuf transaction
+        byte[] txBytes = protobufService.buildTransaction(senderAddress, params.contractAddr, 
+                                                        params.codeHash, encryptedMessage, 
+                                                        params.funds, params.memo, accountNumber, 
                                                         sequence, chainId, walletKey);
 
-        // 5. Broadcast transaction using clean network service
+        // Broadcast transaction
         String response = networkService.broadcastTransactionModern(lcdUrl, txBytes);
-        
-        Log.i(TAG, "Transaction broadcast successful");
 
-        // 6. Enhance response (query for execution results)
+        // Enhance response with detailed results
         String enhancedResponse = enhanceTransactionResponse(response, lcdUrl);
-        Log.i(TAG, "Enhanced transaction response: " + enhancedResponse);
 
-        // 7. Show enhanced response in alert and return result on UI thread
+        // Show result on UI thread
         runOnUiThread(() -> {
             showEnhancedResponseAlert(enhancedResponse, senderAddress);
         });
     }
 
-    // Protobuf transaction building is now handled by SecretProtobufService
 
     private String enhanceTransactionResponse(String initialResponse, String lcdUrl) {
         try {
@@ -182,13 +166,14 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
                 String txHash = txResponse.optString("txhash", "");
 
                 if (code == 0 && !txHash.isEmpty()) {
-                    Log.i(TAG, "Transaction successful, querying for detailed results...");
-                    
-                    Thread.sleep(3000);
-                    
-                    String detailedResponse = networkService.queryTransactionByHash(lcdUrl, txHash);
-                    if (detailedResponse != null) {
-                        return detailedResponse;
+                    try {
+                        Thread.sleep(2000);
+                        String detailedResponse = networkService.queryTransactionByHash(lcdUrl, txHash);
+                        if (detailedResponse != null) {
+                            return detailedResponse;
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
                     }
                 }
             }
@@ -268,7 +253,6 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
                 }
             }
             
-            Log.w(TAG, "No wallets found in multi-wallet system");
             return null;
         } catch (Exception e) {
             Log.e(TAG, "Failed to get mnemonic from multi-wallet system", e);
@@ -304,6 +288,25 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
         } catch (Exception e) {
             Log.e(TAG, "Failed to create secure preferences", e);
             throw new RuntimeException("Secure preferences initialization failed", e);
+        }
+    }
+
+    private static class TransactionParams {
+        final String contractAddr;
+        final String codeHash;
+        final String execJson;
+        final String funds;
+        final String memo;
+        final String contractPubKeyB64;
+
+        TransactionParams(String contractAddr, String codeHash, String execJson, 
+                         String funds, String memo, String contractPubKeyB64) {
+            this.contractAddr = contractAddr;
+            this.codeHash = codeHash;
+            this.execJson = execJson;
+            this.funds = funds != null ? funds : "";
+            this.memo = memo != null ? memo : "";
+            this.contractPubKeyB64 = contractPubKeyB64;
         }
     }
 }

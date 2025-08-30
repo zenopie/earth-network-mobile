@@ -23,15 +23,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Architecture
 
-This is an Android application for scanning ePassports using NFC technology with integrated Secret Network blockchain functionality:
+This is an Android application (EarthWallet) for scanning ePassports using NFC technology with integrated Secret Network blockchain functionality:
 
 ### Core Components
-1. **Passport Scanner**: Android app using JMRTD library for reading ePassports via NFC
+1. **EarthWallet**: Android app using JMRTD library for reading ePassports via NFC
 2. **SecretJS Integration**: Full SecretJS source embedded for Secret Network blockchain interactions
 3. **Bridge Layer**: Java classes that bridge Android and Secret Network operations
 
 ### Key Directories
-- `app/src/main/java/com/example/passportscanner/` - Main Android application code
+- `app/src/main/java/com/example/earthwallet/` - Main Android application code
   - `bridge/` - Secret Network integration classes
   - `wallet/` - Wallet management functionality
 - `secretjs-source/` - Complete SecretJS library source code

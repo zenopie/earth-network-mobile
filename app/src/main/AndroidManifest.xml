@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
-    package="com.example.passportscanner">
+    package="com.example.earthwallet">
 
     <!-- NFC Permissions -->
     <uses-permission android:name="android.permission.NFC" />
@@ -27,15 +27,15 @@
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
-        android:theme="@style/Theme.PassportScanner"
+        android:theme="@style/Theme.EarthWallet"
         android:usesCleartextTraffic="true"
         android:networkSecurityConfig="@xml/network_security_config"
         tools:targetApi="31">
         
         <activity
-            android:name=".HostActivity"
+            android:name=".ui.activities.HostActivity"
             android:exported="true"
-            android:theme="@style/Theme.PassportScanner"
+            android:theme="@style/Theme.EarthWallet"
             android:screenOrientation="portrait">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -44,15 +44,15 @@
         </activity>
 
         <activity
-            android:name=".MRZInputActivity"
+            android:name=".ui.activities.MRZInputActivity"
             android:exported="true"
-            android:theme="@style/Theme.PassportScanner"
+            android:theme="@style/Theme.EarthWallet"
             android:screenOrientation="portrait" />
         
         <activity
-            android:name=".MainActivity"
+            android:name=".ui.activities.MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.PassportScanner"
+            android:theme="@style/Theme.EarthWallet"
             android:screenOrientation="portrait">
             <!-- Intent filter for NFC tag discovery -->
             <intent-filter>
@@ -66,73 +66,55 @@
 
         <!-- Secret Wallet Activity -->
         <activity
-            android:name=".wallet.WalletActivity"
+            android:name=".ui.activities.WalletActivity"
             android:exported="false"
-            android:theme="@style/Theme.PassportScanner"
+            android:theme="@style/Theme.EarthWallet"
             android:screenOrientation="portrait" />
         
         <!-- Create Wallet Activity (Keplr-style flow) -->
         <activity
-            android:name=".wallet.CreateWalletActivity"
+            android:name=".ui.activities.CreateWalletActivity"
             android:exported="false"
-            android:theme="@style/Theme.PassportScanner"
+            android:theme="@style/Theme.EarthWallet"
             android:screenOrientation="portrait" />
         
         <!-- Wallet list activity (manage multiple wallets) -->
         <activity
-            android:name=".wallet.WalletListActivity"
+            android:name=".ui.activities.WalletListActivity"
             android:exported="false"
-            android:theme="@style/Theme.PassportScanner"
+            android:theme="@style/Theme.EarthWallet"
             android:screenOrientation="portrait" />
 
         <!-- ANML Claim Activity -->
         <activity
-            android:name=".ANMLClaimActivity"
+            android:name=".ui.activities.ANMLClaimActivity"
             android:exported="false"
-            android:theme="@style/Theme.PassportScanner"
+            android:theme="@style/Theme.EarthWallet"
             android:screenOrientation="portrait" />
 
         <!-- Actions Navigator Activity -->
         <activity
-            android:name=".ActionsActivity"
+            android:name=".ui.activities.ActionsActivity"
             android:exported="false"
-            android:theme="@style/Theme.PassportScanner"
+            android:theme="@style/Theme.EarthWallet"
             android:screenOrientation="portrait" />
         
         <!-- Secret Query Activity (headless, invisible WebView) -->
         <activity
-            android:name=".bridge.SecretQueryActivity"
+            android:name=".bridge.activities.SecretQueryActivity"
             android:exported="false"
-            android:theme="@style/Theme.PassportScanner.NoDisplay"
+            android:theme="@style/Theme.EarthWallet.NoDisplay"
             android:excludeFromRecents="true" />
         
-        <!-- Secret Signer Activity (headless, on-device signing) -->
-        <activity
-            android:name=".bridge.SecretSignerActivity"
-            android:exported="false"
-            android:theme="@style/Theme.PassportScanner"
-            android:excludeFromRecents="true" />
         
-        <!-- Secret Execute Activity (headless, invisible WebView signer) -->
+        <!-- Secret Execute Activity (headless, pure-native execution) -->
         <activity
-            android:name=".bridge.SecretExecuteActivity"
+            android:name=".bridge.activities.SecretExecuteActivity"
             android:exported="false"
-            android:theme="@style/Theme.PassportScanner.NoDisplay"
+            android:theme="@style/Theme.EarthWallet.NoDisplay"
             android:excludeFromRecents="true" />
 
-        <!-- Secret Execute Native Activity (headless, pure-native signer/broadcaster) -->
-        <activity
-            android:name=".bridge.SecretExecuteNativeActivity"
-            android:exported="false"
-            android:theme="@style/Theme.PassportScanner.NoDisplay"
-            android:excludeFromRecents="true" />
 
-        <!-- Secret Execute Native Activity Refactored (streamlined version) -->
-        <activity
-            android:name=".bridge.SecretExecuteNativeActivityRefactored"
-            android:exported="false"
-            android:theme="@style/Theme.PassportScanner.NoDisplay"
-            android:excludeFromRecents="true" />
     </application>
 
 </manifest>

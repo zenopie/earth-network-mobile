@@ -1,4 +1,4 @@
-package com.example.passportscanner.bridge;
+package com.example.earthwallet.bridge.activities;
 
 import android.app.Activity;
 import android.content.Intent;
@@ -14,7 +14,7 @@ import android.webkit.ConsoleMessage;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
-import com.example.passportscanner.wallet.SecretWallet;
+import com.example.earthwallet.wallet.services.SecretWallet;
 
 import org.json.JSONObject;
 
@@ -45,12 +45,12 @@ import org.json.JSONObject;
  */
 public class SecretQueryActivity extends AppCompatActivity {
 
-    public static final String EXTRA_CONTRACT_ADDRESS = "com.example.passportscanner.EXTRA_CONTRACT_ADDRESS";
-    public static final String EXTRA_CODE_HASH = "com.example.passportscanner.EXTRA_CODE_HASH";
-    public static final String EXTRA_QUERY_JSON = "com.example.passportscanner.EXTRA_QUERY_JSON";
+    public static final String EXTRA_CONTRACT_ADDRESS = "com.example.earthwallet.EXTRA_CONTRACT_ADDRESS";
+    public static final String EXTRA_CODE_HASH = "com.example.earthwallet.EXTRA_CODE_HASH";
+    public static final String EXTRA_QUERY_JSON = "com.example.earthwallet.EXTRA_QUERY_JSON";
 
-    public static final String EXTRA_RESULT_JSON = "com.example.passportscanner.EXTRA_RESULT_JSON";
-    public static final String EXTRA_ERROR = "com.example.passportscanner.EXTRA_ERROR";
+    public static final String EXTRA_RESULT_JSON = "com.example.earthwallet.EXTRA_RESULT_JSON";
+    public static final String EXTRA_ERROR = "com.example.earthwallet.EXTRA_ERROR";
 
     private static final String TAG = "SecretQueryActivity";
     private WebView hiddenWebView;

@@ -1,4 +1,8 @@
-package com.example.passportscanner.wallet;
+package com.example.earthwallet.ui.activities;
+
+import com.example.earthwallet.R;
+import com.example.earthwallet.wallet.services.SecretWallet;
+import com.example.earthwallet.ui.fragments.WalletListFragment;
 
 import android.content.ClipData;
 import android.content.ClipboardManager;
@@ -19,7 +23,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
 
-import com.example.passportscanner.R;
+import com.example.earthwallet.R;
 
 import org.json.JSONArray;
 import org.json.JSONObject;

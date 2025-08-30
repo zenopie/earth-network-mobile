@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace 'com.example.passportscanner'
+    namespace 'com.example.earthwallet'
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.example.passportscanner"
+        applicationId "com.example.earthwallet"
         minSdk 23
         targetSdk 34
         versionCode 1

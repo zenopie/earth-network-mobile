@@ -1,4 +1,6 @@
-package com.example.passportscanner;
+package com.example.earthwallet.ui.activities;
+
+import com.example.earthwallet.R;
 
 import android.app.Activity;
 import android.app.PendingIntent;
@@ -49,7 +51,7 @@ import org.json.JSONObject;
 
 import net.sf.scuba.smartcards.CardService;
 
-import com.example.passportscanner.wallet.SecretWallet;
+import com.example.earthwallet.wallet.services.SecretWallet;
 
 public class MainActivity extends AppCompatActivity {
     private static final String TAG = "PassportScanner";
@@ -224,7 +226,7 @@ public class MainActivity extends AppCompatActivity {
         View navWallet = findViewById(R.id.btn_nav_wallet);
         if (navWallet != null) {
             navWallet.setOnClickListener(v -> {
-                Intent w = new Intent(MainActivity.this, com.example.passportscanner.wallet.WalletActivity.class);
+                Intent w = new Intent(MainActivity.this, com.example.earthwallet.ui.activities.WalletActivity.class);
                 startActivity(w);
             });
         }

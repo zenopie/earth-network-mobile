@@ -1,4 +1,6 @@
-package com.example.passportscanner;
+package com.example.earthwallet.ui.activities;
+
+import com.example.earthwallet.R;
 
 import android.content.Intent;
 import android.os.Bundle;
@@ -12,7 +14,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import android.util.Log;
 
 import com.google.android.material.textfield.TextInputEditText;
-import com.example.passportscanner.wallet.WalletFragment;
+import com.example.earthwallet.ui.fragments.WalletFragment;
 
 public class MRZInputActivity extends AppCompatActivity {
     

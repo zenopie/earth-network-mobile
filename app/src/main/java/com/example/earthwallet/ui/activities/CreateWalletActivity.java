@@ -1,4 +1,7 @@
-package com.example.passportscanner.wallet;
+package com.example.earthwallet.ui.activities;
+
+import com.example.earthwallet.R;
+import com.example.earthwallet.wallet.services.SecretWallet;
 
 import android.content.Context;
 import android.content.Intent;
@@ -27,7 +30,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
 
-import com.example.passportscanner.R;
+import com.example.earthwallet.R;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;

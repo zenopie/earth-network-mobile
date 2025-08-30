@@ -1,4 +1,7 @@
-package com.example.passportscanner;
+package com.example.earthwallet.ui.fragments;
+
+import com.example.earthwallet.R;
+import com.example.earthwallet.ui.activities.MRZInputActivity;
 
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -20,7 +23,7 @@ import androidx.fragment.app.Fragment;
 import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
 
-import com.example.passportscanner.wallet.SecretWallet;
+import com.example.earthwallet.wallet.services.SecretWallet;
 
 import org.json.JSONObject;
 
@@ -55,7 +58,6 @@ public class ANMLClaimFragment extends Fragment {
     
     private static final long ONE_DAY_MILLIS = 24L * 60L * 60L * 1000L;
     private static final int REQ_EXECUTE = 2002;
-    private static final int REQ_EXECUTE_NATIVE = 2003;
 
     private ImageView loadingGif;
     private View registerBox;
@@ -65,7 +67,6 @@ public class ANMLClaimFragment extends Fragment {
 
     private Button btnOpenWallet;
     private Button btnClaim;
-    private Button btnClaimNative;
 
     private SharedPreferences securePrefs;
 
@@ -102,7 +103,6 @@ public class ANMLClaimFragment extends Fragment {
 
         btnOpenWallet = view.findViewById(R.id.btn_open_wallet);
         btnClaim = view.findViewById(R.id.btn_claim);
-        btnClaimNative = view.findViewById(R.id.btn_claim_native);
 
         // Ensure any theme tinting is cleared so the drawable renders as-designed
         try {
@@ -113,10 +113,6 @@ public class ANMLClaimFragment extends Fragment {
             if (btnClaim != null) {
                 btnClaim.setBackgroundTintList(null);
                 btnClaim.setTextColor(getResources().getColor(R.color.anml_button_text));
-            }
-            if (btnClaimNative != null) {
-                btnClaimNative.setBackgroundTintList(null);
-                btnClaimNative.setTextColor(getResources().getColor(R.color.anml_button_text));
             }
         } catch (Exception ignored) {}
 
@@ -131,10 +127,10 @@ public class ANMLClaimFragment extends Fragment {
                 org.json.JSONObject exec = new org.json.JSONObject();
                 exec.put("claim_anml", new org.json.JSONObject());
  
-                Intent ei = new Intent(requireActivity(), com.example.passportscanner.bridge.SecretExecuteActivity.class);
-                ei.putExtra(com.example.passportscanner.bridge.SecretExecuteActivity.EXTRA_CONTRACT_ADDRESS, REGISTRATION_CONTRACT);
-                ei.putExtra(com.example.passportscanner.bridge.SecretExecuteActivity.EXTRA_CODE_HASH, REGISTRATION_HASH);
-                ei.putExtra(com.example.passportscanner.bridge.SecretExecuteActivity.EXTRA_EXECUTE_JSON, exec.toString());
+                Intent ei = new Intent(requireActivity(), com.example.earthwallet.bridge.activities.SecretExecuteActivity.class);
+                ei.putExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_CONTRACT_ADDRESS, REGISTRATION_CONTRACT);
+                ei.putExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_CODE_HASH, REGISTRATION_HASH);
+                ei.putExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_EXECUTE_JSON, exec.toString());
                 showLoading(true);
                 startActivityForResult(ei, REQ_EXECUTE);
             } catch (Exception e) {
@@ -142,30 +138,6 @@ public class ANMLClaimFragment extends Fragment {
             }
         });
         
-        if (btnClaimNative != null) {
-            btnClaimNative.setOnClickListener(v -> {
-                try {
-                    org.json.JSONObject exec = new org.json.JSONObject();
-                    exec.put("claim_anml", new org.json.JSONObject());
- 
-                    Intent ni = new Intent(requireActivity(), com.example.passportscanner.bridge.SecretExecuteNativeActivity.class);
-                    ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_CONTRACT_ADDRESS, REGISTRATION_CONTRACT);
-                    ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_CODE_HASH, REGISTRATION_HASH);
-                    ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_EXECUTE_JSON, exec.toString());
-                    // Optionally pass lcd/funds/memo if desired
-                    // ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_LCD_URL, com.example.passportscanner.wallet.SecretWallet.DEFAULT_LCD_URL);
-                    // ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_FUNDS, "");
-                    // ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_MEMO, "");
-                    if (!android.text.TextUtils.isEmpty(REGISTRATION_ENC_KEY_B64)) {
-                        ni.putExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_CONTRACT_ENCRYPTION_KEY_B64, REGISTRATION_ENC_KEY_B64);
-                    }
-                    showLoading(true);
-                    startActivityForResult(ni, REQ_EXECUTE_NATIVE);
-                } catch (Exception e) {
-                    Toast.makeText(requireContext(), "Failed to start native claim: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-                }
-            });
-        }
 
         initSecurePrefs();
         initHiddenWebView(requireContext());
@@ -314,7 +286,7 @@ private JSONObject runQueryViaWebView(final JSONObject payload) throws Exception
             JSONObject.quote(contract) + "," +
             JSONObject.quote(codeHash) + ",JSON.parse(" + JSONObject.quote(queryJson) + ")," +
             JSONObject.quote("") + "," +
-            JSONObject.quote(com.example.passportscanner.wallet.SecretWallet.DEFAULT_LCD_URL) + "); } else { if(window.AndroidBridge && window.AndroidBridge.onQueryError) window.AndroidBridge.onQueryError('runQuery not defined'); } }catch(e){ if(window.AndroidBridge && window.AndroidBridge.onQueryError) window.AndroidBridge.onQueryError(String(e)); }})();";
+            JSONObject.quote(com.example.earthwallet.wallet.services.SecretWallet.DEFAULT_LCD_URL) + "); } else { if(window.AndroidBridge && window.AndroidBridge.onQueryError) window.AndroidBridge.onQueryError('runQuery not defined'); } }catch(e){ if(window.AndroidBridge && window.AndroidBridge.onQueryError) window.AndroidBridge.onQueryError(String(e)); }})();";
 
     // Wait for the bridge page to finish loading (avoid calling JS before runQuery is defined)
     try {
@@ -392,7 +364,7 @@ private JSONObject runQueryViaWebView(final JSONObject payload) throws Exception
                     return res;
                 }
 
-                String address = com.example.passportscanner.wallet.SecretWallet.getAddressFromMnemonic(mnemonic);
+                String address = com.example.earthwallet.wallet.services.SecretWallet.getAddressFromMnemonic(mnemonic);
                 if (TextUtils.isEmpty(address)) {
                     JSONObject res = new JSONObject();
                     res.put("status", "no_wallet");
@@ -487,7 +459,7 @@ private JSONObject runQueryViaWebView(final JSONObject payload) throws Exception
         if (requestCode == REQ_EXECUTE) {
             showLoading(false);
             if (resultCode != android.app.Activity.RESULT_OK) {
-                String err = (data != null) ? data.getStringExtra(com.example.passportscanner.bridge.SecretExecuteActivity.EXTRA_ERROR) : "Execution canceled";
+                String err = (data != null) ? data.getStringExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_ERROR) : "Execution canceled";
                 try {
                     new AlertDialog.Builder(requireContext())
                             .setTitle("Execute error")
@@ -500,7 +472,7 @@ private JSONObject runQueryViaWebView(final JSONObject payload) throws Exception
                 return;
             }
             try {
-                String json = (data != null) ? data.getStringExtra(com.example.passportscanner.bridge.SecretExecuteActivity.EXTRA_RESULT_JSON) : null;
+                String json = (data != null) ? data.getStringExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_RESULT_JSON) : null;
                 String txhash = null;
                 if (!android.text.TextUtils.isEmpty(json)) {
                     org.json.JSONObject root = new org.json.JSONObject(json);
@@ -523,53 +495,6 @@ private JSONObject runQueryViaWebView(final JSONObject payload) throws Exception
                 try {
                     new AlertDialog.Builder(requireContext())
                             .setTitle("Execute response")
-                            .setMessage("Claim submitted")
-                            .setPositiveButton("OK", null)
-                            .show();
-                } catch (Exception ignored) {
-                    Toast.makeText(requireContext(), "Claim submitted", Toast.LENGTH_LONG).show();
-                }
-                new CheckStatusTask().execute();
-            }
-        } else if (requestCode == REQ_EXECUTE_NATIVE) {
-            showLoading(false);
-            if (resultCode != android.app.Activity.RESULT_OK) {
-                String err = (data != null) ? data.getStringExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_ERROR) : "Execution canceled";
-                try {
-                    new AlertDialog.Builder(requireContext())
-                            .setTitle("Execute (Native) error")
-                            .setMessage(err != null ? err : "(empty)")
-                            .setPositiveButton("OK", null)
-                            .show();
-                } catch (Exception ignored) {
-                    Toast.makeText(requireContext(), "Execute (Native) error: " + (err != null ? err : "(empty)"), Toast.LENGTH_LONG).show();
-                }
-                return;
-            }
-            try {
-                String json = (data != null) ? data.getStringExtra(com.example.passportscanner.bridge.SecretExecuteNativeActivity.EXTRA_RESULT_JSON) : null;
-                String txhash = null;
-                if (!android.text.TextUtils.isEmpty(json)) {
-                    org.json.JSONObject root = new org.json.JSONObject(json);
-                    txhash = root.optString("txhash", null);
-                }
-                try {
-                    new AlertDialog.Builder(requireContext())
-                            .setTitle("Execute (Native) response")
-                            .setMessage(json != null ? json : "(empty)")
-                            .setPositiveButton("OK", null)
-                            .show();
-                } catch (Exception ignored) {
-                    String msg = txhash != null ? "Claim submitted: " + txhash : "Claim submitted";
-                    Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show();
-                }
-                // Re-check status to refresh UI after claim
-                new CheckStatusTask().execute();
-            } catch (Exception e) {
-                Log.e(TAG, "Failed to parse native execute result", e);
-                try {
-                    new AlertDialog.Builder(requireContext())
-                            .setTitle("Execute (Native) response")
                             .setMessage("Claim submitted")
                             .setPositiveButton("OK", null)
                             .show();

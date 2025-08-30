@@ -1,4 +1,6 @@
-package com.example.passportscanner.wallet;
+package com.example.earthwallet.wallet.services;
+
+import com.example.earthwallet.wallet.utils.Bech32;
 
 import org.bitcoinj.core.ECKey;
 import org.bitcoinj.core.Utils;

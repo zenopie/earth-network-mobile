@@ -1,4 +1,4 @@
-package com.example.passportscanner.wallet;
+package com.example.earthwallet.wallet.services;
 
 import android.util.Log;
 import org.bitcoinj.core.ECKey;

@@ -1,4 +1,8 @@
-package com.example.passportscanner.wallet;
+package com.example.earthwallet.ui.fragments;
+
+import com.example.earthwallet.wallet.services.SecretWallet;
+import com.example.earthwallet.ui.activities.CreateWalletActivity;
+import com.example.earthwallet.ui.activities.WalletListActivity;
 
 import android.content.ClipData;
 import android.content.ClipboardManager;
@@ -20,7 +24,7 @@ import androidx.fragment.app.Fragment;
 import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
 
-import com.example.passportscanner.R;
+import com.example.earthwallet.R;
 
 import org.bitcoinj.core.ECKey;
 import android.util.Log;
@@ -142,10 +146,10 @@ public class WalletFragment extends Fragment {
         for (View t : triggers) {
             if (t != null) {
                 t.setOnClickListener(v -> {
-                    if (getActivity() != null && getActivity() instanceof com.example.passportscanner.HostActivity) {
-                        ((com.example.passportscanner.HostActivity) getActivity()).showFragment("wallet_list");
+                    if (getActivity() != null && getActivity() instanceof com.example.earthwallet.ui.activities.HostActivity) {
+                        ((com.example.earthwallet.ui.activities.HostActivity) getActivity()).showFragment("wallet_list");
                     } else {
-                        Intent i = new Intent(requireContext(), com.example.passportscanner.wallet.WalletListActivity.class);
+                        Intent i = new Intent(requireContext(), com.example.earthwallet.ui.activities.WalletListActivity.class);
                         startActivity(i);
                     }
                 });

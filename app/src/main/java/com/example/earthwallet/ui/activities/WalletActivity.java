@@ -1,4 +1,8 @@
-package com.example.passportscanner.wallet;
+package com.example.earthwallet.ui.activities;
+
+import com.example.earthwallet.R;
+import com.example.earthwallet.wallet.services.SecretWallet;
+import com.example.earthwallet.ui.fragments.WalletFragment;
 
 import android.content.ClipData;
 import android.content.ClipboardManager;
@@ -21,8 +25,8 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
 
-import com.example.passportscanner.R;
-import com.example.passportscanner.ActionsActivity;
+import com.example.earthwallet.R;
+import com.example.earthwallet.ui.activities.ActionsActivity;
 
 import org.bitcoinj.core.ECKey;
 import android.util.Log;
@@ -108,12 +112,12 @@ public class WalletActivity extends AppCompatActivity {
                 // If HostActivity is present, ask it to show the wallet_list fragment so bottom nav remains consistent.
                 try {
                     android.app.Activity a = WalletActivity.this;
-                    if (a instanceof com.example.passportscanner.HostActivity) {
-                        ((com.example.passportscanner.HostActivity)a).showFragment("wallet_list");
+                    if (a instanceof com.example.earthwallet.ui.activities.HostActivity) {
+                        ((com.example.earthwallet.ui.activities.HostActivity)a).showFragment("wallet_list");
                         return;
                     }
                 } catch (Exception ignored) {}
-                Intent i = new Intent(WalletActivity.this, com.example.passportscanner.wallet.WalletListActivity.class);
+                Intent i = new Intent(WalletActivity.this, com.example.earthwallet.ui.activities.WalletListActivity.class);
                 startActivity(i);
             });
         }
@@ -127,12 +131,12 @@ public class WalletActivity extends AppCompatActivity {
                     // Prefer HostActivity fragment if available
                     try {
                         android.app.Activity a = WalletActivity.this;
-                        if (a instanceof com.example.passportscanner.HostActivity) {
-                            ((com.example.passportscanner.HostActivity)a).showFragment("wallet_list");
+                        if (a instanceof com.example.earthwallet.ui.activities.HostActivity) {
+                            ((com.example.earthwallet.ui.activities.HostActivity)a).showFragment("wallet_list");
                             return;
                         }
                     } catch (Exception ignored) {}
-                    Intent i = new Intent(WalletActivity.this, com.example.passportscanner.wallet.WalletListActivity.class);
+                    Intent i = new Intent(WalletActivity.this, com.example.earthwallet.ui.activities.WalletListActivity.class);
                     startActivity(i);
                 });
             }

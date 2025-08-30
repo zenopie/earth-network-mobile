@@ -1,4 +1,6 @@
-package com.example.passportscanner;
+package com.example.earthwallet.ui.activities;
+
+import com.example.earthwallet.R;
 
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -93,29 +95,29 @@ public class HostActivity extends AppCompatActivity {
         Fragment fragment;
         switch (tag) {
             case "wallet":
-                fragment = new com.example.passportscanner.wallet.WalletFragment();
+                fragment = new com.example.earthwallet.ui.fragments.WalletFragment();
                 break;
             case "wallet_list":
                 // New fragment that shows the wallet management UI while keeping the HostActivity bottom nav
-                fragment = new com.example.passportscanner.wallet.WalletListFragment();
+                fragment = new com.example.earthwallet.ui.fragments.WalletListFragment();
                 // When showing the wallet list, mark Wallet nav selected
                 setSelectedNav(navWallet, navActions);
                 break;
             case "actions":
-                fragment = new com.example.passportscanner.ActionsFragment();
+                fragment = new com.example.earthwallet.ui.fragments.ActionsFragment();
                 break;
             case "scanner":
-                fragment = new com.example.passportscanner.ScannerFragment();
+                fragment = new com.example.earthwallet.ui.fragments.ScannerFragment();
                 break;
             case "anml":
                 // Show ANML UI inside the HostActivity so bottom nav remains the single shared nav
-                fragment = new com.example.passportscanner.ANMLClaimFragment();
+                fragment = new com.example.earthwallet.ui.fragments.ANMLClaimFragment();
                 // Ensure Actions nav is selected when showing ANML
                 setSelectedNav(navActions, navWallet);
                 break;
             default:
                 // Default to scanner if an unknown tag is passed
-                fragment = new com.example.passportscanner.ScannerFragment();
+                fragment = new com.example.earthwallet.ui.fragments.ScannerFragment();
                 break;
         }
     

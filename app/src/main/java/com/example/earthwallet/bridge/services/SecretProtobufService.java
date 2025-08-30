@@ -1,4 +1,4 @@
-package com.example.passportscanner.bridge;
+package com.example.earthwallet.bridge.services;
 
 import android.util.Log;
 import android.util.Base64;
@@ -12,8 +12,8 @@ import com.google.protobuf.ByteString;
 import cosmos.tx.v1beta1.Tx;
 
 import java.security.MessageDigest;
-import com.example.passportscanner.wallet.SecretWallet;
-import com.example.passportscanner.wallet.TransactionSigner;
+import com.example.earthwallet.wallet.services.SecretWallet;
+import com.example.earthwallet.wallet.services.TransactionSigner;
 
 /**
  * SecretProtobufService
@@ -37,10 +37,6 @@ public class SecretProtobufService {
                                  ECKey walletKey) throws Exception {
         
         Log.i(TAG, "Building Secret Network protobuf transaction");
-        Log.d(TAG, "Sender: " + sender);
-        Log.d(TAG, "Contract: " + contractAddr);
-        Log.d(TAG, "Encrypted message size: " + encryptedMsg.length + " bytes");
-        Log.d(TAG, "Chain: " + chainId + ", Account: " + accountNumber + ", Sequence: " + sequence);
         
         try {
             // Parse funds into coins array
@@ -76,8 +72,6 @@ public class SecretProtobufService {
         byte[] senderBytes = decodeBech32Address(sender);
         byte[] contractBytes = decodeBech32Address(contractAddr);
         
-        Log.d(TAG, "Encoded sender from " + sender.length() + " chars to " + senderBytes.length + " bytes");
-        Log.d(TAG, "Encoded contract from " + contractAddr.length() + " chars to " + contractBytes.length + " bytes");
         
         secret.compute.v1beta1.MsgExecuteContract.Builder msgBuilder = 
             secret.compute.v1beta1.MsgExecuteContract.newBuilder()
@@ -151,7 +145,6 @@ public class SecretProtobufService {
             .setAccountNumber(Long.parseLong(accountNumber))
             .build();
         
-        Log.d(TAG, "SignDoc created, delegating to TransactionSigner...");
         
         // Use the general purpose signer
         byte[] txBytes = TransactionSigner.signTransaction(signDoc, walletKey);
@@ -187,7 +180,6 @@ public class SecretProtobufService {
             throw new IllegalArgumentException("Invalid address length: " + decoded.length + " (expected 20)");
         }
         
-        Log.d(TAG, "Decoded " + bech32Address + " to " + decoded.length + " bytes");
         return decoded;
     }
     
@@ -300,7 +292,6 @@ public class SecretProtobufService {
             coins.put(coin);
         }
         
-        Log.d(TAG, "Parsed funds '" + funds + "' into " + coins.length() + " coins");
         return coins;
     }
 
@@ -309,7 +300,6 @@ public class SecretProtobufService {
      * This prevents signature verification failures due to key/address mismatch
      */
     private void validateWalletMatchesSender(String sender, ECKey walletKey) throws Exception {
-        Log.d(TAG, "Validating wallet key matches sender address...");
         
         try {
             // Use the SAME address derivation method as the app uses

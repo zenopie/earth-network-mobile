@@ -1,4 +1,7 @@
-package com.example.passportscanner;
+package com.example.earthwallet.ui.fragments;
+
+import com.example.earthwallet.ui.activities.HostActivity;
+import com.example.earthwallet.ui.activities.ANMLClaimActivity;
 
 import android.content.Intent;
 import android.os.Bundle;
@@ -9,7 +12,7 @@ import android.widget.Button;
 
 import androidx.fragment.app.Fragment;
 
-import com.example.passportscanner.R;
+import com.example.earthwallet.R;
 
 public class ActionsFragment extends Fragment {
     public ActionsFragment() {}

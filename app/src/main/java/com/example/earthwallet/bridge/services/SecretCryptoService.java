@@ -1,10 +1,10 @@
-package com.example.passportscanner.bridge;
+package com.example.earthwallet.bridge.services;
 
 import android.text.TextUtils;
 import android.util.Base64;
 import android.util.Log;
 
-import com.example.passportscanner.wallet.SecretWallet;
+import com.example.earthwallet.wallet.services.SecretWallet;
 
 import org.bitcoinj.core.ECKey;
 
@@ -86,12 +86,9 @@ public class SecretCryptoService {
         basePoint[0] = 9; // Standard curve25519 base point
         byte[] encryptionPubKey = curve25519.calculateAgreement(basePoint, x25519PrivKey);
         
-        Log.d(TAG, "Generated deterministic curve25519 encryption keypair from wallet seed");
-        Log.d(TAG, "Encryption public key (32 bytes): " + bytesToHex(encryptionPubKey));
         
         // This is the public key that goes in the encrypted message (SecretJS format)
         byte[] walletPubkey32 = encryptionPubKey;
-        Log.d(TAG, "Using encryption pubkey for message format: " + bytesToHex(walletPubkey32));
         
         // Use consensus IO public key (matches SecretJS encryption.ts line 89)
         byte[] consensusIoPubKey = Base64.decode(MAINNET_CONSENSUS_IO_PUBKEY_B64, Base64.NO_WRAP);
@@ -100,7 +97,6 @@ public class SecretCryptoService {
         // Compute x25519 ECDH shared secret using encryption private key (matches SecretJS encryption.ts line 91)
         byte[] txEncryptionIkm = curve25519.calculateAgreement(consensusIoPubKey, x25519PrivKey);
         Log.i(TAG, "Computed x25519 shared secret directly using curve25519 library");
-        Log.d(TAG, "Shared secret (32 bytes): " + bytesToHex(txEncryptionIkm));
         
         // Derive encryption key using HKDF (matches SecretJS encryption.ts lines 92-98)
         byte[] keyMaterial = new byte[txEncryptionIkm.length + nonce.length];
@@ -139,8 +135,6 @@ public class SecretCryptoService {
             System.arraycopy(txEncryptionKey, 0, macKey, 0, 16);    // First 16 bytes for MAC
             System.arraycopy(txEncryptionKey, 16, encKey, 0, 16);   // Second 16 bytes for ENC
             
-            Log.d(TAG, "Derived MAC key (16 bytes): " + bytesToHex(macKey));
-            Log.d(TAG, "Derived ENC key (16 bytes): " + bytesToHex(encKey));
             
             // Use proper AES-SIV implementation that matches miscreant
             SivMode sivMode = new SivMode();

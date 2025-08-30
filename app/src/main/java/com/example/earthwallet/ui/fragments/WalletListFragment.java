@@ -1,4 +1,7 @@
-package com.example.passportscanner.wallet;
+package com.example.earthwallet.ui.fragments;
+
+import com.example.earthwallet.wallet.services.SecretWallet;
+import com.example.earthwallet.ui.activities.CreateWalletActivity;
 
 import android.content.ClipData;
 import android.content.ClipboardManager;
@@ -22,7 +25,7 @@ import androidx.fragment.app.Fragment;
 import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
 
-import com.example.passportscanner.R;
+import com.example.earthwallet.R;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -164,8 +167,8 @@ public class WalletListFragment extends Fragment {
                     } catch (Exception ignored) {}
                     // If hosted inside HostActivity, switch back to the Wallet fragment to show the selected wallet
                     if (getActivity() != null) {
-                        if (getActivity() instanceof com.example.passportscanner.HostActivity) {
-                            ((com.example.passportscanner.HostActivity) getActivity()).showFragment("wallet");
+                        if (getActivity() instanceof com.example.earthwallet.ui.activities.HostActivity) {
+                            ((com.example.earthwallet.ui.activities.HostActivity) getActivity()).showFragment("wallet");
                         } else {
                             // Standalone activity case: finish so caller refreshes UI
                             getActivity().finish();

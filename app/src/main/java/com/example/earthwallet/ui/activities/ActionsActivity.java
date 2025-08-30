@@ -1,4 +1,6 @@
-package com.example.passportscanner;
+package com.example.earthwallet.ui.activities;
+
+import com.example.earthwallet.R;
  
 import android.content.Intent;
 import android.os.Bundle;
@@ -9,7 +11,7 @@ import android.util.Log;
  
 import androidx.appcompat.app.AppCompatActivity;
  
-import com.example.passportscanner.wallet.WalletActivity;
+import com.example.earthwallet.ui.activities.WalletActivity;
 
 public class ActionsActivity extends AppCompatActivity {
     @Override

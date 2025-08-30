@@ -1,4 +1,4 @@
-package com.example.passportscanner.wallet;
+package com.example.earthwallet.wallet.utils;
 
 import java.util.Arrays;
 
