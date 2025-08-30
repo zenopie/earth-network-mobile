@@ -115,8 +115,9 @@ dependencies {
     // x25519 ECDH support (required for SecretJS encryption compatibility)
     implementation 'org.whispersystems:curve25519-java:0.5.0'
     
-    // Note: Using deterministic AES-GCM instead of AES-SIV for compatibility
-    // The existing javax.crypto provides sufficient AES-GCM support
+    
+    // RFC 5297 AES-SIV implementation (matches SecretJS miscreant library)
+    implementation 'org.cryptomator:siv-mode:1.4.0'
     
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'

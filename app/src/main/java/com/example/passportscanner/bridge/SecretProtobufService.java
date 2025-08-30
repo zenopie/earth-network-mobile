@@ -114,7 +114,7 @@ public class SecretProtobufService {
         // 3. Create AuthInfo with fee and signature info
         // Completely omit payer and granter fields to match CosmJS protobuf encoding
         cosmos.tx.v1beta1.Tx.Fee fee = cosmos.tx.v1beta1.Tx.Fee.newBuilder()
-            .setGasLimit(200000)
+            .setGasLimit(5000000)  // Increased from 200K to 5M to match SecretJS contract execution
             .addAmount(cosmos.base.v1beta1.CoinOuterClass.Coin.newBuilder()
                 .setDenom("uscrt")
                 .setAmount("100000")

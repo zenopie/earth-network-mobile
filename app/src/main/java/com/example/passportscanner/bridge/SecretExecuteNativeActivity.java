@@ -145,9 +145,9 @@ public class SecretExecuteNativeActivity extends AppCompatActivity {
         
         Log.i(TAG, "Account: " + accountNumber + ", Sequence: " + sequence);
 
-        // 3. Encrypt contract message using clean crypto service
+        // 3. Encrypt contract message using clean crypto service (no contract pubkey needed)
         byte[] encryptedMessage = cryptoService.encryptContractMessage(
-            contractPubKeyB64, codeHash, execJson, mnemonic);
+            codeHash, execJson, mnemonic);
         
         Log.i(TAG, "Message encrypted, size: " + encryptedMessage.length + " bytes");
 
