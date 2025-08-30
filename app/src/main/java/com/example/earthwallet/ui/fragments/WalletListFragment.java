@@ -1,12 +1,11 @@
 package com.example.earthwallet.ui.fragments;
 
+import com.example.earthwallet.R;
 import com.example.earthwallet.wallet.services.SecretWallet;
-import com.example.earthwallet.ui.activities.CreateWalletActivity;
 
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
-import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.text.TextUtils;
@@ -25,8 +24,6 @@ import androidx.fragment.app.Fragment;
 import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
 
-import com.example.earthwallet.R;
-
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -35,7 +32,8 @@ import java.security.MessageDigest;
 /**
  * WalletListFragment
  *
- * Fragment equivalent of WalletListActivity so the HostActivity can keep a single persistent bottom nav.
+ * Lists saved wallets (from "wallets" JSON array in secure prefs) and shows address,
+ * with Show (requires PIN) and Delete (with irreversible confirmation) actions.
  */
 public class WalletListFragment extends Fragment {
 
@@ -45,20 +43,33 @@ public class WalletListFragment extends Fragment {
     private LinearLayout container;
     private LayoutInflater inflater;
 
+    // Interface for communication with parent activity
+    public interface WalletListListener {
+        void onWalletSelected(int walletIndex);
+        void onCreateWalletRequested();
+    }
+    
+    private WalletListListener listener;
+    
     public WalletListFragment() {}
 
     public static WalletListFragment newInstance() {
         return new WalletListFragment();
     }
+    
+    public void setWalletListListener(WalletListListener listener) {
+        this.listener = listener;
+    }
 
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
-        // Inflate the fragment layout which is similar to activity_wallet_list
-        return inflater.inflate(R.layout.fragment_wallet_list, container, false);
+        return inflater.inflate(R.layout.activity_wallet_list, container, false);
     }
 
     @Override
     public void onViewCreated(View view, Bundle savedInstanceState) {
+        super.onViewCreated(view, savedInstanceState);
+        
         try {
             SecretWallet.initialize(requireContext());
         } catch (Exception e) {
@@ -70,15 +81,13 @@ public class WalletListFragment extends Fragment {
 
         initSecurePrefs();
         loadAndRenderWallets();
- 
-        // Wire Add button (new wallet flow) inside this fragment
-        View addBtn = getView() != null ? getView().findViewById(R.id.btn_add_wallet_list) : null;
+        
+        // Wire Add button (new wallet flow)
+        View addBtn = view.findViewById(R.id.btn_add_wallet_list);
         if (addBtn != null) {
             addBtn.setOnClickListener(v -> {
-                // Start the create wallet flow
-                if (getActivity() != null) {
-                    Intent i = new Intent(requireActivity(), CreateWalletActivity.class);
-                    startActivity(i);
+                if (listener != null) {
+                    listener.onCreateWalletRequested();
                 }
             });
         }
@@ -99,7 +108,7 @@ public class WalletListFragment extends Fragment {
         }
     }
 
-    private void loadAndRenderWallets() {
+    public void loadAndRenderWallets() {
         // Remove any rows except the title (first child)
         if (container.getChildCount() > 1) {
             container.removeViews(1, container.getChildCount() - 1);
@@ -134,10 +143,10 @@ public class WalletListFragment extends Fragment {
                 TextView tvAddr = row.findViewById(R.id.wallet_row_address);
                 ImageButton btnShow = row.findViewById(R.id.wallet_row_show);
                 ImageButton btnDelete = row.findViewById(R.id.wallet_row_delete);
- 
+
                 tvName.setText(walletName);
                 tvAddr.setText(TextUtils.isEmpty(finalAddress) ? "No address" : finalAddress);
- 
+
                 btnShow.setOnClickListener(v -> askPinAndShowMnemonic(index));
                 btnDelete.setOnClickListener(v -> {
                     new AlertDialog.Builder(requireContext())
@@ -147,7 +156,7 @@ public class WalletListFragment extends Fragment {
                             .setNegativeButton("Cancel", null)
                             .show();
                 });
- 
+
                 tvAddr.setOnLongClickListener(v -> {
                     if (!TextUtils.isEmpty(finalAddress)) {
                         ClipboardManager cm = (ClipboardManager) requireContext().getSystemService(Context.CLIPBOARD_SERVICE);
@@ -158,24 +167,19 @@ public class WalletListFragment extends Fragment {
                     }
                     return true;
                 });
- 
+
                 // Allow tapping the row to select it as the active wallet
                 row.setOnClickListener(v -> {
                     try {
                         securePrefs.edit().putInt("selected_wallet_index", index).apply();
                         Toast.makeText(requireContext(), "Selected wallet: " + walletName, Toast.LENGTH_SHORT).show();
                     } catch (Exception ignored) {}
-                    // If hosted inside HostActivity, switch back to the Wallet fragment to show the selected wallet
-                    if (getActivity() != null) {
-                        if (getActivity() instanceof com.example.earthwallet.ui.activities.HostActivity) {
-                            ((com.example.earthwallet.ui.activities.HostActivity) getActivity()).showFragment("wallet");
-                        } else {
-                            // Standalone activity case: finish so caller refreshes UI
-                            getActivity().finish();
-                        }
+                    
+                    if (listener != null) {
+                        listener.onWalletSelected(index);
                     }
                 });
- 
+
                 container.addView(row);
             }
         } catch (Exception e) {
@@ -245,6 +249,7 @@ public class WalletListFragment extends Fragment {
                 Toast.makeText(requireContext(), "Invalid wallet index", Toast.LENGTH_SHORT).show();
                 return;
             }
+            
             JSONArray newArr = new JSONArray();
             for (int i = 0; i < arr.length(); i++) {
                 if (i == index) continue;

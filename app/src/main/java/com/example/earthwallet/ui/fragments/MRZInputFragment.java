@@ -1,22 +1,21 @@
-package com.example.earthwallet.ui.activities;
+package com.example.earthwallet.ui.fragments;
 
 import com.example.earthwallet.R;
 
 import android.content.Intent;
 import android.os.Bundle;
 import android.text.TextUtils;
-import android.view.View;
-import android.widget.Button;
-import android.widget.Toast;
-
-import androidx.appcompat.app.AppCompatActivity;
-
 import android.util.Log;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.Button;
+
+import androidx.fragment.app.Fragment;
 
 import com.google.android.material.textfield.TextInputEditText;
-import com.example.earthwallet.ui.fragments.WalletFragment;
 
-public class MRZInputActivity extends AppCompatActivity {
+public class MRZInputFragment extends Fragment {
     
     // UI elements
     private TextInputEditText passportNumberEditText;
@@ -24,18 +23,38 @@ public class MRZInputActivity extends AppCompatActivity {
     private TextInputEditText dateOfExpiryEditText;
     private Button scanButton;
     
+    // Interface for communication with parent activity
+    public interface MRZInputListener {
+        void onMRZDataEntered(String passportNumber, String dateOfBirth, String dateOfExpiry);
+    }
+    
+    private MRZInputListener listener;
+    
+    public MRZInputFragment() {}
+    
+    public static MRZInputFragment newInstance() {
+        return new MRZInputFragment();
+    }
+    
+    public void setMRZInputListener(MRZInputListener listener) {
+        this.listener = listener;
+    }
+
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
+    public View onCreateView(LayoutInflater inflater, ViewGroup container,
+                             Bundle savedInstanceState) {
+        return inflater.inflate(R.layout.activity_mrz_input, container, false);
+    }
 
-
-        setContentView(R.layout.activity_mrz_input);
+    @Override
+    public void onViewCreated(View view, Bundle savedInstanceState) {
+        super.onViewCreated(view, savedInstanceState);
 
         // Initialize UI elements
-        passportNumberEditText = findViewById(R.id.passport_number);
-        dateOfBirthEditText = findViewById(R.id.date_of_birth);
-        dateOfExpiryEditText = findViewById(R.id.date_of_expiry);
-        scanButton = findViewById(R.id.scan_button);
+        passportNumberEditText = view.findViewById(R.id.passport_number);
+        dateOfBirthEditText = view.findViewById(R.id.date_of_birth);
+        dateOfExpiryEditText = view.findViewById(R.id.date_of_expiry);
+        scanButton = view.findViewById(R.id.scan_button);
         
         // Set default values for testing
         if (passportNumberEditText != null) {
@@ -50,40 +69,32 @@ public class MRZInputActivity extends AppCompatActivity {
         
         // Set click listener for scan button
         if (scanButton != null) {
-            scanButton.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    if (validateInput()) {
-                        // Create intent to pass MRZ data to MainActivity
-                        String passportNumber = getTextFromEditText(passportNumberEditText);
-                        String dateOfBirth = getTextFromEditText(dateOfBirthEditText);
-                        String dateOfExpiry = getTextFromEditText(dateOfExpiryEditText);
-                        
-                        // Do not log sensitive MRZ values in cleartext during demos
-                        Log.d("MRZInputActivity", "Sending MRZ data to MainActivity (values suppressed in logs)");
-                        
-                        Intent intent = new Intent(MRZInputActivity.this, MainActivity.class);
-                        intent.putExtra("passportNumber", passportNumber);
-                        intent.putExtra("dateOfBirth", dateOfBirth);
-                        intent.putExtra("dateOfExpiry", dateOfExpiry);
-                        startActivity(intent);
+            scanButton.setOnClickListener(v -> {
+                if (validateInput()) {
+                    // Get MRZ data and notify parent activity
+                    String passportNumber = getTextFromEditText(passportNumberEditText);
+                    String dateOfBirth = getTextFromEditText(dateOfBirthEditText);
+                    String dateOfExpiry = getTextFromEditText(dateOfExpiryEditText);
+                    
+                    // Do not log sensitive MRZ values in cleartext during demos
+                    Log.d("MRZInputFragment", "Sending MRZ data to parent activity (values suppressed in logs)");
+                    
+                    if (listener != null) {
+                        listener.onMRZDataEntered(passportNumber, dateOfBirth, dateOfExpiry);
                     }
                 }
             });
         }
 
-        // Open Secret Wallet screen (now handled by HostActivity)
-        Button openWallet = findViewById(R.id.open_wallet_button);
+        // Open Secret Wallet screen - remove this as it should be handled by parent activity
+        Button openWallet = view.findViewById(R.id.open_wallet_button);
         if (openWallet != null) {
             openWallet.setOnClickListener(v -> {
-                // Instead of starting WalletActivity, we now navigate to the WalletFragment within HostActivity
-                Intent w = new Intent(MRZInputActivity.this, HostActivity.class);
-                w.putExtra("fragment_to_show", "wallet");
+                // Navigate to wallet through parent activity
+                Intent w = new Intent(requireActivity(), com.example.earthwallet.ui.activities.WalletActivity.class);
                 startActivity(w);
             });
         }
-
-        // Bottom navigation wiring (removed as HostActivity now manages this)
     }
     
     private String getTextFromEditText(TextInputEditText editText) {

@@ -4,6 +4,7 @@ import com.example.earthwallet.R;
 
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.nfc.NfcAdapter;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.view.View;
@@ -16,7 +17,9 @@ import androidx.fragment.app.FragmentTransaction;
 import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
 
-public class HostActivity extends AppCompatActivity {
+import com.example.earthwallet.ui.fragments.CreateWalletFragment;
+
+public class HostActivity extends AppCompatActivity implements CreateWalletFragment.CreateWalletListener {
 
     private static final String PREF_FILE = "secret_wallet_prefs";
     private Button navWallet;
@@ -40,7 +43,7 @@ public class HostActivity extends AppCompatActivity {
             setSelectedNav(navActions, navWallet);
         });
 
-        // Choose default start fragment: open Actions if secure wallet exists, otherwise scanner
+        // Choose default start fragment: open Actions if secure wallet exists, otherwise create wallet
         boolean hasWallet = false;
         try {
             String masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC);
@@ -51,23 +54,23 @@ public class HostActivity extends AppCompatActivity {
                     EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                     EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             );
-            String savedMnemonic = securePrefs.getString("mnemonic", "");
-            hasWallet = !TextUtils.isEmpty(savedMnemonic);
+            String walletsJson = securePrefs.getString("wallets", "[]");
+            hasWallet = !TextUtils.isEmpty(walletsJson) && !"[]".equals(walletsJson.trim());
         } catch (Exception e) {
             SharedPreferences flatPrefs = getSharedPreferences(PREF_FILE, MODE_PRIVATE);
-            String savedMnemonic = flatPrefs.getString("mnemonic", "");
-            hasWallet = !TextUtils.isEmpty(savedMnemonic);
+            String walletsJson = flatPrefs.getString("wallets", "[]");
+            hasWallet = !TextUtils.isEmpty(walletsJson) && !"[]".equals(walletsJson.trim());
         }
 
         if (hasWallet) {
             showFragment("actions");
             setSelectedNav(navActions, navWallet);
         } else {
-            showFragment("scanner");
+            showFragment("create_wallet");
             setSelectedNav(navWallet, navActions);
         }
 
-        // Handle intent to show a specific fragment (e.g., from MRZInputActivity)
+        // Handle intent to show a specific fragment (e.g., from other activities)
         if (getIntent() != null && getIntent().hasExtra("fragment_to_show")) {
             String fragmentToShow = getIntent().getStringExtra("fragment_to_show");
             showFragment(fragmentToShow);
@@ -95,25 +98,21 @@ public class HostActivity extends AppCompatActivity {
         Fragment fragment;
         switch (tag) {
             case "wallet":
-                fragment = new com.example.earthwallet.ui.fragments.WalletFragment();
-                break;
-            case "wallet_list":
-                // New fragment that shows the wallet management UI while keeping the HostActivity bottom nav
-                fragment = new com.example.earthwallet.ui.fragments.WalletListFragment();
-                // When showing the wallet list, mark Wallet nav selected
-                setSelectedNav(navWallet, navActions);
+                fragment = new com.example.earthwallet.ui.fragments.main.WalletMainFragment();
                 break;
             case "actions":
-                fragment = new com.example.earthwallet.ui.fragments.ActionsFragment();
+                fragment = new com.example.earthwallet.ui.fragments.main.ActionsMainFragment();
                 break;
             case "scanner":
                 fragment = new com.example.earthwallet.ui.fragments.ScannerFragment();
                 break;
+            case "create_wallet":
+                CreateWalletFragment createWalletFragment = new com.example.earthwallet.ui.fragments.CreateWalletFragment();
+                createWalletFragment.setCreateWalletListener(this);
+                fragment = createWalletFragment;
+                break;
             case "anml":
-                // Show ANML UI inside the HostActivity so bottom nav remains the single shared nav
-                fragment = new com.example.earthwallet.ui.fragments.ANMLClaimFragment();
-                // Ensure Actions nav is selected when showing ANML
-                setSelectedNav(navActions, navWallet);
+                fragment = new com.example.earthwallet.ui.fragments.main.ANMLClaimMainFragment();
                 break;
             default:
                 // Default to scanner if an unknown tag is passed
@@ -123,5 +122,33 @@ public class HostActivity extends AppCompatActivity {
     
         ft.replace(R.id.host_content, fragment, tag);
         ft.commitAllowingStateLoss();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        
+        // Handle NFC intents and pass them to ScannerFragment if it's currently shown
+        if (NfcAdapter.ACTION_TECH_DISCOVERED.equals(intent.getAction())) {
+            Fragment currentFragment = getSupportFragmentManager().findFragmentById(R.id.host_content);
+            if (currentFragment instanceof com.example.earthwallet.ui.fragments.ScannerFragment) {
+                ((com.example.earthwallet.ui.fragments.ScannerFragment) currentFragment).handleNfcIntent(intent);
+            }
+        }
+    }
+
+    @Override
+    public void onWalletCreated() {
+        // Navigate to actions after wallet creation
+        showFragment("actions");
+        setSelectedNav(navActions, navWallet);
+    }
+
+    @Override
+    public void onCreateWalletCancelled() {
+        // Stay on create wallet or go to scanner
+        showFragment("scanner");
+        setSelectedNav(navWallet, navActions);
     }
 }

@@ -1,17 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/sidebar_bg"
-    android:padding="16dp"
     tools:context="com.example.earthwallet.ui.activities.WalletActivity">
+
+    <RelativeLayout
+        android:id="@+id/wallet_activity_content"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:padding="16dp">
 
     <ScrollView
         android:id="@+id/content_scroll"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:layout_marginBottom="56dp">
+        android:layout_height="match_parent">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -199,5 +203,6 @@
         </LinearLayout>
     </ScrollView>
 
+    </RelativeLayout>
 
-</RelativeLayout>
+</FrameLayout>

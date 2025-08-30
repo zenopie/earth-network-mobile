@@ -10,46 +10,46 @@ import android.widget.Button;
 
 import androidx.fragment.app.Fragment;
 
-public class ANMLClaimFragment extends Fragment {
+public class ANMLRegisterFragment extends Fragment {
     
     // Interface for communication with parent activity
-    public interface ANMLClaimListener {
-        void onClaimRequested();
+    public interface ANMLRegisterListener {
+        void onRegisterRequested();
     }
     
-    private ANMLClaimListener listener;
+    private ANMLRegisterListener listener;
     
-    public ANMLClaimFragment() {}
+    public ANMLRegisterFragment() {}
     
-    public static ANMLClaimFragment newInstance() {
-        return new ANMLClaimFragment();
+    public static ANMLRegisterFragment newInstance() {
+        return new ANMLRegisterFragment();
     }
     
-    public void setANMLClaimListener(ANMLClaimListener listener) {
+    public void setANMLRegisterListener(ANMLRegisterListener listener) {
         this.listener = listener;
     }
 
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container,
                              Bundle savedInstanceState) {
-        return inflater.inflate(R.layout.fragment_anml_claim, container, false);
+        return inflater.inflate(R.layout.fragment_anml_register, container, false);
     }
 
     @Override
     public void onViewCreated(View view, Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
         
-        Button btnClaim = view.findViewById(R.id.btn_claim);
-        if (btnClaim != null) {
+        Button btnOpenWallet = view.findViewById(R.id.btn_open_wallet);
+        if (btnOpenWallet != null) {
             // Ensure any theme tinting is cleared so the drawable renders as-designed
             try {
-                btnClaim.setBackgroundTintList(null);
-                btnClaim.setTextColor(getResources().getColor(R.color.anml_button_text));
+                btnOpenWallet.setBackgroundTintList(null);
+                btnOpenWallet.setTextColor(getResources().getColor(R.color.anml_button_text));
             } catch (Exception ignored) {}
             
-            btnClaim.setOnClickListener(v -> {
+            btnOpenWallet.setOnClickListener(v -> {
                 if (listener != null) {
-                    listener.onClaimRequested();
+                    listener.onRegisterRequested();
                 }
             });
         }

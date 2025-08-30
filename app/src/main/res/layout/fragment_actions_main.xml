@@ -3,8 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/sidebar_bg"
-    tools:context=".ActionsActivity">
+    android:background="@color/sidebar_bg">
 
     <!-- Top logo section (matches desktop sidebar logo placement) -->
     <LinearLayout
@@ -32,7 +31,6 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:layout_below="@id/logo_section"
-        android:layout_marginBottom="56dp"
         android:fillViewport="true"
         android:paddingLeft="12dp"
         android:paddingRight="12dp"
@@ -73,6 +71,5 @@
 
         </LinearLayout>
     </ScrollView>
-
 
 </RelativeLayout>

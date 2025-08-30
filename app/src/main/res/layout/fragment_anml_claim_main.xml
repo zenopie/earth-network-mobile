@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/anml_frame"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/desktop_bg">
+
+    <ScrollView
+        android:id="@+id/anml_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fillViewport="true"
+        android:clipToPadding="false"
+        android:padding="16dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:paddingLeft="24dp"
+            android:paddingRight="24dp">
+
+            <FrameLayout
+                android:id="@+id/anml_root"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:layout_gravity="center">
+
+                <!-- Fragment container for status fragments -->
+
+            </FrameLayout>
+
+            <!-- Fallback / error -->
+            <TextView
+                android:id="@+id/anml_error_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="#ff6666"
+                android:textSize="14sp"
+                android:paddingTop="12dp"
+                android:visibility="gone" />
+
+        </LinearLayout>
+
+    </ScrollView>
+
+    <!-- Overlay loading container so bottom nav stays visible while querying -->
+    <FrameLayout
+        android:id="@+id/loading_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone"
+        android:clickable="false"
+        android:focusable="false">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center">
+
+            <ImageView
+                android:id="@+id/anml_loading_gif"
+                android:layout_width="720dp"
+                android:layout_height="720dp"
+                android:src="@drawable/loading"
+                android:scaleType="centerCrop"
+                android:adjustViewBounds="false"
+                android:contentDescription="Loading"
+                android:visibility="gone" />
+        </LinearLayout>
+    </FrameLayout>
+
+</FrameLayout>

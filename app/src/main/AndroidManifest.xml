@@ -41,19 +41,6 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
-
-        <activity
-            android:name=".ui.activities.MRZInputActivity"
-            android:exported="true"
-            android:theme="@style/Theme.EarthWallet"
-            android:screenOrientation="portrait" />
-        
-        <activity
-            android:name=".ui.activities.MainActivity"
-            android:exported="true"
-            android:theme="@style/Theme.EarthWallet"
-            android:screenOrientation="portrait">
             <!-- Intent filter for NFC tag discovery -->
             <intent-filter>
                 <action android:name="android.nfc.action.TECH_DISCOVERED" />
@@ -64,40 +51,9 @@
                 android:resource="@xml/nfc_tech_filter" />
         </activity>
 
-        <!-- Secret Wallet Activity -->
-        <activity
-            android:name=".ui.activities.WalletActivity"
-            android:exported="false"
-            android:theme="@style/Theme.EarthWallet"
-            android:screenOrientation="portrait" />
         
-        <!-- Create Wallet Activity (Keplr-style flow) -->
-        <activity
-            android:name=".ui.activities.CreateWalletActivity"
-            android:exported="false"
-            android:theme="@style/Theme.EarthWallet"
-            android:screenOrientation="portrait" />
-        
-        <!-- Wallet list activity (manage multiple wallets) -->
-        <activity
-            android:name=".ui.activities.WalletListActivity"
-            android:exported="false"
-            android:theme="@style/Theme.EarthWallet"
-            android:screenOrientation="portrait" />
 
-        <!-- ANML Claim Activity -->
-        <activity
-            android:name=".ui.activities.ANMLClaimActivity"
-            android:exported="false"
-            android:theme="@style/Theme.EarthWallet"
-            android:screenOrientation="portrait" />
 
-        <!-- Actions Navigator Activity -->
-        <activity
-            android:name=".ui.activities.ActionsActivity"
-            android:exported="false"
-            android:theme="@style/Theme.EarthWallet"
-            android:screenOrientation="portrait" />
         
         <!-- Secret Query Activity (headless, invisible WebView) -->
         <activity
