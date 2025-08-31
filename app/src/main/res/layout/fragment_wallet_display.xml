@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:background="@color/desktop_bg">
+
+    <!-- Wallet Header Section -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="16dp">
+
+        <Button
+            android:id="@+id/switchWalletBtn"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Switch Wallet"
+            android:textSize="14sp"
+            android:padding="12dp"
+            android:layout_marginEnd="8dp"
+            android:backgroundTint="@color/brand_blue"
+            android:textColor="@android:color/white" />
+
+        <Button
+            android:id="@+id/addWalletBtn"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Add Wallet"
+            android:textSize="14sp"
+            android:padding="12dp"
+            android:backgroundTint="@color/brand_blue"
+            android:textColor="@android:color/white" />
+
+    </LinearLayout>
+
+    <!-- Wallet Info Card -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/card_rounded_bg"
+        android:padding="20dp"
+        android:layout_marginBottom="16dp">
+
+        <!-- Address Section -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="12dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Address:"
+                android:textSize="14sp"
+                android:textColor="@color/sidebar_text"
+                android:textStyle="bold"
+                android:layout_marginEnd="8dp" />
+
+            <TextView
+                android:id="@+id/addressText"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Loading..."
+                android:textSize="12sp"
+                android:textColor="@color/wallet_row_address"
+                android:maxLines="1"
+                android:ellipsize="middle" />
+
+            <Button
+                android:id="@+id/copyAddressBtn"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:text="Copy"
+                android:textSize="11sp"
+                android:padding="8dp"
+                android:minWidth="0dp"
+                android:background="@drawable/card_rounded_bg"
+                android:textColor="@color/brand_blue" />
+
+        </LinearLayout>
+
+        <!-- Balance Section -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="SCRT Balance:"
+                android:textSize="14sp"
+                android:textColor="@color/sidebar_text"
+                android:textStyle="bold"
+                android:layout_marginEnd="8dp" />
+
+            <TextView
+                android:id="@+id/balanceText"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Loading..."
+                android:textSize="14sp"
+                android:textColor="@color/brand_blue"
+                android:textStyle="bold" />
+
+        </LinearLayout>
+
+        <!-- QR Code Section (hidden for now) -->
+        <ImageView
+            android:id="@+id/qrCodeView"
+            android:layout_width="120dp"
+            android:layout_height="120dp"
+            android:layout_gravity="center"
+            android:layout_marginTop="16dp"
+            android:visibility="gone" />
+
+    </LinearLayout>
+
+</LinearLayout>

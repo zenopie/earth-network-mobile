@@ -10,236 +10,65 @@
         android:id="@+id/wallet_activity_content"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:padding="16dp">
+        android:padding="16dp"
+        android:background="@color/sidebar_bg">
 
-    <ScrollView
-        android:id="@+id/content_scroll"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent">
-
-        <LinearLayout
+        <ScrollView
+            android:id="@+id/content_scroll"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
+            android:layout_height="match_parent">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center"
-                android:layout_marginBottom="24dp"
-                android:paddingTop="8dp"
-                android:paddingBottom="8dp">
- 
-                <TextView
-                    android:id="@+id/wallet_title_text"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/wallet_title"
-                    android:textSize="24sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/brand_blue"
-                    android:gravity="center" />
-            </LinearLayout>
+                android:orientation="vertical">
 
-            <!-- Mnemonic input removed: creation/import handled in dedicated flow -->
-
-            <!-- Wallet selector + Add button -->
-            <LinearLayout
-                android:id="@+id/wallet_selector_row"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginBottom="16dp">
-
+                <!-- Wallet Title -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
-                    android:gravity="center">
+                    android:gravity="center"
+                    android:layout_marginBottom="24dp"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp">
 
                     <TextView
-                        android:id="@+id/current_wallet_name"
+                        android:id="@+id/wallet_title_text"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="No wallet"
-                        android:textSize="26sp"
-                        android:textStyle="bold"
-                        android:textColor="@color/sidebar_text"
-                        android:gravity="center"
-                        android:clickable="true"
-                        android:focusable="true"
-                        android:paddingStart="8dp"
-                        android:paddingEnd="4dp"/>
-
-                    <ImageView
-                        android:id="@+id/current_wallet_arrow"
-                        android:layout_width="20dp"
-                        android:layout_height="20dp"
-                        android:src="@drawable/ic_arrow_down"
-                        android:tint="@color/sidebar_text"
-                        android:layout_marginStart="8dp"
-                        android:contentDescription="Open wallets" />
-                </LinearLayout>
-
-            </LinearLayout>
-
-            <!-- Save button removed: wallet is saved by the Create Wallet flow -->
-
-            <!-- LCD URL removed - endpoint fixed to https://lcd.erth.network -->
-
-            <!-- Address row (label + address stacked; actions aligned right) -->
-            <LinearLayout
-                android:id="@+id/address_row"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:layout_marginBottom="16dp"
-                android:background="@drawable/card_rounded_bg"
-                android:padding="12dp">
-
-                <!-- Left: label and address (stacked) -->
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/address_label"
+                        android:text="@string/wallet_title"
+                        android:textSize="24sp"
                         android:textStyle="bold"
                         android:textColor="@color/brand_blue"
-                        android:textSize="14sp" />
-
-                    <TextView
-                        android:id="@+id/address_text"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"
-                        android:textIsSelectable="true"
-                        android:text=""
-                        android:textColor="@color/sidebar_text"
-                        android:textSize="16sp" />
+                        android:gravity="center" />
                 </LinearLayout>
 
-                <!-- Right: compact action buttons -->
-                <LinearLayout
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:layout_marginStart="8dp">
-
-                    <Button
-                        android:id="@+id/btn_copy"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/copy"
-                        android:backgroundTint="@color/brand_blue"
-                        android:textColor="@android:color/white"
-                        android:minWidth="0dp"
-                        android:paddingLeft="12dp"
-                        android:paddingRight="12dp"
-                        android:textSize="14sp"
-                        android:layout_marginEnd="8dp" />
-
-                </LinearLayout>
-            </LinearLayout>
-
-            <!-- Balance row -->
-            <LinearLayout
-                android:id="@+id/balance_row"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:layout_marginBottom="24dp"
-                android:background="@drawable/card_rounded_bg"
-                android:padding="12dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/balance_label"
-                    android:textStyle="bold"
-                    android:textColor="@color/brand_blue"
-                    android:textSize="16sp" />
-
-                <TextView
-                    android:id="@+id/balance_text"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:layout_weight="1"
-                    android:text=""
-                    android:textColor="@color/sidebar_text"
-                    android:textSize="16sp" />
-
-                <Button
-                    android:id="@+id/btn_refresh"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/refresh"
-                    android:backgroundTint="@color/brand_blue"
-                    android:textColor="@android:color/white"
-                    android:minWidth="0dp"
-                    android:paddingLeft="16dp"
-                    android:paddingRight="16dp"
-                    android:textSize="14sp" />
-            </LinearLayout>
-
-            <!-- Token Balances Section -->
-            <LinearLayout
-                android:id="@+id/token_balances_section"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:layout_marginBottom="24dp"
-                android:visibility="gone">
-                
-                <TextView
+                <!-- Wallet Display Fragment Container -->
+                <FrameLayout
+                    android:id="@+id/wallet_display_container"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Token Balances"
-                    android:textStyle="bold"
-                    android:textColor="@color/brand_blue"
-                    android:textSize="18sp"
-                    android:layout_marginBottom="12dp" />
-                
-                <!-- Token balances will be added dynamically -->
-                <LinearLayout
+                    android:layout_marginBottom="16dp" />
+
+                <!-- Token Balances Fragment Container -->
+                <FrameLayout
                     android:id="@+id/token_balances_container"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="vertical" />
-                    
-                <!-- Viewing Key Management -->
-                <Button
-                    android:id="@+id/btn_manage_viewing_keys"
-                    android:layout_width="wrap_content"
+                    android:layout_marginBottom="16dp" />
+
+                <!-- Note -->
+                <TextView
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Manage Viewing Keys"
-                    android:backgroundTint="@color/brand_blue"
-                    android:textColor="@android:color/white"
-                    android:layout_marginTop="12dp"
-                    android:textSize="14sp" />
-            
+                    android:layout_marginTop="16dp"
+                    android:text="@string/wallet_note"
+                    android:textSize="12sp"
+                    android:textColor="#666666" />
+
             </LinearLayout>
-
-            <!-- Note -->
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:text="@string/wallet_note"
-                android:textSize="12sp"
-                android:textColor="#666666" />
-
-        </LinearLayout>
-    </ScrollView>
+        </ScrollView>
 
     </RelativeLayout>
 
