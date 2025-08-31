@@ -45,6 +45,7 @@ import android.util.Log;
  */
 public class WalletMainFragment extends Fragment implements WalletListFragment.WalletListListener, CreateWalletFragment.CreateWalletListener {
 
+    private static final String TAG = "WalletMainFragment";
     private static final String PREF_FILE = "secret_wallet_prefs";
     private static final String KEY_MNEMONIC = "mnemonic";
     private static final String KEY_LCD_URL = "lcd_url";
@@ -68,6 +69,17 @@ public class WalletMainFragment extends Fragment implements WalletListFragment.W
     private static final int REQ_TOKEN_BALANCE = 2001;
     private static final int REQ_VIEWING_KEY = 2002;
     private static final int REQ_SET_VIEWING_KEY = 2003;
+    
+    // Temporary storage for viewing key generation
+    private Tokens.TokenInfo pendingViewingKeyToken = null;
+    private String pendingViewingKey = null;
+    
+    // Token balance query queue to prevent simultaneous queries
+    private java.util.Queue<Tokens.TokenInfo> tokenQueryQueue = new java.util.LinkedList<>();
+    private boolean isQueryingToken = false;
+    
+    // Track current wallet address to avoid unnecessary token refreshes
+    private String lastWalletAddress = null;
 
     public WalletMainFragment() {}
     
@@ -191,8 +203,13 @@ public class WalletMainFragment extends Fragment implements WalletListFragment.W
     @Override
     public void onResume() {
         super.onResume();
+        Log.d("WalletMainFragment", "onResume called - about to refresh wallets UI");
+        Log.d("WalletMainFragment", "Token container has " + tokenBalancesContainer.getChildCount() + " tokens before onResume");
+        
         // Refresh wallets UI in case CreateWalletFragment added a wallet
         refreshWalletsUI();
+        
+        Log.d("WalletMainFragment", "Token container has " + tokenBalancesContainer.getChildCount() + " tokens after onResume");
     }
  
     private String getMnemonic() {
@@ -244,6 +261,10 @@ public class WalletMainFragment extends Fragment implements WalletListFragment.W
                 // Show token balances section and refresh token balances
                 tokenBalancesSection.setVisibility(View.VISIBLE);
                 refreshTokenBalances();
+                
+                // Automatically query SCRT balance
+                String lcd = getLcdUrl();
+                new FetchBalanceTask().execute(lcd, address);
             } else {
                 addressRow.setVisibility(View.GONE);
                 balanceRow.setVisibility(View.GONE);
@@ -316,15 +337,76 @@ public class WalletMainFragment extends Fragment implements WalletListFragment.W
             return;
         }
 
-        // Clear existing token displays
-        tokenBalancesContainer.removeAllViews();
+        Log.d("WalletMainFragment", "refreshTokenBalances called for address: " + address);
+        Log.d("WalletMainFragment", "Last wallet address was: " + lastWalletAddress);
+        Log.d("WalletMainFragment", "Current token container has " + tokenBalancesContainer.getChildCount() + " tokens");
+        
+        // Only clear and refresh if wallet address has changed
+        boolean walletChanged = !address.equals(lastWalletAddress);
+        
+        if (walletChanged) {
+            Log.d("WalletMainFragment", "Wallet changed - clearing existing tokens and refreshing");
+            // Print stack trace to see WHO is calling refreshTokenBalances
+            Log.d("WalletMainFragment", "refreshTokenBalances called from:", new Exception("Stack trace"));
 
-        // Query balance for each supported token
-        for (String symbol : Tokens.ALL_TOKENS.keySet()) {
-            Tokens.TokenInfo token = Tokens.getToken(symbol);
-            if (token != null) {
-                queryTokenBalance(address, token);
+            // Clear existing token displays only when wallet changes
+            tokenBalancesContainer.removeAllViews();
+
+            // Clear any existing queue and reset state
+            tokenQueryQueue.clear();
+            isQueryingToken = false;
+
+            // Add all tokens to the queue
+            for (String symbol : Tokens.ALL_TOKENS.keySet()) {
+                Tokens.TokenInfo token = Tokens.getToken(symbol);
+                if (token != null) {
+                    tokenQueryQueue.offer(token);
+                }
             }
+
+            // Update the last known wallet address
+            lastWalletAddress = address;
+
+            // Start processing the queue
+            processNextTokenQuery(address);
+        } else {
+            Log.d("WalletMainFragment", "Same wallet address - skipping token refresh to preserve existing tokens");
+            
+            // Still process any queued tokens if the queue is not empty but not currently processing
+            if (!tokenQueryQueue.isEmpty() && !isQueryingToken) {
+                Log.d("WalletMainFragment", "Resuming token queue processing");
+                processNextTokenQuery(address);
+            }
+        }
+    }
+
+    private void queueSingleTokenQuery(String address, Tokens.TokenInfo token) {
+        // Add a single token to the front of the queue for immediate processing
+        Log.d("WalletMainFragment", "Queueing single token query for " + token.symbol);
+        
+        // Add the token to the front of the queue (priority processing)
+        java.util.Queue<Tokens.TokenInfo> tempQueue = new java.util.LinkedList<>();
+        tempQueue.offer(token);
+        while (!tokenQueryQueue.isEmpty()) {
+            tempQueue.offer(tokenQueryQueue.poll());
+        }
+        tokenQueryQueue = tempQueue;
+        
+        // Start processing if not already processing
+        if (!isQueryingToken) {
+            processNextTokenQuery(address);
+        }
+    }
+
+    private void processNextTokenQuery(String address) {
+        if (isQueryingToken || tokenQueryQueue.isEmpty()) {
+            return;
+        }
+
+        Tokens.TokenInfo token = tokenQueryQueue.poll();
+        if (token != null) {
+            isQueryingToken = true;
+            queryTokenBalance(address, token);
         }
     }
 
@@ -335,7 +417,17 @@ public class WalletMainFragment extends Fragment implements WalletListFragment.W
             if (TextUtils.isEmpty(viewingKey)) {
                 // Add button to get viewing key
                 addTokenBalanceView(token, null, false);
+                
+                // Mark query as complete and continue with next token
+                isQueryingToken = false;
+                processNextTokenQuery(address);
                 return;
+            }
+
+            // Store token symbol with viewing key for result matching
+            String walletAddress = getCurrentWalletAddress();
+            if (!TextUtils.isEmpty(walletAddress)) {
+                securePrefs.edit().putString("viewing_key_symbol_" + walletAddress + "_" + token.contract, token.symbol).apply();
             }
 
             // Create SNIP-20 balance query (matches SecretJS implementation)
@@ -345,6 +437,12 @@ public class WalletMainFragment extends Fragment implements WalletListFragment.W
             balanceQuery.put("key", viewingKey);
             balanceQuery.put("time", System.currentTimeMillis()); // Add timestamp like SecretJS
             query.put("balance", balanceQuery);
+
+            Log.d("WalletMainFragment", "Querying token " + token.symbol + " balance");
+            Log.d("WalletMainFragment", "Query JSON: " + query.toString());
+            Log.d("WalletMainFragment", "Contract: " + token.contract);
+            Log.d("WalletMainFragment", "Hash: " + token.hash);
+            Log.d("WalletMainFragment", "Viewing key starts with: " + (viewingKey.length() > 10 ? viewingKey.substring(0, 10) + "..." : viewingKey));
 
             // Launch query using general purpose SecretQueryActivity
             Intent qi = new Intent(getContext(), SecretQueryActivity.class);
@@ -357,10 +455,49 @@ public class WalletMainFragment extends Fragment implements WalletListFragment.W
         } catch (Exception e) {
             Log.e("WalletMainFragment", "Failed to query token balance for " + token.symbol, e);
             addTokenBalanceView(token, "Error", false);
+            
+            // Mark query as complete and continue with next token
+            isQueryingToken = false;
+            processNextTokenQuery(address);
+        }
+    }
+
+    private void querySingleTokenBalance(String address, Tokens.TokenInfo token) {
+        // Query a single token balance without using the queue system
+        // This is used for individual token updates (e.g., after viewing key generation)
+        try {
+            String viewingKey = getViewingKey(token.contract);
+            if (TextUtils.isEmpty(viewingKey)) {
+                // No viewing key, just update to show the button
+                updateTokenBalanceView(token, null);
+                return;
+            }
+
+            // Create SNIP-20 balance query (same as queryTokenBalance)
+            org.json.JSONObject query = new org.json.JSONObject();
+            org.json.JSONObject balanceQuery = new org.json.JSONObject();
+            balanceQuery.put("address", address);
+            balanceQuery.put("key", viewingKey);
+            balanceQuery.put("time", System.currentTimeMillis());
+            query.put("balance", balanceQuery);
+
+            // Launch query
+            Intent qi = new Intent(getContext(), SecretQueryActivity.class);
+            qi.putExtra(SecretQueryActivity.EXTRA_CONTRACT_ADDRESS, token.contract);
+            qi.putExtra(SecretQueryActivity.EXTRA_CODE_HASH, token.hash);
+            qi.putExtra(SecretQueryActivity.EXTRA_QUERY_JSON, query.toString());
+            qi.putExtra("token_symbol", token.symbol);
+            startActivityForResult(qi, REQ_TOKEN_BALANCE);
+
+        } catch (Exception e) {
+            Log.e("WalletMainFragment", "Failed to query single token balance for " + token.symbol, e);
+            updateTokenBalanceView(token, "Error");
         }
     }
 
     private void addTokenBalanceView(Tokens.TokenInfo token, String balance, boolean hasViewingKey) {
+        Log.d("WalletMainFragment", "addTokenBalanceView called for " + token.symbol + " with balance: " + balance + " hasViewingKey: " + hasViewingKey);
+        
         try {
             // Create a card view for the token balance
             LinearLayout tokenCard = new LinearLayout(getContext());
@@ -368,6 +505,7 @@ public class WalletMainFragment extends Fragment implements WalletListFragment.W
             tokenCard.setGravity(android.view.Gravity.CENTER_VERTICAL);
             tokenCard.setPadding(24, 16, 24, 16);
             tokenCard.setBackground(getResources().getDrawable(R.drawable.card_rounded_bg));
+            tokenCard.setTag(token.symbol); // Add tag to identify this token card
 
             // Add margin between cards
             LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
@@ -404,14 +542,23 @@ public class WalletMainFragment extends Fragment implements WalletListFragment.W
                 getViewingKeyBtn.setOnClickListener(v -> {
                     requestViewingKey(token);
                 });
+                getViewingKeyBtn.setTag("get_key_btn"); // Add tag to identify button
                 
                 tokenCard.addView(getViewingKeyBtn);
             } else {
                 // Has viewing key - show balance text
                 TextView balanceText = new TextView(getContext());
                 balanceText.setText(balance);
-                balanceText.setTextSize(16);
-                balanceText.setTextColor(getResources().getColor(R.color.sidebar_text));
+                balanceText.setTag("balance"); // Add tag to identify balance text
+                
+                // Style based on whether it's an error or normal balance
+                if ("!".equals(balance)) {
+                    balanceText.setTextColor(getResources().getColor(android.R.color.holo_red_dark));
+                    balanceText.setTextSize(20); // Make it slightly larger
+                } else {
+                    balanceText.setTextColor(getResources().getColor(R.color.sidebar_text));
+                    balanceText.setTextSize(16); // Normal size
+                }
                 
                 tokenCard.addView(balanceText);
                 
@@ -426,27 +573,81 @@ public class WalletMainFragment extends Fragment implements WalletListFragment.W
             }
 
             tokenBalancesContainer.addView(tokenCard);
+            Log.d("WalletMainFragment", "Successfully added token view for " + token.symbol + " to container. Container now has " + tokenBalancesContainer.getChildCount() + " tokens");
         } catch (Exception e) {
             Log.e("WalletMainFragment", "Failed to add token balance view for " + token.symbol, e);
         }
     }
 
     private String getViewingKey(String contractAddress) {
-        return securePrefs.getString("viewing_key_" + contractAddress, "");
+        String walletAddress = getCurrentWalletAddress();
+        if (TextUtils.isEmpty(walletAddress)) {
+            return ""; // No wallet address available
+        }
+        return securePrefs.getString("viewing_key_" + walletAddress + "_" + contractAddress, "");
+    }
+
+    private String getViewingKeyTokenSymbol(String contractAddress) {
+        String walletAddress = getCurrentWalletAddress();
+        if (TextUtils.isEmpty(walletAddress)) {
+            return ""; // No wallet address available
+        }
+        return securePrefs.getString("viewing_key_symbol_" + walletAddress + "_" + contractAddress, "");
     }
 
     private void setViewingKey(String contractAddress, String viewingKey) {
-        securePrefs.edit().putString("viewing_key_" + contractAddress, viewingKey).apply();
+        String walletAddress = getCurrentWalletAddress();
+        if (TextUtils.isEmpty(walletAddress)) {
+            Log.e("WalletMainFragment", "Cannot set viewing key: no wallet address available");
+            return;
+        }
+        
+        // Store both the viewing key and the token symbol for later matching
+        String tokenSymbol = null;
+        if (pendingViewingKeyToken != null && contractAddress.equals(pendingViewingKeyToken.contract)) {
+            tokenSymbol = pendingViewingKeyToken.symbol;
+        }
+        
+        securePrefs.edit().putString("viewing_key_" + walletAddress + "_" + contractAddress, viewingKey).apply();
+        
+        // Also store the token symbol for this viewing key
+        if (!TextUtils.isEmpty(tokenSymbol)) {
+            securePrefs.edit().putString("viewing_key_symbol_" + walletAddress + "_" + contractAddress, tokenSymbol).apply();
+        }
+    }
+
+    private String getCurrentWalletAddress() {
+        // Get the current wallet's address from the UI or derive it from mnemonic
+        if (addressText != null && addressText.getText() != null) {
+            String address = addressText.getText().toString().trim();
+            if (!TextUtils.isEmpty(address)) {
+                return address;
+            }
+        }
+        
+        // Fallback: derive from mnemonic if address not available in UI
+        try {
+            String mnemonic = getMnemonic();
+            if (!TextUtils.isEmpty(mnemonic)) {
+                return SecretWallet.getAddressFromMnemonic(mnemonic);
+            }
+        } catch (Exception e) {
+            Log.e("WalletMainFragment", "Failed to get current wallet address", e);
+        }
+        
+        return null;
     }
 
     private void showViewingKeyManagementDialog() {
-        // Create a dialog to manage all viewing keys
+        // Create a dialog to manage all viewing keys for the current wallet
         android.app.AlertDialog.Builder builder = new android.app.AlertDialog.Builder(getContext());
-        builder.setTitle("Manage Viewing Keys");
+        String walletAddress = getCurrentWalletAddress();
+        String walletDisplayAddress = walletAddress != null ? walletAddress.substring(0, Math.min(10, walletAddress.length())) + "..." : "Unknown";
+        builder.setTitle("Manage Viewing Keys - " + walletDisplayAddress);
         
-        // Create a simple list of tokens with their viewing key status
+        // Create a simple list of tokens with their viewing key status for this wallet
         StringBuilder message = new StringBuilder();
-        message.append("Viewing keys allow you to see your private token balances.\n\n");
+        message.append("Viewing keys allow you to see your private token balances for this wallet.\n\n");
         
         for (String symbol : Tokens.ALL_TOKENS.keySet()) {
             Tokens.TokenInfo token = Tokens.getToken(symbol);
@@ -614,6 +815,10 @@ public class WalletMainFragment extends Fragment implements WalletListFragment.W
      */
     private void executeSetViewingKeyTransaction(Tokens.TokenInfo token, String viewingKey) {
         try {
+            // Store the pending viewing key info for when the transaction completes
+            pendingViewingKeyToken = token;
+            pendingViewingKey = viewingKey;
+            
             // Create the set_viewing_key message
             org.json.JSONObject setViewingKeyMsg = new org.json.JSONObject();
             org.json.JSONObject setViewingKeyInner = new org.json.JSONObject();
@@ -626,16 +831,14 @@ public class WalletMainFragment extends Fragment implements WalletListFragment.W
             intent.putExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_CODE_HASH, token.hash);
             intent.putExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_EXECUTE_JSON, setViewingKeyMsg.toString());
             
-            // Add token info to intent so we can handle the result
-            intent.putExtra("token_symbol", token.symbol);
-            intent.putExtra("token_contract", token.contract);
-            intent.putExtra("generated_viewing_key", viewingKey);
-            
             startActivityForResult(intent, REQ_SET_VIEWING_KEY);
             
         } catch (Exception e) {
             Log.e("WalletMainFragment", "Failed to create set viewing key transaction", e);
             Toast.makeText(getContext(), "Failed to create transaction: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+            // Clear pending state on error
+            pendingViewingKeyToken = null;
+            pendingViewingKey = null;
         }
     }
 
@@ -645,24 +848,18 @@ public class WalletMainFragment extends Fragment implements WalletListFragment.W
      */
     private String generateSecret20ViewingKey(String mnemonic, String contractAddress) {
         try {
-            // Generate a deterministic viewing key based on wallet and contract
-            // This follows the Secret Network viewing key standard
+            // Generate a random viewing key following Secret Network standard
+            // This matches how Keplr and other wallets generate viewing keys
             
-            // Use wallet's private key + contract address to generate unique viewing key
-            ECKey walletKey = SecretWallet.deriveKeyFromMnemonic(mnemonic);
-            byte[] privateKeyBytes = walletKey.getPrivKeyBytes();
-            
-            // Create viewing key material: privateKey + contractAddress
-            String keyMaterial = java.util.Base64.getEncoder().encodeToString(privateKeyBytes) + contractAddress;
-            
-            // Hash to create viewing key
-            java.security.MessageDigest sha256 = java.security.MessageDigest.getInstance("SHA-256");
-            byte[] hash = sha256.digest(keyMaterial.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            // Generate 32 random bytes for the viewing key
+            java.security.SecureRandom random = new java.security.SecureRandom();
+            byte[] keyBytes = new byte[32];
+            random.nextBytes(keyBytes);
             
             // Format as Secret Network viewing key (api_key_ prefix + base64)
-            String viewingKey = "api_key_" + java.util.Base64.getEncoder().encodeToString(hash).substring(0, 32);
+            String viewingKey = "api_key_" + java.util.Base64.getEncoder().encodeToString(keyBytes);
             
-            Log.i("WalletMainFragment", "Generated viewing key for contract: " + contractAddress);
+            Log.i("WalletMainFragment", "Generated random viewing key for contract: " + contractAddress);
             return viewingKey;
             
         } catch (Exception e) {
@@ -682,87 +879,251 @@ public class WalletMainFragment extends Fragment implements WalletListFragment.W
                     String json = data.getStringExtra(SecretQueryActivity.EXTRA_RESULT_JSON);
                     String tokenSymbol = data.getStringExtra("token_symbol");
                     
+                    // If token_symbol is null, use stored token symbol from viewing key storage
+                    if (TextUtils.isEmpty(tokenSymbol)) {
+                        Log.w("WalletMainFragment", "token_symbol is null, looking up from stored viewing key symbols");
+                        // Since we process tokens sequentially, find the token that has a viewing key and was recently queried
+                        for (String symbol : Tokens.ALL_TOKENS.keySet()) {
+                            Tokens.TokenInfo token = Tokens.getToken(symbol);
+                            if (token != null) {
+                                String storedSymbol = getViewingKeyTokenSymbol(token.contract);
+                                String viewingKey = getViewingKey(token.contract);
+                                if (!TextUtils.isEmpty(storedSymbol) && !TextUtils.isEmpty(viewingKey)) {
+                                    tokenSymbol = storedSymbol;
+                                    Log.d("WalletMainFragment", "Found stored token symbol: " + tokenSymbol + " for contract: " + token.contract);
+                                    break; // Take the first match since we query sequentially
+                                }
+                            }
+                        }
+                        if (TextUtils.isEmpty(tokenSymbol)) {
+                            Log.e("WalletMainFragment", "Still no token symbol found, cannot process result");
+                        }
+                    }
+                    
+                    Log.d("WalletMainFragment", "Token balance query result for " + tokenSymbol + ": " + json);
+                    
                     if (!TextUtils.isEmpty(json) && !TextUtils.isEmpty(tokenSymbol)) {
                         org.json.JSONObject root = new org.json.JSONObject(json);
                         boolean success = root.optBoolean("success", false);
                         
-                        if (success) {
-                            org.json.JSONObject result = root.optJSONObject("result");
-                            if (result != null) {
-                                org.json.JSONObject balance = result.optJSONObject("balance");
-                                if (balance != null) {
-                                    String amount = balance.optString("amount", "0");
-                                    Tokens.TokenInfo token = Tokens.getToken(tokenSymbol);
-                                    if (token != null) {
+                        Log.d("WalletMainFragment", "Query success: " + success + " for token " + tokenSymbol);
+                        
+                        Tokens.TokenInfo token = Tokens.getToken(tokenSymbol);
+                        if (token != null) {
+                            if (success) {
+                                org.json.JSONObject result = root.optJSONObject("result");
+                                Log.d("WalletMainFragment", "Result object: " + (result != null ? result.toString() : "null"));
+                                
+                                if (result != null) {
+                                    org.json.JSONObject balance = result.optJSONObject("balance");
+                                    Log.d("WalletMainFragment", "Balance object: " + (balance != null ? balance.toString() : "null"));
+                                    
+                                    if (balance != null) {
+                                        String amount = balance.optString("amount", "0");
+                                        Log.d("WalletMainFragment", "Balance amount: " + amount + " for token " + tokenSymbol);
                                         String formattedBalance = Tokens.formatTokenAmount(amount, token) + " " + token.symbol;
                                         
                                         // Update the specific token balance view
                                         updateTokenBalanceView(token, formattedBalance);
+                                    } else {
+                                        Log.w("WalletMainFragment", "No balance object in result for " + tokenSymbol);
+                                        // Query succeeded but no balance data - show error
+                                        updateTokenBalanceView(token, "!");
                                     }
+                                } else {
+                                    Log.w("WalletMainFragment", "No result object for " + tokenSymbol);
+                                    // Query succeeded but no result data - show error
+                                    updateTokenBalanceView(token, "!");
                                 }
+                            } else {
+                                Log.w("WalletMainFragment", "Query failed for " + tokenSymbol);
+                                // Query failed - show error
+                                updateTokenBalanceView(token, "!");
                             }
                         }
+                    } else {
+                        Log.w("WalletMainFragment", "Missing json or tokenSymbol in result");
                     }
                 } catch (Exception e) {
                     Log.e("WalletMainFragment", "Failed to parse token balance result", e);
+                    // If we can't parse the result, still try to show error for the token if we can identify it
+                    String tokenSymbol = data != null ? data.getStringExtra("token_symbol") : null;
+                    if (!TextUtils.isEmpty(tokenSymbol)) {
+                        Tokens.TokenInfo token = Tokens.getToken(tokenSymbol);
+                        if (token != null) {
+                            updateTokenBalanceView(token, "!");
+                        }
+                    }
                 }
+            } else {
+                // Query returned error or was cancelled - try to show error for the token
+                String tokenSymbol = (data != null) ? data.getStringExtra("token_symbol") : null;
+                if (!TextUtils.isEmpty(tokenSymbol)) {
+                    Tokens.TokenInfo token = Tokens.getToken(tokenSymbol);
+                    if (token != null) {
+                        updateTokenBalanceView(token, "!");
+                    }
+                }
+            }
+            
+            // Mark current query as complete and process next token in queue
+            isQueryingToken = false;
+            String address = addressText.getText() != null ? addressText.getText().toString().trim() : "";
+            if (!TextUtils.isEmpty(address)) {
+                processNextTokenQuery(address);
             }
         } else if (requestCode == REQ_SET_VIEWING_KEY) {
             // Handle set_viewing_key transaction result
-            if (resultCode == getActivity().RESULT_OK && data != null) {
-                try {
-                    String tokenSymbol = data.getStringExtra("token_symbol");
-                    String tokenContract = data.getStringExtra("token_contract");  
-                    String generatedViewingKey = data.getStringExtra("generated_viewing_key");
-                    
-                    if (!TextUtils.isEmpty(tokenSymbol) && !TextUtils.isEmpty(tokenContract) && !TextUtils.isEmpty(generatedViewingKey)) {
-                        // Transaction succeeded - now save the viewing key locally
-                        setViewingKey(tokenContract, generatedViewingKey);
-                        Toast.makeText(getContext(), "Viewing key set successfully for " + tokenSymbol + "!", Toast.LENGTH_SHORT).show();
+            if (resultCode == getActivity().RESULT_OK) {
+                // Transaction succeeded - use the stored pending values
+                if (pendingViewingKeyToken != null && !TextUtils.isEmpty(pendingViewingKey)) {
+                    try {
+                        Log.d("WalletMainFragment", "Processing viewing key success for " + pendingViewingKeyToken.symbol);
+                        Log.d("WalletMainFragment", "Token container has " + tokenBalancesContainer.getChildCount() + " tokens before processing");
                         
-                        // Refresh token balances to show the new balance
-                        Tokens.TokenInfo token = Tokens.getToken(tokenSymbol);
-                        if (token != null) {
-                            updateTokenBalanceView(token, "Loading...");
-                            String mnemonic = getMnemonic();
-                            if (!TextUtils.isEmpty(mnemonic)) {
-                                String address = SecretWallet.getAddressFromMnemonic(mnemonic);
-                                if (!TextUtils.isEmpty(address)) {
-                                    queryTokenBalance(address, token);
-                                }
-                            }
+                        // Save the viewing key locally
+                        setViewingKey(pendingViewingKeyToken.contract, pendingViewingKey);
+                        Toast.makeText(getContext(), "Viewing key set successfully for " + pendingViewingKeyToken.symbol + "!", Toast.LENGTH_SHORT).show();
+                        
+                        Log.d("WalletMainFragment", "Token container has " + tokenBalancesContainer.getChildCount() + " tokens after setViewingKey");
+                        
+                        // Update the UI to show the viewing key is set and balance is loading
+                        // Use the address we already have instead of regenerating it
+                        String currentAddress = getCurrentWalletAddress();
+                        if (!TextUtils.isEmpty(currentAddress)) {
+                            Log.d("WalletMainFragment", "About to update token balance view for " + pendingViewingKeyToken.symbol);
+                            Log.d("WalletMainFragment", "Current address: " + currentAddress);
+                            Log.d("WalletMainFragment", "Last wallet address: " + lastWalletAddress);
+                            Log.d("WalletMainFragment", "Token container has " + tokenBalancesContainer.getChildCount() + " tokens before update");
+                            
+                            // Update the token to show "Loading..." (this handles both existing and new tokens)
+                            updateTokenBalanceView(pendingViewingKeyToken, "Loading...");
+                            
+                            Log.d("WalletMainFragment", "Token container has " + tokenBalancesContainer.getChildCount() + " tokens after updateTokenBalanceView");
+                            
+                            // Queue a single token balance query without blocking the UI
+                            Log.d("WalletMainFragment", "About to queue single token query for " + pendingViewingKeyToken.symbol);
+                            queueSingleTokenQuery(currentAddress, pendingViewingKeyToken);
+                            Log.d("WalletMainFragment", "Token container has " + tokenBalancesContainer.getChildCount() + " tokens after queueSingleTokenQuery");
+                            
+                            // Let's also log if anything calls refreshTokenBalances after this point
+                            Log.d("WalletMainFragment", "Viewing key success handler completed. Any subsequent refreshTokenBalances calls will be logged with stack trace.");
+                        } else {
+                            Log.w("WalletMainFragment", "No wallet address available for token balance query");
                         }
                         
-                        Log.i("WalletMainFragment", "Successfully set viewing key for " + tokenSymbol);
+                        Log.i("WalletMainFragment", "Successfully set viewing key for " + pendingViewingKeyToken.symbol);
+                    } catch (Exception e) {
+                        Log.e("WalletMainFragment", "Failed to handle set viewing key result", e);
+                        Toast.makeText(getContext(), "Failed to process viewing key result", Toast.LENGTH_SHORT).show();
                     }
-                } catch (Exception e) {
-                    Log.e("WalletMainFragment", "Failed to handle set viewing key result", e);
-                    Toast.makeText(getContext(), "Failed to process viewing key result", Toast.LENGTH_SHORT).show();
+                } else {
+                    Log.w("WalletMainFragment", "Transaction succeeded but no pending viewing key info");
+                    Toast.makeText(getContext(), "Viewing key transaction completed", Toast.LENGTH_SHORT).show();
                 }
+                
+                // Clear pending state
+                pendingViewingKeyToken = null;
+                pendingViewingKey = null;
             } else {
                 // Transaction failed
                 String error = (data != null) ? data.getStringExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_ERROR) : "Transaction failed";
                 Toast.makeText(getContext(), "Failed to set viewing key: " + error, Toast.LENGTH_SHORT).show();
                 Log.e("WalletMainFragment", "Set viewing key transaction failed: " + error);
+                
+                // Clear pending state on failure too
+                pendingViewingKeyToken = null;
+                pendingViewingKey = null;
             }
         }
     }
 
     private void updateTokenBalanceView(Tokens.TokenInfo token, String balance) {
-        // Find and update the existing token balance view
-        // For simplicity, just refresh all token balances for now
-        // In production, you might want to find and update the specific view
-        refreshTokenBalances();
+        Log.d("WalletMainFragment", "updateTokenBalanceView called for " + token.symbol + " with balance: " + balance);
+        Log.d("WalletMainFragment", "Searching through " + tokenBalancesContainer.getChildCount() + " tokens in container");
+        
+        // Try to find and update the existing token balance view instead of refreshing all
+        try {
+            for (int i = 0; i < tokenBalancesContainer.getChildCount(); i++) {
+                View child = tokenBalancesContainer.getChildAt(i);
+                String childTag = child.getTag() != null ? child.getTag().toString() : "null";
+                Log.d("WalletMainFragment", "Child " + i + " has tag: " + childTag);
+                
+                if (child.getTag() != null && child.getTag().equals(token.symbol)) {
+                    Log.d("WalletMainFragment", "Found existing token view for " + token.symbol);
+                    // Found the existing token view, update its balance
+                    LinearLayout tokenCard = (LinearLayout) child;
+                    
+                    // Find the balance text view or button in the card
+                    for (int j = 0; j < tokenCard.getChildCount(); j++) {
+                        View cardChild = tokenCard.getChildAt(j);
+                        if (cardChild instanceof TextView && cardChild.getTag() != null && cardChild.getTag().equals("balance")) {
+                            TextView balanceTextView = (TextView) cardChild;
+                            balanceTextView.setText(balance);
+                            
+                            // Make error indicator red
+                            if ("!".equals(balance)) {
+                                balanceTextView.setTextColor(getResources().getColor(android.R.color.holo_red_dark));
+                                balanceTextView.setTextSize(20); // Make it slightly larger
+                            } else {
+                                balanceTextView.setTextColor(getResources().getColor(R.color.sidebar_text));
+                                balanceTextView.setTextSize(16); // Normal size
+                            }
+                            return;
+                        } else if (cardChild instanceof Button && cardChild.getTag() != null && cardChild.getTag().equals("get_key_btn")) {
+                            // Replace the "Get Viewing Key" button with balance text
+                            tokenCard.removeView(cardChild);
+                            TextView balanceText = new TextView(getContext());
+                            balanceText.setText(balance);
+                            balanceText.setTag("balance");
+                            
+                            // Style based on whether it's an error or normal balance
+                            if ("!".equals(balance)) {
+                                balanceText.setTextColor(getResources().getColor(android.R.color.holo_red_dark));
+                                balanceText.setTextSize(20); // Make it slightly larger
+                            } else {
+                                balanceText.setTextColor(getResources().getColor(R.color.sidebar_text));
+                                balanceText.setTextSize(16); // Normal size
+                            }
+                            
+                            tokenCard.addView(balanceText);
+                            return;
+                        }
+                    }
+                    return;
+                }
+            }
+            
+            // Token view not found, add a new one
+            Log.d("WalletMainFragment", "Token " + token.symbol + " not found in existing views, adding new one");
+            addTokenBalanceView(token, balance, !TextUtils.isEmpty(getViewingKey(token.contract)));
+            
+        } catch (Exception e) {
+            Log.e("WalletMainFragment", "Failed to update token balance view for " + token.symbol, e);
+            // Fallback to adding a new view
+            Log.d("WalletMainFragment", "Exception occurred, falling back to adding new token view for " + token.symbol);
+            addTokenBalanceView(token, balance, !TextUtils.isEmpty(getViewingKey(token.contract)));
+        }
     }
 
     /**
-     * FetchBalanceTask - AsyncTask to query SCRT balance via LCD
+     * FetchBalanceTask - AsyncTask to query SCRT balance via LCD using bank module
      */
     private class FetchBalanceTask extends AsyncTask<String, Void, String> {
         @Override
         protected String doInBackground(String... params) {
-            // Simplified balance fetch implementation
-            return "0 SCRT";
+            if (params.length < 2) return "Error: missing params";
+            String lcdUrl = params[0];
+            String address = params[1];
+            
+            try {
+                // Use SecretWallet's bank query method (not contract query)
+                long microScrt = SecretWallet.fetchUscrtBalanceMicro(lcdUrl, address);
+                return SecretWallet.formatScrt(microScrt);
+            } catch (Exception e) {
+                Log.e(TAG, "SCRT balance query failed", e);
+                return "Error: " + e.getMessage();
+            }
         }
 
         @Override
