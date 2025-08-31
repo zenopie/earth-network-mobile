@@ -111,6 +111,9 @@ public class HostActivity extends AppCompatActivity implements CreateWalletFragm
                 createWalletFragment.setCreateWalletListener(this);
                 fragment = createWalletFragment;
                 break;
+            case "swap":
+                fragment = new com.example.earthwallet.ui.fragments.main.SwapTokensMainFragment();
+                break;
             case "anml":
                 fragment = new com.example.earthwallet.ui.fragments.main.ANMLClaimMainFragment();
                 break;

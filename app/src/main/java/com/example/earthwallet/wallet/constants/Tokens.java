@@ -61,7 +61,7 @@ public class Tokens {
         "638a3e1d50175fbcb8373cf801565283e3eb23d88a9b7b7f99fcc5eb1e6b561e",
         6,
         "ERTH",
-        "/images/coin/ERTH.png"
+        "coin/ERTH.png"
     );
     
     public static final TokenInfo ANML = new TokenInfo(
@@ -69,7 +69,7 @@ public class Tokens {
         "638a3e1d50175fbcb8373cf801565283e3eb23d88a9b7b7f99fcc5eb1e6b561e",
         6,
         "ANML",
-        "/images/coin/ANML.png",
+        "coin/ANML.png",
         null,
         new LpInfo(
             "secret1cqxxq586zl6g5zly3536rc7crwfcmeluuwehvx",
@@ -83,7 +83,7 @@ public class Tokens {
         "af74387e276be8874f07bec3a87023ee49b0e7ebe08178c49d0a49c3c98ed60e",
         6,
         "sSCRT",
-        "/images/coin/SSCRT.png",
+        "coin/SSCRT.png",
         "secret",
         new LpInfo(
             "secret1lqmvkxrhqfjj64ge8cr9v8pwnz4enhw7f6hdys",

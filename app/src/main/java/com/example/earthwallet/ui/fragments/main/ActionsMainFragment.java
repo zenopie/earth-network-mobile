@@ -29,6 +29,19 @@ public class ActionsMainFragment extends Fragment {
     @Override
     public void onViewCreated(View view, Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
+        
+        // Swap Tokens button
+        Button swapTokens = view.findViewById(R.id.btn_swap_tokens);
+        if (swapTokens != null) {
+            swapTokens.setOnClickListener(v -> {
+                Log.d("ActionsMainFragment", "Swap Tokens button clicked");
+                if (getActivity() instanceof com.example.earthwallet.ui.activities.HostActivity) {
+                    ((com.example.earthwallet.ui.activities.HostActivity) getActivity()).showFragment("swap");
+                } else {
+                    Toast.makeText(getContext(), "Navigation not available", Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
     
         // ANML Claim button - request parent HostActivity to show ANML fragment
         Button anml = view.findViewById(R.id.btn_anml_claim);
