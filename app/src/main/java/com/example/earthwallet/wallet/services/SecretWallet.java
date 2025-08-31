@@ -153,7 +153,7 @@ public final class SecretWallet {
         long frac = Math.abs(micro % 1_000_000L);
         // trim trailing zeros
         String fracStr = String.format("%06d", frac).replaceFirst("0+$", "");
-        return fracStr.isEmpty() ? (whole + " SCRT") : (whole + "." + fracStr + " SCRT");
+        return fracStr.isEmpty() ? String.valueOf(whole) : (whole + "." + fracStr);
     }
 
     private static String httpGet(String urlStr) throws Exception {

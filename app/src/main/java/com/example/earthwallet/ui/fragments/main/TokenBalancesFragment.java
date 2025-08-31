@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.util.Log;
@@ -11,6 +13,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -256,7 +259,7 @@ public class TokenBalancesFragment extends Fragment {
                                     JSONObject balance = result.optJSONObject("balance");
                                     if (balance != null) {
                                         String amount = balance.optString("amount", "0");
-                                        String formattedBalance = Tokens.formatTokenAmount(amount, currentlyQueryingToken) + " " + currentlyQueryingToken.symbol;
+                                        String formattedBalance = Tokens.formatTokenAmount(amount, currentlyQueryingToken);
                                         updateTokenBalanceView(currentlyQueryingToken, formattedBalance);
                                     } else {
                                         updateTokenBalanceView(currentlyQueryingToken, "!");
@@ -295,40 +298,39 @@ public class TokenBalancesFragment extends Fragment {
         Log.d(TAG, "addTokenBalanceView called for " + token.symbol + " with balance: " + balance + " hasViewingKey: " + hasViewingKey);
         
         try {
-            // Create a card view for the token balance
-            LinearLayout tokenCard = new LinearLayout(getContext());
-            tokenCard.setOrientation(LinearLayout.HORIZONTAL);
-            tokenCard.setGravity(android.view.Gravity.CENTER_VERTICAL);
-            tokenCard.setPadding(24, 16, 24, 16);
-            tokenCard.setBackground(getResources().getDrawable(R.drawable.card_rounded_bg));
-            tokenCard.setTag(token.symbol);
+            // Create a flat row for the token balance
+            LinearLayout tokenRow = new LinearLayout(getContext());
+            tokenRow.setOrientation(LinearLayout.HORIZONTAL);
+            tokenRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            tokenRow.setPadding(0, 12, 0, 12);
+            tokenRow.setTag(token.symbol);
             
-            // Add margin between cards
-            LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
+            // Add margin between rows
+            LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             );
-            cardParams.setMargins(0, 0, 0, 12);
-            tokenCard.setLayoutParams(cardParams);
+            rowParams.setMargins(0, 0, 0, 16);
+            tokenRow.setLayoutParams(rowParams);
             
             // Token symbol
             TextView symbolText = new TextView(getContext());
             symbolText.setText(token.symbol);
             symbolText.setTextSize(16);
-            symbolText.setTextColor(getResources().getColor(R.color.brand_blue));
+            symbolText.setTextColor(android.graphics.Color.parseColor("#1e3a8a"));
             symbolText.setTypeface(null, android.graphics.Typeface.BOLD);
             LinearLayout.LayoutParams symbolParams = new LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f
             );
             symbolText.setLayoutParams(symbolParams);
-            tokenCard.addView(symbolText);
+            tokenRow.addView(symbolText);
             
             if (balance == null) {
                 // No viewing key - show "Get Viewing Key" button
                 Button getViewingKeyBtn = new Button(getContext());
                 getViewingKeyBtn.setText("Get Viewing Key");
                 getViewingKeyBtn.setTextSize(12);
-                getViewingKeyBtn.getBackground().setTint(getResources().getColor(R.color.brand_blue));
+                getViewingKeyBtn.setBackgroundColor(android.graphics.Color.parseColor("#4caf50"));
                 getViewingKeyBtn.setTextColor(getResources().getColor(android.R.color.white));
                 getViewingKeyBtn.setPadding(16, 8, 16, 8);
                 getViewingKeyBtn.setMinWidth(0);
@@ -340,7 +342,7 @@ public class TokenBalancesFragment extends Fragment {
                     }
                 });
                 getViewingKeyBtn.setTag("get_key_btn");
-                tokenCard.addView(getViewingKeyBtn);
+                tokenRow.addView(getViewingKeyBtn);
             } else {
                 // Has viewing key - show balance text
                 TextView balanceText = new TextView(getContext());
@@ -350,20 +352,52 @@ public class TokenBalancesFragment extends Fragment {
                 // Style based on whether it's an error or normal balance
                 if ("!".equals(balance)) {
                     balanceText.setTextColor(getResources().getColor(android.R.color.holo_red_dark));
-                    balanceText.setTextSize(20);
-                } else {
-                    balanceText.setTextColor(getResources().getColor(R.color.sidebar_text));
                     balanceText.setTextSize(16);
+                } else {
+                    balanceText.setTextColor(android.graphics.Color.parseColor("#4caf50"));
+                    balanceText.setTextSize(16);
+                    balanceText.setTypeface(null, android.graphics.Typeface.BOLD);
                 }
                 
-                tokenCard.addView(balanceText);
+                tokenRow.addView(balanceText);
             }
             
-            tokenBalancesContainer.addView(tokenCard);
+            // Add token logo
+            if (!TextUtils.isEmpty(token.logo)) {
+                ImageView logoView = new ImageView(getContext());
+                LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(
+                    dpToPx(24), dpToPx(24)
+                );
+                logoParams.setMargins(dpToPx(8), 0, 0, 0);
+                logoView.setLayoutParams(logoParams);
+                logoView.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                
+                // Load logo from assets
+                try {
+                    Bitmap bitmap = BitmapFactory.decodeStream(getContext().getAssets().open(token.logo));
+                    logoView.setImageBitmap(bitmap);
+                } catch (Exception e) {
+                    Log.w(TAG, "Failed to load logo for " + token.symbol + ": " + token.logo, e);
+                    // Hide the logo view if loading fails
+                    logoView.setVisibility(View.GONE);
+                }
+                
+                tokenRow.addView(logoView);
+            }
+            
+            tokenBalancesContainer.addView(tokenRow);
             Log.d(TAG, "Successfully added token view for " + token.symbol + " to container. Container now has " + tokenBalancesContainer.getChildCount() + " tokens");
         } catch (Exception e) {
             Log.e(TAG, "Failed to add token balance view for " + token.symbol, e);
         }
+    }
+    
+    /**
+     * Convert dp to pixels
+     */
+    private int dpToPx(int dp) {
+        float density = getResources().getDisplayMetrics().density;
+        return Math.round(dp * density);
     }
     
     private void updateTokenBalanceView(Tokens.TokenInfo token, String balance) {

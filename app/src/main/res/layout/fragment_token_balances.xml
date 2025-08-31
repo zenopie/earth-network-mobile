@@ -3,25 +3,26 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fillViewport="true"
-    android:background="@color/desktop_bg">
+    android:background="@android:color/white">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="16dp">
+        android:padding="30dp">
 
-        <!-- Token Balances Section -->
+        <!-- Token Balances Section Header -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Token Balances"
-            android:textColor="@color/sidebar_text"
-            android:textSize="18sp"
+            android:textColor="#1e3a8a"
+            android:textSize="16sp"
             android:textStyle="bold"
-            android:layout_marginBottom="16dp" />
+            android:layout_gravity="center"
+            android:layout_marginBottom="24dp" />
 
-        <!-- Container for token balance cards -->
+        <!-- Container for token balance rows -->
         <LinearLayout
             android:id="@+id/tokenBalancesContainer"
             android:layout_width="match_parent"

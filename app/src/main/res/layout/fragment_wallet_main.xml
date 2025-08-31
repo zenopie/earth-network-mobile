@@ -24,40 +24,21 @@
                 android:orientation="vertical"
                 android:gravity="center">
 
-                <!-- Wallet Name Dropdown -->
-                <LinearLayout
-                    android:id="@+id/wallet_name_container"
-                    android:layout_width="match_parent"
+                <!-- Wallet Name Header -->
+                <TextView
+                    android:id="@+id/wallet_name_text"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center"
-                    android:layout_marginBottom="24dp"
-                    android:paddingTop="8dp"
-                    android:paddingBottom="8dp"
+                    android:text="My Wallet"
+                    android:textSize="24sp"
+                    android:textStyle="bold"
+                    android:textColor="#1e3a8a"
+                    android:layout_gravity="center"
+                    android:layout_marginBottom="12dp"
                     android:clickable="true"
                     android:focusable="true"
-                    android:background="?android:attr/selectableItemBackground">
-
-                    <TextView
-                        android:id="@+id/wallet_name_text"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="My Wallet"
-                        android:textSize="24sp"
-                        android:textStyle="bold"
-                        android:textColor="#333333"
-                        android:gravity="center" />
-                        
-                    <TextView
-                        android:id="@+id/wallet_dropdown_chevron"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="▼"
-                        android:textSize="16sp"
-                        android:textColor="#333333"
-                        android:layout_marginStart="8dp"
-                        android:gravity="center" />
-                </LinearLayout>
+                    android:background="?android:attr/selectableItemBackground"
+                    android:padding="12dp" />
 
                 <!-- Wallet Display Fragment Container -->
                 <FrameLayout
@@ -73,14 +54,6 @@
                     android:layout_height="wrap_content"
                     android:layout_marginBottom="16dp" />
 
-                <!-- Note -->
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="16dp"
-                    android:text="@string/wallet_note"
-                    android:textSize="12sp"
-                    android:textColor="#666666" />
 
             </LinearLayout>
         </ScrollView>

@@ -14,8 +14,10 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageButton;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.graphics.PorterDuff;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -41,6 +43,9 @@ public class WalletDisplayFragment extends Fragment {
     private TextView addressText;
     private TextView balanceText;
     private ImageView qrCodeView;
+    private ImageButton sendButton;
+    private ImageButton receiveButton;
+    private LinearLayout addressContainer;
     
     // State
     private String currentAddress = "";
@@ -73,6 +78,17 @@ public class WalletDisplayFragment extends Fragment {
         addressText = view.findViewById(R.id.addressText);
         balanceText = view.findViewById(R.id.balanceText);
         qrCodeView = view.findViewById(R.id.qrCodeView);
+        sendButton = view.findViewById(R.id.sendButton);
+        receiveButton = view.findViewById(R.id.receiveButton);
+        addressContainer = view.findViewById(R.id.addressContainer);
+        
+        // Set white tint on button icons
+        if (sendButton != null) {
+            sendButton.setColorFilter(android.graphics.Color.WHITE, PorterDuff.Mode.SRC_IN);
+        }
+        if (receiveButton != null) {
+            receiveButton.setColorFilter(android.graphics.Color.WHITE, PorterDuff.Mode.SRC_IN);
+        }
         
         // Set up click listeners
         setupClickListeners();
@@ -89,7 +105,10 @@ public class WalletDisplayFragment extends Fragment {
     }
     
     private void setupClickListeners() {
-        // No click listeners needed for now
+        // Set up address container click listener to copy address
+        if (addressContainer != null) {
+            addressContainer.setOnClickListener(v -> copyAddressToClipboard());
+        }
     }
     
     /**

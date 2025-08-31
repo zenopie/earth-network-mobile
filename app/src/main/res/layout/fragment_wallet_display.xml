@@ -3,108 +3,141 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:padding="0dp"
+    android:padding="30dp"
     android:background="@android:color/white">
 
-    <!-- Address Section -->
+    <!-- Wallet Address Section -->
+    <LinearLayout
+        android:id="@+id/addressContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/address_box_bg"
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:foreground="?android:attr/selectableItemBackground"
+        android:layout_marginBottom="30dp">
+
+        <TextView
+            android:id="@+id/addressText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Loading..."
+            android:textSize="14sp"
+            android:textColor="#333333"
+            android:gravity="center"
+            android:maxLines="2"
+            android:ellipsize="middle" />
+
+    </LinearLayout>
+
+    <!-- Send/Receive Buttons Section -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:layout_marginBottom="12dp">
-        
-        <!-- Address Label -->
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:layout_marginBottom="40dp">
+
+        <!-- Send Button Column -->
         <LinearLayout
-            android:layout_width="match_parent"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="8dp"
-            android:orientation="horizontal"
-            android:paddingHorizontal="4dp">
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:layout_marginEnd="16dp">
+
+            <ImageButton
+                android:id="@+id/sendButton"
+                android:layout_width="80dp"
+                android:layout_height="80dp"
+                android:src="@drawable/ic_minus"
+                android:background="@drawable/green_button_bg"
+                android:scaleType="center"
+                android:layout_marginBottom="8dp" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Address"
-                android:textColor="#333333"
-                android:textSize="16sp"
+                android:text="Send"
+                android:textColor="#4caf50"
+                android:textSize="14sp"
                 android:textStyle="bold" />
 
         </LinearLayout>
-        
-        <!-- Address Display -->
-        <RelativeLayout
-            android:layout_width="match_parent"
-            android:layout_height="70dp"
-            android:background="@color/desktop_bg"
-            android:padding="0dp">
+
+        <!-- Receive Button Column -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:layout_marginStart="16dp">
+
+            <ImageButton
+                android:id="@+id/receiveButton"
+                android:layout_width="80dp"
+                android:layout_height="80dp"
+                android:src="@drawable/ic_plus"
+                android:background="@drawable/green_button_bg"
+                android:scaleType="center"
+                android:layout_marginBottom="8dp" />
 
             <TextView
-                android:id="@+id/addressText"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:text="Loading..."
-                android:textSize="16sp"
-                android:textColor="#333333"
-                android:paddingStart="18dp"
-                android:paddingEnd="18dp"
-                android:paddingTop="18dp"
-                android:paddingBottom="18dp"
-                android:gravity="center_vertical"
-                android:maxLines="2"
-                android:ellipsize="middle" />
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Receive"
+                android:textColor="#4caf50"
+                android:textSize="14sp"
+                android:textStyle="bold" />
 
-        </RelativeLayout>
+        </LinearLayout>
 
     </LinearLayout>
-    
+
     <!-- Balance Section -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:layout_marginBottom="12dp">
+        android:orientation="vertical">
 
-        <!-- Balance Label -->
-        <LinearLayout
-            android:layout_width="match_parent"
+        <TextView
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="8dp"
+            android:text="SCRT Balance"
+            android:textColor="#1e3a8a"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="12dp"
+            android:layout_gravity="center" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:paddingHorizontal="4dp">
+            android:gravity="center_vertical"
+            android:layout_gravity="center">
+
+            <TextView
+                android:id="@+id/balanceText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Loading..."
+                android:textSize="28sp"
+                android:textColor="#4caf50"
+                android:textStyle="bold" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="SCRT Balance"
-                android:textColor="#333333"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-
+                android:text="⛽"
+                android:textSize="24sp"
+                android:layout_marginStart="8dp" />
 
         </LinearLayout>
-        
-        <!-- Balance Display -->
-        <RelativeLayout
-            android:layout_width="match_parent"
-            android:layout_height="70dp"
-            android:background="@color/desktop_bg"
-            android:padding="0dp">
-
-            <TextView
-                android:id="@+id/balanceText"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:text="Loading..."
-                android:textSize="20sp"
-                android:textColor="#333333"
-                android:textStyle="bold"
-                android:paddingStart="18dp"
-                android:paddingEnd="18dp"
-                android:paddingTop="18dp"
-                android:paddingBottom="18dp"
-                android:gravity="center_vertical" />
-
-        </RelativeLayout>
 
     </LinearLayout>
 

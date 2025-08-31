@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="sidebar_bg">#FFFFFF</color>
-    <color name="brand_blue">#4056A1</color>
+    <color name="brand_blue">#4caf50</color>
     <color name="sidebar_hover">#F1F2F7</color>
-    <color name="sidebar_text">#4056A1</color>
-    <color name="sidebar_icon">#4056A1</color>
+    <color name="sidebar_text">#1e3a8a</color>
+    <color name="sidebar_icon">#1e3a8a</color>
     <color name="sidebar_divider">#EEEEEE</color>
     <!-- Desktop/background colors from the web app -->
     <color name="desktop_bg">#F1F0EA</color>
     <!-- ANML / desktop-specific colors -->
     <color name="anml_button_text">#293462</color>
-    <!-- reverted border color to original brand blue -->
-    <color name="anml_button_border">#4056A1</color>
+    <!-- reverted border color to green -->
+    <color name="anml_button_border">#4caf50</color>
 
     <!-- Wallet row colors -->
     <color name="wallet_row_name">@color/sidebar_text</color>

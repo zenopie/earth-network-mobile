@@ -58,7 +58,6 @@ public class WalletMainFragment extends Fragment
     
     // UI components
     private TextView walletNameText;
-    private LinearLayout walletNameContainer;
     
     // State management
     private SharedPreferences securePrefs;
@@ -101,11 +100,10 @@ public class WalletMainFragment extends Fragment
         
         // Initialize UI components
         walletNameText = view.findViewById(R.id.wallet_name_text);
-        walletNameContainer = view.findViewById(R.id.wallet_name_container);
         
         // Set up wallet name click listener
-        if (walletNameContainer != null) {
-            walletNameContainer.setOnClickListener(v -> showWalletListFragment());
+        if (walletNameText != null) {
+            walletNameText.setOnClickListener(v -> showWalletListFragment());
         }
         
         // Initialize child fragments
