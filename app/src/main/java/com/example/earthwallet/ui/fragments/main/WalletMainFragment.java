@@ -7,6 +7,8 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -54,6 +56,10 @@ public class WalletMainFragment extends Fragment
     private TokenBalancesFragment tokenBalancesFragment;
     private ViewingKeyManagerFragment viewingKeyManagerFragment;
     
+    // UI components
+    private TextView walletNameText;
+    private LinearLayout walletNameContainer;
+    
     // State management
     private SharedPreferences securePrefs;
     private String currentWalletAddress = "";
@@ -92,6 +98,15 @@ public class WalletMainFragment extends Fragment
     @Override
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
+        
+        // Initialize UI components
+        walletNameText = view.findViewById(R.id.wallet_name_text);
+        walletNameContainer = view.findViewById(R.id.wallet_name_container);
+        
+        // Set up wallet name click listener
+        if (walletNameContainer != null) {
+            walletNameContainer.setOnClickListener(v -> showWalletListFragment());
+        }
         
         // Initialize child fragments
         initializeChildFragments();
@@ -168,6 +183,12 @@ public class WalletMainFragment extends Fragment
     }
     
     private void updateChildFragments() {
+        // Update wallet name display
+        if (walletNameText != null) {
+            String displayName = currentWalletName.isEmpty() ? "My Wallet" : currentWalletName;
+            walletNameText.setText(displayName);
+        }
+        
         // Update wallet display fragment
         if (walletDisplayFragment != null) {
             walletDisplayFragment.updateWalletInfo();
@@ -187,16 +208,6 @@ public class WalletMainFragment extends Fragment
     // =============================================================================
     // WalletDisplayFragment.WalletDisplayListener Implementation
     // =============================================================================
-    
-    @Override
-    public void onSwitchWalletRequested() {
-        showWalletListFragment();
-    }
-    
-    @Override
-    public void onAddWalletRequested() {
-        showCreateWalletFragment();
-    }
     
     @Override
     public String getCurrentWalletAddress() {

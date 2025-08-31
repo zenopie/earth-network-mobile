@@ -51,6 +51,7 @@ public class TokenBalancesFragment extends Fragment {
     private java.util.Queue<Tokens.TokenInfo> tokenQueryQueue = new java.util.LinkedList<>();
     private boolean isQueryingToken = false;
     private String walletAddress = "";
+    private Tokens.TokenInfo currentlyQueryingToken = null;
     
     // Interface for communication with parent
     public interface TokenBalancesListener {
@@ -176,6 +177,7 @@ public class TokenBalancesFragment extends Fragment {
         Tokens.TokenInfo token = tokenQueryQueue.poll();
         if (token != null) {
             isQueryingToken = true;
+            currentlyQueryingToken = token;
             queryTokenBalance(token);
         }
     }
@@ -190,6 +192,7 @@ public class TokenBalancesFragment extends Fragment {
                 
                 // Mark query as complete and continue with next token
                 isQueryingToken = false;
+                currentlyQueryingToken = null;
                 processNextTokenQuery();
                 return;
             }
@@ -217,7 +220,6 @@ public class TokenBalancesFragment extends Fragment {
             qi.putExtra(SecretQueryActivity.EXTRA_CONTRACT_ADDRESS, token.contract);
             qi.putExtra(SecretQueryActivity.EXTRA_CODE_HASH, token.hash);
             qi.putExtra(SecretQueryActivity.EXTRA_QUERY_JSON, query.toString());
-            qi.putExtra("token_symbol", token.symbol);
             startActivityForResult(qi, REQ_TOKEN_BALANCE);
             
         } catch (Exception e) {
@@ -226,6 +228,7 @@ public class TokenBalancesFragment extends Fragment {
             
             // Mark query as complete and continue with next token
             isQueryingToken = false;
+            currentlyQueryingToken = null;
             processNextTokenQuery();
         }
     }
@@ -238,61 +241,52 @@ public class TokenBalancesFragment extends Fragment {
             if (resultCode == Activity.RESULT_OK && data != null) {
                 try {
                     String json = data.getStringExtra(SecretQueryActivity.EXTRA_RESULT_JSON);
-                    String tokenSymbol = data.getStringExtra("token_symbol");
                     
-                    // If token_symbol is null, use stored token symbol from viewing key storage
-                    if (TextUtils.isEmpty(tokenSymbol)) {
-                        Log.w(TAG, "token_symbol is null, looking up from stored viewing key symbols");
-                        for (String symbol : Tokens.ALL_TOKENS.keySet()) {
-                            Tokens.TokenInfo token = Tokens.getToken(symbol);
-                            if (token != null) {
-                                String storedSymbol = getViewingKeyTokenSymbol(token.contract);
-                                String viewingKey = getViewingKey(token.contract);
-                                if (!TextUtils.isEmpty(storedSymbol) && !TextUtils.isEmpty(viewingKey)) {
-                                    tokenSymbol = storedSymbol;
-                                    Log.d(TAG, "Found stored token symbol: " + tokenSymbol + " for contract: " + token.contract);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    
-                    Log.d(TAG, "Token balance query result for " + tokenSymbol + ": " + json);
-                    
-                    if (!TextUtils.isEmpty(json) && !TextUtils.isEmpty(tokenSymbol)) {
-                        JSONObject root = new JSONObject(json);
-                        boolean success = root.optBoolean("success", false);
+                    // Use the currently querying token instead of trying to parse from result
+                    if (currentlyQueryingToken != null) {
+                        Log.d(TAG, "Token balance query result for " + currentlyQueryingToken.symbol + ": " + json);
                         
-                        Tokens.TokenInfo token = Tokens.getToken(tokenSymbol);
-                        if (token != null) {
+                        if (!TextUtils.isEmpty(json)) {
+                            JSONObject root = new JSONObject(json);
+                            boolean success = root.optBoolean("success", false);
+                            
                             if (success) {
                                 JSONObject result = root.optJSONObject("result");
                                 if (result != null) {
                                     JSONObject balance = result.optJSONObject("balance");
                                     if (balance != null) {
                                         String amount = balance.optString("amount", "0");
-                                        String formattedBalance = Tokens.formatTokenAmount(amount, token) + " " + token.symbol;
-                                        updateTokenBalanceView(token, formattedBalance);
+                                        String formattedBalance = Tokens.formatTokenAmount(amount, currentlyQueryingToken) + " " + currentlyQueryingToken.symbol;
+                                        updateTokenBalanceView(currentlyQueryingToken, formattedBalance);
                                     } else {
-                                        updateTokenBalanceView(token, "!");
+                                        updateTokenBalanceView(currentlyQueryingToken, "!");
                                     }
                                 } else {
-                                    updateTokenBalanceView(token, "!");
+                                    updateTokenBalanceView(currentlyQueryingToken, "!");
                                 }
                             } else {
-                                updateTokenBalanceView(token, "!");
+                                updateTokenBalanceView(currentlyQueryingToken, "!");
                             }
                         }
+                    } else {
+                        Log.w(TAG, "No currently querying token, cannot process result");
                     }
                 } catch (Exception e) {
                     Log.e(TAG, "Failed to parse token balance result", e);
+                    if (currentlyQueryingToken != null) {
+                        updateTokenBalanceView(currentlyQueryingToken, "!");
+                    }
                 }
             } else {
                 Log.w(TAG, "Token balance query failed or was cancelled");
+                if (currentlyQueryingToken != null) {
+                    updateTokenBalanceView(currentlyQueryingToken, "!");
+                }
             }
             
             // Mark current query as complete and process next token in queue
             isQueryingToken = false;
+            currentlyQueryingToken = null;
             processNextTokenQuery();
         }
     }

@@ -23,24 +23,38 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical">
 
-                <!-- Wallet Title -->
+                <!-- Wallet Name Dropdown -->
                 <LinearLayout
+                    android:id="@+id/wallet_name_container"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
                     android:gravity="center"
                     android:layout_marginBottom="24dp"
                     android:paddingTop="8dp"
-                    android:paddingBottom="8dp">
+                    android:paddingBottom="8dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:background="?android:attr/selectableItemBackground">
 
                     <TextView
-                        android:id="@+id/wallet_title_text"
+                        android:id="@+id/wallet_name_text"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="@string/wallet_title"
+                        android:text="My Wallet"
                         android:textSize="24sp"
                         android:textStyle="bold"
                         android:textColor="@color/brand_blue"
+                        android:gravity="center" />
+                        
+                    <TextView
+                        android:id="@+id/wallet_dropdown_chevron"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="▼"
+                        android:textSize="16sp"
+                        android:textColor="@color/brand_blue"
+                        android:layout_marginStart="8dp"
                         android:gravity="center" />
                 </LinearLayout>
 

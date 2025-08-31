@@ -6,36 +6,6 @@
     android:padding="16dp"
     android:background="@color/desktop_bg">
 
-    <!-- Wallet Header Section -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:layout_marginBottom="16dp">
-
-        <Button
-            android:id="@+id/switchWalletBtn"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Switch Wallet"
-            android:textSize="14sp"
-            android:padding="12dp"
-            android:layout_marginEnd="8dp"
-            android:backgroundTint="@color/brand_blue"
-            android:textColor="@android:color/white" />
-
-        <Button
-            android:id="@+id/addWalletBtn"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Add Wallet"
-            android:textSize="14sp"
-            android:padding="12dp"
-            android:backgroundTint="@color/brand_blue"
-            android:textColor="@android:color/white" />
-
-    </LinearLayout>
 
     <!-- Wallet Info Card -->
     <LinearLayout
@@ -74,17 +44,6 @@
                 android:maxLines="1"
                 android:ellipsize="middle" />
 
-            <Button
-                android:id="@+id/copyAddressBtn"
-                android:layout_width="wrap_content"
-                android:layout_height="32dp"
-                android:text="Copy"
-                android:textSize="11sp"
-                android:padding="8dp"
-                android:minWidth="0dp"
-                android:background="@drawable/card_rounded_bg"
-                android:textColor="@color/brand_blue" />
-
         </LinearLayout>
 
         <!-- Balance Section -->
@@ -112,6 +71,21 @@
                 android:textSize="14sp"
                 android:textColor="@color/brand_blue"
                 android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/refreshBalanceBtn"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:text="⟲"
+                android:textSize="24sp"
+                android:textStyle="bold"
+                android:textColor="@color/brand_blue"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:padding="2dp"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:layout_gravity="top"
+                android:layout_marginTop="-4dp" />
 
         </LinearLayout>
 

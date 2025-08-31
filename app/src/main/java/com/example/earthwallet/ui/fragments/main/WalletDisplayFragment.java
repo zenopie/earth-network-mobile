@@ -40,9 +40,7 @@ public class WalletDisplayFragment extends Fragment {
     // UI Components
     private TextView addressText;
     private TextView balanceText;
-    private Button copyAddressBtn;
-    private Button switchWalletBtn;
-    private Button addWalletBtn;
+    private Button refreshBalanceBtn;
     private ImageView qrCodeView;
     
     // State
@@ -51,8 +49,6 @@ public class WalletDisplayFragment extends Fragment {
     
     // Interface for communication with parent
     public interface WalletDisplayListener {
-        void onSwitchWalletRequested();
-        void onAddWalletRequested();
         String getCurrentWalletAddress();
         String getCurrentWalletMnemonic();
     }
@@ -78,9 +74,7 @@ public class WalletDisplayFragment extends Fragment {
         // Initialize UI components
         addressText = view.findViewById(R.id.addressText);
         balanceText = view.findViewById(R.id.balanceText);
-        copyAddressBtn = view.findViewById(R.id.copyAddressBtn);
-        switchWalletBtn = view.findViewById(R.id.switchWalletBtn);
-        addWalletBtn = view.findViewById(R.id.addWalletBtn);
+        refreshBalanceBtn = view.findViewById(R.id.refreshBalanceBtn);
         qrCodeView = view.findViewById(R.id.qrCodeView);
         
         // Set up click listeners
@@ -98,17 +92,7 @@ public class WalletDisplayFragment extends Fragment {
     }
     
     private void setupClickListeners() {
-        copyAddressBtn.setOnClickListener(v -> copyAddressToClipboard());
-        switchWalletBtn.setOnClickListener(v -> {
-            if (listener != null) {
-                listener.onSwitchWalletRequested();
-            }
-        });
-        addWalletBtn.setOnClickListener(v -> {
-            if (listener != null) {
-                listener.onAddWalletRequested();
-            }
-        });
+        refreshBalanceBtn.setOnClickListener(v -> refreshBalance());
     }
     
     /**
