@@ -40,11 +40,11 @@ public class WalletDisplayFragment extends Fragment {
     // UI Components
     private TextView addressText;
     private TextView balanceText;
-    private ImageButton refreshBalanceBtn;
     private ImageView qrCodeView;
     
     // State
     private String currentAddress = "";
+    private boolean balanceLoaded = false;
     
     // Interface for communication with parent
     public interface WalletDisplayListener {
@@ -72,7 +72,6 @@ public class WalletDisplayFragment extends Fragment {
         // Initialize UI components
         addressText = view.findViewById(R.id.addressText);
         balanceText = view.findViewById(R.id.balanceText);
-        refreshBalanceBtn = view.findViewById(R.id.refreshBalanceBtn);
         qrCodeView = view.findViewById(R.id.qrCodeView);
         
         // Set up click listeners
@@ -90,7 +89,7 @@ public class WalletDisplayFragment extends Fragment {
     }
     
     private void setupClickListeners() {
-        refreshBalanceBtn.setOnClickListener(v -> refreshBalance());
+        // No click listeners needed for now
     }
     
     /**
@@ -98,11 +97,20 @@ public class WalletDisplayFragment extends Fragment {
      */
     public void updateWalletInfo() {
         if (listener != null) {
-            currentAddress = listener.getCurrentWalletAddress();
+            String newAddress = listener.getCurrentWalletAddress();
             
-            updateUI();
-            refreshBalance();
-            generateQRCode();
+            // Only refresh balance if address changed or balance not yet loaded
+            if (!newAddress.equals(currentAddress) || !balanceLoaded) {
+                currentAddress = newAddress;
+                updateUI();
+                refreshBalance();
+                generateQRCode();
+            } else {
+                // Address hasn't changed, just update UI without fetching balance
+                currentAddress = newAddress;
+                updateUI();
+                generateQRCode();
+            }
         }
     }
     
@@ -134,8 +142,8 @@ public class WalletDisplayFragment extends Fragment {
             addressText.setText(currentAddress);
         }
         
-        // Set initial balance to "Loading..." while we fetch it
-        if (balanceText != null) {
+        // Set initial balance to "Loading..." only if not already loaded
+        if (balanceText != null && !balanceLoaded) {
             balanceText.setText("Loading...");
         }
     }
@@ -143,6 +151,7 @@ public class WalletDisplayFragment extends Fragment {
     private void refreshBalance() {
         if (!TextUtils.isEmpty(currentAddress)) {
             // Launch background task to fetch SCRT balance
+            balanceLoaded = false; // Mark as loading
             new FetchBalanceTask().execute(SecretWallet.DEFAULT_LCD_URL, currentAddress);
         }
     }
@@ -188,6 +197,7 @@ public class WalletDisplayFragment extends Fragment {
         protected void onPostExecute(String result) {
             if (balanceText != null) {
                 balanceText.setText(result);
+                balanceLoaded = true; // Mark as loaded
             }
         }
     }
