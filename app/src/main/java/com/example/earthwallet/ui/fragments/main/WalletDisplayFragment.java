@@ -12,7 +12,7 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.Button;
+import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -40,7 +40,7 @@ public class WalletDisplayFragment extends Fragment {
     // UI Components
     private TextView addressText;
     private TextView balanceText;
-    private Button refreshBalanceBtn;
+    private ImageButton refreshBalanceBtn;
     private ImageView qrCodeView;
     
     // State
