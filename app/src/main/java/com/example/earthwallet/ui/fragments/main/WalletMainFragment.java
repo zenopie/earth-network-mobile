@@ -159,12 +159,20 @@ public class WalletMainFragment extends Fragment
                 
                 currentWalletMnemonic = selectedWallet.optString("mnemonic", "");
                 currentWalletName = selectedWallet.optString("name", "Wallet");
+                currentWalletAddress = selectedWallet.optString("address", "");
                 
-                if (!TextUtils.isEmpty(currentWalletMnemonic)) {
-                    // Derive address from mnemonic
+                // If address is missing, derive it once and update storage
+                if (TextUtils.isEmpty(currentWalletAddress) && !TextUtils.isEmpty(currentWalletMnemonic)) {
                     ECKey key = SecretWallet.deriveKeyFromMnemonic(currentWalletMnemonic);
                     currentWalletAddress = SecretWallet.getAddress(key);
                     
+                    // Update the stored wallet with the address
+                    selectedWallet.put("address", currentWalletAddress);
+                    walletsArray.put(selectedIndex >= 0 ? selectedIndex : 0, selectedWallet);
+                    securePrefs.edit().putString("wallets", walletsArray.toString()).apply();
+                    
+                    Log.d(TAG, "Migrated wallet address: " + currentWalletName + " (" + currentWalletAddress + ")");
+                } else {
                     Log.d(TAG, "Loaded wallet: " + currentWalletName + " (" + currentWalletAddress + ")");
                 }
             } else {
@@ -212,11 +220,6 @@ public class WalletMainFragment extends Fragment
     @Override
     public String getCurrentWalletAddress() {
         return currentWalletAddress;
-    }
-    
-    @Override
-    public String getCurrentWalletMnemonic() {
-        return currentWalletMnemonic;
     }
     
     // =============================================================================

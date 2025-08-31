@@ -346,9 +346,14 @@ public class CreateWalletFragment extends Fragment {
             String walletsJson = securePrefs.getString("wallets", "[]");
             JSONArray arr = new JSONArray(walletsJson);
 
+            // Derive address from mnemonic once during creation
+            org.bitcoinj.core.ECKey key = SecretWallet.deriveKeyFromMnemonic(mnemonic);
+            String address = SecretWallet.getAddress(key);
+            
             JSONObject obj = new JSONObject();
             obj.put("name", walletName);
             obj.put("mnemonic", mnemonic);
+            obj.put("address", address);
             arr.put(obj);
 
             SharedPreferences.Editor ed = securePrefs.edit();

@@ -45,12 +45,10 @@ public class WalletDisplayFragment extends Fragment {
     
     // State
     private String currentAddress = "";
-    private String currentMnemonic = "";
     
     // Interface for communication with parent
     public interface WalletDisplayListener {
         String getCurrentWalletAddress();
-        String getCurrentWalletMnemonic();
     }
     
     private WalletDisplayListener listener;
@@ -101,7 +99,6 @@ public class WalletDisplayFragment extends Fragment {
     public void updateWalletInfo() {
         if (listener != null) {
             currentAddress = listener.getCurrentWalletAddress();
-            currentMnemonic = listener.getCurrentWalletMnemonic();
             
             updateUI();
             refreshBalance();
