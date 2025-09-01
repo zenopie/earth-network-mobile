@@ -4,25 +4,47 @@
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:padding="12dp"
-    android:gravity="center">
+    android:gravity="center"
+    android:background="@color/desktop_bg">
 
+    <!-- Horizon Container -->
+    <RelativeLayout
+        android:id="@+id/horizon_container"
+        android:layout_width="200dp"
+        android:layout_height="120dp"
+        android:layout_marginBottom="24dp">
+        
+        <!-- Shadow Area (elliptical shadow) -->
+        <View
+            android:id="@+id/shadow_area"
+            android:layout_width="60dp"
+            android:layout_height="15dp"
+            android:layout_centerHorizontal="true"
+            android:layout_alignParentBottom="true"
+            android:background="@drawable/shadow_oval" />
+        
+        <!-- Food Emoji -->
+        <TextView
+            android:id="@+id/food_emoji"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_centerHorizontal="true"
+            android:layout_above="@id/shadow_area"
+            android:layout_marginBottom="16dp"
+            android:textSize="72sp"
+            android:text="🍎" />
+            
+    </RelativeLayout>
+
+    <!-- Success Message -->
     <TextView
-        android:id="@+id/complete_title"
+        android:id="@+id/success_text"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Already claimed"
+        android:text="CLAIMED! see you tomorrow!"
         android:textColor="@color/sidebar_text"
         android:textSize="18sp"
-        android:paddingBottom="8dp"
-        android:gravity="center" />
-
-    <TextView
-        android:id="@+id/complete_subtitle"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="You've already claimed ANML for today. Come back tomorrow."
-        android:textColor="@color/sidebar_text"
-        android:textSize="14sp"
-        android:gravity="center" />
+        android:gravity="center"
+        android:textStyle="bold" />
 
 </LinearLayout>
