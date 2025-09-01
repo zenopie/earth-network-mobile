@@ -30,8 +30,10 @@ import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
 
 import com.example.earthwallet.R;
+import com.example.earthwallet.Constants;
 import com.example.earthwallet.bridge.activities.SecretQueryActivity;
 import com.example.earthwallet.bridge.activities.SecretExecuteActivity;
+import com.example.earthwallet.bridge.activities.SnipQueryActivity;
 import com.example.earthwallet.wallet.constants.Tokens;
 
 import org.json.JSONArray;
@@ -61,10 +63,8 @@ public class SwapTokensMainFragment extends Fragment {
     private static final int REQUEST_SWAP_SIMULATION = 3004;
     private static final int REQUEST_TOKEN_BALANCE = 3005;
     private static final int REQUEST_SWAP_EXECUTION = 3006;
+    private static final int REQ_SNIP_BALANCE_QUERY = 3007;
     
-    // Exchange contract (placeholder - should be in constants)
-    private static final String EXCHANGE_CONTRACT = "secret1exchangecontractaddress";
-    private static final String EXCHANGE_HASH = "exchangehash";
     
     // UI Components
     private Spinner fromTokenSpinner, toTokenSpinner;
@@ -497,16 +497,27 @@ public class SwapTokensMainFragment extends Fragment {
         super.onActivityResult(requestCode, resultCode, data);
         
         if (resultCode == Activity.RESULT_OK && data != null) {
-            String json = data.getStringExtra(SecretQueryActivity.EXTRA_RESULT_JSON);
+            String json;
             
-            if (requestCode == REQ_BALANCE_QUERY) {
-                handleBalanceQueryResult(data, json);
-            } else if (requestCode == REQ_SIMULATE_SWAP || requestCode == REQUEST_SWAP_SIMULATION) {
-                handleSwapSimulationResult(json);
+            if (requestCode == REQ_SNIP_BALANCE_QUERY) {
+                // Use SnipQueryActivity's result key
+                json = data.getStringExtra(SnipQueryActivity.EXTRA_RESULT_JSON);
+                handleSnipBalanceQueryResult(data, json);
             } else if (requestCode == REQ_EXECUTE_SWAP || requestCode == REQUEST_SWAP_EXECUTION) {
+                // Use SecretExecuteActivity's result key for execution requests
+                json = data.getStringExtra(SecretExecuteActivity.EXTRA_RESULT_JSON);
                 handleSwapExecutionResult(json);
-            } else if (requestCode == REQUEST_TOKEN_BALANCE) {
-                handleTokenBalanceResult(data, json);
+            } else {
+                // Use SecretQueryActivity's result key for other requests
+                json = data.getStringExtra(SecretQueryActivity.EXTRA_RESULT_JSON);
+                
+                if (requestCode == REQ_BALANCE_QUERY) {
+                    handleBalanceQueryResult(data, json);
+                } else if (requestCode == REQ_SIMULATE_SWAP || requestCode == REQUEST_SWAP_SIMULATION) {
+                    handleSwapSimulationResult(json);
+                } else if (requestCode == REQUEST_TOKEN_BALANCE) {
+                    handleTokenBalanceResult(data, json);
+                }
             }
         }
     }
@@ -555,14 +566,17 @@ public class SwapTokensMainFragment extends Fragment {
     }
     
     private void handleSwapSimulationResult(String json) {
+        Log.d(TAG, "handleSwapSimulationResult called with JSON: " + json);
         try {
             JSONObject root = new JSONObject(json);
             boolean success = root.optBoolean("success", false);
+            Log.d(TAG, "Swap simulation success: " + success);
             
             if (success) {
                 JSONObject result = root.optJSONObject("result");
                 if (result != null) {
-                    String outputAmount = result.optString("amount_out", "0");
+                    // Parse output_amount to match React web app response format
+                    String outputAmount = result.optString("output_amount", "0");
                     String toTokenSymbol = tokenSymbols.get(toTokenSpinner.getSelectedItemPosition());
                     Tokens.TokenInfo toTokenInfo = Tokens.getToken(toTokenSymbol);
                     if (toTokenInfo != null) {
@@ -570,6 +584,10 @@ public class SwapTokensMainFragment extends Fragment {
                         DecimalFormat df = new DecimalFormat("#.######");
                         toAmountInput.setText(df.format(formattedOutput));
                         updateDetailsDisplay();
+                        
+                        Log.d(TAG, "Swap simulation successful - input: " + fromAmountInput.getText() + " " + 
+                            tokenSymbols.get(fromTokenSpinner.getSelectedItemPosition()) + ", output: " + 
+                            df.format(formattedOutput) + " " + toTokenSymbol);
                     }
                 }
             } else {
@@ -645,27 +663,41 @@ public class SwapTokensMainFragment extends Fragment {
         String fromTokenSymbol = tokenSymbols.get(fromTokenSpinner.getSelectedItemPosition());
         String toTokenSymbol = tokenSymbols.get(toTokenSpinner.getSelectedItemPosition());
         
+        Log.d(TAG, "Starting swap simulation: " + inputAmount + " " + fromTokenSymbol + " -> " + toTokenSymbol);
+        
         // Get token info for from token
         Tokens.TokenInfo fromTokenInfo = Tokens.getToken(fromTokenSymbol);
         if (fromTokenInfo == null) {
+            Log.e(TAG, "From token not supported: " + fromTokenSymbol);
             Toast.makeText(getContext(), "Token not supported", Toast.LENGTH_SHORT).show();
             isSimulatingSwap = false;
             updateSwapButton();
             return;
         }
         
-        // Build swap simulation query
+        // Build swap simulation query to match React web app format
+        Tokens.TokenInfo toTokenInfo = Tokens.getToken(toTokenSymbol);
+        if (toTokenInfo == null) {
+            Toast.makeText(getContext(), "To token not supported", Toast.LENGTH_SHORT).show();
+            isSimulatingSwap = false;
+            updateSwapButton();
+            return;
+        }
+        
         String queryJson = String.format(
-            "{\"simulate_swap_exact_in\": {\"token_in\": \"%s\", \"token_out\": \"%s\", \"amount_in\": \"%s\"}}",
+            "{\"simulate_swap\": {\"input_token\": \"%s\", \"amount\": \"%s\", \"output_token\": \"%s\"}}",
             fromTokenInfo.contract,
-            toTokenSymbol.equals("SCRT") ? "uscrt" : Tokens.getToken(toTokenSymbol).contract,
-            String.valueOf((long)(inputAmount * Math.pow(10, fromTokenInfo.decimals)))
+            String.valueOf((long)(inputAmount * Math.pow(10, fromTokenInfo.decimals))),
+            toTokenInfo.contract
         );
         
+        Log.d(TAG, "Swap simulation query: " + queryJson);
+        Log.d(TAG, "Exchange contract: " + Constants.EXCHANGE_CONTRACT);
+        
         Intent intent = new Intent(getContext(), SecretQueryActivity.class);
-        intent.putExtra("contractAddress", "secret1ja0hcwvy76grqkpgv2s42h5swh0uu4xeupj3h8"); // DEX contract
-        intent.putExtra("queryJson", queryJson);
-        intent.putExtra("requestType", "SWAP_SIMULATION");
+        intent.putExtra(SecretQueryActivity.EXTRA_CONTRACT_ADDRESS, Constants.EXCHANGE_CONTRACT);
+        intent.putExtra(SecretQueryActivity.EXTRA_CODE_HASH, Constants.EXCHANGE_HASH);
+        intent.putExtra(SecretQueryActivity.EXTRA_QUERY_JSON, queryJson);
         
         startActivityForResult(intent, REQUEST_SWAP_SIMULATION);
     }
@@ -682,31 +714,41 @@ public class SwapTokensMainFragment extends Fragment {
             return;
         }
         
-        String queryJson;
-        String contractAddress;
-        
         if ("SCRT".equals(tokenSymbol)) {
-            // Native SCRT balance query - use bank module
-            queryJson = "{\"balance\":{}}";
-            contractAddress = "bank";
+            // Native SCRT balance query - use existing SecretQueryActivity for bank module
+            String queryJson = "{\"balance\":{}}";
+            Intent intent = new Intent(getContext(), SecretQueryActivity.class);
+            intent.putExtra("contractAddress", "bank");
+            intent.putExtra("queryJson", queryJson);
+            intent.putExtra("requestType", "TOKEN_BALANCE");
+            intent.putExtra("tokenSymbol", tokenSymbol);
+            intent.putExtra("isFromToken", isFromToken);
+            startActivityForResult(intent, REQUEST_TOKEN_BALANCE);
         } else {
-            // SNIP-20 token balance query
-            queryJson = String.format(
-                "{\"balance\": {\"address\": \"%s\", \"key\": \"%s\"}}",
-                currentWalletAddress,
-                getViewingKeyForToken(tokenSymbol)
-            );
-            contractAddress = tokenInfo.contract;
+            // SNIP-20 token balance query using new SnipQueryActivity
+            String viewingKey = getViewingKeyForToken(tokenSymbol);
+            if (TextUtils.isEmpty(viewingKey)) {
+                // No viewing key available - set balance to error state
+                if (isFromToken) {
+                    fromBalance = -1;
+                    updateFromBalanceDisplay();
+                } else {
+                    toBalance = -1;
+                    updateToBalanceDisplay();
+                }
+                return;
+            }
+            
+            Intent intent = new Intent(getContext(), SnipQueryActivity.class);
+            intent.putExtra(SnipQueryActivity.EXTRA_TOKEN_SYMBOL, tokenSymbol);
+            intent.putExtra(SnipQueryActivity.EXTRA_QUERY_TYPE, SnipQueryActivity.QUERY_TYPE_BALANCE);
+            intent.putExtra(SnipQueryActivity.EXTRA_WALLET_ADDRESS, currentWalletAddress);
+            intent.putExtra(SnipQueryActivity.EXTRA_VIEWING_KEY, viewingKey);
+            intent.putExtra("isFromToken", isFromToken);
+            intent.putExtra("tokenSymbol", tokenSymbol);
+            
+            startActivityForResult(intent, REQ_SNIP_BALANCE_QUERY);
         }
-        
-        Intent intent = new Intent(getContext(), SecretQueryActivity.class);
-        intent.putExtra("contractAddress", contractAddress);
-        intent.putExtra("queryJson", queryJson);
-        intent.putExtra("requestType", "TOKEN_BALANCE");
-        intent.putExtra("tokenSymbol", tokenSymbol);
-        intent.putExtra("isFromToken", isFromToken);
-        
-        startActivityForResult(intent, REQUEST_TOKEN_BALANCE);
     }
     
     private void updateBalanceDisplay() {
@@ -757,9 +799,9 @@ public class SwapTokensMainFragment extends Fragment {
         );
         
         Intent intent = new Intent(getContext(), SecretExecuteActivity.class);
-        intent.putExtra("contractAddress", "secret1ja0hcwvy76grqkpgv2s42h5swh0uu4xeupj3h8"); // DEX contract
-        intent.putExtra("executeMsg", executeMsg);
-        intent.putExtra("requestType", "SWAP_EXECUTION");
+        intent.putExtra(SecretExecuteActivity.EXTRA_CONTRACT_ADDRESS, Constants.EXCHANGE_CONTRACT);
+        intent.putExtra(SecretExecuteActivity.EXTRA_CODE_HASH, Constants.EXCHANGE_HASH);
+        intent.putExtra(SecretExecuteActivity.EXTRA_EXECUTE_JSON, executeMsg);
         
         startActivityForResult(intent, REQUEST_SWAP_EXECUTION);
     }
@@ -784,6 +826,11 @@ public class SwapTokensMainFragment extends Fragment {
     private String getViewingKeyForToken(String tokenSymbol) {
         // Get viewing key for the token from secure storage
         try {
+            Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenSymbol);
+            if (tokenInfo == null) {
+                return "";
+            }
+            
             String masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC);
             SharedPreferences securePrefs = EncryptedSharedPreferences.create(
                     "secret_wallet_prefs",
@@ -792,7 +839,9 @@ public class SwapTokensMainFragment extends Fragment {
                     EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                     EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             );
-            return securePrefs.getString("vk_" + tokenSymbol, "");
+            
+            // Use consistent key format with TokenBalancesFragment
+            return securePrefs.getString("viewing_key_" + currentWalletAddress + "_" + tokenInfo.contract, "");
         } catch (Exception e) {
             Log.e(TAG, "Failed to get viewing key for " + tokenSymbol, e);
             return "";
@@ -855,6 +904,108 @@ public class SwapTokensMainFragment extends Fragment {
                 toBalance = -1;
             }
             updateBalanceDisplay();
+        }
+    }
+    
+    private void handleSnipBalanceQueryResult(Intent data, String json) {
+        try {
+            boolean isFromToken = data.getBooleanExtra("isFromToken", false);
+            String tokenSymbol = data.getStringExtra(SnipQueryActivity.EXTRA_TOKEN_SYMBOL);
+            
+            // Fallback to old key format for compatibility
+            if (TextUtils.isEmpty(tokenSymbol)) {
+                tokenSymbol = data.getStringExtra("tokenSymbol");
+            }
+            
+            Log.d(TAG, "handleSnipBalanceQueryResult - tokenSymbol: " + tokenSymbol + ", isFromToken: " + isFromToken);
+            
+            if (TextUtils.isEmpty(json)) {
+                Log.e(TAG, "SNIP balance query result JSON is empty");
+                if (isFromToken) {
+                    fromBalance = -1;
+                    updateFromBalanceDisplay();
+                } else {
+                    toBalance = -1;
+                    updateToBalanceDisplay();
+                }
+                return;
+            }
+            
+            JSONObject root = new JSONObject(json);
+            boolean success = root.optBoolean("success", false);
+            
+            if (success) {
+                JSONObject result = root.optJSONObject("result");
+                if (result != null) {
+                    JSONObject balance = result.optJSONObject("balance");
+                    if (balance != null) {
+                        String amount = balance.optString("amount", "0");
+                        Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenSymbol);
+                        if (tokenInfo != null) {
+                            double balanceValue = Double.parseDouble(amount) / Math.pow(10, tokenInfo.decimals);
+                            
+                            if (isFromToken) {
+                                fromBalance = balanceValue;
+                                Log.d(TAG, "Setting fromBalance for " + tokenSymbol + ": " + balanceValue);
+                                updateFromBalanceDisplay();
+                            } else {
+                                toBalance = balanceValue;
+                                Log.d(TAG, "Setting toBalance for " + tokenSymbol + ": " + balanceValue);
+                                updateToBalanceDisplay();
+                            }
+                            
+                            Log.d(TAG, "Successfully parsed SNIP balance for " + tokenSymbol + ": " + balanceValue);
+                        } else {
+                            Log.e(TAG, "Token info not found for: " + tokenSymbol);
+                            if (isFromToken) {
+                                fromBalance = -1;
+                                updateFromBalanceDisplay();
+                            } else {
+                                toBalance = -1;
+                                updateToBalanceDisplay();
+                            }
+                        }
+                    } else {
+                        Log.e(TAG, "Balance object not found in SNIP query result");
+                        if (isFromToken) {
+                            fromBalance = -1;
+                            updateFromBalanceDisplay();
+                        } else {
+                            toBalance = -1;
+                            updateToBalanceDisplay();
+                        }
+                    }
+                } else {
+                    Log.e(TAG, "Result object not found in SNIP query response");
+                    if (isFromToken) {
+                        fromBalance = -1;
+                        updateFromBalanceDisplay();
+                    } else {
+                        toBalance = -1;
+                        updateToBalanceDisplay();
+                    }
+                }
+            } else {
+                String error = root.optString("error", "Unknown error");
+                Log.e(TAG, "SNIP balance query failed: " + error);
+                if (isFromToken) {
+                    fromBalance = -1;
+                    updateFromBalanceDisplay();
+                } else {
+                    toBalance = -1;
+                    updateToBalanceDisplay();
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to parse SNIP balance query result", e);
+            boolean isFromToken = data.getBooleanExtra("isFromToken", false);
+            if (isFromToken) {
+                fromBalance = -1;
+                updateFromBalanceDisplay();
+            } else {
+                toBalance = -1;
+                updateToBalanceDisplay();
+            }
         }
     }
 }

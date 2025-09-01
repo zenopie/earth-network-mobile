@@ -26,6 +26,7 @@ import androidx.security.crypto.MasterKeys;
 
 import com.example.earthwallet.R;
 import com.example.earthwallet.bridge.activities.SecretQueryActivity;
+import com.example.earthwallet.bridge.activities.SnipQueryActivity;
 import com.example.earthwallet.wallet.constants.Tokens;
 
 import org.json.JSONArray;
