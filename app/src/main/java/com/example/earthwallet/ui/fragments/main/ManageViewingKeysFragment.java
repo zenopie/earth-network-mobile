@@ -1,17 +1,21 @@
 package com.example.earthwallet.ui.fragments.main;
 
+import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Bundle;
 import android.text.TextUtils;
+import android.util.Base64;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -24,8 +28,12 @@ import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
 
 import com.example.earthwallet.R;
+import com.example.earthwallet.bridge.activities.SecretExecuteActivity;
 import com.example.earthwallet.wallet.constants.Tokens;
 
+import org.json.JSONObject;
+
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -41,6 +49,7 @@ public class ManageViewingKeysFragment extends Fragment {
     
     private static final String TAG = "ManageViewingKeysFragment";
     private static final String PREF_FILE = "secret_wallet_prefs";
+    private static final int REQ_SET_VIEWING_KEY = 2003;
     
     // UI Components
     private LinearLayout viewingKeysContainer;
@@ -49,11 +58,14 @@ public class ManageViewingKeysFragment extends Fragment {
     // State management
     private SharedPreferences securePrefs;
     private String walletAddress = "";
+    private Tokens.TokenInfo pendingViewingKeyToken = null;
+    private String pendingViewingKey = null;
     
     // Interface for communication with parent
     public interface ManageViewingKeysListener {
         String getCurrentWalletAddress();
         void onViewingKeyRemoved(Tokens.TokenInfo token);
+        void onViewingKeyRequested(Tokens.TokenInfo token);
     }
     
     private ManageViewingKeysListener listener;
@@ -99,12 +111,18 @@ public class ManageViewingKeysFragment extends Fragment {
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
         
-        // Get wallet address
-        if (listener != null) {
+        // Get wallet address from arguments first
+        Bundle args = getArguments();
+        if (args != null) {
+            walletAddress = args.getString("wallet_address", "");
+        }
+        
+        // Fallback to listener if available
+        if (TextUtils.isEmpty(walletAddress) && listener != null) {
             walletAddress = listener.getCurrentWalletAddress();
         }
         
-        // If we don't have a listener, try to get wallet address directly
+        // If we still don't have a wallet address, try to get it directly
         if (TextUtils.isEmpty(walletAddress)) {
             walletAddress = getCurrentWalletAddressDirect();
         }
@@ -116,7 +134,7 @@ public class ManageViewingKeysFragment extends Fragment {
     }
     
     /**
-     * Load all viewing keys for the current wallet and display them
+     * Load all tokens and display them with their viewing key status
      */
     private void loadViewingKeys() {
         if (TextUtils.isEmpty(walletAddress)) {
@@ -127,14 +145,14 @@ public class ManageViewingKeysFragment extends Fragment {
         
         viewingKeysContainer.removeAllViews();
         
-        List<TokenViewingKeyInfo> viewingKeys = getStoredViewingKeys();
+        List<TokenViewingKeyInfo> allTokens = getAllTokensWithViewingKeyStatus();
         
-        if (viewingKeys.isEmpty()) {
+        if (allTokens.isEmpty()) {
             showEmptyState();
         } else {
             hideEmptyState();
-            for (TokenViewingKeyInfo keyInfo : viewingKeys) {
-                addViewingKeyItem(keyInfo);
+            for (TokenViewingKeyInfo tokenInfo : allTokens) {
+                addTokenItem(tokenInfo);
             }
         }
     }
@@ -164,13 +182,13 @@ public class ManageViewingKeysFragment extends Fragment {
     }
 
     /**
-     * Get all stored viewing keys for the current wallet
+     * Get all tokens with their viewing key status
      */
-    private List<TokenViewingKeyInfo> getStoredViewingKeys() {
-        List<TokenViewingKeyInfo> viewingKeys = new ArrayList<>();
+    private List<TokenViewingKeyInfo> getAllTokensWithViewingKeyStatus() {
+        List<TokenViewingKeyInfo> allTokens = new ArrayList<>();
         
         try {
-            Log.d(TAG, "Looking for viewing keys with wallet address: " + walletAddress);
+            Log.d(TAG, "Loading all tokens with viewing key status, wallet address: " + walletAddress);
             
             // Check each token to see if it has a viewing key
             for (String symbol : Tokens.ALL_TOKENS.keySet()) {
@@ -180,35 +198,33 @@ public class ManageViewingKeysFragment extends Fragment {
                     Log.d(TAG, "Token " + symbol + " (" + token.contract + ") viewing key: " + 
                         (TextUtils.isEmpty(viewingKey) ? "NONE" : viewingKey.length() + " chars"));
                     
-                    if (!TextUtils.isEmpty(viewingKey)) {
-                        TokenViewingKeyInfo keyInfo = new TokenViewingKeyInfo();
-                        keyInfo.token = token;
-                        keyInfo.viewingKey = viewingKey;
-                        viewingKeys.add(keyInfo);
-                        Log.d(TAG, "Added viewing key for " + symbol);
-                    }
+                    TokenViewingKeyInfo tokenInfo = new TokenViewingKeyInfo();
+                    tokenInfo.token = token;
+                    tokenInfo.viewingKey = viewingKey; // Can be null/empty
+                    allTokens.add(tokenInfo);
+                    Log.d(TAG, "Added token " + symbol + " (has viewing key: " + !TextUtils.isEmpty(viewingKey) + ")");
                 }
             }
             
-            Log.d(TAG, "Found " + viewingKeys.size() + " viewing keys total");
+            Log.d(TAG, "Loaded " + allTokens.size() + " tokens total");
         } catch (Exception e) {
-            Log.e(TAG, "Failed to load viewing keys", e);
+            Log.e(TAG, "Failed to load tokens", e);
         }
         
-        return viewingKeys;
+        return allTokens;
     }
     
     /**
-     * Add a viewing key item to the UI
+     * Add a token item to the UI (with or without viewing key)
      */
-    private void addViewingKeyItem(TokenViewingKeyInfo keyInfo) {
+    private void addTokenItem(TokenViewingKeyInfo tokenInfo) {
         try {
-            // Create a row for each viewing key
-            LinearLayout keyRow = new LinearLayout(getContext());
-            keyRow.setOrientation(LinearLayout.HORIZONTAL);
-            keyRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
-            keyRow.setPadding(16, 16, 16, 16);
-            keyRow.setBackground(getResources().getDrawable(R.drawable.card_rounded_bg));
+            // Create a row for each token
+            LinearLayout tokenRow = new LinearLayout(getContext());
+            tokenRow.setOrientation(LinearLayout.HORIZONTAL);
+            tokenRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            tokenRow.setPadding(16, 16, 16, 16);
+            tokenRow.setBackground(getResources().getDrawable(R.drawable.card_rounded_bg));
             
             // Add margin between rows
             LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
@@ -216,10 +232,10 @@ public class ManageViewingKeysFragment extends Fragment {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             );
             rowParams.setMargins(0, 0, 0, 16);
-            keyRow.setLayoutParams(rowParams);
+            tokenRow.setLayoutParams(rowParams);
             
             // Token logo
-            if (!TextUtils.isEmpty(keyInfo.token.logo)) {
+            if (!TextUtils.isEmpty(tokenInfo.token.logo)) {
                 ImageView logoView = new ImageView(getContext());
                 LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(
                     dpToPx(32), dpToPx(32)
@@ -230,11 +246,11 @@ public class ManageViewingKeysFragment extends Fragment {
                 
                 // Load logo from assets
                 try {
-                    Bitmap bitmap = BitmapFactory.decodeStream(getContext().getAssets().open(keyInfo.token.logo));
+                    Bitmap bitmap = BitmapFactory.decodeStream(getContext().getAssets().open(tokenInfo.token.logo));
                     logoView.setImageBitmap(bitmap);
-                    keyRow.addView(logoView);
+                    tokenRow.addView(logoView);
                 } catch (Exception e) {
-                    Log.w(TAG, "Failed to load logo for " + keyInfo.token.symbol + ": " + keyInfo.token.logo, e);
+                    Log.w(TAG, "Failed to load logo for " + tokenInfo.token.symbol + ": " + tokenInfo.token.logo, e);
                 }
             }
             
@@ -248,55 +264,69 @@ public class ManageViewingKeysFragment extends Fragment {
             
             // Token symbol
             TextView symbolText = new TextView(getContext());
-            symbolText.setText(keyInfo.token.symbol);
+            symbolText.setText(tokenInfo.token.symbol);
             symbolText.setTextSize(16);
             symbolText.setTextColor(android.graphics.Color.parseColor("#1e3a8a"));
             symbolText.setTypeface(null, android.graphics.Typeface.BOLD);
             tokenInfoContainer.addView(symbolText);
             
-            // Viewing key (truncated)
-            TextView keyText = new TextView(getContext());
-            String truncatedKey = keyInfo.viewingKey.length() > 20 ? 
-                keyInfo.viewingKey.substring(0, 20) + "..." : keyInfo.viewingKey;
-            keyText.setText("Key: " + truncatedKey);
-            keyText.setTextSize(12);
-            keyText.setTextColor(getResources().getColor(R.color.wallet_row_address));
-            tokenInfoContainer.addView(keyText);
+            // Status text (viewing key status or truncated key)
+            TextView statusText = new TextView(getContext());
+            if (TextUtils.isEmpty(tokenInfo.viewingKey)) {
+                statusText.setText("No viewing key set");
+                statusText.setTextColor(getResources().getColor(R.color.wallet_row_address));
+            } else {
+                String truncatedKey = tokenInfo.viewingKey.length() > 20 ? 
+                    tokenInfo.viewingKey.substring(0, 20) + "..." : tokenInfo.viewingKey;
+                statusText.setText("Key: " + truncatedKey);
+                statusText.setTextColor(getResources().getColor(R.color.wallet_row_address));
+            }
+            statusText.setTextSize(12);
+            tokenInfoContainer.addView(statusText);
             
-            keyRow.addView(tokenInfoContainer);
+            tokenRow.addView(tokenInfoContainer);
             
-            // Remove button
-            Button removeButton = new Button(getContext());
-            removeButton.setText("Remove");
-            removeButton.setTextSize(12);
-            
-            // Create rounded red background
-            android.graphics.drawable.GradientDrawable background = new android.graphics.drawable.GradientDrawable();
-            background.setColor(android.graphics.Color.parseColor("#f44336"));
-            background.setCornerRadius(8 * getResources().getDisplayMetrics().density);
-            removeButton.setBackground(background);
-            
-            removeButton.setTextColor(getResources().getColor(android.R.color.white));
-            removeButton.setPadding(16, 8, 16, 8);
-            removeButton.setMinWidth(0);
-            removeButton.setMinHeight(0);
-            removeButton.setElevation(0f);
-            removeButton.setStateListAnimator(null);
+            // Action button (Get or Remove)
+            Button actionButton = new Button(getContext());
+            actionButton.setTextSize(12);
+            actionButton.setPadding(16, 8, 16, 8);
+            actionButton.setMinWidth(0);
+            actionButton.setMinHeight(0);
+            actionButton.setElevation(0f);
+            actionButton.setStateListAnimator(null);
             
             LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             );
-            removeButton.setLayoutParams(buttonParams);
+            actionButton.setLayoutParams(buttonParams);
             
-            removeButton.setOnClickListener(v -> showRemoveConfirmationDialog(keyInfo));
+            if (TextUtils.isEmpty(tokenInfo.viewingKey)) {
+                // No viewing key - show "Get" button
+                actionButton.setText("Get");
+                android.graphics.drawable.GradientDrawable getBackground = new android.graphics.drawable.GradientDrawable();
+                getBackground.setColor(android.graphics.Color.parseColor("#4caf50"));
+                getBackground.setCornerRadius(8 * getResources().getDisplayMetrics().density);
+                actionButton.setBackground(getBackground);
+                actionButton.setTextColor(getResources().getColor(android.R.color.white));
+                actionButton.setOnClickListener(v -> requestViewingKey(tokenInfo.token));
+            } else {
+                // Has viewing key - show "Remove" button
+                actionButton.setText("Remove");
+                android.graphics.drawable.GradientDrawable removeBackground = new android.graphics.drawable.GradientDrawable();
+                removeBackground.setColor(android.graphics.Color.parseColor("#f44336"));
+                removeBackground.setCornerRadius(8 * getResources().getDisplayMetrics().density);
+                actionButton.setBackground(removeBackground);
+                actionButton.setTextColor(getResources().getColor(android.R.color.white));
+                actionButton.setOnClickListener(v -> showRemoveConfirmationDialog(tokenInfo));
+            }
             
-            keyRow.addView(removeButton);
+            tokenRow.addView(actionButton);
             
-            viewingKeysContainer.addView(keyRow);
+            viewingKeysContainer.addView(tokenRow);
             
         } catch (Exception e) {
-            Log.e(TAG, "Failed to add viewing key item for " + keyInfo.token.symbol, e);
+            Log.e(TAG, "Failed to add token item for " + tokenInfo.token.symbol, e);
         }
     }
     
@@ -390,6 +420,210 @@ public class ManageViewingKeysFragment extends Fragment {
         if (!newAddress.equals(walletAddress)) {
             walletAddress = newAddress;
             loadViewingKeys();
+        }
+    }
+    
+    /**
+     * Request viewing key generation for a token
+     */
+    private void requestViewingKey(Tokens.TokenInfo token) {
+        Log.i(TAG, "Requesting viewing key for " + token.symbol);
+        
+        // Check if viewing key already exists
+        String existingKey = getViewingKey(token.contract);
+        if (!TextUtils.isEmpty(existingKey)) {
+            showViewingKeyManagementDialog(token);
+        } else {
+            showAutoViewingKeyDialog(token);
+        }
+    }
+    
+    private void showAutoViewingKeyDialog(Tokens.TokenInfo token) {
+        new AlertDialog.Builder(getContext())
+            .setTitle("Set Viewing Key for " + token.symbol)
+            .setMessage("A viewing key is required to see your " + token.symbol + " balance. Would you like to:")
+            .setPositiveButton("Generate Random Key", (dialog, which) -> {
+                generateViewingKey(token);
+            })
+            .setNeutralButton("Enter Custom Key", (dialog, which) -> {
+                showSetViewingKeyDialog(token);
+            })
+            .setNegativeButton("Learn More", (dialog, which) -> {
+                showViewingKeyHelpDialog(token);
+            })
+            .setCancelable(true)
+            .show();
+    }
+    
+    private void showSetViewingKeyDialog(Tokens.TokenInfo token) {
+        View dialogView = LayoutInflater.from(getContext()).inflate(R.layout.dialog_set_viewing_key, null);
+        EditText keyInput = dialogView.findViewById(R.id.viewing_key_input);
+        
+        new AlertDialog.Builder(getContext())
+            .setTitle("Set Viewing Key for " + token.symbol)
+            .setView(dialogView)
+            .setPositiveButton("Set Key", (dialog, which) -> {
+                String customKey = keyInput.getText().toString().trim();
+                if (!TextUtils.isEmpty(customKey)) {
+                    executeSetViewingKeyTransaction(token, customKey);
+                } else {
+                    Toast.makeText(getContext(), "Please enter a viewing key", Toast.LENGTH_SHORT).show();
+                }
+            })
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+    
+    private void showViewingKeyHelpDialog(Tokens.TokenInfo token) {
+        String helpText = "Viewing keys allow you to see your token balance while keeping transactions private.\n\n" +
+                "• Generated keys are random and secure\n" +
+                "• Custom keys let you use existing keys from other wallets\n" +
+                "• Keys are stored securely on your device\n" +
+                "• You can change or regenerate keys anytime";
+        
+        new AlertDialog.Builder(getContext())
+            .setTitle("About Viewing Keys")
+            .setMessage(helpText)
+            .setPositiveButton("Generate Key", (dialog, which) -> {
+                generateViewingKey(token);
+            })
+            .setNeutralButton("Enter Custom", (dialog, which) -> {
+                showSetViewingKeyDialog(token);
+            })
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+    
+    private void showViewingKeyManagementDialog(Tokens.TokenInfo token) {
+        String currentKey = getViewingKey(token.contract);
+        String message = "Current viewing key: " + 
+            (currentKey.length() > 20 ? currentKey.substring(0, 20) + "..." : currentKey) +
+            "\n\nWhat would you like to do?";
+        
+        new AlertDialog.Builder(getContext())
+            .setTitle("Manage Viewing Key - " + token.symbol)
+            .setMessage(message)
+            .setPositiveButton("Regenerate", (dialog, which) -> {
+                new AlertDialog.Builder(getContext())
+                    .setTitle("Regenerate Viewing Key?")
+                    .setMessage("This will generate a new viewing key and update it on the blockchain. Continue?")
+                    .setPositiveButton("Yes", (d, w) -> generateViewingKey(token))
+                    .setNegativeButton("No", null)
+                    .show();
+            })
+            .setNeutralButton("Set Custom", (dialog, which) -> {
+                showSetViewingKeyDialog(token);
+            })
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+    
+    private void generateViewingKey(Tokens.TokenInfo token) {
+        try {
+            Log.d(TAG, "Starting viewing key generation for " + token.symbol);
+            
+            // Generate random viewing key (matches Secret Network standard)
+            SecureRandom random = new SecureRandom();
+            byte[] keyBytes = new byte[32];
+            random.nextBytes(keyBytes);
+            String viewingKey = "api_key_" + Base64.encodeToString(keyBytes, Base64.NO_WRAP);
+            
+            Log.i(TAG, "Generated random viewing key for contract: " + token.contract);
+            executeSetViewingKeyTransaction(token, viewingKey);
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to generate viewing key for " + token.symbol, e);
+            Toast.makeText(getContext(), "Failed to generate viewing key: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+    
+    private void executeSetViewingKeyTransaction(Tokens.TokenInfo token, String viewingKey) {
+        try {
+            // Store pending state for result handling
+            pendingViewingKeyToken = token;
+            pendingViewingKey = viewingKey;
+            
+            // Create set_viewing_key message for SNIP-20 contract
+            JSONObject setViewingKeyMsg = new JSONObject();
+            JSONObject msgContent = new JSONObject();
+            msgContent.put("key", viewingKey);
+            setViewingKeyMsg.put("set_viewing_key", msgContent);
+            
+            // Launch SecretExecuteActivity to set viewing key on blockchain
+            Intent intent = new Intent(getContext(), SecretExecuteActivity.class);
+            intent.putExtra(SecretExecuteActivity.EXTRA_CONTRACT_ADDRESS, token.contract);
+            intent.putExtra(SecretExecuteActivity.EXTRA_CODE_HASH, token.hash);
+            intent.putExtra(SecretExecuteActivity.EXTRA_EXECUTE_JSON, setViewingKeyMsg.toString());
+            intent.putExtra(SecretExecuteActivity.EXTRA_MEMO, "Set viewing key for " + token.symbol);
+            startActivityForResult(intent, REQ_SET_VIEWING_KEY);
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to execute set viewing key transaction", e);
+            Toast.makeText(getContext(), "Failed to create transaction: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            
+            // Clear pending state on error
+            pendingViewingKeyToken = null;
+            pendingViewingKey = null;
+        }
+    }
+    
+    @Override
+    public void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        
+        if (requestCode == REQ_SET_VIEWING_KEY) {
+            if (resultCode == Activity.RESULT_OK) {
+                // Transaction succeeded - use the stored pending values
+                if (pendingViewingKeyToken != null && !TextUtils.isEmpty(pendingViewingKey)) {
+                    try {
+                        Log.d(TAG, "Processing viewing key success for " + pendingViewingKeyToken.symbol);
+                        
+                        // Save the viewing key locally
+                        setViewingKey(pendingViewingKeyToken.contract, pendingViewingKey);
+                        Toast.makeText(getContext(), "Viewing key set successfully for " + pendingViewingKeyToken.symbol + "!", Toast.LENGTH_SHORT).show();
+                        
+                        // Refresh the display
+                        loadViewingKeys();
+                        
+                        Log.i(TAG, "Successfully set viewing key for " + pendingViewingKeyToken.symbol);
+                    } catch (Exception e) {
+                        Log.e(TAG, "Failed to handle set viewing key result", e);
+                        Toast.makeText(getContext(), "Failed to process viewing key result", Toast.LENGTH_SHORT).show();
+                    }
+                } else {
+                    Log.w(TAG, "Transaction succeeded but no pending viewing key info");
+                    Toast.makeText(getContext(), "Viewing key transaction completed", Toast.LENGTH_SHORT).show();
+                }
+            } else {
+                // Transaction failed
+                String error = (data != null) ? data.getStringExtra(SecretExecuteActivity.EXTRA_ERROR) : "Transaction failed";
+                Toast.makeText(getContext(), "Failed to set viewing key: " + error, Toast.LENGTH_SHORT).show();
+                Log.e(TAG, "Set viewing key transaction failed: " + error);
+            }
+            
+            // Clear pending state
+            pendingViewingKeyToken = null;
+            pendingViewingKey = null;
+        }
+    }
+    
+    private void setViewingKey(String contractAddress, String viewingKey) {
+        if (TextUtils.isEmpty(walletAddress)) {
+            Log.e(TAG, "Cannot set viewing key: no wallet address available");
+            return;
+        }
+        
+        // Store both the viewing key and the token symbol for later matching
+        String tokenSymbol = null;
+        if (pendingViewingKeyToken != null && contractAddress.equals(pendingViewingKeyToken.contract)) {
+            tokenSymbol = pendingViewingKeyToken.symbol;
+        }
+        
+        securePrefs.edit().putString("viewing_key_" + walletAddress + "_" + contractAddress, viewingKey).apply();
+        
+        // Also store the token symbol for this viewing key
+        if (!TextUtils.isEmpty(tokenSymbol)) {
+            securePrefs.edit().putString("viewing_key_symbol_" + walletAddress + "_" + contractAddress, tokenSymbol).apply();
         }
     }
     

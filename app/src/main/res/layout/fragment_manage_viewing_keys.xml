@@ -35,7 +35,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Manage viewing keys for your SNIP-20 tokens. Removing a viewing key will hide the token balance until you set it again."
+            android:text="Manage viewing keys for your SNIP-20 tokens. Set viewing keys to see token balances or remove them to hide balances."
             android:textSize="14sp"
             android:textColor="@color/wallet_row_address"
             android:layout_marginBottom="20dp"
@@ -48,12 +48,12 @@
             android:layout_height="wrap_content"
             android:orientation="vertical" />
 
-        <!-- Empty state message -->
+        <!-- Empty state message (hidden since we always show all tokens) -->
         <TextView
             android:id="@+id/empty_state_message"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="No viewing keys found. Set viewing keys from the token balances screen to see your SNIP-20 token balances."
+            android:text="No tokens available."
             android:textSize="16sp"
             android:textColor="@color/wallet_row_address"
             android:layout_marginTop="40dp"

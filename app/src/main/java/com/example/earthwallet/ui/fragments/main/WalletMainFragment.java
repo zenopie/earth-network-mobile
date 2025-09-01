@@ -266,9 +266,9 @@ public class WalletMainFragment extends Fragment
     public void onViewingKeyRemoved(Tokens.TokenInfo token) {
         Log.d(TAG, "Viewing key removed for " + token.symbol + ", updating token balance");
         
-        // Update token balance fragment to show "Get Viewing Key" button
+        // Update token balance fragment to refresh (will hide tokens without viewing keys)
         if (tokenBalancesFragment != null) {
-            tokenBalancesFragment.updateTokenBalance(token, null);
+            tokenBalancesFragment.refreshTokenBalances();
         }
     }
     
@@ -357,6 +357,11 @@ public class WalletMainFragment extends Fragment
         // Use the HostActivity's navigation system to show manage viewing keys as a full-screen fragment
         if (getActivity() instanceof com.example.earthwallet.ui.activities.HostActivity) {
             ManageViewingKeysFragment manageViewingKeysFragment = new ManageViewingKeysFragment();
+            
+            // Create a bundle to pass the current wallet address
+            Bundle args = new Bundle();
+            args.putString("wallet_address", currentWalletAddress);
+            manageViewingKeysFragment.setArguments(args);
             
             try {
                 FragmentTransaction transaction = requireActivity().getSupportFragmentManager().beginTransaction();
