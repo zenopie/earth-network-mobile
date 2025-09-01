@@ -42,9 +42,9 @@
             android:orientation="vertical">
 
 
-            <!-- Swap Tokens action -->
+            <!-- ANML Claim action -->
             <Button
-                android:id="@+id/btn_swap_tokens"
+                android:id="@+id/btn_anml_claim"
                 android:layout_width="match_parent"
                 android:layout_height="56dp"
                 android:layout_marginTop="8dp"
@@ -52,7 +52,7 @@
                 android:paddingLeft="16dp"
                 android:paddingRight="16dp"
                 android:backgroundTint="@color/sidebar_bg"
-                android:text="Swap Tokens"
+                android:text="ANML Claim"
                 android:textColor="@color/sidebar_text"
                 android:textAllCaps="false"
                 android:textSize="18sp"
@@ -67,9 +67,9 @@
                 android:layout_marginBottom="12dp"
                 android:background="@color/sidebar_divider" />
 
-            <!-- ANML Claim action -->
+            <!-- Swap Tokens action -->
             <Button
-                android:id="@+id/btn_anml_claim"
+                android:id="@+id/btn_swap_tokens"
                 android:layout_width="match_parent"
                 android:layout_height="56dp"
                 android:layout_marginTop="8dp"
@@ -77,7 +77,7 @@
                 android:paddingLeft="16dp"
                 android:paddingRight="16dp"
                 android:backgroundTint="@color/sidebar_bg"
-                android:text="ANML Claim"
+                android:text="Swap Tokens"
                 android:textColor="@color/sidebar_text"
                 android:textAllCaps="false"
                 android:textSize="18sp"

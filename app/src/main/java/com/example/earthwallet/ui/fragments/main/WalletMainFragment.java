@@ -298,6 +298,7 @@ public class WalletMainFragment extends Fragment
         // Use the HostActivity's navigation system to show wallet list as a full-screen fragment
         if (getActivity() instanceof com.example.earthwallet.ui.activities.HostActivity) {
             WalletListFragment walletListFragment = new WalletListFragment();
+            walletListFragment.setWalletListListener(this); // Set the listener so add wallet button works
             
             try {
                 FragmentTransaction transaction = requireActivity().getSupportFragmentManager().beginTransaction();
@@ -312,12 +313,22 @@ public class WalletMainFragment extends Fragment
     }
     
     private void showCreateWalletFragment() {
-        CreateWalletFragment createWalletFragment = new CreateWalletFragment();
+        Log.d(TAG, "showCreateWalletFragment called");
         
-        FragmentTransaction transaction = getChildFragmentManager().beginTransaction();
-        transaction.replace(R.id.wallet_activity_content, createWalletFragment);
-        transaction.addToBackStack(null);
-        transaction.commit();
+        // Use the same navigation pattern as showWalletListFragment (HostActivity level)
+        if (getActivity() instanceof com.example.earthwallet.ui.activities.HostActivity) {
+            CreateWalletFragment createWalletFragment = new CreateWalletFragment();
+            
+            try {
+                FragmentTransaction transaction = requireActivity().getSupportFragmentManager().beginTransaction();
+                transaction.replace(R.id.host_content, createWalletFragment, "create_wallet");
+                transaction.addToBackStack("create_wallet");
+                transaction.commit();
+                Log.d(TAG, "CreateWalletFragment shown as full-screen using HostActivity fragment manager");
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to show CreateWalletFragment via HostActivity", e);
+            }
+        }
     }
     
     // =============================================================================
