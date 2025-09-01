@@ -95,15 +95,18 @@
                             <Button
                                 android:id="@+id/from_viewing_key_button"
                                 android:layout_width="wrap_content"
-                                android:layout_height="32dp"
+                                android:layout_height="24dp"
                                 android:layout_marginStart="8dp"
                                 android:background="@drawable/card_rounded_bg"
                                 android:minWidth="0dp"
                                 android:minHeight="0dp"
-                                android:padding="8dp"
+                                android:paddingLeft="8dp"
+                                android:paddingRight="8dp"
+                                android:paddingTop="2dp"
+                                android:paddingBottom="2dp"
                                 android:text="Get Viewing Key"
                                 android:textColor="@color/brand_blue"
-                                android:textSize="12sp"
+                                android:textSize="11sp"
                                 android:visibility="gone" />
 
                         </LinearLayout>
@@ -224,15 +227,18 @@
                             <Button
                                 android:id="@+id/to_viewing_key_button"
                                 android:layout_width="wrap_content"
-                                android:layout_height="32dp"
+                                android:layout_height="24dp"
                                 android:layout_marginStart="8dp"
                                 android:background="@drawable/card_rounded_bg"
                                 android:minWidth="0dp"
                                 android:minHeight="0dp"
-                                android:padding="8dp"
+                                android:paddingLeft="8dp"
+                                android:paddingRight="8dp"
+                                android:paddingTop="2dp"
+                                android:paddingBottom="2dp"
                                 android:text="Get Viewing Key"
                                 android:textColor="@color/brand_blue"
-                                android:textSize="12sp"
+                                android:textSize="11sp"
                                 android:visibility="gone" />
 
                         </LinearLayout>

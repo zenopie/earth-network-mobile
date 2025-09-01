@@ -386,12 +386,34 @@ public class TokenBalancesFragment extends Fragment {
                 // No viewing key - show "Get Viewing Key" button
                 Button getViewingKeyBtn = new Button(getContext());
                 getViewingKeyBtn.setText("Get Viewing Key");
-                getViewingKeyBtn.setTextSize(12);
-                getViewingKeyBtn.setBackgroundColor(android.graphics.Color.parseColor("#4caf50"));
+                getViewingKeyBtn.setTextSize(11);
+                
+                // Create rounded green background programmatically
+                android.graphics.drawable.GradientDrawable background = new android.graphics.drawable.GradientDrawable();
+                background.setColor(android.graphics.Color.parseColor("#4caf50"));
+                background.setCornerRadius(12 * getResources().getDisplayMetrics().density); // 12dp corner radius
+                getViewingKeyBtn.setBackground(background);
+                
+                // Remove button shadow/elevation
+                getViewingKeyBtn.setElevation(0f);
+                getViewingKeyBtn.setStateListAnimator(null);
+                
                 getViewingKeyBtn.setTextColor(getResources().getColor(android.R.color.white));
-                getViewingKeyBtn.setPadding(16, 8, 16, 8);
+                getViewingKeyBtn.setPadding(16, 4, 16, 4);  // Reduced vertical padding
                 getViewingKeyBtn.setMinWidth(0);
                 getViewingKeyBtn.setMinHeight(0);
+                
+                // Set smaller height with top and bottom margins to prevent cutoff
+                LinearLayout.LayoutParams layoutParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, 
+                    (int) (24 * getResources().getDisplayMetrics().density)  // 24dp height
+                );
+                layoutParams.setMargins(0, 
+                    (int) (4 * getResources().getDisplayMetrics().density), // 4dp top margin
+                    0, 
+                    (int) (4 * getResources().getDisplayMetrics().density)  // 4dp bottom margin
+                );
+                getViewingKeyBtn.setLayoutParams(layoutParams);
                 
                 getViewingKeyBtn.setOnClickListener(v -> {
                     if (listener != null) {
