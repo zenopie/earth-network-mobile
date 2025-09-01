@@ -29,6 +29,25 @@
             android:layout_height="wrap_content"
             android:orientation="vertical" />
 
+        <!-- Manage Viewing Keys Button -->
+        <Button
+            android:id="@+id/manage_viewing_keys_button"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Manage Keys"
+            android:textSize="10sp"
+            android:textColor="@android:color/white"
+            android:background="@drawable/card_rounded_bg"
+            android:backgroundTint="#1e3a8a"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="4dp"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:elevation="0dp"
+            android:stateListAnimator="@null"
+            android:layout_gravity="center"
+            android:layout_marginTop="16dp" />
+
     </LinearLayout>
 
 </ScrollView>

@@ -46,7 +46,8 @@ public class WalletMainFragment extends Fragment
                CreateWalletFragment.CreateWalletListener,
                WalletDisplayFragment.WalletDisplayListener,
                TokenBalancesFragment.TokenBalancesListener,
-               ViewingKeyManagerFragment.ViewingKeyManagerListener {
+               ViewingKeyManagerFragment.ViewingKeyManagerListener,
+               ManageViewingKeysFragment.ManageViewingKeysListener {
     
     private static final String TAG = "WalletMainFragment";
     private static final String PREF_FILE = "secret_wallet_prefs";
@@ -233,6 +234,11 @@ public class WalletMainFragment extends Fragment
     }
     
     @Override
+    public void onManageViewingKeysRequested() {
+        showManageViewingKeysFragment();
+    }
+    
+    @Override
     public SharedPreferences getSecurePrefs() {
         return securePrefs;
     }
@@ -249,6 +255,20 @@ public class WalletMainFragment extends Fragment
         if (tokenBalancesFragment != null) {
             tokenBalancesFragment.updateTokenBalance(token, "Loading...");
             tokenBalancesFragment.querySingleToken(token);
+        }
+    }
+    
+    // =============================================================================
+    // ManageViewingKeysFragment.ManageViewingKeysListener Implementation
+    // =============================================================================
+    
+    @Override
+    public void onViewingKeyRemoved(Tokens.TokenInfo token) {
+        Log.d(TAG, "Viewing key removed for " + token.symbol + ", updating token balance");
+        
+        // Update token balance fragment to show "Get Viewing Key" button
+        if (tokenBalancesFragment != null) {
+            tokenBalancesFragment.updateTokenBalance(token, null);
         }
     }
     
@@ -327,6 +347,25 @@ public class WalletMainFragment extends Fragment
                 Log.d(TAG, "CreateWalletFragment shown as full-screen using HostActivity fragment manager");
             } catch (Exception e) {
                 Log.e(TAG, "Failed to show CreateWalletFragment via HostActivity", e);
+            }
+        }
+    }
+    
+    private void showManageViewingKeysFragment() {
+        Log.d(TAG, "showManageViewingKeysFragment called");
+        
+        // Use the HostActivity's navigation system to show manage viewing keys as a full-screen fragment
+        if (getActivity() instanceof com.example.earthwallet.ui.activities.HostActivity) {
+            ManageViewingKeysFragment manageViewingKeysFragment = new ManageViewingKeysFragment();
+            
+            try {
+                FragmentTransaction transaction = requireActivity().getSupportFragmentManager().beginTransaction();
+                transaction.replace(R.id.host_content, manageViewingKeysFragment, "manage_viewing_keys");
+                transaction.addToBackStack("manage_viewing_keys");
+                transaction.commit();
+                Log.d(TAG, "ManageViewingKeysFragment shown as full-screen using HostActivity fragment manager");
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to show ManageViewingKeysFragment via HostActivity", e);
             }
         }
     }

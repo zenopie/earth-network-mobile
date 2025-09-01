@@ -60,6 +60,7 @@ public class TokenBalancesFragment extends Fragment {
     // Interface for communication with parent
     public interface TokenBalancesListener {
         void onViewingKeyRequested(Tokens.TokenInfo token);
+        void onManageViewingKeysRequested();
         String getCurrentWalletAddress();
         SharedPreferences getSecurePrefs();
     }
@@ -101,6 +102,16 @@ public class TokenBalancesFragment extends Fragment {
         View view = inflater.inflate(R.layout.fragment_token_balances, container, false);
         
         tokenBalancesContainer = view.findViewById(R.id.tokenBalancesContainer);
+        
+        // Set up manage viewing keys button
+        Button manageViewingKeysButton = view.findViewById(R.id.manage_viewing_keys_button);
+        if (manageViewingKeysButton != null) {
+            manageViewingKeysButton.setOnClickListener(v -> {
+                if (listener != null) {
+                    listener.onManageViewingKeysRequested();
+                }
+            });
+        }
         
         return view;
     }

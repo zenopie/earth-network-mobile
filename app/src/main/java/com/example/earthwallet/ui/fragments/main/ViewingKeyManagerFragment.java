@@ -345,6 +345,37 @@ public class ViewingKeyManagerFragment extends Fragment {
         return getViewingKey(contractAddress);
     }
     
+    /**
+     * Public method to remove viewing key for a token
+     */
+    public boolean removeViewingKey(Tokens.TokenInfo token) {
+        try {
+            if (TextUtils.isEmpty(walletAddress)) {
+                walletAddress = listener != null ? listener.getCurrentWalletAddress() : "";
+            }
+            if (TextUtils.isEmpty(walletAddress)) {
+                Log.e(TAG, "Cannot remove viewing key: no wallet address available");
+                return false;
+            }
+            
+            // Remove viewing key from secure preferences
+            String viewingKeyPref = "viewing_key_" + walletAddress + "_" + token.contract;
+            String symbolKeyPref = "viewing_key_symbol_" + walletAddress + "_" + token.contract;
+            
+            securePrefs.edit()
+                .remove(viewingKeyPref)
+                .remove(symbolKeyPref)
+                .apply();
+            
+            Log.i(TAG, "Successfully removed viewing key for " + token.symbol);
+            return true;
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to remove viewing key for " + token.symbol, e);
+            return false;
+        }
+    }
+    
     @Override
     public void onDetach() {
         super.onDetach();
