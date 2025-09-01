@@ -5,6 +5,8 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.AsyncTask;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.Editable;
 import android.text.TextUtils;
 import android.text.TextWatcher;
@@ -35,6 +37,7 @@ import com.example.earthwallet.bridge.activities.SecretQueryActivity;
 import com.example.earthwallet.bridge.activities.SecretExecuteActivity;
 import com.example.earthwallet.bridge.activities.SnipQueryActivity;
 import com.example.earthwallet.bridge.activities.SnipExecuteActivity;
+import com.example.earthwallet.bridge.services.SecretQueryService;
 import com.example.earthwallet.wallet.constants.Tokens;
 
 import org.json.JSONArray;
@@ -89,6 +92,8 @@ public class SwapTokensMainFragment extends Fragment {
     private double slippage = 1.0;
     private boolean isSimulatingSwap = false;
     private boolean detailsVisible = false;
+    private Handler inputHandler = new Handler(Looper.getMainLooper());
+    private Runnable simulationRunnable;
     
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
@@ -203,6 +208,7 @@ public class SwapTokensMainFragment extends Fragment {
     }
     
     private void setupClickListeners() {
+        // Add delayed simulation TextWatcher to prevent clearing and keyboard dismissal
         fromAmountInput.addTextChangedListener(new TextWatcher() {
             @Override
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
@@ -210,7 +216,14 @@ public class SwapTokensMainFragment extends Fragment {
             public void onTextChanged(CharSequence s, int start, int before, int count) {}
             @Override
             public void afterTextChanged(Editable s) {
-                onFromAmountChanged();
+                // Cancel previous simulation if still pending
+                if (simulationRunnable != null) {
+                    inputHandler.removeCallbacks(simulationRunnable);
+                }
+                
+                // Schedule new simulation with delay
+                simulationRunnable = () -> onFromAmountChangedDelayed();
+                inputHandler.postDelayed(simulationRunnable, 500); // 500ms delay - no keyboard dismissal with direct service
             }
         });
         
@@ -241,7 +254,7 @@ public class SwapTokensMainFragment extends Fragment {
         fetchBalances();
     }
     
-    private void onFromAmountChanged() {
+    private void onFromAmountChangedDelayed() {
         String amountStr = fromAmountInput.getText().toString();
         if (TextUtils.isEmpty(amountStr)) {
             toAmountInput.setText("");
@@ -588,6 +601,8 @@ public class SwapTokensMainFragment extends Fragment {
                     if (toTokenInfo != null) {
                         double formattedOutput = Double.parseDouble(outputAmount) / Math.pow(10, toTokenInfo.decimals);
                         DecimalFormat df = new DecimalFormat("#.######");
+                        
+                        // Update output amount without requesting focus to avoid dismissing keyboard
                         toAmountInput.setText(df.format(formattedOutput));
                         updateDetailsDisplay();
                         
@@ -716,12 +731,48 @@ public class SwapTokensMainFragment extends Fragment {
         Log.d(TAG, "Swap simulation query: " + queryJson);
         Log.d(TAG, "Exchange contract: " + Constants.EXCHANGE_CONTRACT);
         
-        Intent intent = new Intent(getContext(), SecretQueryActivity.class);
-        intent.putExtra(SecretQueryActivity.EXTRA_CONTRACT_ADDRESS, Constants.EXCHANGE_CONTRACT);
-        intent.putExtra(SecretQueryActivity.EXTRA_CODE_HASH, Constants.EXCHANGE_HASH);
-        intent.putExtra(SecretQueryActivity.EXTRA_QUERY_JSON, queryJson);
-        
-        startActivityForResult(intent, REQUEST_SWAP_SIMULATION);
+        // Use SecretQueryService directly in background thread to avoid Activity transition
+        new Thread(() -> {
+            try {
+                String mnemonic = getSelectedMnemonic();
+                if (TextUtils.isEmpty(mnemonic)) {
+                    getActivity().runOnUiThread(() -> {
+                        Toast.makeText(getContext(), "No wallet found", Toast.LENGTH_SHORT).show();
+                        isSimulatingSwap = false;
+                        updateSwapButton();
+                    });
+                    return;
+                }
+                
+                JSONObject queryObj = new JSONObject(queryJson);
+                SecretQueryService queryService = new SecretQueryService();
+                JSONObject result = queryService.queryContract(
+                    com.example.earthwallet.wallet.services.SecretWallet.DEFAULT_LCD_URL,
+                    Constants.EXCHANGE_CONTRACT,
+                    Constants.EXCHANGE_HASH,
+                    queryObj,
+                    mnemonic
+                );
+                
+                // Format result to match expected format
+                JSONObject response = new JSONObject();
+                response.put("success", true);
+                response.put("result", result);
+                
+                // Handle result on UI thread
+                getActivity().runOnUiThread(() -> {
+                    handleSwapSimulationResult(response.toString());
+                });
+                
+            } catch (Exception e) {
+                Log.e(TAG, "Swap simulation failed", e);
+                getActivity().runOnUiThread(() -> {
+                    Toast.makeText(getContext(), "Swap simulation failed: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                    isSimulatingSwap = false;
+                    updateSwapButton();
+                });
+            }
+        }).start();
     }
     
     private void fetchTokenBalanceWithContract(String tokenSymbol, boolean isFromToken) {
@@ -1047,6 +1098,28 @@ public class SwapTokensMainFragment extends Fragment {
                 toBalance = -1;
                 updateToBalanceDisplay();
             }
+        }
+    }
+    
+    private String getSelectedMnemonic() {
+        try {
+            String walletsJson = securePrefs.getString("wallets", "[]");
+            JSONArray arr = new JSONArray(walletsJson);
+            int selectedIndex = securePrefs.getInt("selected_wallet_index", -1);
+            
+            if (arr.length() > 0) {
+                if (selectedIndex >= 0 && selectedIndex < arr.length()) {
+                    return arr.getJSONObject(selectedIndex).optString("mnemonic", "");
+                } else {
+                    // Default to first wallet if invalid selection
+                    return arr.getJSONObject(0).optString("mnemonic", "");
+                }
+            }
+            
+            return null;
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to get mnemonic from multi-wallet system", e);
+            return null;
         }
     }
 }
