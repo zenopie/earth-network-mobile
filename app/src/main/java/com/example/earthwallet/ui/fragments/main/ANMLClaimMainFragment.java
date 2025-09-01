@@ -26,6 +26,7 @@ import androidx.security.crypto.MasterKeys;
 
 import com.example.earthwallet.wallet.services.SecretWallet;
 import com.example.earthwallet.Constants;
+import com.example.earthwallet.bridge.services.SecretQueryService;
 import com.example.earthwallet.ui.fragments.ANMLRegisterFragment;
 import com.example.earthwallet.ui.fragments.ANMLClaimFragment;
 import com.example.earthwallet.ui.fragments.ANMLCompleteFragment;
@@ -254,11 +255,51 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
             inner.put("address", address);
             q.put("query_registration_status", inner);
 
-            Intent qi = new Intent(getContext(), com.example.earthwallet.bridge.activities.SecretQueryActivity.class);
-            qi.putExtra(com.example.earthwallet.bridge.activities.SecretQueryActivity.EXTRA_CONTRACT_ADDRESS, Constants.REGISTRATION_CONTRACT);
-            qi.putExtra(com.example.earthwallet.bridge.activities.SecretQueryActivity.EXTRA_CODE_HASH, Constants.REGISTRATION_HASH);
-            qi.putExtra(com.example.earthwallet.bridge.activities.SecretQueryActivity.EXTRA_QUERY_JSON, q.toString());
-            startActivityForResult(qi, REQ_QUERY);
+            // Use SecretQueryService directly in background thread
+            final String finalMnemonic = mnemonic;
+            new Thread(() -> {
+                try {
+                    if (TextUtils.isEmpty(finalMnemonic)) {
+                        getActivity().runOnUiThread(() -> {
+                            showLoading(false);
+                            if (errorText != null) {
+                                errorText.setText("No wallet found");
+                                errorText.setVisibility(View.VISIBLE);
+                            }
+                        });
+                        return;
+                    }
+                    
+                    SecretQueryService queryService = new SecretQueryService();
+                    JSONObject result = queryService.queryContract(
+                        SecretWallet.DEFAULT_LCD_URL,
+                        Constants.REGISTRATION_CONTRACT,
+                        Constants.REGISTRATION_HASH,
+                        q,
+                        finalMnemonic
+                    );
+                    
+                    // Format result to match expected format
+                    JSONObject response = new JSONObject();
+                    response.put("success", true);
+                    response.put("result", result);
+                    
+                    // Handle result on UI thread
+                    getActivity().runOnUiThread(() -> {
+                        handleRegistrationQueryResult(response.toString());
+                    });
+                    
+                } catch (Exception e) {
+                    Log.e(TAG, "Registration status query failed", e);
+                    getActivity().runOnUiThread(() -> {
+                        showLoading(false);
+                        if (errorText != null) {
+                            errorText.setText("Failed to check status: " + e.getMessage());
+                            errorText.setVisibility(View.VISIBLE);
+                        }
+                    });
+                }
+            }).start();
         } catch (Exception e) {
             Log.e(TAG, "checkStatus failed", e);
             showLoading(false);
@@ -269,99 +310,90 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
         }
     }
 
-    @Override
-    @SuppressWarnings("deprecation")
-    public void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQ_QUERY) {
-            showLoading(false);
-            boolean wasSuppressed = suppressNextQueryDialog;
-            suppressNextQueryDialog = false;
-            if (resultCode != getActivity().RESULT_OK) {
-                String err = (data != null) ? data.getStringExtra(com.example.earthwallet.bridge.activities.SecretQueryActivity.EXTRA_ERROR) : "Query canceled";
+    private void handleRegistrationQueryResult(String json) {
+        showLoading(false);
+        boolean wasSuppressed = suppressNextQueryDialog;
+        suppressNextQueryDialog = false;
+        
+        try {
+            if (TextUtils.isEmpty(json)) {
                 if (errorText != null) {
-                    errorText.setText("Failed to check status: " + err);
+                    errorText.setText("No response from bridge.");
                     errorText.setVisibility(View.VISIBLE);
                 }
-                if (!wasSuppressed) { try { showAlert("Query error", err); } catch (Exception ignored) {} }
                 return;
             }
-            try {
-                String json = (data != null) ? data.getStringExtra(com.example.earthwallet.bridge.activities.SecretQueryActivity.EXTRA_RESULT_JSON) : null;
-                if (TextUtils.isEmpty(json)) {
-                    if (errorText != null) {
-                        errorText.setText("No response from bridge.");
-                        errorText.setVisibility(View.VISIBLE);
-                    }
-                    return;
+            
+            JSONObject root = new JSONObject(json);
+            boolean success = root.optBoolean("success", false);
+            if (!success) {
+                if (errorText != null) {
+                    errorText.setText("Bridge returned error.");
+                    errorText.setVisibility(View.VISIBLE);
                 }
-                JSONObject root = new JSONObject(json);
-                boolean success = root.optBoolean("success", false);
-                if (!success) {
-                    if (errorText != null) {
-                        errorText.setText("Bridge returned error.");
-                        errorText.setVisibility(View.VISIBLE);
-                    }
-                    return;
-                }
-                JSONObject result = root.optJSONObject("result");
-                if (result == null) {
-                    result = root;
-                }
+                return;
+            }
+            JSONObject result = root.optJSONObject("result");
+            if (result == null) {
+                result = root;
+            }
 
-                if ("no_wallet".equals(result.optString("status", ""))) {
-                    showRegisterFragment();
-                    return;
-                }
+            if ("no_wallet".equals(result.optString("status", ""))) {
+                showRegisterFragment();
+                return;
+            }
 
-                boolean registered = result.optBoolean("registration_status", false);
-                if (!registered) {
-                    showRegisterFragment();
-                    return;
-                }
+            boolean registered = result.optBoolean("registration_status", false);
+            if (!registered) {
+                showRegisterFragment();
+                return;
+            }
 
-                long lastClaim = result.optLong("last_claim", 0L);
-                long nextClaimMillis = (lastClaim / 1000000L) + ONE_DAY_MILLIS;
-                long now = System.currentTimeMillis();
-                if (now > nextClaimMillis) {
-                    showClaimFragment();
+            long lastClaim = result.optLong("last_claim", 0L);
+            long nextClaimMillis = (lastClaim / 1000000L) + ONE_DAY_MILLIS;
+            long now = System.currentTimeMillis();
+            if (now > nextClaimMillis) {
+                showClaimFragment();
+            } else {
+                showCompleteFragment();
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to parse bridge result", e);
+            if (errorText != null) {
+                errorText.setText("Invalid result from bridge.");
+                errorText.setVisibility(View.VISIBLE);
+            }
+        }
+    }
+    
+    private String getSelectedMnemonic() {
+        try {
+            String masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC);
+            SharedPreferences securePrefs = EncryptedSharedPreferences.create(
+                    PREF_FILE,
+                    masterKeyAlias,
+                    getContext(),
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            );
+            
+            String walletsJson = securePrefs.getString("wallets", "[]");
+            org.json.JSONArray arr = new org.json.JSONArray(walletsJson);
+            int selectedIndex = securePrefs.getInt("selected_wallet_index", -1);
+            
+            if (arr.length() > 0) {
+                if (selectedIndex >= 0 && selectedIndex < arr.length()) {
+                    return arr.getJSONObject(selectedIndex).optString("mnemonic", "");
                 } else {
-                    showCompleteFragment();
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "Failed to parse bridge result", e);
-                if (errorText != null) {
-                    errorText.setText("Invalid result from bridge.");
-                    errorText.setVisibility(View.VISIBLE);
+                    // Default to first wallet if invalid selection
+                    return arr.getJSONObject(0).optString("mnemonic", "");
                 }
             }
-        } else if (requestCode == REQ_EXECUTE) {
-            showLoading(false);
-            if (resultCode != getActivity().RESULT_OK) {
-                String err = (data != null) ? data.getStringExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_ERROR) : "Execution canceled";
-                if (errorText != null) {
-                    errorText.setText("Claim failed: " + err);
-                    errorText.setVisibility(View.VISIBLE);
-                }
-                try { showAlert("Execute error", err); } catch (Exception ignored) {}
-                return;
-            }
-            try {
-                String json = (data != null) ? data.getStringExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_RESULT_JSON) : null;
-                String txhash = null;
-                if (!TextUtils.isEmpty(json)) {
-                    JSONObject root = new JSONObject(json);
-                    txhash = root.optString("txhash", null);
-                }
-                Toast.makeText(getContext(), txhash != null ? "Claim submitted: " + txhash : "Claim submitted", Toast.LENGTH_LONG).show();
-                suppressNextQueryDialog = true;
-                // Refresh status to update UI after claim
-                checkStatus();
-            } catch (Exception e) {
-                Log.e(TAG, "Failed to parse execute result", e);
-                Toast.makeText(getContext(), "Claim submitted", Toast.LENGTH_LONG).show();
-                checkStatus();
-            }
+            
+            return null;
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to get mnemonic from multi-wallet system", e);
+            return null;
         }
     }
 }

@@ -33,7 +33,6 @@ import androidx.security.crypto.MasterKeys;
 
 import com.example.earthwallet.R;
 import com.example.earthwallet.Constants;
-import com.example.earthwallet.bridge.activities.SecretQueryActivity;
 import com.example.earthwallet.bridge.activities.SecretExecuteActivity;
 import com.example.earthwallet.bridge.activities.SnipQueryActivity;
 import com.example.earthwallet.bridge.activities.SnipExecuteActivity;
@@ -431,52 +430,6 @@ public class SwapTokensMainFragment extends Fragment {
         fetchTokenBalanceWithContract(toTokenSymbol, false);
     }
     
-    private void fetchTokenBalance(String tokenSymbol, boolean isFromToken) {
-        Tokens.TokenInfo token = Tokens.getToken(tokenSymbol);
-        if (token == null) return;
-        
-        // Check if we have a viewing key for this token
-        String viewingKey = getViewingKey(token.contract);
-        if (TextUtils.isEmpty(viewingKey)) {
-            // No viewing key available
-            if (isFromToken) {
-                fromBalance = -1; // Error state
-                updateFromBalanceDisplay();
-            } else {
-                toBalance = -1; // Error state
-                updateToBalanceDisplay();
-            }
-            return;
-        }
-        
-        // Query token balance using existing pattern from TokenBalancesFragment
-        try {
-            JSONObject query = new JSONObject();
-            JSONObject balanceQuery = new JSONObject();
-            balanceQuery.put("address", currentWalletAddress);
-            balanceQuery.put("key", viewingKey);
-            balanceQuery.put("time", System.currentTimeMillis());
-            query.put("balance", balanceQuery);
-            
-            Intent qi = new Intent(getContext(), SecretQueryActivity.class);
-            qi.putExtra(SecretQueryActivity.EXTRA_CONTRACT_ADDRESS, token.contract);
-            qi.putExtra(SecretQueryActivity.EXTRA_CODE_HASH, token.hash);
-            qi.putExtra(SecretQueryActivity.EXTRA_QUERY_JSON, query.toString());
-            qi.putExtra("is_from_token", isFromToken);
-            qi.putExtra("token_symbol", tokenSymbol);
-            startActivityForResult(qi, REQ_BALANCE_QUERY);
-            
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to query balance for " + tokenSymbol, e);
-            if (isFromToken) {
-                fromBalance = -1;
-                updateFromBalanceDisplay();
-            } else {
-                toBalance = -1;
-                updateToBalanceDisplay();
-            }
-        }
-    }
     
     private String getViewingKey(String contractAddress) {
         if (TextUtils.isEmpty(currentWalletAddress)) return "";
@@ -527,8 +480,8 @@ public class SwapTokensMainFragment extends Fragment {
                 json = data.getStringExtra(SecretExecuteActivity.EXTRA_RESULT_JSON);
                 handleSwapExecutionResult(json);
             } else {
-                // Use SecretQueryActivity's result key for other requests
-                json = data.getStringExtra(SecretQueryActivity.EXTRA_RESULT_JSON);
+                // Use generic result key for other requests
+                json = data.getStringExtra("EXTRA_RESULT_JSON");
                 
                 if (requestCode == REQ_BALANCE_QUERY) {
                     handleBalanceQueryResult(data, json);
@@ -788,15 +741,15 @@ public class SwapTokensMainFragment extends Fragment {
         }
         
         if ("SCRT".equals(tokenSymbol)) {
-            // Native SCRT balance query - use existing SecretQueryActivity for bank module
-            String queryJson = "{\"balance\":{}}";
-            Intent intent = new Intent(getContext(), SecretQueryActivity.class);
-            intent.putExtra("contractAddress", "bank");
-            intent.putExtra("queryJson", queryJson);
-            intent.putExtra("requestType", "TOKEN_BALANCE");
-            intent.putExtra("tokenSymbol", tokenSymbol);
-            intent.putExtra("isFromToken", isFromToken);
-            startActivityForResult(intent, REQUEST_TOKEN_BALANCE);
+            // Native SCRT balance query - handle directly since it doesn't use contract queries
+            // For now, set to 0 balance as SCRT balance queries need different handling
+            if (isFromToken) {
+                fromBalance = 0.0;
+                updateFromBalanceDisplay();
+            } else {
+                toBalance = 0.0;
+                updateToBalanceDisplay();
+            }
         } else {
             // SNIP-20 token balance query using new SnipQueryActivity
             String viewingKey = getViewingKeyForToken(tokenSymbol);

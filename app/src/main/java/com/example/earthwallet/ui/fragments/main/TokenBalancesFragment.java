@@ -25,8 +25,8 @@ import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
 
 import com.example.earthwallet.R;
-import com.example.earthwallet.bridge.activities.SecretQueryActivity;
 import com.example.earthwallet.bridge.activities.SnipQueryActivity;
+import com.example.earthwallet.bridge.services.SecretQueryService;
 import com.example.earthwallet.wallet.constants.Tokens;
 
 import org.json.JSONArray;
@@ -219,12 +219,51 @@ public class TokenBalancesFragment extends Fragment {
             Log.d(TAG, "Contract: " + token.contract);
             Log.d(TAG, "Hash: " + token.hash);
             
-            // Launch query using SecretQueryActivity
-            Intent qi = new Intent(getContext(), SecretQueryActivity.class);
-            qi.putExtra(SecretQueryActivity.EXTRA_CONTRACT_ADDRESS, token.contract);
-            qi.putExtra(SecretQueryActivity.EXTRA_CODE_HASH, token.hash);
-            qi.putExtra(SecretQueryActivity.EXTRA_QUERY_JSON, query.toString());
-            startActivityForResult(qi, REQ_TOKEN_BALANCE);
+            // Use SecretQueryService directly in background thread
+            new Thread(() -> {
+                try {
+                    String mnemonic = getSelectedMnemonic();
+                    if (TextUtils.isEmpty(mnemonic)) {
+                        getActivity().runOnUiThread(() -> {
+                            Log.e(TAG, "No wallet found for token balance query");
+                            addTokenBalanceView(token, "Error", false);
+                            isQueryingToken = false;
+                            currentlyQueryingToken = null;
+                            processNextTokenQuery();
+                        });
+                        return;
+                    }
+                    
+                    JSONObject queryObj = new JSONObject(query.toString());
+                    SecretQueryService queryService = new SecretQueryService();
+                    JSONObject result = queryService.queryContract(
+                        com.example.earthwallet.wallet.services.SecretWallet.DEFAULT_LCD_URL,
+                        token.contract,
+                        token.hash,
+                        queryObj,
+                        mnemonic
+                    );
+                    
+                    // Format result to match expected format
+                    JSONObject response = new JSONObject();
+                    response.put("success", true);
+                    response.put("result", result);
+                    
+                    // Handle result on UI thread
+                    getActivity().runOnUiThread(() -> {
+                        handleTokenBalanceResult(response.toString());
+                    });
+                    
+                } catch (Exception e) {
+                    Log.e(TAG, "Token balance query failed for " + token.symbol, e);
+                    getActivity().runOnUiThread(() -> {
+                        addTokenBalanceView(token, "Error", false);
+                        isQueryingToken = false;
+                        currentlyQueryingToken = null;
+                        processNextTokenQuery();
+                    });
+                }
+            }).start();
             
         } catch (Exception e) {
             Log.e(TAG, "Failed to query token balance for " + token.symbol, e);
@@ -237,61 +276,78 @@ public class TokenBalancesFragment extends Fragment {
         }
     }
     
-    @Override
-    public void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        
-        if (requestCode == REQ_TOKEN_BALANCE) {
-            if (resultCode == Activity.RESULT_OK && data != null) {
-                try {
-                    String json = data.getStringExtra(SecretQueryActivity.EXTRA_RESULT_JSON);
+    private void handleTokenBalanceResult(String json) {
+        try {
+            // Use the currently querying token instead of trying to parse from result
+            if (currentlyQueryingToken != null) {
+                Log.d(TAG, "Token balance query result for " + currentlyQueryingToken.symbol + ": " + json);
+                
+                if (!TextUtils.isEmpty(json)) {
+                    JSONObject root = new JSONObject(json);
+                    boolean success = root.optBoolean("success", false);
                     
-                    // Use the currently querying token instead of trying to parse from result
-                    if (currentlyQueryingToken != null) {
-                        Log.d(TAG, "Token balance query result for " + currentlyQueryingToken.symbol + ": " + json);
-                        
-                        if (!TextUtils.isEmpty(json)) {
-                            JSONObject root = new JSONObject(json);
-                            boolean success = root.optBoolean("success", false);
-                            
-                            if (success) {
-                                JSONObject result = root.optJSONObject("result");
-                                if (result != null) {
-                                    JSONObject balance = result.optJSONObject("balance");
-                                    if (balance != null) {
-                                        String amount = balance.optString("amount", "0");
-                                        String formattedBalance = Tokens.formatTokenAmount(amount, currentlyQueryingToken);
-                                        updateTokenBalanceView(currentlyQueryingToken, formattedBalance);
-                                    } else {
-                                        updateTokenBalanceView(currentlyQueryingToken, "!");
-                                    }
-                                } else {
-                                    updateTokenBalanceView(currentlyQueryingToken, "!");
-                                }
+                    if (success) {
+                        JSONObject result = root.optJSONObject("result");
+                        if (result != null) {
+                            JSONObject balance = result.optJSONObject("balance");
+                            if (balance != null) {
+                                String amount = balance.optString("amount", "0");
+                                String formattedBalance = Tokens.formatTokenAmount(amount, currentlyQueryingToken);
+                                updateTokenBalanceView(currentlyQueryingToken, formattedBalance);
                             } else {
                                 updateTokenBalanceView(currentlyQueryingToken, "!");
                             }
+                        } else {
+                            updateTokenBalanceView(currentlyQueryingToken, "!");
                         }
                     } else {
-                        Log.w(TAG, "No currently querying token, cannot process result");
-                    }
-                } catch (Exception e) {
-                    Log.e(TAG, "Failed to parse token balance result", e);
-                    if (currentlyQueryingToken != null) {
                         updateTokenBalanceView(currentlyQueryingToken, "!");
                     }
                 }
             } else {
-                Log.w(TAG, "Token balance query failed or was cancelled");
-                if (currentlyQueryingToken != null) {
-                    updateTokenBalanceView(currentlyQueryingToken, "!");
+                Log.w(TAG, "No currently querying token, cannot process result");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to parse token balance result", e);
+            if (currentlyQueryingToken != null) {
+                updateTokenBalanceView(currentlyQueryingToken, "!");
+            }
+        }
+        
+        // Mark current query as complete and process next token in queue
+        isQueryingToken = false;
+        currentlyQueryingToken = null;
+        processNextTokenQuery();
+    }
+
+    private String getSelectedMnemonic() {
+        try {
+            String masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC);
+            SharedPreferences securePrefs = EncryptedSharedPreferences.create(
+                    PREF_FILE,
+                    masterKeyAlias,
+                    getContext(),
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            );
+            
+            String walletsJson = securePrefs.getString("wallets", "[]");
+            JSONArray arr = new JSONArray(walletsJson);
+            int selectedIndex = securePrefs.getInt("selected_wallet_index", -1);
+            
+            if (arr.length() > 0) {
+                if (selectedIndex >= 0 && selectedIndex < arr.length()) {
+                    return arr.getJSONObject(selectedIndex).optString("mnemonic", "");
+                } else {
+                    // Default to first wallet if invalid selection
+                    return arr.getJSONObject(0).optString("mnemonic", "");
                 }
             }
             
-            // Mark current query as complete and process next token in queue
-            isQueryingToken = false;
-            currentlyQueryingToken = null;
-            processNextTokenQuery();
+            return null;
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to get mnemonic from multi-wallet system", e);
+            return null;
         }
     }
     
