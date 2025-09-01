@@ -75,6 +75,13 @@
             android:exported="false"
             android:theme="@style/Theme.EarthWallet.NoDisplay"
             android:excludeFromRecents="true" />
+        
+        <!-- SNIP Execute Activity (headless, specialized SNIP-20/SNIP-721 executions using send message) -->
+        <activity
+            android:name=".bridge.activities.SnipExecuteActivity"
+            android:exported="false"
+            android:theme="@style/Theme.EarthWallet.NoDisplay"
+            android:excludeFromRecents="true" />
 
 
     </application>

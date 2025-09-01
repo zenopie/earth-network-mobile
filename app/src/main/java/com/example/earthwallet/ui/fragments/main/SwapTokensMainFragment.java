@@ -34,6 +34,7 @@ import com.example.earthwallet.Constants;
 import com.example.earthwallet.bridge.activities.SecretQueryActivity;
 import com.example.earthwallet.bridge.activities.SecretExecuteActivity;
 import com.example.earthwallet.bridge.activities.SnipQueryActivity;
+import com.example.earthwallet.bridge.activities.SnipExecuteActivity;
 import com.example.earthwallet.wallet.constants.Tokens;
 
 import org.json.JSONArray;
@@ -64,6 +65,7 @@ public class SwapTokensMainFragment extends Fragment {
     private static final int REQUEST_TOKEN_BALANCE = 3005;
     private static final int REQUEST_SWAP_EXECUTION = 3006;
     private static final int REQ_SNIP_BALANCE_QUERY = 3007;
+    private static final int REQ_SNIP_EXECUTE = 3008;
     
     
     // UI Components
@@ -503,6 +505,10 @@ public class SwapTokensMainFragment extends Fragment {
                 // Use SnipQueryActivity's result key
                 json = data.getStringExtra(SnipQueryActivity.EXTRA_RESULT_JSON);
                 handleSnipBalanceQueryResult(data, json);
+            } else if (requestCode == REQ_SNIP_EXECUTE) {
+                // Use SnipExecuteActivity's result key for SNIP execution requests
+                json = data.getStringExtra(SnipExecuteActivity.EXTRA_RESULT_JSON);
+                handleSwapExecutionResult(json);
             } else if (requestCode == REQ_EXECUTE_SWAP || requestCode == REQUEST_SWAP_EXECUTION) {
                 // Use SecretExecuteActivity's result key for execution requests
                 json = data.getStringExtra(SecretExecuteActivity.EXTRA_RESULT_JSON);
@@ -603,15 +609,31 @@ public class SwapTokensMainFragment extends Fragment {
     }
     
     private void handleSwapExecutionResult(String json) {
+        Log.d(TAG, "handleSwapExecutionResult called with JSON: " + json);
+        
         swapButton.setEnabled(true);
         swapButton.setText("Swap");
         
         try {
             JSONObject root = new JSONObject(json);
-            boolean success = root.optBoolean("success", false);
             
-            swapButton.setEnabled(true);
-            swapButton.setText("Swap");
+            // Check for success based on transaction code (0 = success)
+            boolean success = false;
+            if (root.has("tx_response")) {
+                JSONObject txResponse = root.getJSONObject("tx_response");
+                int code = txResponse.optInt("code", -1);
+                success = (code == 0);
+                Log.d(TAG, "Transaction code: " + code + ", success: " + success);
+                
+                if (success) {
+                    String txHash = txResponse.optString("txhash", "");
+                    Log.d(TAG, "Transaction hash: " + txHash);
+                }
+            } else {
+                // Fallback to old success field
+                success = root.optBoolean("success", false);
+                Log.d(TAG, "Using fallback success field: " + success);
+            }
             
             if (success) {
                 Toast.makeText(getContext(), "Swap completed successfully!", Toast.LENGTH_SHORT).show();
@@ -789,21 +811,40 @@ public class SwapTokensMainFragment extends Fragment {
             return;
         }
         
-        // Build swap execution message
-        String executeMsg = String.format(
-            "{\"swap_exact_in\": {\"token_in\": \"%s\", \"token_out\": \"%s\", \"amount_in\": \"%s\", \"min_amount_out\": \"%s\"}}",
-            fromTokenInfo.contract,
-            toTokenSymbol.equals("SCRT") ? "uscrt" : Tokens.getToken(toTokenSymbol).contract,
-            String.valueOf((long)(inputAmount * Math.pow(10, fromTokenInfo.decimals))),
+        // Build swap execution message to match React web app format
+        // Use SNIP execution with "send" message like the React app's snip() function
+        Tokens.TokenInfo toTokenInfo = Tokens.getToken(toTokenSymbol);
+        if (toTokenInfo == null) {
+            Toast.makeText(getContext(), "To token not supported", Toast.LENGTH_SHORT).show();
+            swapButton.setEnabled(true);
+            swapButton.setText("Swap");
+            return;
+        }
+        
+        // Build the message that will be base64 encoded (like snipmsg in React app)
+        String swapMessage = String.format(
+            "{\"swap\": {\"output_token\": \"%s\", \"min_received\": \"%s\"}}",
+            toTokenInfo.contract,
             calculateMinAmountOut(inputAmount)
         );
         
-        Intent intent = new Intent(getContext(), SecretExecuteActivity.class);
-        intent.putExtra(SecretExecuteActivity.EXTRA_CONTRACT_ADDRESS, Constants.EXCHANGE_CONTRACT);
-        intent.putExtra(SecretExecuteActivity.EXTRA_CODE_HASH, Constants.EXCHANGE_HASH);
-        intent.putExtra(SecretExecuteActivity.EXTRA_EXECUTE_JSON, executeMsg);
+        long inputAmountMicro = (long)(inputAmount * Math.pow(10, fromTokenInfo.decimals));
         
-        startActivityForResult(intent, REQUEST_SWAP_EXECUTION);
+        Log.d(TAG, "Starting SNIP swap execution");
+        Log.d(TAG, "From token: " + fromTokenSymbol + " (" + fromTokenInfo.contract + ")");
+        Log.d(TAG, "To exchange: " + Constants.EXCHANGE_CONTRACT);
+        Log.d(TAG, "Amount: " + inputAmountMicro);
+        Log.d(TAG, "Swap message: " + swapMessage);
+        
+        Intent intent = new Intent(getContext(), SnipExecuteActivity.class);
+        intent.putExtra(SnipExecuteActivity.EXTRA_TOKEN_CONTRACT, fromTokenInfo.contract);
+        intent.putExtra(SnipExecuteActivity.EXTRA_TOKEN_HASH, fromTokenInfo.hash);
+        intent.putExtra(SnipExecuteActivity.EXTRA_RECIPIENT, Constants.EXCHANGE_CONTRACT);
+        intent.putExtra(SnipExecuteActivity.EXTRA_RECIPIENT_HASH, Constants.EXCHANGE_HASH);
+        intent.putExtra(SnipExecuteActivity.EXTRA_AMOUNT, String.valueOf(inputAmountMicro));
+        intent.putExtra(SnipExecuteActivity.EXTRA_MESSAGE_JSON, swapMessage);
+        
+        startActivityForResult(intent, REQ_SNIP_EXECUTE);
     }
     
     private String calculateMinAmountOut(double inputAmount) {
