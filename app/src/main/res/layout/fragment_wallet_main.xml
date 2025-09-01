@@ -34,18 +34,18 @@
                     android:textStyle="bold"
                     android:textColor="#1e3a8a"
                     android:layout_gravity="center"
-                    android:layout_marginBottom="12dp"
+                    android:layout_marginBottom="4dp"
                     android:clickable="true"
                     android:focusable="true"
                     android:background="?android:attr/selectableItemBackground"
-                    android:padding="12dp" />
+                    android:padding="8dp" />
 
                 <!-- Wallet Display Fragment Container -->
                 <FrameLayout
                     android:id="@+id/wallet_display_container"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginBottom="16dp" />
+                    android:layout_marginBottom="0dp" />
 
                 <!-- Token Balances Fragment Container -->
                 <FrameLayout
