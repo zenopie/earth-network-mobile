@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.fragments.main;
+package com.example.earthwallet.ui.pages.wallet;
 
 import android.content.ClipData;
 import android.content.ClipboardManager;

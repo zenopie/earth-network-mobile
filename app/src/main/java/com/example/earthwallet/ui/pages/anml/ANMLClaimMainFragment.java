@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.fragments.main;
+package com.example.earthwallet.ui.pages.anml;
 
 import com.example.earthwallet.R;
 
@@ -27,9 +27,9 @@ import androidx.security.crypto.MasterKeys;
 import com.example.earthwallet.wallet.services.SecretWallet;
 import com.example.earthwallet.Constants;
 import com.example.earthwallet.bridge.services.SecretQueryService;
-import com.example.earthwallet.ui.fragments.ANMLRegisterFragment;
-import com.example.earthwallet.ui.fragments.ANMLClaimFragment;
-import com.example.earthwallet.ui.fragments.ANMLCompleteFragment;
+import com.example.earthwallet.ui.pages.anml.ANMLRegisterFragment;
+import com.example.earthwallet.ui.pages.anml.ANMLClaimFragment;
+import com.example.earthwallet.ui.pages.anml.ANMLCompleteFragment;
 
 import org.json.JSONObject;
 
@@ -96,7 +96,7 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
 
     private void initSecurePrefs() {
         // Use centralized secure preferences from HostActivity
-        securePrefs = ((com.example.earthwallet.ui.activities.HostActivity) getActivity()).getSecurePrefs();
+        securePrefs = ((com.example.earthwallet.ui.host.HostActivity) getActivity()).getSecurePrefs();
     }
 
     private void showLoading(boolean loading) {
@@ -183,7 +183,7 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
 
     @Override
     public void onRegisterRequested() {
-        Intent i = new Intent(getContext(), com.example.earthwallet.ui.activities.HostActivity.class);
+        Intent i = new Intent(getContext(), com.example.earthwallet.ui.host.HostActivity.class);
         i.putExtra("fragment_to_show", "scanner");
         startActivity(i);
     }

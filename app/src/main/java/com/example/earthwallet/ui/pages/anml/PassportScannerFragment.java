@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.fragments;
+package com.example.earthwallet.ui.pages.anml;
 
 import com.example.earthwallet.R;
 
@@ -223,16 +223,16 @@ public class PassportScannerFragment extends Fragment implements MRZInputFragmen
         View navWallet = view.findViewById(R.id.btn_nav_wallet);
         if (navWallet != null) {
             navWallet.setOnClickListener(v -> {
-                if (getActivity() instanceof com.example.earthwallet.ui.activities.HostActivity) {
-                    ((com.example.earthwallet.ui.activities.HostActivity) getActivity()).showFragment("wallet");
+                if (getActivity() instanceof com.example.earthwallet.ui.host.HostActivity) {
+                    ((com.example.earthwallet.ui.host.HostActivity) getActivity()).showFragment("wallet");
                 }
             });
         }
         View navActions = view.findViewById(R.id.btn_nav_actions);
         if (navActions != null) {
             navActions.setOnClickListener(v -> {
-                if (getActivity() instanceof com.example.earthwallet.ui.activities.HostActivity) {
-                    ((com.example.earthwallet.ui.activities.HostActivity) getActivity()).showFragment("actions");
+                if (getActivity() instanceof com.example.earthwallet.ui.host.HostActivity) {
+                    ((com.example.earthwallet.ui.host.HostActivity) getActivity()).showFragment("actions");
                 }
             });
         }

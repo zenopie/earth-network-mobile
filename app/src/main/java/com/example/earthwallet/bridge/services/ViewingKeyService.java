@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.fragments.main;
+package com.example.earthwallet.bridge.services;
 
 import android.app.Activity;
 import android.app.AlertDialog;
@@ -30,17 +30,19 @@ import org.json.JSONObject;
 import java.security.SecureRandom;
 
 /**
- * ViewingKeyManagerFragment
+ * ViewingKeyService
  * 
- * Handles all viewing key operations:
+ * Service for handling all viewing key operations:
  * - Generating viewing keys (random or manual)
  * - Setting viewing keys on blockchain
  * - Managing viewing key dialogs
  * - Storing viewing keys securely
+ * 
+ * This is a headless Fragment service with no UI
  */
-public class ViewingKeyManagerFragment extends Fragment {
+public class ViewingKeyService extends Fragment {
     
-    private static final String TAG = "ViewingKeyManagerFragment";
+    private static final String TAG = "ViewingKeyService";
     private static final String PREF_FILE = "secret_wallet_prefs";
     private static final int REQ_SET_VIEWING_KEY = 2002;
     
@@ -51,23 +53,23 @@ public class ViewingKeyManagerFragment extends Fragment {
     private String walletAddress = "";
     
     // Interface for communication with parent
-    public interface ViewingKeyManagerListener {
+    public interface ViewingKeyServiceListener {
         void onViewingKeySet(Tokens.TokenInfo token, String viewingKey);
         String getCurrentWalletAddress();
         SharedPreferences getSecurePrefs();
     }
     
-    private ViewingKeyManagerListener listener;
+    private ViewingKeyServiceListener listener;
     
     @Override
     public void onAttach(@NonNull Context context) {
         super.onAttach(context);
-        if (getParentFragment() instanceof ViewingKeyManagerListener) {
-            listener = (ViewingKeyManagerListener) getParentFragment();
-        } else if (context instanceof ViewingKeyManagerListener) {
-            listener = (ViewingKeyManagerListener) context;
+        if (getParentFragment() instanceof ViewingKeyServiceListener) {
+            listener = (ViewingKeyServiceListener) getParentFragment();
+        } else if (context instanceof ViewingKeyServiceListener) {
+            listener = (ViewingKeyServiceListener) context;
         } else {
-            throw new RuntimeException(context.toString() + " must implement ViewingKeyManagerListener");
+            throw new RuntimeException(context.toString() + " must implement ViewingKeyServiceListener");
         }
     }
     

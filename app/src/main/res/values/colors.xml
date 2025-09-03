@@ -10,8 +10,8 @@
     <color name="desktop_bg">#F1F0EA</color>
     <!-- ANML / desktop-specific colors -->
     <color name="anml_button_text">#293462</color>
-    <!-- Set border color to royal blue -->
-    <color name="anml_button_border">#1e3a8a</color>
+    <!-- Set border color to custom blue -->
+    <color name="anml_button_border">#4056a1</color>
 
     <!-- Wallet row colors -->
     <color name="wallet_row_name">@color/sidebar_text</color>

@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.fragments;
+package com.example.earthwallet.ui.pages.anml;
 
 import com.example.earthwallet.R;
 
@@ -90,8 +90,8 @@ public class MRZInputFragment extends Fragment {
         Button openWallet = view.findViewById(R.id.open_wallet_button);
         if (openWallet != null) {
             openWallet.setOnClickListener(v -> {
-                if (getActivity() instanceof com.example.earthwallet.ui.activities.HostActivity) {
-                    ((com.example.earthwallet.ui.activities.HostActivity) getActivity()).showFragment("wallet");
+                if (getActivity() instanceof com.example.earthwallet.ui.host.HostActivity) {
+                    ((com.example.earthwallet.ui.host.HostActivity) getActivity()).showFragment("wallet");
                 }
             });
         }

@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.fragments.main;
+package com.example.earthwallet.ui.pages.wallet;
 
 import android.content.SharedPreferences;
 import android.os.Bundle;
@@ -18,8 +18,10 @@ import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
 
 import com.example.earthwallet.R;
-import com.example.earthwallet.ui.fragments.CreateWalletFragment;
-import com.example.earthwallet.ui.fragments.WalletListFragment;
+import com.example.earthwallet.ui.pages.wallet.CreateWalletFragment;
+import com.example.earthwallet.ui.pages.wallet.WalletListFragment;
+import com.example.earthwallet.bridge.services.ViewingKeyService;
+import com.example.earthwallet.ui.pages.wallet.ManageViewingKeysFragment;
 import com.example.earthwallet.wallet.constants.Tokens;
 import com.example.earthwallet.wallet.services.SecretWallet;
 
@@ -33,7 +35,7 @@ import org.json.JSONObject;
  * Coordinating fragment that manages child fragments:
  * - WalletDisplayFragment: Wallet info, address, SCRT balance
  * - TokenBalancesFragment: Token balance management
- * - ViewingKeyManagerFragment: Viewing key operations (invisible helper)
+ * - ViewingKeyService: Viewing key operations (invisible helper service)
  * 
  * This fragment handles:
  * - Child fragment lifecycle management
@@ -46,7 +48,7 @@ public class WalletMainFragment extends Fragment
                CreateWalletFragment.CreateWalletListener,
                WalletDisplayFragment.WalletDisplayListener,
                TokenBalancesFragment.TokenBalancesListener,
-               ViewingKeyManagerFragment.ViewingKeyManagerListener,
+               ViewingKeyService.ViewingKeyServiceListener,
                ManageViewingKeysFragment.ManageViewingKeysListener {
     
     private static final String TAG = "WalletMainFragment";
@@ -55,7 +57,7 @@ public class WalletMainFragment extends Fragment
     // Child fragments
     private WalletDisplayFragment walletDisplayFragment;
     private TokenBalancesFragment tokenBalancesFragment;
-    private ViewingKeyManagerFragment viewingKeyManagerFragment;
+    private ViewingKeyService viewingKeyService;
     
     // UI components
     private TextView walletNameText;
@@ -77,7 +79,7 @@ public class WalletMainFragment extends Fragment
         }
         
         // Use centralized secure preferences from HostActivity
-        securePrefs = ((com.example.earthwallet.ui.activities.HostActivity) getActivity()).getSecurePrefs();
+        securePrefs = ((com.example.earthwallet.ui.host.HostActivity) getActivity()).getSecurePrefs();
     }
     
     @Override
@@ -114,13 +116,13 @@ public class WalletMainFragment extends Fragment
         // Create child fragments
         walletDisplayFragment = new WalletDisplayFragment();
         tokenBalancesFragment = new TokenBalancesFragment();
-        viewingKeyManagerFragment = new ViewingKeyManagerFragment();
+        viewingKeyService = new ViewingKeyService();
         
         // Add fragments to their containers
         FragmentTransaction transaction = getChildFragmentManager().beginTransaction();
         transaction.add(R.id.wallet_display_container, walletDisplayFragment);
         transaction.add(R.id.token_balances_container, tokenBalancesFragment);
-        transaction.add(viewingKeyManagerFragment, "viewing_key_manager"); // Invisible helper
+        transaction.add(viewingKeyService, "viewing_key_service"); // Invisible helper service
         transaction.commit();
     }
     
@@ -197,8 +199,8 @@ public class WalletMainFragment extends Fragment
         }
         
         // Update viewing key manager fragment
-        if (viewingKeyManagerFragment != null) {
-            viewingKeyManagerFragment.updateWalletAddress(currentWalletAddress);
+        if (viewingKeyService != null) {
+            viewingKeyService.updateWalletAddress(currentWalletAddress);
         }
     }
     
@@ -218,8 +220,8 @@ public class WalletMainFragment extends Fragment
     @Override
     public void onViewingKeyRequested(Tokens.TokenInfo token) {
         // Delegate to viewing key manager fragment
-        if (viewingKeyManagerFragment != null) {
-            viewingKeyManagerFragment.requestViewingKey(token);
+        if (viewingKeyService != null) {
+            viewingKeyService.requestViewingKey(token);
         }
     }
     
@@ -234,7 +236,7 @@ public class WalletMainFragment extends Fragment
     }
     
     // =============================================================================
-    // ViewingKeyManagerFragment.ViewingKeyManagerListener Implementation
+    // ViewingKeyService.ViewingKeyServiceListener Implementation
     // =============================================================================
     
     @Override
@@ -306,7 +308,7 @@ public class WalletMainFragment extends Fragment
         Log.d(TAG, "showWalletListFragment called");
         
         // Use the HostActivity's navigation system to show wallet list as a full-screen fragment
-        if (getActivity() instanceof com.example.earthwallet.ui.activities.HostActivity) {
+        if (getActivity() instanceof com.example.earthwallet.ui.host.HostActivity) {
             WalletListFragment walletListFragment = new WalletListFragment();
             walletListFragment.setWalletListListener(this); // Set the listener so add wallet button works
             
@@ -326,7 +328,7 @@ public class WalletMainFragment extends Fragment
         Log.d(TAG, "showCreateWalletFragment called");
         
         // Use the same navigation pattern as showWalletListFragment (HostActivity level)
-        if (getActivity() instanceof com.example.earthwallet.ui.activities.HostActivity) {
+        if (getActivity() instanceof com.example.earthwallet.ui.host.HostActivity) {
             CreateWalletFragment createWalletFragment = new CreateWalletFragment();
             
             try {
@@ -345,7 +347,7 @@ public class WalletMainFragment extends Fragment
         Log.d(TAG, "showManageViewingKeysFragment called");
         
         // Use the HostActivity's navigation system to show manage viewing keys as a full-screen fragment
-        if (getActivity() instanceof com.example.earthwallet.ui.activities.HostActivity) {
+        if (getActivity() instanceof com.example.earthwallet.ui.host.HostActivity) {
             ManageViewingKeysFragment manageViewingKeysFragment = new ManageViewingKeysFragment();
             
             // Create a bundle to pass the current wallet address

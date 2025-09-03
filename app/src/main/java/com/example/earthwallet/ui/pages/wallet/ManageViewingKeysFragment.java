@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.fragments.main;
+package com.example.earthwallet.ui.pages.wallet;
 
 import android.app.Activity;
 import android.app.AlertDialog;

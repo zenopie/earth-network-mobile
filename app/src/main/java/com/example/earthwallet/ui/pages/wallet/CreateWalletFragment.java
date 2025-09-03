@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.fragments;
+package com.example.earthwallet.ui.pages.wallet;
 
 import com.example.earthwallet.R;
 import com.example.earthwallet.wallet.services.SecretWallet;

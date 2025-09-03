@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.fragments;
+package com.example.earthwallet.ui.pages.anml;
 
 import com.example.earthwallet.R;
 

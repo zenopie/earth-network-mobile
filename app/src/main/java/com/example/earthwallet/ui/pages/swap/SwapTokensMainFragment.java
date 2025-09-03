@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.fragments.main;
+package com.example.earthwallet.ui.pages.swap;
 
 import android.app.Activity;
 import android.content.Intent;
@@ -98,8 +98,8 @@ public class SwapTokensMainFragment extends Fragment {
         
         // Use centralized secure preferences from HostActivity
         try {
-            if (getActivity() instanceof com.example.earthwallet.ui.activities.HostActivity) {
-                securePrefs = ((com.example.earthwallet.ui.activities.HostActivity) getActivity()).getSecurePrefs();
+            if (getActivity() instanceof com.example.earthwallet.ui.host.HostActivity) {
+                securePrefs = ((com.example.earthwallet.ui.host.HostActivity) getActivity()).getSecurePrefs();
                 Log.d(TAG, "Successfully got securePrefs from HostActivity");
             } else {
                 Log.e(TAG, "Activity is not HostActivity: " + (getActivity() != null ? getActivity().getClass().getSimpleName() : "null"));
@@ -435,7 +435,7 @@ public class SwapTokensMainFragment extends Fragment {
     
     private void requestViewingKey(String tokenSymbol) {
         Toast.makeText(getContext(), "Requesting viewing key for " + tokenSymbol, Toast.LENGTH_SHORT).show();
-        // Navigate to ViewingKeyManagerFragment or implement inline viewing key request
+        // Use ViewingKeyService or implement inline viewing key request
         Toast.makeText(getContext(), "Please set viewing key for " + tokenSymbol + " first", Toast.LENGTH_LONG).show();
     }
     

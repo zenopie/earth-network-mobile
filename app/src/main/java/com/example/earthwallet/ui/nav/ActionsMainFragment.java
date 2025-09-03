@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.fragments.main;
+package com.example.earthwallet.ui.nav;
 
 import com.example.earthwallet.R;
  
@@ -35,8 +35,8 @@ public class ActionsMainFragment extends Fragment {
         if (swapTokens != null) {
             swapTokens.setOnClickListener(v -> {
                 Log.d("ActionsMainFragment", "Swap Tokens button clicked");
-                if (getActivity() instanceof com.example.earthwallet.ui.activities.HostActivity) {
-                    ((com.example.earthwallet.ui.activities.HostActivity) getActivity()).showFragment("swap");
+                if (getActivity() instanceof com.example.earthwallet.ui.host.HostActivity) {
+                    ((com.example.earthwallet.ui.host.HostActivity) getActivity()).showFragment("swap");
                 } else {
                     Toast.makeText(getContext(), "Navigation not available", Toast.LENGTH_SHORT).show();
                 }
@@ -48,8 +48,8 @@ public class ActionsMainFragment extends Fragment {
         if (anml != null) {
             anml.setOnClickListener(v -> {
                 Log.d("ActionsMainFragment", "ANML Claim button clicked");
-                if (getActivity() instanceof com.example.earthwallet.ui.activities.HostActivity) {
-                    ((com.example.earthwallet.ui.activities.HostActivity) getActivity()).showFragment("anml");
+                if (getActivity() instanceof com.example.earthwallet.ui.host.HostActivity) {
+                    ((com.example.earthwallet.ui.host.HostActivity) getActivity()).showFragment("anml");
                 } else {
                     Toast.makeText(getContext(), "Navigation not available", Toast.LENGTH_SHORT).show();
                 }

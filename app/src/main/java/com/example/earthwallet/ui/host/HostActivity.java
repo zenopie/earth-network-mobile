@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.activities;
+package com.example.earthwallet.ui.host;
 
 import com.example.earthwallet.R;
 
@@ -17,7 +17,7 @@ import androidx.fragment.app.FragmentTransaction;
 import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
 
-import com.example.earthwallet.ui.fragments.CreateWalletFragment;
+import com.example.earthwallet.ui.pages.wallet.CreateWalletFragment;
 
 public class HostActivity extends AppCompatActivity implements CreateWalletFragment.CreateWalletListener {
 
@@ -94,28 +94,28 @@ public class HostActivity extends AppCompatActivity implements CreateWalletFragm
         Fragment fragment;
         switch (tag) {
             case "wallet":
-                fragment = new com.example.earthwallet.ui.fragments.main.WalletMainFragment();
+                fragment = new com.example.earthwallet.ui.pages.wallet.WalletMainFragment();
                 break;
             case "actions":
-                fragment = new com.example.earthwallet.ui.fragments.main.ActionsMainFragment();
+                fragment = new com.example.earthwallet.ui.nav.ActionsMainFragment();
                 break;
             case "scanner":
-                fragment = new com.example.earthwallet.ui.fragments.ScannerFragment();
+                fragment = new com.example.earthwallet.ui.pages.anml.ScannerFragment();
                 break;
             case "create_wallet":
-                CreateWalletFragment createWalletFragment = new com.example.earthwallet.ui.fragments.CreateWalletFragment();
+                CreateWalletFragment createWalletFragment = new com.example.earthwallet.ui.pages.wallet.CreateWalletFragment();
                 createWalletFragment.setCreateWalletListener(this);
                 fragment = createWalletFragment;
                 break;
             case "swap":
-                fragment = new com.example.earthwallet.ui.fragments.main.SwapTokensMainFragment();
+                fragment = new com.example.earthwallet.ui.pages.swap.SwapTokensMainFragment();
                 break;
             case "anml":
-                fragment = new com.example.earthwallet.ui.fragments.main.ANMLClaimMainFragment();
+                fragment = new com.example.earthwallet.ui.pages.anml.ANMLClaimMainFragment();
                 break;
             default:
                 // Default to scanner if an unknown tag is passed
-                fragment = new com.example.earthwallet.ui.fragments.ScannerFragment();
+                fragment = new com.example.earthwallet.ui.pages.anml.ScannerFragment();
                 break;
         }
     
@@ -131,8 +131,8 @@ public class HostActivity extends AppCompatActivity implements CreateWalletFragm
         // Handle NFC intents and pass them to ScannerFragment if it's currently shown
         if (NfcAdapter.ACTION_TECH_DISCOVERED.equals(intent.getAction())) {
             Fragment currentFragment = getSupportFragmentManager().findFragmentById(R.id.host_content);
-            if (currentFragment instanceof com.example.earthwallet.ui.fragments.ScannerFragment) {
-                ((com.example.earthwallet.ui.fragments.ScannerFragment) currentFragment).handleNfcIntent(intent);
+            if (currentFragment instanceof com.example.earthwallet.ui.pages.anml.ScannerFragment) {
+                ((com.example.earthwallet.ui.pages.anml.ScannerFragment) currentFragment).handleNfcIntent(intent);
             }
         }
     }

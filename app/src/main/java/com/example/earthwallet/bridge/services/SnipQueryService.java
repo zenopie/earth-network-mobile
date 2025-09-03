@@ -83,7 +83,7 @@ public class SnipQueryService {
         // Execute native query with secure mnemonic handling
         // Use HostActivity context if available for centralized securePrefs access
         Context queryContext = context;
-        if (context instanceof com.example.earthwallet.ui.activities.HostActivity) {
+        if (context instanceof com.example.earthwallet.ui.host.HostActivity) {
             queryContext = context;
             Log.d(TAG, "Using HostActivity context for SecretQueryService");
         } else {
