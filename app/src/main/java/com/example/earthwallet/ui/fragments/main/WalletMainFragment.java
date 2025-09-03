@@ -76,18 +76,8 @@ public class WalletMainFragment extends Fragment
             Log.e(TAG, "Failed to initialize SecretWallet", e);
         }
         
-        try {
-            String masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC);
-            securePrefs = EncryptedSharedPreferences.create(
-                PREF_FILE,
-                masterKeyAlias,
-                requireContext(),
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            );
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to create secure preferences", e);
-        }
+        // Use centralized secure preferences from HostActivity
+        securePrefs = ((com.example.earthwallet.ui.activities.HostActivity) getActivity()).getSecurePrefs();
     }
     
     @Override

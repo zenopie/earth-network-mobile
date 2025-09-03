@@ -95,19 +95,8 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
     }
 
     private void initSecurePrefs() {
-        try {
-            String masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC);
-            securePrefs = EncryptedSharedPreferences.create(
-                    PREF_FILE,
-                    masterKeyAlias,
-                    getContext(),
-                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            );
-        } catch (Exception e) {
-            Log.w(TAG, "EncryptedSharedPreferences not available, falling back", e);
-            securePrefs = getContext().getSharedPreferences(PREF_FILE, getContext().MODE_PRIVATE);
-        }
+        // Use centralized secure preferences from HostActivity
+        securePrefs = ((com.example.earthwallet.ui.activities.HostActivity) getActivity()).getSecurePrefs();
     }
 
     private void showLoading(boolean loading) {
@@ -222,28 +211,23 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
         try {
             showLoading(true);
 
-            // Prefer wallets array (multi-wallet support). Fall back to legacy top-level mnemonic.
-            String mnemonic = "";
+            // Get wallet address using secure just-in-time mnemonic access
+            String address;
             try {
-                String walletsJson = securePrefs.getString("wallets", "[]");
-                org.json.JSONArray arr = new org.json.JSONArray(walletsJson);
-                int sel = securePrefs.getInt("selected_wallet_index", -1);
-                if (arr.length() > 0) {
-                    if (sel >= 0 && sel < arr.length()) {
-                        mnemonic = arr.getJSONObject(sel).optString("mnemonic", "");
-                    } else if (arr.length() == 1) {
-                        mnemonic = arr.getJSONObject(0).optString("mnemonic", "");
-                    }
+                if (!com.example.earthwallet.wallet.services.SecureWalletManager.isWalletAvailable(getContext())) {
+                    showLoading(false);
+                    showRegisterFragment();
+                    return;
                 }
-            } catch (Exception ignored) {}
-            if (TextUtils.isEmpty(mnemonic)) {
-                showLoading(false);
-                showRegisterFragment();
-                return;
-            }
-
-            String address = SecretWallet.getAddressFromMnemonic(mnemonic);
-            if (TextUtils.isEmpty(address)) {
+                
+                address = com.example.earthwallet.wallet.services.SecureWalletManager.getWalletAddress(getContext());
+                if (TextUtils.isEmpty(address)) {
+                    showLoading(false);
+                    showRegisterFragment();
+                    return;
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to get wallet address: " + e.getMessage());
                 showLoading(false);
                 showRegisterFragment();
                 return;
@@ -256,10 +240,10 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
             q.put("query_registration_status", inner);
 
             // Use SecretQueryService directly in background thread
-            final String finalMnemonic = mnemonic;
             new Thread(() -> {
                 try {
-                    if (TextUtils.isEmpty(finalMnemonic)) {
+                    // Check wallet availability without retrieving mnemonic
+                    if (!com.example.earthwallet.wallet.services.SecureWalletManager.isWalletAvailable(getContext())) {
                         getActivity().runOnUiThread(() -> {
                             showLoading(false);
                             if (errorText != null) {
@@ -270,13 +254,12 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
                         return;
                     }
                     
-                    SecretQueryService queryService = new SecretQueryService();
+                    SecretQueryService queryService = new SecretQueryService(getContext());
                     JSONObject result = queryService.queryContract(
                         SecretWallet.DEFAULT_LCD_URL,
                         Constants.REGISTRATION_CONTRACT,
                         Constants.REGISTRATION_HASH,
-                        q,
-                        finalMnemonic
+                        q
                     );
                     
                     // Format result to match expected format
@@ -363,37 +346,6 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
                 errorText.setText("Invalid result from bridge.");
                 errorText.setVisibility(View.VISIBLE);
             }
-        }
-    }
-    
-    private String getSelectedMnemonic() {
-        try {
-            String masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC);
-            SharedPreferences securePrefs = EncryptedSharedPreferences.create(
-                    PREF_FILE,
-                    masterKeyAlias,
-                    getContext(),
-                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            );
-            
-            String walletsJson = securePrefs.getString("wallets", "[]");
-            org.json.JSONArray arr = new org.json.JSONArray(walletsJson);
-            int selectedIndex = securePrefs.getInt("selected_wallet_index", -1);
-            
-            if (arr.length() > 0) {
-                if (selectedIndex >= 0 && selectedIndex < arr.length()) {
-                    return arr.getJSONObject(selectedIndex).optString("mnemonic", "");
-                } else {
-                    // Default to first wallet if invalid selection
-                    return arr.getJSONObject(0).optString("mnemonic", "");
-                }
-            }
-            
-            return null;
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to get mnemonic from multi-wallet system", e);
-            return null;
         }
     }
 }

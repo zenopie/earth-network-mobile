@@ -34,7 +34,6 @@ import androidx.security.crypto.MasterKeys;
 import com.example.earthwallet.R;
 import com.example.earthwallet.Constants;
 import com.example.earthwallet.bridge.activities.SecretExecuteActivity;
-import com.example.earthwallet.bridge.activities.SnipQueryActivity;
 import com.example.earthwallet.bridge.activities.SnipExecuteActivity;
 import com.example.earthwallet.bridge.services.SecretQueryService;
 import com.example.earthwallet.wallet.constants.Tokens;
@@ -66,7 +65,6 @@ public class SwapTokensMainFragment extends Fragment {
     private static final int REQUEST_SWAP_SIMULATION = 3004;
     private static final int REQUEST_TOKEN_BALANCE = 3005;
     private static final int REQUEST_SWAP_EXECUTION = 3006;
-    private static final int REQ_SNIP_BALANCE_QUERY = 3007;
     private static final int REQ_SNIP_EXECUTE = 3008;
     
     
@@ -98,17 +96,16 @@ public class SwapTokensMainFragment extends Fragment {
     public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         
+        // Use centralized secure preferences from HostActivity
         try {
-            String masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC);
-            securePrefs = EncryptedSharedPreferences.create(
-                PREF_FILE,
-                masterKeyAlias,
-                requireContext(),
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            );
+            if (getActivity() instanceof com.example.earthwallet.ui.activities.HostActivity) {
+                securePrefs = ((com.example.earthwallet.ui.activities.HostActivity) getActivity()).getSecurePrefs();
+                Log.d(TAG, "Successfully got securePrefs from HostActivity");
+            } else {
+                Log.e(TAG, "Activity is not HostActivity: " + (getActivity() != null ? getActivity().getClass().getSimpleName() : "null"));
+            }
         } catch (Exception e) {
-            Log.e(TAG, "Failed to create secure preferences", e);
+            Log.e(TAG, "Failed to get securePrefs from HostActivity", e);
         }
         
         // Initialize token list
@@ -467,11 +464,7 @@ public class SwapTokensMainFragment extends Fragment {
         if (resultCode == Activity.RESULT_OK && data != null) {
             String json;
             
-            if (requestCode == REQ_SNIP_BALANCE_QUERY) {
-                // Use SnipQueryActivity's result key
-                json = data.getStringExtra(SnipQueryActivity.EXTRA_RESULT_JSON);
-                handleSnipBalanceQueryResult(data, json);
-            } else if (requestCode == REQ_SNIP_EXECUTE) {
+            if (requestCode == REQ_SNIP_EXECUTE) {
                 // Use SnipExecuteActivity's result key for SNIP execution requests
                 json = data.getStringExtra(SnipExecuteActivity.EXTRA_RESULT_JSON);
                 handleSwapExecutionResult(json);
@@ -687,8 +680,8 @@ public class SwapTokensMainFragment extends Fragment {
         // Use SecretQueryService directly in background thread to avoid Activity transition
         new Thread(() -> {
             try {
-                String mnemonic = getSelectedMnemonic();
-                if (TextUtils.isEmpty(mnemonic)) {
+                // Check wallet availability without retrieving mnemonic
+                if (!com.example.earthwallet.wallet.services.SecureWalletManager.isWalletAvailable(getContext(), securePrefs)) {
                     getActivity().runOnUiThread(() -> {
                         Toast.makeText(getContext(), "No wallet found", Toast.LENGTH_SHORT).show();
                         isSimulatingSwap = false;
@@ -698,13 +691,12 @@ public class SwapTokensMainFragment extends Fragment {
                 }
                 
                 JSONObject queryObj = new JSONObject(queryJson);
-                SecretQueryService queryService = new SecretQueryService();
+                SecretQueryService queryService = new SecretQueryService(getContext());
                 JSONObject result = queryService.queryContract(
                     com.example.earthwallet.wallet.services.SecretWallet.DEFAULT_LCD_URL,
                     Constants.EXCHANGE_CONTRACT,
                     Constants.EXCHANGE_HASH,
-                    queryObj,
-                    mnemonic
+                    queryObj
                 );
                 
                 // Format result to match expected format
@@ -751,7 +743,7 @@ public class SwapTokensMainFragment extends Fragment {
                 updateToBalanceDisplay();
             }
         } else {
-            // SNIP-20 token balance query using new SnipQueryActivity
+            // SNIP-20 token balance query using SnipQueryService directly
             String viewingKey = getViewingKeyForToken(tokenSymbol);
             if (TextUtils.isEmpty(viewingKey)) {
                 // No viewing key available - set balance to error state
@@ -765,18 +757,123 @@ public class SwapTokensMainFragment extends Fragment {
                 return;
             }
             
-            Intent intent = new Intent(getContext(), SnipQueryActivity.class);
-            intent.putExtra(SnipQueryActivity.EXTRA_TOKEN_SYMBOL, tokenSymbol);
-            intent.putExtra(SnipQueryActivity.EXTRA_QUERY_TYPE, SnipQueryActivity.QUERY_TYPE_BALANCE);
-            intent.putExtra(SnipQueryActivity.EXTRA_WALLET_ADDRESS, currentWalletAddress);
-            intent.putExtra(SnipQueryActivity.EXTRA_VIEWING_KEY, viewingKey);
-            intent.putExtra("isFromToken", isFromToken);
-            intent.putExtra("tokenSymbol", tokenSymbol);
-            
-            startActivityForResult(intent, REQ_SNIP_BALANCE_QUERY);
+            // Execute query in background thread
+            new Thread(() -> {
+                try {
+                    JSONObject result = com.example.earthwallet.bridge.services.SnipQueryService.queryBalance(
+                        getActivity(), // Use HostActivity context instead of Fragment context
+                        tokenSymbol,
+                        currentWalletAddress,
+                        viewingKey
+                    );
+                    
+                    // Handle result on UI thread
+                    getActivity().runOnUiThread(() -> {
+                        Log.d(TAG, "Raw SNIP query result: " + result.toString());
+                        handleSnipBalanceResult(tokenSymbol, isFromToken, result.toString());
+                    });
+                    
+                } catch (Exception e) {
+                    Log.e(TAG, "Token balance query failed for " + tokenSymbol + ": " + e.getMessage(), e);
+                    getActivity().runOnUiThread(() -> {
+                        if (isFromToken) {
+                            fromBalance = -1;
+                            updateFromBalanceDisplay();
+                        } else {
+                            toBalance = -1;
+                            updateToBalanceDisplay();
+                        }
+                    });
+                }
+            }).start();
         }
     }
     
+    private void handleSnipBalanceResult(String tokenSymbol, boolean isFromToken, String json) {
+        try {
+            Log.d(TAG, "handleSnipBalanceResult - tokenSymbol: " + tokenSymbol + ", isFromToken: " + isFromToken);
+            
+            if (TextUtils.isEmpty(json)) {
+                Log.e(TAG, "SNIP balance query result JSON is empty");
+                if (isFromToken) {
+                    fromBalance = -1;
+                    updateFromBalanceDisplay();
+                } else {
+                    toBalance = -1;
+                    updateToBalanceDisplay();
+                }
+                return;
+            }
+            
+            JSONObject root = new JSONObject(json);
+            boolean success = root.optBoolean("success", false);
+            
+            if (success) {
+                JSONObject result = root.optJSONObject("result");
+                if (result != null) {
+                    JSONObject balance = result.optJSONObject("balance");
+                    if (balance != null) {
+                        String amount = balance.optString("amount", "0");
+                        Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenSymbol);
+                        if (tokenInfo != null && !TextUtils.isEmpty(amount)) {
+                            double formattedBalance = Double.parseDouble(amount) / Math.pow(10, tokenInfo.decimals);
+                            if (isFromToken) {
+                                fromBalance = formattedBalance;
+                                updateFromBalanceDisplay();
+                            } else {
+                                toBalance = formattedBalance;
+                                updateToBalanceDisplay();
+                            }
+                        } else {
+                            if (isFromToken) {
+                                fromBalance = -1;
+                                updateFromBalanceDisplay();
+                            } else {
+                                toBalance = -1;
+                                updateToBalanceDisplay();
+                            }
+                        }
+                    } else {
+                        if (isFromToken) {
+                            fromBalance = -1;
+                            updateFromBalanceDisplay();
+                        } else {
+                            toBalance = -1;
+                            updateToBalanceDisplay();
+                        }
+                    }
+                } else {
+                    if (isFromToken) {
+                        fromBalance = -1;
+                        updateFromBalanceDisplay();
+                    } else {
+                        toBalance = -1;
+                        updateToBalanceDisplay();
+                    }
+                }
+            } else {
+                String error = root.optString("error", "Unknown error");
+                Log.e(TAG, "SNIP balance query failed: " + error);
+                if (isFromToken) {
+                    fromBalance = -1;
+                    updateFromBalanceDisplay();
+                } else {
+                    toBalance = -1;
+                    updateToBalanceDisplay();
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to parse SNIP balance query result", e);
+            if (isFromToken) {
+                fromBalance = -1;
+                updateFromBalanceDisplay();
+            } else {
+                toBalance = -1;
+                updateToBalanceDisplay();
+            }
+        }
+    }
+
     private void updateBalanceDisplay() {
         DecimalFormat df = new DecimalFormat("#.##");
         
@@ -871,22 +968,26 @@ public class SwapTokensMainFragment extends Fragment {
     private String getViewingKeyForToken(String tokenSymbol) {
         // Get viewing key for the token from secure storage
         try {
+            Log.d(TAG, "getViewingKeyForToken called for: " + tokenSymbol);
+            Log.d(TAG, "securePrefs is null: " + (securePrefs == null));
+            Log.d(TAG, "currentWalletAddress: " + currentWalletAddress);
+            
             Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenSymbol);
             if (tokenInfo == null) {
+                Log.w(TAG, "Token info not found for: " + tokenSymbol);
                 return "";
             }
             
-            String masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC);
-            SharedPreferences securePrefs = EncryptedSharedPreferences.create(
-                    "secret_wallet_prefs",
-                    masterKeyAlias,
-                    getContext(),
-                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            );
+            if (securePrefs == null) {
+                Log.e(TAG, "securePrefs is null, cannot get viewing key");
+                return "";
+            }
             
-            // Use consistent key format with TokenBalancesFragment
-            return securePrefs.getString("viewing_key_" + currentWalletAddress + "_" + tokenInfo.contract, "");
+            String key = "viewing_key_" + currentWalletAddress + "_" + tokenInfo.contract;
+            String viewingKey = securePrefs.getString(key, "");
+            Log.d(TAG, "Viewing key lookup - key: " + key + ", found: " + !TextUtils.isEmpty(viewingKey));
+            
+            return viewingKey;
         } catch (Exception e) {
             Log.e(TAG, "Failed to get viewing key for " + tokenSymbol, e);
             return "";
@@ -952,127 +1053,4 @@ public class SwapTokensMainFragment extends Fragment {
         }
     }
     
-    private void handleSnipBalanceQueryResult(Intent data, String json) {
-        try {
-            boolean isFromToken = data.getBooleanExtra("isFromToken", false);
-            String tokenSymbol = data.getStringExtra(SnipQueryActivity.EXTRA_TOKEN_SYMBOL);
-            
-            // Fallback to old key format for compatibility
-            if (TextUtils.isEmpty(tokenSymbol)) {
-                tokenSymbol = data.getStringExtra("tokenSymbol");
-            }
-            
-            Log.d(TAG, "handleSnipBalanceQueryResult - tokenSymbol: " + tokenSymbol + ", isFromToken: " + isFromToken);
-            
-            if (TextUtils.isEmpty(json)) {
-                Log.e(TAG, "SNIP balance query result JSON is empty");
-                if (isFromToken) {
-                    fromBalance = -1;
-                    updateFromBalanceDisplay();
-                } else {
-                    toBalance = -1;
-                    updateToBalanceDisplay();
-                }
-                return;
-            }
-            
-            JSONObject root = new JSONObject(json);
-            boolean success = root.optBoolean("success", false);
-            
-            if (success) {
-                JSONObject result = root.optJSONObject("result");
-                if (result != null) {
-                    JSONObject balance = result.optJSONObject("balance");
-                    if (balance != null) {
-                        String amount = balance.optString("amount", "0");
-                        Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenSymbol);
-                        if (tokenInfo != null) {
-                            double balanceValue = Double.parseDouble(amount) / Math.pow(10, tokenInfo.decimals);
-                            
-                            if (isFromToken) {
-                                fromBalance = balanceValue;
-                                Log.d(TAG, "Setting fromBalance for " + tokenSymbol + ": " + balanceValue);
-                                updateFromBalanceDisplay();
-                            } else {
-                                toBalance = balanceValue;
-                                Log.d(TAG, "Setting toBalance for " + tokenSymbol + ": " + balanceValue);
-                                updateToBalanceDisplay();
-                            }
-                            
-                            Log.d(TAG, "Successfully parsed SNIP balance for " + tokenSymbol + ": " + balanceValue);
-                        } else {
-                            Log.e(TAG, "Token info not found for: " + tokenSymbol);
-                            if (isFromToken) {
-                                fromBalance = -1;
-                                updateFromBalanceDisplay();
-                            } else {
-                                toBalance = -1;
-                                updateToBalanceDisplay();
-                            }
-                        }
-                    } else {
-                        Log.e(TAG, "Balance object not found in SNIP query result");
-                        if (isFromToken) {
-                            fromBalance = -1;
-                            updateFromBalanceDisplay();
-                        } else {
-                            toBalance = -1;
-                            updateToBalanceDisplay();
-                        }
-                    }
-                } else {
-                    Log.e(TAG, "Result object not found in SNIP query response");
-                    if (isFromToken) {
-                        fromBalance = -1;
-                        updateFromBalanceDisplay();
-                    } else {
-                        toBalance = -1;
-                        updateToBalanceDisplay();
-                    }
-                }
-            } else {
-                String error = root.optString("error", "Unknown error");
-                Log.e(TAG, "SNIP balance query failed: " + error);
-                if (isFromToken) {
-                    fromBalance = -1;
-                    updateFromBalanceDisplay();
-                } else {
-                    toBalance = -1;
-                    updateToBalanceDisplay();
-                }
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to parse SNIP balance query result", e);
-            boolean isFromToken = data.getBooleanExtra("isFromToken", false);
-            if (isFromToken) {
-                fromBalance = -1;
-                updateFromBalanceDisplay();
-            } else {
-                toBalance = -1;
-                updateToBalanceDisplay();
-            }
-        }
-    }
-    
-    private String getSelectedMnemonic() {
-        try {
-            String walletsJson = securePrefs.getString("wallets", "[]");
-            JSONArray arr = new JSONArray(walletsJson);
-            int selectedIndex = securePrefs.getInt("selected_wallet_index", -1);
-            
-            if (arr.length() > 0) {
-                if (selectedIndex >= 0 && selectedIndex < arr.length()) {
-                    return arr.getJSONObject(selectedIndex).optString("mnemonic", "");
-                } else {
-                    // Default to first wallet if invalid selection
-                    return arr.getJSONObject(0).optString("mnemonic", "");
-                }
-            }
-            
-            return null;
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to get mnemonic from multi-wallet system", e);
-            return null;
-        }
-    }
 }

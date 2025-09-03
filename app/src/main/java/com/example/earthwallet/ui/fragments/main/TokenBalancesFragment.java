@@ -25,7 +25,6 @@ import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
 
 import com.example.earthwallet.R;
-import com.example.earthwallet.bridge.activities.SnipQueryActivity;
 import com.example.earthwallet.bridge.services.SecretQueryService;
 import com.example.earthwallet.wallet.constants.Tokens;
 
@@ -83,17 +82,9 @@ public class TokenBalancesFragment extends Fragment {
     public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         
-        try {
-            String masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC);
-            securePrefs = EncryptedSharedPreferences.create(
-                PREF_FILE,
-                masterKeyAlias,
-                requireContext(),
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            );
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to create secure preferences", e);
+        // Use centralized secure preferences from HostActivity via listener
+        if (listener != null) {
+            securePrefs = listener.getSecurePrefs();
         }
     }
     
@@ -233,11 +224,11 @@ public class TokenBalancesFragment extends Fragment {
             Log.d(TAG, "Contract: " + token.contract);
             Log.d(TAG, "Hash: " + token.hash);
             
-            // Use SecretQueryService directly in background thread
+            // Use SnipQueryService for cleaner token balance queries
             new Thread(() -> {
                 try {
-                    String mnemonic = getSelectedMnemonic();
-                    if (TextUtils.isEmpty(mnemonic)) {
+                    // Check wallet availability without retrieving mnemonic
+                    if (!com.example.earthwallet.wallet.services.SecureWalletManager.isWalletAvailable(getActivity())) {
                         getActivity().runOnUiThread(() -> {
                             Log.e(TAG, "No wallet found for token balance query");
                             addTokenBalanceView(token, "Error", false);
@@ -248,24 +239,17 @@ public class TokenBalancesFragment extends Fragment {
                         return;
                     }
                     
-                    JSONObject queryObj = new JSONObject(query.toString());
-                    SecretQueryService queryService = new SecretQueryService();
-                    JSONObject result = queryService.queryContract(
-                        com.example.earthwallet.wallet.services.SecretWallet.DEFAULT_LCD_URL,
-                        token.contract,
-                        token.hash,
-                        queryObj,
-                        mnemonic
+                    // Use SnipQueryService for the balance query
+                    JSONObject result = com.example.earthwallet.bridge.services.SnipQueryService.queryBalance(
+                        getActivity(), // Use HostActivity context
+                        token.symbol,
+                        walletAddress,
+                        viewingKey
                     );
-                    
-                    // Format result to match expected format
-                    JSONObject response = new JSONObject();
-                    response.put("success", true);
-                    response.put("result", result);
                     
                     // Handle result on UI thread
                     getActivity().runOnUiThread(() -> {
-                        handleTokenBalanceResult(response.toString());
+                        handleTokenBalanceResult(result.toString());
                     });
                     
                 } catch (Exception e) {
@@ -334,36 +318,6 @@ public class TokenBalancesFragment extends Fragment {
         processNextTokenQuery();
     }
 
-    private String getSelectedMnemonic() {
-        try {
-            String masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC);
-            SharedPreferences securePrefs = EncryptedSharedPreferences.create(
-                    PREF_FILE,
-                    masterKeyAlias,
-                    getContext(),
-                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            );
-            
-            String walletsJson = securePrefs.getString("wallets", "[]");
-            JSONArray arr = new JSONArray(walletsJson);
-            int selectedIndex = securePrefs.getInt("selected_wallet_index", -1);
-            
-            if (arr.length() > 0) {
-                if (selectedIndex >= 0 && selectedIndex < arr.length()) {
-                    return arr.getJSONObject(selectedIndex).optString("mnemonic", "");
-                } else {
-                    // Default to first wallet if invalid selection
-                    return arr.getJSONObject(0).optString("mnemonic", "");
-                }
-            }
-            
-            return null;
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to get mnemonic from multi-wallet system", e);
-            return null;
-        }
-    }
     
     private void addTokenBalanceView(Tokens.TokenInfo token, String balance, boolean hasViewingKey) {
         Log.d(TAG, "addTokenBalanceView called for " + token.symbol + " with balance: " + balance + " hasViewingKey: " + hasViewingKey);

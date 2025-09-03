@@ -55,12 +55,6 @@
             android:theme="@style/Theme.EarthWallet.NoDisplay"
             android:excludeFromRecents="true" />
         
-        <!-- SNIP Query Activity (headless, specialized SNIP-20/SNIP-721 queries) -->
-        <activity
-            android:name=".bridge.activities.SnipQueryActivity"
-            android:exported="false"
-            android:theme="@style/Theme.EarthWallet.NoDisplay"
-            android:excludeFromRecents="true" />
         
         <!-- SNIP Execute Activity (headless, specialized SNIP-20/SNIP-721 executions using send message) -->
         <activity

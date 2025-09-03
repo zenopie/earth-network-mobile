@@ -24,6 +24,7 @@ public class HostActivity extends AppCompatActivity implements CreateWalletFragm
     private static final String PREF_FILE = "secret_wallet_prefs";
     private Button navWallet;
     private Button navActions;
+    private SharedPreferences securePrefs;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -43,17 +44,12 @@ public class HostActivity extends AppCompatActivity implements CreateWalletFragm
             setSelectedNav(navActions, navWallet);
         });
 
+        // Initialize secure preferences for app-wide use
+        initializeSecurePreferences();
+        
         // Choose default start fragment: open Actions if secure wallet exists, otherwise create wallet
         boolean hasWallet = false;
         try {
-            String masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC);
-            SharedPreferences securePrefs = EncryptedSharedPreferences.create(
-                    PREF_FILE,
-                    masterKeyAlias,
-                    this,
-                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            );
             String walletsJson = securePrefs.getString("wallets", "[]");
             hasWallet = !TextUtils.isEmpty(walletsJson) && !"[]".equals(walletsJson.trim());
         } catch (Exception e) {
@@ -153,5 +149,32 @@ public class HostActivity extends AppCompatActivity implements CreateWalletFragm
         // Stay on create wallet or go to scanner
         showFragment("scanner");
         setSelectedNav(navWallet, navActions);
+    }
+
+    /**
+     * Initialize encrypted shared preferences for app-wide secure wallet access
+     */
+    private void initializeSecurePreferences() {
+        try {
+            String masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC);
+            securePrefs = EncryptedSharedPreferences.create(
+                    PREF_FILE,
+                    masterKeyAlias,
+                    this,
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            );
+        } catch (Exception e) {
+            // Fallback to regular SharedPreferences if encryption fails
+            securePrefs = getSharedPreferences(PREF_FILE, MODE_PRIVATE);
+        }
+    }
+
+    /**
+     * Get the secure preferences instance for app-wide use
+     * @return Secure SharedPreferences instance
+     */
+    public SharedPreferences getSecurePrefs() {
+        return securePrefs;
     }
 }

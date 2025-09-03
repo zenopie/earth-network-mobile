@@ -1,8 +1,12 @@
 package com.example.earthwallet.bridge.services;
 
+import android.content.Context;
+import android.content.SharedPreferences;
 import android.text.TextUtils;
 import android.util.Base64;
 import android.util.Log;
+
+import com.example.earthwallet.wallet.services.SecureWalletManager;
 
 import org.json.JSONObject;
 
@@ -31,25 +35,27 @@ public class SecretQueryService {
     
     private final SecretNetworkService networkService;
     private final SecretCryptoService cryptoService;
+    private final Context context;
     
-    public SecretQueryService() {
+    public SecretQueryService(Context context) {
+        this.context = context;
         this.networkService = new SecretNetworkService();
         this.cryptoService = new SecretCryptoService();
     }
     
     /**
      * Query a Secret Network contract natively (no webview)
+     * Uses just-in-time mnemonic fetching with automatic cleanup for enhanced security.
      * 
      * @param lcdUrl LCD endpoint URL
      * @param contractAddress Contract address  
      * @param codeHash Contract code hash (optional, will be fetched if null)
      * @param queryJson Query JSON object
-     * @param mnemonic Wallet mnemonic for encryption keys
      * @return Query result JSON object
      */
-    public JSONObject queryContract(String lcdUrl, String contractAddress, String codeHash, 
-                                   JSONObject queryJson, String mnemonic) throws Exception {
-        Log.i(TAG, "Starting native Secret Network contract query");
+    public JSONObject queryContract(String lcdUrl, String contractAddress, 
+                                   String codeHash, JSONObject queryJson) throws Exception {
+        Log.i(TAG, "Starting native Secret Network contract query with secure mnemonic handling");
         Log.i(TAG, "Contract: " + contractAddress);
         Log.i(TAG, "Code hash: " + (codeHash != null ? codeHash : "null (will fetch)"));
         Log.i(TAG, "Query: " + queryJson.toString());
@@ -61,25 +67,30 @@ public class SecretQueryService {
         }
         
         // Clean code hash (remove 0x prefix, lowercase)
-        codeHash = codeHash.replace("0x", "").toLowerCase();
-        Log.i(TAG, "Using code hash: " + codeHash);
+        final String finalCodeHash = codeHash.replace("0x", "").toLowerCase();
+        Log.i(TAG, "Using code hash: " + finalCodeHash);
         
-        // Step 2: Encrypt query message (matches SecretJS ComputeQuerier.queryContract line 182)
-        byte[] encryptedQuery = cryptoService.encryptContractMessage(codeHash, queryJson.toString(), mnemonic);
-        Log.i(TAG, "Query encrypted, length: " + encryptedQuery.length + " bytes");
-        
-        // Extract nonce for decryption (first 32 bytes of encrypted message)
-        byte[] nonce = new byte[32];
-        System.arraycopy(encryptedQuery, 0, nonce, 0, 32);
-        
-        // Step 3: Send encrypted query to Secret Network (matches SecretJS Query.QuerySecretContract)
-        String encryptedResult = sendEncryptedQuery(lcdUrl, contractAddress, encryptedQuery);
-        
-        // Step 4: Decrypt response (matches SecretJS ComputeQuerier.queryContract line 197)
-        JSONObject result = decryptQueryResult(encryptedResult, nonce, mnemonic);
-        
-        Log.i(TAG, "Native query completed successfully");
-        return result;
+        // Use SecureWalletManager for just-in-time mnemonic access with automatic cleanup
+        return SecureWalletManager.executeWithMnemonic(context, mnemonic -> {
+            Log.i(TAG, "Executing contract query with securely retrieved mnemonic");
+            
+            // Step 2: Encrypt query message (matches SecretJS ComputeQuerier.queryContract line 182)
+            byte[] encryptedQuery = cryptoService.encryptContractMessage(finalCodeHash, queryJson.toString(), mnemonic);
+            Log.i(TAG, "Query encrypted, length: " + encryptedQuery.length + " bytes");
+            
+            // Extract nonce for decryption (first 32 bytes of encrypted message)
+            byte[] nonce = new byte[32];
+            System.arraycopy(encryptedQuery, 0, nonce, 0, 32);
+            
+            // Step 3: Send encrypted query to Secret Network (matches SecretJS Query.QuerySecretContract)
+            String encryptedResult = sendEncryptedQuery(lcdUrl, contractAddress, encryptedQuery);
+            
+            // Step 4: Decrypt response (matches SecretJS ComputeQuerier.queryContract line 197)
+            JSONObject result = decryptQueryResult(encryptedResult, nonce, mnemonic);
+            
+            Log.i(TAG, "Native query completed successfully with secure mnemonic cleanup");
+            return result;
+        });
     }
     
     /**
