@@ -612,9 +612,9 @@ public class SwapTokensMainFragment extends Fragment {
     private void updateFromBalanceDisplay() {
         DecimalFormat df = new DecimalFormat("#.##");
         
-        if (fromBalance > 0) {
+        if (fromBalance >= 0) {
             fromBalanceText.setText("Balance: " + df.format(fromBalance));
-            fromMaxButton.setVisibility(View.VISIBLE);
+            fromMaxButton.setVisibility(fromBalance > 0 ? View.VISIBLE : View.GONE);
             fromViewingKeyButton.setVisibility(View.GONE);
         } else if (fromBalance == -1) {
             fromBalanceText.setText("Balance: Error");
@@ -630,7 +630,7 @@ public class SwapTokensMainFragment extends Fragment {
     private void updateToBalanceDisplay() {
         DecimalFormat df = new DecimalFormat("#.##");
         
-        if (toBalance > 0) {
+        if (toBalance >= 0) {
             toBalanceText.setText("Balance: " + df.format(toBalance));
             toViewingKeyButton.setVisibility(View.GONE);
         } else if (toBalance == -1) {
@@ -815,8 +815,16 @@ public class SwapTokensMainFragment extends Fragment {
                     if (balance != null) {
                         String amount = balance.optString("amount", "0");
                         Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenSymbol);
-                        if (tokenInfo != null && !TextUtils.isEmpty(amount)) {
-                            double formattedBalance = Double.parseDouble(amount) / Math.pow(10, tokenInfo.decimals);
+                        if (tokenInfo != null) {
+                            // Always process amount, even if it's "0" or empty (like wallet display does)
+                            double formattedBalance = 0;
+                            if (!TextUtils.isEmpty(amount)) {
+                                try {
+                                    formattedBalance = Double.parseDouble(amount) / Math.pow(10, tokenInfo.decimals);
+                                } catch (NumberFormatException e) {
+                                    Log.w(TAG, "Invalid amount format: " + amount + ", using 0");
+                                }
+                            }
                             if (isFromToken) {
                                 fromBalance = formattedBalance;
                                 updateFromBalanceDisplay();
