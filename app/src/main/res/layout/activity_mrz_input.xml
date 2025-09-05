@@ -5,18 +5,21 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:padding="16dp"
+    android:background="@android:color/black"
     tools:context=".MRZInputActivity">
 
     <ScrollView
         android:id="@+id/content_scroll"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_marginBottom="56dp">
+        android:layout_centerInParent="true"
+        android:fillViewport="true">
 
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center">
 
             <TextView
                 android:layout_width="wrap_content"
@@ -25,7 +28,8 @@
                 android:layout_marginBottom="24dp"
                 android:text="Enter BAC Key Data"
                 android:textSize="24sp"
-                android:textStyle="bold" />
+                android:textStyle="bold"
+                android:textColor="@android:color/white" />
 
             <TextView
                 android:layout_width="wrap_content"
@@ -33,13 +37,13 @@
                 android:layout_marginBottom="8dp"
                 android:text="Passport Details for BAC Key"
                 android:textSize="16sp"
-                android:textStyle="bold" />
+                android:textStyle="bold"
+                android:textColor="@android:color/white" />
 
             <com.google.android.material.textfield.TextInputLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginBottom="16dp"
-                app:endIconMode="password_toggle">
+                android:layout_marginBottom="16dp">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/passport_number"
@@ -47,14 +51,13 @@
                     android:layout_height="wrap_content"
                     android:hint="Passport Number"
                     android:maxLength="9"
-                    android:inputType="textPassword" />
+                    android:inputType="text" />
             </com.google.android.material.textfield.TextInputLayout>
 
             <com.google.android.material.textfield.TextInputLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginBottom="16dp"
-                app:endIconMode="password_toggle">
+                android:layout_marginBottom="16dp">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/date_of_birth"
@@ -62,14 +65,13 @@
                     android:layout_height="wrap_content"
                     android:hint="Date of Birth (YYMMDD, e.g., 901231)"
                     android:maxLength="6"
-                    android:inputType="numberPassword" />
+                    android:inputType="number" />
             </com.google.android.material.textfield.TextInputLayout>
 
             <com.google.android.material.textfield.TextInputLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginBottom="24dp"
-                app:endIconMode="password_toggle">
+                android:layout_marginBottom="24dp">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/date_of_expiry"
@@ -77,7 +79,7 @@
                     android:layout_height="wrap_content"
                     android:hint="Date of Expiry (YYMMDD, e.g., 251231)"
                     android:maxLength="6"
-                    android:inputType="numberPassword" />
+                    android:inputType="number" />
             </com.google.android.material.textfield.TextInputLayout>
 
             <Button
@@ -88,13 +90,6 @@
                 android:text="Scan Passport"
                 android:textSize="18sp" />
 
-            <Button
-                android:id="@+id/open_wallet_button"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/open_wallet"
-                android:textSize="18sp"
-                android:layout_marginBottom="12dp" />
 
             <TextView
                 android:layout_width="wrap_content"
@@ -102,7 +97,8 @@
                 android:layout_gravity="center_horizontal"
                 android:gravity="center"
                 android:text="Enter the required information to create the BAC key for passport authentication. Place your passport on the back of your device and tap 'Scan Passport'"
-                android:textSize="14sp" />
+                android:textSize="14sp"
+                android:textColor="@android:color/white" />
 
         </LinearLayout>
     </ScrollView>

@@ -9,6 +9,7 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.widget.Button;
 
 import androidx.fragment.app.Fragment;
@@ -49,6 +50,17 @@ public class MRZInputFragment extends Fragment {
     @Override
     public void onViewCreated(View view, Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
+        
+        // Hide bottom navigation and status bar
+        if (getActivity() instanceof com.example.earthwallet.ui.host.HostActivity) {
+            com.example.earthwallet.ui.host.HostActivity hostActivity = 
+                (com.example.earthwallet.ui.host.HostActivity) getActivity();
+            hostActivity.hideBottomNavigation();
+            
+            // Hide status bar
+            getActivity().getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+            getActivity().getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
+        }
 
         // Initialize UI elements
         passportNumberEditText = view.findViewById(R.id.passport_number);
@@ -56,29 +68,50 @@ public class MRZInputFragment extends Fragment {
         dateOfExpiryEditText = view.findViewById(R.id.date_of_expiry);
         scanButton = view.findViewById(R.id.scan_button);
         
-        // Set default values for testing
+        // Load captured MRZ data if available, otherwise clear fields
+        android.content.SharedPreferences prefs = getContext().getSharedPreferences("mrz_data", getContext().MODE_PRIVATE);
+        String savedPassportNumber = prefs.getString("passportNumber", "");
+        String savedDateOfBirth = prefs.getString("dateOfBirth", "");
+        String savedDateOfExpiry = prefs.getString("dateOfExpiry", "");
+        
         if (passportNumberEditText != null) {
-            passportNumberEditText.setText("A01077766");
+            passportNumberEditText.setText(savedPassportNumber);
         }
         if (dateOfBirthEditText != null) {
-            dateOfBirthEditText.setText("900215");
+            dateOfBirthEditText.setText(savedDateOfBirth);
         }
         if (dateOfExpiryEditText != null) {
-            dateOfExpiryEditText.setText("320228");
+            dateOfExpiryEditText.setText(savedDateOfExpiry);
         }
         
         // Set click listener for scan button
         if (scanButton != null) {
             scanButton.setOnClickListener(v -> {
                 if (validateInput()) {
-                    // Get MRZ data and notify parent activity
+                    // Get MRZ data and save it to SharedPreferences for the scanner
                     String passportNumber = getTextFromEditText(passportNumberEditText);
                     String dateOfBirth = getTextFromEditText(dateOfBirthEditText);
                     String dateOfExpiry = getTextFromEditText(dateOfExpiryEditText);
                     
                     // Do not log sensitive MRZ values in cleartext during demos
-                    Log.d("MRZInputFragment", "Sending MRZ data to parent activity (values suppressed in logs)");
+                    Log.d("MRZInputFragment", "Saving MRZ data and navigating to scanner");
                     
+                    // Save MRZ data to SharedPreferences for the scanner to use
+                    android.content.SharedPreferences scannerPrefs = getContext().getSharedPreferences("mrz_data", getContext().MODE_PRIVATE);
+                    android.content.SharedPreferences.Editor editor = scannerPrefs.edit();
+                    editor.putString("passportNumber", passportNumber);
+                    editor.putString("dateOfBirth", dateOfBirth);
+                    editor.putString("dateOfExpiry", dateOfExpiry);
+                    editor.apply();
+                    
+                    // Navigate to scanner fragment - let HostActivity handle UI state
+                    if (getActivity() instanceof com.example.earthwallet.ui.host.HostActivity) {
+                        com.example.earthwallet.ui.host.HostActivity hostActivity = 
+                            (com.example.earthwallet.ui.host.HostActivity) getActivity();
+                        hostActivity.showFragment("scanner");
+                    }
+                    
+                    // Also notify listener if present (for embedded usage)
                     if (listener != null) {
                         listener.onMRZDataEntered(passportNumber, dateOfBirth, dateOfExpiry);
                     }
@@ -86,15 +119,6 @@ public class MRZInputFragment extends Fragment {
             });
         }
 
-        // Open Secret Wallet screen - navigate through parent HostActivity
-        Button openWallet = view.findViewById(R.id.open_wallet_button);
-        if (openWallet != null) {
-            openWallet.setOnClickListener(v -> {
-                if (getActivity() instanceof com.example.earthwallet.ui.host.HostActivity) {
-                    ((com.example.earthwallet.ui.host.HostActivity) getActivity()).showFragment("wallet");
-                }
-            });
-        }
     }
     
     private String getTextFromEditText(TextInputEditText editText) {
@@ -139,5 +163,12 @@ public class MRZInputFragment extends Fragment {
     
     private boolean isEmpty(TextInputEditText editText) {
         return editText == null || editText.getText() == null || TextUtils.isEmpty(editText.getText().toString().trim());
+    }
+    
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        // Don't restore navigation here - let HostActivity manage it based on the target fragment
+        // The HostActivity showFragment() method will properly set navigation state
     }
 }

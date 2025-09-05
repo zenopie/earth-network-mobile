@@ -184,7 +184,7 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
     @Override
     public void onRegisterRequested() {
         Intent i = new Intent(getContext(), com.example.earthwallet.ui.host.HostActivity.class);
-        i.putExtra("fragment_to_show", "scanner");
+        i.putExtra("fragment_to_show", "camera_mrz_scanner");
         startActivity(i);
     }
 

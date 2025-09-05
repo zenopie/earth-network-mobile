@@ -21,4 +21,8 @@
     <color name="white">#FFFFFF</color>
     <color name="green_primary">#4CAF50</color>
     <color name="green_hover">#45a049</color>
+    
+    <!-- Camera overlay colors -->
+    <color name="black_overlay">#80000000</color>
+    <color name="anml_button_background">#4056a1</color>
 </resources>

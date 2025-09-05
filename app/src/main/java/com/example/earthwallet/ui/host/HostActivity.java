@@ -4,11 +4,15 @@ import com.example.earthwallet.R;
 
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.ActivityInfo;
 import android.nfc.NfcAdapter;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.view.View;
+import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.FrameLayout;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.fragment.app.Fragment;
@@ -24,6 +28,8 @@ public class HostActivity extends AppCompatActivity implements CreateWalletFragm
     private static final String PREF_FILE = "secret_wallet_prefs";
     private Button navWallet;
     private Button navActions;
+    private View bottomNavView;
+    private View hostContent;
     private SharedPreferences securePrefs;
 
     @Override
@@ -33,6 +39,10 @@ public class HostActivity extends AppCompatActivity implements CreateWalletFragm
 
         navWallet = findViewById(R.id.btn_nav_wallet);
         navActions = findViewById(R.id.btn_nav_actions);
+        hostContent = findViewById(R.id.host_content);
+        
+        // Find bottom navigation view - it's included via <include> tag
+        bottomNavView = findViewById(R.id.bottom_nav);
 
         // Wire nav buttons to swap fragments
         navWallet.setOnClickListener(v -> {
@@ -88,6 +98,7 @@ public class HostActivity extends AppCompatActivity implements CreateWalletFragm
     
     // Make this public so fragments can request navigation without creating a second bottom nav.
     public void showFragment(String tag) {
+        android.util.Log.d("HostActivity", "showFragment called with tag: " + tag);
         FragmentManager fm = getSupportFragmentManager();
         FragmentTransaction ft = fm.beginTransaction();
     
@@ -95,30 +106,70 @@ public class HostActivity extends AppCompatActivity implements CreateWalletFragm
         switch (tag) {
             case "wallet":
                 fragment = new com.example.earthwallet.ui.pages.wallet.WalletMainFragment();
+                // Show navigation and status bar for normal fragments
+                showBottomNavigation();
+                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
                 break;
             case "actions":
                 fragment = new com.example.earthwallet.ui.nav.ActionsMainFragment();
+                // Show navigation and status bar for normal fragments
+                showBottomNavigation();
+                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
                 break;
             case "scanner":
                 fragment = new com.example.earthwallet.ui.pages.anml.ScannerFragment();
+                // Hide navigation and status bar for scanner
+                android.util.Log.d("HostActivity", "HIDING NAVIGATION AND STATUS BAR FOR SCANNER");
+                hideBottomNavigation();
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
+                break;
+            case "mrz_input":
+                android.util.Log.d("HostActivity", "Creating MRZInputFragment");
+                fragment = new com.example.earthwallet.ui.pages.anml.MRZInputFragment();
+                break;
+            case "camera_mrz_scanner":
+                fragment = new com.example.earthwallet.ui.pages.anml.CameraMRZScannerFragment();
                 break;
             case "create_wallet":
                 CreateWalletFragment createWalletFragment = new com.example.earthwallet.ui.pages.wallet.CreateWalletFragment();
                 createWalletFragment.setCreateWalletListener(this);
                 fragment = createWalletFragment;
+                // Show navigation and status bar for normal fragments
+                showBottomNavigation();
+                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
                 break;
             case "swap":
                 fragment = new com.example.earthwallet.ui.pages.swap.SwapTokensMainFragment();
+                // Show navigation and status bar for normal fragments
+                showBottomNavigation();
+                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
                 break;
             case "anml":
                 fragment = new com.example.earthwallet.ui.pages.anml.ANMLClaimMainFragment();
+                // Show navigation and status bar for normal fragments
+                showBottomNavigation();
+                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
                 break;
             case "managelp":
                 fragment = new com.example.earthwallet.ui.pages.managelp.ManageLPFragment();
+                // Show navigation and status bar for normal fragments
+                showBottomNavigation();
+                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
                 break;
             default:
                 // Default to scanner if an unknown tag is passed
                 fragment = new com.example.earthwallet.ui.pages.anml.ScannerFragment();
+                // Hide navigation and status bar for scanner
+                hideBottomNavigation();
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
                 break;
         }
     
@@ -179,5 +230,75 @@ public class HostActivity extends AppCompatActivity implements CreateWalletFragm
      */
     public SharedPreferences getSecurePrefs() {
         return securePrefs;
+    }
+    
+    /**
+     * Hide bottom navigation and adjust content layout
+     */
+    public void hideBottomNavigation() {
+        try {
+            android.util.Log.d("HostActivity", "hideBottomNavigation called - bottomNavView: " + (bottomNavView != null));
+            if (bottomNavView != null) {
+                bottomNavView.setVisibility(View.GONE);
+                android.util.Log.d("HostActivity", "Set bottomNavView visibility to GONE");
+            }
+            if (hostContent != null) {
+                android.util.Log.d("HostActivity", "hostContent layoutParams type: " + hostContent.getLayoutParams().getClass().getSimpleName());
+                ViewGroup.LayoutParams layoutParams = hostContent.getLayoutParams();
+                if (layoutParams instanceof ViewGroup.MarginLayoutParams) {
+                    // Remove bottom margin to make content full screen
+                    ViewGroup.MarginLayoutParams params = (ViewGroup.MarginLayoutParams) layoutParams;
+                    android.util.Log.d("HostActivity", "Original bottom margin: " + params.bottomMargin);
+                    params.bottomMargin = 0;
+                    hostContent.setLayoutParams(params);
+                    android.util.Log.d("HostActivity", "Set bottom margin to 0");
+                } else {
+                    android.util.Log.d("HostActivity", "LayoutParams is not MarginLayoutParams, cannot set margin");
+                }
+            }
+        } catch (Exception e) {
+            android.util.Log.e("HostActivity", "Error hiding bottom navigation", e);
+        }
+    }
+    
+    /**
+     * Show bottom navigation and restore content layout
+     */
+    public void showBottomNavigation() {
+        try {
+            android.util.Log.d("HostActivity", "showBottomNavigation called - STACK TRACE:");
+            StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
+            for (int i = 0; i < Math.min(stackTrace.length, 8); i++) {
+                android.util.Log.d("HostActivity", "  " + stackTrace[i].toString());
+            }
+            
+            if (bottomNavView != null) {
+                bottomNavView.setVisibility(View.VISIBLE);
+                android.util.Log.d("HostActivity", "Set bottomNavView visibility to VISIBLE");
+            }
+            if (hostContent != null && hostContent.getLayoutParams() instanceof ViewGroup.MarginLayoutParams) {
+                // Restore bottom margin for navigation
+                ViewGroup.MarginLayoutParams params = (ViewGroup.MarginLayoutParams) hostContent.getLayoutParams();
+                params.bottomMargin = (int) (56 * getResources().getDisplayMetrics().density); // 56dp in pixels
+                hostContent.setLayoutParams(params);
+                android.util.Log.d("HostActivity", "Restored bottom margin to 56dp");
+            }
+        } catch (Exception e) {
+            android.util.Log.e("HostActivity", "Error showing bottom navigation", e);
+        }
+    }
+    
+    /**
+     * Set screen orientation to landscape
+     */
+    public void setLandscapeOrientation() {
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
+    }
+    
+    /**
+     * Set screen orientation to portrait
+     */
+    public void setPortraitOrientation() {
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
     }
 }

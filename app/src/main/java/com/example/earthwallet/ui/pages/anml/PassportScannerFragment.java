@@ -13,6 +13,7 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.widget.ImageView;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -839,4 +840,5 @@ public class PassportScannerFragment extends Fragment implements MRZInputFragmen
         public String getDg1IntegrityStatus() { return dg1IntegrityStatus; }
         public void setDg1IntegrityStatus(String dg1IntegrityStatus) { this.dg1IntegrityStatus = dg1IntegrityStatus; }
     }
+    
 }

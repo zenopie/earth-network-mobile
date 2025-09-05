@@ -4,6 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@android:color/black"
     tools:context=".ui.fragments.PassportScannerFragment">
 
     <RelativeLayout
@@ -20,7 +21,8 @@
         android:layout_marginTop="32dp"
         android:text="@string/scan_passport"
         android:textSize="24sp"
-        android:textStyle="bold" />
+        android:textStyle="bold"
+        android:textColor="@android:color/white" />
 
     <ImageView
         android:id="@+id/nfc_icon"
@@ -41,7 +43,8 @@
         android:layout_marginTop="32dp"
         android:gravity="center"
         android:text="@string/place_passport"
-        android:textSize="18sp" />
+        android:textSize="18sp"
+        android:textColor="@android:color/white" />
 
     <ImageView
         android:id="@+id/progress_bar"
@@ -75,7 +78,8 @@
                 android:layout_gravity="center_horizontal"
                 android:text="@string/scan_complete"
                 android:textSize="20sp"
-                android:textStyle="bold" />
+                android:textStyle="bold"
+                android:textColor="@android:color/white" />
     
             <!-- Passport info table hidden for demo: do NOT show MRZ/DG1 fields or their labels -->
             <TableLayout

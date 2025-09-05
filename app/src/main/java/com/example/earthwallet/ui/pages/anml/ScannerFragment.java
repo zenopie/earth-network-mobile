@@ -12,6 +12,7 @@ import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentManager;
@@ -102,4 +103,5 @@ public class ScannerFragment extends Fragment implements PassportScannerFragment
             techLists = new String[][] { new String[] { IsoDep.class.getName() } };
         }
     }
+    
 }
