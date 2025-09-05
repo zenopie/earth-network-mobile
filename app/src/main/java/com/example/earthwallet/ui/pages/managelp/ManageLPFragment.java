@@ -41,6 +41,7 @@ public class ManageLPFragment extends Fragment {
     private TextView totalRewardsText;
     private Button claimAllButton;
     private LinearLayout claimAllContainer;
+    private View liquidityManagementContainer;
     
     private SecretQueryService queryService;
     private ExecutorService executorService;
@@ -87,6 +88,7 @@ public class ManageLPFragment extends Fragment {
         totalRewardsText = view.findViewById(R.id.total_rewards_text);
         claimAllButton = view.findViewById(R.id.claim_all_button);
         claimAllContainer = view.findViewById(R.id.claim_all_container);
+        liquidityManagementContainer = view.findViewById(R.id.liquidity_management_container);
     }
     
     private void setupRecyclerView() {
@@ -348,6 +350,12 @@ public class ManageLPFragment extends Fragment {
     private void showPoolOverview() {
         // Show the RecyclerView with pool overviews
         poolsRecyclerView.setVisibility(View.VISIBLE);
+        
+        // Hide liquidity management
+        if (liquidityManagementContainer != null) {
+            liquidityManagementContainer.setVisibility(View.GONE);
+        }
+        
         updateTotalRewards();
     }
     
@@ -356,9 +364,19 @@ public class ManageLPFragment extends Fragment {
         poolsRecyclerView.setVisibility(View.GONE);
         claimAllContainer.setVisibility(View.GONE);
         
-        // TODO: Create and show LiquidityManagementComponent
-        // For now, just log the action
-        Log.d(TAG, "Showing liquidity management for: " + poolData.getTokenKey());
+        // Show liquidity management component
+        if (liquidityManagementContainer != null) {
+            liquidityManagementContainer.setVisibility(View.VISIBLE);
+            
+            // Create and add the LiquidityManagementComponent
+            LiquidityManagementComponent liquidityComponent = LiquidityManagementComponent.newInstance(poolData);
+            
+            getChildFragmentManager().beginTransaction()
+                .replace(R.id.liquidity_management_container, liquidityComponent)
+                .commit();
+                
+            Log.d(TAG, "Showing liquidity management for: " + poolData.getTokenKey());
+        }
     }
     
     private void handleClaimRewards(PoolData poolData) {

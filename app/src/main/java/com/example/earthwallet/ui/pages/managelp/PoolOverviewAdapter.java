@@ -1,5 +1,8 @@
 package com.example.earthwallet.ui.pages.managelp;
 
+import android.content.Context;
+import android.graphics.drawable.Drawable;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -12,6 +15,9 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.example.earthwallet.R;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.text.DecimalFormat;
 import java.util.List;
 
 /**
@@ -97,14 +103,14 @@ public class PoolOverviewAdapter extends RecyclerView.Adapter<PoolOverviewAdapte
             tokenLabel.setText(pool.getTokenKey());
             pairLabel.setText("/" + "ERTH");
             
-            // Set pool statistics
-            rewardsValue.setText(pool.getPendingRewards());
+            // Set pool statistics with proper formatting
+            rewardsValue.setText(formatNumber(pool.getPendingRewards()));
             rewardsLabel.setText("Rewards");
             
-            liquidityValue.setText(pool.getLiquidity());
+            liquidityValue.setText(formatNumber(pool.getLiquidity()));
             liquidityLabel.setText("Liquidity (ERTH)");
             
-            volumeValue.setText(pool.getVolume());
+            volumeValue.setText(formatNumber(pool.getVolume()));
             volumeLabel.setText("Volume (7d)");
             
             aprValue.setText(pool.getApr());
@@ -152,28 +158,76 @@ public class PoolOverviewAdapter extends RecyclerView.Adapter<PoolOverviewAdapte
         }
         
         private void setTokenLogo(String tokenKey) {
-            if (tokenLogo == null) return;
+            if (tokenLogo == null || itemView.getContext() == null) return;
             
             try {
                 // Get token info and load logo from assets
                 if (currentPool != null && currentPool.getTokenInfo() != null) {
                     String logoPath = currentPool.getTokenInfo().logo;
-                    // TODO: Load image from assets using logoPath (e.g., "coin/ANML.png")
-                    // For now, use default based on token key
+                    if (logoPath != null && !logoPath.isEmpty()) {
+                        loadImageFromAssets(itemView.getContext(), logoPath);
+                        return;
+                    }
                 }
+                
+                // Fallback to token key based loading
+                String assetPath = "coin/" + tokenKey.toUpperCase() + ".png";
+                loadImageFromAssets(itemView.getContext(), assetPath);
+                
             } catch (Exception e) {
+                Log.w("PoolOverviewAdapter", "Failed to load token logo for " + tokenKey + ": " + e.getMessage());
                 // Fallback to default
+                tokenLogo.setImageResource(R.drawable.ic_token_default);
+            }
+        }
+        
+        private void loadImageFromAssets(Context context, String assetPath) {
+            try {
+                InputStream inputStream = context.getAssets().open(assetPath);
+                Drawable drawable = Drawable.createFromStream(inputStream, null);
+                tokenLogo.setImageDrawable(drawable);
+                inputStream.close();
+                Log.d("PoolOverviewAdapter", "Successfully loaded logo from: " + assetPath);
+            } catch (IOException e) {
+                Log.w("PoolOverviewAdapter", "Failed to load asset: " + assetPath + ", using default");
+                tokenLogo.setImageResource(R.drawable.ic_token_default);
+            }
+        }
+        
+        private String formatNumber(String numberStr) {
+            if (numberStr == null || numberStr.trim().isEmpty()) {
+                return "0";
             }
             
-            // Temporary fallback until asset loading is implemented
-            switch (tokenKey.toLowerCase()) {
-                case "sscrt":
-                case "anml":
-                    tokenLogo.setImageResource(R.drawable.ic_token_default);
-                    break;
-                default:
-                    tokenLogo.setImageResource(R.drawable.ic_token_default);
-                    break;
+            try {
+                // Remove any commas and parse
+                double number = Double.parseDouble(numberStr.replace(",", ""));
+                
+                if (number == 0) {
+                    return "0";
+                }
+                
+                DecimalFormat formatter;
+                if (number >= 1000000) {
+                    // Show millions with 1 decimal place
+                    formatter = new DecimalFormat("#.#M");
+                    return formatter.format(number / 1000000);
+                } else if (number >= 1000) {
+                    // Show thousands with 1 decimal place  
+                    formatter = new DecimalFormat("#.#K");
+                    return formatter.format(number / 1000);
+                } else if (number >= 1) {
+                    // Show whole numbers or 1 decimal place
+                    formatter = new DecimalFormat("#.#");
+                    return formatter.format(number);
+                } else {
+                    // Show small numbers with more precision
+                    formatter = new DecimalFormat("#.###");
+                    return formatter.format(number);
+                }
+            } catch (NumberFormatException e) {
+                Log.w("PoolOverviewAdapter", "Failed to format number: " + numberStr);
+                return numberStr; // Return as-is if parsing fails
             }
         }
     }

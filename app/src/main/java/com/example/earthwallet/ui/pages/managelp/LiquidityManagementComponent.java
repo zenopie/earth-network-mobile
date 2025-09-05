@@ -14,8 +14,17 @@ import androidx.fragment.app.Fragment;
 import androidx.viewpager2.widget.ViewPager2;
 
 import com.example.earthwallet.R;
+import com.example.earthwallet.Constants;
+import com.example.earthwallet.bridge.services.SecretQueryService;
+import com.example.earthwallet.wallet.services.SecureWalletManager;
 import com.google.android.material.tabs.TabLayout;
 import com.google.android.material.tabs.TabLayoutMediator;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Component for managing liquidity operations (Add/Remove/Unbond)
@@ -24,7 +33,11 @@ import com.google.android.material.tabs.TabLayoutMediator;
 public class LiquidityManagementComponent extends Fragment {
 
     private static final String TAG = "LiquidityManagement";
-    private static final String ARG_POOL_DATA = "pool_data";
+    private static final String ARG_TOKEN_KEY = "token_key";
+    private static final String ARG_PENDING_REWARDS = "pending_rewards";
+    private static final String ARG_LIQUIDITY = "liquidity";
+    private static final String ARG_VOLUME = "volume";
+    private static final String ARG_APR = "apr";
     
     private TabLayout tabLayout;
     private ViewPager2 viewPager;
@@ -55,6 +68,22 @@ public class LiquidityManagementComponent extends Fragment {
     private TextView userSharesText;
     private TextView poolOwnershipText;
     private TextView unbondingPercentText;
+    private TextView erthValueText;
+    private TextView tokenValueText;
+    private TextView tokenValueLabel;
+    
+    // Pool data
+    private String tokenKey;
+    private String pendingRewards;
+    private String liquidity;
+    private String volume;
+    private String apr;
+    
+    // Detailed pool state (from contract queries)
+    private JSONObject poolState;
+    private JSONObject userInfo;
+    private SecretQueryService queryService;
+    private ExecutorService executorService;
 
     public LiquidityManagementComponent() {
         // Required empty public constructor
@@ -63,8 +92,11 @@ public class LiquidityManagementComponent extends Fragment {
     public static LiquidityManagementComponent newInstance(ManageLPFragment.PoolData poolData) {
         LiquidityManagementComponent fragment = new LiquidityManagementComponent();
         Bundle args = new Bundle();
-        // Note: In a real implementation, you'd serialize the poolData properly
-        args.putString(ARG_POOL_DATA, poolData.getTokenKey());
+        args.putString(ARG_TOKEN_KEY, poolData.getTokenKey());
+        args.putString(ARG_PENDING_REWARDS, poolData.getPendingRewards());
+        args.putString(ARG_LIQUIDITY, poolData.getLiquidity());
+        args.putString(ARG_VOLUME, poolData.getVolume());
+        args.putString(ARG_APR, poolData.getApr());
         fragment.setArguments(args);
         return fragment;
     }
@@ -79,14 +111,34 @@ public class LiquidityManagementComponent extends Fragment {
     public void onViewCreated(View view, Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
         
+        // Extract arguments FIRST before setting up tabs
+        if (getArguments() != null) {
+            tokenKey = getArguments().getString(ARG_TOKEN_KEY);
+            pendingRewards = getArguments().getString(ARG_PENDING_REWARDS);
+            liquidity = getArguments().getString(ARG_LIQUIDITY);
+            volume = getArguments().getString(ARG_VOLUME);
+            apr = getArguments().getString(ARG_APR);
+            
+            Log.d(TAG, "Managing liquidity for token: " + tokenKey);
+        }
+        
         initializeViews(view);
-        setupTabs();
+        setupTabs();  // Now tokenKey is available
         setupCloseButton();
         
-        if (getArguments() != null) {
-            String tokenKey = getArguments().getString(ARG_POOL_DATA);
-            // TODO: Load actual pool data from tokenKey
-            Log.d(TAG, "Managing liquidity for token: " + tokenKey);
+        // Initialize services
+        queryService = new SecretQueryService(getContext());
+        executorService = Executors.newCachedThreadPool();
+        
+        if (tokenKey != null) {
+            // Update pool title
+            TextView poolTitle = getView() != null ? getView().findViewById(R.id.pool_title) : null;
+            if (poolTitle != null) {
+                poolTitle.setText(tokenKey + " Pool");
+            }
+            
+            // Query detailed pool state data
+            queryPoolState();
         }
     }
     
@@ -95,16 +147,12 @@ public class LiquidityManagementComponent extends Fragment {
         viewPager = view.findViewById(R.id.view_pager);
         closeButton = view.findViewById(R.id.close_button);
         titleText = view.findViewById(R.id.title_text);
-        
-        if (titleText != null) {
-            titleText.setText("Manage Liquidity");
-        }
     }
     
     private void setupTabs() {
         if (tabLayout == null || viewPager == null) return;
         
-        LiquidityTabsAdapter adapter = new LiquidityTabsAdapter(this);
+        LiquidityTabsAdapter adapter = new LiquidityTabsAdapter(this, tokenKey);
         viewPager.setAdapter(adapter);
         
         new TabLayoutMediator(tabLayout, viewPager,
@@ -131,9 +179,9 @@ public class LiquidityManagementComponent extends Fragment {
     }
     
     // Tab content creation methods
-    public View createInfoTab() {
+    public View createInfoTab(ViewGroup container) {
         View view = LayoutInflater.from(getContext())
-                .inflate(R.layout.tab_liquidity_info, null);
+                .inflate(R.layout.tab_liquidity_info, container, false);
         
         initializeInfoViews(view);
         updateInfoTab();
@@ -141,9 +189,9 @@ public class LiquidityManagementComponent extends Fragment {
         return view;
     }
     
-    public View createAddTab() {
+    public View createAddTab(ViewGroup container) {
         View view = LayoutInflater.from(getContext())
-                .inflate(R.layout.tab_liquidity_add, null);
+                .inflate(R.layout.tab_liquidity_add, container, false);
         
         initializeAddViews(view);
         setupAddTabListeners();
@@ -151,9 +199,9 @@ public class LiquidityManagementComponent extends Fragment {
         return view;
     }
     
-    public View createRemoveTab() {
+    public View createRemoveTab(ViewGroup container) {
         View view = LayoutInflater.from(getContext())
-                .inflate(R.layout.tab_liquidity_remove, null);
+                .inflate(R.layout.tab_liquidity_remove, container, false);
         
         initializeRemoveViews(view);
         setupRemoveTabListeners();
@@ -161,9 +209,9 @@ public class LiquidityManagementComponent extends Fragment {
         return view;
     }
     
-    public View createUnbondTab() {
+    public View createUnbondTab(ViewGroup container) {
         View view = LayoutInflater.from(getContext())
-                .inflate(R.layout.tab_liquidity_unbond, null);
+                .inflate(R.layout.tab_liquidity_unbond, container, false);
         
         // TODO: Initialize unbond views and setup listeners
         
@@ -175,6 +223,14 @@ public class LiquidityManagementComponent extends Fragment {
         userSharesText = view.findViewById(R.id.user_shares_text);
         poolOwnershipText = view.findViewById(R.id.pool_ownership_text);
         unbondingPercentText = view.findViewById(R.id.unbonding_percent_text);
+        erthValueText = view.findViewById(R.id.erth_value_text);
+        tokenValueText = view.findViewById(R.id.token_value_text);
+        tokenValueLabel = view.findViewById(R.id.token_value_label);
+        
+        // Set the token label
+        if (tokenValueLabel != null && tokenKey != null) {
+            tokenValueLabel.setText(tokenKey + ":");
+        }
     }
     
     private void initializeAddViews(View view) {
@@ -191,12 +247,189 @@ public class LiquidityManagementComponent extends Fragment {
         removeLiquidityButton = view.findViewById(R.id.remove_liquidity_button);
     }
     
+    private void queryPoolState() {
+        if (tokenKey == null) return;
+        
+        executorService.execute(() -> {
+            try {
+                String userAddress = SecureWalletManager.getWalletAddress(getContext());
+                if (userAddress == null) {
+                    Log.w(TAG, "No user address available");
+                    return;
+                }
+                
+                // Get token contract address based on tokenKey
+                String tokenContract = getTokenContract(tokenKey);
+                if (tokenContract == null) {
+                    Log.w(TAG, "No contract found for token: " + tokenKey);
+                    return;
+                }
+                
+                // Query like React app: query_user_info with pools array
+                JSONObject queryMsg = new JSONObject();
+                JSONObject queryUserInfo = new JSONObject();
+                JSONArray poolsArray = new JSONArray();
+                poolsArray.put(tokenContract);
+                queryUserInfo.put("pools", poolsArray);
+                queryUserInfo.put("user", userAddress);
+                queryMsg.put("query_user_info", queryUserInfo);
+                
+                Log.d(TAG, "Querying detailed pool state for: " + tokenKey);
+                JSONObject result = queryService.queryContract(
+                    Constants.EXCHANGE_CONTRACT,
+                    Constants.EXCHANGE_HASH,
+                    queryMsg
+                );
+                
+                if (getActivity() != null) {
+                    getActivity().runOnUiThread(() -> {
+                        processPoolStateResult(result);
+                    });
+                }
+                
+            } catch (Exception e) {
+                Log.e(TAG, "Error querying pool state", e);
+            }
+        });
+    }
+    
+    private void processPoolStateResult(JSONObject result) {
+        try {
+            if (result != null && result.has("data")) {
+                JSONArray dataArray = result.getJSONArray("data");
+                if (dataArray.length() > 0) {
+                    JSONObject poolData = dataArray.getJSONObject(0);
+                    
+                    // Store the detailed pool state
+                    if (poolData.has("pool_info")) {
+                        poolState = poolData.getJSONObject("pool_info");
+                    }
+                    if (poolData.has("user_info")) {
+                        userInfo = poolData.getJSONObject("user_info");
+                    }
+                    
+                    // Update the Info tab with real data
+                    updateInfoTab();
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error processing pool state result", e);
+        }
+    }
+    
+    private String getTokenContract(String tokenSymbol) {
+        // Map token symbols to contract addresses (from React tokens.js)
+        switch (tokenSymbol.toUpperCase()) {
+            case "ANML":
+                return "secret14p6dhjznntlzw0yysl7p6z069nk0skv5e9qjut";
+            case "SSCRT":
+                return "secret1k0jntykt7e4g3y88ltc60czgjuqdy4c9e8fzek";
+            default:
+                return null;
+        }
+    }
+    
     private void updateInfoTab() {
-        // TODO: Update with actual pool data
-        if (totalSharesText != null) totalSharesText.setText("Total Pool Shares: 1,000,000");
-        if (userSharesText != null) userSharesText.setText("Your Shares: 5,000");
-        if (poolOwnershipText != null) poolOwnershipText.setText("Pool Ownership: 0.5%");
-        if (unbondingPercentText != null) unbondingPercentText.setText("Unbonding: 0.0%");
+        if (poolState == null || userInfo == null) {
+            // Fallback to basic data if detailed state not available
+            if (totalSharesText != null) {
+                totalSharesText.setText("Total Liquidity: " + formatNumber(liquidity) + " ERTH");
+            }
+            if (userSharesText != null) {
+                userSharesText.setText("Pending Rewards: " + formatNumber(pendingRewards) + " ERTH");
+            }
+            if (poolOwnershipText != null) {
+                poolOwnershipText.setText("7d Volume: " + formatNumber(volume) + " ERTH");
+            }
+            if (unbondingPercentText != null) {
+                unbondingPercentText.setText("APR: " + apr);
+            }
+            return;
+        }
+        
+        try {
+            // Extract data like React app does
+            JSONObject state = poolState.optJSONObject("state");
+            if (state != null) {
+                // Total shares and user shares (converted from micro to macro units)
+                long totalSharesMicro = state.optLong("total_shares", 0);
+                long userStakedMicro = userInfo.optLong("amount_staked", 0);
+                long unbondingSharesMicro = state.optLong("unbonding_shares", 0);
+                
+                double totalShares = totalSharesMicro / 1000000.0;
+                double userStaked = userStakedMicro / 1000000.0;
+                double unbondingShares = unbondingSharesMicro / 1000000.0;
+                
+                // Pool ownership percentage
+                double ownershipPercent = totalShares > 0 ? (userStaked / totalShares) * 100 : 0;
+                
+                // Unbonding percentage
+                double unbondingPercent = totalShares > 0 ? (unbondingShares / totalShares) * 100 : 0;
+                
+                // Update UI with calculated values
+                if (totalSharesText != null) {
+                    totalSharesText.setText(String.format("Total Pool Shares: %,.0f", totalShares));
+                }
+                
+                if (userSharesText != null) {
+                    userSharesText.setText(String.format("Your Shares: %,.0f", userStaked));
+                }
+                
+                if (poolOwnershipText != null) {
+                    poolOwnershipText.setText(String.format("Pool Ownership: %.4f%%", ownershipPercent));
+                }
+                
+                if (unbondingPercentText != null) {
+                    unbondingPercentText.setText(String.format("%.4f%%", unbondingPercent));
+                }
+                
+                // Calculate underlying values like React app
+                calculateUnderlyingValues(state, ownershipPercent);
+                
+                Log.d(TAG, "Updated Info tab with real pool state data");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error updating info tab", e);
+        }
+    }
+    
+    private String formatNumber(String numberStr) {
+        if (numberStr == null || numberStr.trim().isEmpty()) {
+            return "0";
+        }
+        
+        try {
+            double number = Double.parseDouble(numberStr.replace(",", ""));
+            
+            if (number == 0) {
+                return "0";
+            }
+            
+            java.text.DecimalFormat formatter;
+            if (number >= 1000000) {
+                formatter = new java.text.DecimalFormat("#.#M");
+                return formatter.format(number / 1000000);
+            } else if (number >= 1000) {
+                formatter = new java.text.DecimalFormat("#.#K");
+                return formatter.format(number / 1000);
+            } else if (number >= 1) {
+                formatter = new java.text.DecimalFormat("#.#");
+                return formatter.format(number);
+            } else {
+                formatter = new java.text.DecimalFormat("#.###");
+                return formatter.format(number);
+            }
+        } catch (NumberFormatException e) {
+            return numberStr;
+        }
+    }
+    
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        if (executorService != null && !executorService.isShutdown()) {
+            executorService.shutdown();
+        }
     }
     
     private void setupAddTabListeners() {
@@ -251,6 +484,50 @@ public class LiquidityManagementComponent extends Fragment {
         
         // TODO: Implement actual liquidity removal
         // This should call the exchange contract to remove liquidity
+    }
+    
+    private void calculateUnderlyingValues(JSONObject state, double ownershipPercent) {
+        try {
+            if (ownershipPercent <= 0) {
+                // No ownership, show zero values
+                if (erthValueText != null) {
+                    erthValueText.setText("0.000000");
+                }
+                if (tokenValueText != null) {
+                    tokenValueText.setText("0.000000");
+                }
+                return;
+            }
+            
+            // Get reserves from pool state (in micro units)
+            long erthReserveMicro = state.optLong("erth_reserve", 0);
+            long tokenBReserveMicro = state.optLong("token_b_reserve", 0);
+            
+            // Convert to macro units (divide by 1,000,000) like React app toMacroUnits
+            double erthReserveMacro = erthReserveMicro / 1000000.0;
+            double tokenBReserveMacro = tokenBReserveMicro / 1000000.0;
+            
+            // Calculate user's underlying value like React app:
+            // userErthValue = (erthReserveMacro * ownershipPercent) / 100
+            // userTokenBValue = (tokenBReserveMacro * ownershipPercent) / 100
+            double userErthValue = (erthReserveMacro * ownershipPercent) / 100.0;
+            double userTokenBValue = (tokenBReserveMacro * ownershipPercent) / 100.0;
+            
+            // Update UI with calculated values (6 decimal places like React)
+            if (erthValueText != null) {
+                erthValueText.setText(String.format("%.6f", userErthValue));
+            }
+            
+            if (tokenValueText != null) {
+                tokenValueText.setText(String.format("%.6f", userTokenBValue));
+            }
+            
+            Log.d(TAG, String.format("Calculated underlying values - ERTH: %.6f, %s: %.6f (%.4f%% ownership)", 
+                    userErthValue, tokenKey, userTokenBValue, ownershipPercent));
+                    
+        } catch (Exception e) {
+            Log.e(TAG, "Error calculating underlying values", e);
+        }
     }
     
     // Interface for communicating with parent fragment

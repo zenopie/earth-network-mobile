@@ -1,5 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<shape xmlns:android="http://schemas.android.com/apk/res/android">
-    <solid android:color="#F1F0EA" />
-    <corners android:radius="10dp" />
-</shape>
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Selected tab -->
+    <item android:state_selected="true">
+        <shape>
+            <solid android:color="#4CAF50" />
+            <corners android:radius="10dp" />
+        </shape>
+    </item>
+    <!-- Normal tab -->
+    <item>
+        <shape>
+            <solid android:color="#F1F0EA" />
+            <corners android:radius="10dp" />
+        </shape>
+    </item>
+</selector>

@@ -11,7 +11,8 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="16dp">
+        android:paddingTop="20dp"
+        android:paddingBottom="20dp">
 
         <!-- Title -->
         <TextView
@@ -21,8 +22,10 @@
             android:text="Manage Liquidity Pools"
             android:textSize="24sp"
             android:textStyle="bold"
+            android:fontFamily="sans-serif-medium"
             android:textColor="#293462"
-            android:layout_marginBottom="20dp" />
+            android:layout_marginTop="10dp"
+            android:layout_marginBottom="30dp" />
 
         <!-- Claim All Container -->
         <LinearLayout
@@ -69,6 +72,13 @@
             android:overScrollMode="never"
             tools:listitem="@layout/item_pool_overview"
             tools:itemCount="3" />
+
+        <!-- Liquidity Management Container -->
+        <FrameLayout
+            android:id="@+id/liquidity_management_container"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:visibility="gone" />
 
     </LinearLayout>
 
