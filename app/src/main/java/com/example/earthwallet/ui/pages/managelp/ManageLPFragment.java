@@ -8,6 +8,7 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.util.Log;
+import androidx.core.content.ContextCompat;
 
 import androidx.fragment.app.Fragment;
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -42,6 +43,7 @@ public class ManageLPFragment extends Fragment {
     private Button claimAllButton;
     private LinearLayout claimAllContainer;
     private View liquidityManagementContainer;
+    private View rootView;
     
     private SecretQueryService queryService;
     private ExecutorService executorService;
@@ -64,7 +66,8 @@ public class ManageLPFragment extends Fragment {
     public View onCreateView(LayoutInflater inflater, ViewGroup container,
                              Bundle savedInstanceState) {
         Log.d(TAG, "Creating ManageLP view");
-        return inflater.inflate(R.layout.fragment_manage_lp, container, false);
+        rootView = inflater.inflate(R.layout.fragment_manage_lp, container, false);
+        return rootView;
     }
 
     @Override
@@ -78,6 +81,9 @@ public class ManageLPFragment extends Fragment {
         initializeViews(view);
         setupRecyclerView();
         setupClaimAllButton();
+        
+        // Set initial title background
+        updateTitleBackground();
         
         // Load initial data
         refreshPoolData();
@@ -209,77 +215,120 @@ public class ManageLPFragment extends Fragment {
         
         List<PoolData> newPoolData = new ArrayList<>();
         
-        // The result should be an array of pool data
-        if (result.has("data") && result.get("data") instanceof JSONArray) {
-            JSONArray poolResults = result.getJSONArray("data");
+        // Handle the decryption_error case where data is embedded in error message
+        if (result.has("error") && result.has("decryption_error")) {
+            String decryptionError = result.getString("decryption_error");
+            Log.d(TAG, "Processing decryption_error for unbonding shares");
             
-            for (int i = 0; i < poolResults.length() && i < tokenKeys.size(); i++) {
-                String tokenKey = tokenKeys.get(i);
-                JSONObject poolInfo = poolResults.getJSONObject(i);
-                Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenKey);
-                
-                // Extract pool data like React app does
-                String pendingRewards = "0.0";
-                String liquidity = "0.0";
-                String volume = "0.0";
-                String apr = "0.0%";
-                
-                // Parse user_info for rewards
-                if (poolInfo.has("user_info") && !poolInfo.isNull("user_info")) {
-                    JSONObject userInfo = poolInfo.getJSONObject("user_info");
-                    if (userInfo.has("pending_rewards")) {
-                        long rewardsMicro = userInfo.getLong("pending_rewards");
-                        double rewardsMacro = rewardsMicro / 1000000.0; // Convert from micro to macro
-                        pendingRewards = String.format("%.1f", rewardsMacro);
+            // Look for base64-decoded JSON in the error message
+            String jsonMarker = "base64=Value ";
+            int jsonIndex = decryptionError.indexOf(jsonMarker);
+            if (jsonIndex != -1) {
+                int startIndex = jsonIndex + jsonMarker.length();
+                int endIndex = decryptionError.indexOf(" of type org.json.JSONArray", startIndex);
+                if (endIndex != -1) {
+                    String jsonArrayString = decryptionError.substring(startIndex, endIndex);
+                    try {
+                        JSONArray poolResults = new JSONArray(jsonArrayString);
+                        processPoolArray(poolResults, tokenKeys, newPoolData);
+                        updatePoolDataOnUI(newPoolData);
+                        return;
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error parsing JSON from decryption_error", e);
                     }
                 }
-                
-                // Parse pool_info for liquidity, volume, APR
-                if (poolInfo.has("pool_info") && !poolInfo.isNull("pool_info")) {
-                    JSONObject poolState = poolInfo.getJSONObject("pool_info");
-                    if (poolState.has("state") && !poolState.isNull("state")) {
-                        JSONObject state = poolState.getJSONObject("state");
-                        
-                        // Calculate liquidity (2 * ERTH reserve)
-                        if (state.has("erth_reserve")) {
-                            long erthReserveMicro = state.getLong("erth_reserve");
-                            double erthReserveMacro = erthReserveMicro / 1000000.0;
-                            double totalLiquidity = 2 * erthReserveMacro;
-                            liquidity = String.format("%.0f", totalLiquidity);
-                        }
-                        
-                        // Calculate volume (sum of last 7 days)
-                        if (state.has("daily_volumes")) {
-                            JSONArray volumes = state.getJSONArray("daily_volumes");
-                            long totalVolumeMicro = 0;
-                            for (int v = 0; v < Math.min(7, volumes.length()); v++) {
-                                totalVolumeMicro += volumes.getLong(v);
-                            }
-                            double totalVolumeMacro = totalVolumeMicro / 1000000.0;
-                            volume = String.format("%.0f", totalVolumeMacro);
-                        }
-                        
-                        // Calculate APR (weekly rewards / liquidity * 52)
-                        if (state.has("daily_rewards")) {
-                            JSONArray rewards = state.getJSONArray("daily_rewards");
-                            long weeklyRewardsMicro = 0;
-                            for (int r = 0; r < Math.min(7, rewards.length()); r++) {
-                                weeklyRewardsMicro += rewards.getLong(r);
-                            }
-                            double weeklyRewardsMacro = weeklyRewardsMicro / 1000000.0;
-                            double liquidityValue = Double.parseDouble(liquidity.replace(",", ""));
-                            if (liquidityValue > 0) {
-                                double aprValue = (weeklyRewardsMacro / liquidityValue) * 52 * 100;
-                                apr = String.format("%.2f%%", aprValue);
-                            }
-                        }
-                    }
-                }
-                
-                newPoolData.add(new PoolData(tokenKey, pendingRewards, liquidity, volume, apr, tokenInfo));
             }
         }
         
+        // The result should be an array of pool data
+        if (result.has("data") && result.get("data") instanceof JSONArray) {
+            JSONArray poolResults = result.getJSONArray("data");
+            processPoolArray(poolResults, tokenKeys, newPoolData);
+            updatePoolDataOnUI(newPoolData);
+        } else {
+            Log.w(TAG, "No valid pool data found in result");
+            updatePoolDataOnUI(newPoolData);
+        }
+    }
+    
+    private void processPoolArray(JSONArray poolResults, List<String> tokenKeys, List<PoolData> newPoolData) throws Exception {
+        for (int i = 0; i < poolResults.length() && i < tokenKeys.size(); i++) {
+            String tokenKey = tokenKeys.get(i);
+            JSONObject poolInfo = poolResults.getJSONObject(i);
+            Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenKey);
+                
+            // Extract pool data like React app does
+            String pendingRewards = "0.0";
+            String liquidity = "0.0";
+            String volume = "0.0";
+            String apr = "0.0%";
+            String unbondingShares = "0.0";
+            
+            // Parse user_info for rewards
+            if (poolInfo.has("user_info") && !poolInfo.isNull("user_info")) {
+                JSONObject userInfo = poolInfo.getJSONObject("user_info");
+                if (userInfo.has("pending_rewards")) {
+                    long rewardsMicro = userInfo.getLong("pending_rewards");
+                    double rewardsMacro = rewardsMicro / 1000000.0; // Convert from micro to macro
+                    pendingRewards = String.format("%.1f", rewardsMacro);
+                }
+            }
+                
+            // Parse pool_info for liquidity, volume, APR, and unbonding shares
+            if (poolInfo.has("pool_info") && !poolInfo.isNull("pool_info")) {
+                JSONObject poolState = poolInfo.getJSONObject("pool_info");
+                if (poolState.has("state") && !poolState.isNull("state")) {
+                    JSONObject state = poolState.getJSONObject("state");
+                    
+                    // Extract unbonding shares for this user
+                    if (state.has("unbonding_shares")) {
+                        long unbondingSharesMicro = state.getLong("unbonding_shares");
+                        double unbondingSharesMacro = unbondingSharesMicro / 1000000.0;
+                        unbondingShares = String.format("%.2f", unbondingSharesMacro);
+                        Log.d(TAG, tokenKey + " unbonding shares: " + unbondingShares);
+                    }
+                    
+                    // Calculate liquidity (2 * ERTH reserve)
+                    if (state.has("erth_reserve")) {
+                        long erthReserveMicro = state.getLong("erth_reserve");
+                        double erthReserveMacro = erthReserveMicro / 1000000.0;
+                        double totalLiquidity = 2 * erthReserveMacro;
+                        liquidity = String.format("%.0f", totalLiquidity);
+                    }
+                    
+                    // Calculate volume (sum of last 7 days)
+                    if (state.has("daily_volumes")) {
+                        JSONArray volumes = state.getJSONArray("daily_volumes");
+                        long totalVolumeMicro = 0;
+                        for (int v = 0; v < Math.min(7, volumes.length()); v++) {
+                            totalVolumeMicro += volumes.getLong(v);
+                        }
+                        double totalVolumeMacro = totalVolumeMicro / 1000000.0;
+                        volume = String.format("%.0f", totalVolumeMacro);
+                    }
+                    
+                    // Calculate APR (weekly rewards / liquidity * 52)
+                    if (state.has("daily_rewards")) {
+                        JSONArray rewards = state.getJSONArray("daily_rewards");
+                        long weeklyRewardsMicro = 0;
+                        for (int r = 0; r < Math.min(7, rewards.length()); r++) {
+                            weeklyRewardsMicro += rewards.getLong(r);
+                        }
+                        double weeklyRewardsMacro = weeklyRewardsMicro / 1000000.0;
+                        double liquidityValue = Double.parseDouble(liquidity.replace(",", ""));
+                        if (liquidityValue > 0) {
+                            double aprValue = (weeklyRewardsMacro / liquidityValue) * 52 * 100;
+                            apr = String.format("%.2f%%", aprValue);
+                        }
+                    }
+                }
+            }
+            
+            newPoolData.add(new PoolData(tokenKey, pendingRewards, liquidity, volume, apr, unbondingShares, tokenInfo));
+        }
+    }
+    
+    private void updatePoolDataOnUI(List<PoolData> newPoolData) {
         // Update UI on main thread
         if (getActivity() != null) {
             getActivity().runOnUiThread(() -> {
@@ -303,7 +352,7 @@ public class ManageLPFragment extends Fragment {
                 if (token != null) {
                     // TODO: Query exchange contract for actual pool data
                     // This should call query_user_info with pools array and user address
-                    allPoolsData.add(new PoolData(symbol, "0.0", "0.0", "0.0", "0.0%", token));
+                    allPoolsData.add(new PoolData(symbol, "0.0", "0.0", "0.0", "0.0%", "0.0", token));
                 }
             }
         }
@@ -357,6 +406,7 @@ public class ManageLPFragment extends Fragment {
         }
         
         updateTotalRewards();
+        updateTitleBackground();
     }
     
     private void showLiquidityManagement(PoolData poolData) {
@@ -376,6 +426,20 @@ public class ManageLPFragment extends Fragment {
                 .commit();
                 
             Log.d(TAG, "Showing liquidity management for: " + poolData.getTokenKey());
+        }
+        
+        updateTitleBackground();
+    }
+    
+    private void updateTitleBackground() {
+        if (rootView != null) {
+            if (isManagingLiquidity) {
+                // White background for manage liquidity
+                rootView.setBackgroundColor(ContextCompat.getColor(getContext(), android.R.color.white));
+            } else {
+                // Off-white background for pool overview
+                rootView.setBackgroundColor(ContextCompat.getColor(getContext(), R.color.desktop_bg));
+            }
         }
     }
     
@@ -400,14 +464,16 @@ public class ManageLPFragment extends Fragment {
         private String liquidity;
         private String volume;
         private String apr;
+        private String unbondingShares;
         private Tokens.TokenInfo tokenInfo;
         
-        public PoolData(String tokenKey, String pendingRewards, String liquidity, String volume, String apr, Tokens.TokenInfo tokenInfo) {
+        public PoolData(String tokenKey, String pendingRewards, String liquidity, String volume, String apr, String unbondingShares, Tokens.TokenInfo tokenInfo) {
             this.tokenKey = tokenKey;
             this.pendingRewards = pendingRewards;
             this.liquidity = liquidity;
             this.volume = volume;
             this.apr = apr;
+            this.unbondingShares = unbondingShares;
             this.tokenInfo = tokenInfo;
         }
         
@@ -417,6 +483,7 @@ public class ManageLPFragment extends Fragment {
         public String getLiquidity() { return liquidity; }
         public String getVolume() { return volume; }
         public String getApr() { return apr; }
+        public String getUnbondingShares() { return unbondingShares; }
         public Tokens.TokenInfo getTokenInfo() { return tokenInfo; }
         
         // Setters
@@ -424,6 +491,7 @@ public class ManageLPFragment extends Fragment {
         public void setLiquidity(String liquidity) { this.liquidity = liquidity; }
         public void setVolume(String volume) { this.volume = volume; }
         public void setApr(String apr) { this.apr = apr; }
+        public void setUnbondingShares(String unbondingShares) { this.unbondingShares = unbondingShares; }
     }
     
     @Override

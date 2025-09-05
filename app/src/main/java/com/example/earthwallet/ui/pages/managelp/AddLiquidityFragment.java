@@ -18,8 +18,10 @@ import androidx.fragment.app.Fragment;
 
 import com.example.earthwallet.R;
 import com.example.earthwallet.wallet.constants.Tokens;
+import com.example.earthwallet.Constants;
 
 import org.json.JSONObject;
+import org.json.JSONArray;
 
 import java.io.InputStream;
 import java.text.DecimalFormat;
@@ -47,6 +49,11 @@ public class AddLiquidityFragment extends Fragment {
     private String currentWalletAddress = "";
     private SharedPreferences securePrefs;
     private ExecutorService executorService;
+    
+    // Pool reserves for ratio calculation
+    private double erthReserve = 0.0;
+    private double tokenReserve = 0.0;
+    private boolean isUpdatingRatio = false;
     
     public static AddLiquidityFragment newInstance(String tokenKey) {
         AddLiquidityFragment fragment = new AddLiquidityFragment();
@@ -93,6 +100,7 @@ public class AddLiquidityFragment extends Fragment {
         loadCurrentWalletAddress();
         updateTokenInfo();
         loadTokenBalances();
+        loadPoolReserves();
     }
     
     private void initializeViews(View view) {
@@ -112,12 +120,45 @@ public class AddLiquidityFragment extends Fragment {
         tokenMaxButton.setOnClickListener(v -> {
             if (tokenBalance > 0) {
                 tokenAmountInput.setText(String.valueOf(tokenBalance));
+                calculateErthFromToken(String.valueOf(tokenBalance));
             }
         });
         
         erthMaxButton.setOnClickListener(v -> {
             if (erthBalance > 0) {
                 erthAmountInput.setText(String.valueOf(erthBalance));
+                calculateTokenFromErth(String.valueOf(erthBalance));
+            }
+        });
+        
+        // Add text change listeners for ratio calculation
+        tokenAmountInput.addTextChangedListener(new android.text.TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {}
+
+            @Override
+            public void afterTextChanged(android.text.Editable s) {
+                if (!isUpdatingRatio) {
+                    calculateErthFromToken(s.toString());
+                }
+            }
+        });
+        
+        erthAmountInput.addTextChangedListener(new android.text.TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {}
+
+            @Override
+            public void afterTextChanged(android.text.Editable s) {
+                if (!isUpdatingRatio) {
+                    calculateTokenFromErth(s.toString());
+                }
             }
         });
         
@@ -383,6 +424,165 @@ public class AddLiquidityFragment extends Fragment {
         } catch (Exception e) {
             Log.e(TAG, "Failed to get viewing key for " + tokenSymbol, e);
             return "";
+        }
+    }
+    
+    private void loadPoolReserves() {
+        if (tokenKey == null || TextUtils.isEmpty(currentWalletAddress)) {
+            return;
+        }
+        
+        executorService.execute(() -> {
+            try {
+                String tokenContract = getTokenContractAddress(tokenKey);
+                if (tokenContract == null) return;
+                
+                // Query pool info
+                JSONObject queryMsg = new JSONObject();
+                JSONObject queryUserInfo = new JSONObject();
+                JSONArray poolsArray = new JSONArray();
+                poolsArray.put(tokenContract);
+                queryUserInfo.put("pools", poolsArray);
+                queryUserInfo.put("user", currentWalletAddress);
+                queryMsg.put("query_user_info", queryUserInfo);
+                
+                com.example.earthwallet.bridge.services.SecretQueryService queryService = new com.example.earthwallet.bridge.services.SecretQueryService(getContext());
+                JSONObject result = queryService.queryContract(
+                    Constants.EXCHANGE_CONTRACT,
+                    Constants.EXCHANGE_HASH,
+                    queryMsg
+                );
+                
+                if (getActivity() != null) {
+                    getActivity().runOnUiThread(() -> {
+                        parsePoolReserves(result);
+                    });
+                }
+                
+            } catch (Exception e) {
+                Log.e(TAG, "Error loading pool reserves", e);
+            }
+        });
+    }
+    
+    private void parsePoolReserves(JSONObject result) {
+        try {
+            // Handle the SecretQueryService error case where data is in the error message
+            if (result.has("error") && result.has("decryption_error")) {
+                String decryptionError = result.getString("decryption_error");
+                Log.d(TAG, "Got decryption error, checking for base64 data: " + decryptionError);
+                
+                // Look for "base64=" in the error message and extract the array
+                String base64Marker = "base64=Value ";
+                int base64Index = decryptionError.indexOf(base64Marker);
+                if (base64Index != -1) {
+                    int startIndex = base64Index + base64Marker.length();
+                    int endIndex = decryptionError.indexOf(" of type org.json.JSONArray", startIndex);
+                    if (endIndex != -1) {
+                        String jsonArrayString = decryptionError.substring(startIndex, endIndex);
+                        Log.d(TAG, "Extracted JSON array from error: " + jsonArrayString.substring(0, Math.min(100, jsonArrayString.length())));
+                        
+                        try {
+                            JSONArray poolsData = new JSONArray(jsonArrayString);
+                            if (poolsData.length() > 0) {
+                                // Find the pool that matches our token
+                                for (int i = 0; i < poolsData.length(); i++) {
+                                    JSONObject poolInfo = poolsData.getJSONObject(i);
+                                    JSONObject config = poolInfo.getJSONObject("pool_info").getJSONObject("config");
+                                    String tokenSymbol = config.getString("token_b_symbol");
+                                    if (tokenKey.equals(tokenSymbol)) {
+                                        Log.d(TAG, "Found matching pool for " + tokenKey);
+                                        extractReserves(poolInfo);
+                                        return;
+                                    }
+                                }
+                            }
+                        } catch (Exception e) {
+                            Log.e(TAG, "Error parsing extracted JSON array", e);
+                        }
+                    }
+                }
+            }
+            
+            // Also try the normal data path
+            if (result.has("data")) {
+                JSONArray poolsData = result.getJSONArray("data");
+                if (poolsData.length() > 0) {
+                    JSONObject poolInfo = poolsData.getJSONObject(0);
+                    extractReserves(poolInfo);
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error processing pool reserves", e);
+        }
+    }
+    
+    private void extractReserves(JSONObject poolInfo) {
+        try {
+            JSONObject poolState = poolInfo.getJSONObject("pool_info").getJSONObject("state");
+            
+            long erthReserveRaw = poolState.optLong("erth_reserve", 0);
+            long tokenReserveRaw = poolState.optLong("token_b_reserve", 0);
+            
+            // Convert from microunits to regular units (divide by 10^6)
+            erthReserve = erthReserveRaw / 1000000.0;
+            tokenReserve = tokenReserveRaw / 1000000.0;
+            
+            Log.d(TAG, "Pool reserves loaded - ERTH: " + erthReserve + ", " + tokenKey + ": " + tokenReserve);
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error extracting reserves from pool info", e);
+        }
+    }
+    
+    private String getTokenContractAddress(String symbol) {
+        Tokens.TokenInfo tokenInfo = Tokens.getToken(symbol);
+        return tokenInfo != null ? tokenInfo.contract : null;
+    }
+    
+    private void calculateErthFromToken(String tokenAmountStr) {
+        if (android.text.TextUtils.isEmpty(tokenAmountStr) || erthReserve <= 0 || tokenReserve <= 0) {
+            return;
+        }
+        
+        try {
+            double tokenAmount = Double.parseDouble(tokenAmountStr);
+            if (tokenAmount > 0) {
+                double erthAmount = (tokenAmount * erthReserve) / tokenReserve;
+                
+                isUpdatingRatio = true;
+                erthAmountInput.setText(String.format("%.6f", erthAmount));
+                isUpdatingRatio = false;
+            } else {
+                isUpdatingRatio = true;
+                erthAmountInput.setText("");
+                isUpdatingRatio = false;
+            }
+        } catch (NumberFormatException e) {
+            Log.w(TAG, "Invalid token amount format: " + tokenAmountStr);
+        }
+    }
+    
+    private void calculateTokenFromErth(String erthAmountStr) {
+        if (android.text.TextUtils.isEmpty(erthAmountStr) || erthReserve <= 0 || tokenReserve <= 0) {
+            return;
+        }
+        
+        try {
+            double erthAmount = Double.parseDouble(erthAmountStr);
+            if (erthAmount > 0) {
+                double tokenAmount = (erthAmount * tokenReserve) / erthReserve;
+                
+                isUpdatingRatio = true;
+                tokenAmountInput.setText(String.format("%.6f", tokenAmount));
+                isUpdatingRatio = false;
+            } else {
+                isUpdatingRatio = true;
+                tokenAmountInput.setText("");
+                isUpdatingRatio = false;
+            }
+        } catch (NumberFormatException e) {
+            Log.w(TAG, "Invalid ERTH amount format: " + erthAmountStr);
         }
     }
     

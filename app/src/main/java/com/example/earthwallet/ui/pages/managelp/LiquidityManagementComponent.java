@@ -8,6 +8,8 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.LinearLayout;
+import android.widget.ImageView;
+import android.graphics.drawable.Drawable;
 import android.util.Log;
 
 import androidx.fragment.app.Fragment;
@@ -23,6 +25,8 @@ import com.google.android.material.tabs.TabLayoutMediator;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -43,6 +47,7 @@ public class LiquidityManagementComponent extends Fragment {
     private ViewPager2 viewPager;
     private Button closeButton;
     private TextView titleText;
+    private ImageView poolTokenLogo;
     private ManageLPFragment.PoolData poolData;
     
     // Current tab views
@@ -131,10 +136,16 @@ public class LiquidityManagementComponent extends Fragment {
         executorService = Executors.newCachedThreadPool();
         
         if (tokenKey != null) {
-            // Update pool title
+            // Update pool title and logo
             TextView poolTitle = getView() != null ? getView().findViewById(R.id.pool_title) : null;
+            ImageView poolLogo = getView() != null ? getView().findViewById(R.id.pool_token_logo) : null;
+            
             if (poolTitle != null) {
                 poolTitle.setText(tokenKey + " Pool");
+            }
+            
+            if (poolLogo != null) {
+                setTokenLogo(poolLogo, tokenKey);
             }
             
             // Query detailed pool state data
@@ -147,6 +158,7 @@ public class LiquidityManagementComponent extends Fragment {
         viewPager = view.findViewById(R.id.view_pager);
         closeButton = view.findViewById(R.id.close_button);
         titleText = view.findViewById(R.id.title_text);
+        poolTokenLogo = view.findViewById(R.id.pool_token_logo);
     }
     
     private void setupTabs() {
@@ -527,6 +539,33 @@ public class LiquidityManagementComponent extends Fragment {
                     
         } catch (Exception e) {
             Log.e(TAG, "Error calculating underlying values", e);
+        }
+    }
+    
+    private void setTokenLogo(ImageView imageView, String tokenKey) {
+        if (imageView == null || getContext() == null || tokenKey == null) return;
+        
+        try {
+            // Try to load token logo from assets
+            String assetPath = "coin/" + tokenKey.toUpperCase() + ".png";
+            loadImageFromAssets(assetPath, imageView);
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to load token logo for " + tokenKey + ": " + e.getMessage());
+            // Fallback to default
+            imageView.setImageResource(R.drawable.ic_token_default);
+        }
+    }
+    
+    private void loadImageFromAssets(String assetPath, ImageView imageView) {
+        try {
+            InputStream inputStream = getContext().getAssets().open(assetPath);
+            Drawable drawable = Drawable.createFromStream(inputStream, null);
+            imageView.setImageDrawable(drawable);
+            inputStream.close();
+            Log.d(TAG, "Successfully loaded logo from: " + assetPath);
+        } catch (IOException e) {
+            Log.w(TAG, "Failed to load asset: " + assetPath + ", using default");
+            imageView.setImageResource(R.drawable.ic_token_default);
         }
     }
     

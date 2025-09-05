@@ -150,8 +150,7 @@ public class PoolOverviewAdapter extends RecyclerView.Adapter<PoolOverviewAdapte
             // Set token logo based on token type
             setTokenLogo(pool.getTokenKey());
             
-            // TODO: Implement unbonding lock visualization
-            // For now, hide the unbonding lock until we have actual unbonding data
+            // Hide unbonding lock for now - this was for pool overview, not remove liquidity tab
             if (unbondingLock != null) {
                 unbondingLock.setVisibility(View.GONE);
             }

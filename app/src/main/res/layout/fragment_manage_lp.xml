@@ -4,7 +4,6 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#f5f5f5"
     android:fillViewport="true">
 
     <LinearLayout
@@ -14,18 +13,6 @@
         android:paddingTop="20dp"
         android:paddingBottom="20dp">
 
-        <!-- Title -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:text="Manage Liquidity Pools"
-            android:textSize="24sp"
-            android:textStyle="bold"
-            android:fontFamily="sans-serif-medium"
-            android:textColor="#293462"
-            android:layout_marginTop="10dp"
-            android:layout_marginBottom="30dp" />
 
         <!-- Claim All Container -->
         <LinearLayout

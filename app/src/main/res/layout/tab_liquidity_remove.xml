@@ -3,115 +3,135 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:fillViewport="true"
-    android:paddingTop="20dp"
-    android:paddingStart="20dp"
-    android:paddingEnd="20dp"
-    android:paddingBottom="40dp"
-    android:clipToPadding="false">
+    android:fillViewport="true">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical">
+        android:orientation="vertical"
+        android:padding="30dp">
 
-        <!-- Shares Amount Input Group -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:orientation="vertical">
-
-            <!-- Label and Balance -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="8dp"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Shares"
-                    android:textColor="#333333"
-                    android:textSize="16sp" />
-
+                <!-- Shares Amount Input Group -->
                 <LinearLayout
-                    android:layout_width="wrap_content"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
+                    android:layout_marginBottom="12dp"
+                    android:orientation="vertical">
 
-                    <TextView
-                        android:id="@+id/staked_shares_text"
-                        android:layout_width="wrap_content"
+                    <!-- Label and Balance -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="Balance: ..."
-                        android:textColor="#333333"
-                        android:textSize="14sp"
-                        tools:text="Balance: 5,000" />
+                        android:layout_marginBottom="8dp"
+                        android:orientation="horizontal"
+                        android:paddingHorizontal="4dp">
 
-                    <Button
-                        android:id="@+id/shares_max_button"
-                        android:layout_width="wrap_content"
-                        android:layout_height="32dp"
-                        android:layout_marginStart="10dp"
-                        android:background="@drawable/button_max"
-                        android:minWidth="0dp"
-                        android:paddingHorizontal="10dp"
-                        android:text="Max"
-                        android:textColor="@color/white"
-                        android:textSize="12sp" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Shares"
+                            android:textColor="#333333"
+                            android:textSize="16sp"
+                            android:textStyle="bold" />
+
+                        <View
+                            android:layout_width="0dp"
+                            android:layout_height="1dp"
+                            android:layout_weight="1" />
+
+                        <LinearLayout
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical">
+
+                            <TextView
+                                android:id="@+id/staked_shares_text"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Balance: ..."
+                                android:textColor="#333333"
+                                android:textSize="14sp"
+                                tools:text="Balance: 5,000" />
+
+                            <Button
+                                android:id="@+id/shares_max_button"
+                                android:layout_width="wrap_content"
+                                android:layout_height="32dp"
+                                android:layout_marginStart="8dp"
+                                android:background="@drawable/card_rounded_bg"
+                                android:minWidth="0dp"
+                                android:minHeight="0dp"
+                                android:padding="8dp"
+                                android:text="Max"
+                                android:textColor="@color/brand_blue"
+                                android:textSize="12sp"
+                                android:visibility="gone" />
+
+                        </LinearLayout>
+
+                    </LinearLayout>
+
+                    <!-- Input wrapper -->
+                    <RelativeLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="70dp"
+                        android:background="@color/desktop_bg"
+                        android:padding="0dp">
+
+                        <EditText
+                            android:id="@+id/remove_amount_input"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:layout_marginStart="20dp"
+                            android:layout_marginEnd="20dp"
+                            android:background="@android:color/transparent"
+                            android:hint="0.0"
+                            android:textColorHint="#999999"
+                            android:inputType="numberDecimal"
+                            android:paddingStart="18dp"
+                            android:paddingEnd="18dp"
+                            android:paddingTop="18dp"
+                            android:paddingBottom="18dp"
+                            android:textColor="#333333"
+                            android:textSize="20sp"
+                            android:textStyle="bold"
+                            android:gravity="end" />
+
+                    </RelativeLayout>
 
                 </LinearLayout>
 
-            </LinearLayout>
+                <!-- Remove Liquidity Button -->
+                <Button
+                    android:id="@+id/remove_liquidity_button"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:layout_marginTop="20dp"
+                    android:backgroundTint="#4caf50"
+                    android:text="Remove Liquidity"
+                    android:textColor="@android:color/white"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
 
-            <!-- Input Wrapper -->
-            <FrameLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/input_background">
-
-                <EditText
-                    android:id="@+id/remove_amount_input"
+                <!-- Info Section -->
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:background="@android:color/transparent"
-                    android:gravity="end"
-                    android:hint="Number of shares to remove"
-                    android:inputType="numberDecimal"
-                    android:padding="15dp"
-                    android:textSize="16sp" />
+                    android:layout_marginTop="20dp"
+                    android:background="@android:color/white"
+                    android:orientation="vertical"
+                    android:padding="16dp">
 
-            </FrameLayout>
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:text="Note: Removing liquidity requires a 7-day unbonding period before you can claim your tokens."
+                        android:textColor="#666666"
+                        android:textSize="14sp" />
 
-        </LinearLayout>
-
-        <!-- Remove Liquidity Button -->
-        <Button
-            android:id="@+id/remove_liquidity_button"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:layout_marginBottom="20dp"
-            android:background="@drawable/button_rounded_green"
-            android:padding="15dp"
-            android:text="Remove Liquidity"
-            android:textColor="@color/white"
-            android:textSize="18sp" />
-
-        <!-- Info Text -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="15dp"
-            android:layout_marginBottom="30dp"
-            android:gravity="center"
-            android:text="Note: Removing liquidity requires a 7-day unbonding period before you can claim your tokens."
-            android:textColor="#666666"
-            android:textSize="14sp" />
+                </LinearLayout>
 
     </LinearLayout>
 

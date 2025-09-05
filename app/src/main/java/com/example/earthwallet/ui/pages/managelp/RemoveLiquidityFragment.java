@@ -1,6 +1,9 @@
 package com.example.earthwallet.ui.pages.managelp;
 
+import android.content.SharedPreferences;
 import android.os.Bundle;
+import android.text.TextUtils;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -13,8 +16,19 @@ import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 
 import com.example.earthwallet.R;
+import com.example.earthwallet.wallet.constants.Tokens;
+import com.example.earthwallet.Constants;
+
+import org.json.JSONObject;
+import org.json.JSONArray;
+
+import java.text.DecimalFormat;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class RemoveLiquidityFragment extends Fragment {
+    
+    private static final String TAG = "RemoveLiquidityFragment";
     
     private EditText removeAmountInput;
     private TextView stakedSharesText;
@@ -22,6 +36,10 @@ public class RemoveLiquidityFragment extends Fragment {
     private Button removeLiquidityButton;
     
     private String tokenKey;
+    private double userStakedShares = 0.0;
+    private String currentWalletAddress = "";
+    private SharedPreferences securePrefs;
+    private ExecutorService executorService;
     
     public static RemoveLiquidityFragment newInstance(String tokenKey) {
         RemoveLiquidityFragment fragment = new RemoveLiquidityFragment();
@@ -37,6 +55,20 @@ public class RemoveLiquidityFragment extends Fragment {
         if (getArguments() != null) {
             tokenKey = getArguments().getString("token_key");
         }
+        
+        // Get secure preferences from HostActivity
+        try {
+            if (getActivity() instanceof com.example.earthwallet.ui.host.HostActivity) {
+                securePrefs = ((com.example.earthwallet.ui.host.HostActivity) getActivity()).getSecurePrefs();
+                Log.d(TAG, "Successfully got securePrefs from HostActivity");
+            } else {
+                Log.e(TAG, "Activity is not HostActivity");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to get securePrefs from HostActivity", e);
+        }
+        
+        executorService = Executors.newCachedThreadPool();
     }
     
     @Nullable
@@ -51,6 +83,9 @@ public class RemoveLiquidityFragment extends Fragment {
         
         initializeViews(view);
         setupListeners();
+        loadCurrentWalletAddress();
+        loadUserShares();
+        loadUnbondingRequests();
     }
     
     private void initializeViews(View view) {
@@ -62,11 +97,279 @@ public class RemoveLiquidityFragment extends Fragment {
     
     private void setupListeners() {
         sharesMaxButton.setOnClickListener(v -> {
-            // TODO: Set max shares amount
+            if (userStakedShares > 0) {
+                removeAmountInput.setText(String.valueOf(userStakedShares));
+            }
         });
         
         removeLiquidityButton.setOnClickListener(v -> {
             // TODO: Execute remove liquidity
+            Log.d(TAG, "Remove liquidity button clicked");
         });
+    }
+    
+    private void loadCurrentWalletAddress() {
+        try {
+            if (securePrefs != null) {
+                String walletsJson = securePrefs.getString("wallets", "[]");
+                org.json.JSONArray walletsArray = new org.json.JSONArray(walletsJson);
+                int selectedIndex = securePrefs.getInt("selected_wallet_index", -1);
+                
+                if (walletsArray.length() > 0) {
+                    org.json.JSONObject selectedWallet;
+                    if (selectedIndex >= 0 && selectedIndex < walletsArray.length()) {
+                        selectedWallet = walletsArray.getJSONObject(selectedIndex);
+                    } else {
+                        selectedWallet = walletsArray.getJSONObject(0);
+                    }
+                    currentWalletAddress = selectedWallet.optString("address", "");
+                    Log.d(TAG, "Loaded wallet address: " + currentWalletAddress);
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to load wallet address", e);
+        }
+    }
+    
+    private void loadUserShares() {
+        if (tokenKey == null || TextUtils.isEmpty(currentWalletAddress)) {
+            stakedSharesText.setText("Balance: Connect wallet");
+            return;
+        }
+        
+        executorService.execute(() -> {
+            try {
+                String tokenContract = getTokenContractAddress(tokenKey);
+                if (tokenContract == null) return;
+                
+                // Query pool info
+                JSONObject queryMsg = new JSONObject();
+                JSONObject queryUserInfo = new JSONObject();
+                JSONArray poolsArray = new JSONArray();
+                poolsArray.put(tokenContract);
+                queryUserInfo.put("pools", poolsArray);
+                queryUserInfo.put("user", currentWalletAddress);
+                queryMsg.put("query_user_info", queryUserInfo);
+                
+                com.example.earthwallet.bridge.services.SecretQueryService queryService = new com.example.earthwallet.bridge.services.SecretQueryService(getContext());
+                JSONObject result = queryService.queryContract(
+                    Constants.EXCHANGE_CONTRACT,
+                    Constants.EXCHANGE_HASH,
+                    queryMsg
+                );
+                
+                if (getActivity() != null) {
+                    getActivity().runOnUiThread(() -> {
+                        parseUserShares(result);
+                    });
+                }
+                
+            } catch (Exception e) {
+                Log.e(TAG, "Error loading user shares", e);
+                if (getActivity() != null) {
+                    getActivity().runOnUiThread(() -> {
+                        stakedSharesText.setText("Balance: Error loading");
+                    });
+                }
+            }
+        });
+    }
+    
+    private void parseUserShares(JSONObject result) {
+        try {
+            // Handle the SecretQueryService error case where data is in the error message
+            if (result.has("error") && result.has("decryption_error")) {
+                String decryptionError = result.getString("decryption_error");
+                Log.d(TAG, "Got decryption error, checking for base64 data: " + decryptionError);
+                
+                // Look for "base64=" in the error message and extract the array
+                String base64Marker = "base64=Value ";
+                int base64Index = decryptionError.indexOf(base64Marker);
+                if (base64Index != -1) {
+                    int startIndex = base64Index + base64Marker.length();
+                    int endIndex = decryptionError.indexOf(" of type org.json.JSONArray", startIndex);
+                    if (endIndex != -1) {
+                        String jsonArrayString = decryptionError.substring(startIndex, endIndex);
+                        Log.d(TAG, "Extracted JSON array from error: " + jsonArrayString.substring(0, Math.min(100, jsonArrayString.length())));
+                        
+                        try {
+                            JSONArray poolsData = new JSONArray(jsonArrayString);
+                            if (poolsData.length() > 0) {
+                                // Find the pool that matches our token
+                                for (int i = 0; i < poolsData.length(); i++) {
+                                    JSONObject poolInfo = poolsData.getJSONObject(i);
+                                    JSONObject config = poolInfo.getJSONObject("pool_info").getJSONObject("config");
+                                    String tokenSymbol = config.getString("token_b_symbol");
+                                    if (tokenKey.equals(tokenSymbol)) {
+                                        Log.d(TAG, "Found matching pool for " + tokenKey);
+                                        extractUserShares(poolInfo);
+                                        return;
+                                    }
+                                }
+                            }
+                        } catch (Exception e) {
+                            Log.e(TAG, "Error parsing extracted JSON array", e);
+                        }
+                    }
+                }
+            }
+            
+            // Also try the normal data path
+            if (result.has("data")) {
+                JSONArray poolsData = result.getJSONArray("data");
+                if (poolsData.length() > 0) {
+                    JSONObject poolInfo = poolsData.getJSONObject(0);
+                    extractUserShares(poolInfo);
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error processing user shares", e);
+            stakedSharesText.setText("Balance: Error");
+        }
+    }
+    
+    private void extractUserShares(JSONObject poolInfo) {
+        try {
+            JSONObject userInfo = poolInfo.getJSONObject("user_info");
+            
+            long userStakedRaw = userInfo.optLong("amount_staked", 0);
+            
+            // Convert from microunits to regular units (divide by 10^6)
+            userStakedShares = userStakedRaw / 1000000.0;
+            
+            Log.d(TAG, "User staked shares loaded: " + userStakedShares);
+            
+            updateSharesDisplay();
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error extracting user shares from pool info", e);
+            stakedSharesText.setText("Balance: Error");
+        }
+    }
+    
+    private void updateSharesDisplay() {
+        DecimalFormat df = new DecimalFormat("#.##");
+        
+        if (userStakedShares >= 0) {
+            stakedSharesText.setText("Balance: " + df.format(userStakedShares));
+            sharesMaxButton.setVisibility(userStakedShares > 0 ? View.VISIBLE : View.VISIBLE);
+        } else {
+            stakedSharesText.setText("Balance: Error");
+            sharesMaxButton.setVisibility(View.GONE);
+        }
+    }
+    
+    private void loadUnbondingRequests() {
+        if (tokenKey == null || TextUtils.isEmpty(currentWalletAddress)) {
+            Log.d(TAG, "Cannot load unbonding requests: missing token key or wallet address");
+            return;
+        }
+        
+        executorService.execute(() -> {
+            try {
+                String tokenContract = getTokenContractAddress(tokenKey);
+                if (tokenContract == null) return;
+                
+                // Query unbonding requests for this user and token
+                JSONObject queryMsg = new JSONObject();
+                JSONObject queryUnbonding = new JSONObject();
+                queryUnbonding.put("user", currentWalletAddress);
+                queryUnbonding.put("token", tokenContract);
+                queryMsg.put("query_unbonding", queryUnbonding);
+                
+                Log.d(TAG, "Querying unbonding requests for " + tokenKey + " with message: " + queryMsg.toString());
+                
+                com.example.earthwallet.bridge.services.SecretQueryService queryService = new com.example.earthwallet.bridge.services.SecretQueryService(getContext());
+                JSONObject result = queryService.queryContract(
+                    Constants.EXCHANGE_CONTRACT,
+                    Constants.EXCHANGE_HASH,
+                    queryMsg
+                );
+                
+                Log.d(TAG, "Unbonding query result: " + result.toString());
+                
+                if (getActivity() != null) {
+                    getActivity().runOnUiThread(() -> {
+                        parseUnbondingRequests(result);
+                    });
+                }
+                
+            } catch (Exception e) {
+                Log.e(TAG, "Error loading unbonding requests", e);
+            }
+        });
+    }
+    
+    private void parseUnbondingRequests(JSONObject result) {
+        try {
+            // Handle the SecretQueryService error case where data is in the error message
+            if (result.has("error") && result.has("decryption_error")) {
+                String decryptionError = result.getString("decryption_error");
+                Log.d(TAG, "Parsing unbonding from decryption error: " + decryptionError.substring(0, Math.min(200, decryptionError.length())));
+                
+                // Look for "base64=Value " in the error message and extract the JSON
+                String base64Marker = "base64=Value ";
+                int base64Index = decryptionError.indexOf(base64Marker);
+                if (base64Index != -1) {
+                    int startIndex = base64Index + base64Marker.length();
+                    int endIndex = decryptionError.indexOf(" of type", startIndex);
+                    if (endIndex != -1) {
+                        String jsonString = decryptionError.substring(startIndex, endIndex);
+                        Log.d(TAG, "Extracted unbonding JSON: " + jsonString);
+                        
+                        try {
+                            JSONArray unbondingArray = new JSONArray(jsonString);
+                            Log.d(TAG, "Found " + unbondingArray.length() + " unbonding requests");
+                            
+                            // TODO: Display unbonding requests in UI
+                            displayUnbondingRequests(unbondingArray);
+                            return;
+                        } catch (Exception e) {
+                            Log.e(TAG, "Error parsing unbonding JSON array", e);
+                        }
+                    }
+                }
+            }
+            
+            // Also try the normal data path
+            if (result.has("data")) {
+                Object data = result.get("data");
+                if (data instanceof JSONArray) {
+                    JSONArray unbondingArray = (JSONArray) data;
+                    Log.d(TAG, "Found " + unbondingArray.length() + " unbonding requests in data");
+                    displayUnbondingRequests(unbondingArray);
+                } else {
+                    Log.d(TAG, "No unbonding requests found");
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error processing unbonding requests", e);
+        }
+    }
+    
+    private void displayUnbondingRequests(JSONArray unbondingArray) {
+        // TODO: Add UI elements to show unbonding requests with amount and remaining time
+        Log.d(TAG, "Displaying " + unbondingArray.length() + " unbonding requests");
+        for (int i = 0; i < unbondingArray.length(); i++) {
+            try {
+                JSONObject request = unbondingArray.getJSONObject(i);
+                Log.d(TAG, "Unbonding request " + i + ": " + request.toString());
+            } catch (Exception e) {
+                Log.e(TAG, "Error processing unbonding request " + i, e);
+            }
+        }
+    }
+    
+    private String getTokenContractAddress(String symbol) {
+        Tokens.TokenInfo tokenInfo = Tokens.getToken(symbol);
+        return tokenInfo != null ? tokenInfo.contract : null;
+    }
+    
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        if (executorService != null && !executorService.isShutdown()) {
+            executorService.shutdown();
+        }
     }
 }
