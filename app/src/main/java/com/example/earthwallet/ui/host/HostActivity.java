@@ -113,6 +113,9 @@ public class HostActivity extends AppCompatActivity implements CreateWalletFragm
             case "anml":
                 fragment = new com.example.earthwallet.ui.pages.anml.ANMLClaimMainFragment();
                 break;
+            case "managelp":
+                fragment = new com.example.earthwallet.ui.pages.managelp.ManageLPFragment();
+                break;
             default:
                 // Default to scanner if an unknown tag is passed
                 fragment = new com.example.earthwallet.ui.pages.anml.ScannerFragment();

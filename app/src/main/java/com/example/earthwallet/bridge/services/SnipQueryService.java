@@ -92,7 +92,6 @@ public class SnipQueryService {
         
         SecretQueryService queryService = new SecretQueryService(queryContext);
         JSONObject result = queryService.queryContract(
-            SecretWallet.DEFAULT_LCD_URL,
             contractAddress,
             codeHash,
             queryObj

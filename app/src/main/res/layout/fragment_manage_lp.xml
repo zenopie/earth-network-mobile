@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#f5f5f5"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <!-- Title -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="Manage Liquidity Pools"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:textColor="#293462"
+            android:layout_marginBottom="20dp" />
+
+        <!-- Claim All Container -->
+        <LinearLayout
+            android:id="@+id/claim_all_container"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:background="@drawable/claim_all_background"
+            android:padding="20dp"
+            android:layout_marginBottom="25dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/total_rewards_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Total Rewards: 0 ERTH"
+                android:textSize="20sp"
+                android:textColor="#293462"
+                android:textStyle="bold"
+                android:layout_marginBottom="15dp"
+                tools:text="Total Rewards: 1,500 ERTH" />
+
+            <Button
+                android:id="@+id/claim_all_button"
+                android:layout_width="175dp"
+                android:layout_height="wrap_content"
+                android:text="Claim All"
+                android:textSize="18sp"
+                android:textColor="@color/white"
+                android:background="@drawable/button_rounded_green"
+                android:layout_gravity="center"
+                android:padding="12dp" />
+
+        </LinearLayout>
+
+        <!-- Pools RecyclerView -->
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/pools_recycler_view"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:nestedScrollingEnabled="false"
+            android:overScrollMode="never"
+            tools:listitem="@layout/item_pool_overview"
+            tools:itemCount="3" />
+
+    </LinearLayout>
+
+</ScrollView>

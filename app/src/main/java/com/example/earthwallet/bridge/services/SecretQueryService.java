@@ -32,6 +32,7 @@ import java.nio.charset.StandardCharsets;
 public class SecretQueryService {
     
     private static final String TAG = "SecretQueryService";
+    private static final String DEFAULT_LCD_URL = "https://lcd.erth.network";
     
     private final SecretNetworkService networkService;
     private final SecretCryptoService cryptoService;
@@ -47,14 +48,13 @@ public class SecretQueryService {
      * Query a Secret Network contract natively (no webview)
      * Uses just-in-time mnemonic fetching with automatic cleanup for enhanced security.
      * 
-     * @param lcdUrl LCD endpoint URL
      * @param contractAddress Contract address  
      * @param codeHash Contract code hash (optional, will be fetched if null)
      * @param queryJson Query JSON object
      * @return Query result JSON object
      */
-    public JSONObject queryContract(String lcdUrl, String contractAddress, 
-                                   String codeHash, JSONObject queryJson) throws Exception {
+    public JSONObject queryContract(String contractAddress, String codeHash, JSONObject queryJson) throws Exception {
+        String lcdUrl = DEFAULT_LCD_URL;
         Log.i(TAG, "Starting native Secret Network contract query with secure mnemonic handling");
         Log.i(TAG, "Contract: " + contractAddress);
         Log.i(TAG, "Code hash: " + (codeHash != null ? codeHash : "null (will fetch)"));
@@ -166,6 +166,14 @@ public class SecretQueryService {
                     return new JSONObject("{}");
                 }
                 
+                // Check if it's a JSON array and wrap it in an object with "data" key
+                if (directJson.trim().startsWith("[")) {
+                    Log.i(TAG, "Response is JSON array, wrapping in object");
+                    JSONObject wrapper = new JSONObject();
+                    wrapper.put("data", new org.json.JSONArray(directJson));
+                    return wrapper;
+                }
+                
                 return new JSONObject(directJson);
             } catch (Exception e1) {
                 Log.w(TAG, "Direct JSON parse failed, trying base64 decode: " + e1.getMessage());
@@ -178,6 +186,14 @@ public class SecretQueryService {
                     
                     if (finalJson.trim().isEmpty()) {
                         return new JSONObject("{}");
+                    }
+                    
+                    // Check if it's a JSON array and wrap it in an object with "data" key  
+                    if (finalJson.trim().startsWith("[")) {
+                        Log.i(TAG, "Base64-decoded response is JSON array, wrapping in object");
+                        JSONObject wrapper = new JSONObject();
+                        wrapper.put("data", new org.json.JSONArray(finalJson));
+                        return wrapper;
                     }
                     
                     return new JSONObject(finalJson);

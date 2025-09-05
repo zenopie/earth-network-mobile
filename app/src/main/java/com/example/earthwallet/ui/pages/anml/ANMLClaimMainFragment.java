@@ -256,7 +256,6 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
                     
                     SecretQueryService queryService = new SecretQueryService(getContext());
                     JSONObject result = queryService.queryContract(
-                        SecretWallet.DEFAULT_LCD_URL,
                         Constants.REGISTRATION_CONTRACT,
                         Constants.REGISTRATION_HASH,
                         q

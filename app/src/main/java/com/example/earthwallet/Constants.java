@@ -9,5 +9,5 @@ public class Constants {
     
     // Exchange contract details
     public static final String EXCHANGE_CONTRACT = "secret1rj2phrf6x3v7526jrz60m2dcq58slyq2269kra";
-    public static final String EXCHANGE_HASH = "2be409a0708a9e05155341ee3fe42a63bf2ff77b140942a2593767f5637bbf70";
+    public static final String EXCHANGE_HASH = "95f8e02efc032c5c3c3632a97014b3b4b9efbec1b55051c18ca7ad1729522c00";
 }

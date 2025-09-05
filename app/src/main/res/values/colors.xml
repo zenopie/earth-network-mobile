@@ -16,4 +16,9 @@
     <!-- Wallet row colors -->
     <color name="wallet_row_name">@color/sidebar_text</color>
     <color name="wallet_row_address">#666666</color>
+
+    <!-- Common colors -->
+    <color name="white">#FFFFFF</color>
+    <color name="green_primary">#4CAF50</color>
+    <color name="green_hover">#45a049</color>
 </resources>

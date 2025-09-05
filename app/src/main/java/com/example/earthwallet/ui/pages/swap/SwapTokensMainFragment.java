@@ -693,7 +693,6 @@ public class SwapTokensMainFragment extends Fragment {
                 JSONObject queryObj = new JSONObject(queryJson);
                 SecretQueryService queryService = new SecretQueryService(getContext());
                 JSONObject result = queryService.queryContract(
-                    com.example.earthwallet.wallet.services.SecretWallet.DEFAULT_LCD_URL,
                     Constants.EXCHANGE_CONTRACT,
                     Constants.EXCHANGE_HASH,
                     queryObj

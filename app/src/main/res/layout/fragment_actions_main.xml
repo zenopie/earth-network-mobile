@@ -92,6 +92,31 @@
                 android:layout_marginBottom="12dp"
                 android:background="@color/sidebar_divider" />
 
+            <!-- Manage LP action -->
+            <Button
+                android:id="@+id/btn_manage_lp"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:layout_marginTop="8dp"
+                android:layout_marginBottom="8dp"
+                android:paddingLeft="16dp"
+                android:paddingRight="16dp"
+                android:backgroundTint="@color/sidebar_bg"
+                android:text="Manage LP"
+                android:textColor="@color/sidebar_text"
+                android:textAllCaps="false"
+                android:textSize="18sp"
+                android:gravity="center_vertical"
+                android:stateListAnimator="@null" />
+
+            <!-- Divider -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="12dp"
+                android:layout_marginBottom="12dp"
+                android:background="@color/sidebar_divider" />
+
             <!-- Additional descriptive area (optional) -->
 
         </LinearLayout>
