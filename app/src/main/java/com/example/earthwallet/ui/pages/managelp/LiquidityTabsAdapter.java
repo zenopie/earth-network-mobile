@@ -13,11 +13,23 @@ public class LiquidityTabsAdapter extends FragmentStateAdapter {
 
     private static final String TAG = "LiquidityTabsAdapter";
     private String tokenKey;
+    private long erthReserve;
+    private long tokenBReserve;
+    private long totalShares;
 
     public LiquidityTabsAdapter(Fragment fragment, String tokenKey) {
         super(fragment);
         this.tokenKey = tokenKey;
         Log.d(TAG, "LiquidityTabsAdapter created with tokenKey: " + tokenKey);
+    }
+    
+    public LiquidityTabsAdapter(Fragment fragment, String tokenKey, long erthReserve, long tokenBReserve, long totalShares) {
+        super(fragment);
+        this.tokenKey = tokenKey;
+        this.erthReserve = erthReserve;
+        this.tokenBReserve = tokenBReserve;
+        this.totalShares = totalShares;
+        Log.d(TAG, "LiquidityTabsAdapter created with tokenKey: " + tokenKey + " and pool info");
     }
 
     @NonNull
@@ -36,7 +48,13 @@ public class LiquidityTabsAdapter extends FragmentStateAdapter {
                 return RemoveLiquidityFragment.newInstance(tokenKey);
             case 3: 
                 Log.d(TAG, "Creating UnbondFragment for tokenKey: " + tokenKey);
-                return UnbondFragment.newInstance(tokenKey);
+                if (totalShares > 0 && erthReserve > 0 && tokenBReserve > 0) {
+                    Log.d(TAG, "Using pool info for UnbondFragment - ERTH: " + erthReserve + ", Token: " + tokenBReserve + ", Shares: " + totalShares);
+                    return UnbondFragment.newInstance(tokenKey, erthReserve, tokenBReserve, totalShares);
+                } else {
+                    Log.d(TAG, "No pool info available, using basic UnbondFragment constructor");
+                    return UnbondFragment.newInstance(tokenKey);
+                }
             default: 
                 Log.d(TAG, "Creating default InfoFragment for tokenKey: " + tokenKey);
                 return InfoFragment.newInstance(tokenKey);

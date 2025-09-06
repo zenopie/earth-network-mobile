@@ -34,6 +34,11 @@ public class UnbondFragment extends Fragment {
     private SharedPreferences securePrefs;
     private ExecutorService executorService;
     
+    // Pool information for calculating estimated values
+    private long erthReserveMicro = 0;
+    private long tokenBReserveMicro = 0;
+    private long totalSharesMicro = 0;
+    
     private Button completeUnbondButton;
     private TextView unbondingRequestsTitle;
     private LinearLayout unbondingRequestsContainer;
@@ -47,11 +52,28 @@ public class UnbondFragment extends Fragment {
         return fragment;
     }
     
+    public static UnbondFragment newInstance(String tokenKey, long erthReserve, long tokenBReserve, long totalShares) {
+        UnbondFragment fragment = new UnbondFragment();
+        Bundle args = new Bundle();
+        args.putString("token_key", tokenKey);
+        args.putLong("erth_reserve", erthReserve);
+        args.putLong("token_b_reserve", tokenBReserve);
+        args.putLong("total_shares", totalShares);
+        fragment.setArguments(args);
+        return fragment;
+    }
+    
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         if (getArguments() != null) {
             tokenKey = getArguments().getString("token_key");
+            // Get pool information from arguments if provided
+            erthReserveMicro = getArguments().getLong("erth_reserve", 0);
+            tokenBReserveMicro = getArguments().getLong("token_b_reserve", 0);
+            totalSharesMicro = getArguments().getLong("total_shares", 0);
+            
+            Log.d(TAG, "Pool info from arguments - ERTH: " + erthReserveMicro + ", Token: " + tokenBReserveMicro + ", Shares: " + totalSharesMicro);
         }
         
         // Get secure preferences from HostActivity
@@ -82,7 +104,13 @@ public class UnbondFragment extends Fragment {
         initializeViews(view);
         setupListeners();
         loadCurrentWalletAddress();
-        loadUnbondingRequests();
+        // If pool info is available from arguments, go straight to unbonding requests
+        if (erthReserveMicro > 0 && tokenBReserveMicro > 0 && totalSharesMicro > 0) {
+            executorService.execute(() -> loadUnbondingRequests());
+        } else {
+            // Fall back to loading pool info first if not provided
+            loadPoolInformationThenUnbondingRequests();
+        }
     }
     
     private void initializeViews(View view) {
@@ -122,9 +150,9 @@ public class UnbondFragment extends Fragment {
         }
     }
     
-    private void loadUnbondingRequests() {
+    private void loadPoolInformationThenUnbondingRequests() {
         if (tokenKey == null || TextUtils.isEmpty(currentWalletAddress)) {
-            Log.d(TAG, "Cannot load unbonding requests: missing token key or wallet address");
+            Log.d(TAG, "Cannot load pool information: missing token key or wallet address");
             return;
         }
         
@@ -133,14 +161,13 @@ public class UnbondFragment extends Fragment {
                 String tokenContract = getTokenContractAddress(tokenKey);
                 if (tokenContract == null) return;
                 
-                // Query unbonding requests for this user and token
+                // Query pool information to get reserves and total shares
                 JSONObject queryMsg = new JSONObject();
-                JSONObject queryUnbondingRequests = new JSONObject();
-                queryUnbondingRequests.put("pool", tokenContract);
-                queryUnbondingRequests.put("user", currentWalletAddress);
-                queryMsg.put("query_unbonding_requests", queryUnbondingRequests);
+                JSONObject queryPool = new JSONObject();
+                queryPool.put("pool", tokenContract);
+                queryMsg.put("query_pool", queryPool);
                 
-                Log.d(TAG, "Querying unbonding requests for " + tokenKey + " with message: " + queryMsg.toString());
+                Log.d(TAG, "Querying pool information for " + tokenKey);
                 
                 com.example.earthwallet.bridge.services.SecretQueryService queryService = new com.example.earthwallet.bridge.services.SecretQueryService(getContext());
                 JSONObject result = queryService.queryContract(
@@ -149,18 +176,137 @@ public class UnbondFragment extends Fragment {
                     queryMsg
                 );
                 
-                Log.d(TAG, "Unbonding query result: " + result.toString());
+                Log.d(TAG, "Pool query result: " + result.toString());
+                parsePoolInformation(result);
                 
-                if (getActivity() != null) {
-                    getActivity().runOnUiThread(() -> {
-                        parseUnbondingRequests(result);
-                    });
-                }
+                // Now load unbonding requests after pool info is loaded
+                loadUnbondingRequests();
                 
             } catch (Exception e) {
-                Log.e(TAG, "Error loading unbonding requests", e);
+                Log.e(TAG, "Error loading pool information", e);
+                // Still try to load unbonding requests even if pool info fails
+                loadUnbondingRequests();
             }
         });
+    }
+    
+    private void loadPoolInformation() {
+        if (tokenKey == null || TextUtils.isEmpty(currentWalletAddress)) {
+            Log.d(TAG, "Cannot load pool information: missing token key or wallet address");
+            return;
+        }
+        
+        executorService.execute(() -> {
+            try {
+                String tokenContract = getTokenContractAddress(tokenKey);
+                if (tokenContract == null) return;
+                
+                // Query pool information to get reserves and total shares
+                JSONObject queryMsg = new JSONObject();
+                JSONObject queryPool = new JSONObject();
+                queryPool.put("pool", tokenContract);
+                queryMsg.put("query_pool", queryPool);
+                
+                Log.d(TAG, "Querying pool information for " + tokenKey);
+                
+                com.example.earthwallet.bridge.services.SecretQueryService queryService = new com.example.earthwallet.bridge.services.SecretQueryService(getContext());
+                JSONObject result = queryService.queryContract(
+                    Constants.EXCHANGE_CONTRACT,
+                    Constants.EXCHANGE_HASH,
+                    queryMsg
+                );
+                
+                Log.d(TAG, "Pool query result: " + result.toString());
+                parsePoolInformation(result);
+                
+            } catch (Exception e) {
+                Log.e(TAG, "Error loading pool information", e);
+            }
+        });
+    }
+    
+    private void parsePoolInformation(JSONObject result) {
+        try {
+            // Handle the SecretQueryService error case where data is in the error message
+            if (result.has("error") && result.has("decryption_error")) {
+                String decryptionError = result.getString("decryption_error");
+                Log.d(TAG, "Parsing pool info from decryption error");
+                
+                // Look for "base64=Value " in the error message
+                String base64Marker = "base64=Value ";
+                int base64Index = decryptionError.indexOf(base64Marker);
+                if (base64Index != -1) {
+                    int startIndex = base64Index + base64Marker.length();
+                    int endIndex = decryptionError.indexOf(" of type", startIndex);
+                    if (endIndex != -1) {
+                        String jsonString = decryptionError.substring(startIndex, endIndex);
+                        Log.d(TAG, "Extracted pool JSON: " + jsonString);
+                        
+                        try {
+                            JSONObject poolData = new JSONObject(jsonString);
+                            erthReserveMicro = poolData.optLong("erth_reserve", 0);
+                            tokenBReserveMicro = poolData.optLong("token_b_reserve", 0);
+                            totalSharesMicro = poolData.optLong("total_shares", 0);
+                            
+                            Log.d(TAG, "Pool info loaded - ERTH: " + erthReserveMicro + ", Token: " + tokenBReserveMicro + ", Shares: " + totalSharesMicro);
+                        } catch (Exception e) {
+                            Log.e(TAG, "Error parsing pool JSON", e);
+                        }
+                    }
+                }
+            }
+            
+            // Also try the normal data path
+            if (result.has("data")) {
+                JSONObject poolData = result.getJSONObject("data");
+                erthReserveMicro = poolData.optLong("erth_reserve", 0);
+                tokenBReserveMicro = poolData.optLong("token_b_reserve", 0);
+                totalSharesMicro = poolData.optLong("total_shares", 0);
+                
+                Log.d(TAG, "Pool info loaded from data - ERTH: " + erthReserveMicro + ", Token: " + tokenBReserveMicro + ", Shares: " + totalSharesMicro);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error parsing pool information", e);
+        }
+    }
+    
+    private void loadUnbondingRequests() {
+        if (tokenKey == null || TextUtils.isEmpty(currentWalletAddress)) {
+            Log.d(TAG, "Cannot load unbonding requests: missing token key or wallet address");
+            return;
+        }
+        
+        try {
+            String tokenContract = getTokenContractAddress(tokenKey);
+            if (tokenContract == null) return;
+            
+            // Query unbonding requests for this user and token
+            JSONObject queryMsg = new JSONObject();
+            JSONObject queryUnbondingRequests = new JSONObject();
+            queryUnbondingRequests.put("pool", tokenContract);
+            queryUnbondingRequests.put("user", currentWalletAddress);
+            queryMsg.put("query_unbonding_requests", queryUnbondingRequests);
+            
+            Log.d(TAG, "Querying unbonding requests for " + tokenKey + " with message: " + queryMsg.toString());
+            
+            com.example.earthwallet.bridge.services.SecretQueryService queryService = new com.example.earthwallet.bridge.services.SecretQueryService(getContext());
+            JSONObject result = queryService.queryContract(
+                Constants.EXCHANGE_CONTRACT,
+                Constants.EXCHANGE_HASH,
+                queryMsg
+            );
+            
+            Log.d(TAG, "Unbonding query result: " + result.toString());
+            
+            if (getActivity() != null) {
+                getActivity().runOnUiThread(() -> {
+                    parseUnbondingRequests(result);
+                });
+            }
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error loading unbonding requests", e);
+        }
     }
     
     private void parseUnbondingRequests(JSONObject result) {
@@ -250,18 +396,37 @@ public class UnbondFragment extends Fragment {
             View view = LayoutInflater.from(getContext()).inflate(R.layout.item_unbonding_request, unbondingRequestsContainer, false);
             
             TextView amountText = view.findViewById(R.id.unbonding_amount_text);
+            TextView estimatedText = view.findViewById(R.id.unbonding_estimated_text);
             TextView statusText = view.findViewById(R.id.unbonding_status_text);
             TextView timeText = view.findViewById(R.id.unbonding_time_text);
             
             // Parse the request data based on React app structure
-            String amount = "0";
+            String displayAmount = "0 Shares";
+            String estimatedValues = "";
             String status = "Unbonding";
             String timeRemaining = "Unknown";
             
             if (request.has("amount")) {
-                long amountMicro = request.getLong("amount");
-                double amountMacro = amountMicro / 1000000.0;
-                amount = String.format("%.2f", amountMacro);
+                long sharesMicro = request.getLong("amount");
+                double sharesMacro = sharesMicro / 1000000.0;
+                
+                // Display shares amount with capital S
+                displayAmount = String.format("%.2f Shares", sharesMacro);
+                
+                // Calculate estimated token values based on pool reserves (like InfoFragment does)
+                if (totalSharesMicro > 0 && erthReserveMicro > 0 && tokenBReserveMicro > 0) {
+                    // Calculate ownership percentage for these shares
+                    double ownershipPercent = (sharesMicro * 100.0) / totalSharesMicro;
+                    
+                    // Calculate estimated underlying values
+                    double erthReserveMacro = erthReserveMicro / 1000000.0;
+                    double tokenBReserveMacro = tokenBReserveMicro / 1000000.0;
+                    
+                    double estimatedErth = (erthReserveMacro * ownershipPercent) / 100.0;
+                    double estimatedToken = (tokenBReserveMacro * ownershipPercent) / 100.0;
+                    
+                    estimatedValues = String.format("~%.2f ERTH + %.2f %s", estimatedErth, estimatedToken, tokenKey);
+                }
             }
             
             if (request.has("start_time")) {
@@ -279,11 +444,19 @@ public class UnbondFragment extends Fragment {
                 }
             }
             
-            amountText.setText(amount + " " + tokenKey);
+            amountText.setText(displayAmount);
             statusText.setText(status);
             timeText.setText(timeRemaining);
             
-            Log.d(TAG, "Created unbonding request view: " + amount + " " + tokenKey + ", " + status + ", " + timeRemaining);
+            // Set estimated values or hide if empty
+            if (estimatedValues != null && !estimatedValues.isEmpty()) {
+                estimatedText.setText(estimatedValues);
+                estimatedText.setVisibility(View.VISIBLE);
+            } else {
+                estimatedText.setVisibility(View.GONE);
+            }
+            
+            Log.d(TAG, "Created unbonding request view: " + displayAmount + ", " + estimatedValues + ", " + status + ", " + timeRemaining);
             
             return view;
         } catch (Exception e) {

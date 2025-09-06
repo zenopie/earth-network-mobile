@@ -164,7 +164,32 @@ public class LiquidityManagementComponent extends Fragment {
     private void setupTabs() {
         if (tabLayout == null || viewPager == null) return;
         
-        LiquidityTabsAdapter adapter = new LiquidityTabsAdapter(this, tokenKey);
+        // Create adapter with pool information if available
+        LiquidityTabsAdapter adapter;
+        if (poolState != null) {
+            try {
+                JSONObject state = poolState.optJSONObject("state");
+                if (state != null) {
+                    long erthReserve = state.optLong("erth_reserve", 0);
+                    long tokenBReserve = state.optLong("token_b_reserve", 0);
+                    long totalShares = state.optLong("total_shares", 0);
+                    
+                    Log.d(TAG, "Setting up tabs with pool info - ERTH: " + erthReserve + 
+                          ", Token: " + tokenBReserve + ", Shares: " + totalShares);
+                    adapter = new LiquidityTabsAdapter(this, tokenKey, erthReserve, tokenBReserve, totalShares);
+                } else {
+                    Log.d(TAG, "No state in poolState, using basic adapter");
+                    adapter = new LiquidityTabsAdapter(this, tokenKey);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Error extracting pool info, using basic adapter", e);
+                adapter = new LiquidityTabsAdapter(this, tokenKey);
+            }
+        } else {
+            Log.d(TAG, "No poolState available, using basic adapter");
+            adapter = new LiquidityTabsAdapter(this, tokenKey);
+        }
+        
         viewPager.setAdapter(adapter);
         
         new TabLayoutMediator(tabLayout, viewPager,
@@ -322,6 +347,10 @@ public class LiquidityManagementComponent extends Fragment {
                     
                     // Update the Info tab with real data
                     updateInfoTab();
+                    
+                    // Recreate tabs with pool information now that we have it
+                    Log.d(TAG, "Pool state loaded, recreating tabs with pool information");
+                    setupTabs();
                 }
             }
         } catch (Exception e) {
