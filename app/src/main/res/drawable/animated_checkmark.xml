@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt">
+    <aapt:attr name="android:drawable">
+        <vector
+            android:width="52dp"
+            android:height="52dp"
+            android:viewportWidth="52"
+            android:viewportHeight="52">
+            
+            <!-- Circle -->
+            <path
+                android:name="circle"
+                android:pathData="M26,1 A25,25 0 1,1 25.99,1"
+                android:strokeColor="@color/success_green"
+                android:strokeWidth="2"
+                android:fillColor="@color/success_green"
+                android:strokeLineCap="round" />
+            
+            <!-- Checkmark -->
+            <path
+                android:name="checkmark"
+                android:pathData="M14.1,27.2 L21.2,34.4 L37.9,17.6"
+                android:strokeColor="@android:color/white"
+                android:strokeWidth="3"
+                android:strokeLineCap="round"
+                android:strokeLineJoin="round"
+                android:fillColor="@android:color/transparent" />
+        </vector>
+    </aapt:attr>
+    
+    <!-- Circle animation -->
+    <target android:name="circle">
+        <aapt:attr name="android:animation">
+            <objectAnimator
+                android:duration="600"
+                android:propertyName="trimPathEnd"
+                android:valueFrom="0"
+                android:valueTo="1"
+                android:interpolator="@android:interpolator/decelerate_cubic" />
+        </aapt:attr>
+    </target>
+    
+    <!-- Checkmark animation -->
+    <target android:name="checkmark">
+        <aapt:attr name="android:animation">
+            <objectAnimator
+                android:duration="300"
+                android:startOffset="800"
+                android:propertyName="trimPathEnd"
+                android:valueFrom="0"
+                android:valueTo="1"
+                android:interpolator="@android:interpolator/decelerate_cubic" />
+        </aapt:attr>
+    </target>
+</animated-vector>

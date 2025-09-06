@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt">
+    <aapt:attr name="android:drawable">
+        <vector
+            android:width="192dp"
+            android:height="192dp"
+            android:viewportWidth="192"
+            android:viewportHeight="192">
+            
+            <!-- Outer ring group -->
+            <group
+                android:name="outer_ring_group"
+                android:pivotX="96"
+                android:pivotY="96">
+                <path
+                    android:pathData="M96,16 A80,80 0 1,1 95.99,16"
+                    android:strokeColor="#FFFFFF"
+                    android:strokeWidth="3"
+                    android:strokeLineCap="round"
+                    android:fillColor="@android:color/transparent" />
+            </group>
+            
+            <!-- Middle ring group -->
+            <group
+                android:name="middle_ring_group"
+                android:pivotX="96"
+                android:pivotY="96">
+                <path
+                    android:pathData="M96,32 A64,64 0 1,1 95.99,32"
+                    android:strokeColor="#CCFFFFFF"
+                    android:strokeWidth="2.5"
+                    android:strokeLineCap="round"
+                    android:fillColor="@android:color/transparent" />
+            </group>
+            
+            <!-- Inner ring group -->
+            <group
+                android:name="inner_ring_group"
+                android:pivotX="96"
+                android:pivotY="96">
+                <path
+                    android:pathData="M96,48 A48,48 0 1,1 95.99,48"
+                    android:strokeColor="#99FFFFFF"
+                    android:strokeWidth="2"
+                    android:strokeLineCap="round"
+                    android:fillColor="@android:color/transparent" />
+            </group>
+            
+            <!-- Center dot group -->
+            <group
+                android:name="center_dot_group"
+                android:pivotX="96"
+                android:pivotY="96">
+                <path
+                    android:pathData="M96,90 A6,6 0 1,1 95.99,90"
+                    android:fillColor="#FFFFFF" />
+            </group>
+        </vector>
+    </aapt:attr>
+    
+    <!-- Outer ring rotation -->
+    <target android:name="outer_ring_group">
+        <aapt:attr name="android:animation">
+            <objectAnimator
+                android:duration="2000"
+                android:propertyName="rotation"
+                android:valueFrom="0"
+                android:valueTo="360"
+                android:repeatCount="infinite"
+                android:interpolator="@android:interpolator/linear" />
+        </aapt:attr>
+    </target>
+    
+    <!-- Middle ring rotation (opposite direction) -->
+    <target android:name="middle_ring_group">
+        <aapt:attr name="android:animation">
+            <objectAnimator
+                android:duration="1500"
+                android:propertyName="rotation"
+                android:valueFrom="360"
+                android:valueTo="0"
+                android:repeatCount="infinite"
+                android:interpolator="@android:interpolator/linear" />
+        </aapt:attr>
+    </target>
+    
+    <!-- Inner ring rotation -->
+    <target android:name="inner_ring_group">
+        <aapt:attr name="android:animation">
+            <objectAnimator
+                android:duration="1000"
+                android:propertyName="rotation"
+                android:valueFrom="0"
+                android:valueTo="360"
+                android:repeatCount="infinite"
+                android:interpolator="@android:interpolator/linear" />
+        </aapt:attr>
+    </target>
+    
+    <!-- Center dot pulsing -->
+    <target android:name="center_dot_group">
+        <aapt:attr name="android:animation">
+            <objectAnimator
+                android:duration="800"
+                android:propertyName="alpha"
+                android:valueFrom="1.0"
+                android:valueTo="0.3"
+                android:repeatCount="infinite"
+                android:repeatMode="reverse"
+                android:interpolator="@android:interpolator/accelerate_decelerate" />
+        </aapt:attr>
+    </target>
+</animated-vector>

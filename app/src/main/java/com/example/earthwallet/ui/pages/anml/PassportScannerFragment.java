@@ -9,12 +9,14 @@ import android.nfc.Tag;
 import android.nfc.tech.IsoDep;
 import android.os.AsyncTask;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
-import android.widget.ImageView;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -22,8 +24,6 @@ import android.widget.EditText;
 import android.text.InputType;
 import android.content.SharedPreferences;
 import android.text.TextUtils;
-import com.bumptech.glide.Glide;
-import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions;
 
 import androidx.appcompat.app.AlertDialog;
 import androidx.fragment.app.Fragment;
@@ -62,7 +62,7 @@ public class PassportScannerFragment extends Fragment implements MRZInputFragmen
     private String backendUrl;
     
     // UI elements
-    private ImageView progressBar;
+    private ProgressBar progressBar;
     private TextView statusText;
     private ScrollView resultContainer;
     private TextView passportNumberText;
@@ -85,6 +85,8 @@ public class PassportScannerFragment extends Fragment implements MRZInputFragmen
     private String passportNumber;
     private String dateOfBirth;
     private String dateOfExpiry;
+    
+    // Note: Using simple progress bar instead of modal for this scanner
 
     // Interface for NFC communication with parent activity
     public interface PassportScannerListener {
@@ -182,13 +184,8 @@ public class PassportScannerFragment extends Fragment implements MRZInputFragmen
         expiryText = view.findViewById(R.id.expiry_text);
         countryText = view.findViewById(R.id.country_text);
 
-        // Load GIF into the ImageView using Glide and keep it hidden until needed
+        // Simple progress bar - just set visibility
         if (progressBar != null) {
-            Glide.with(this)
-                    .asGif()
-                    .load(R.drawable.loading)
-                    .transition(DrawableTransitionOptions.withCrossFade())
-                    .into(progressBar);
             progressBar.setVisibility(View.GONE);
         }
 
@@ -215,27 +212,11 @@ public class PassportScannerFragment extends Fragment implements MRZInputFragmen
             });
         }
         
+        // No need for StatusModal in scanner - we'll use simple progress indicator
+        
         // Request NFC setup from parent activity
         if (listener != null) {
             listener.requestNFCSetup();
-        }
-        
-        // Bottom navigation wiring
-        View navWallet = view.findViewById(R.id.btn_nav_wallet);
-        if (navWallet != null) {
-            navWallet.setOnClickListener(v -> {
-                if (getActivity() instanceof com.example.earthwallet.ui.host.HostActivity) {
-                    ((com.example.earthwallet.ui.host.HostActivity) getActivity()).showFragment("wallet");
-                }
-            });
-        }
-        View navActions = view.findViewById(R.id.btn_nav_actions);
-        if (navActions != null) {
-            navActions.setOnClickListener(v -> {
-                if (getActivity() instanceof com.example.earthwallet.ui.host.HostActivity) {
-                    ((com.example.earthwallet.ui.host.HostActivity) getActivity()).showFragment("actions");
-                }
-            });
         }
     }
     
@@ -251,7 +232,8 @@ public class PassportScannerFragment extends Fragment implements MRZInputFragmen
         @Override
         protected void onPreExecute() {
             super.onPreExecute();
-            // Show progress UI
+            Log.d(TAG, "ReadPassportTask onPreExecute - showing loading spinner");
+            // Show simple progress bar
             if (progressBar != null) progressBar.setVisibility(View.VISIBLE);
             if (resultContainer != null) resultContainer.setVisibility(View.GONE);
         }
@@ -269,25 +251,211 @@ public class PassportScannerFragment extends Fragment implements MRZInputFragmen
         protected void onPostExecute(PassportData passportData) {
             super.onPostExecute(passportData);
             Log.d(TAG, "onPostExecute called with passportData=" + passportData);
-            // Hide progress UI
-            if (progressBar != null) progressBar.setVisibility(View.GONE);
             
             if (passportData != null) {
                 Log.d(TAG, "Passport data read successfully");
-                // Ensure the result container is visible
-                if (resultContainer != null) {
-                    resultContainer.setVisibility(View.VISIBLE);
+                
+                // Hide progress bar
+                if (progressBar != null) progressBar.setVisibility(View.GONE);
+                
+                // Check if verification was successful
+                boolean verificationSuccessful = isVerificationSuccessful(passportData);
+                Log.d(TAG, "Verification successful: " + verificationSuccessful);
+                
+                // Navigate based on result
+                if (verificationSuccessful) {
+                    Log.d(TAG, "Scan successful, navigating back to ANML");
+                    navigateBackToANML();
+                } else {
+                    Log.d(TAG, "Verification failed, navigating to failure screen");
+                    String failureReason = getFailureReason(passportData);
+                    String failureDetails = getFailureDetails(passportData);
+                    navigateToFailureScreen(failureReason, failureDetails);
                 }
-                // Update the result rows (this will hide any empty rows)
-                displayPassportData(passportData);
-                // Then display verification and raw response
-                displayVerification(passportData);
-                Log.d(TAG, "Displayed verification and adjusted result rows");
+                
             } else {
                 Log.d(TAG, "Failed to read passport data");
-                Toast.makeText(requireContext(), "Failed to read passport", Toast.LENGTH_LONG).show();
+                // Hide progress bar
+                if (progressBar != null) progressBar.setVisibility(View.GONE);
+                
+                // Navigate to failure screen
+                Log.d(TAG, "Scan failed, navigating to failure screen");
+                navigateToFailureScreen("Failed to read passport", 
+                    "Please ensure your passport is placed correctly on the back of your device and try again.");
             }
         }
+    }
+    
+    /**
+     * Determine if verification was successful based on passport data
+     */
+    private boolean isVerificationSuccessful(PassportData passportData) {
+        if (passportData == null) {
+            return false;
+        }
+        
+        // Check if backend was contacted successfully
+        Integer httpCode = passportData.getBackendHttpCode();
+        if (httpCode == null) {
+            Log.d(TAG, "Backend was not contacted (no HTTP code)");
+            return false;
+        }
+        
+        // Check HTTP response code
+        if (httpCode < 200 || httpCode >= 300) {
+            Log.d(TAG, "Backend returned error HTTP code: " + httpCode);
+            return false;
+        }
+        
+        // Check if passive authentication passed
+        Boolean passiveAuthPassed = passportData.getPassiveAuthenticationPassed();
+        if (passiveAuthPassed != null && passiveAuthPassed) {
+            Log.d(TAG, "Passive authentication passed");
+            return true;
+        }
+        
+        Log.d(TAG, "Verification failed - passive authentication: " + passiveAuthPassed);
+        return false;
+    }
+    
+    /**
+     * Navigate back to ANML main page
+     */
+    private void navigateBackToANML() {
+        if (getActivity() instanceof com.example.earthwallet.ui.host.HostActivity) {
+            com.example.earthwallet.ui.host.HostActivity hostActivity = 
+                (com.example.earthwallet.ui.host.HostActivity) getActivity();
+            // Navigate to ANML page
+            hostActivity.showFragment("anml");
+        }
+    }
+    
+    /**
+     * Navigate to failure screen with specific reason and details
+     */
+    private void navigateToFailureScreen(String reason, String details) {
+        if (getActivity() instanceof com.example.earthwallet.ui.host.HostActivity) {
+            com.example.earthwallet.ui.host.HostActivity hostActivity = 
+                (com.example.earthwallet.ui.host.HostActivity) getActivity();
+            
+            // Create failure fragment with details
+            android.os.Bundle bundle = new android.os.Bundle();
+            bundle.putString("failure_reason", reason);
+            bundle.putString("failure_details", details);
+            
+            Log.d(TAG, "Navigating to failure screen with reason: " + reason);
+            Log.d(TAG, "Details: " + details);
+            
+            // Navigate with arguments
+            hostActivity.showFragment("scan_failure", bundle);
+        }
+    }
+    
+    /**
+     * Get human-readable failure reason based on passport data
+     */
+    private String getFailureReason(PassportData passportData) {
+        if (passportData == null) {
+            return "Failed to read passport";
+        }
+        
+        Integer httpCode = passportData.getBackendHttpCode();
+        if (httpCode == null) {
+            return "Backend server not connected";
+        }
+        
+        // Check specific HTTP error codes
+        if (httpCode >= 500) {
+            return "Backend server error (" + httpCode + ")";
+        } else if (httpCode >= 400) {
+            return "Backend request failed (" + httpCode + ")";
+        } else if (httpCode < 200 || httpCode >= 300) {
+            return "Backend verification failed (" + httpCode + ")";
+        }
+        
+        Boolean passiveAuthPassed = passportData.getPassiveAuthenticationPassed();
+        if (passiveAuthPassed != null && !passiveAuthPassed) {
+            return "Passport authentication failed";
+        }
+        
+        return "Verification failed";
+    }
+    
+    /**
+     * Get detailed failure explanation based on passport data
+     */
+    private String getFailureDetails(PassportData passportData) {
+        if (passportData == null) {
+            return "Could not establish NFC connection with your passport. Please ensure your passport is placed correctly on the back of your device and try again.";
+        }
+        
+        Integer httpCode = passportData.getBackendHttpCode();
+        String rawResponse = passportData.getBackendRawResponse();
+        
+        if (httpCode == null) {
+            return "The verification server is not reachable. This could be due to:\n• No internet connection\n• Server is offline\n• Network firewall blocking connection\n\nPlease check your connection and try again.";
+        }
+        
+        // Show specific HTTP error details
+        String details = "";
+        if (httpCode >= 500) {
+            details = "The verification server is experiencing internal errors. Please try again in a few minutes.";
+        } else if (httpCode == 404) {
+            details = "The verification endpoint was not found. The server may be misconfigured.";
+        } else if (httpCode == 403) {
+            details = "Access to the verification server was denied. Check server configuration.";
+        } else if (httpCode == 400) {
+            details = "The server rejected the passport data format. This may indicate a compatibility issue.";
+        } else if (httpCode >= 400) {
+            details = "The server rejected the verification request.";
+        } else if (httpCode < 200 || httpCode >= 300) {
+            details = "The server returned an unexpected response.";
+        }
+        
+        // If we have a raw response, try to extract useful error info
+        if (rawResponse != null && !rawResponse.trim().isEmpty() && httpCode != null && httpCode >= 400) {
+            // Try to extract error message from JSON response
+            try {
+                org.json.JSONObject response = new org.json.JSONObject(rawResponse);
+                String error = response.optString("error", null);
+                String message = response.optString("message", null);
+                
+                if (error != null && !error.isEmpty()) {
+                    details += "\n\nServer error: " + error;
+                }
+                if (message != null && !message.isEmpty() && !message.equals(error)) {
+                    details += "\nDetails: " + message;
+                }
+            } catch (Exception e) {
+                // If we can't parse JSON, show first 200 chars of raw response
+                if (rawResponse.length() > 200) {
+                    details += "\n\nServer response: " + rawResponse.substring(0, 200) + "...";
+                } else {
+                    details += "\n\nServer response: " + rawResponse;
+                }
+            }
+        }
+        
+        if (httpCode != null && httpCode >= 200 && httpCode < 300) {
+            Boolean passiveAuthPassed = passportData.getPassiveAuthenticationPassed();
+            if (passiveAuthPassed != null && !passiveAuthPassed) {
+                details = "Your passport could not be authenticated. This could mean:\n• The passport data is corrupted\n• Unsupported passport type\n• Security verification failed\n\nTry scanning again or contact support if the issue persists.";
+                
+                // Add trust chain information if available
+                String trustStatus = passportData.getTrustChainStatus();
+                String trustReason = passportData.getTrustChainFailureReason();
+                if (trustStatus != null && !trustStatus.isEmpty()) {
+                    details += "\n\nTrust chain status: " + trustStatus;
+                }
+                if (trustReason != null && !trustReason.isEmpty()) {
+                    details += "\nReason: " + trustReason;
+                }
+            } else {
+                details = "The verification process completed but failed for an unknown reason. Please try again.";
+            }
+        }
+        
+        return details.isEmpty() ? "Please try again or contact support if the problem persists." : details;
     }
     
     // Fragment handling methods
@@ -839,6 +1007,12 @@ public class PassportScannerFragment extends Fragment implements MRZInputFragmen
 
         public String getDg1IntegrityStatus() { return dg1IntegrityStatus; }
         public void setDg1IntegrityStatus(String dg1IntegrityStatus) { this.dg1IntegrityStatus = dg1IntegrityStatus; }
+    }
+    
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        // No special cleanup needed for simple progress bar
     }
     
 }

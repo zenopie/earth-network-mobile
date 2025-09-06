@@ -50,12 +50,11 @@
 
     </LinearLayout>
 
-    <ImageView
+    <ProgressBar
         android:id="@+id/progress_bar"
-        android:layout_width="192dp"
-        android:layout_height="192dp"
+        android:layout_width="80dp"
+        android:layout_height="80dp"
         android:layout_centerInParent="true"
-        android:src="@drawable/loading"
         android:contentDescription="@string/scanning"
         android:visibility="gone" />
 

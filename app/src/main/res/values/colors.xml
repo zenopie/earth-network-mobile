@@ -25,4 +25,10 @@
     <!-- Camera overlay colors -->
     <color name="black_overlay">#80000000</color>
     <color name="anml_button_background">#4056a1</color>
+    
+    <!-- Status Modal colors -->
+    <color name="modal_overlay_background">#CCFFFFFF</color>
+    <color name="primary_blue">#27366b</color>
+    <color name="success_green">#4bb543</color>
+    <color name="error_red">#ff5353</color>
 </resources>

@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt">
+    <aapt:attr name="android:drawable">
+        <vector
+            android:width="60dp"
+            android:height="60dp"
+            android:viewportWidth="60"
+            android:viewportHeight="60">
+            
+            <!-- First line of X -->
+            <path
+                android:name="line1"
+                android:pathData="M15,15 L45,45"
+                android:strokeColor="@color/error_red"
+                android:strokeWidth="3"
+                android:strokeLineCap="round" />
+            
+            <!-- Second line of X -->
+            <path
+                android:name="line2"
+                android:pathData="M45,15 L15,45"
+                android:strokeColor="@color/error_red"
+                android:strokeWidth="3"
+                android:strokeLineCap="round" />
+        </vector>
+    </aapt:attr>
+    
+    <!-- First line animation -->
+    <target android:name="line1">
+        <aapt:attr name="android:animation">
+            <objectAnimator
+                android:duration="200"
+                android:propertyName="trimPathEnd"
+                android:valueFrom="0"
+                android:valueTo="1"
+                android:interpolator="@android:interpolator/linear" />
+        </aapt:attr>
+    </target>
+    
+    <!-- Second line animation -->
+    <target android:name="line2">
+        <aapt:attr name="android:animation">
+            <objectAnimator
+                android:duration="200"
+                android:startOffset="200"
+                android:propertyName="trimPathEnd"
+                android:valueFrom="0"
+                android:valueTo="1"
+                android:interpolator="@android:interpolator/linear" />
+        </aapt:attr>
+    </target>
+</animated-vector>

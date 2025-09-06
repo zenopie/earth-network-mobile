@@ -244,13 +244,15 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
                 try {
                     // Check wallet availability without retrieving mnemonic
                     if (!com.example.earthwallet.wallet.services.SecureWalletManager.isWalletAvailable(getContext())) {
-                        getActivity().runOnUiThread(() -> {
-                            showLoading(false);
-                            if (errorText != null) {
-                                errorText.setText("No wallet found");
-                                errorText.setVisibility(View.VISIBLE);
-                            }
-                        });
+                        if (getActivity() != null) {
+                            getActivity().runOnUiThread(() -> {
+                                showLoading(false);
+                                if (errorText != null) {
+                                    errorText.setText("No wallet found");
+                                    errorText.setVisibility(View.VISIBLE);
+                                }
+                            });
+                        }
                         return;
                     }
                     
@@ -267,19 +269,23 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
                     response.put("result", result);
                     
                     // Handle result on UI thread
-                    getActivity().runOnUiThread(() -> {
-                        handleRegistrationQueryResult(response.toString());
-                    });
+                    if (getActivity() != null) {
+                        getActivity().runOnUiThread(() -> {
+                            handleRegistrationQueryResult(response.toString());
+                        });
+                    }
                     
                 } catch (Exception e) {
                     Log.e(TAG, "Registration status query failed", e);
-                    getActivity().runOnUiThread(() -> {
-                        showLoading(false);
-                        if (errorText != null) {
-                            errorText.setText("Failed to check status: " + e.getMessage());
-                            errorText.setVisibility(View.VISIBLE);
-                        }
-                    });
+                    if (getActivity() != null) {
+                        getActivity().runOnUiThread(() -> {
+                            showLoading(false);
+                            if (errorText != null) {
+                                errorText.setText("Failed to check status: " + e.getMessage());
+                                errorText.setVisibility(View.VISIBLE);
+                            }
+                        });
+                    }
                 }
             }).start();
         } catch (Exception e) {

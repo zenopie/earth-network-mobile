@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/modal_overlay_background"
+    android:clickable="true"
+    android:focusable="true">
+
+    <!-- Modal Container -->
+    <FrameLayout
+        android:id="@+id/modal_container"
+        android:layout_width="200dp"
+        android:layout_height="200dp"
+        android:layout_gravity="center"
+        android:background="@android:color/transparent"
+        android:elevation="8dp">
+
+        <!-- Background Loading Animation - Always running -->
+        <ImageView
+            android:id="@+id/loading_spinner"
+            android:layout_width="400dp"
+            android:layout_height="400dp"
+            android:layout_gravity="center"
+            android:src="@drawable/loading"
+            android:contentDescription="Loading"
+            android:visibility="visible"
+            android:scaleType="centerInside" />
+
+        <!-- Success State Overlay -->
+        <ImageView
+            android:id="@+id/success_checkmark"
+            android:layout_width="80dp"
+            android:layout_height="80dp"
+            android:layout_gravity="center"
+            android:src="@drawable/animated_checkmark"
+            android:contentDescription="Success"
+            android:visibility="gone" />
+
+        <!-- Error State Overlay -->
+        <ImageView
+            android:id="@+id/error_crossmark"
+            android:layout_width="80dp"
+            android:layout_height="80dp"
+            android:layout_gravity="center"
+            android:src="@drawable/animated_crossmark"
+            android:contentDescription="Error"
+            android:visibility="gone" />
+
+    </FrameLayout>
+
+</FrameLayout>

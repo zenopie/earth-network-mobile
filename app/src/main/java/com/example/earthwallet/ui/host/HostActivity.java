@@ -98,6 +98,10 @@ public class HostActivity extends AppCompatActivity implements CreateWalletFragm
     
     // Make this public so fragments can request navigation without creating a second bottom nav.
     public void showFragment(String tag) {
+        showFragment(tag, null);
+    }
+    
+    public void showFragment(String tag, Bundle arguments) {
         android.util.Log.d("HostActivity", "showFragment called with tag: " + tag);
         FragmentManager fm = getSupportFragmentManager();
         FragmentTransaction ft = fm.beginTransaction();
@@ -132,6 +136,12 @@ public class HostActivity extends AppCompatActivity implements CreateWalletFragm
                 break;
             case "camera_mrz_scanner":
                 fragment = new com.example.earthwallet.ui.pages.anml.CameraMRZScannerFragment();
+                break;
+            case "scan_failure":
+                fragment = new com.example.earthwallet.ui.pages.anml.ScanFailureFragment();
+                if (arguments != null) {
+                    fragment.setArguments(arguments);
+                }
                 break;
             case "create_wallet":
                 CreateWalletFragment createWalletFragment = new com.example.earthwallet.ui.pages.wallet.CreateWalletFragment();
