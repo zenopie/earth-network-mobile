@@ -140,6 +140,24 @@ public class CameraMRZScannerFragment extends Fragment {
         }
     }
     
+    @Override
+    public void onResume() {
+        super.onResume();
+        Log.d(TAG, "onResume called");
+        
+        // Check if we need to start camera (in case permission was granted while paused)
+        if (allPermissionsGranted() && previewView != null && cameraProviderFuture == null) {
+            Log.d(TAG, "Permission available on resume, starting camera");
+            startCamera();
+        }
+    }
+    
+    @Override
+    public void onPause() {
+        super.onPause();
+        Log.d(TAG, "onPause called");
+    }
+    
     private boolean allPermissionsGranted() {
         return ContextCompat.checkSelfPermission(getContext(), Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
     }
@@ -148,7 +166,19 @@ public class CameraMRZScannerFragment extends Fragment {
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         if (requestCode == CAMERA_PERMISSION_REQUEST_CODE) {
             if (allPermissionsGranted()) {
-                startCamera();
+                Log.d(TAG, "Camera permission granted, starting camera...");
+                // Add a small delay to ensure views are ready
+                if (getView() != null) {
+                    getView().post(() -> {
+                        if (isAdded() && !isDetached() && getContext() != null) {
+                            startCamera();
+                        } else {
+                            Log.w(TAG, "Fragment not ready to start camera after permission grant");
+                        }
+                    });
+                } else {
+                    Log.w(TAG, "View not available after permission grant");
+                }
             } else {
                 Toast.makeText(getContext(), "Camera permission is required to scan passport", Toast.LENGTH_LONG).show();
                 // Go back to ANML screen and restore UI
@@ -170,21 +200,36 @@ public class CameraMRZScannerFragment extends Fragment {
     
     private void startCamera() {
         Log.d(TAG, "Starting camera...");
-        if (getContext() == null) {
-            Log.e(TAG, "Context is null, cannot start camera");
+        if (getContext() == null || previewView == null) {
+            Log.e(TAG, "Context or previewView is null, cannot start camera");
             return;
         }
         
-        cameraProviderFuture = ProcessCameraProvider.getInstance(requireContext());
-        cameraProviderFuture.addListener(() -> {
-            try {
-                ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
-                Log.d(TAG, "Camera provider obtained, binding preview...");
-                bindPreview(cameraProvider);
-            } catch (ExecutionException | InterruptedException e) {
-                Log.e(TAG, "Error starting camera", e);
-            }
-        }, ContextCompat.getMainExecutor(requireContext()));
+        if (!allPermissionsGranted()) {
+            Log.e(TAG, "Camera permission not granted, cannot start camera");
+            return;
+        }
+        
+        try {
+            cameraProviderFuture = ProcessCameraProvider.getInstance(requireContext());
+            cameraProviderFuture.addListener(() -> {
+                try {
+                    // Double-check that we're still in a valid state
+                    if (getContext() == null || previewView == null || !isAdded()) {
+                        Log.w(TAG, "Fragment not in valid state when camera provider ready");
+                        return;
+                    }
+                    
+                    ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
+                    Log.d(TAG, "Camera provider obtained, binding preview...");
+                    bindPreview(cameraProvider);
+                } catch (ExecutionException | InterruptedException e) {
+                    Log.e(TAG, "Error starting camera", e);
+                }
+            }, ContextCompat.getMainExecutor(requireContext()));
+        } catch (Exception e) {
+            Log.e(TAG, "Error initializing camera provider", e);
+        }
     }
     
     private void bindPreview(@NonNull ProcessCameraProvider cameraProvider) {
