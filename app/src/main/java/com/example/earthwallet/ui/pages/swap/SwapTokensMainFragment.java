@@ -1,6 +1,7 @@
 package com.example.earthwallet.ui.pages.swap;
 
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.AsyncTask;
@@ -58,7 +59,7 @@ import java.util.List;
 public class SwapTokensMainFragment extends Fragment {
     
     private static final String TAG = "SwapTokensFragment";
-    private static final String PREF_FILE = "secret_wallet_prefs";
+    private static final String PREF_FILE = "viewing_keys_prefs";
     private static final int REQ_SIMULATE_SWAP = 3001;
     private static final int REQ_EXECUTE_SWAP = 3002;
     private static final int REQ_BALANCE_QUERY = 3003;
@@ -96,16 +97,12 @@ public class SwapTokensMainFragment extends Fragment {
     public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         
-        // Use centralized secure preferences from HostActivity
+        // Create separate secure preferences for viewing keys to avoid wallet corruption
         try {
-            if (getActivity() instanceof com.example.earthwallet.ui.host.HostActivity) {
-                securePrefs = ((com.example.earthwallet.ui.host.HostActivity) getActivity()).getSecurePrefs();
-                Log.d(TAG, "Successfully got securePrefs from HostActivity");
-            } else {
-                Log.e(TAG, "Activity is not HostActivity: " + (getActivity() != null ? getActivity().getClass().getSimpleName() : "null"));
-            }
+            securePrefs = createSecurePrefs(requireContext());
+            Log.d(TAG, "Successfully created viewing keys secure preferences");
         } catch (Exception e) {
-            Log.e(TAG, "Failed to get securePrefs from HostActivity", e);
+            Log.e(TAG, "Failed to create viewing keys secure preferences", e);
         }
         
         // Initialize token list
@@ -395,21 +392,12 @@ public class SwapTokensMainFragment extends Fragment {
     
     private void loadCurrentWalletAddress() {
         try {
-            String walletsJson = securePrefs.getString("wallets", "[]");
-            org.json.JSONArray walletsArray = new org.json.JSONArray(walletsJson);
-            int selectedIndex = securePrefs.getInt("selected_wallet_index", -1);
-            
-            if (walletsArray.length() > 0) {
-                org.json.JSONObject selectedWallet;
-                if (selectedIndex >= 0 && selectedIndex < walletsArray.length()) {
-                    selectedWallet = walletsArray.getJSONObject(selectedIndex);
-                } else {
-                    selectedWallet = walletsArray.getJSONObject(0);
-                }
-                currentWalletAddress = selectedWallet.optString("address", "");
-            }
+            // Use SecureWalletManager to get current wallet address
+            currentWalletAddress = com.example.earthwallet.wallet.services.SecureWalletManager.getWalletAddress(getContext());
+            Log.d(TAG, "Loaded wallet address from SecureWalletManager: " + currentWalletAddress);
         } catch (Exception e) {
             Log.e(TAG, "Failed to load wallet address", e);
+            currentWalletAddress = "";
         }
     }
     
@@ -1057,6 +1045,22 @@ public class SwapTokensMainFragment extends Fragment {
                 toBalance = -1;
             }
             updateBalanceDisplay();
+        }
+    }
+    
+    private static SharedPreferences createSecurePrefs(Context context) {
+        try {
+            String masterKeyAlias = androidx.security.crypto.MasterKeys.getOrCreate(androidx.security.crypto.MasterKeys.AES256_GCM_SPEC);
+            return androidx.security.crypto.EncryptedSharedPreferences.create(
+                PREF_FILE,
+                masterKeyAlias,
+                context,
+                androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            );
+        } catch (Exception e) {
+            Log.e("SwapTokensMainFragment", "Failed to create secure preferences", e);
+            throw new RuntimeException("Secure preferences initialization failed", e);
         }
     }
     

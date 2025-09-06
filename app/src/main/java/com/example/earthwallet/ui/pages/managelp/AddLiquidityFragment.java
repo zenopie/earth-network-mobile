@@ -805,9 +805,11 @@ public class AddLiquidityFragment extends Fragment {
                 tokenAmountInput.setText("");
                 erthAmountInput.setText("");
                 
-                // Refresh balances and pool reserves
-                loadTokenBalances();
-                loadPoolReserves();
+                // Refresh balances and pool reserves after a short delay to allow blockchain to settle
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                    loadTokenBalances();
+                    loadPoolReserves();
+                }, 2000); // 2 second delay
                 
             } else {
                 String error = (data != null) ? data.getStringExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_ERROR) : "Transaction failed";

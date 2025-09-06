@@ -43,7 +43,7 @@ import org.json.JSONObject;
 public class TokenBalancesFragment extends Fragment {
     
     private static final String TAG = "TokenBalancesFragment";
-    private static final String PREF_FILE = "secret_wallet_prefs";
+    private static final String PREF_FILE = "viewing_keys_prefs";
     private static final int REQ_TOKEN_BALANCE = 2001;
     
     // UI Components
@@ -82,9 +82,12 @@ public class TokenBalancesFragment extends Fragment {
     public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         
-        // Use centralized secure preferences from HostActivity via listener
-        if (listener != null) {
-            securePrefs = listener.getSecurePrefs();
+        // Create separate secure preferences for viewing keys to avoid wallet corruption
+        try {
+            securePrefs = createSecurePrefs(requireContext());
+            Log.d(TAG, "Successfully created viewing keys secure preferences");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to create viewing keys secure preferences", e);
         }
     }
     
@@ -545,6 +548,22 @@ public class TokenBalancesFragment extends Fragment {
             return "";
         }
         return securePrefs.getString("viewing_key_symbol_" + walletAddress + "_" + contractAddress, "");
+    }
+    
+    private static SharedPreferences createSecurePrefs(Context context) {
+        try {
+            String masterKeyAlias = androidx.security.crypto.MasterKeys.getOrCreate(androidx.security.crypto.MasterKeys.AES256_GCM_SPEC);
+            return androidx.security.crypto.EncryptedSharedPreferences.create(
+                PREF_FILE,
+                masterKeyAlias,
+                context,
+                androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            );
+        } catch (Exception e) {
+            Log.e("TokenBalancesFragment", "Failed to create secure preferences", e);
+            throw new RuntimeException("Secure preferences initialization failed", e);
+        }
     }
     
     @Override

@@ -1,5 +1,7 @@
 package com.example.earthwallet.ui.pages.managelp;
 
+import android.app.Activity;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.text.TextUtils;
@@ -103,8 +105,29 @@ public class RemoveLiquidityFragment extends Fragment {
         });
         
         removeLiquidityButton.setOnClickListener(v -> {
-            // TODO: Execute remove liquidity
-            Log.d(TAG, "Remove liquidity button clicked");
+            String removeAmountStr = removeAmountInput.getText().toString().trim();
+            if (TextUtils.isEmpty(removeAmountStr)) {
+                android.widget.Toast.makeText(getContext(), "Please enter amount to remove", android.widget.Toast.LENGTH_SHORT).show();
+                return;
+            }
+            
+            try {
+                double removeAmount = Double.parseDouble(removeAmountStr);
+                if (removeAmount <= 0) {
+                    android.widget.Toast.makeText(getContext(), "Amount must be greater than 0", android.widget.Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                
+                if (removeAmount > userStakedShares) {
+                    android.widget.Toast.makeText(getContext(), "Amount exceeds your staked shares", android.widget.Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                
+                executeRemoveLiquidity(removeAmount);
+                
+            } catch (NumberFormatException e) {
+                android.widget.Toast.makeText(getContext(), "Invalid amount format", android.widget.Toast.LENGTH_SHORT).show();
+            }
         });
     }
     
@@ -363,6 +386,67 @@ public class RemoveLiquidityFragment extends Fragment {
     private String getTokenContractAddress(String symbol) {
         Tokens.TokenInfo tokenInfo = Tokens.getToken(symbol);
         return tokenInfo != null ? tokenInfo.contract : null;
+    }
+    
+    private void executeRemoveLiquidity(double removeAmount) {
+        try {
+            String tokenContract = getTokenContractAddress(tokenKey);
+            if (tokenContract == null) {
+                android.widget.Toast.makeText(getContext(), "Token contract not found", android.widget.Toast.LENGTH_SHORT).show();
+                return;
+            }
+            
+            // Convert shares to microunits (multiply by 1,000,000)
+            long removeAmountMicro = Math.round(removeAmount * 1000000);
+            
+            // Create remove liquidity message
+            JSONObject msg = new JSONObject();
+            JSONObject removeLiquidity = new JSONObject();
+            removeLiquidity.put("amount", String.valueOf(removeAmountMicro));
+            removeLiquidity.put("pool", tokenContract);
+            msg.put("remove_liquidity", removeLiquidity);
+            
+            Log.d(TAG, "Remove liquidity message: " + msg.toString());
+            
+            // Launch SecretExecuteActivity
+            Intent intent = new Intent(getContext(), com.example.earthwallet.bridge.activities.SecretExecuteActivity.class);
+            intent.putExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_CONTRACT_ADDRESS, Constants.EXCHANGE_CONTRACT);
+            intent.putExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_CODE_HASH, Constants.EXCHANGE_HASH);
+            intent.putExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_EXECUTE_JSON, msg.toString());
+            intent.putExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_MEMO, "Remove liquidity for " + tokenKey);
+            
+            startActivityForResult(intent, 1001); // REQ_REMOVE_LIQUIDITY
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error creating remove liquidity message", e);
+            android.widget.Toast.makeText(getContext(), "Error: " + e.getMessage(), android.widget.Toast.LENGTH_LONG).show();
+        }
+    }
+    
+    @Override
+    public void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        
+        if (requestCode == 1001) { // REQ_REMOVE_LIQUIDITY
+            if (resultCode == Activity.RESULT_OK) {
+                android.widget.Toast.makeText(getContext(), "Liquidity removed successfully!", android.widget.Toast.LENGTH_SHORT).show();
+                Log.i(TAG, "Remove liquidity transaction succeeded");
+                
+                // Clear input field
+                removeAmountInput.setText("");
+                
+                // Refresh user shares after a short delay to allow blockchain to settle
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                    loadUserShares();
+                    loadUnbondingRequests();
+                }, 2000); // 2 second delay
+                
+            } else {
+                String error = (data != null) ? data.getStringExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_ERROR) : "Transaction failed";
+                android.widget.Toast.makeText(getContext(), "Failed to remove liquidity: " + error, android.widget.Toast.LENGTH_LONG).show();
+                Log.e(TAG, "Remove liquidity transaction failed: " + error);
+            }
+        }
     }
     
     @Override
