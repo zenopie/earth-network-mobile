@@ -1,5 +1,8 @@
 package com.example.earthwallet.ui.pages.managelp;
 
+import android.app.Activity;
+import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.text.TextUtils;
@@ -11,6 +14,7 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.ImageView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -31,6 +35,7 @@ import java.util.concurrent.Executors;
 public class AddLiquidityFragment extends Fragment {
     
     private static final String TAG = "AddLiquidityFragment";
+    private static final int REQ_ADD_LIQUIDITY = 4001;
     
     private EditText tokenAmountInput;
     private EditText erthAmountInput;
@@ -48,6 +53,7 @@ public class AddLiquidityFragment extends Fragment {
     private double erthBalance = 0.0;
     private String currentWalletAddress = "";
     private SharedPreferences securePrefs;
+    private SharedPreferences viewingKeysPrefs;
     private ExecutorService executorService;
     
     // Pool reserves for ratio calculation
@@ -80,6 +86,23 @@ public class AddLiquidityFragment extends Fragment {
             }
         } catch (Exception e) {
             Log.e(TAG, "Failed to get securePrefs from HostActivity", e);
+        }
+        
+        // Initialize viewing keys preferences (separate from wallet preferences)
+        try {
+            String masterKeyAlias = androidx.security.crypto.MasterKeys.getOrCreate(androidx.security.crypto.MasterKeys.AES256_GCM_SPEC);
+            viewingKeysPrefs = androidx.security.crypto.EncryptedSharedPreferences.create(
+                "viewing_keys_prefs",
+                masterKeyAlias,
+                requireContext(),
+                androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            );
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to create viewing keys preferences", e);
+            // Safe fallback: use regular SharedPreferences for viewing keys only
+            viewingKeysPrefs = requireContext().getSharedPreferences("viewing_keys_prefs_fallback", Context.MODE_PRIVATE);
+            Log.w(TAG, "Using fallback regular SharedPreferences for viewing keys");
         }
         
         executorService = Executors.newCachedThreadPool();
@@ -163,8 +186,7 @@ public class AddLiquidityFragment extends Fragment {
         });
         
         addLiquidityButton.setOnClickListener(v -> {
-            // TODO: Execute add liquidity
-            Log.d(TAG, "Add liquidity button clicked");
+            handleAddLiquidity();
         });
     }
     
@@ -413,12 +435,12 @@ public class AddLiquidityFragment extends Fragment {
     private String getViewingKeyForToken(String tokenSymbol) {
         try {
             Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenSymbol);
-            if (tokenInfo == null || securePrefs == null) {
+            if (tokenInfo == null || viewingKeysPrefs == null) {
                 return "";
             }
             
             String key = "viewing_key_" + currentWalletAddress + "_" + tokenInfo.contract;
-            String viewingKey = securePrefs.getString(key, "");
+            String viewingKey = viewingKeysPrefs.getString(key, "");
             Log.d(TAG, "Viewing key lookup - key: " + key + ", found: " + !TextUtils.isEmpty(viewingKey));
             return viewingKey;
         } catch (Exception e) {
@@ -583,6 +605,215 @@ public class AddLiquidityFragment extends Fragment {
             }
         } catch (NumberFormatException e) {
             Log.w(TAG, "Invalid ERTH amount format: " + erthAmountStr);
+        }
+    }
+    
+    /**
+     * Handle add liquidity button click
+     * Based on the React provideLiquidity function from your web app
+     */
+    private void handleAddLiquidity() {
+        String tokenAmountStr = tokenAmountInput.getText().toString().trim();
+        String erthAmountStr = erthAmountInput.getText().toString().trim();
+        
+        // Validate inputs
+        if (TextUtils.isEmpty(tokenAmountStr) || TextUtils.isEmpty(erthAmountStr)) {
+            Toast.makeText(getContext(), "Please enter both token amounts", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        
+        if (TextUtils.isEmpty(currentWalletAddress)) {
+            Toast.makeText(getContext(), "No wallet connected", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        
+        try {
+            double tokenAmount = Double.parseDouble(tokenAmountStr);
+            double erthAmount = Double.parseDouble(erthAmountStr);
+            
+            if (tokenAmount <= 0 || erthAmount <= 0) {
+                Toast.makeText(getContext(), "Amounts must be greater than zero", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            
+            // Check balances
+            if (tokenBalance >= 0 && tokenAmount > tokenBalance) {
+                Toast.makeText(getContext(), "Insufficient " + tokenKey + " balance", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            
+            if (erthBalance >= 0 && erthAmount > erthBalance) {
+                Toast.makeText(getContext(), "Insufficient ERTH balance", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            
+            // Execute add liquidity transaction
+            executeAddLiquidity(tokenAmount, erthAmount);
+            
+        } catch (NumberFormatException e) {
+            Toast.makeText(getContext(), "Please enter valid numbers", Toast.LENGTH_SHORT).show();
+        }
+    }
+    
+    /**
+     * Execute the add liquidity transaction using MultiMessageExecuteActivity
+     * This matches the React app's provideLiquidity function with multi-message transaction
+     */
+    private void executeAddLiquidity(double tokenAmount, double erthAmount) {
+        try {
+            Log.d(TAG, "Executing add liquidity: " + tokenAmount + " " + tokenKey + " + " + erthAmount + " ERTH");
+            
+            Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenKey);
+            Tokens.TokenInfo erthInfo = Tokens.getToken("ERTH");
+            
+            if (tokenInfo == null || erthInfo == null) {
+                Toast.makeText(getContext(), "Token information not found", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            
+            // Convert to microunits (multiply by 10^6)
+            long tokenMicroAmount = Math.round(tokenAmount * Math.pow(10, tokenInfo.decimals));
+            long erthMicroAmount = Math.round(erthAmount * Math.pow(10, erthInfo.decimals));
+            
+            String walletAddress = getCurrentWalletAddress();
+            if (TextUtils.isEmpty(walletAddress)) {
+                Toast.makeText(getContext(), "No wallet address available", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            
+            // Create the multi-message transaction array (like React app)
+            JSONArray messages = new JSONArray();
+            
+            // 1. ERTH allowance message
+            JSONObject erthAllowanceMsg = createAllowanceMessage(
+                walletAddress, erthInfo.contract, erthInfo.hash, 
+                Constants.EXCHANGE_CONTRACT, String.valueOf(erthMicroAmount)
+            );
+            messages.put(erthAllowanceMsg);
+            
+            // 2. Token allowance message  
+            JSONObject tokenAllowanceMsg = createAllowanceMessage(
+                walletAddress, tokenInfo.contract, tokenInfo.hash,
+                Constants.EXCHANGE_CONTRACT, String.valueOf(tokenMicroAmount)
+            );
+            messages.put(tokenAllowanceMsg);
+            
+            // 3. Add liquidity message
+            JSONObject addLiquidityMsg = createAddLiquidityMessage(
+                walletAddress, Constants.EXCHANGE_CONTRACT, Constants.EXCHANGE_HASH,
+                tokenInfo.contract, String.valueOf(erthMicroAmount), String.valueOf(tokenMicroAmount)
+            );
+            messages.put(addLiquidityMsg);
+            
+            Log.d(TAG, "Multi-message array: " + messages.toString());
+            
+            // Launch MultiMessageExecuteActivity
+            Intent intent = new Intent(getContext(), com.example.earthwallet.bridge.activities.MultiMessageExecuteActivity.class);
+            intent.putExtra(com.example.earthwallet.bridge.activities.MultiMessageExecuteActivity.EXTRA_MESSAGES_JSON, messages.toString());
+            intent.putExtra(com.example.earthwallet.bridge.activities.MultiMessageExecuteActivity.EXTRA_MEMO, "Add liquidity: " + tokenAmount + " " + tokenKey + " + " + erthAmount + " ERTH");
+            intent.putExtra(com.example.earthwallet.bridge.activities.MultiMessageExecuteActivity.EXTRA_GAS_LIMIT, 1000000L);
+            
+            startActivityForResult(intent, REQ_ADD_LIQUIDITY);
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to execute add liquidity transaction", e);
+            Toast.makeText(getContext(), "Failed to create transaction: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+    
+    /**
+     * Create SNIP-20 increase_allowance message
+     */
+    private JSONObject createAllowanceMessage(String sender, String tokenContract, String tokenHash, 
+                                            String spender, String amount) throws Exception {
+        JSONObject message = new JSONObject();
+        message.put("sender", sender);
+        message.put("contract", tokenContract);
+        message.put("code_hash", tokenHash);
+        
+        JSONObject msg = new JSONObject();
+        JSONObject increaseAllowance = new JSONObject();
+        increaseAllowance.put("spender", spender);
+        increaseAllowance.put("amount", amount);
+        msg.put("increase_allowance", increaseAllowance);
+        
+        message.put("msg", msg);
+        message.put("sent_funds", new JSONArray()); // Empty array for no funds
+        
+        return message;
+    }
+    
+    /**
+     * Create add_liquidity message for exchange contract
+     */
+    private JSONObject createAddLiquidityMessage(String sender, String exchangeContract, String exchangeHash,
+                                               String pool, String amountErth, String amountB) throws Exception {
+        JSONObject message = new JSONObject();
+        message.put("sender", sender);
+        message.put("contract", exchangeContract);
+        message.put("code_hash", exchangeHash);
+        
+        JSONObject msg = new JSONObject();
+        JSONObject addLiquidity = new JSONObject();
+        addLiquidity.put("amount_erth", amountErth);
+        addLiquidity.put("amount_b", amountB);
+        addLiquidity.put("pool", pool);
+        msg.put("add_liquidity", addLiquidity);
+        
+        message.put("msg", msg);
+        message.put("sent_funds", new JSONArray()); // Empty array for no funds
+        
+        return message;
+    }
+    
+    /**
+     * Get current wallet address directly from secure preferences
+     */
+    private String getCurrentWalletAddress() {
+        try {
+            if (securePrefs != null) {
+                String walletsJson = securePrefs.getString("wallets", "[]");
+                JSONArray walletsArray = new JSONArray(walletsJson);
+                int selectedIndex = securePrefs.getInt("selected_wallet_index", -1);
+                
+                if (walletsArray.length() > 0) {
+                    JSONObject selectedWallet;
+                    if (selectedIndex >= 0 && selectedIndex < walletsArray.length()) {
+                        selectedWallet = walletsArray.getJSONObject(selectedIndex);
+                    } else {
+                        selectedWallet = walletsArray.getJSONObject(0);
+                    }
+                    return selectedWallet.optString("address", "");
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to get wallet address", e);
+        }
+        return "";
+    }
+    
+    @Override
+    public void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        
+        if (requestCode == REQ_ADD_LIQUIDITY) {
+            if (resultCode == Activity.RESULT_OK) {
+                Toast.makeText(getContext(), "Liquidity added successfully!", Toast.LENGTH_SHORT).show();
+                Log.i(TAG, "Add liquidity transaction succeeded");
+                
+                // Clear input fields
+                tokenAmountInput.setText("");
+                erthAmountInput.setText("");
+                
+                // Refresh balances and pool reserves
+                loadTokenBalances();
+                loadPoolReserves();
+                
+            } else {
+                String error = (data != null) ? data.getStringExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_ERROR) : "Transaction failed";
+                Toast.makeText(getContext(), "Failed to add liquidity: " + error, Toast.LENGTH_LONG).show();
+                Log.e(TAG, "Add liquidity transaction failed: " + error);
+            }
         }
     }
     

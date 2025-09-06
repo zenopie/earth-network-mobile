@@ -1,5 +1,6 @@
 package com.example.earthwallet.bridge.services;
 
+import android.content.Context;
 import android.util.Log;
 import android.util.Base64;
 
@@ -329,6 +330,83 @@ public class SecretProtobufService {
             } else {
                 throw new Exception("Wallet validation failed: " + e.getMessage());
             }
+        }
+    }
+    
+    /**
+     * Callback interface for protobuf transaction execution
+     */
+    public interface ProtobufCallback {
+        void onSuccess(JSONObject result);
+        void onError(String error);
+    }
+    
+    
+    /**
+     * Execute multiple transactions sequentially 
+     * This is a temporary solution until true multi-message protobuf is implemented
+     */
+    private void executeMultipleTransactionsSequentially(JSONArray messages, int currentIndex, ProtobufCallback callback) {
+        if (currentIndex >= messages.length()) {
+            // All transactions completed successfully
+            JSONObject result = new JSONObject();
+            try {
+                result.put("success", true);
+                result.put("message", "All " + messages.length() + " transactions completed successfully");
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to create result JSON", e);
+            }
+            callback.onSuccess(result);
+            return;
+        }
+        
+        try {
+            JSONObject message = messages.getJSONObject(currentIndex);
+            Log.i(TAG, "Executing transaction " + (currentIndex + 1) + "/" + messages.length());
+            
+            // Extract message details
+            String sender = message.getString("sender");
+            String contract = message.getString("contract");
+            String codeHash = message.getString("code_hash");
+            JSONObject msg = message.getJSONObject("msg");
+            
+            // Create a simple transaction executor (this would normally use SecretExecuteActivity)
+            executeSingleMessage(sender, contract, codeHash, msg, new ProtobufCallback() {
+                @Override
+                public void onSuccess(JSONObject result) {
+                    Log.i(TAG, "Transaction " + (currentIndex + 1) + " completed successfully");
+                    // Continue with next transaction
+                    executeMultipleTransactionsSequentially(messages, currentIndex + 1, callback);
+                }
+                
+                @Override
+                public void onError(String error) {
+                    Log.e(TAG, "Transaction " + (currentIndex + 1) + " failed: " + error);
+                    callback.onError("Transaction " + (currentIndex + 1) + " failed: " + error);
+                }
+            });
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to process message " + currentIndex, e);
+            callback.onError("Failed to process message " + (currentIndex + 1) + ": " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Execute a single message (placeholder implementation)
+     * TODO: Integrate with proper transaction execution
+     */
+    private void executeSingleMessage(String sender, String contract, String codeHash, JSONObject msg, ProtobufCallback callback) {
+        // For now, just simulate success
+        // In a real implementation, this would build and broadcast the transaction
+        try {
+            Thread.sleep(1000); // Simulate network delay
+            JSONObject result = new JSONObject();
+            result.put("success", true);
+            result.put("txhash", "simulated_tx_" + System.currentTimeMillis());
+            callback.onSuccess(result);
+        } catch (Exception e) {
+            callback.onError("Execution failed: " + e.getMessage());
         }
     }
 }

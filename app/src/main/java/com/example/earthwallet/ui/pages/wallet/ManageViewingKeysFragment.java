@@ -48,7 +48,7 @@ import java.util.List;
 public class ManageViewingKeysFragment extends Fragment {
     
     private static final String TAG = "ManageViewingKeysFragment";
-    private static final String PREF_FILE = "secret_wallet_prefs";
+    private static final String PREF_FILE = "viewing_keys_prefs";
     private static final int REQ_SET_VIEWING_KEY = 2003;
     
     // UI Components
@@ -93,7 +93,11 @@ public class ManageViewingKeysFragment extends Fragment {
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             );
         } catch (Exception e) {
-            Log.e(TAG, "Failed to create secure preferences", e);
+            Log.e(TAG, "Failed to create secure preferences for viewing keys", e);
+            // Safe fallback: use regular SharedPreferences for viewing keys only
+            // This doesn't affect wallet mnemonic storage
+            securePrefs = requireContext().getSharedPreferences(PREF_FILE + "_fallback", Context.MODE_PRIVATE);
+            Log.w(TAG, "Using fallback regular SharedPreferences for viewing keys (not encrypted)");
         }
     }
     
