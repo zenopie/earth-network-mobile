@@ -191,10 +191,11 @@ public class SecretExecuteActivity extends AppCompatActivity {
             JSONObject response = new JSONObject(enhancedResponse);
             String title = "Transaction Response";
             String message = enhancedResponse;
+            int code = -1; // Default to failed
             
             if (response.has("tx_response")) {
                 JSONObject txResponse = response.getJSONObject("tx_response");
-                int code = txResponse.optInt("code", -1);
+                code = txResponse.optInt("code", -1);
                 String txHash = txResponse.optString("txhash", "");
                 String rawLog = txResponse.optString("raw_log", "");
                 
@@ -207,22 +208,29 @@ public class SecretExecuteActivity extends AppCompatActivity {
                 }
             }
             
-            new AlertDialog.Builder(this)
-                .setTitle(title)
-                .setMessage(message)
-                .setPositiveButton("OK", (dialog, which) -> {
-                    finishWithSuccess(enhancedResponse, senderAddress);
-                })
-                .setNegativeButton("Copy", (dialog, which) -> {
-                    android.content.ClipboardManager clipboard = 
-                        (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-                    android.content.ClipData clip = 
-                        android.content.ClipData.newPlainText("Transaction Response", enhancedResponse);
-                    clipboard.setPrimaryClip(clip);
-                    finishWithSuccess(enhancedResponse, senderAddress);
-                })
-                .setCancelable(false)
-                .show();
+            if (code == 0) {
+                // For successful transactions, show a toast and finish immediately
+                android.widget.Toast.makeText(this, "Transaction successful!", android.widget.Toast.LENGTH_SHORT).show();
+                finishWithSuccess(enhancedResponse, senderAddress);
+            } else {
+                // For failed transactions, still show the alert dialog with details
+                new AlertDialog.Builder(this)
+                    .setTitle(title)
+                    .setMessage(message)
+                    .setPositiveButton("OK", (dialog, which) -> {
+                        finishWithSuccess(enhancedResponse, senderAddress);
+                    })
+                    .setNegativeButton("Copy", (dialog, which) -> {
+                        android.content.ClipboardManager clipboard = 
+                            (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                        android.content.ClipData clip = 
+                            android.content.ClipData.newPlainText("Transaction Response", enhancedResponse);
+                        clipboard.setPrimaryClip(clip);
+                        finishWithSuccess(enhancedResponse, senderAddress);
+                    })
+                    .setCancelable(false)
+                    .show();
+            }
         } catch (Exception e) {
             Log.e(TAG, "Failed to show enhanced response alert", e);
             // Fallback: show raw response

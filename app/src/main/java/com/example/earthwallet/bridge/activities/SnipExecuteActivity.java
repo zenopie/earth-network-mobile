@@ -104,10 +104,8 @@ public class SnipExecuteActivity extends AppCompatActivity {
             finishWithError("Recipient is required");
             return;
         }
-        if (TextUtils.isEmpty(recipientHash)) {
-            finishWithError("Recipient hash is required");
-            return;
-        }
+        // Recipient hash is optional - only required for contract-to-contract interactions
+        // For wallet-to-wallet transfers, recipient hash can be empty
         if (TextUtils.isEmpty(amount)) {
             finishWithError("Amount is required");
             return;
@@ -138,7 +136,9 @@ public class SnipExecuteActivity extends AppCompatActivity {
             JSONObject sendMsg = new JSONObject();
             JSONObject sendData = new JSONObject();
             sendData.put("recipient", recipient);
-            sendData.put("code_hash", recipientHash);
+            if (!TextUtils.isEmpty(recipientHash)) {
+                sendData.put("code_hash", recipientHash);
+            }
             sendData.put("amount", amount);
             sendData.put("msg", encodedMessage);
             sendMsg.put("send", sendData);
