@@ -332,4 +332,52 @@ public class HostActivity extends AppCompatActivity implements CreateWalletFragm
     public void setPortraitOrientation() {
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
     }
+    
+    @Override
+    public void onBackPressed() {
+        Fragment currentFragment = getSupportFragmentManager().findFragmentById(R.id.host_content);
+        if (currentFragment != null) {
+            String currentTag = currentFragment.getTag();
+            android.util.Log.d("HostActivity", "Back pressed, current fragment tag: " + currentTag);
+            
+            // Actions pages should navigate back to actions nav
+            if (isActionsPage(currentTag)) {
+                android.util.Log.d("HostActivity", "Current page is actions page, navigating to actions");
+                showFragment("actions");
+                setSelectedNav(navActions, navWallet);
+                return;
+            }
+            
+            // Wallet pages should navigate back to wallet page
+            if (isWalletPage(currentTag)) {
+                android.util.Log.d("HostActivity", "Current page is wallet page, navigating to wallet");
+                showFragment("wallet");
+                setSelectedNav(navWallet, navActions);
+                return;
+            }
+        }
+        
+        // Default back behavior for main pages (wallet, actions) or unknown pages
+        super.onBackPressed();
+    }
+    
+    /**
+     * Check if the current page is an actions page
+     */
+    private boolean isActionsPage(String fragmentTag) {
+        if (fragmentTag == null) return false;
+        return fragmentTag.equals("swap") || 
+               fragmentTag.equals("anml") || 
+               fragmentTag.equals("managelp") || 
+               fragmentTag.equals("staking");
+    }
+    
+    /**
+     * Check if the current page is a wallet page
+     */
+    private boolean isWalletPage(String fragmentTag) {
+        if (fragmentTag == null) return false;
+        return fragmentTag.equals("send") || 
+               fragmentTag.equals("receive");
+    }
 }

@@ -76,10 +76,10 @@ public class UnbondingFragment extends Fragment {
     public void refreshData() {
         Log.d(TAG, "Refreshing unbonding data");
         
-        // Query unbonding entries from parent fragment
-        if (getParentFragment() instanceof StakeEarthFragment) {
-            StakeEarthFragment parentFragment = (StakeEarthFragment) getParentFragment();
-            parentFragment.queryUserStakingInfo(new StakeEarthFragment.UserStakingCallback() {
+        // Find the StakeEarthFragment through fragment manager
+        StakeEarthFragment stakeEarthFragment = findStakeEarthFragment();
+        if (stakeEarthFragment != null) {
+            stakeEarthFragment.queryUserStakingInfo(new StakeEarthFragment.UserStakingCallback() {
                 @Override
                 public void onStakingDataReceived(JSONObject data) {
                     try {
@@ -95,7 +95,34 @@ public class UnbondingFragment extends Fragment {
                     Log.e(TAG, "Error querying unbonding data: " + error);
                 }
             });
+        } else {
+            Log.e(TAG, "Could not find StakeEarthFragment");
         }
+    }
+    
+    /**
+     * Find the StakeEarthFragment in the fragment hierarchy
+     */
+    private StakeEarthFragment findStakeEarthFragment() {
+        // For ViewPager2, we need to go up to find the actual parent
+        Fragment fragment = this;
+        while (fragment != null) {
+            if (fragment instanceof StakeEarthFragment) {
+                return (StakeEarthFragment) fragment;
+            }
+            fragment = fragment.getParentFragment();
+        }
+        
+        // If we can't find it through parent hierarchy, try through the activity's fragment manager
+        if (getActivity() != null && getActivity().getSupportFragmentManager() != null) {
+            for (Fragment f : getActivity().getSupportFragmentManager().getFragments()) {
+                if (f instanceof StakeEarthFragment) {
+                    return (StakeEarthFragment) f;
+                }
+            }
+        }
+        
+        return null;
     }
     
     private void parseUnbondingEntries(JSONObject data) {
