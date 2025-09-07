@@ -33,15 +33,33 @@
             android:gravity="center"
             android:layout_marginBottom="24dp" />
 
-        <!-- QR Code (placeholder) -->
-        <ImageView
-            android:id="@+id/qrCodeView"
-            android:layout_width="200dp"
-            android:layout_height="200dp"
-            android:background="@drawable/address_box_bg"
-            android:scaleType="center"
-            android:layout_marginBottom="20dp"
-            android:visibility="gone" />
+        <!-- QR Code -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:layout_marginBottom="20dp">
+            
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Scan QR Code"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="#333333"
+                android:layout_marginBottom="8dp" />
+            
+            <ImageView
+                android:id="@+id/qrCodeView"
+                android:layout_width="250dp"
+                android:layout_height="250dp"
+                android:background="@drawable/address_box_bg"
+                android:scaleType="fitCenter"
+                android:padding="8dp"
+                android:visibility="gone" />
+                
+        </LinearLayout>
 
         <!-- Wallet Address Section -->
         <TextView

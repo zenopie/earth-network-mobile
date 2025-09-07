@@ -1,15 +1,18 @@
 package com.example.earthwallet.ui.pages.wallet;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.ActivityInfo;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
@@ -17,6 +20,7 @@ import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
@@ -30,6 +34,9 @@ import com.example.earthwallet.bridge.activities.SnipExecuteActivity;
 import com.example.earthwallet.wallet.constants.Tokens;
 import com.example.earthwallet.wallet.services.SecretWallet;
 import com.example.earthwallet.wallet.services.SecureWalletManager;
+
+import com.journeyapps.barcodescanner.ScanContract;
+import com.journeyapps.barcodescanner.ScanOptions;
 
 import org.bitcoinj.core.ECKey;
 
@@ -59,6 +66,9 @@ public class SendTokensFragment extends Fragment implements
     // UI Components
     private Spinner tokenSpinner;
     private EditText recipientEditText;
+    private Button pickWalletButton;
+    private Button scanQrButton;
+    private Button clearRecipientButton;
     private EditText amountEditText;
     private EditText memoEditText;
     private Button sendButton;
@@ -67,6 +77,7 @@ public class SendTokensFragment extends Fragment implements
     // Data
     private List<TokenOption> tokenOptions;
     private SharedPreferences securePrefs;
+    private ActivityResultLauncher<ScanOptions> qrScannerLauncher;
     
     // Interface for communication with parent
     public interface SendTokensListener {
@@ -92,9 +103,19 @@ public class SendTokensFragment extends Fragment implements
     public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
         View view = inflater.inflate(R.layout.fragment_send_tokens, container, false);
         
+        // Initialize QR scanner launcher
+        qrScannerLauncher = registerForActivityResult(new ScanContract(), result -> {
+            if (result.getContents() != null) {
+                handleQRScanResult(result.getContents());
+            }
+        });
+        
         // Initialize UI components
         tokenSpinner = view.findViewById(R.id.tokenSpinner);
         recipientEditText = view.findViewById(R.id.recipientEditText);
+        pickWalletButton = view.findViewById(R.id.pickWalletButton);
+        scanQrButton = view.findViewById(R.id.scanQrButton);
+        clearRecipientButton = view.findViewById(R.id.clearRecipientButton);
         amountEditText = view.findViewById(R.id.amountEditText);
         memoEditText = view.findViewById(R.id.memoEditText);
         sendButton = view.findViewById(R.id.sendButton);
@@ -111,6 +132,9 @@ public class SendTokensFragment extends Fragment implements
         setupTokenSpinner();
         setupClickListeners();
         
+        // Force spinner background to be light
+        tokenSpinner.setBackgroundColor(0xFFFFFFFF); // White background
+        
         return view;
     }
     
@@ -126,13 +150,123 @@ public class SendTokensFragment extends Fragment implements
             tokenOptions.add(new TokenOption(symbol, symbol + " (" + token.contract.substring(0, 14) + "...)", false, token));
         }
         
-        ArrayAdapter<TokenOption> adapter = new ArrayAdapter<>(getContext(), android.R.layout.simple_spinner_item, tokenOptions);
+        // Create adapter with custom styling to fix white text on white background
+        ArrayAdapter<TokenOption> adapter = new ArrayAdapter<TokenOption>(getContext(), android.R.layout.simple_spinner_item, tokenOptions) {
+            @Override
+            public View getView(int position, View convertView, ViewGroup parent) {
+                View view = super.getView(position, convertView, parent);
+                TextView textView = (TextView) view;
+                textView.setTextColor(0xFF333333);
+                textView.setTextSize(14);
+                return view;
+            }
+            
+            @Override
+            public View getDropDownView(int position, View convertView, ViewGroup parent) {
+                View view = super.getDropDownView(position, convertView, parent);
+                TextView textView = (TextView) view;
+                textView.setTextColor(0xFF333333);
+                textView.setTextSize(14);
+                textView.setPadding(16, 12, 16, 12);
+                view.setBackgroundColor(0xFFFFFFFF); // Force white background for dropdown items
+                return view;
+            }
+        };
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         tokenSpinner.setAdapter(adapter);
     }
     
+    
+    private void launchQRScanner() {
+        ScanOptions options = new ScanOptions();
+        options.setPrompt("Scan QR code to get recipient address");
+        options.setBeepEnabled(true);
+        options.setBarcodeImageEnabled(true);
+        options.setOrientationLocked(true);
+        options.setDesiredBarcodeFormats(ScanOptions.QR_CODE);
+        options.setCameraId(0); // Use rear camera
+        
+        qrScannerLauncher.launch(options);
+    }
+    
+    private void handleQRScanResult(String scannedContent) {
+        String content = scannedContent.trim();
+        
+        // Validate that the scanned content is a valid Secret Network address
+        if (content.startsWith("secret1") && content.length() >= 45) {
+            recipientEditText.setText(content);
+            Toast.makeText(getContext(), "Address scanned successfully!", Toast.LENGTH_SHORT).show();
+            Log.d(TAG, "QR code scanned: " + content.substring(0, 14) + "...");
+        } else {
+            Toast.makeText(getContext(), "Invalid Secret Network address in QR code", Toast.LENGTH_LONG).show();
+            Log.w(TAG, "Invalid QR code content: " + content);
+        }
+    }
+    
+    private void showWalletSelectionDialog() {
+        try {
+            List<WalletOption> walletOptions = new ArrayList<>();
+            
+            // Load all wallets from secure preferences
+            String walletsJson = securePrefs.getString("wallets", "[]");
+            JSONArray walletsArray = new JSONArray(walletsJson);
+            String currentAddress = getCurrentWalletAddress();
+            
+            for (int i = 0; i < walletsArray.length(); i++) {
+                JSONObject wallet = walletsArray.getJSONObject(i);
+                String mnemonic = wallet.optString("mnemonic", "");
+                String name = wallet.optString("name", "Wallet " + (i + 1));
+                
+                if (!TextUtils.isEmpty(mnemonic)) {
+                    ECKey walletKey = SecretWallet.deriveKeyFromMnemonic(mnemonic);
+                    String address = SecretWallet.getAddress(walletKey);
+                    
+                    // Don't include the current wallet in the recipient list
+                    if (!address.equals(currentAddress)) {
+                        String displayName = name + " (" + address.substring(0, 14) + "...)";
+                        walletOptions.add(new WalletOption(address, displayName, name));
+                    }
+                }
+            }
+            
+            if (walletOptions.isEmpty()) {
+                Toast.makeText(getContext(), "No other wallets available", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            
+            // Create dialog with wallet options
+            AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
+            builder.setTitle("Select Wallet");
+            
+            String[] walletNames = new String[walletOptions.size()];
+            for (int i = 0; i < walletOptions.size(); i++) {
+                walletNames[i] = walletOptions.get(i).displayName;
+            }
+            
+            builder.setItems(walletNames, (dialog, which) -> {
+                WalletOption selected = walletOptions.get(which);
+                recipientEditText.setText(selected.address);
+                Toast.makeText(getContext(), "Selected: " + selected.name, Toast.LENGTH_SHORT).show();
+            });
+            
+            builder.setNegativeButton("Cancel", null);
+            builder.show();
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to show wallet selection dialog", e);
+            Toast.makeText(getContext(), "Failed to load wallets", Toast.LENGTH_SHORT).show();
+        }
+    }
+    
     private void setupClickListeners() {
         sendButton.setOnClickListener(v -> sendTokens());
+        
+        clearRecipientButton.setOnClickListener(v -> {
+            recipientEditText.setText("");
+        });
+        
+        pickWalletButton.setOnClickListener(v -> showWalletSelectionDialog());
+        scanQrButton.setOnClickListener(v -> launchQRScanner());
     }
     
     private void sendTokens() {
@@ -286,6 +420,26 @@ public class SendTokensFragment extends Fragment implements
             this.displayName = displayName;
             this.isNative = isNative;
             this.tokenInfo = tokenInfo;
+        }
+        
+        @Override
+        public String toString() {
+            return displayName;
+        }
+    }
+    
+    /**
+     * Wallet option for recipient spinner
+     */
+    private static class WalletOption {
+        final String address;
+        final String displayName;
+        final String name;
+        
+        WalletOption(String address, String displayName, String name) {
+            this.address = address;
+            this.displayName = displayName;
+            this.name = name;
         }
         
         @Override

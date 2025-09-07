@@ -34,8 +34,9 @@
             android:id="@+id/tokenSpinner"
             android:layout_width="match_parent"
             android:layout_height="48dp"
-            android:background="@drawable/address_box_bg"
-            android:layout_marginBottom="16dp" />
+            android:background="#ffffff"
+            android:layout_marginBottom="16dp"
+            android:padding="12dp" />
 
         <!-- Balance Display -->
         <TextView
@@ -56,15 +57,77 @@
             android:textColor="#333333"
             android:layout_marginBottom="8dp" />
 
-        <EditText
-            android:id="@+id/recipientEditText"
+        <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:hint="secret1..."
-            android:textSize="14sp"
-            android:background="@drawable/address_box_bg"
-            android:padding="12dp"
-            android:layout_marginBottom="16dp" />
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="8dp">
+
+            <EditText
+                android:id="@+id/recipientEditText"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:hint="secret1... or select wallet below"
+                android:textSize="14sp"
+                android:textColor="#333333"
+                android:textColorHint="#666666"
+                android:background="@drawable/address_box_bg"
+                android:padding="12dp"
+                android:layout_marginEnd="8dp" />
+
+            <Button
+                android:id="@+id/clearRecipientButton"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:text="✕"
+                android:textColor="#666666"
+                android:textSize="16sp"
+                android:background="@drawable/address_box_bg"
+                android:layout_gravity="center_vertical" />
+
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Or select recipient method:"
+            android:textSize="12sp"
+            android:textColor="#666666"
+            android:layout_marginBottom="8dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="16dp"
+            android:gravity="center">
+
+            <Button
+                android:id="@+id/pickWalletButton"
+                android:layout_width="0dp"
+                android:layout_height="56dp"
+                android:layout_weight="1"
+                android:text="👛\nWallet"
+                android:textColor="#333333"
+                android:textSize="12sp"
+                android:background="@drawable/address_box_bg"
+                android:gravity="center"
+                android:layout_marginEnd="8dp" />
+
+            <Button
+                android:id="@+id/scanQrButton"
+                android:layout_width="0dp"
+                android:layout_height="56dp"
+                android:layout_weight="1"
+                android:text="📷\nScan QR"
+                android:textColor="#333333"
+                android:textSize="12sp"
+                android:background="@drawable/address_box_bg"
+                android:gravity="center"
+                android:layout_marginStart="8dp" />
+
+        </LinearLayout>
 
         <!-- Amount -->
         <TextView
@@ -82,6 +145,8 @@
             android:hint="0.0"
             android:inputType="numberDecimal"
             android:textSize="14sp"
+            android:textColor="#333333"
+            android:textColorHint="#666666"
             android:background="@drawable/address_box_bg"
             android:padding="12dp"
             android:layout_marginBottom="16dp" />
@@ -101,6 +166,8 @@
             android:layout_height="48dp"
             android:hint="Enter memo..."
             android:textSize="14sp"
+            android:textColor="#333333"
+            android:textColorHint="#666666"
             android:background="@drawable/address_box_bg"
             android:padding="12dp"
             android:layout_marginBottom="24dp" />

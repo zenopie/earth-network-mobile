@@ -3,6 +3,8 @@ package com.example.earthwallet.ui.pages.wallet;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.Color;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.util.Log;
@@ -28,6 +30,11 @@ import org.json.JSONObject;
 
 import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
+
+import com.google.zxing.BarcodeFormat;
+import com.google.zxing.WriterException;
+import com.google.zxing.common.BitMatrix;
+import com.google.zxing.qrcode.QRCodeWriter;
 
 /**
  * ReceiveTokensFragment
@@ -128,11 +135,39 @@ public class ReceiveTokensFragment extends Fragment {
     
     private void generateQRCode(String address) {
         if (qrCodeView != null && !TextUtils.isEmpty(address)) {
-            // For now, just hide the QR code view
-            // TODO: Implement QR code generation using a QR library
-            qrCodeView.setVisibility(View.GONE);
+            try {
+                // Generate QR code bitmap
+                Bitmap qrBitmap = createQRCodeBitmap(address, 300, 300);
+                if (qrBitmap != null) {
+                    qrCodeView.setImageBitmap(qrBitmap);
+                    qrCodeView.setVisibility(View.VISIBLE);
+                    Log.d(TAG, "QR code generated successfully for address: " + address.substring(0, 14) + "...");
+                } else {
+                    qrCodeView.setVisibility(View.GONE);
+                    Log.e(TAG, "Failed to generate QR code bitmap");
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Error generating QR code", e);
+                qrCodeView.setVisibility(View.GONE);
+            }
+        }
+    }
+    
+    private Bitmap createQRCodeBitmap(String content, int width, int height) {
+        try {
+            QRCodeWriter qrCodeWriter = new QRCodeWriter();
+            BitMatrix bitMatrix = qrCodeWriter.encode(content, BarcodeFormat.QR_CODE, width, height);
             
-            Log.d(TAG, "QR code generation not yet implemented for address: " + address);
+            Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565);
+            for (int x = 0; x < width; x++) {
+                for (int y = 0; y < height; y++) {
+                    bitmap.setPixel(x, y, bitMatrix.get(x, y) ? Color.BLACK : Color.WHITE);
+                }
+            }
+            return bitmap;
+        } catch (WriterException e) {
+            Log.e(TAG, "Error creating QR code", e);
+            return null;
         }
     }
     
