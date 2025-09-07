@@ -153,9 +153,12 @@ public class NativeSendActivity extends AppCompatActivity {
         // Broadcast transaction
         String response = networkService.broadcastTransactionModern(lcdUrl, txBytes);
 
+        // Enhance response with detailed results
+        String enhancedResponse = enhanceTransactionResponse(response, lcdUrl);
+
         // Show result on UI thread
         runOnUiThread(() -> {
-            showResponseAlert(response, senderAddress);
+            showEnhancedResponseAlert(enhancedResponse, senderAddress);
         });
     }
 
@@ -259,38 +262,90 @@ public class NativeSendActivity extends AppCompatActivity {
             .build();
     }
 
-    private void showResponseAlert(String response, String senderAddress) {
+    private String enhanceTransactionResponse(String initialResponse, String lcdUrl) {
         try {
-            JSONObject responseObj = new JSONObject(response);
-            String title = "Transaction Response";
-            String message = response;
-            
-            if (responseObj.has("tx_response")) {
-                JSONObject txResponse = responseObj.getJSONObject("tx_response");
+            JSONObject response = new JSONObject(initialResponse);
+            if (response.has("tx_response")) {
+                JSONObject txResponse = response.getJSONObject("tx_response");
                 int code = txResponse.optInt("code", -1);
+                String txHash = txResponse.optString("txhash", "");
+
+                if (code == 0 && !txHash.isEmpty()) {
+                    try {
+                        Thread.sleep(2000);
+                        String detailedResponse = networkService.queryTransactionByHash(lcdUrl, txHash);
+                        if (detailedResponse != null) {
+                            return detailedResponse;
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to enhance response: " + e.getMessage());
+        }
+        
+        return initialResponse;
+    }
+
+    private void showEnhancedResponseAlert(String enhancedResponse, String senderAddress) {
+        try {
+            // Parse the response to make it more readable
+            JSONObject response = new JSONObject(enhancedResponse);
+            String title = "Transaction Response";
+            String message = enhancedResponse;
+            int code = -1; // Default to failed
+            
+            if (response.has("tx_response")) {
+                JSONObject txResponse = response.getJSONObject("tx_response");
+                code = txResponse.optInt("code", -1);
                 String txHash = txResponse.optString("txhash", "");
                 String rawLog = txResponse.optString("raw_log", "");
                 
                 if (code == 0) {
                     title = "✅ Transfer Successful";
-                    message = "Hash: " + txHash + "\n\nFull Response:\n" + response;
+                    message = "Hash: " + txHash + "\n\nFull Response:\n" + enhancedResponse;
                 } else {
                     title = "❌ Transfer Failed (Code: " + code + ")";
-                    message = "Hash: " + txHash + "\nError: " + rawLog + "\n\nFull Response:\n" + response;
+                    message = "Hash: " + txHash + "\nError: " + rawLog + "\n\nFull Response:\n" + enhancedResponse;
                 }
             }
             
+            if (code == 0) {
+                // For successful transactions, show a toast and finish immediately
+                android.widget.Toast.makeText(this, "Transaction successful!", android.widget.Toast.LENGTH_SHORT).show();
+                finishWithSuccess(enhancedResponse, senderAddress);
+            } else {
+                // For failed transactions, still show the alert dialog with details
+                new AlertDialog.Builder(this)
+                    .setTitle(title)
+                    .setMessage(message)
+                    .setPositiveButton("OK", (dialog, which) -> {
+                        finishWithSuccess(enhancedResponse, senderAddress);
+                    })
+                    .setNegativeButton("Copy", (dialog, which) -> {
+                        android.content.ClipboardManager clipboard = 
+                            (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                        android.content.ClipData clip = 
+                            android.content.ClipData.newPlainText("Transaction Response", enhancedResponse);
+                        clipboard.setPrimaryClip(clip);
+                        finishWithSuccess(enhancedResponse, senderAddress);
+                    })
+                    .setCancelable(false)
+                    .show();
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to show enhanced response alert", e);
+            // Fallback: show raw response
             new AlertDialog.Builder(this)
-                .setTitle(title)
-                .setMessage(message)
+                .setTitle("Transaction Response")
+                .setMessage(enhancedResponse)
                 .setPositiveButton("OK", (dialog, which) -> {
-                    finishWithSuccess(response, senderAddress);
+                    finishWithSuccess(enhancedResponse, senderAddress);
                 })
                 .setCancelable(false)
                 .show();
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to show response alert", e);
-            finishWithSuccess(response, senderAddress);
         }
     }
 

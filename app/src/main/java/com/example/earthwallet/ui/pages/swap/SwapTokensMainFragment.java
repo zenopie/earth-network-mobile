@@ -585,7 +585,6 @@ public class SwapTokensMainFragment extends Fragment {
             }
             
             if (success) {
-                Toast.makeText(getContext(), "Swap completed successfully!", Toast.LENGTH_SHORT).show();
                 clearAmounts();
                 fetchBalances(); // Refresh balances
             } else {
@@ -668,8 +667,8 @@ public class SwapTokensMainFragment extends Fragment {
         // Use SecretQueryService directly in background thread to avoid Activity transition
         new Thread(() -> {
             try {
-                // Check wallet availability without retrieving mnemonic
-                if (!com.example.earthwallet.wallet.services.SecureWalletManager.isWalletAvailable(getContext(), securePrefs)) {
+                // Check wallet availability using the correct wallet preferences
+                if (!com.example.earthwallet.wallet.services.SecureWalletManager.isWalletAvailable(getContext())) {
                     getActivity().runOnUiThread(() -> {
                         Toast.makeText(getContext(), "No wallet found", Toast.LENGTH_SHORT).show();
                         isSimulatingSwap = false;

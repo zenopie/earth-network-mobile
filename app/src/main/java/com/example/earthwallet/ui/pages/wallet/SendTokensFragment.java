@@ -359,7 +359,6 @@ public class SendTokensFragment extends Fragment implements
         
         if (requestCode == REQ_SEND_NATIVE || requestCode == REQ_SEND_SNIP) {
             if (resultCode == Activity.RESULT_OK) {
-                Toast.makeText(getContext(), "Transaction sent successfully!", Toast.LENGTH_SHORT).show();
                 // Clear form
                 clearForm();
                 // Notify parent
