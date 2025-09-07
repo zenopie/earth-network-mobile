@@ -109,6 +109,16 @@ public class WalletDisplayFragment extends Fragment {
         if (addressContainer != null) {
             addressContainer.setOnClickListener(v -> copyAddressToClipboard());
         }
+        
+        // Set up send button click listener
+        if (sendButton != null) {
+            sendButton.setOnClickListener(v -> openSendTokens());
+        }
+        
+        // Set up receive button click listener
+        if (receiveButton != null) {
+            receiveButton.setOnClickListener(v -> openReceiveTokens());
+        }
     }
     
     /**
@@ -218,6 +228,40 @@ public class WalletDisplayFragment extends Fragment {
                 balanceText.setText(result);
                 balanceLoaded = true; // Mark as loaded
             }
+        }
+    }
+    
+    private void openSendTokens() {
+        try {
+            SendTokensFragment sendFragment = new SendTokensFragment();
+            
+            // Replace current fragment with send tokens fragment
+            requireActivity().getSupportFragmentManager()
+                .beginTransaction()
+                .replace(android.R.id.content, sendFragment)
+                .addToBackStack("send_tokens")
+                .commit();
+                
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to open send tokens", e);
+            Toast.makeText(getContext(), "Failed to open send", Toast.LENGTH_SHORT).show();
+        }
+    }
+    
+    private void openReceiveTokens() {
+        try {
+            ReceiveTokensFragment receiveFragment = new ReceiveTokensFragment();
+            
+            // Replace current fragment with receive tokens fragment
+            requireActivity().getSupportFragmentManager()
+                .beginTransaction()
+                .replace(android.R.id.content, receiveFragment)
+                .addToBackStack("receive_tokens")
+                .commit();
+                
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to open receive tokens", e);
+            Toast.makeText(getContext(), "Failed to open receive", Toast.LENGTH_SHORT).show();
         }
     }
     
