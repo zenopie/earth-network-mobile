@@ -9,6 +9,7 @@ import android.view.ViewGroup;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
 import androidx.viewpager2.widget.ViewPager2;
 
@@ -35,6 +36,7 @@ public class StakeEarthFragment extends Fragment {
     // UI Components
     private TabLayout tabLayout;
     private ViewPager2 viewPager;
+    private View rootView;
     
     // Data and Services
     private SecretQueryService queryService;
@@ -42,6 +44,9 @@ public class StakeEarthFragment extends Fragment {
     
     // Adapter
     private StakingTabsAdapter stakingAdapter;
+    
+    // Current tab for styling
+    private int currentTab = 0;
     
     // Interface for communication with parent
     public interface StakeEarthListener {
@@ -65,7 +70,8 @@ public class StakeEarthFragment extends Fragment {
     
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
-        return inflater.inflate(R.layout.fragment_stake_earth, container, false);
+        rootView = inflater.inflate(R.layout.fragment_stake_earth, container, false);
+        return rootView;
     }
     
     @Override

@@ -112,6 +112,33 @@ public class StakeUnstakeFragment extends Fragment {
             }
         });
         
+        // Add text watchers for validation
+        stakeAmountInput.addTextChangedListener(new android.text.TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {}
+            
+            @Override
+            public void afterTextChanged(android.text.Editable s) {
+                validateStakeButton();
+            }
+        });
+        
+        unstakeAmountInput.addTextChangedListener(new android.text.TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {}
+            
+            @Override
+            public void afterTextChanged(android.text.Editable s) {
+                validateUnstakeButton();
+            }
+        });
+        
         stakeButton.setOnClickListener(v -> handleStake());
         unstakeButton.setOnClickListener(v -> handleUnstake());
     }
@@ -263,15 +290,21 @@ public class StakeUnstakeFragment extends Fragment {
         String amountText = stakeAmountInput.getText().toString().trim();
         boolean isValid = false;
         
+        Log.d(TAG, "validateStakeButton - amountText: '" + amountText + "', erthBalance: " + erthBalance);
+        
         if (!TextUtils.isEmpty(amountText)) {
             try {
                 double amount = Double.parseDouble(amountText);
                 isValid = amount > 0 && amount <= erthBalance;
+                Log.d(TAG, "validateStakeButton - parsed amount: " + amount + ", isValid: " + isValid);
             } catch (NumberFormatException e) {
-                // Invalid number
+                Log.d(TAG, "validateStakeButton - NumberFormatException: " + e.getMessage());
             }
+        } else {
+            Log.d(TAG, "validateStakeButton - empty amount text");
         }
         
+        Log.d(TAG, "validateStakeButton - setting button enabled: " + isValid);
         stakeButton.setEnabled(isValid);
     }
     
