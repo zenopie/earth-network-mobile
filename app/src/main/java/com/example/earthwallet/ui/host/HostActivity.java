@@ -173,6 +173,13 @@ public class HostActivity extends AppCompatActivity implements CreateWalletFragm
                 getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
                 getWindow().addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
                 break;
+            case "staking":
+                fragment = new com.example.earthwallet.ui.pages.staking.StakeEarthFragment();
+                // Show navigation and status bar for normal fragments
+                showBottomNavigation();
+                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
+                break;
             default:
                 // Default to scanner if an unknown tag is passed
                 fragment = new com.example.earthwallet.ui.pages.anml.ScannerFragment();

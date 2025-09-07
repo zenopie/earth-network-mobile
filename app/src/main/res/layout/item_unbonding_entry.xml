@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/address_box_bg"
+    android:padding="16dp"
+    android:layout_marginBottom="8dp">
+
+    <!-- Entry Details -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginBottom="8dp">
+
+        <!-- Amount -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Amount:"
+                android:textSize="12sp"
+                android:textColor="#666666" />
+
+            <TextView
+                android:id="@+id/unbonding_amount_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0.00 ERTH"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:textColor="#333333" />
+        </LinearLayout>
+
+        <!-- Available Date -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="end">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Available:"
+                android:textSize="12sp"
+                android:textColor="#666666" />
+
+            <TextView
+                android:id="@+id/unbonding_date_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Loading..."
+                android:textSize="12sp"
+                android:textColor="#333333" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Action Button -->
+    <Button
+        android:id="@+id/unbonding_action_button"
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:text="Claim"
+        android:textColor="@android:color/white"
+        android:textSize="14sp"
+        android:background="@drawable/green_button_bg" />
+
+</LinearLayout>

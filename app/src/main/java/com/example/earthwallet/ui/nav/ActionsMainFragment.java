@@ -68,5 +68,18 @@ public class ActionsMainFragment extends Fragment {
                 }
             });
         }
+
+        // Stake ERTH button - request parent HostActivity to show Staking fragment
+        Button stakeERTH = view.findViewById(R.id.btn_stake_erth);
+        if (stakeERTH != null) {
+            stakeERTH.setOnClickListener(v -> {
+                Log.d("ActionsMainFragment", "Stake ERTH button clicked");
+                if (getActivity() instanceof com.example.earthwallet.ui.host.HostActivity) {
+                    ((com.example.earthwallet.ui.host.HostActivity) getActivity()).showFragment("staking");
+                } else {
+                    Toast.makeText(getContext(), "Navigation not available", Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
     }
 }

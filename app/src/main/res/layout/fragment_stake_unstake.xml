@@ -1,0 +1,215 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <!-- Stake Section -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/address_box_bg"
+        android:padding="16dp"
+        android:layout_marginBottom="16dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Stake ERTH"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="@color/primary_blue"
+            android:layout_marginBottom="16dp" />
+
+        <!-- Amount Input Section -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginBottom="12dp">
+
+            <!-- Label and Balance -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Amount to Stake"
+                    android:textSize="14sp"
+                    android:textColor="#666666" />
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:id="@+id/stake_balance_label"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Balance: Loading..."
+                        android:textSize="12sp"
+                        android:textColor="#666666" />
+
+                    <Button
+                        android:id="@+id/stake_max_button"
+                        android:layout_width="wrap_content"
+                        android:layout_height="28dp"
+                        android:text="Max"
+                        android:textSize="10sp"
+                        android:textColor="@color/primary_blue"
+                        android:background="@drawable/address_box_bg"
+                        android:paddingHorizontal="12dp"
+                        android:layout_marginStart="8dp"
+                        android:visibility="gone" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Amount Input -->
+            <EditText
+                android:id="@+id/stake_amount_input"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:hint="0.0"
+                android:inputType="numberDecimal"
+                android:textSize="16sp"
+                android:textColor="#333333"
+                android:background="@drawable/address_box_bg"
+                android:padding="12dp" />
+        </LinearLayout>
+
+        <!-- Stake Button -->
+        <Button
+            android:id="@+id/stake_button"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:text="Stake"
+            android:textColor="@android:color/white"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:background="@drawable/green_button_bg"
+            android:enabled="false" />
+    </LinearLayout>
+
+    <!-- Divider -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="#E0E0E0"
+        android:layout_marginBottom="16dp" />
+
+    <!-- Unstake Section -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/address_box_bg"
+        android:padding="16dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Unstake ERTH"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="@color/primary_blue"
+            android:layout_marginBottom="16dp" />
+
+        <!-- Amount Input Section -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginBottom="12dp">
+
+            <!-- Label and Balance -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Amount to Unstake"
+                    android:textSize="14sp"
+                    android:textColor="#666666" />
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:id="@+id/unstake_balance_label"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Balance: Loading..."
+                        android:textSize="12sp"
+                        android:textColor="#666666" />
+
+                    <Button
+                        android:id="@+id/unstake_max_button"
+                        android:layout_width="wrap_content"
+                        android:layout_height="28dp"
+                        android:text="Max"
+                        android:textSize="10sp"
+                        android:textColor="@color/primary_blue"
+                        android:background="@drawable/address_box_bg"
+                        android:paddingHorizontal="12dp"
+                        android:layout_marginStart="8dp"
+                        android:visibility="gone" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Amount Input -->
+            <EditText
+                android:id="@+id/unstake_amount_input"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:hint="0.0"
+                android:inputType="numberDecimal"
+                android:textSize="16sp"
+                android:textColor="#333333"
+                android:background="@drawable/address_box_bg"
+                android:padding="12dp" />
+        </LinearLayout>
+
+        <!-- Unstake Button -->
+        <Button
+            android:id="@+id/unstake_button"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:text="Unstake"
+            android:textColor="@android:color/white"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:background="@drawable/green_button_bg"
+            android:layout_marginBottom="12dp"
+            android:enabled="false" />
+
+        <!-- Unbonding Note -->
+        <TextView
+            android:id="@+id/unbonding_note_text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="💡 Unstaking has a 21-day unbonding period"
+            android:textSize="12sp"
+            android:textColor="#FF8F00"
+            android:background="#FFF3E0"
+            android:padding="12dp"
+            android:gravity="center" />
+    </LinearLayout>
+
+</LinearLayout>
