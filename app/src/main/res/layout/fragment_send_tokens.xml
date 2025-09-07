@@ -144,6 +144,7 @@
             android:layout_height="48dp"
             android:hint="0.0"
             android:inputType="numberDecimal"
+            android:imeOptions="actionDone"
             android:textSize="14sp"
             android:textColor="#333333"
             android:textColorHint="#666666"
