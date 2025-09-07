@@ -63,6 +63,13 @@
             android:theme="@style/Theme.EarthWallet.NoDisplay"
             android:excludeFromRecents="true" />
 
+        <!-- Native Send Activity (headless, native SCRT token transfers) -->
+        <activity
+            android:name=".bridge.activities.NativeSendActivity"
+            android:exported="false"
+            android:theme="@style/Theme.EarthWallet.NoDisplay"
+            android:excludeFromRecents="true" />
+
         <!-- Multi-Message Execute Activity (headless, multi-message transactions like add liquidity) -->
         <activity
             android:name="com.example.earthwallet.bridge.activities.MultiMessageExecuteActivity"

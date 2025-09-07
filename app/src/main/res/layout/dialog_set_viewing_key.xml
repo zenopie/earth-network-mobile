@@ -17,7 +17,7 @@
         android:id="@+id/viewing_key_input"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="api_key_..."
+        android:hint="vk_..."
         android:inputType="text"
         android:textSize="14sp"
         android:padding="12dp"

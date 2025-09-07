@@ -530,7 +530,7 @@ public class ManageViewingKeysFragment extends Fragment {
             SecureRandom random = new SecureRandom();
             byte[] keyBytes = new byte[32];
             random.nextBytes(keyBytes);
-            String viewingKey = "api_key_" + Base64.encodeToString(keyBytes, Base64.NO_WRAP);
+            String viewingKey = "vk_" + Base64.encodeToString(keyBytes, Base64.NO_WRAP);
             
             Log.i(TAG, "Generated random viewing key for contract: " + token.contract);
             executeSetViewingKeyTransaction(token, viewingKey);
