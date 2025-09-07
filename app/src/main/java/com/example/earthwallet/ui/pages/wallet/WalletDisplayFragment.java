@@ -233,14 +233,18 @@ public class WalletDisplayFragment extends Fragment {
     
     private void openSendTokens() {
         try {
-            SendTokensFragment sendFragment = new SendTokensFragment();
-            
-            // Replace current fragment with send tokens fragment
-            requireActivity().getSupportFragmentManager()
-                .beginTransaction()
-                .replace(android.R.id.content, sendFragment)
-                .addToBackStack("send_tokens")
-                .commit();
+            // Use HostActivity's showFragment method to ensure bottom navigation is shown
+            if (getActivity() instanceof com.example.earthwallet.ui.host.HostActivity) {
+                ((com.example.earthwallet.ui.host.HostActivity) getActivity()).showFragment("send");
+            } else {
+                // Fallback for non-HostActivity contexts
+                SendTokensFragment sendFragment = new SendTokensFragment();
+                requireActivity().getSupportFragmentManager()
+                    .beginTransaction()
+                    .replace(android.R.id.content, sendFragment)
+                    .addToBackStack("send_tokens")
+                    .commit();
+            }
                 
         } catch (Exception e) {
             Log.e(TAG, "Failed to open send tokens", e);
@@ -250,14 +254,18 @@ public class WalletDisplayFragment extends Fragment {
     
     private void openReceiveTokens() {
         try {
-            ReceiveTokensFragment receiveFragment = new ReceiveTokensFragment();
-            
-            // Replace current fragment with receive tokens fragment
-            requireActivity().getSupportFragmentManager()
-                .beginTransaction()
-                .replace(android.R.id.content, receiveFragment)
-                .addToBackStack("receive_tokens")
-                .commit();
+            // Use HostActivity's showFragment method to ensure bottom navigation is shown
+            if (getActivity() instanceof com.example.earthwallet.ui.host.HostActivity) {
+                ((com.example.earthwallet.ui.host.HostActivity) getActivity()).showFragment("receive");
+            } else {
+                // Fallback for non-HostActivity contexts
+                ReceiveTokensFragment receiveFragment = new ReceiveTokensFragment();
+                requireActivity().getSupportFragmentManager()
+                    .beginTransaction()
+                    .replace(android.R.id.content, receiveFragment)
+                    .addToBackStack("receive_tokens")
+                    .commit();
+            }
                 
         } catch (Exception e) {
             Log.e(TAG, "Failed to open receive tokens", e);

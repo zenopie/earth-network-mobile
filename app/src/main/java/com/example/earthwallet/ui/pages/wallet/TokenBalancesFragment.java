@@ -251,18 +251,22 @@ public class TokenBalancesFragment extends Fragment {
                     );
                     
                     // Handle result on UI thread
-                    getActivity().runOnUiThread(() -> {
-                        handleTokenBalanceResult(result.toString());
-                    });
+                    if (getActivity() != null) {
+                        getActivity().runOnUiThread(() -> {
+                            handleTokenBalanceResult(result.toString());
+                        });
+                    }
                     
                 } catch (Exception e) {
                     Log.e(TAG, "Token balance query failed for " + token.symbol, e);
-                    getActivity().runOnUiThread(() -> {
-                        addTokenBalanceView(token, "Error", false);
-                        isQueryingToken = false;
-                        currentlyQueryingToken = null;
-                        processNextTokenQuery();
-                    });
+                    if (getActivity() != null) {
+                        getActivity().runOnUiThread(() -> {
+                            addTokenBalanceView(token, "Error", false);
+                            isQueryingToken = false;
+                            currentlyQueryingToken = null;
+                            processNextTokenQuery();
+                        });
+                    }
                 }
             }).start();
             
