@@ -194,6 +194,27 @@ public class HostActivity extends AppCompatActivity implements CreateWalletFragm
                 getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
                 getWindow().addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
                 break;
+            case "governance":
+                fragment = new com.example.earthwallet.ui.pages.governance.GovernanceFragment();
+                // Show navigation and status bar for normal fragments
+                showBottomNavigation();
+                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
+                break;
+            case "caretaker_fund":
+                fragment = new com.example.earthwallet.ui.pages.governance.CaretakerFundFragment();
+                // Show navigation and status bar for normal fragments
+                showBottomNavigation();
+                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
+                break;
+            case "deflation_fund":
+                fragment = new com.example.earthwallet.ui.pages.governance.DeflationFundFragment();
+                // Show navigation and status bar for normal fragments
+                showBottomNavigation();
+                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
+                break;
             default:
                 // Default to scanner if an unknown tag is passed
                 fragment = new com.example.earthwallet.ui.pages.anml.ScannerFragment();
@@ -369,7 +390,10 @@ public class HostActivity extends AppCompatActivity implements CreateWalletFragm
         return fragmentTag.equals("swap") || 
                fragmentTag.equals("anml") || 
                fragmentTag.equals("managelp") || 
-               fragmentTag.equals("staking");
+               fragmentTag.equals("staking") ||
+               fragmentTag.equals("governance") ||
+               fragmentTag.equals("caretaker_fund") ||
+               fragmentTag.equals("deflation_fund");
     }
     
     /**

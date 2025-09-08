@@ -7,12 +7,15 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.LinearLayout;
 import android.widget.Toast;
 import android.util.Log;
  
 import androidx.fragment.app.Fragment;
 
 public class ActionsMainFragment extends Fragment {
+
+    private boolean isGovernanceExpanded = false;
 
     public ActionsMainFragment() {}
     
@@ -80,6 +83,54 @@ public class ActionsMainFragment extends Fragment {
                     Toast.makeText(getContext(), "Navigation not available", Toast.LENGTH_SHORT).show();
                 }
             });
+        }
+
+        // Governance button - toggle expansion of submenu
+        Button governance = view.findViewById(R.id.btn_governance);
+        LinearLayout governanceSubmenu = view.findViewById(R.id.governance_submenu);
+        if (governance != null && governanceSubmenu != null) {
+            governance.setOnClickListener(v -> {
+                Log.d("ActionsMainFragment", "Governance button clicked");
+                toggleGovernanceSubmenu(governanceSubmenu);
+            });
+        }
+
+        // Caretaker Fund button
+        Button caretakerFund = view.findViewById(R.id.btn_caretaker_fund);
+        if (caretakerFund != null) {
+            caretakerFund.setOnClickListener(v -> {
+                Log.d("ActionsMainFragment", "Caretaker Fund button clicked");
+                if (getActivity() instanceof com.example.earthwallet.ui.host.HostActivity) {
+                    ((com.example.earthwallet.ui.host.HostActivity) getActivity()).showFragment("caretaker_fund");
+                } else {
+                    Toast.makeText(getContext(), "Navigation not available", Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
+
+        // Deflation Fund button
+        Button deflationFund = view.findViewById(R.id.btn_deflation_fund);
+        if (deflationFund != null) {
+            deflationFund.setOnClickListener(v -> {
+                Log.d("ActionsMainFragment", "Deflation Fund button clicked");
+                if (getActivity() instanceof com.example.earthwallet.ui.host.HostActivity) {
+                    ((com.example.earthwallet.ui.host.HostActivity) getActivity()).showFragment("deflation_fund");
+                } else {
+                    Toast.makeText(getContext(), "Navigation not available", Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
+    }
+    
+    private void toggleGovernanceSubmenu(LinearLayout submenu) {
+        if (isGovernanceExpanded) {
+            submenu.setVisibility(View.GONE);
+            isGovernanceExpanded = false;
+            Log.d("ActionsMainFragment", "Governance submenu collapsed");
+        } else {
+            submenu.setVisibility(View.VISIBLE);
+            isGovernanceExpanded = true;
+            Log.d("ActionsMainFragment", "Governance submenu expanded");
         }
     }
 }

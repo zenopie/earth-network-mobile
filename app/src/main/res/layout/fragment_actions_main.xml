@@ -142,6 +142,80 @@
                 android:layout_marginBottom="12dp"
                 android:background="@color/sidebar_divider" />
 
+            <!-- Governance action -->
+            <Button
+                android:id="@+id/btn_governance"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:layout_marginTop="8dp"
+                android:layout_marginBottom="8dp"
+                android:paddingLeft="16dp"
+                android:paddingRight="16dp"
+                android:backgroundTint="@color/sidebar_bg"
+                android:text="Governance"
+                android:textColor="@color/sidebar_text"
+                android:textAllCaps="false"
+                android:textSize="18sp"
+                android:gravity="center_vertical"
+                android:stateListAnimator="@null" />
+
+            <!-- Expandable governance sub-menu -->
+            <LinearLayout
+                android:id="@+id/governance_submenu"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone"
+                android:paddingLeft="24dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp">
+
+                <!-- Caretaker Fund sub-option -->
+                <Button
+                    android:id="@+id/btn_caretaker_fund"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="4dp"
+                    android:layout_marginBottom="4dp"
+                    android:paddingLeft="16dp"
+                    android:paddingRight="16dp"
+                    android:backgroundTint="@color/sidebar_bg"
+                    android:text="Caretaker Fund"
+                    android:textColor="@color/sidebar_text"
+                    android:textAllCaps="false"
+                    android:textSize="16sp"
+                    android:gravity="center_vertical"
+                    android:stateListAnimator="@null"
+                    android:alpha="0.8" />
+
+                <!-- Deflation Fund sub-option -->
+                <Button
+                    android:id="@+id/btn_deflation_fund"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="4dp"
+                    android:layout_marginBottom="4dp"
+                    android:paddingLeft="16dp"
+                    android:paddingRight="16dp"
+                    android:backgroundTint="@color/sidebar_bg"
+                    android:text="Deflation Fund"
+                    android:textColor="@color/sidebar_text"
+                    android:textAllCaps="false"
+                    android:textSize="16sp"
+                    android:gravity="center_vertical"
+                    android:stateListAnimator="@null"
+                    android:alpha="0.8" />
+
+            </LinearLayout>
+
+            <!-- Divider -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="12dp"
+                android:layout_marginBottom="12dp"
+                android:background="@color/sidebar_divider" />
+
             <!-- Additional descriptive area (optional) -->
 
         </LinearLayout>
