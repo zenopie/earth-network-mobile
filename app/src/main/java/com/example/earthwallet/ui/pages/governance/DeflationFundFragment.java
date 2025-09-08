@@ -19,6 +19,7 @@ import com.google.android.material.tabs.TabLayout;
 
 import com.example.earthwallet.Constants;
 import com.example.earthwallet.R;
+import com.example.earthwallet.ui.components.PieChartView;
 import com.example.earthwallet.bridge.services.SecretQueryService;
 import com.example.earthwallet.wallet.services.SecureWalletManager;
 
@@ -27,6 +28,8 @@ import org.json.JSONObject;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.List;
+import java.util.ArrayList;
 
 /**
  * Fragment for managing Deflation Fund allocation voting
@@ -146,11 +149,20 @@ public class DeflationFundFragment extends Fragment {
     private void loadActualAllocations() {
         executorService.execute(() -> {
             try {
+                // First check if we have a wallet
+                String walletAddress = SecureWalletManager.getWalletAddress(getContext());
+                Log.d(TAG, "Loading allocations with wallet: " + (walletAddress != null ? walletAddress : "null"));
+                
+                if (walletAddress == null || walletAddress.isEmpty()) {
+                    Log.w(TAG, "No wallet address available - query may fail");
+                }
                 // Query current allocations from staking contract
                 JSONObject queryMsg = new JSONObject();
                 queryMsg.put("query_allocation_options", new JSONObject());
                 
                 Log.d(TAG, "Querying deflation fund allocations from: " + Constants.STAKING_CONTRACT);
+                Log.d(TAG, "Using hash: " + Constants.STAKING_HASH);
+                Log.d(TAG, "Query message: " + queryMsg.toString());
                 
                 JSONObject result = queryService.queryContract(
                     Constants.STAKING_CONTRACT,
@@ -163,15 +175,64 @@ public class DeflationFundFragment extends Fragment {
                 if (getActivity() != null) {
                     getActivity().runOnUiThread(() -> {
                         try {
-                            currentAllocations = result.optJSONArray("allocations");
-                            if (currentAllocations == null && result.has("allocations")) {
-                                // Handle case where result is direct array
-                                currentAllocations = new JSONArray();
-                                // Parse result as array if it's array format
-                                if (result.toString().startsWith("[")) {
-                                    currentAllocations = new JSONArray(result.toString());
+                            // Handle different response formats matching what we see in logs  
+                            currentAllocations = new JSONArray();
+                            
+                            if (result.has("data") && result.getJSONArray("data").length() > 0) {
+                                // SecretQueryService wrapped response  
+                                JSONArray dataArray = result.getJSONArray("data");
+                                Log.d(TAG, "Processing SecretQueryService wrapped response with " + dataArray.length() + " items");
+                                
+                                // First pass: collect all raw amounts to calculate total
+                                long totalAmount = 0;
+                                for (int i = 0; i < dataArray.length(); i++) {
+                                    JSONObject item = dataArray.getJSONObject(i);
+                                    String amountStr = item.optString("amount_allocated", "0");
+                                    try {
+                                        totalAmount += Long.parseLong(amountStr);
+                                    } catch (NumberFormatException e) {
+                                        Log.w(TAG, "Invalid amount format: " + amountStr);
+                                    }
                                 }
+                                
+                                Log.d(TAG, "Deflation fund total amount: " + totalAmount);
+                                
+                                // Second pass: calculate percentages
+                                for (int i = 0; i < dataArray.length(); i++) {
+                                    JSONObject item = dataArray.getJSONObject(i);
+                                    JSONObject transformed = new JSONObject();
+                                    
+                                    // Deflation fund format has direct allocation_id and amount_allocated fields
+                                    int allocationId = item.optInt("allocation_id", 0);
+                                    String amountStr = item.optString("amount_allocated", "0");
+                                    
+                                    long rawAmount = 0;
+                                    try {
+                                        rawAmount = Long.parseLong(amountStr);
+                                    } catch (NumberFormatException e) {
+                                        Log.w(TAG, "Invalid amount format: " + amountStr);
+                                    }
+                                    
+                                    // Calculate percentage based on actual amounts
+                                    int percentage = totalAmount > 0 ? (int) Math.round((rawAmount * 100.0) / totalAmount) : 0;
+                                    
+                                    transformed.put("allocation_id", allocationId);
+                                    transformed.put("amount_allocated", percentage);
+                                    
+                                    Log.d(TAG, "Deflation fund item: allocation_id=" + allocationId + ", raw_amount=" + rawAmount + " -> " + percentage + "%");
+                                    currentAllocations.put(transformed);
+                                }
+                            } else if (result.toString().startsWith("[")) {
+                                // Direct array response (fallback)
+                                JSONArray directArray = new JSONArray(result.toString());
+                                Log.d(TAG, "Processing direct array response with " + directArray.length() + " items");
+                                currentAllocations = directArray;
+                            } else if (result.has("allocations")) {
+                                // DeflationFund style response (old format)
+                                currentAllocations = result.getJSONArray("allocations");
                             }
+                            
+                            Log.d(TAG, "Processed allocations: " + currentAllocations.toString());
                             updateActualAllocationsUI();
                         } catch (Exception e) {
                             Log.e(TAG, "Error processing allocation data", e);
@@ -182,10 +243,23 @@ public class DeflationFundFragment extends Fragment {
                 
             } catch (Exception e) {
                 Log.e(TAG, "Error loading actual allocations", e);
+                Log.e(TAG, "Exception type: " + e.getClass().getSimpleName());
+                Log.e(TAG, "Exception message: " + e.getMessage());
+                e.printStackTrace();
                 if (getActivity() != null) {
-                    getActivity().runOnUiThread(() -> 
-                        Toast.makeText(getContext(), "Error loading allocations: " + e.getMessage(), Toast.LENGTH_SHORT).show()
-                    );
+                    getActivity().runOnUiThread(() -> {
+                        Toast.makeText(getContext(), "Error loading allocations: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                        // Also update the UI to show the error
+                        if (actualAllocationSection != null) {
+                            actualAllocationSection.removeAllViews();
+                            TextView errorText = new TextView(getContext());
+                            errorText.setText("Query Error: " + e.getMessage() + "\n\nContract: " + Constants.STAKING_CONTRACT + "\nHash: " + Constants.STAKING_HASH);
+                            errorText.setTextSize(14);
+                            errorText.setTextColor(0xFFFF0000);
+                            errorText.setPadding(20, 20, 20, 20);
+                            actualAllocationSection.addView(errorText);
+                        }
+                    });
                 }
             }
         });
@@ -223,10 +297,45 @@ public class DeflationFundFragment extends Fragment {
                 if (getActivity() != null) {
                     getActivity().runOnUiThread(() -> {
                         try {
-                            userAllocations = result.optJSONArray("percentages");
-                            if (userAllocations == null && result.toString().startsWith("[")) {
+                            // Handle user allocation response - SecretQueryService wrapped with "percentage" fields
+                            userAllocations = new JSONArray();
+                            
+                            if (result.has("data") && result.getJSONArray("data").length() > 0) {
+                                // SecretQueryService wrapped response with percentage field
+                                JSONArray dataArray = result.getJSONArray("data");
+                                Log.d(TAG, "Processing user allocations with " + dataArray.length() + " items");
+                                
+                                for (int i = 0; i < dataArray.length(); i++) {
+                                    JSONObject item = dataArray.getJSONObject(i);
+                                    JSONObject transformed = new JSONObject();
+                                    
+                                    // User allocation format has allocation_id and percentage fields
+                                    int allocationId = item.optInt("allocation_id", 0);
+                                    String percentageStr = item.optString("percentage", "0");
+                                    
+                                    int percentage = 0;
+                                    try {
+                                        percentage = Integer.parseInt(percentageStr);
+                                    } catch (NumberFormatException e) {
+                                        Log.w(TAG, "Invalid percentage format: " + percentageStr);
+                                    }
+                                    
+                                    transformed.put("allocation_id", allocationId);
+                                    transformed.put("amount_allocated", percentage);
+                                    
+                                    Log.d(TAG, "User allocation item: allocation_id=" + allocationId + ", percentage=" + percentage + "%");
+                                    userAllocations.put(transformed);
+                                }
+                            } else if (result.toString().startsWith("[")) {
+                                // Fallback: direct array response format
                                 userAllocations = new JSONArray(result.toString());
+                                Log.d(TAG, "Processing user allocations array with " + userAllocations.length() + " items");
+                            } else if (result.has("percentages")) {
+                                // Fallback for older format
+                                userAllocations = result.getJSONArray("percentages");
                             }
+                            
+                            Log.d(TAG, "Processed user allocations: " + userAllocations.toString());
                             updatePreferredAllocationsUI();
                         } catch (Exception e) {
                             Log.e(TAG, "Error processing user allocation data", e);
@@ -254,20 +363,51 @@ public class DeflationFundFragment extends Fragment {
         
         if (currentAllocations == null || currentAllocations.length() == 0) {
             TextView noDataText = new TextView(getContext());
-            noDataText.setText("No allocation data available");
-            noDataText.setTextSize(16);
+            noDataText.setText("No allocation data available from staking contract.\n\nThis could mean:\n• The contract hasn't been configured yet\n• No allocations have been set\n• Contract query failed");
+            noDataText.setTextSize(14);
+            noDataText.setTextColor(0xFF666666);
             noDataText.setPadding(20, 20, 20, 20);
             actualAllocationSection.addView(noDataText);
             return;
         }
         
         try {
+            
+            // Create and add actual pie chart
+            PieChartView pieChart = createPieChart(currentAllocations);
+            if (pieChart != null) {
+                LinearLayout.LayoutParams chartParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, 
+                    600 // Bigger height
+                );
+                chartParams.setMargins(40, 20, 40, 20);
+                chartParams.gravity = android.view.Gravity.CENTER_HORIZONTAL;
+                pieChart.setLayoutParams(chartParams);
+                actualAllocationSection.addView(pieChart);
+            }
+            
+            // Add list view of allocations with better visual styling
             for (int i = 0; i < currentAllocations.length(); i++) {
                 JSONObject allocation = currentAllocations.getJSONObject(i);
-                
                 View allocationView = createAllocationItemView(allocation, false);
                 actualAllocationSection.addView(allocationView);
             }
+            
+            // Add total percentage check
+            int totalPercentage = 0;
+            for (int i = 0; i < currentAllocations.length(); i++) {
+                JSONObject allocation = currentAllocations.getJSONObject(i);
+                totalPercentage += allocation.optInt("amount_allocated", 0);
+            }
+            
+            TextView totalLabel = new TextView(getContext());
+            totalLabel.setText("Total: " + totalPercentage + "%");
+            totalLabel.setTextSize(14);
+            totalLabel.setTextColor(totalPercentage == 100 ? 0xFF4CAF50 : 0xFFFF9800);
+            totalLabel.setPadding(20, 10, 20, 10);
+            totalLabel.setTypeface(totalLabel.getTypeface(), android.graphics.Typeface.BOLD);
+            actualAllocationSection.addView(totalLabel);
+            
         } catch (Exception e) {
             Log.e(TAG, "Error updating actual allocations UI", e);
         }
@@ -279,44 +419,87 @@ public class DeflationFundFragment extends Fragment {
         // Clear existing views
         preferredAllocationSection.removeAllViews();
         
-        // Add UI for setting user preferences
-        TextView instructionText = new TextView(getContext());
-        instructionText.setText("Set your preferred allocation percentages (must total 100%)");
-        instructionText.setTextSize(16);
-        instructionText.setPadding(20, 20, 20, 20);
-        preferredAllocationSection.addView(instructionText);
         
-        // Add controls for each allocation option
-        for (int i = 0; i < ALLOCATION_NAMES.length; i++) {
-            View prefView = createPreferenceItemView(i + 1, ALLOCATION_NAMES[i]);
-            preferredAllocationSection.addView(prefView);
+        // Show current user allocations if available
+        if (userAllocations != null && userAllocations.length() > 0) {
+            // Create and add pie chart for user preferences
+            PieChartView userPieChart = createPieChart(userAllocations);
+            if (userPieChart != null) {
+                LinearLayout.LayoutParams chartParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, 
+                    600 // Same size as actual allocation chart
+                );
+                chartParams.setMargins(40, 20, 40, 20);
+                chartParams.gravity = android.view.Gravity.CENTER_HORIZONTAL;
+                userPieChart.setLayoutParams(chartParams);
+                preferredAllocationSection.addView(userPieChart);
+            }
+            
+            try {
+                for (int i = 0; i < userAllocations.length(); i++) {
+                    JSONObject allocation = userAllocations.getJSONObject(i);
+                    View allocationView = createAllocationItemView(allocation, false);
+                    preferredAllocationSection.addView(allocationView);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Error displaying user allocations", e);
+            }
+        } else {
+            TextView noPrefsText = new TextView(getContext());
+            noPrefsText.setText("No preferences set yet.");
+            noPrefsText.setTextSize(14);
+            noPrefsText.setTextColor(0xFF666666);
+            noPrefsText.setPadding(20, 10, 20, 10);
+            preferredAllocationSection.addView(noPrefsText);
+            
+            TextView comingSoonText = new TextView(getContext());
+            comingSoonText.setText("Setting preferences coming soon!");
+            comingSoonText.setTextSize(14);
+            comingSoonText.setTextColor(0xFF1976D2);
+            comingSoonText.setPadding(20, 10, 20, 20);
+            preferredAllocationSection.addView(comingSoonText);
         }
-        
-        // Add submit button
-        Button submitButton = new Button(getContext());
-        submitButton.setText("Set Allocation");
-        submitButton.setOnClickListener(v -> submitUserAllocations());
-        preferredAllocationSection.addView(submitButton);
     }
     
     private View createAllocationItemView(JSONObject allocation, boolean isEditable) {
         try {
             LinearLayout itemLayout = new LinearLayout(getContext());
             itemLayout.setOrientation(LinearLayout.HORIZONTAL);
-            itemLayout.setPadding(20, 10, 20, 10);
+            itemLayout.setPadding(20, 15, 20, 15);
+            itemLayout.setBackgroundColor(0x10000000); // Light gray background
+            
+            // Get allocation data
+            int allocationId = allocation.optInt("allocation_id", 0);
+            int value = allocation.optInt("amount_allocated", 0);
+            
+            // Also check for percentage field for user allocations
+            if (value == 0 && allocation.has("percentage")) {
+                value = allocation.optInt("percentage", 0);
+            }
+            
+            String name = getAllocationName(allocationId);
+            
+            // Add a color indicator for pie chart effect
+            View colorIndicator = new View(getContext());
+            int color = getPieChartColor(allocationId);
+            colorIndicator.setBackgroundColor(color);
+            LinearLayout.LayoutParams colorParams = new LinearLayout.LayoutParams(20, ViewGroup.LayoutParams.MATCH_PARENT);
+            colorParams.setMargins(0, 0, 12, 0);
+            colorIndicator.setLayoutParams(colorParams);
             
             TextView nameText = new TextView(getContext());
-            int allocationId = allocation.optInt("allocation_id", 0);
-            String name = getAllocationName(allocationId);
             nameText.setText(name);
             nameText.setTextSize(16);
+            nameText.setTextColor(0xFF333333);
             nameText.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
             
             TextView valueText = new TextView(getContext());
-            int value = allocation.optInt("amount_allocated", 0);
             valueText.setText(value + "%");
             valueText.setTextSize(16);
+            valueText.setTextColor(0xFF1976D2);
+            valueText.setTypeface(valueText.getTypeface(), android.graphics.Typeface.BOLD);
             
+            itemLayout.addView(colorIndicator);
             itemLayout.addView(nameText);
             itemLayout.addView(valueText);
             
@@ -354,6 +537,44 @@ public class DeflationFundFragment extends Fragment {
             return ALLOCATION_NAMES[allocationId - 1];
         }
         return "Unknown (" + allocationId + ")";
+    }
+    
+    private int getPieChartColor(int allocationId) {
+        // Pie chart colors similar to web app
+        int[] colors = {
+            0xFF4CAF50, // Green
+            0xFF8BC34A, // Light Green  
+            0xFFFF9800, // Orange
+            0xFFCDDC39, // Lime
+            0xFF009688, // Teal
+            0xFF795548  // Brown
+        };
+        return colors[(allocationId - 1) % colors.length];
+    }
+    
+    private PieChartView createPieChart(JSONArray allocations) {
+        try {
+            PieChartView pieChart = new PieChartView(getContext());
+            List<PieChartView.PieSlice> slices = new ArrayList<>();
+            
+            for (int i = 0; i < allocations.length(); i++) {
+                JSONObject allocation = allocations.getJSONObject(i);
+                int allocationId = allocation.optInt("allocation_id", 0);
+                int percentage = allocation.optInt("amount_allocated", 0);
+                
+                if (percentage > 0) {
+                    String name = getAllocationName(allocationId);
+                    int color = getPieChartColor(allocationId);
+                    slices.add(new PieChartView.PieSlice(name, percentage, color));
+                }
+            }
+            
+            pieChart.setData(slices);
+            return pieChart;
+        } catch (Exception e) {
+            Log.e(TAG, "Error creating pie chart", e);
+            return null;
+        }
     }
     
     private void submitUserAllocations() {
