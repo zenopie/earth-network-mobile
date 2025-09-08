@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/white"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:gravity="center_vertical">
+
+        <!-- Title -->
+        <TextView
+            android:id="@+id/title_text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Set Allocation Preferences"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:textColor="@color/primary_blue"
+            android:gravity="center"
+            android:layout_marginBottom="16dp" />
+
+        <!-- Selected Allocations Section -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Your Allocations"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/primary_blue"
+            android:layout_marginBottom="8dp"
+            android:layout_marginStart="16dp" />
+            
+        <LinearLayout
+            android:id="@+id/allocation_inputs_container"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginBottom="16dp" />
+
+        <!-- Total Percentage Display -->
+        <TextView
+            android:id="@+id/total_percentage_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:text="Total: 0%"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="@android:color/holo_red_dark"
+            android:layout_marginBottom="20dp" />
+
+        <!-- Available Allocations Section -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Tap to Add Allocations"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/primary_blue"
+            android:layout_marginBottom="8dp"
+            android:layout_marginStart="16dp" />
+            
+        <!-- Flexible container for chips/tags -->
+        <LinearLayout
+            android:id="@+id/available_allocations_container"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginBottom="16dp" />
+
+        <!-- Set Allocation Button -->
+        <Button
+            android:id="@+id/set_allocation_button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Set Allocation"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:background="@color/primary_blue"
+            android:textColor="@android:color/white"
+            android:padding="12dp"
+            android:enabled="false" />
+
+    </LinearLayout>
+
+</ScrollView>

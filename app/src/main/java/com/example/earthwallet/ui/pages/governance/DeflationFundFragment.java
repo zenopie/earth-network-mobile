@@ -361,6 +361,21 @@ public class DeflationFundFragment extends Fragment {
         // Clear existing views
         actualAllocationSection.removeAllViews();
         
+        // Add pie chart if we have data
+        if (currentAllocations != null && currentAllocations.length() > 0) {
+            PieChartView pieChart = createPieChart(currentAllocations);
+            if (pieChart != null) {
+                LinearLayout.LayoutParams chartParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, 
+                    600 // Consistent height
+                );
+                chartParams.setMargins(40, 20, 40, 20);
+                chartParams.gravity = android.view.Gravity.CENTER_HORIZONTAL;
+                pieChart.setLayoutParams(chartParams);
+                actualAllocationSection.addView(pieChart);
+            }
+        }
+        
         if (currentAllocations == null || currentAllocations.length() == 0) {
             TextView noDataText = new TextView(getContext());
             noDataText.setText("No allocation data available from staking contract.\n\nThis could mean:\n• The contract hasn't been configured yet\n• No allocations have been set\n• Contract query failed");
@@ -371,22 +386,9 @@ public class DeflationFundFragment extends Fragment {
             return;
         }
         
-        try {
-            
-            // Create and add actual pie chart
-            PieChartView pieChart = createPieChart(currentAllocations);
-            if (pieChart != null) {
-                LinearLayout.LayoutParams chartParams = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, 
-                    600 // Bigger height
-                );
-                chartParams.setMargins(40, 20, 40, 20);
-                chartParams.gravity = android.view.Gravity.CENTER_HORIZONTAL;
-                pieChart.setLayoutParams(chartParams);
-                actualAllocationSection.addView(pieChart);
-            }
-            
-            // Add list view of allocations with better visual styling
+        // Add list view of allocations with better visual styling if we have data
+        if (currentAllocations != null && currentAllocations.length() > 0) {
+            try {
             for (int i = 0; i < currentAllocations.length(); i++) {
                 JSONObject allocation = currentAllocations.getJSONObject(i);
                 View allocationView = createAllocationItemView(allocation, false);
@@ -408,8 +410,9 @@ public class DeflationFundFragment extends Fragment {
             totalLabel.setTypeface(totalLabel.getTypeface(), android.graphics.Typeface.BOLD);
             actualAllocationSection.addView(totalLabel);
             
-        } catch (Exception e) {
-            Log.e(TAG, "Error updating actual allocations UI", e);
+            } catch (Exception e) {
+                Log.e(TAG, "Error updating actual allocations UI", e);
+            }
         }
     }
     
@@ -419,10 +422,8 @@ public class DeflationFundFragment extends Fragment {
         // Clear existing views
         preferredAllocationSection.removeAllViews();
         
-        
-        // Show current user allocations if available
+        // Add pie chart for user data
         if (userAllocations != null && userAllocations.length() > 0) {
-            // Create and add pie chart for user preferences
             PieChartView userPieChart = createPieChart(userAllocations);
             if (userPieChart != null) {
                 LinearLayout.LayoutParams chartParams = new LinearLayout.LayoutParams(
@@ -434,6 +435,10 @@ public class DeflationFundFragment extends Fragment {
                 userPieChart.setLayoutParams(chartParams);
                 preferredAllocationSection.addView(userPieChart);
             }
+        }
+        
+        // Show current user allocations if available
+        if (userAllocations != null && userAllocations.length() > 0) {
             
             try {
                 for (int i = 0; i < userAllocations.length(); i++) {
@@ -459,6 +464,29 @@ public class DeflationFundFragment extends Fragment {
             comingSoonText.setPadding(20, 10, 20, 20);
             preferredAllocationSection.addView(comingSoonText);
         }
+        
+        // Add Set Preferences button (styled like swap button)
+        Button setPrefsButton = new Button(getContext());
+        setPrefsButton.setText(userAllocations != null && userAllocations.length() > 0 
+            ? "Update Preferences" : "Set Preferences");
+        setPrefsButton.setTextColor(0xFFFFFFFF);
+        setPrefsButton.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF4CAF50)); // Green like swap button
+        setPrefsButton.setTextSize(18); // Match swap button text size
+        setPrefsButton.setTypeface(setPrefsButton.getTypeface(), android.graphics.Typeface.BOLD);
+        
+        LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 
+            (int) (56 * getResources().getDisplayMetrics().density) // 56dp height like swap button
+        );
+        buttonParams.setMargins(
+            (int) (20 * getResources().getDisplayMetrics().density), // 20dp margins
+            (int) (20 * getResources().getDisplayMetrics().density), 
+            (int) (20 * getResources().getDisplayMetrics().density), 
+            (int) (10 * getResources().getDisplayMetrics().density)
+        );
+        setPrefsButton.setLayoutParams(buttonParams);
+        setPrefsButton.setOnClickListener(v -> openSetAllocationActivity());
+        preferredAllocationSection.addView(setPrefsButton);
     }
     
     private View createAllocationItemView(JSONObject allocation, boolean isEditable) {
@@ -552,6 +580,38 @@ public class DeflationFundFragment extends Fragment {
         return colors[(allocationId - 1) % colors.length];
     }
     
+    private PieChartView createLoadingPieChart() {
+        try {
+            PieChartView pieChart = new PieChartView(getContext());
+            List<PieChartView.PieSlice> slices = new ArrayList<>();
+            
+            // Add 100% loading slice
+            slices.add(new PieChartView.PieSlice("Loading...", 100, 0xFFB0B0B0));
+            
+            pieChart.setData(slices);
+            return pieChart;
+        } catch (Exception e) {
+            Log.e(TAG, "Error creating loading pie chart", e);
+            return null;
+        }
+    }
+    
+    private PieChartView createEmptyPreferencesPieChart() {
+        try {
+            PieChartView pieChart = new PieChartView(getContext());
+            List<PieChartView.PieSlice> slices = new ArrayList<>();
+            
+            // Add 100% "No Preferences Set" slice
+            slices.add(new PieChartView.PieSlice("No Preferences Set", 100, 0xFFE0E0E0));
+            
+            pieChart.setData(slices);
+            return pieChart;
+        } catch (Exception e) {
+            Log.e(TAG, "Error creating empty preferences pie chart", e);
+            return null;
+        }
+    }
+    
     private PieChartView createPieChart(JSONArray allocations) {
         try {
             PieChartView pieChart = new PieChartView(getContext());
@@ -580,6 +640,22 @@ public class DeflationFundFragment extends Fragment {
     private void submitUserAllocations() {
         // Simplified submit - in full implementation would collect percentages from UI
         Toast.makeText(getContext(), "Allocation submission not fully implemented", Toast.LENGTH_SHORT).show();
+    }
+    
+    
+    private void openSetAllocationActivity() {
+        SetAllocationFragment fragment = SetAllocationFragment.newInstance(
+            SetAllocationFragment.FUND_TYPE_DEFLATION, 
+            "Deflation Fund"
+        );
+        
+        if (getActivity() != null && getActivity().getSupportFragmentManager() != null) {
+            getActivity().getSupportFragmentManager()
+                .beginTransaction()
+                .replace(R.id.host_content, fragment)
+                .addToBackStack(null)
+                .commit();
+        }
     }
     
     @Override
