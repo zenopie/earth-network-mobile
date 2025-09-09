@@ -56,7 +56,10 @@
                 android:textColor="@color/sidebar_text"
                 android:textAllCaps="false"
                 android:textSize="18sp"
-                android:gravity="center_vertical"
+                android:gravity="center_vertical|start"
+                android:drawableLeft="@drawable/ic_monetization_on"
+                android:drawablePadding="12dp"
+                android:drawableTint="@color/sidebar_text"
                 android:stateListAnimator="@null" />
 
             <!-- Divider -->
@@ -81,7 +84,10 @@
                 android:textColor="@color/sidebar_text"
                 android:textAllCaps="false"
                 android:textSize="18sp"
-                android:gravity="center_vertical"
+                android:gravity="center_vertical|start"
+                android:drawableLeft="@drawable/ic_swap_horizontal"
+                android:drawablePadding="12dp"
+                android:drawableTint="@color/sidebar_text"
                 android:stateListAnimator="@null" />
 
             <!-- Divider -->
@@ -106,7 +112,10 @@
                 android:textColor="@color/sidebar_text"
                 android:textAllCaps="false"
                 android:textSize="18sp"
-                android:gravity="center_vertical"
+                android:gravity="center_vertical|start"
+                android:drawableLeft="@drawable/ic_water_drop"
+                android:drawablePadding="12dp"
+                android:drawableTint="@color/sidebar_text"
                 android:stateListAnimator="@null" />
 
             <!-- Divider -->
@@ -131,7 +140,10 @@
                 android:textColor="@color/sidebar_text"
                 android:textAllCaps="false"
                 android:textSize="18sp"
-                android:gravity="center_vertical"
+                android:gravity="center_vertical|start"
+                android:drawableLeft="@drawable/ic_account_balance"
+                android:drawablePadding="12dp"
+                android:drawableTint="@color/sidebar_text"
                 android:stateListAnimator="@null" />
 
             <!-- Divider -->
@@ -156,7 +168,11 @@
                 android:textColor="@color/sidebar_text"
                 android:textAllCaps="false"
                 android:textSize="18sp"
-                android:gravity="center_vertical"
+                android:gravity="center_vertical|start"
+                android:drawableLeft="@drawable/ic_pie_chart"
+                android:drawableRight="@drawable/ic_keyboard_arrow_right"
+                android:drawablePadding="12dp"
+                android:drawableTint="@color/sidebar_text"
                 android:stateListAnimator="@null" />
 
             <!-- Expandable governance sub-menu -->
@@ -230,7 +246,10 @@
                 android:textColor="@color/sidebar_text"
                 android:textAllCaps="false"
                 android:textSize="18sp"
-                android:gravity="center_vertical"
+                android:gravity="center_vertical|start"
+                android:drawableLeft="@drawable/ic_local_gas_station"
+                android:drawablePadding="12dp"
+                android:drawableTint="@color/sidebar_text"
                 android:stateListAnimator="@null" />
 
             <!-- Additional descriptive area (optional) -->
