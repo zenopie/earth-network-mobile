@@ -216,6 +216,23 @@
                 android:layout_marginBottom="12dp"
                 android:background="@color/sidebar_divider" />
 
+            <!-- Gas Station action -->
+            <Button
+                android:id="@+id/btn_gas_station"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:layout_marginTop="8dp"
+                android:layout_marginBottom="8dp"
+                android:paddingLeft="16dp"
+                android:paddingRight="16dp"
+                android:backgroundTint="@color/sidebar_bg"
+                android:text="Gas Station"
+                android:textColor="@color/sidebar_text"
+                android:textAllCaps="false"
+                android:textSize="18sp"
+                android:gravity="center_vertical"
+                android:stateListAnimator="@null" />
+
             <!-- Additional descriptive area (optional) -->
 
         </LinearLayout>

@@ -59,6 +59,19 @@ public class ActionsMainFragment extends Fragment {
             });
         }
 
+        // Gas Station button - request parent HostActivity to show Gas Station fragment
+        Button gasStation = view.findViewById(R.id.btn_gas_station);
+        if (gasStation != null) {
+            gasStation.setOnClickListener(v -> {
+                Log.d("ActionsMainFragment", "Gas Station button clicked");
+                if (getActivity() instanceof com.example.earthwallet.ui.host.HostActivity) {
+                    ((com.example.earthwallet.ui.host.HostActivity) getActivity()).showFragment("gas_station");
+                } else {
+                    Toast.makeText(getContext(), "Navigation not available", Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
+
         // Manage LP button - request parent HostActivity to show ManageLP fragment
         Button manageLP = view.findViewById(R.id.btn_manage_lp);
         if (manageLP != null) {

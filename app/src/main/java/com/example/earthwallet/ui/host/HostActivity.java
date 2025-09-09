@@ -201,6 +201,13 @@ public class HostActivity extends AppCompatActivity implements CreateWalletFragm
                 getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
                 getWindow().addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
                 break;
+            case "gas_station":
+                fragment = new com.example.earthwallet.ui.pages.gasstation.GasStationFragment();
+                // Show navigation and status bar for normal fragments
+                showBottomNavigation();
+                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
+                break;
             case "caretaker_fund":
                 fragment = new com.example.earthwallet.ui.pages.governance.CaretakerFundFragment();
                 // Show navigation and status bar for normal fragments
@@ -392,6 +399,7 @@ public class HostActivity extends AppCompatActivity implements CreateWalletFragm
                fragmentTag.equals("managelp") || 
                fragmentTag.equals("staking") ||
                fragmentTag.equals("governance") ||
+               fragmentTag.equals("gas_station") ||
                fragmentTag.equals("caretaker_fund") ||
                fragmentTag.equals("deflation_fund");
     }
