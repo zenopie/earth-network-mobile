@@ -9,8 +9,8 @@
     <!-- Modal Container -->
     <FrameLayout
         android:id="@+id/modal_container"
-        android:layout_width="200dp"
-        android:layout_height="200dp"
+        android:layout_width="400dp"
+        android:layout_height="400dp"
         android:layout_gravity="center"
         android:background="@android:color/transparent"
         android:elevation="8dp">
@@ -18,8 +18,8 @@
         <!-- Background Loading Animation - Always running -->
         <ImageView
             android:id="@+id/loading_spinner"
-            android:layout_width="400dp"
-            android:layout_height="400dp"
+            android:layout_width="800dp"
+            android:layout_height="800dp"
             android:layout_gravity="center"
             android:src="@drawable/loading"
             android:contentDescription="Loading"
@@ -29,8 +29,8 @@
         <!-- Success State Overlay -->
         <ImageView
             android:id="@+id/success_checkmark"
-            android:layout_width="80dp"
-            android:layout_height="80dp"
+            android:layout_width="160dp"
+            android:layout_height="160dp"
             android:layout_gravity="center"
             android:src="@drawable/animated_checkmark"
             android:contentDescription="Success"
@@ -39,8 +39,8 @@
         <!-- Error State Overlay -->
         <ImageView
             android:id="@+id/error_crossmark"
-            android:layout_width="80dp"
-            android:layout_height="80dp"
+            android:layout_width="160dp"
+            android:layout_height="160dp"
             android:layout_gravity="center"
             android:src="@drawable/animated_crossmark"
             android:contentDescription="Error"

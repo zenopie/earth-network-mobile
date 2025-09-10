@@ -24,6 +24,7 @@ import androidx.security.crypto.MasterKeys;
 
 import com.example.earthwallet.R;
 import com.example.earthwallet.wallet.services.SecretWallet;
+import com.example.earthwallet.ui.components.StatusModal;
 import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.google.android.material.bottomsheet.BottomSheetBehavior;
 
@@ -60,6 +61,9 @@ public class SecretExecuteActivity extends AppCompatActivity {
     private SecretNetworkService networkService;
     private SecretCryptoService cryptoService;
     private SecretProtobufService protobufService;
+    private StatusModal statusModal;
+    private String pendingSuccessResult;
+    private String pendingSenderAddress;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -80,6 +84,24 @@ public class SecretExecuteActivity extends AppCompatActivity {
         networkService = new SecretNetworkService();
         cryptoService = new SecretCryptoService();
         protobufService = new SecretProtobufService();
+        statusModal = new StatusModal(this);
+        setupStatusModal();
+    }
+
+    private void setupStatusModal() {
+        statusModal.setOnCloseListener(this::handleStatusModalClose);
+    }
+
+    private void handleStatusModalClose() {
+        // StatusModal closed - finish activity with appropriate result
+        if (statusModal.getCurrentState() == StatusModal.State.SUCCESS && pendingSuccessResult != null) {
+            finishWithSuccess(pendingSuccessResult, pendingSenderAddress);
+        } else if (statusModal.getCurrentState() == StatusModal.State.ERROR) {
+            // Error case - activity should already have been finished with error
+            finish();
+        } else {
+            finish();
+        }
     }
 
     private void executeTransaction() {
@@ -176,13 +198,17 @@ public class SecretExecuteActivity extends AppCompatActivity {
         // Handle swipe down / dismiss as cancel
         bottomSheetDialog.setOnDismissListener(dialog -> {
             if (isConfirmed[0]) {
-                // User confirmed - execute transaction
+                // User confirmed - show status modal and execute transaction
+                statusModal.show(StatusModal.State.LOADING);
                 new Thread(() -> {
                     try {
                         performTransaction(params, mnemonic);
                     } catch (Exception e) {
                         Log.e(TAG, "Transaction failed", e);
-                        runOnUiThread(() -> finishWithError("Transaction failed: " + e.getMessage()));
+                        runOnUiThread(() -> {
+                            statusModal.updateState(StatusModal.State.ERROR);
+                            finishWithError("Transaction failed: " + e.getMessage());
+                        });
                     }
                 }).start();
             } else {
@@ -353,39 +379,22 @@ public class SecretExecuteActivity extends AppCompatActivity {
             }
             
             if (code == 0) {
-                // For successful transactions, show a toast and finish immediately
-                android.widget.Toast.makeText(this, "Transaction successful!", android.widget.Toast.LENGTH_SHORT).show();
-                finishWithSuccess(enhancedResponse, senderAddress);
+                // Transaction successful - store result and update status modal to show success
+                pendingSuccessResult = enhancedResponse;
+                pendingSenderAddress = senderAddress;
+                statusModal.updateState(StatusModal.State.SUCCESS);
+                // Don't finish immediately - let the status modal show success animation
             } else {
-                // For failed transactions, still show the alert dialog with details
-                new AlertDialog.Builder(this)
-                    .setTitle(title)
-                    .setMessage(message)
-                    .setPositiveButton("OK", (dialog, which) -> {
-                        finishWithSuccess(enhancedResponse, senderAddress);
-                    })
-                    .setNegativeButton("Copy", (dialog, which) -> {
-                        android.content.ClipboardManager clipboard = 
-                            (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-                        android.content.ClipData clip = 
-                            android.content.ClipData.newPlainText("Transaction Response", enhancedResponse);
-                        clipboard.setPrimaryClip(clip);
-                        finishWithSuccess(enhancedResponse, senderAddress);
-                    })
-                    .setCancelable(false)
-                    .show();
+                // Transaction failed - update status modal to show error
+                statusModal.updateState(StatusModal.State.ERROR);
+                // For errors, we can finish immediately since we don't need to return success data
+                finishWithError("Transaction failed: Code " + code);
             }
         } catch (Exception e) {
             Log.e(TAG, "Failed to show enhanced response alert", e);
-            // Fallback: show raw response
-            new AlertDialog.Builder(this)
-                .setTitle("Transaction Response")
-                .setMessage(enhancedResponse)
-                .setPositiveButton("OK", (dialog, which) -> {
-                    finishWithSuccess(enhancedResponse, senderAddress);
-                })
-                .setCancelable(false)
-                .show();
+            // Fallback: show error status and finish
+            statusModal.updateState(StatusModal.State.ERROR);
+            finishWithError("Failed to process transaction response: " + e.getMessage());
         }
     }
 
@@ -441,6 +450,20 @@ public class SecretExecuteActivity extends AppCompatActivity {
             Log.e(TAG, "Failed to create secure preferences", e);
             throw new RuntimeException("Secure preferences initialization failed", e);
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        // Clean up status modal before calling super.onDestroy()
+        if (statusModal != null) {
+            try {
+                statusModal.destroy();
+            } catch (Exception e) {
+                Log.e(TAG, "Error destroying status modal", e);
+            }
+            statusModal = null;
+        }
+        super.onDestroy();
     }
 
     private static class TransactionParams {

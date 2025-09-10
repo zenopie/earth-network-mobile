@@ -189,10 +189,12 @@ public class StatusModal {
         
         if (loadingSpinner != null && context != null) {
             Log.d(TAG, "Setting up light theme animation with Glide");
-            // Use GIF for light theme
+            // Use GIF for light theme - scale it 2x larger
             Glide.with(context)
                     .asGif()
                     .load(R.drawable.loading)
+                    .transform(new com.bumptech.glide.load.resource.bitmap.CenterCrop())
+                    .override(1600, 1600) // Double the original size (800dp -> 1600dp)
                     .into(loadingSpinner);
         } else {
             Log.w(TAG, "Cannot setup loading animation - missing dependencies");
@@ -269,9 +271,21 @@ public class StatusModal {
         Log.d(TAG, "Destroying modal");
         handler.removeCallbacksAndMessages(null);
         
-        // Clear Glide resources
+        // Clear Glide resources - but only if activity is not destroyed
         if (loadingSpinner != null && context != null) {
-            Glide.with(context).clear(loadingSpinner);
+            try {
+                // Check if activity is still alive before using Glide
+                if (context instanceof android.app.Activity) {
+                    android.app.Activity activity = (android.app.Activity) context;
+                    if (!activity.isDestroyed()) {
+                        Glide.with(context).clear(loadingSpinner);
+                    }
+                } else {
+                    Glide.with(context).clear(loadingSpinner);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Could not clear Glide resources: " + e.getMessage());
+            }
         }
         
         if (dialog != null) {
