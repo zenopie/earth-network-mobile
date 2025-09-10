@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.text.TextUtils;
+import android.util.Base64;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -24,6 +25,7 @@ import androidx.security.crypto.MasterKeys;
 import com.example.earthwallet.R;
 import com.example.earthwallet.wallet.services.SecretWallet;
 import com.google.android.material.bottomsheet.BottomSheetDialog;
+import com.google.android.material.bottomsheet.BottomSheetBehavior;
 
 import org.bitcoinj.core.ECKey;
 import org.json.JSONArray;
@@ -120,8 +122,11 @@ public class SecretExecuteActivity extends AppCompatActivity {
         BottomSheetDialog bottomSheetDialog = new BottomSheetDialog(this);
         View bottomSheetView = LayoutInflater.from(this).inflate(R.layout.transaction_confirmation_popup, null);
         bottomSheetDialog.setContentView(bottomSheetView);
+        
+        final boolean[] isConfirmed = {false};
 
         // Find views
+        TextView contractLabel = bottomSheetView.findViewById(R.id.contract_label);
         TextView contractAddressText = bottomSheetView.findViewById(R.id.contract_address_text);
         TextView executeMessageText = bottomSheetView.findViewById(R.id.execute_message_text);
         TextView fundsText = bottomSheetView.findViewById(R.id.funds_text);
@@ -130,6 +135,12 @@ public class SecretExecuteActivity extends AppCompatActivity {
         View memoSection = bottomSheetView.findViewById(R.id.memo_section);
         Button cancelButton = bottomSheetView.findViewById(R.id.cancel_button);
         Button confirmButton = bottomSheetView.findViewById(R.id.confirm_button);
+
+        // Check if this is a SNIP message and update labels accordingly
+        boolean isSnipMessage = isSnipMessage(params.execJson);
+        if (isSnipMessage) {
+            contractLabel.setText("Token Contract:");
+        }
 
         // Set transaction details
         contractAddressText.setText(params.contractAddr);
@@ -153,24 +164,42 @@ public class SecretExecuteActivity extends AppCompatActivity {
 
         // Set click listeners
         cancelButton.setOnClickListener(v -> {
+            isConfirmed[0] = false;
             bottomSheetDialog.dismiss();
-            finishWithError("Transaction cancelled");
         });
 
         confirmButton.setOnClickListener(v -> {
+            isConfirmed[0] = true;
             bottomSheetDialog.dismiss();
-            // Execute on background thread
-            new Thread(() -> {
-                try {
-                    performTransaction(params, mnemonic);
-                } catch (Exception e) {
-                    Log.e(TAG, "Transaction failed", e);
-                    runOnUiThread(() -> finishWithError("Transaction failed: " + e.getMessage()));
-                }
-            }).start();
+        });
+
+        // Handle swipe down / dismiss as cancel
+        bottomSheetDialog.setOnDismissListener(dialog -> {
+            if (isConfirmed[0]) {
+                // User confirmed - execute transaction
+                new Thread(() -> {
+                    try {
+                        performTransaction(params, mnemonic);
+                    } catch (Exception e) {
+                        Log.e(TAG, "Transaction failed", e);
+                        runOnUiThread(() -> finishWithError("Transaction failed: " + e.getMessage()));
+                    }
+                }).start();
+            } else {
+                // User cancelled (either by cancel button or swipe down)
+                finishWithError("Transaction cancelled");
+            }
         });
 
         bottomSheetDialog.show();
+        
+        // Configure bottom sheet to expand to full content height
+        View bottomSheet = bottomSheetDialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+        if (bottomSheet != null) {
+            BottomSheetBehavior<View> behavior = BottomSheetBehavior.from(bottomSheet);
+            behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
+            behavior.setSkipCollapsed(true);
+        }
     }
 
     private String truncateAddress(String address) {
@@ -179,10 +208,53 @@ public class SecretExecuteActivity extends AppCompatActivity {
         return address.substring(0, 10) + "..." + address.substring(address.length() - 6);
     }
 
+    private boolean isSnipMessage(String json) {
+        if (TextUtils.isEmpty(json)) return false;
+        try {
+            JSONObject jsonObj = new JSONObject(json);
+            return jsonObj.has("send");
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private String formatJsonForDisplay(String json) {
         if (TextUtils.isEmpty(json)) return "";
         try {
             JSONObject jsonObj = new JSONObject(json);
+            
+            // Check if this is a SNIP message with base64 encoded data
+            if (jsonObj.has("send")) {
+                JSONObject sendObj = jsonObj.getJSONObject("send");
+                if (sendObj.has("msg")) {
+                    String encodedMsg = sendObj.getString("msg");
+                    try {
+                        // Try to decode the base64 message
+                        byte[] decoded = Base64.decode(encodedMsg, Base64.NO_WRAP);
+                        String decodedMsg = new String(decoded);
+                        
+                        // Try to parse the decoded message as JSON
+                        JSONObject decodedJson = new JSONObject(decodedMsg);
+                        
+                        // Create a more readable version
+                        JSONObject readableObj = new JSONObject();
+                        JSONObject readableSend = new JSONObject();
+                        readableSend.put("recipient", sendObj.optString("recipient", ""));
+                        if (sendObj.has("code_hash")) {
+                            readableSend.put("code_hash", sendObj.getString("code_hash"));
+                        }
+                        readableSend.put("amount", sendObj.optString("amount", ""));
+                        readableSend.put("decoded_message", decodedJson);
+                        readableObj.put("send", readableSend);
+                        
+                        return readableObj.toString(2); // Pretty print with 2 space indentation
+                    } catch (Exception decodeEx) {
+                        // If decoding fails, fall back to original formatting
+                        Log.d(TAG, "Failed to decode SNIP message, using original: " + decodeEx.getMessage());
+                    }
+                }
+            }
+            
             return jsonObj.toString(2); // Pretty print with 2 space indentation
         } catch (Exception e) {
             return json; // Return original if parsing fails

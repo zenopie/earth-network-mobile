@@ -344,13 +344,7 @@ public class SwapTokensMainFragment extends Fragment {
                          
         swapButton.setEnabled(enabled);
         
-        // Show/hide details toggle
-        detailsToggle.setVisibility(enabled ? View.VISIBLE : View.GONE);
-        if (!enabled) {
-            detailsContainer.setVisibility(View.GONE);
-            detailsVisible = false;
-            detailsToggle.setText("Show Details ▼");
-        }
+        // Details toggle is always visible now - no layout shift
     }
     
     private void updateSlippage() {
@@ -559,9 +553,6 @@ public class SwapTokensMainFragment extends Fragment {
     
     private void handleSwapExecutionResult(String json) {
         Log.d(TAG, "handleSwapExecutionResult called with JSON: " + json);
-        
-        swapButton.setEnabled(true);
-        swapButton.setText("Swap");
         
         try {
             JSONObject root = new JSONObject(json);
@@ -891,9 +882,6 @@ public class SwapTokensMainFragment extends Fragment {
     }
     
     private void executeSwapWithContract() {
-        swapButton.setEnabled(false);
-        swapButton.setText("Swapping...");
-        
         String fromTokenSymbol = tokenSymbols.get(fromTokenSpinner.getSelectedItemPosition());
         String toTokenSymbol = tokenSymbols.get(toTokenSpinner.getSelectedItemPosition());
         double inputAmount = Double.parseDouble(fromAmountInput.getText().toString());
@@ -901,8 +889,6 @@ public class SwapTokensMainFragment extends Fragment {
         Tokens.TokenInfo fromTokenInfo = Tokens.getToken(fromTokenSymbol);
         if (fromTokenInfo == null) {
             Toast.makeText(getContext(), "Token not supported", Toast.LENGTH_SHORT).show();
-            swapButton.setEnabled(true);
-            swapButton.setText("Swap");
             return;
         }
         
@@ -911,8 +897,6 @@ public class SwapTokensMainFragment extends Fragment {
         Tokens.TokenInfo toTokenInfo = Tokens.getToken(toTokenSymbol);
         if (toTokenInfo == null) {
             Toast.makeText(getContext(), "To token not supported", Toast.LENGTH_SHORT).show();
-            swapButton.setEnabled(true);
-            swapButton.setText("Swap");
             return;
         }
         

@@ -317,7 +317,7 @@
                     android:text="Show Details ▼"
                     android:textColor="#4caf50"
                     android:textSize="14sp"
-                    android:visibility="gone" />
+                    android:visibility="visible" />
 
                 <!-- Details Section -->
                 <LinearLayout
@@ -354,8 +354,8 @@
                             android:id="@+id/rate_text"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="1 ANML = 0.000000 ERTH"
-                            android:textColor="#333333"
+                            android:text="--"
+                            android:textColor="#999999"
                             android:textSize="14sp" />
 
                     </LinearLayout>
@@ -384,8 +384,8 @@
                             android:id="@+id/min_received_text"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="0.000000 ERTH"
-                            android:textColor="#333333"
+                            android:text="--"
+                            android:textColor="#999999"
                             android:textSize="14sp" />
 
                     </LinearLayout>
