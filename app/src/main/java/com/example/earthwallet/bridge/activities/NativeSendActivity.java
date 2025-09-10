@@ -16,6 +16,8 @@ import androidx.security.crypto.MasterKeys;
 import com.example.earthwallet.bridge.services.SecretNetworkService;
 import com.example.earthwallet.wallet.services.SecretWallet;
 import com.example.earthwallet.wallet.services.TransactionSigner;
+import com.example.earthwallet.ui.components.TransactionHandler;
+import com.example.earthwallet.ui.components.TransactionConfirmationDialog;
 
 import org.bitcoinj.core.ECKey;
 import org.json.JSONArray;
@@ -49,6 +51,7 @@ public class NativeSendActivity extends AppCompatActivity {
 
     private SharedPreferences securePrefs;
     private SecretNetworkService networkService;
+    private TransactionHandler transactionHandler;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -81,15 +84,8 @@ public class NativeSendActivity extends AppCompatActivity {
             return;
         }
 
-        // Execute on background thread
-        new Thread(() -> {
-            try {
-                performNativeTransfer(params, mnemonic);
-            } catch (Exception e) {
-                Log.e(TAG, "Native transfer failed", e);
-                runOnUiThread(() -> finishWithError("Transfer failed: " + e.getMessage()));
-            }
-        }).start();
+        // Show confirmation dialog and execute with status modal
+        showTransferConfirmationAndExecute(params, mnemonic);
     }
 
     private TransactionParams parseIntentParameters() {
@@ -126,6 +122,72 @@ public class NativeSendActivity extends AppCompatActivity {
         
         return true;
     }
+    
+    private void showTransferConfirmationAndExecute(TransactionParams params, String mnemonic) {
+        try {
+            // Initialize transaction handler
+            transactionHandler = new TransactionHandler(this);
+            
+            // Create transaction details for confirmation dialog
+            TransactionConfirmationDialog.TransactionDetails details = createNativeTransferDetails(params);
+            
+            // Execute with confirmation and status modal
+            transactionHandler.executeTransaction(
+                details,
+                () -> performNativeTransfer(params, mnemonic),
+                new TransactionHandler.TransactionResultHandler() {
+                    @Override
+                    public void onSuccess(String result, String senderAddress) {
+                        finishWithSuccess(result, senderAddress);
+                    }
+                    
+                    @Override
+                    public void onError(String error) {
+                        finishWithError(error);
+                    }
+                }
+            );
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to show confirmation dialog", e);
+            finishWithError("Failed to show confirmation: " + e.getMessage());
+        }
+    }
+    
+    private TransactionConfirmationDialog.TransactionDetails createNativeTransferDetails(TransactionParams params) {
+        String transferMessage = String.format("Transfer %s %s to %s", 
+            formatAmount(params.amount, params.denom), 
+            params.denom, 
+            truncateAddress(params.recipient));
+            
+        TransactionConfirmationDialog.TransactionDetails details = 
+            new TransactionConfirmationDialog.TransactionDetails(params.recipient, transferMessage)
+                .setContractLabel("Recipient:")
+                .setFunds(params.amount + " " + params.denom)
+                .setMemo(params.memo);
+                
+        return details;
+    }
+    
+    private String formatAmount(String amount, String denom) {
+        try {
+            if ("uscrt".equals(denom)) {
+                // Convert microSCRT to SCRT for display
+                long microAmount = Long.parseLong(amount);
+                double scrtAmount = microAmount / 1_000_000.0;
+                return String.format("%.6f", scrtAmount);
+            }
+        } catch (NumberFormatException e) {
+            // Fallback to raw amount
+        }
+        return amount;
+    }
+    
+    private String truncateAddress(String address) {
+        if (TextUtils.isEmpty(address)) return "";
+        if (address.length() <= 20) return address;
+        return address.substring(0, 10) + "..." + address.substring(address.length() - 6);
+    }
 
     private void performNativeTransfer(TransactionParams params, String mnemonic) throws Exception {
         // Get wallet information
@@ -156,10 +218,29 @@ public class NativeSendActivity extends AppCompatActivity {
         // Enhance response with detailed results
         String enhancedResponse = enhanceTransactionResponse(response, lcdUrl);
 
-        // Show result on UI thread
-        runOnUiThread(() -> {
-            showEnhancedResponseAlert(enhancedResponse, senderAddress);
-        });
+        // Parse response to check for success/failure and report through TransactionHandler
+        try {
+            JSONObject responseObj = new JSONObject(enhancedResponse);
+            if (responseObj.has("tx_response")) {
+                JSONObject txResponse = responseObj.getJSONObject("tx_response");
+                int code = txResponse.optInt("code", -1);
+                
+                if (code == 0) {
+                    // Transaction successful
+                    transactionHandler.onTransactionSuccess(enhancedResponse, senderAddress);
+                } else {
+                    // Transaction failed
+                    String rawLog = txResponse.optString("raw_log", "Unknown error");
+                    transactionHandler.onTransactionError("Transfer failed (Code: " + code + "): " + rawLog);
+                }
+            } else {
+                // Fallback: assume success if no error code
+                transactionHandler.onTransactionSuccess(enhancedResponse, senderAddress);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to parse transaction response", e);
+            transactionHandler.onTransactionError("Failed to parse transaction response: " + e.getMessage());
+        }
     }
 
     private byte[] buildNativeTransferTransaction(String sender, String recipient, 
@@ -289,65 +370,6 @@ public class NativeSendActivity extends AppCompatActivity {
         return initialResponse;
     }
 
-    private void showEnhancedResponseAlert(String enhancedResponse, String senderAddress) {
-        try {
-            // Parse the response to make it more readable
-            JSONObject response = new JSONObject(enhancedResponse);
-            String title = "Transaction Response";
-            String message = enhancedResponse;
-            int code = -1; // Default to failed
-            
-            if (response.has("tx_response")) {
-                JSONObject txResponse = response.getJSONObject("tx_response");
-                code = txResponse.optInt("code", -1);
-                String txHash = txResponse.optString("txhash", "");
-                String rawLog = txResponse.optString("raw_log", "");
-                
-                if (code == 0) {
-                    title = "✅ Transfer Successful";
-                    message = "Hash: " + txHash + "\n\nFull Response:\n" + enhancedResponse;
-                } else {
-                    title = "❌ Transfer Failed (Code: " + code + ")";
-                    message = "Hash: " + txHash + "\nError: " + rawLog + "\n\nFull Response:\n" + enhancedResponse;
-                }
-            }
-            
-            if (code == 0) {
-                // For successful transactions, show a toast and finish immediately
-                android.widget.Toast.makeText(this, "Transaction successful!", android.widget.Toast.LENGTH_SHORT).show();
-                finishWithSuccess(enhancedResponse, senderAddress);
-            } else {
-                // For failed transactions, still show the alert dialog with details
-                new AlertDialog.Builder(this)
-                    .setTitle(title)
-                    .setMessage(message)
-                    .setPositiveButton("OK", (dialog, which) -> {
-                        finishWithSuccess(enhancedResponse, senderAddress);
-                    })
-                    .setNegativeButton("Copy", (dialog, which) -> {
-                        android.content.ClipboardManager clipboard = 
-                            (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-                        android.content.ClipData clip = 
-                            android.content.ClipData.newPlainText("Transaction Response", enhancedResponse);
-                        clipboard.setPrimaryClip(clip);
-                        finishWithSuccess(enhancedResponse, senderAddress);
-                    })
-                    .setCancelable(false)
-                    .show();
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to show enhanced response alert", e);
-            // Fallback: show raw response
-            new AlertDialog.Builder(this)
-                .setTitle("Transaction Response")
-                .setMessage(enhancedResponse)
-                .setPositiveButton("OK", (dialog, which) -> {
-                    finishWithSuccess(enhancedResponse, senderAddress);
-                })
-                .setCancelable(false)
-                .show();
-        }
-    }
 
     private String getSelectedMnemonic() {
         try {
@@ -413,5 +435,19 @@ public class NativeSendActivity extends AppCompatActivity {
             this.denom = denom;
             this.memo = memo != null ? memo : "";
         }
+    }
+    
+    @Override
+    protected void onDestroy() {
+        // Clean up transaction handler
+        if (transactionHandler != null) {
+            try {
+                transactionHandler.destroy();
+            } catch (Exception e) {
+                Log.e(TAG, "Error destroying transaction handler", e);
+            }
+            transactionHandler = null;
+        }
+        super.onDestroy();
     }
 }

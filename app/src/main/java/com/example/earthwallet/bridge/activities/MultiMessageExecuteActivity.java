@@ -13,6 +13,8 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.example.earthwallet.wallet.services.SecretWallet;
 import com.example.earthwallet.bridge.services.SecretNetworkService;
 import com.example.earthwallet.bridge.services.SecretCryptoService;
+import com.example.earthwallet.ui.components.TransactionHandler;
+import com.example.earthwallet.ui.components.TransactionConfirmationDialog;
 
 import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
@@ -65,6 +67,7 @@ public class MultiMessageExecuteActivity extends AppCompatActivity {
     private SharedPreferences securePrefs;
     private SecretNetworkService networkService;
     private SecretCryptoService cryptoService;
+    private TransactionHandler transactionHandler;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -111,7 +114,7 @@ public class MultiMessageExecuteActivity extends AppCompatActivity {
             }
             
             Log.i(TAG, "Executing multi-message transaction with " + messages.length() + " messages");
-            executeMultiMessageTransaction(messages, gasLimit, memo, lcdUrl);
+            executeMultiMessageTransactionWithConfirmation(messages, gasLimit, memo, lcdUrl);
             
         } catch (Exception e) {
             Log.e(TAG, "Failed to parse messages JSON", e);
@@ -120,9 +123,9 @@ public class MultiMessageExecuteActivity extends AppCompatActivity {
     }
 
     /**
-     * Execute the multi-message transaction using the same pattern as SecretExecuteActivity
+     * Execute the multi-message transaction with confirmation dialog and status modal
      */
-    private void executeMultiMessageTransaction(JSONArray messages, long gasLimit, String memo, String lcdUrl) {
+    private void executeMultiMessageTransactionWithConfirmation(JSONArray messages, long gasLimit, String memo, String lcdUrl) {
         try {
             // Initialize services like SecretExecuteActivity
             initializeServices();
@@ -134,19 +137,93 @@ public class MultiMessageExecuteActivity extends AppCompatActivity {
                 return;
             }
 
-            // Execute on background thread like SecretExecuteActivity
-            new Thread(() -> {
-                try {
-                    performMultiMessageTransaction(messages, mnemonic, memo, lcdUrl);
-                } catch (Exception e) {
-                    Log.e(TAG, "Multi-message transaction failed", e);
-                    runOnUiThread(() -> finishWithError("Transaction failed: " + e.getMessage()));
+            // Initialize transaction handler
+            transactionHandler = new TransactionHandler(this);
+            
+            // Create transaction details for confirmation dialog
+            TransactionConfirmationDialog.TransactionDetails details = createTransactionDetails(messages, memo);
+            
+            // Execute with confirmation and status modal
+            transactionHandler.executeTransaction(
+                details,
+                () -> performMultiMessageTransaction(messages, mnemonic, memo, lcdUrl),
+                new TransactionHandler.TransactionResultHandler() {
+                    @Override
+                    public void onSuccess(String result, String senderAddress) {
+                        finishWithSuccess(result, extractTxHashFromJson(result));
+                    }
+                    
+                    @Override
+                    public void onError(String error) {
+                        finishWithError(error);
+                    }
                 }
-            }).start();
+            );
             
         } catch (Exception e) {
             Log.e(TAG, "Failed to start multi-message transaction", e);
             finishWithError("Failed to start transaction: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Create transaction details for the confirmation dialog
+     */
+    private TransactionConfirmationDialog.TransactionDetails createTransactionDetails(JSONArray messages, String memo) {
+        try {
+            StringBuilder messagesSummary = new StringBuilder();
+            messagesSummary.append("Multi-message transaction with ").append(messages.length()).append(" messages:\n\n");
+            
+            for (int i = 0; i < Math.min(messages.length(), 3); i++) { // Show first 3 messages
+                JSONObject messageObj = messages.getJSONObject(i);
+                String contract = messageObj.optString("contract", "Unknown");
+                JSONObject msg = messageObj.optJSONObject("msg");
+                
+                messagesSummary.append(i + 1).append(". Contract: ").append(truncateAddress(contract)).append("\n");
+                if (msg != null) {
+                    messagesSummary.append("   Message: ").append(msg.toString()).append("\n");
+                }
+                if (i < Math.min(messages.length(), 3) - 1) {
+                    messagesSummary.append("\n");
+                }
+            }
+            
+            if (messages.length() > 3) {
+                messagesSummary.append("\n... and ").append(messages.length() - 3).append(" more messages");
+            }
+            
+            TransactionConfirmationDialog.TransactionDetails details = 
+                new TransactionConfirmationDialog.TransactionDetails("Multiple Contracts", messagesSummary.toString())
+                    .setContractLabel("Type:")
+                    .setMemo(memo);
+                    
+            return details;
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to create transaction details", e);
+            return new TransactionConfirmationDialog.TransactionDetails("Multiple Contracts", "Multi-message transaction")
+                .setContractLabel("Type:")
+                .setMemo(memo);
+        }
+    }
+    
+    private String truncateAddress(String address) {
+        if (TextUtils.isEmpty(address)) return "";
+        if (address.length() <= 20) return address;
+        return address.substring(0, 10) + "..." + address.substring(address.length() - 6);
+    }
+    
+    private String extractTxHashFromJson(String json) {
+        try {
+            JSONObject response = new JSONObject(json);
+            if (response.has("tx_response")) {
+                JSONObject txResponse = response.getJSONObject("tx_response");
+                return txResponse.optString("txhash", "");
+            }
+            return response.optString("txhash", "");
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to extract tx hash", e);
+            return "";
         }
     }
     
@@ -215,10 +292,29 @@ public class MultiMessageExecuteActivity extends AppCompatActivity {
         // Enhance response with detailed results like SecretExecuteActivity
         String enhancedResponse = enhanceTransactionResponse(response, lcdUrl);
 
-        // Show result on UI thread like SecretExecuteActivity
-        runOnUiThread(() -> {
-            showResponseAlert("Transaction Result", enhancedResponse, true);
-        });
+        // Parse response to check for success/failure
+        try {
+            JSONObject responseObj = new JSONObject(enhancedResponse);
+            if (responseObj.has("tx_response")) {
+                JSONObject txResponse = responseObj.getJSONObject("tx_response");
+                int code = txResponse.optInt("code", -1);
+                
+                if (code == 0) {
+                    // Transaction successful
+                    transactionHandler.onTransactionSuccess(enhancedResponse, senderAddress);
+                } else {
+                    // Transaction failed
+                    String rawLog = txResponse.optString("raw_log", "Unknown error");
+                    transactionHandler.onTransactionError("Transaction failed (Code: " + code + "): " + rawLog);
+                }
+            } else {
+                // Fallback: assume success if no error code
+                transactionHandler.onTransactionSuccess(enhancedResponse, senderAddress);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to parse transaction response", e);
+            transactionHandler.onTransactionError("Failed to parse transaction response: " + e.getMessage());
+        }
     }
     
     /**
@@ -272,75 +368,6 @@ public class MultiMessageExecuteActivity extends AppCompatActivity {
         return initialResponse;
     }
     
-    /**
-     * Show alert with transaction response for debugging (like SecretExecuteActivity)
-     */
-    private void showResponseAlert(String title, String enhancedResponse, boolean isSuccess) {
-        try {
-            // Parse the response to make it more readable
-            JSONObject response = new JSONObject(enhancedResponse);
-            String alertTitle = title;
-            String alertMessage = enhancedResponse;
-            
-            if (response.has("tx_response")) {
-                JSONObject txResponse = response.getJSONObject("tx_response");
-                int code = txResponse.optInt("code", -1);
-                String txHash = txResponse.optString("txhash", "");
-                String rawLog = txResponse.optString("raw_log", "");
-                
-                if (code == 0) {
-                    alertTitle = "✅ Transaction Successful";
-                    alertMessage = "Hash: " + txHash + "\n\nFull Response:\n" + enhancedResponse;
-                } else {
-                    alertTitle = "❌ Transaction Failed (Code: " + code + ")";
-                    alertMessage = "Hash: " + txHash + "\nError: " + rawLog + "\n\nFull Response:\n" + enhancedResponse;
-                }
-            }
-            
-            new AlertDialog.Builder(this)
-                .setTitle(alertTitle)
-                .setMessage(alertMessage)
-                .setPositiveButton("OK", (dialog, which) -> {
-                    if (isSuccess) {
-                        setResult(Activity.RESULT_OK, new Intent().putExtra(EXTRA_RESULT_JSON, enhancedResponse));
-                    } else {
-                        setResult(Activity.RESULT_CANCELED, new Intent().putExtra(EXTRA_ERROR, enhancedResponse));
-                    }
-                    finish();
-                })
-                .setNegativeButton("Copy", (dialog, which) -> {
-                    android.content.ClipboardManager clipboard = 
-                        (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-                    android.content.ClipData clip = 
-                        android.content.ClipData.newPlainText("Transaction Response", enhancedResponse);
-                    clipboard.setPrimaryClip(clip);
-                    if (isSuccess) {
-                        setResult(Activity.RESULT_OK, new Intent().putExtra(EXTRA_RESULT_JSON, enhancedResponse));
-                    } else {
-                        setResult(Activity.RESULT_CANCELED, new Intent().putExtra(EXTRA_ERROR, enhancedResponse));
-                    }
-                    finish();
-                })
-                .setCancelable(false)
-                .show();
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to show enhanced response alert", e);
-            // Fallback: show raw response
-            new AlertDialog.Builder(this)
-                .setTitle(title)
-                .setMessage(enhancedResponse)
-                .setPositiveButton("OK", (dialog, which) -> {
-                    if (isSuccess) {
-                        setResult(Activity.RESULT_OK, new Intent().putExtra(EXTRA_RESULT_JSON, enhancedResponse));
-                    } else {
-                        setResult(Activity.RESULT_CANCELED, new Intent().putExtra(EXTRA_ERROR, enhancedResponse));
-                    }
-                    finish();
-                })
-                .setCancelable(false)
-                .show();
-        }
-    }
 
     private void finishWithSuccess(String json, String txHash) {
         try {
@@ -573,5 +600,19 @@ public class MultiMessageExecuteActivity extends AppCompatActivity {
             setResult(Activity.RESULT_CANCELED);
         }
         finish();
+    }
+    
+    @Override
+    protected void onDestroy() {
+        // Clean up transaction handler
+        if (transactionHandler != null) {
+            try {
+                transactionHandler.destroy();
+            } catch (Exception e) {
+                Log.e(TAG, "Error destroying transaction handler", e);
+            }
+            transactionHandler = null;
+        }
+        super.onDestroy();
     }
 }
