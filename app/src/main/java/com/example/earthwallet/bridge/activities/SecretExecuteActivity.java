@@ -11,13 +11,19 @@ import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.util.Log;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.widget.Button;
+import android.widget.TextView;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
 
+import com.example.earthwallet.R;
 import com.example.earthwallet.wallet.services.SecretWallet;
+import com.google.android.material.bottomsheet.BottomSheetDialog;
 
 import org.bitcoinj.core.ECKey;
 import org.json.JSONArray;
@@ -86,15 +92,8 @@ public class SecretExecuteActivity extends AppCompatActivity {
             return;
         }
 
-        // Execute on background thread
-        new Thread(() -> {
-            try {
-                performTransaction(params, mnemonic);
-            } catch (Exception e) {
-                Log.e(TAG, "Transaction failed", e);
-                runOnUiThread(() -> finishWithError("Transaction failed: " + e.getMessage()));
-            }
-        }).start();
+        // Show confirmation popup before executing
+        showTransactionConfirmation(params, mnemonic);
     }
 
     private TransactionParams parseIntentParameters() {
@@ -115,6 +114,79 @@ public class SecretExecuteActivity extends AppCompatActivity {
             return false;
         }
         return true;
+    }
+
+    private void showTransactionConfirmation(TransactionParams params, String mnemonic) {
+        BottomSheetDialog bottomSheetDialog = new BottomSheetDialog(this);
+        View bottomSheetView = LayoutInflater.from(this).inflate(R.layout.transaction_confirmation_popup, null);
+        bottomSheetDialog.setContentView(bottomSheetView);
+
+        // Find views
+        TextView contractAddressText = bottomSheetView.findViewById(R.id.contract_address_text);
+        TextView executeMessageText = bottomSheetView.findViewById(R.id.execute_message_text);
+        TextView fundsText = bottomSheetView.findViewById(R.id.funds_text);
+        TextView memoText = bottomSheetView.findViewById(R.id.memo_text);
+        View fundsSection = bottomSheetView.findViewById(R.id.funds_section);
+        View memoSection = bottomSheetView.findViewById(R.id.memo_section);
+        Button cancelButton = bottomSheetView.findViewById(R.id.cancel_button);
+        Button confirmButton = bottomSheetView.findViewById(R.id.confirm_button);
+
+        // Set transaction details
+        contractAddressText.setText(params.contractAddr);
+        executeMessageText.setText(formatJsonForDisplay(params.execJson));
+
+        // Show funds section if funds are provided
+        if (!TextUtils.isEmpty(params.funds)) {
+            fundsSection.setVisibility(View.VISIBLE);
+            fundsText.setText(params.funds);
+        } else {
+            fundsSection.setVisibility(View.GONE);
+        }
+
+        // Show memo section if memo is provided
+        if (!TextUtils.isEmpty(params.memo)) {
+            memoSection.setVisibility(View.VISIBLE);
+            memoText.setText(params.memo);
+        } else {
+            memoSection.setVisibility(View.GONE);
+        }
+
+        // Set click listeners
+        cancelButton.setOnClickListener(v -> {
+            bottomSheetDialog.dismiss();
+            finishWithError("Transaction cancelled");
+        });
+
+        confirmButton.setOnClickListener(v -> {
+            bottomSheetDialog.dismiss();
+            // Execute on background thread
+            new Thread(() -> {
+                try {
+                    performTransaction(params, mnemonic);
+                } catch (Exception e) {
+                    Log.e(TAG, "Transaction failed", e);
+                    runOnUiThread(() -> finishWithError("Transaction failed: " + e.getMessage()));
+                }
+            }).start();
+        });
+
+        bottomSheetDialog.show();
+    }
+
+    private String truncateAddress(String address) {
+        if (TextUtils.isEmpty(address)) return "";
+        if (address.length() <= 20) return address;
+        return address.substring(0, 10) + "..." + address.substring(address.length() - 6);
+    }
+
+    private String formatJsonForDisplay(String json) {
+        if (TextUtils.isEmpty(json)) return "";
+        try {
+            JSONObject jsonObj = new JSONObject(json);
+            return jsonObj.toString(2); // Pretty print with 2 space indentation
+        } catch (Exception e) {
+            return json; // Return original if parsing fails
+        }
     }
 
     private void performTransaction(TransactionParams params, String mnemonic) throws Exception {
