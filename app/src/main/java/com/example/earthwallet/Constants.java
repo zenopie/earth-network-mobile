@@ -3,7 +3,7 @@ package com.example.earthwallet;
 public class Constants {
     // Registration contract details (from desktop app)
     public static final String REGISTRATION_CONTRACT = "secret12q72eas34u8fyg68k6wnerk2nd6l5gaqppld6p";
-    public static final String REGISTRATION_HASH = "d8ef975b34982f3c1ef2feac1ea9503dd3bbc03c8c18c8e88e1889fc19c5c676";
+    public static final String REGISTRATION_HASH = "3f19502de44fa43454f39ed0787cca2686adfb652e21195fba0b91c422d027dd";
     
     // Exchange contract details
     public static final String EXCHANGE_CONTRACT = "secret1rj2phrf6x3v7526jrz60m2dcq58slyq2269kra";
@@ -12,4 +12,7 @@ public class Constants {
     // Staking contract details
     public static final String STAKING_CONTRACT = "secret10ea3ya578qnz02rmr7adhu2rq7g2qjg88ry2h5";
     public static final String STAKING_HASH = "f3890262cc071b02dbb14f4dbd3b240aca4b0776be896fc60cfd993db97357db";
+    
+    // Backend base URL
+    public static final String BACKEND_BASE_URL = "https://maroon-wolverine.vm.scrtlabs.com/api";
 }

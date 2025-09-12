@@ -2,12 +2,7 @@
 <network-security-config>
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">lcd.erth.network</domain>
-        <domain includeSubdomains="true">lcd.secret.express</domain>
-        <domain includeSubdomains="true">api.scrt.network</domain>
-        <domain includeSubdomains="true">localhost</domain>
-        <domain includeSubdomains="true">127.0.0.1</domain>
-        <domain includeSubdomains="true">10.0.2.2</domain>
-        <domain includeSubdomains="true">192.168.1.145</domain>
+        <domain includeSubdomains="true">maroon-wolverine.vm.scrtlabs.com</domain>
     </domain-config>
     
     <!-- Allow all HTTPS traffic -->

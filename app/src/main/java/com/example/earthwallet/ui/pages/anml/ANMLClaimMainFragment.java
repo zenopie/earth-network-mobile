@@ -46,6 +46,7 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
     
     private SharedPreferences securePrefs;
     private boolean suppressNextQueryDialog = false;
+    private String currentRegistrationReward;
 
     // Request codes for launching bridge Activities
     private static final int REQ_QUERY = 1001;
@@ -157,7 +158,12 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
 
     private void showRegisterFragment() {
         hideStatusFragments();
-        ANMLRegisterFragment fragment = ANMLRegisterFragment.newInstance();
+        ANMLRegisterFragment fragment;
+        if (currentRegistrationReward != null) {
+            fragment = ANMLRegisterFragment.newInstance(currentRegistrationReward);
+        } else {
+            fragment = ANMLRegisterFragment.newInstance();
+        }
         fragment.setANMLRegisterListener(this);
         getChildFragmentManager().beginTransaction()
                 .replace(R.id.anml_root, fragment)
@@ -324,6 +330,9 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
             if (result == null) {
                 result = root;
             }
+
+            // Extract registration reward if available
+            currentRegistrationReward = result.optString("registration_reward", null);
 
             if ("no_wallet".equals(result.optString("status", ""))) {
                 showRegisterFragment();

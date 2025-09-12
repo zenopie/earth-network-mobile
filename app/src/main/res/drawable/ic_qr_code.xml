@@ -1,0 +1,56 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="?attr/colorOnSurface">
+    
+    <!-- QR Code outer frame -->
+    <path android:fillColor="@android:color/transparent"
+        android:strokeColor="@android:color/black"
+        android:strokeWidth="2"
+        android:pathData="M3,3 L9,3 L9,9 L3,9 Z" />
+    
+    <path android:fillColor="@android:color/transparent"
+        android:strokeColor="@android:color/black"
+        android:strokeWidth="2"
+        android:pathData="M15,3 L21,3 L21,9 L15,9 Z" />
+    
+    <path android:fillColor="@android:color/transparent"
+        android:strokeColor="@android:color/black"
+        android:strokeWidth="2"
+        android:pathData="M3,15 L9,15 L9,21 L3,21 Z" />
+    
+    <!-- QR Code inner squares -->
+    <path android:fillColor="@android:color/black"
+        android:pathData="M5,5 L7,5 L7,7 L5,7 Z" />
+    
+    <path android:fillColor="@android:color/black"
+        android:pathData="M17,5 L19,5 L19,7 L17,7 Z" />
+    
+    <path android:fillColor="@android:color/black"
+        android:pathData="M5,17 L7,17 L7,19 L5,19 Z" />
+    
+    <!-- Data pattern squares -->
+    <path android:fillColor="@android:color/black"
+        android:pathData="M11,5 L13,5 L13,7 L11,7 Z" />
+    
+    <path android:fillColor="@android:color/black"
+        android:pathData="M15,11 L17,11 L17,13 L15,13 Z" />
+    
+    <path android:fillColor="@android:color/black"
+        android:pathData="M19,15 L21,15 L21,17 L19,17 Z" />
+    
+    <path android:fillColor="@android:color/black"
+        android:pathData="M11,11 L13,11 L13,13 L11,13 Z" />
+    
+    <path android:fillColor="@android:color/black"
+        android:pathData="M17,19 L19,19 L19,21 L17,21 Z" />
+    
+    <path android:fillColor="@android:color/black"
+        android:pathData="M15,17 L17,17 L17,19 L15,19 Z" />
+        
+    <path android:fillColor="@android:color/black"
+        android:pathData="M11,15 L13,15 L13,17 L11,17 Z" />
+
+</vector>

@@ -54,6 +54,7 @@ import org.json.JSONObject;
 import net.sf.scuba.smartcards.CardService;
 
 import com.example.earthwallet.wallet.services.SecretWallet;
+import com.example.earthwallet.Constants;
 
 public class PassportScannerFragment extends Fragment implements MRZInputFragment.MRZInputListener {
     private static final String TAG = "PassportScannerFragment";
@@ -197,10 +198,8 @@ public class PassportScannerFragment extends Fragment implements MRZInputFragmen
         dg1StatusText = view.findViewById(R.id.dg1_status_text);
         rawResponseText = view.findViewById(R.id.raw_response_text);
 
-        // Load backend URL preference or fallback to resource
-        SharedPreferences appPrefs = requireActivity().getSharedPreferences("app_prefs", requireActivity().MODE_PRIVATE);
-        String savedBackendUrl = appPrefs.getString("backend_url", null);
-        backendUrl = savedBackendUrl != null ? savedBackendUrl : getString(R.string.backend_url);
+        // Use backend URL from Constants
+        backendUrl = Constants.BACKEND_BASE_URL + "/verify";
         Log.d(TAG, "Backend URL = " + backendUrl);
 
         // Long-press title to configure backend URL

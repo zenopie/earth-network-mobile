@@ -19,8 +19,7 @@
     <string name="enter_mrz_data">Enter MRZ Data</string>
 
     <!-- Added for backend verification UI/config -->
-    <string name="verification_results">Verification Results</string>
-    <string name="backend_url">http://192.168.1.145:8000/api/verify</string>
+    <string name="verification_results">Verification Results</string>non
     
     <!-- Wallet strings -->
     <string name="wallet_title">Earth Wallet</string>
