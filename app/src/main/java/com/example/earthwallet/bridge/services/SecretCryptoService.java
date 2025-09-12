@@ -35,7 +35,7 @@ public class SecretCryptoService {
     private static final String TAG = "SecretCryptoService";
     
     // Hardcoded consensus IO public key from SecretJS (mainnetConsensusIoPubKey)
-    private static final String MAINNET_CONSENSUS_IO_PUBKEY_B64 = "79++5YOHfm0SwhlpUDClv7cuCjq9xBZlWqSjDJWkRG8=";
+    private static final String MAINNET_CONSENSUS_IO_PUBKEY_B64 = "UyAkgs8Z55YD2091/RjSnmdMH4yF9PKc5lWqjV78nS8=";
     
     // HKDF constants (matches SecretJS encryption.ts line 18-20)
     private static final byte[] HKDF_SALT = hexStringToByteArray("000000000000000000024bead8df69990852c202db0e0097c1a12ea637d7e96d");
