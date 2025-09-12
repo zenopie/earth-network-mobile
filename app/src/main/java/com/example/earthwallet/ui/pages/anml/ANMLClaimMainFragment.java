@@ -199,7 +199,6 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
             ei.putExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_CODE_HASH, Constants.REGISTRATION_HASH);
             ei.putExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_EXECUTE_JSON, exec.toString());
             // Funds/memo/lcd are optional; default LCD is used in the bridge
-            showLoading(true);
             startActivityForResult(ei, REQ_EXECUTE);
         } catch (Exception e) {
             Toast.makeText(getContext(), "Failed to start claim: " + e.getMessage(), Toast.LENGTH_SHORT).show();
@@ -350,6 +349,24 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
             if (errorText != null) {
                 errorText.setText("Invalid result from bridge.");
                 errorText.setVisibility(View.VISIBLE);
+            }
+        }
+    }
+
+    @Override
+    public void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        
+        if (requestCode == REQ_EXECUTE) {
+            // Hide loading screen that might be showing
+            showLoading(false);
+            
+            if (resultCode == getActivity().RESULT_OK) {
+                // Transaction successful - refresh the status to update the UI
+                checkStatus();
+            } else {
+                // Transaction failed or was cancelled - just refresh to ensure UI is correct
+                checkStatus();
             }
         }
     }
