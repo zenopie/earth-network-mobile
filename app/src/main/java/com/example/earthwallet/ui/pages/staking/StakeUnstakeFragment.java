@@ -355,6 +355,7 @@ public class StakeUnstakeFragment extends Fragment {
             // Use SnipExecuteActivity to send ERTH to staking contract
             Tokens.TokenInfo erthToken = Tokens.getToken("ERTH");
             Intent intent = new Intent(getActivity(), TransactionActivity.class);
+            intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SNIP_EXECUTE);
             intent.putExtra(TransactionActivity.EXTRA_TOKEN_CONTRACT, erthToken.contract);
             intent.putExtra(TransactionActivity.EXTRA_TOKEN_HASH, erthToken.hash);
             intent.putExtra(TransactionActivity.EXTRA_RECIPIENT_ADDRESS, Constants.STAKING_CONTRACT);
@@ -402,6 +403,7 @@ public class StakeUnstakeFragment extends Fragment {
             
             // Use SecretExecuteActivity for unstaking
             Intent intent = new Intent(getActivity(), TransactionActivity.class);
+            intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE);
             intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.STAKING_CONTRACT);
             intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.STAKING_HASH);
             intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, withdrawMsg.toString());

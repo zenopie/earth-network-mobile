@@ -251,6 +251,7 @@ public class UnbondingFragment extends Fragment {
             
             // Use SecretExecuteActivity for claiming unbonded tokens
             Intent intent = new Intent(getActivity(), TransactionActivity.class);
+            intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE);
             intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.STAKING_CONTRACT);
             intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.STAKING_HASH);
             intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, claimMsg.toString());
@@ -278,6 +279,7 @@ public class UnbondingFragment extends Fragment {
             
             // Use SecretExecuteActivity for canceling unbond
             Intent intent = new Intent(getActivity(), TransactionActivity.class);
+            intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE);
             intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.STAKING_CONTRACT);
             intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.STAKING_HASH);
             intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, cancelMsg.toString());

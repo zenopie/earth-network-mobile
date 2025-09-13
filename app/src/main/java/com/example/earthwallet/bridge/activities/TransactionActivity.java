@@ -133,14 +133,35 @@ public class TransactionActivity extends AppCompatActivity {
             case TYPE_SNIP_EXECUTE:
                 String tokenContract = intent.getStringExtra(EXTRA_TOKEN_CONTRACT);
                 String snipRecipient = intent.getStringExtra(EXTRA_RECIPIENT_ADDRESS);
+                String snipRecipientHash = intent.getStringExtra(EXTRA_RECIPIENT_HASH);
                 String snipAmount = intent.getStringExtra(EXTRA_AMOUNT);
                 String messageJson = intent.getStringExtra(EXTRA_MESSAGE_JSON);
                 if (tokenContract == null || snipRecipient == null || snipAmount == null || messageJson == null) return null;
                 
-                return new TransactionConfirmationDialog.TransactionDetails(
-                    snipRecipient,
-                    "Send " + snipAmount + " tokens"
-                ).setContractLabel("To:");
+                try {
+                    // Show the SNIP send structure that will be created with the actual message
+                    org.json.JSONObject sendMsg = new org.json.JSONObject();
+                    org.json.JSONObject sendData = new org.json.JSONObject();
+                    sendData.put("recipient", snipRecipient);
+                    if (snipRecipientHash != null && !snipRecipientHash.isEmpty()) {
+                        sendData.put("code_hash", snipRecipientHash);
+                    }
+                    sendData.put("amount", snipAmount);
+                    sendData.put("msg", messageJson);
+                    sendMsg.put("send", sendData);
+                    
+                    return new TransactionConfirmationDialog.TransactionDetails(
+                        tokenContract,
+                        formatJsonForDisplay(sendMsg.toString())
+                    ).setContractLabel("Token Contract:");
+                    
+                } catch (Exception e) {
+                    // Fallback to simple display if JSON building fails
+                    return new TransactionConfirmationDialog.TransactionDetails(
+                        tokenContract,
+                        "SNIP Execute: " + formatJsonForDisplay(messageJson)
+                    ).setContractLabel("Token Contract:");
+                }
                 
             default:
                 return null;
@@ -173,7 +194,16 @@ public class TransactionActivity extends AppCompatActivity {
                         break;
                         
                     case TYPE_SNIP_EXECUTE:
-                        String[] snipResult = SnipExecuteService.execute(this, getIntent());
+                        // Create properly mapped intent for SnipExecuteService
+                        Intent snipIntent = new Intent();
+                        snipIntent.putExtra("token_contract", getIntent().getStringExtra(EXTRA_TOKEN_CONTRACT));
+                        snipIntent.putExtra("token_hash", getIntent().getStringExtra(EXTRA_TOKEN_HASH));
+                        snipIntent.putExtra("recipient", getIntent().getStringExtra(EXTRA_RECIPIENT_ADDRESS));
+                        snipIntent.putExtra("recipient_hash", getIntent().getStringExtra(EXTRA_RECIPIENT_HASH));
+                        snipIntent.putExtra("amount", getIntent().getStringExtra(EXTRA_AMOUNT));
+                        snipIntent.putExtra("message_json", getIntent().getStringExtra(EXTRA_MESSAGE_JSON));
+                        
+                        String[] snipResult = SnipExecuteService.execute(this, snipIntent);
                         result = snipResult[0];
                         senderAddress = snipResult[1];
                         break;
@@ -240,6 +270,12 @@ public class TransactionActivity extends AppCompatActivity {
         } catch (Exception e) {
             return false;
         }
+    }
+    
+    private String truncateAddress(String address) {
+        if (address == null || address.isEmpty()) return "";
+        if (address.length() <= 20) return address;
+        return address.substring(0, 10) + "..." + address.substring(address.length() - 6);
     }
     
     private String formatJsonForDisplay(String json) {

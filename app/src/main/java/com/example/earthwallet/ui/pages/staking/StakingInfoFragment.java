@@ -96,7 +96,11 @@ public class StakingInfoFragment extends Fragment {
                 }
             };
             IntentFilter filter = new IntentFilter("com.example.earthwallet.TRANSACTION_SUCCESS");
-            requireActivity().getApplicationContext().registerReceiver(transactionSuccessReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                requireActivity().getApplicationContext().registerReceiver(transactionSuccessReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                requireActivity().getApplicationContext().registerReceiver(transactionSuccessReceiver, filter);
+            }
         }
         
         initializeViews(view);
