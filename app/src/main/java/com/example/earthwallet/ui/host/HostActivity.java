@@ -23,14 +23,33 @@ import androidx.security.crypto.MasterKeys;
 
 import com.example.earthwallet.ui.pages.wallet.CreateWalletFragment;
 
+import com.google.android.gms.ads.AdRequest;
+import com.google.android.gms.ads.FullScreenContentCallback;
+import com.google.android.gms.ads.LoadAdError;
+import com.google.android.gms.ads.MobileAds;
+import com.google.android.gms.ads.initialization.InitializationStatus;
+import com.google.android.gms.ads.initialization.OnInitializationCompleteListener;
+import com.google.android.gms.ads.interstitial.InterstitialAd;
+import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback;
+
 public class HostActivity extends AppCompatActivity implements CreateWalletFragment.CreateWalletListener {
 
     private static final String PREF_FILE = "secret_wallet_prefs";
+    private static final String TAG = "HostActivity";
+    
+    // Test interstitial ad unit ID (use your real ad unit ID in production)
+    private static final String INTERSTITIAL_AD_UNIT_ID = "ca-app-pub-3940256099942544/1033173712";
+    
     private Button navWallet;
     private Button navActions;
     private View bottomNavView;
     private View hostContent;
     private SharedPreferences securePrefs;
+    
+    // AdMob interstitial ad
+    private InterstitialAd mInterstitialAd;
+    private boolean isAdLoaded = false;
+    private Runnable adCompletionCallback;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -56,6 +75,9 @@ public class HostActivity extends AppCompatActivity implements CreateWalletFragm
 
         // Initialize secure preferences for app-wide use
         initializeSecurePreferences();
+        
+        // Initialize AdMob
+        initializeAds();
         
         // Choose default start fragment: open Actions if secure wallet exists, otherwise create wallet
         boolean hasWallet = false;
@@ -411,5 +433,116 @@ public class HostActivity extends AppCompatActivity implements CreateWalletFragm
         if (fragmentTag == null) return false;
         return fragmentTag.equals("send") || 
                fragmentTag.equals("receive");
+    }
+    
+    /**
+     * Initialize AdMob and load interstitial ad
+     */
+    private void initializeAds() {
+        android.util.Log.d(TAG, "Initializing AdMob");
+        
+        MobileAds.initialize(this, new OnInitializationCompleteListener() {
+            @Override
+            public void onInitializationComplete(InitializationStatus initializationStatus) {
+                android.util.Log.d(TAG, "AdMob initialization complete");
+                loadInterstitialAd();
+            }
+        });
+    }
+    
+    /**
+     * Load an interstitial ad
+     */
+    private void loadInterstitialAd() {
+        android.util.Log.d(TAG, "Loading interstitial ad");
+        
+        AdRequest adRequest = new AdRequest.Builder().build();
+        
+        InterstitialAd.load(this, INTERSTITIAL_AD_UNIT_ID, adRequest,
+            new InterstitialAdLoadCallback() {
+                @Override
+                public void onAdLoaded(InterstitialAd interstitialAd) {
+                    android.util.Log.d(TAG, "Interstitial ad loaded successfully");
+                    mInterstitialAd = interstitialAd;
+                    isAdLoaded = true;
+                    
+                    // Set up full screen content callback
+                    mInterstitialAd.setFullScreenContentCallback(new FullScreenContentCallback() {
+                        @Override
+                        public void onAdClicked() {
+                            android.util.Log.d(TAG, "Interstitial ad was clicked");
+                        }
+                        
+                        @Override
+                        public void onAdDismissedFullScreenContent() {
+                            android.util.Log.d(TAG, "Interstitial ad dismissed");
+                            mInterstitialAd = null;
+                            isAdLoaded = false;
+                            
+                            // Execute the completion callback if set
+                            if (adCompletionCallback != null) {
+                                adCompletionCallback.run();
+                                adCompletionCallback = null;
+                            }
+                            
+                            // Load a new ad for next time
+                            loadInterstitialAd();
+                        }
+                        
+                        @Override
+                        public void onAdFailedToShowFullScreenContent(com.google.android.gms.ads.AdError adError) {
+                            android.util.Log.e(TAG, "Interstitial ad failed to show: " + adError.getMessage());
+                            mInterstitialAd = null;
+                            isAdLoaded = false;
+                            
+                            // Execute the completion callback anyway
+                            if (adCompletionCallback != null) {
+                                adCompletionCallback.run();
+                                adCompletionCallback = null;
+                            }
+                            
+                            // Load a new ad for next time
+                            loadInterstitialAd();
+                        }
+                        
+                        @Override
+                        public void onAdImpression() {
+                            android.util.Log.d(TAG, "Interstitial ad recorded an impression");
+                        }
+                        
+                        @Override
+                        public void onAdShowedFullScreenContent() {
+                            android.util.Log.d(TAG, "Interstitial ad showed full screen content");
+                        }
+                    });
+                }
+                
+                @Override
+                public void onAdFailedToLoad(LoadAdError loadAdError) {
+                    android.util.Log.e(TAG, "Failed to load interstitial ad: " + loadAdError.getMessage());
+                    mInterstitialAd = null;
+                    isAdLoaded = false;
+                }
+            });
+    }
+    
+    /**
+     * Show interstitial ad before executing a callback
+     * @param callback The callback to execute after the ad is dismissed (or if ad fails to show)
+     */
+    public void showInterstitialAdThen(Runnable callback) {
+        android.util.Log.d(TAG, "showInterstitialAdThen called, isAdLoaded: " + isAdLoaded);
+        
+        if (mInterstitialAd != null && isAdLoaded) {
+            android.util.Log.d(TAG, "Showing interstitial ad");
+            adCompletionCallback = callback;
+            mInterstitialAd.show(this);
+        } else {
+            android.util.Log.d(TAG, "No ad loaded, executing callback immediately");
+            // No ad loaded, execute callback immediately
+            if (callback != null) {
+                callback.run();
+            }
+        }
     }
 }

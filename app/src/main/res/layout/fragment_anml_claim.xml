@@ -17,6 +17,70 @@
         android:scaleType="centerInside"
         android:importantForAccessibility="yes" />
 
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginBottom="16dp"
+        android:gravity="center">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Current ANML Price:"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/anml_button_text"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:id="@+id/anml_price_amount"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Loading..."
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="@color/anml_button_text" />
+
+    </LinearLayout>
+
+    <!-- Ad-Free Status Indicator -->
+    <LinearLayout
+        android:id="@+id/ad_free_indicator_container"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:layout_marginBottom="16dp"
+        android:padding="8dp"
+        android:background="@drawable/address_box_bg"
+        android:visibility="visible">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="✨"
+            android:textSize="16sp"
+            android:layout_marginRight="4dp" />
+
+        <TextView
+            android:id="@+id/ad_free_status_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Loading..."
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:textColor="#4CAF50"
+            android:layout_marginRight="4dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="ℹ️"
+            android:textSize="12sp" />
+
+    </LinearLayout>
+
     <Button
         android:id="@+id/btn_claim"
         android:layout_width="220dp"

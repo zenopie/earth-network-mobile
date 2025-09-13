@@ -371,10 +371,10 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
             showLoading(false);
             
             if (resultCode == getActivity().RESULT_OK) {
-                // Transaction successful - refresh the status to update the UI
-                checkStatus();
+                // Transaction successful - navigate optimistically to complete screen
+                showCompleteFragment();
             } else {
-                // Transaction failed or was cancelled - just refresh to ensure UI is correct
+                // Transaction failed or was cancelled - refresh to ensure UI is correct
                 checkStatus();
             }
         }
