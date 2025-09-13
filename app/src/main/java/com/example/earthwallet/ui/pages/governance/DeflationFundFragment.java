@@ -197,29 +197,66 @@ public class DeflationFundFragment extends Fragment {
                                 
                                 Log.d(TAG, "Deflation fund total amount: " + totalAmount);
                                 
-                                // Second pass: calculate percentages
+                                // Second pass: calculate percentages with proper rounding to ensure 100% total
+                                long[] rawAmounts = new long[dataArray.length()];
+                                int[] allocationIds = new int[dataArray.length()];
+                                
+                                // Collect raw data first
                                 for (int i = 0; i < dataArray.length(); i++) {
                                     JSONObject item = dataArray.getJSONObject(i);
-                                    JSONObject transformed = new JSONObject();
-                                    
-                                    // Deflation fund format has direct allocation_id and amount_allocated fields
-                                    int allocationId = item.optInt("allocation_id", 0);
+                                    allocationIds[i] = item.optInt("allocation_id", 0);
                                     String amountStr = item.optString("amount_allocated", "0");
-                                    
-                                    long rawAmount = 0;
                                     try {
-                                        rawAmount = Long.parseLong(amountStr);
+                                        rawAmounts[i] = Long.parseLong(amountStr);
                                     } catch (NumberFormatException e) {
                                         Log.w(TAG, "Invalid amount format: " + amountStr);
+                                        rawAmounts[i] = 0;
+                                    }
+                                }
+                                
+                                // Calculate percentages with proper distribution to ensure 100% total
+                                int[] percentages = new int[dataArray.length()];
+                                int totalCalculatedPercentage = 0;
+                                
+                                if (totalAmount > 0) {
+                                    // First calculate raw percentages
+                                    double[] exactPercentages = new double[dataArray.length()];
+                                    for (int i = 0; i < dataArray.length(); i++) {
+                                        exactPercentages[i] = (rawAmounts[i] * 100.0) / totalAmount;
+                                        percentages[i] = (int) Math.floor(exactPercentages[i]); // Use floor to avoid over-allocation
+                                        totalCalculatedPercentage += percentages[i];
                                     }
                                     
-                                    // Calculate percentage based on actual amounts
-                                    int percentage = totalAmount > 0 ? (int) Math.round((rawAmount * 100.0) / totalAmount) : 0;
+                                    // Distribute remaining percentage to items with highest fractional parts
+                                    int remaining = 100 - totalCalculatedPercentage;
+                                    if (remaining > 0) {
+                                        // Create array of indices sorted by fractional part (descending)
+                                        Integer[] indices = new Integer[dataArray.length()];
+                                        for (int i = 0; i < dataArray.length(); i++) {
+                                            indices[i] = i;
+                                        }
+                                        
+                                        // Sort by fractional part descending
+                                        java.util.Arrays.sort(indices, (a, b) -> {
+                                            double fracA = exactPercentages[a] - Math.floor(exactPercentages[a]);
+                                            double fracB = exactPercentages[b] - Math.floor(exactPercentages[b]);
+                                            return Double.compare(fracB, fracA);
+                                        });
+                                        
+                                        // Add 1% to the items with highest fractional parts
+                                        for (int i = 0; i < remaining && i < indices.length; i++) {
+                                            percentages[indices[i]]++;
+                                        }
+                                    }
+                                }
+                                
+                                // Create transformed objects
+                                for (int i = 0; i < dataArray.length(); i++) {
+                                    JSONObject transformed = new JSONObject();
+                                    transformed.put("allocation_id", allocationIds[i]);
+                                    transformed.put("amount_allocated", percentages[i]);
                                     
-                                    transformed.put("allocation_id", allocationId);
-                                    transformed.put("amount_allocated", percentage);
-                                    
-                                    Log.d(TAG, "Deflation fund item: allocation_id=" + allocationId + ", raw_amount=" + rawAmount + " -> " + percentage + "%");
+                                    Log.d(TAG, "Deflation fund item: allocation_id=" + allocationIds[i] + ", raw_amount=" + rawAmounts[i] + " -> " + percentages[i] + "%");
                                     currentAllocations.put(transformed);
                                 }
                             } else if (result.toString().startsWith("[")) {

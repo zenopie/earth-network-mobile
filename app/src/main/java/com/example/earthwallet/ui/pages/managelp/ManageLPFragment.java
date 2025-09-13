@@ -1,5 +1,6 @@
 package com.example.earthwallet.ui.pages.managelp;
 
+import android.content.Intent;
 import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -8,6 +9,7 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.util.Log;
+import androidx.annotation.Nullable;
 import androidx.core.content.ContextCompat;
 
 import androidx.fragment.app.Fragment;
@@ -16,6 +18,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.example.earthwallet.R;
 import com.example.earthwallet.Constants;
+import com.example.earthwallet.bridge.activities.SecretExecuteActivity;
 import com.example.earthwallet.wallet.constants.Tokens;
 import com.example.earthwallet.bridge.services.SecretQueryService;
 import com.example.earthwallet.wallet.services.SecureWalletManager;
@@ -36,6 +39,8 @@ public class ManageLPFragment extends Fragment {
 
     private static final String TAG = "ManageLPFragment";
     private static final String LCD_URL = "https://lcd.mainnet.secretsaturn.net";
+    private static final int REQ_CLAIM_INDIVIDUAL = 5001;
+    private static final int REQ_CLAIM_ALL = 5002;
     
     private RecyclerView poolsRecyclerView;
     private PoolOverviewAdapter poolAdapter;
@@ -446,15 +451,79 @@ public class ManageLPFragment extends Fragment {
     private void handleClaimRewards(PoolData poolData) {
         Log.d(TAG, "Claiming rewards for pool: " + poolData.getTokenKey());
         
-        // TODO: Implement actual claim rewards functionality
-        // This should call the exchange contract to claim rewards for specific pool
+        try {
+            // Get token contract for this pool
+            Tokens.TokenInfo tokenInfo = poolData.getTokenInfo();
+            if (tokenInfo == null) {
+                Log.e(TAG, "No token info available for: " + poolData.getTokenKey());
+                return;
+            }
+            
+            // Create claim message: { claim_rewards: { pools: [contract] } }
+            JSONObject claimMsg = new JSONObject();
+            JSONObject claimRewards = new JSONObject();
+            JSONArray pools = new JSONArray();
+            pools.put(tokenInfo.contract);
+            claimRewards.put("pools", pools);
+            claimMsg.put("claim_rewards", claimRewards);
+            
+            Log.d(TAG, "Claiming rewards for pool " + poolData.getTokenKey() + " with message: " + claimMsg.toString());
+            
+            // Use SecretExecuteActivity for claiming rewards
+            Intent intent = new Intent(getActivity(), SecretExecuteActivity.class);
+            intent.putExtra(SecretExecuteActivity.EXTRA_CONTRACT_ADDRESS, Constants.EXCHANGE_CONTRACT);
+            intent.putExtra(SecretExecuteActivity.EXTRA_CODE_HASH, Constants.EXCHANGE_HASH);
+            intent.putExtra(SecretExecuteActivity.EXTRA_EXECUTE_JSON, claimMsg.toString());
+            
+            startActivityForResult(intent, REQ_CLAIM_INDIVIDUAL);
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error claiming rewards for pool: " + poolData.getTokenKey(), e);
+        }
     }
     
     private void handleClaimAll() {
         Log.d(TAG, "Claiming all rewards");
         
-        // TODO: Implement claim all functionality
-        // This should call the exchange contract to claim rewards for all pools with rewards
+        try {
+            // Collect all pools with rewards > 0
+            JSONArray poolsWithRewards = new JSONArray();
+            for (PoolData pool : allPoolsData) {
+                try {
+                    double rewards = Double.parseDouble(pool.getPendingRewards().replace(",", ""));
+                    if (rewards > 0 && pool.getTokenInfo() != null) {
+                        poolsWithRewards.put(pool.getTokenInfo().contract);
+                        Log.d(TAG, "Adding pool " + pool.getTokenKey() + " to claim all (rewards: " + rewards + ")");
+                    }
+                } catch (NumberFormatException e) {
+                    Log.w(TAG, "Error parsing rewards for pool: " + pool.getTokenKey());
+                }
+            }
+            
+            if (poolsWithRewards.length() == 0) {
+                Log.w(TAG, "No pools with rewards to claim");
+                return;
+            }
+            
+            // Create claim message: { claim_rewards: { pools: [contracts...] } }
+            JSONObject claimMsg = new JSONObject();
+            JSONObject claimRewards = new JSONObject();
+            claimRewards.put("pools", poolsWithRewards);
+            claimMsg.put("claim_rewards", claimRewards);
+            
+            Log.d(TAG, "Claiming all rewards with message: " + claimMsg.toString());
+            
+            // Use SecretExecuteActivity for claiming all rewards
+            Intent intent = new Intent(getActivity(), SecretExecuteActivity.class);
+            intent.putExtra(SecretExecuteActivity.EXTRA_CONTRACT_ADDRESS, Constants.EXCHANGE_CONTRACT);
+            intent.putExtra(SecretExecuteActivity.EXTRA_CODE_HASH, Constants.EXCHANGE_HASH);
+            intent.putExtra(SecretExecuteActivity.EXTRA_EXECUTE_JSON, claimMsg.toString());
+            
+            startActivityForResult(intent, REQ_CLAIM_ALL);
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error claiming all rewards", e);
+        }
     }
     
     // Data class for pool information
@@ -492,6 +561,29 @@ public class ManageLPFragment extends Fragment {
         public void setVolume(String volume) { this.volume = volume; }
         public void setApr(String apr) { this.apr = apr; }
         public void setUnbondingShares(String unbondingShares) { this.unbondingShares = unbondingShares; }
+    }
+    
+    @Override
+    public void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        
+        if (requestCode == REQ_CLAIM_INDIVIDUAL || requestCode == REQ_CLAIM_ALL) {
+            if (resultCode == getActivity().RESULT_OK) {
+                Log.d(TAG, "Claim transaction completed successfully");
+                // Refresh pool data and UI to reflect new balances
+                refreshPoolData();
+                // Also refresh the pool overview display immediately
+                if (getActivity() != null) {
+                    getActivity().runOnUiThread(() -> {
+                        updateTotalRewards();
+                        poolAdapter.notifyDataSetChanged();
+                    });
+                }
+            } else {
+                String error = data != null ? data.getStringExtra("error") : "Unknown error";
+                Log.e(TAG, "Claim transaction failed: " + error);
+            }
+        }
     }
     
     @Override
