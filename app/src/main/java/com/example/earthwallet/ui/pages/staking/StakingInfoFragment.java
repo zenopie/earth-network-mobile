@@ -403,12 +403,10 @@ public class StakingInfoFragment extends Fragment {
         
         if (requestCode == REQ_CLAIM_REWARDS) {
             if (resultCode == getActivity().RESULT_OK) {
-                Toast.makeText(getContext(), "Rewards claimed successfully!", Toast.LENGTH_SHORT).show();
                 // Refresh data to reflect new balances
                 refreshData();
             } else {
                 String error = data != null ? data.getStringExtra("error") : "Unknown error";
-                Toast.makeText(getContext(), "Failed to claim rewards: " + error, Toast.LENGTH_LONG).show();
             }
         } else if (requestCode == REQ_GET_VIEWING_KEY) {
             if (resultCode == getActivity().RESULT_OK) {

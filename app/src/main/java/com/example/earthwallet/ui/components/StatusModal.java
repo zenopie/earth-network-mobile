@@ -2,11 +2,15 @@ package com.example.earthwallet.ui.components;
 
 import android.app.Dialog;
 import android.content.Context;
+import android.animation.AnimatorSet;
+import android.animation.ObjectAnimator;
+import android.animation.ValueAnimator;
 import android.graphics.drawable.AnimatedVectorDrawable;
 import android.graphics.drawable.Drawable;
 import com.bumptech.glide.Glide;
 import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions;
 import android.os.Handler;
+import android.view.animation.AccelerateDecelerateInterpolator;
 import android.os.Looper;
 import android.util.Log;
 import android.view.LayoutInflater;
@@ -206,9 +210,43 @@ public class StatusModal {
     }
     
     private void startSuccessAnimation() {
-        if (successCheckmark != null && successCheckmark.getDrawable() instanceof AnimatedVectorDrawable) {
-            AnimatedVectorDrawable animatedDrawable = (AnimatedVectorDrawable) successCheckmark.getDrawable();
-            animatedDrawable.start();
+        if (successCheckmark != null) {
+            // Start with 50% scale and invisible
+            successCheckmark.setScaleX(0.5f);
+            successCheckmark.setScaleY(0.5f);
+            successCheckmark.setAlpha(1.0f);
+            
+            // Create circle scaling animation: 50% -> 110% -> 100%
+            ObjectAnimator scaleUpX = ObjectAnimator.ofFloat(successCheckmark, "scaleX", 0.5f, 1.1f);
+            ObjectAnimator scaleUpY = ObjectAnimator.ofFloat(successCheckmark, "scaleY", 0.5f, 1.1f);
+            scaleUpX.setDuration(200);
+            scaleUpY.setDuration(200);
+            
+            ObjectAnimator scaleDownX = ObjectAnimator.ofFloat(successCheckmark, "scaleX", 1.1f, 1.0f);
+            ObjectAnimator scaleDownY = ObjectAnimator.ofFloat(successCheckmark, "scaleY", 1.1f, 1.0f);
+            scaleDownX.setDuration(150);
+            scaleDownY.setDuration(150);
+            
+            // Set interpolator for smooth animation
+            AccelerateDecelerateInterpolator interpolator = new AccelerateDecelerateInterpolator();
+            scaleUpX.setInterpolator(interpolator);
+            scaleUpY.setInterpolator(interpolator);
+            scaleDownX.setInterpolator(interpolator);
+            scaleDownY.setInterpolator(interpolator);
+            
+            // Create animation sequence
+            AnimatorSet scaleUpSet = new AnimatorSet();
+            scaleUpSet.playTogether(scaleUpX, scaleUpY);
+            
+            AnimatorSet scaleDownSet = new AnimatorSet();
+            scaleDownSet.playTogether(scaleDownX, scaleDownY);
+            
+            AnimatorSet circleAnimation = new AnimatorSet();
+            circleAnimation.playSequentially(scaleUpSet, scaleDownSet);
+            
+            // No checkmark drawing animation - just the circle scaling
+            
+            circleAnimation.start();
         }
     }
     

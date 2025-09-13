@@ -24,9 +24,8 @@ import androidx.security.crypto.MasterKeys;
 
 import com.example.earthwallet.R;
 import com.example.earthwallet.wallet.services.SecretWallet;
-import com.example.earthwallet.ui.components.StatusModal;
-import com.google.android.material.bottomsheet.BottomSheetDialog;
-import com.google.android.material.bottomsheet.BottomSheetBehavior;
+import com.example.earthwallet.ui.components.TransactionHandler;
+import com.example.earthwallet.ui.components.TransactionConfirmationDialog;
 
 import org.bitcoinj.core.ECKey;
 import org.json.JSONArray;
@@ -61,9 +60,7 @@ public class SecretExecuteActivity extends AppCompatActivity {
     private SecretNetworkService networkService;
     private SecretCryptoService cryptoService;
     private SecretProtobufService protobufService;
-    private StatusModal statusModal;
-    private String pendingSuccessResult;
-    private String pendingSenderAddress;
+    private TransactionHandler transactionHandler;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -84,25 +81,9 @@ public class SecretExecuteActivity extends AppCompatActivity {
         networkService = new SecretNetworkService();
         cryptoService = new SecretCryptoService();
         protobufService = new SecretProtobufService();
-        statusModal = new StatusModal(this);
-        setupStatusModal();
+        transactionHandler = new TransactionHandler(this);
     }
 
-    private void setupStatusModal() {
-        statusModal.setOnCloseListener(this::handleStatusModalClose);
-    }
-
-    private void handleStatusModalClose() {
-        // StatusModal closed - finish activity with appropriate result
-        if (statusModal.getCurrentState() == StatusModal.State.SUCCESS && pendingSuccessResult != null) {
-            finishWithSuccess(pendingSuccessResult, pendingSenderAddress);
-        } else if (statusModal.getCurrentState() == StatusModal.State.ERROR) {
-            // Error case - activity should already have been finished with error
-            finish();
-        } else {
-            finish();
-        }
-    }
 
     private void executeTransaction() {
         TransactionParams params = parseIntentParameters();
@@ -116,8 +97,8 @@ public class SecretExecuteActivity extends AppCompatActivity {
             return;
         }
 
-        // Show confirmation popup before executing
-        showTransactionConfirmation(params, mnemonic);
+        // Use TransactionHandler for confirmation and execution
+        executeWithTransactionHandler(params, mnemonic);
     }
 
     private TransactionParams parseIntentParameters() {
@@ -140,92 +121,34 @@ public class SecretExecuteActivity extends AppCompatActivity {
         return true;
     }
 
-    private void showTransactionConfirmation(TransactionParams params, String mnemonic) {
-        BottomSheetDialog bottomSheetDialog = new BottomSheetDialog(this);
-        View bottomSheetView = LayoutInflater.from(this).inflate(R.layout.transaction_confirmation_popup, null);
-        bottomSheetDialog.setContentView(bottomSheetView);
+    private void executeWithTransactionHandler(TransactionParams params, String mnemonic) {
+        // Create transaction details for the confirmation dialog
+        TransactionConfirmationDialog.TransactionDetails details = new TransactionConfirmationDialog.TransactionDetails(
+            params.contractAddr,
+            formatJsonForDisplay(params.execJson)
+        ).setContractLabel(isSnipMessage(params.execJson) ? "Token Contract:" : "Contract:")
+         .setFunds(params.funds)
+         .setMemo(params.memo);
         
-        final boolean[] isConfirmed = {false};
-
-        // Find views
-        TextView contractLabel = bottomSheetView.findViewById(R.id.contract_label);
-        TextView contractAddressText = bottomSheetView.findViewById(R.id.contract_address_text);
-        TextView executeMessageText = bottomSheetView.findViewById(R.id.execute_message_text);
-        TextView fundsText = bottomSheetView.findViewById(R.id.funds_text);
-        TextView memoText = bottomSheetView.findViewById(R.id.memo_text);
-        View fundsSection = bottomSheetView.findViewById(R.id.funds_section);
-        View memoSection = bottomSheetView.findViewById(R.id.memo_section);
-        Button cancelButton = bottomSheetView.findViewById(R.id.cancel_button);
-        Button confirmButton = bottomSheetView.findViewById(R.id.confirm_button);
-
-        // Check if this is a SNIP message and update labels accordingly
-        boolean isSnipMessage = isSnipMessage(params.execJson);
-        if (isSnipMessage) {
-            contractLabel.setText("Token Contract:");
-        }
-
-        // Set transaction details
-        contractAddressText.setText(params.contractAddr);
-        executeMessageText.setText(formatJsonForDisplay(params.execJson));
-
-        // Show funds section if funds are provided
-        if (!TextUtils.isEmpty(params.funds)) {
-            fundsSection.setVisibility(View.VISIBLE);
-            fundsText.setText(params.funds);
-        } else {
-            fundsSection.setVisibility(View.GONE);
-        }
-
-        // Show memo section if memo is provided
-        if (!TextUtils.isEmpty(params.memo)) {
-            memoSection.setVisibility(View.VISIBLE);
-            memoText.setText(params.memo);
-        } else {
-            memoSection.setVisibility(View.GONE);
-        }
-
-        // Set click listeners
-        cancelButton.setOnClickListener(v -> {
-            isConfirmed[0] = false;
-            bottomSheetDialog.dismiss();
-        });
-
-        confirmButton.setOnClickListener(v -> {
-            isConfirmed[0] = true;
-            bottomSheetDialog.dismiss();
-        });
-
-        // Handle swipe down / dismiss as cancel
-        bottomSheetDialog.setOnDismissListener(dialog -> {
-            if (isConfirmed[0]) {
-                // User confirmed - show status modal and execute transaction
-                statusModal.show(StatusModal.State.LOADING);
-                new Thread(() -> {
-                    try {
-                        performTransaction(params, mnemonic);
-                    } catch (Exception e) {
-                        Log.e(TAG, "Transaction failed", e);
-                        runOnUiThread(() -> {
-                            statusModal.updateState(StatusModal.State.ERROR);
-                            finishWithError("Transaction failed: " + e.getMessage());
-                        });
-                    }
-                }).start();
-            } else {
-                // User cancelled (either by cancel button or swipe down)
-                finishWithError("Transaction cancelled");
+        // Use TransactionHandler to execute the transaction
+        transactionHandler.executeTransaction(details, () -> {
+            try {
+                performTransaction(params, mnemonic);
+            } catch (Exception e) {
+                Log.e(TAG, "Transaction failed", e);
+                transactionHandler.onTransactionError("Transaction failed: " + e.getMessage());
+            }
+        }, new TransactionHandler.TransactionResultHandler() {
+            @Override
+            public void onSuccess(String result, String senderAddress) {
+                finishWithSuccess(result, senderAddress);
+            }
+            
+            @Override
+            public void onError(String error) {
+                finishWithError(error);
             }
         });
-
-        bottomSheetDialog.show();
-        
-        // Configure bottom sheet to expand to full content height
-        View bottomSheet = bottomSheetDialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
-        if (bottomSheet != null) {
-            BottomSheetBehavior<View> behavior = BottomSheetBehavior.from(bottomSheet);
-            behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
-            behavior.setSkipCollapsed(true);
-        }
     }
 
     private String truncateAddress(String address) {
@@ -322,7 +245,7 @@ public class SecretExecuteActivity extends AppCompatActivity {
 
         // Show result on UI thread
         runOnUiThread(() -> {
-            showEnhancedResponseAlert(enhancedResponse, senderAddress);
+            handleTransactionResult(enhancedResponse, senderAddress);
         });
     }
 
@@ -355,46 +278,31 @@ public class SecretExecuteActivity extends AppCompatActivity {
     }
 
     // Utility methods
-    private void showEnhancedResponseAlert(String enhancedResponse, String senderAddress) {
+    private void handleTransactionResult(String enhancedResponse, String senderAddress) {
         try {
-            // Parse the response to make it more readable
+            // Parse the response to check success/failure
             JSONObject response = new JSONObject(enhancedResponse);
-            String title = "Transaction Response";
-            String message = enhancedResponse;
             int code = -1; // Default to failed
             
             if (response.has("tx_response")) {
                 JSONObject txResponse = response.getJSONObject("tx_response");
                 code = txResponse.optInt("code", -1);
-                String txHash = txResponse.optString("txhash", "");
                 String rawLog = txResponse.optString("raw_log", "");
                 
                 if (code == 0) {
-                    title = "✅ Transaction Successful";
-                    message = "Hash: " + txHash + "\n\nFull Response:\n" + enhancedResponse;
+                    // Transaction successful - notify TransactionHandler
+                    transactionHandler.onTransactionSuccess(enhancedResponse, senderAddress);
                 } else {
-                    title = "❌ Transaction Failed (Code: " + code + ")";
-                    message = "Hash: " + txHash + "\nError: " + rawLog + "\n\nFull Response:\n" + enhancedResponse;
+                    // Transaction failed - notify TransactionHandler
+                    transactionHandler.onTransactionError("Transaction failed: Code " + code + ". " + rawLog);
                 }
-            }
-            
-            if (code == 0) {
-                // Transaction successful - store result and update status modal to show success
-                pendingSuccessResult = enhancedResponse;
-                pendingSenderAddress = senderAddress;
-                statusModal.updateState(StatusModal.State.SUCCESS);
-                // Don't finish immediately - let the status modal show success animation
             } else {
-                // Transaction failed - update status modal to show error
-                statusModal.updateState(StatusModal.State.ERROR);
-                // For errors, we can finish immediately since we don't need to return success data
-                finishWithError("Transaction failed: Code " + code);
+                // No tx_response field - treat as error
+                transactionHandler.onTransactionError("Invalid transaction response format");
             }
         } catch (Exception e) {
-            Log.e(TAG, "Failed to show enhanced response alert", e);
-            // Fallback: show error status and finish
-            statusModal.updateState(StatusModal.State.ERROR);
-            finishWithError("Failed to process transaction response: " + e.getMessage());
+            Log.e(TAG, "Failed to process transaction response", e);
+            transactionHandler.onTransactionError("Failed to process transaction response: " + e.getMessage());
         }
     }
 
@@ -454,14 +362,14 @@ public class SecretExecuteActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
-        // Clean up status modal before calling super.onDestroy()
-        if (statusModal != null) {
+        // Clean up transaction handler before calling super.onDestroy()
+        if (transactionHandler != null) {
             try {
-                statusModal.destroy();
+                transactionHandler.destroy();
             } catch (Exception e) {
-                Log.e(TAG, "Error destroying status modal", e);
+                Log.e(TAG, "Error destroying transaction handler", e);
             }
-            statusModal = null;
+            transactionHandler = null;
         }
         super.onDestroy();
     }
