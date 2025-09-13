@@ -18,7 +18,7 @@ import androidx.fragment.app.Fragment;
 
 import com.example.earthwallet.R;
 import com.example.earthwallet.Constants;
-import com.example.earthwallet.bridge.activities.SecretExecuteActivity;
+import com.example.earthwallet.bridge.activities.TransactionActivity;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -250,10 +250,10 @@ public class UnbondingFragment extends Fragment {
             claimMsg.put("claim_unbonded", new JSONObject());
             
             // Use SecretExecuteActivity for claiming unbonded tokens
-            Intent intent = new Intent(getActivity(), SecretExecuteActivity.class);
-            intent.putExtra(SecretExecuteActivity.EXTRA_CONTRACT_ADDRESS, Constants.STAKING_CONTRACT);
-            intent.putExtra(SecretExecuteActivity.EXTRA_CODE_HASH, Constants.STAKING_HASH);
-            intent.putExtra(SecretExecuteActivity.EXTRA_EXECUTE_JSON, claimMsg.toString());
+            Intent intent = new Intent(getActivity(), TransactionActivity.class);
+            intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.STAKING_CONTRACT);
+            intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.STAKING_HASH);
+            intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, claimMsg.toString());
             
             startActivityForResult(intent, REQ_CLAIM_UNBONDED);
             
@@ -277,10 +277,10 @@ public class UnbondingFragment extends Fragment {
             Log.d(TAG, "Cancel unbond message: " + cancelMsg.toString());
             
             // Use SecretExecuteActivity for canceling unbond
-            Intent intent = new Intent(getActivity(), SecretExecuteActivity.class);
-            intent.putExtra(SecretExecuteActivity.EXTRA_CONTRACT_ADDRESS, Constants.STAKING_CONTRACT);
-            intent.putExtra(SecretExecuteActivity.EXTRA_CODE_HASH, Constants.STAKING_HASH);
-            intent.putExtra(SecretExecuteActivity.EXTRA_EXECUTE_JSON, cancelMsg.toString());
+            Intent intent = new Intent(getActivity(), TransactionActivity.class);
+            intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.STAKING_CONTRACT);
+            intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.STAKING_HASH);
+            intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, cancelMsg.toString());
             
             startActivityForResult(intent, REQ_CANCEL_UNBOND);
             

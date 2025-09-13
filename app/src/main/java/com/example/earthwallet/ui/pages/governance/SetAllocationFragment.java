@@ -22,7 +22,7 @@ import com.example.earthwallet.Constants;
 import com.example.earthwallet.R;
 import com.example.earthwallet.ui.components.PieChartView;
 import com.example.earthwallet.bridge.services.SecretQueryService;
-import com.example.earthwallet.bridge.activities.SecretExecuteActivity;
+import com.example.earthwallet.bridge.activities.TransactionActivity;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -460,19 +460,19 @@ public class SetAllocationFragment extends Fragment {
             
             if (FUND_TYPE_CARETAKER.equals(fundType)) {
                 // Execute on registration contract
-                Intent intent = new Intent(getActivity(), SecretExecuteActivity.class);
-                intent.putExtra(SecretExecuteActivity.EXTRA_CONTRACT_ADDRESS, Constants.REGISTRATION_CONTRACT);
-                intent.putExtra(SecretExecuteActivity.EXTRA_CODE_HASH, Constants.REGISTRATION_HASH);
-                intent.putExtra(SecretExecuteActivity.EXTRA_EXECUTE_JSON, executeMsg.toString());
+                Intent intent = new Intent(getActivity(), TransactionActivity.class);
+                intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.REGISTRATION_CONTRACT);
+                intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.REGISTRATION_HASH);
+                intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, executeMsg.toString());
                 
                 startActivityForResult(intent, 1001); // Request code for caretaker fund
                 
             } else if (FUND_TYPE_DEFLATION.equals(fundType)) {
                 // Execute on staking contract
-                Intent intent = new Intent(getActivity(), SecretExecuteActivity.class);
-                intent.putExtra(SecretExecuteActivity.EXTRA_CONTRACT_ADDRESS, Constants.STAKING_CONTRACT);
-                intent.putExtra(SecretExecuteActivity.EXTRA_CODE_HASH, Constants.STAKING_HASH);
-                intent.putExtra(SecretExecuteActivity.EXTRA_EXECUTE_JSON, executeMsg.toString());
+                Intent intent = new Intent(getActivity(), TransactionActivity.class);
+                intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.STAKING_CONTRACT);
+                intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.STAKING_HASH);
+                intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, executeMsg.toString());
                 
                 startActivityForResult(intent, 1002); // Request code for deflation fund
             }
@@ -500,7 +500,7 @@ public class SetAllocationFragment extends Fragment {
                 // Handle errors
                 String error = "Unknown error";
                 if (data != null) {
-                    error = data.getStringExtra(SecretExecuteActivity.EXTRA_ERROR);
+                    error = data.getStringExtra(TransactionActivity.EXTRA_ERROR);
                     if (error == null || error.isEmpty()) {
                         error = "Transaction cancelled or failed";
                     }

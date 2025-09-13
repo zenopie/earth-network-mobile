@@ -409,11 +409,11 @@ public class RemoveLiquidityFragment extends Fragment {
             Log.d(TAG, "Remove liquidity message: " + msg.toString());
             
             // Launch SecretExecuteActivity
-            Intent intent = new Intent(getContext(), com.example.earthwallet.bridge.activities.SecretExecuteActivity.class);
-            intent.putExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_CONTRACT_ADDRESS, Constants.EXCHANGE_CONTRACT);
-            intent.putExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_CODE_HASH, Constants.EXCHANGE_HASH);
-            intent.putExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_EXECUTE_JSON, msg.toString());
-            intent.putExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_MEMO, "Remove liquidity for " + tokenKey);
+            Intent intent = new Intent(getContext(), com.example.earthwallet.bridge.activities.TransactionActivity.class);
+            intent.putExtra(com.example.earthwallet.bridge.activities.TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.EXCHANGE_CONTRACT);
+            intent.putExtra(com.example.earthwallet.bridge.activities.TransactionActivity.EXTRA_CODE_HASH, Constants.EXCHANGE_HASH);
+            intent.putExtra(com.example.earthwallet.bridge.activities.TransactionActivity.EXTRA_EXECUTE_JSON, msg.toString());
+            intent.putExtra(com.example.earthwallet.bridge.activities.TransactionActivity.EXTRA_MEMO, "Remove liquidity for " + tokenKey);
             
             startActivityForResult(intent, 1001); // REQ_REMOVE_LIQUIDITY
             
@@ -442,7 +442,7 @@ public class RemoveLiquidityFragment extends Fragment {
                 }, 2000); // 2 second delay
                 
             } else {
-                String error = (data != null) ? data.getStringExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_ERROR) : "Transaction failed";
+                String error = (data != null) ? data.getStringExtra(com.example.earthwallet.bridge.activities.TransactionActivity.EXTRA_ERROR) : "Transaction failed";
                 android.widget.Toast.makeText(getContext(), "Failed to remove liquidity: " + error, android.widget.Toast.LENGTH_LONG).show();
                 Log.e(TAG, "Remove liquidity transaction failed: " + error);
             }

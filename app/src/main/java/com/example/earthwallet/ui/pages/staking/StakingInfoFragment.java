@@ -1,7 +1,9 @@
 package com.example.earthwallet.ui.pages.staking;
 
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.util.Log;
@@ -18,7 +20,7 @@ import androidx.fragment.app.Fragment;
 
 import com.example.earthwallet.R;
 import com.example.earthwallet.Constants;
-import com.example.earthwallet.bridge.activities.SecretExecuteActivity;
+import com.example.earthwallet.bridge.activities.TransactionActivity;
 import com.example.earthwallet.bridge.services.SecretQueryService;
 import com.example.earthwallet.bridge.services.SnipQueryService;
 import com.example.earthwallet.wallet.constants.Tokens;
@@ -56,6 +58,9 @@ public class StakingInfoFragment extends Fragment {
     private SecretQueryService queryService;
     private ExecutorService executorService;
     
+    // Broadcast receiver for transaction success
+    private BroadcastReceiver transactionSuccessReceiver;
+    
     // Data
     private double stakedBalance = 0.0;
     private double unstakedBalance = 0.0;
@@ -79,6 +84,20 @@ public class StakingInfoFragment extends Fragment {
         // Initialize services
         queryService = new SecretQueryService(getContext());
         executorService = Executors.newCachedThreadPool();
+        
+        // Register broadcast receiver for immediate transaction success notifications
+        if (getContext() != null) {
+            transactionSuccessReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    Log.d(TAG, "Received transaction success broadcast - refreshing data immediately");
+                    Log.d(TAG, "Fragment isVisible: " + isVisible() + ", isAdded: " + isAdded() + ", isResumed: " + isResumed());
+                    refreshData();
+                }
+            };
+            IntentFilter filter = new IntentFilter("com.example.earthwallet.TRANSACTION_SUCCESS");
+            requireActivity().getApplicationContext().registerReceiver(transactionSuccessReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        }
         
         initializeViews(view);
         setupClickListeners();
@@ -349,11 +368,12 @@ public class StakingInfoFragment extends Fragment {
             JSONObject claimMsg = new JSONObject();
             claimMsg.put("claim", new JSONObject());
             
-            // Use SecretExecuteActivity for claiming rewards
-            Intent intent = new Intent(getActivity(), SecretExecuteActivity.class);
-            intent.putExtra(SecretExecuteActivity.EXTRA_CONTRACT_ADDRESS, Constants.STAKING_CONTRACT);
-            intent.putExtra(SecretExecuteActivity.EXTRA_CODE_HASH, Constants.STAKING_HASH);
-            intent.putExtra(SecretExecuteActivity.EXTRA_EXECUTE_JSON, claimMsg.toString());
+            // Use TransactionActivity for claiming rewards
+            Intent intent = new Intent(getActivity(), TransactionActivity.class);
+            intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE);
+            intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.STAKING_CONTRACT);
+            intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.STAKING_HASH);
+            intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, claimMsg.toString());
             
             startActivityForResult(intent, REQ_CLAIM_REWARDS);
             
@@ -375,11 +395,12 @@ public class StakingInfoFragment extends Fragment {
                 createViewingKey.put("entropy", generateRandomEntropy());
                 viewingKeyMsg.put("create_viewing_key", createViewingKey);
                 
-                // Use SecretExecuteActivity to set viewing key
-                Intent intent = new Intent(getActivity(), SecretExecuteActivity.class);
-                intent.putExtra(SecretExecuteActivity.EXTRA_CONTRACT_ADDRESS, erthToken.contract);
-                intent.putExtra(SecretExecuteActivity.EXTRA_CODE_HASH, erthToken.hash);
-                intent.putExtra(SecretExecuteActivity.EXTRA_EXECUTE_JSON, viewingKeyMsg.toString());
+                // Use TransactionActivity to set viewing key
+                Intent intent = new Intent(getActivity(), TransactionActivity.class);
+                intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE);
+                intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, erthToken.contract);
+                intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, erthToken.hash);
+                intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, viewingKeyMsg.toString());
                 
                 startActivityForResult(intent, REQ_GET_VIEWING_KEY);
             }
@@ -423,6 +444,16 @@ public class StakingInfoFragment extends Fragment {
     @Override
     public void onDestroy() {
         super.onDestroy();
+        
+        // Unregister broadcast receiver
+        if (transactionSuccessReceiver != null && getContext() != null) {
+            try {
+                requireActivity().getApplicationContext().unregisterReceiver(transactionSuccessReceiver);
+            } catch (Exception e) {
+                Log.w(TAG, "Error unregistering transaction success receiver: " + e.getMessage());
+            }
+        }
+        
         if (executorService != null && !executorService.isShutdown()) {
             executorService.shutdown();
         }

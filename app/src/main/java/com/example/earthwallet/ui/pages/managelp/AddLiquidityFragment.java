@@ -23,6 +23,7 @@ import androidx.fragment.app.Fragment;
 import com.example.earthwallet.R;
 import com.example.earthwallet.wallet.constants.Tokens;
 import com.example.earthwallet.Constants;
+import com.example.earthwallet.bridge.activities.TransactionActivity;
 
 import org.json.JSONObject;
 import org.json.JSONArray;
@@ -708,10 +709,10 @@ public class AddLiquidityFragment extends Fragment {
             Log.d(TAG, "Multi-message array: " + messages.toString());
             
             // Launch MultiMessageExecuteActivity
-            Intent intent = new Intent(getContext(), com.example.earthwallet.bridge.activities.MultiMessageExecuteActivity.class);
-            intent.putExtra(com.example.earthwallet.bridge.activities.MultiMessageExecuteActivity.EXTRA_MESSAGES_JSON, messages.toString());
-            intent.putExtra(com.example.earthwallet.bridge.activities.MultiMessageExecuteActivity.EXTRA_MEMO, "Add liquidity: " + tokenAmount + " " + tokenKey + " + " + erthAmount + " ERTH");
-            intent.putExtra(com.example.earthwallet.bridge.activities.MultiMessageExecuteActivity.EXTRA_GAS_LIMIT, 1000000L);
+            Intent intent = new Intent(getContext(), TransactionActivity.class);
+            intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_MULTI_MESSAGE);
+            intent.putExtra(TransactionActivity.EXTRA_MESSAGES, messages.toString());
+            intent.putExtra(TransactionActivity.EXTRA_MEMO, "Add liquidity: " + tokenAmount + " " + tokenKey + " + " + erthAmount + " ERTH");
             
             startActivityForResult(intent, REQ_ADD_LIQUIDITY);
             
@@ -812,7 +813,7 @@ public class AddLiquidityFragment extends Fragment {
                 }, 2000); // 2 second delay
                 
             } else {
-                String error = (data != null) ? data.getStringExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_ERROR) : "Transaction failed";
+                String error = (data != null) ? data.getStringExtra(com.example.earthwallet.bridge.activities.TransactionActivity.EXTRA_ERROR) : "Transaction failed";
                 Toast.makeText(getContext(), "Failed to add liquidity: " + error, Toast.LENGTH_LONG).show();
                 Log.e(TAG, "Add liquidity transaction failed: " + error);
             }

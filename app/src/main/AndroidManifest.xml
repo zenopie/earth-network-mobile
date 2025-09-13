@@ -53,34 +53,16 @@
 
         
         
-        <!-- Secret Execute Activity (headless, pure-native execution) -->
+        <!-- Transaction Activity (universal transaction handler with UI) -->
         <activity
-            android:name=".bridge.activities.SecretExecuteActivity"
+            android:name=".bridge.activities.TransactionActivity"
             android:exported="false"
-            android:theme="@style/Theme.EarthWallet.NoDisplay"
-            android:excludeFromRecents="true" />
-        
-        
-        <!-- SNIP Execute Activity (headless, specialized SNIP-20/SNIP-721 executions using send message) -->
-        <activity
-            android:name=".bridge.activities.SnipExecuteActivity"
-            android:exported="false"
-            android:theme="@style/Theme.EarthWallet.NoDisplay"
+            android:theme="@style/Theme.EarthWallet.Dialog"
             android:excludeFromRecents="true" />
 
-        <!-- Native Send Activity (headless, native SCRT token transfers) -->
-        <activity
-            android:name=".bridge.activities.NativeSendActivity"
-            android:exported="false"
-            android:theme="@style/Theme.EarthWallet.NoDisplay"
-            android:excludeFromRecents="true" />
+        
+        
 
-        <!-- Multi-Message Execute Activity (headless, multi-message transactions like add liquidity) -->
-        <activity
-            android:name="com.example.earthwallet.bridge.activities.MultiMessageExecuteActivity"
-            android:exported="false"
-            android:theme="@style/Theme.EarthWallet.NoDisplay"
-            android:excludeFromRecents="true" />
 
         <!-- ZXing Capture Activity with forced portrait orientation -->
         <activity

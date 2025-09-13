@@ -200,10 +200,10 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
             org.json.JSONObject exec = new org.json.JSONObject();
             exec.put("claim_anml", new org.json.JSONObject());
 
-            Intent ei = new Intent(getContext(), com.example.earthwallet.bridge.activities.SecretExecuteActivity.class);
-            ei.putExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_CONTRACT_ADDRESS, Constants.REGISTRATION_CONTRACT);
-            ei.putExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_CODE_HASH, Constants.REGISTRATION_HASH);
-            ei.putExtra(com.example.earthwallet.bridge.activities.SecretExecuteActivity.EXTRA_EXECUTE_JSON, exec.toString());
+            Intent ei = new Intent(getContext(), com.example.earthwallet.bridge.activities.TransactionActivity.class);
+            ei.putExtra(com.example.earthwallet.bridge.activities.TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.REGISTRATION_CONTRACT);
+            ei.putExtra(com.example.earthwallet.bridge.activities.TransactionActivity.EXTRA_CODE_HASH, Constants.REGISTRATION_HASH);
+            ei.putExtra(com.example.earthwallet.bridge.activities.TransactionActivity.EXTRA_EXECUTE_JSON, exec.toString());
             // Funds/memo/lcd are optional; default LCD is used in the bridge
             startActivityForResult(ei, REQ_EXECUTE);
         } catch (Exception e) {

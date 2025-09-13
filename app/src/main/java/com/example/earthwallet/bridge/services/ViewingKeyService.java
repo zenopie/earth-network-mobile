@@ -22,7 +22,7 @@ import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
 
 import com.example.earthwallet.R;
-import com.example.earthwallet.bridge.activities.SecretExecuteActivity;
+import com.example.earthwallet.bridge.activities.TransactionActivity;
 import com.example.earthwallet.wallet.constants.Tokens;
 
 import org.json.JSONObject;
@@ -233,11 +233,11 @@ public class ViewingKeyService extends Fragment {
             setViewingKeyMsg.put("set_viewing_key", msgContent);
             
             // Launch SecretExecuteActivity to set viewing key on blockchain
-            Intent intent = new Intent(getContext(), SecretExecuteActivity.class);
-            intent.putExtra(SecretExecuteActivity.EXTRA_CONTRACT_ADDRESS, token.contract);
-            intent.putExtra(SecretExecuteActivity.EXTRA_CODE_HASH, token.hash);
-            intent.putExtra(SecretExecuteActivity.EXTRA_EXECUTE_JSON, setViewingKeyMsg.toString());
-            intent.putExtra(SecretExecuteActivity.EXTRA_MEMO, "Set viewing key for " + token.symbol);
+            Intent intent = new Intent(getContext(), TransactionActivity.class);
+            intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, token.contract);
+            intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, token.hash);
+            intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, setViewingKeyMsg.toString());
+            intent.putExtra(TransactionActivity.EXTRA_MEMO, "Set viewing key for " + token.symbol);
             startActivityForResult(intent, REQ_SET_VIEWING_KEY);
             
         } catch (Exception e) {
@@ -281,7 +281,7 @@ public class ViewingKeyService extends Fragment {
                 }
             } else {
                 // Transaction failed
-                String error = (data != null) ? data.getStringExtra(SecretExecuteActivity.EXTRA_ERROR) : "Transaction failed";
+                String error = (data != null) ? data.getStringExtra(TransactionActivity.EXTRA_ERROR) : "Transaction failed";
                 Toast.makeText(getContext(), "Failed to set viewing key: " + error, Toast.LENGTH_SHORT).show();
                 Log.e(TAG, "Set viewing key transaction failed: " + error);
             }

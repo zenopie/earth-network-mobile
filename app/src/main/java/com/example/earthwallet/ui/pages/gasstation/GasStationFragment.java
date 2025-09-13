@@ -31,7 +31,8 @@ import androidx.security.crypto.MasterKeys;
 
 import com.example.earthwallet.R;
 import com.example.earthwallet.Constants;
-import com.example.earthwallet.bridge.activities.SnipExecuteActivity;
+import com.example.earthwallet.bridge.activities.TransactionActivity;
+
 import com.example.earthwallet.bridge.services.SecretQueryService;
 import com.example.earthwallet.wallet.constants.Tokens;
 
@@ -635,13 +636,14 @@ public class GasStationFragment extends Fragment {
             Log.d(TAG, "Amount: " + inputAmountMicro);
             Log.d(TAG, "Message: " + swapForGasMessage);
             
-            Intent intent = new Intent(getContext(), SnipExecuteActivity.class);
-            intent.putExtra(SnipExecuteActivity.EXTRA_TOKEN_CONTRACT, fromTokenInfo.contract);
-            intent.putExtra(SnipExecuteActivity.EXTRA_TOKEN_HASH, fromTokenInfo.hash);
-            intent.putExtra(SnipExecuteActivity.EXTRA_RECIPIENT, Constants.EXCHANGE_CONTRACT);
-            intent.putExtra(SnipExecuteActivity.EXTRA_RECIPIENT_HASH, Constants.EXCHANGE_HASH);
-            intent.putExtra(SnipExecuteActivity.EXTRA_AMOUNT, String.valueOf(inputAmountMicro));
-            intent.putExtra(SnipExecuteActivity.EXTRA_MESSAGE_JSON, swapForGasMessage);
+            Intent intent = new Intent(getContext(), TransactionActivity.class);
+            intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SNIP_EXECUTE);
+            intent.putExtra(TransactionActivity.EXTRA_TOKEN_CONTRACT, fromTokenInfo.contract);
+            intent.putExtra(TransactionActivity.EXTRA_TOKEN_HASH, fromTokenInfo.hash);
+            intent.putExtra(TransactionActivity.EXTRA_RECIPIENT_ADDRESS, Constants.EXCHANGE_CONTRACT);
+            intent.putExtra(TransactionActivity.EXTRA_RECIPIENT_HASH, Constants.EXCHANGE_HASH);
+            intent.putExtra(TransactionActivity.EXTRA_AMOUNT, String.valueOf(inputAmountMicro));
+            intent.putExtra(TransactionActivity.EXTRA_MESSAGE_JSON, swapForGasMessage);
             
             startActivityForResult(intent, REQ_SWAP_FOR_GAS);
             
@@ -679,7 +681,7 @@ public class GasStationFragment extends Fragment {
         
         if (resultCode == Activity.RESULT_OK && data != null) {
             if (requestCode == REQ_SWAP_FOR_GAS) {
-                String json = data.getStringExtra(SnipExecuteActivity.EXTRA_RESULT_JSON);
+                String json = data.getStringExtra(TransactionActivity.EXTRA_RESULT_JSON);
                 handleSwapForGasResult(json);
             }
         }

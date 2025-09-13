@@ -34,8 +34,8 @@ import androidx.security.crypto.MasterKeys;
 
 import com.example.earthwallet.R;
 import com.example.earthwallet.Constants;
-import com.example.earthwallet.bridge.activities.SecretExecuteActivity;
-import com.example.earthwallet.bridge.activities.SnipExecuteActivity;
+import com.example.earthwallet.bridge.activities.TransactionActivity;
+
 import com.example.earthwallet.bridge.services.SecretQueryService;
 import com.example.earthwallet.wallet.constants.Tokens;
 
@@ -448,11 +448,11 @@ public class SwapTokensMainFragment extends Fragment {
             
             if (requestCode == REQ_SNIP_EXECUTE) {
                 // Use SnipExecuteActivity's result key for SNIP execution requests
-                json = data.getStringExtra(SnipExecuteActivity.EXTRA_RESULT_JSON);
+                json = data.getStringExtra(TransactionActivity.EXTRA_RESULT_JSON);
                 handleSwapExecutionResult(json);
             } else if (requestCode == REQ_EXECUTE_SWAP || requestCode == REQUEST_SWAP_EXECUTION) {
                 // Use SecretExecuteActivity's result key for execution requests
-                json = data.getStringExtra(SecretExecuteActivity.EXTRA_RESULT_JSON);
+                json = data.getStringExtra(TransactionActivity.EXTRA_RESULT_JSON);
                 handleSwapExecutionResult(json);
             } else {
                 // Use generic result key for other requests
@@ -915,13 +915,13 @@ public class SwapTokensMainFragment extends Fragment {
         Log.d(TAG, "Amount: " + inputAmountMicro);
         Log.d(TAG, "Swap message: " + swapMessage);
         
-        Intent intent = new Intent(getContext(), SnipExecuteActivity.class);
-        intent.putExtra(SnipExecuteActivity.EXTRA_TOKEN_CONTRACT, fromTokenInfo.contract);
-        intent.putExtra(SnipExecuteActivity.EXTRA_TOKEN_HASH, fromTokenInfo.hash);
-        intent.putExtra(SnipExecuteActivity.EXTRA_RECIPIENT, Constants.EXCHANGE_CONTRACT);
-        intent.putExtra(SnipExecuteActivity.EXTRA_RECIPIENT_HASH, Constants.EXCHANGE_HASH);
-        intent.putExtra(SnipExecuteActivity.EXTRA_AMOUNT, String.valueOf(inputAmountMicro));
-        intent.putExtra(SnipExecuteActivity.EXTRA_MESSAGE_JSON, swapMessage);
+        Intent intent = new Intent(getContext(), TransactionActivity.class);
+        intent.putExtra(TransactionActivity.EXTRA_TOKEN_CONTRACT, fromTokenInfo.contract);
+        intent.putExtra(TransactionActivity.EXTRA_TOKEN_HASH, fromTokenInfo.hash);
+        intent.putExtra(TransactionActivity.EXTRA_RECIPIENT_ADDRESS, Constants.EXCHANGE_CONTRACT);
+        intent.putExtra(TransactionActivity.EXTRA_RECIPIENT_HASH, Constants.EXCHANGE_HASH);
+        intent.putExtra(TransactionActivity.EXTRA_AMOUNT, String.valueOf(inputAmountMicro));
+        intent.putExtra(TransactionActivity.EXTRA_MESSAGE_JSON, swapMessage);
         
         startActivityForResult(intent, REQ_SNIP_EXECUTE);
     }

@@ -28,9 +28,9 @@ import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
 
 import com.example.earthwallet.R;
-import com.example.earthwallet.bridge.activities.NativeSendActivity;
-import com.example.earthwallet.bridge.activities.SecretExecuteActivity;
-import com.example.earthwallet.bridge.activities.SnipExecuteActivity;
+
+import com.example.earthwallet.bridge.activities.TransactionActivity;
+
 import com.example.earthwallet.wallet.constants.Tokens;
 import com.example.earthwallet.wallet.services.SecretWallet;
 import com.example.earthwallet.wallet.services.SecureWalletManager;
@@ -314,11 +314,11 @@ public class SendTokensFragment extends Fragment implements
         String microScrtString = String.valueOf(microScrt);
         
         // Use the native token sending activity (we'll need to create this)
-        Intent intent = new Intent(getActivity(), NativeSendActivity.class);
-        intent.putExtra(NativeSendActivity.EXTRA_RECIPIENT, recipient);
-        intent.putExtra(NativeSendActivity.EXTRA_AMOUNT, microScrtString);
-        intent.putExtra(NativeSendActivity.EXTRA_DENOM, "uscrt");
-        intent.putExtra(NativeSendActivity.EXTRA_MEMO, memo);
+        Intent intent = new Intent(getActivity(), TransactionActivity.class);
+        intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_NATIVE_SEND);
+        intent.putExtra(TransactionActivity.EXTRA_RECIPIENT_ADDRESS, recipient);
+        intent.putExtra(TransactionActivity.EXTRA_AMOUNT, microScrtString);
+        intent.putExtra(TransactionActivity.EXTRA_MEMO, memo);
         
         startActivityForResult(intent, REQ_SEND_NATIVE);
     }
@@ -342,13 +342,13 @@ public class SendTokensFragment extends Fragment implements
         transferMsg.put("transfer", transfer);
         
         // Use SnipExecuteActivity for SNIP-20 token transfer
-        Intent intent = new Intent(getActivity(), SnipExecuteActivity.class);
-        intent.putExtra(SnipExecuteActivity.EXTRA_TOKEN_CONTRACT, token.contract);
-        intent.putExtra(SnipExecuteActivity.EXTRA_TOKEN_HASH, token.hash);
-        intent.putExtra(SnipExecuteActivity.EXTRA_RECIPIENT, recipient);
-        intent.putExtra(SnipExecuteActivity.EXTRA_RECIPIENT_HASH, "");
-        intent.putExtra(SnipExecuteActivity.EXTRA_AMOUNT, tokenAmountString);
-        intent.putExtra(SnipExecuteActivity.EXTRA_MESSAGE_JSON, transferMsg.toString());
+        Intent intent = new Intent(getActivity(), TransactionActivity.class);
+        intent.putExtra(TransactionActivity.EXTRA_TOKEN_CONTRACT, token.contract);
+        intent.putExtra(TransactionActivity.EXTRA_TOKEN_HASH, token.hash);
+        intent.putExtra(TransactionActivity.EXTRA_RECIPIENT_ADDRESS, recipient);
+        intent.putExtra(TransactionActivity.EXTRA_RECIPIENT_HASH, "");
+        intent.putExtra(TransactionActivity.EXTRA_AMOUNT, tokenAmountString);
+        intent.putExtra(TransactionActivity.EXTRA_MESSAGE_JSON, transferMsg.toString());
         
         startActivityForResult(intent, REQ_SEND_SNIP);
     }

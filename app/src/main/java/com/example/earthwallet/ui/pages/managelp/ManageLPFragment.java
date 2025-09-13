@@ -18,7 +18,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.example.earthwallet.R;
 import com.example.earthwallet.Constants;
-import com.example.earthwallet.bridge.activities.SecretExecuteActivity;
+import com.example.earthwallet.bridge.activities.TransactionActivity;
 import com.example.earthwallet.wallet.constants.Tokens;
 import com.example.earthwallet.bridge.services.SecretQueryService;
 import com.example.earthwallet.wallet.services.SecureWalletManager;
@@ -470,10 +470,10 @@ public class ManageLPFragment extends Fragment {
             Log.d(TAG, "Claiming rewards for pool " + poolData.getTokenKey() + " with message: " + claimMsg.toString());
             
             // Use SecretExecuteActivity for claiming rewards
-            Intent intent = new Intent(getActivity(), SecretExecuteActivity.class);
-            intent.putExtra(SecretExecuteActivity.EXTRA_CONTRACT_ADDRESS, Constants.EXCHANGE_CONTRACT);
-            intent.putExtra(SecretExecuteActivity.EXTRA_CODE_HASH, Constants.EXCHANGE_HASH);
-            intent.putExtra(SecretExecuteActivity.EXTRA_EXECUTE_JSON, claimMsg.toString());
+            Intent intent = new Intent(getActivity(), TransactionActivity.class);
+            intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.EXCHANGE_CONTRACT);
+            intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.EXCHANGE_HASH);
+            intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, claimMsg.toString());
             
             startActivityForResult(intent, REQ_CLAIM_INDIVIDUAL);
             
@@ -514,10 +514,10 @@ public class ManageLPFragment extends Fragment {
             Log.d(TAG, "Claiming all rewards with message: " + claimMsg.toString());
             
             // Use SecretExecuteActivity for claiming all rewards
-            Intent intent = new Intent(getActivity(), SecretExecuteActivity.class);
-            intent.putExtra(SecretExecuteActivity.EXTRA_CONTRACT_ADDRESS, Constants.EXCHANGE_CONTRACT);
-            intent.putExtra(SecretExecuteActivity.EXTRA_CODE_HASH, Constants.EXCHANGE_HASH);
-            intent.putExtra(SecretExecuteActivity.EXTRA_EXECUTE_JSON, claimMsg.toString());
+            Intent intent = new Intent(getActivity(), TransactionActivity.class);
+            intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.EXCHANGE_CONTRACT);
+            intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.EXCHANGE_HASH);
+            intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, claimMsg.toString());
             
             startActivityForResult(intent, REQ_CLAIM_ALL);
             

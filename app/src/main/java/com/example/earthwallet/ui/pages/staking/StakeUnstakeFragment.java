@@ -19,8 +19,8 @@ import androidx.fragment.app.Fragment;
 
 import com.example.earthwallet.R;
 import com.example.earthwallet.Constants;
-import com.example.earthwallet.bridge.activities.SecretExecuteActivity;
-import com.example.earthwallet.bridge.activities.SnipExecuteActivity;
+import com.example.earthwallet.bridge.activities.TransactionActivity;
+
 import com.example.earthwallet.bridge.services.SnipQueryService;
 import com.example.earthwallet.bridge.services.ViewingKeyService;
 import com.example.earthwallet.wallet.constants.Tokens;
@@ -354,13 +354,13 @@ public class StakeUnstakeFragment extends Fragment {
             
             // Use SnipExecuteActivity to send ERTH to staking contract
             Tokens.TokenInfo erthToken = Tokens.getToken("ERTH");
-            Intent intent = new Intent(getActivity(), SnipExecuteActivity.class);
-            intent.putExtra(SnipExecuteActivity.EXTRA_TOKEN_CONTRACT, erthToken.contract);
-            intent.putExtra(SnipExecuteActivity.EXTRA_TOKEN_HASH, erthToken.hash);
-            intent.putExtra(SnipExecuteActivity.EXTRA_RECIPIENT, Constants.STAKING_CONTRACT);
-            intent.putExtra(SnipExecuteActivity.EXTRA_RECIPIENT_HASH, Constants.STAKING_HASH);
-            intent.putExtra(SnipExecuteActivity.EXTRA_AMOUNT, String.valueOf(amountMicro));
-            intent.putExtra(SnipExecuteActivity.EXTRA_MESSAGE_JSON, stakeMsg.toString());
+            Intent intent = new Intent(getActivity(), TransactionActivity.class);
+            intent.putExtra(TransactionActivity.EXTRA_TOKEN_CONTRACT, erthToken.contract);
+            intent.putExtra(TransactionActivity.EXTRA_TOKEN_HASH, erthToken.hash);
+            intent.putExtra(TransactionActivity.EXTRA_RECIPIENT_ADDRESS, Constants.STAKING_CONTRACT);
+            intent.putExtra(TransactionActivity.EXTRA_RECIPIENT_HASH, Constants.STAKING_HASH);
+            intent.putExtra(TransactionActivity.EXTRA_AMOUNT, String.valueOf(amountMicro));
+            intent.putExtra(TransactionActivity.EXTRA_MESSAGE_JSON, stakeMsg.toString());
             
             startActivityForResult(intent, REQ_STAKE_ERTH);
             
@@ -401,10 +401,10 @@ public class StakeUnstakeFragment extends Fragment {
             withdrawMsg.put("withdraw", withdraw);
             
             // Use SecretExecuteActivity for unstaking
-            Intent intent = new Intent(getActivity(), SecretExecuteActivity.class);
-            intent.putExtra(SecretExecuteActivity.EXTRA_CONTRACT_ADDRESS, Constants.STAKING_CONTRACT);
-            intent.putExtra(SecretExecuteActivity.EXTRA_CODE_HASH, Constants.STAKING_HASH);
-            intent.putExtra(SecretExecuteActivity.EXTRA_EXECUTE_JSON, withdrawMsg.toString());
+            Intent intent = new Intent(getActivity(), TransactionActivity.class);
+            intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.STAKING_CONTRACT);
+            intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.STAKING_HASH);
+            intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, withdrawMsg.toString());
             
             startActivityForResult(intent, REQ_UNSTAKE_ERTH);
             
