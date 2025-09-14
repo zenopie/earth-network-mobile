@@ -19,6 +19,7 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.example.earthwallet.R;
 import com.example.earthwallet.Constants;
 import com.example.earthwallet.bridge.activities.TransactionActivity;
+import com.example.earthwallet.ui.components.LoadingOverlay;
 import com.example.earthwallet.wallet.constants.Tokens;
 import com.example.earthwallet.bridge.services.SecretQueryService;
 import com.example.earthwallet.wallet.services.SecureWalletManager;
@@ -49,6 +50,7 @@ public class ManageLPFragment extends Fragment {
     private LinearLayout claimAllContainer;
     private View liquidityManagementContainer;
     private View rootView;
+    private LoadingOverlay loadingOverlay;
     
     private SecretQueryService queryService;
     private ExecutorService executorService;
@@ -100,6 +102,12 @@ public class ManageLPFragment extends Fragment {
         claimAllButton = view.findViewById(R.id.claim_all_button);
         claimAllContainer = view.findViewById(R.id.claim_all_container);
         liquidityManagementContainer = view.findViewById(R.id.liquidity_management_container);
+        loadingOverlay = view.findViewById(R.id.loading_overlay);
+
+        // Initialize the loading overlay with this fragment for Glide
+        if (loadingOverlay != null) {
+            loadingOverlay.initializeWithFragment(this);
+        }
     }
     
     private void setupRecyclerView() {
@@ -127,7 +135,10 @@ public class ManageLPFragment extends Fragment {
     
     private void refreshPoolData() {
         Log.d(TAG, "Refreshing pool data with real contract queries");
-        
+
+        // Show loading overlay
+        showLoading(true);
+
         // Query exchange contract like React app does
         executorService.execute(() -> {
             try {
@@ -136,12 +147,23 @@ public class ManageLPFragment extends Fragment {
                 Log.e(TAG, "Error querying pool data", e);
                 // Fall back to empty data on error
                 getActivity().runOnUiThread(() -> {
+                    showLoading(false);
                     allPoolsData.clear();
                     updateTotalRewards();
                     poolAdapter.notifyDataSetChanged();
                 });
             }
         });
+    }
+
+    private void showLoading(boolean show) {
+        if (loadingOverlay != null) {
+            if (show) {
+                loadingOverlay.show();
+            } else {
+                loadingOverlay.hide();
+            }
+        }
     }
     
     private void queryExchangeContract() throws Exception {
@@ -337,6 +359,7 @@ public class ManageLPFragment extends Fragment {
         // Update UI on main thread
         if (getActivity() != null) {
             getActivity().runOnUiThread(() -> {
+                showLoading(false);
                 allPoolsData.clear();
                 allPoolsData.addAll(newPoolData);
                 updateTotalRewards();
@@ -591,6 +614,9 @@ public class ManageLPFragment extends Fragment {
         super.onDestroy();
         if (executorService != null && !executorService.isShutdown()) {
             executorService.shutdown();
+        }
+        if (loadingOverlay != null && getContext() != null) {
+            loadingOverlay.cleanup(getContext());
         }
     }
 }

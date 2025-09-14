@@ -46,31 +46,10 @@
 
     </ScrollView>
 
-    <!-- Overlay loading container so bottom nav stays visible while querying -->
-    <FrameLayout
+    <!-- Overlay loading container using reusable component -->
+    <com.example.earthwallet.ui.components.LoadingOverlay
         android:id="@+id/loading_overlay"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:visibility="gone"
-        android:clickable="false"
-        android:focusable="false">
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:orientation="vertical"
-            android:gravity="center">
-
-            <ImageView
-                android:id="@+id/anml_loading_gif"
-                android:layout_width="720dp"
-                android:layout_height="720dp"
-                android:src="@drawable/loading"
-                android:scaleType="centerCrop"
-                android:adjustViewBounds="false"
-                android:contentDescription="Loading"
-                android:visibility="gone" />
-        </LinearLayout>
-    </FrameLayout>
+        android:layout_height="match_parent" />
 
 </FrameLayout>

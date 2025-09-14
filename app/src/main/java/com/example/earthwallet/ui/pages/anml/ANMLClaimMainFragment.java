@@ -14,11 +14,8 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
-import com.bumptech.glide.Glide;
-import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions;
  
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentManager;
@@ -30,6 +27,7 @@ import androidx.security.crypto.MasterKeys;
 import com.example.earthwallet.bridge.activities.TransactionActivity;
 import com.example.earthwallet.wallet.services.SecretWallet;
 import com.example.earthwallet.Constants;
+import com.example.earthwallet.ui.components.LoadingOverlay;
 import com.example.earthwallet.bridge.services.SecretQueryService;
 import com.example.earthwallet.ui.pages.anml.ANMLRegisterFragment;
 import com.example.earthwallet.ui.pages.anml.ANMLClaimFragment;
@@ -43,9 +41,8 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
 
     private static final long ONE_DAY_MILLIS = 24L * 60L * 60L * 1000L;
 
-    private ImageView loadingGif;
     private TextView errorText;
-    private View loadingOverlay;
+    private LoadingOverlay loadingOverlay;
     private View fragmentContainer;
     
     private SharedPreferences securePrefs;
@@ -81,19 +78,13 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
             Log.e(TAG, "Failed to initialize SecretWallet", e);
         }
 
-        loadingGif = view.findViewById(R.id.anml_loading_gif);
         errorText = view.findViewById(R.id.anml_error_text);
         loadingOverlay = view.findViewById(R.id.loading_overlay);
         fragmentContainer = view.findViewById(R.id.anml_root);
 
-        if (loadingGif != null) {
-            // Load GIF using Glide (from drawable resource)
-            Glide.with(this)
-                    .asGif()
-                    .load(R.drawable.loading)
-                    .transition(DrawableTransitionOptions.withCrossFade())
-                    .into(loadingGif);
-            loadingGif.setVisibility(View.GONE);
+        // Initialize the loading overlay with this fragment for Glide
+        if (loadingOverlay != null) {
+            loadingOverlay.initializeWithFragment(this);
         }
 
         initSecurePrefs();
@@ -149,18 +140,15 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
     }
 
     private void showLoading(boolean loading) {
-        // Toggle the overlay that contains the spinner so the bottom nav remains visible.
+        // Use the reusable LoadingOverlay component
         if (loadingOverlay != null) {
-            loadingOverlay.setVisibility(loading ? View.VISIBLE : View.GONE);
-        }
-
-        if (loadingGif != null) {
-            loadingGif.setVisibility(loading ? View.VISIBLE : View.GONE);
-        }
-
-        if (loading) {
-            if (errorText != null) errorText.setVisibility(View.GONE);
-            hideStatusFragments();
+            if (loading) {
+                loadingOverlay.show();
+                if (errorText != null) errorText.setVisibility(View.GONE);
+                hideStatusFragments();
+            } else {
+                loadingOverlay.hide();
+            }
         }
     }
 
@@ -437,6 +425,11 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
     @Override
     public void onDestroy() {
         super.onDestroy();
+
+        // Cleanup loading overlay
+        if (loadingOverlay != null && getContext() != null) {
+            loadingOverlay.cleanup(getContext());
+        }
 
         // Unregister broadcast receiver
         if (transactionSuccessReceiver != null && getContext() != null) {

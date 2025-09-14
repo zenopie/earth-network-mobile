@@ -151,12 +151,14 @@ public class TokenBalancesFragment extends Fragment {
         tokenQueryQueue.clear();
         isQueryingToken = false;
         
-        // Add only tokens with viewing keys to the queue
+        // Add tokens with viewing keys to the queue and display them immediately with "..."
         for (String symbol : Tokens.ALL_TOKENS.keySet()) {
             Tokens.TokenInfo token = Tokens.getToken(symbol);
             if (token != null) {
                 String viewingKey = getViewingKey(token.contract);
                 if (!TextUtils.isEmpty(viewingKey)) {
+                    // Show token immediately with "..." while we fetch the actual balance
+                    addTokenBalanceView(token, "...", true);
                     tokenQueryQueue.offer(token);
                 }
             }

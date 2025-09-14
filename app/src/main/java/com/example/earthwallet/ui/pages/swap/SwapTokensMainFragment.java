@@ -403,12 +403,14 @@ public class SwapTokensMainFragment extends Fragment {
     }
     
     private void fetchBalances() {
+        Log.i(TAG, "*** FETCHBALANCES CALLED - refreshing " + fromToken + " and " + toToken + " balances ***");
+
         if (TextUtils.isEmpty(currentWalletAddress)) {
             fromBalanceText.setText("Balance: Connect wallet");
             toBalanceText.setText("Balance: Connect wallet");
             return;
         }
-        
+
         String fromTokenSymbol = tokenSymbols.get(fromTokenSpinner.getSelectedItemPosition());
         String toTokenSymbol = tokenSymbols.get(toTokenSpinner.getSelectedItemPosition());
         
@@ -896,7 +898,7 @@ public class SwapTokensMainFragment extends Fragment {
         transactionSuccessReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
-                Log.d(TAG, "Received TRANSACTION_SUCCESS broadcast - refreshing swap data immediately");
+                Log.i(TAG, "*** SWAP PAGE: Received TRANSACTION_SUCCESS broadcast - refreshing balances ***");
 
                 // Clear amounts and start multiple refresh attempts to ensure UI updates during animation
                 clearAmounts();
