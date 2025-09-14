@@ -1,8 +1,10 @@
 package com.example.earthwallet.ui.pages.managelp;
 
 import android.app.Activity;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.text.TextUtils;
@@ -56,6 +58,9 @@ public class AddLiquidityFragment extends Fragment {
     private SharedPreferences securePrefs;
     private SharedPreferences viewingKeysPrefs;
     private ExecutorService executorService;
+
+    // Broadcast receiver for transaction success
+    private BroadcastReceiver transactionSuccessReceiver;
     
     // Pool reserves for ratio calculation
     private double erthReserve = 0.0;
@@ -121,6 +126,8 @@ public class AddLiquidityFragment extends Fragment {
         
         initializeViews(view);
         setupListeners();
+        setupBroadcastReceiver();
+        registerBroadcastReceiver();
         loadCurrentWalletAddress();
         updateTokenInfo();
         loadTokenBalances();
@@ -140,6 +147,50 @@ public class AddLiquidityFragment extends Fragment {
         addLiquidityButton = view.findViewById(R.id.add_liquidity_button);
     }
     
+    private void setupBroadcastReceiver() {
+        transactionSuccessReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                Log.d(TAG, "Received TRANSACTION_SUCCESS broadcast - refreshing liquidity data immediately");
+
+                // Clear input fields and start multiple refresh attempts
+                tokenAmountInput.setText("");
+                erthAmountInput.setText("");
+                loadTokenBalances();
+                loadPoolReserves();
+
+                // Stagger additional refreshes to catch the UI during animation
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                    Log.d(TAG, "Secondary refresh during animation");
+                    loadTokenBalances();
+                    loadPoolReserves();
+                }, 100); // 100ms delay
+
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                    Log.d(TAG, "Third refresh during animation");
+                    loadTokenBalances();
+                    loadPoolReserves();
+                }, 500); // 500ms delay
+            }
+        };
+    }
+
+    private void registerBroadcastReceiver() {
+        if (getActivity() != null && transactionSuccessReceiver != null) {
+            IntentFilter filter = new IntentFilter("com.example.earthwallet.TRANSACTION_SUCCESS");
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                    requireActivity().getApplicationContext().registerReceiver(transactionSuccessReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+                } else {
+                    requireActivity().getApplicationContext().registerReceiver(transactionSuccessReceiver, filter);
+                }
+                Log.d(TAG, "Registered transaction success receiver");
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to register broadcast receiver", e);
+            }
+        }
+    }
+
     private void setupListeners() {
         tokenMaxButton.setOnClickListener(v -> {
             if (tokenBalance > 0) {
@@ -796,25 +847,18 @@ public class AddLiquidityFragment extends Fragment {
     @Override
     public void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        
+
         if (requestCode == REQ_ADD_LIQUIDITY) {
             if (resultCode == Activity.RESULT_OK) {
-                Toast.makeText(getContext(), "Liquidity added successfully!", Toast.LENGTH_SHORT).show();
                 Log.i(TAG, "Add liquidity transaction succeeded");
-                
                 // Clear input fields
                 tokenAmountInput.setText("");
                 erthAmountInput.setText("");
-                
-                // Refresh balances and pool reserves after a short delay to allow blockchain to settle
-                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
-                    loadTokenBalances();
-                    loadPoolReserves();
-                }, 2000); // 2 second delay
-                
+                // Refresh data (broadcast receiver will also handle this)
+                loadTokenBalances();
+                loadPoolReserves();
             } else {
-                String error = (data != null) ? data.getStringExtra(com.example.earthwallet.bridge.activities.TransactionActivity.EXTRA_ERROR) : "Transaction failed";
-                Toast.makeText(getContext(), "Failed to add liquidity: " + error, Toast.LENGTH_LONG).show();
+                String error = (data != null) ? data.getStringExtra(TransactionActivity.EXTRA_ERROR) : "Transaction failed";
                 Log.e(TAG, "Add liquidity transaction failed: " + error);
             }
         }
@@ -823,6 +867,20 @@ public class AddLiquidityFragment extends Fragment {
     @Override
     public void onDestroy() {
         super.onDestroy();
+
+        // Unregister broadcast receiver
+        if (transactionSuccessReceiver != null && getContext() != null) {
+            try {
+                requireActivity().getApplicationContext().unregisterReceiver(transactionSuccessReceiver);
+                Log.d(TAG, "Unregistered transaction success receiver");
+            } catch (IllegalArgumentException e) {
+                // Receiver was not registered, ignore
+                Log.d(TAG, "Receiver was not registered");
+            } catch (Exception e) {
+                Log.e(TAG, "Error unregistering receiver", e);
+            }
+        }
+
         if (executorService != null && !executorService.isShutdown()) {
             executorService.shutdown();
         }

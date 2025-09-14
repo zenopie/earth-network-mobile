@@ -31,79 +31,115 @@ public class SecretProtobufService {
 
     /**
      * Builds a complete protobuf transaction for Secret Network contract execution
+     * Supports both single message (legacy) and multi-message transactions
      */
-    public byte[] buildTransaction(String sender, String contractAddr, String codeHash, 
-                                 byte[] encryptedMsg, String funds, String memo, 
-                                 String accountNumber, String sequence, String chainId, 
+    public byte[] buildTransaction(String sender, String contractAddr, String codeHash,
+                                 byte[] encryptedMsg, String funds, String memo,
+                                 String accountNumber, String sequence, String chainId,
                                  ECKey walletKey) throws Exception {
-        
-        Log.i(TAG, "Building Secret Network protobuf transaction");
-        
+
+        // Convert single message to messages array for unified processing
+        JSONArray messagesArray = new JSONArray();
+        JSONObject singleMessage = new JSONObject();
         try {
-            // Parse funds into coins array
-            JSONArray coins = null;
+            singleMessage.put("sender", sender);
+            singleMessage.put("contract", contractAddr);
+            singleMessage.put("code_hash", codeHash);
+            singleMessage.put("encrypted_msg", Base64.encodeToString(encryptedMsg, Base64.NO_WRAP));
             if (funds != null && !funds.isEmpty()) {
-                coins = parseCoins(funds);
+                singleMessage.put("sent_funds", parseCoins(funds));
             }
-            
-            // Build the complete transaction using protobuf structure
-            return encodeTransactionToProtobuf(
-                sender, contractAddr, codeHash, encryptedMsg, coins, memo,
-                accountNumber, sequence, chainId, walletKey
-            );
-            
+            messagesArray.put(singleMessage);
         } catch (Exception e) {
-            Log.e(TAG, "Failed to build protobuf transaction", e);
-            throw new Exception("Protobuf transaction building failed: " + e.getMessage());
+            throw new Exception("Failed to create single message array: " + e.getMessage());
+        }
+
+        return buildMultiMessageTransaction(messagesArray, memo, accountNumber, sequence, chainId, walletKey);
+    }
+
+    /**
+     * Builds a protobuf transaction with multiple messages - unified method for all execute transactions
+     */
+    public byte[] buildMultiMessageTransaction(JSONArray messages, String memo,
+                                             String accountNumber, String sequence,
+                                             String chainId, ECKey walletKey) throws Exception {
+
+        Log.i(TAG, "Building Secret Network protobuf transaction with " + messages.length() + " message(s)");
+
+        try {
+            return encodeMultiMessageTransactionToProtobuf(
+                messages, memo, accountNumber, sequence, chainId, walletKey
+            );
+
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to build multi-message protobuf transaction", e);
+            throw new Exception("Multi-message protobuf transaction building failed: " + e.getMessage());
         }
     }
 
     /**
-     * Creates a clean, simple protobuf transaction for Secret Network
+     * Creates a protobuf transaction with multiple MsgExecuteContract messages
      */
-    private byte[] encodeTransactionToProtobuf(String sender, String contractAddr, String codeHash,
-                                             byte[] encryptedMsg, JSONArray coins, String memo,
-                                             String accountNumber, String sequence, String chainId,
-                                             ECKey walletKey) throws Exception {
-        
-        Log.i(TAG, "Creating clean protobuf transaction");
-        
-        // 1. Create MsgExecuteContract message with binary addresses (like SecretJS)
-        // Convert bech32 addresses to 20-byte binary format
+    private byte[] encodeMultiMessageTransactionToProtobuf(JSONArray messages, String memo,
+                                                         String accountNumber, String sequence,
+                                                         String chainId, ECKey walletKey) throws Exception {
+
+        Log.i(TAG, "Creating multi-message protobuf transaction");
+
+        // Get sender from first message (all messages should have same sender)
+        JSONObject firstMessage = messages.getJSONObject(0);
+        String sender = firstMessage.getString("sender");
         byte[] senderBytes = decodeBech32Address(sender);
-        byte[] contractBytes = decodeBech32Address(contractAddr);
-        
-        
-        secret.compute.v1beta1.MsgExecuteContract.Builder msgBuilder = 
-            secret.compute.v1beta1.MsgExecuteContract.newBuilder()
-                .setSender(ByteString.copyFrom(senderBytes))      // Binary address
-                .setContract(ByteString.copyFrom(contractBytes))  // Binary address
-                .setMsg(ByteString.copyFrom(encryptedMsg))
-                .setCallbackCodeHash("")  // Empty string, not null - matches SecretJS
-                .setCallbackSig(ByteString.EMPTY);  // Empty bytes, not null - matches SecretJS
-        
-        // Add funds if provided
-        if (coins != null && coins.length() > 0) {
-            for (int i = 0; i < coins.length(); i++) {
-                JSONObject coin = coins.getJSONObject(i);
-                cosmos.base.v1beta1.CoinOuterClass.Coin.Builder coinBuilder = cosmos.base.v1beta1.CoinOuterClass.Coin.newBuilder()
-                    .setDenom(coin.getString("denom"))
-                    .setAmount(coin.getString("amount"));
-                msgBuilder.addSentFunds(coinBuilder.build());
+
+        // 1. Create all MsgExecuteContract messages
+        cosmos.tx.v1beta1.Tx.TxBody.Builder txBodyBuilder =
+            cosmos.tx.v1beta1.Tx.TxBody.newBuilder();
+
+        for (int i = 0; i < messages.length(); i++) {
+            JSONObject message = messages.getJSONObject(i);
+            String contract = message.getString("contract");
+            String encryptedMsgB64 = message.getString("encrypted_msg");
+
+            // Convert addresses to binary format
+            byte[] contractBytes = decodeBech32Address(contract);
+            byte[] encryptedMsg = Base64.decode(encryptedMsgB64, Base64.NO_WRAP);
+
+            // Create MsgExecuteContract
+            secret.compute.v1beta1.MsgExecuteContract.Builder msgBuilder =
+                secret.compute.v1beta1.MsgExecuteContract.newBuilder()
+                    .setSender(ByteString.copyFrom(senderBytes))
+                    .setContract(ByteString.copyFrom(contractBytes))
+                    .setMsg(ByteString.copyFrom(encryptedMsg))
+                    .setCallbackCodeHash("")
+                    .setCallbackSig(ByteString.EMPTY);
+
+            // Add funds if provided
+            if (message.has("sent_funds")) {
+                JSONArray coins = message.getJSONArray("sent_funds");
+                for (int j = 0; j < coins.length(); j++) {
+                    JSONObject coin = coins.getJSONObject(j);
+                    cosmos.base.v1beta1.CoinOuterClass.Coin.Builder coinBuilder =
+                        cosmos.base.v1beta1.CoinOuterClass.Coin.newBuilder()
+                            .setDenom(coin.getString("denom"))
+                            .setAmount(coin.getString("amount"));
+                    msgBuilder.addSentFunds(coinBuilder.build());
+                }
             }
+
+            secret.compute.v1beta1.MsgExecuteContract msg = msgBuilder.build();
+
+            // Wrap in Any and add to TxBody
+            com.google.protobuf.Any messageAny = com.google.protobuf.Any.newBuilder()
+                .setTypeUrl("/secret.compute.v1beta1.MsgExecuteContract")
+                .setValue(msg.toByteString())
+                .build();
+
+            txBodyBuilder.addMessages(messageAny);
+            Log.i(TAG, "Added message " + (i + 1) + " to transaction: " + contract);
         }
-        
-        secret.compute.v1beta1.MsgExecuteContract msg = msgBuilder.build();
-        
-        // 2. Create TxBody
-        cosmos.tx.v1beta1.Tx.TxBody.Builder txBodyBuilder = 
-            cosmos.tx.v1beta1.Tx.TxBody.newBuilder()
-                .addMessages(com.google.protobuf.Any.newBuilder()
-                    .setTypeUrl("/secret.compute.v1beta1.MsgExecuteContract")
-                    .setValue(msg.toByteString())
-                    .build())
-                .setMemo(memo != null ? memo : "");
-        
+
+        // 2. Complete TxBody with memo
+        txBodyBuilder.setMemo(memo != null ? memo : "");
         cosmos.tx.v1beta1.Tx.TxBody txBody = txBodyBuilder.build();
         
         // 3. Create AuthInfo with fee and signature info
