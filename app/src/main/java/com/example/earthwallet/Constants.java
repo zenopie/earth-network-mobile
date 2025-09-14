@@ -15,4 +15,7 @@ public class Constants {
     
     // Backend base URL
     public static final String BACKEND_BASE_URL = "https://maroon-wolverine.vm.scrtlabs.com/api";
+
+    // Network constants
+    public static final String DEFAULT_LCD_URL = "https://lcd.erth.network";
 }

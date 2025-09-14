@@ -4,7 +4,7 @@ import android.text.TextUtils;
 import android.util.Base64;
 import android.util.Log;
 
-import com.example.earthwallet.wallet.services.SecretWallet;
+import com.example.earthwallet.wallet.utils.WalletCrypto;
 
 import org.bitcoinj.core.ECKey;
 
@@ -167,7 +167,7 @@ public class SecretCryptoService {
      * Signs a message using secp256k1
      */
     public byte[] signMessage(byte[] messageHash, String mnemonic) throws Exception {
-        ECKey key = SecretWallet.deriveKeyFromMnemonic(mnemonic);
+        ECKey key = WalletCrypto.deriveKeyFromMnemonic(mnemonic);
         return key.sign(org.bitcoinj.core.Sha256Hash.wrap(messageHash)).encodeToDER();
     }
 
@@ -175,7 +175,7 @@ public class SecretCryptoService {
      * Gets the compressed public key for a wallet
      */
     public byte[] getWalletPublicKey(String mnemonic) throws Exception {
-        ECKey key = SecretWallet.deriveKeyFromMnemonic(mnemonic);
+        ECKey key = WalletCrypto.deriveKeyFromMnemonic(mnemonic);
         return key.getPubKeyPoint().getEncoded(true);
     }
 

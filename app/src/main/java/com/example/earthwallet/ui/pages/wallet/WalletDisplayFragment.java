@@ -24,7 +24,7 @@ import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 
 import com.example.earthwallet.R;
-import com.example.earthwallet.wallet.services.SecretWallet;
+import com.example.earthwallet.wallet.utils.WalletNetwork;
 
 /**
  * WalletDisplayFragment
@@ -181,7 +181,7 @@ public class WalletDisplayFragment extends Fragment {
         if (!TextUtils.isEmpty(currentAddress)) {
             // Launch background task to fetch SCRT balance
             balanceLoaded = false; // Mark as loading
-            new FetchBalanceTask().execute(SecretWallet.DEFAULT_LCD_URL, currentAddress);
+            new FetchBalanceTask().execute(WalletNetwork.DEFAULT_LCD_URL, currentAddress);
         }
     }
     
@@ -214,8 +214,8 @@ public class WalletDisplayFragment extends Fragment {
             
             try {
                 // Use SecretWallet's bank query method
-                long microScrt = SecretWallet.fetchUscrtBalanceMicro(lcdUrl, address);
-                return SecretWallet.formatScrt(microScrt);
+                long microScrt = WalletNetwork.fetchUscrtBalanceMicro(lcdUrl, address);
+                return WalletNetwork.formatScrt(microScrt);
             } catch (Exception e) {
                 Log.e(TAG, "SCRT balance query failed", e);
                 return "Error: " + e.getMessage();

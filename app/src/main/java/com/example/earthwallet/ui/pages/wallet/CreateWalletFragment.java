@@ -1,7 +1,7 @@
 package com.example.earthwallet.ui.pages.wallet;
 
 import com.example.earthwallet.R;
-import com.example.earthwallet.wallet.services.SecretWallet;
+import com.example.earthwallet.wallet.services.SecureWalletManager;
 
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -10,6 +10,7 @@ import android.text.Editable;
 import android.text.InputType;
 import android.text.TextUtils;
 import android.text.TextWatcher;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -44,7 +45,6 @@ public class CreateWalletFragment extends Fragment {
 
     private static final String PREF_FILE = "secret_wallet_prefs";
     private static final String KEY_MNEMONIC = "mnemonic";
-    private static final String KEY_LCD_URL = "lcd_url";
     private static final String KEY_PIN_HASH = "pin_hash";
     private static final String KEY_WALLET_NAME = "wallet_name";
 
@@ -109,7 +109,6 @@ public class CreateWalletFragment extends Fragment {
 
         // Initialize SecretWallet wordlist
         try {
-            SecretWallet.initialize(requireContext());
         } catch (Exception e) {
             Toast.makeText(requireContext(), "Wallet initialization failed", Toast.LENGTH_LONG).show();
             if (listener != null) {
@@ -180,7 +179,13 @@ public class CreateWalletFragment extends Fragment {
         Button btnReveal = view.findViewById(R.id.btn_reveal);
         btnReveal.setOnClickListener(v -> {
             // Generate mnemonic and show it
-            mnemonic = SecretWallet.generateMnemonic();
+            try {
+                mnemonic = SecureWalletManager.generateMnemonic(requireContext());
+            } catch (Exception e) {
+                Log.e("CreateWalletFragment", "Failed to generate mnemonic", e);
+                Toast.makeText(requireContext(), "Failed to generate wallet", Toast.LENGTH_LONG).show();
+                return;
+            }
             mnemonicWords = Arrays.asList(mnemonic.trim().split("\\s+"));
             revealMnemonicText.setText(mnemonic);
             btnRevealNext.setEnabled(true);
@@ -343,24 +348,11 @@ public class CreateWalletFragment extends Fragment {
                 pinHash = sb.toString();
             }
 
-            String walletsJson = securePrefs.getString("wallets", "[]");
-            JSONArray arr = new JSONArray(walletsJson);
-
-            // Derive address from mnemonic once during creation
-            org.bitcoinj.core.ECKey key = SecretWallet.deriveKeyFromMnemonic(mnemonic);
-            String address = SecretWallet.getAddress(key);
-            
-            JSONObject obj = new JSONObject();
-            obj.put("name", walletName);
-            obj.put("mnemonic", mnemonic);
-            obj.put("address", address);
-            arr.put(obj);
+            // Create wallet using SecureWalletManager
+            SecureWalletManager.createWallet(requireContext(), securePrefs, walletName, mnemonic);
 
             SharedPreferences.Editor ed = securePrefs.edit();
-            ed.putString("wallets", arr.toString());
-            ed.putInt("selected_wallet_index", arr.length() - 1);
             ed.putString(KEY_WALLET_NAME, walletName);
-            ed.putString(KEY_LCD_URL, SecretWallet.DEFAULT_LCD_URL);
             if (TextUtils.isEmpty(existingPinHash)) {
                 ed.putString(KEY_PIN_HASH, pinHash);
             }

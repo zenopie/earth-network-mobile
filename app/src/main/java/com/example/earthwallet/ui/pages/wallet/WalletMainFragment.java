@@ -20,14 +20,9 @@ import androidx.security.crypto.MasterKeys;
 import com.example.earthwallet.R;
 import com.example.earthwallet.ui.pages.wallet.CreateWalletFragment;
 import com.example.earthwallet.ui.pages.wallet.WalletListFragment;
-import com.example.earthwallet.bridge.services.ViewingKeyService;
 import com.example.earthwallet.ui.pages.wallet.ManageViewingKeysFragment;
 import com.example.earthwallet.wallet.constants.Tokens;
-import com.example.earthwallet.wallet.services.SecretWallet;
-
-import org.bitcoinj.core.ECKey;
-import org.json.JSONArray;
-import org.json.JSONObject;
+import com.example.earthwallet.wallet.services.SecureWalletManager;
 
 /**
  * WalletMainFragment
@@ -35,7 +30,6 @@ import org.json.JSONObject;
  * Coordinating fragment that manages child fragments:
  * - WalletDisplayFragment: Wallet info, address, SCRT balance
  * - TokenBalancesFragment: Token balance management
- * - ViewingKeyService: Viewing key operations (invisible helper service)
  * 
  * This fragment handles:
  * - Child fragment lifecycle management
@@ -48,7 +42,6 @@ public class WalletMainFragment extends Fragment
                CreateWalletFragment.CreateWalletListener,
                WalletDisplayFragment.WalletDisplayListener,
                TokenBalancesFragment.TokenBalancesListener,
-               ViewingKeyService.ViewingKeyServiceListener,
                ManageViewingKeysFragment.ManageViewingKeysListener {
     
     private static final String TAG = "WalletMainFragment";
@@ -57,7 +50,6 @@ public class WalletMainFragment extends Fragment
     // Child fragments
     private WalletDisplayFragment walletDisplayFragment;
     private TokenBalancesFragment tokenBalancesFragment;
-    private ViewingKeyService viewingKeyService;
     
     // UI components
     private TextView walletNameText;
@@ -65,19 +57,12 @@ public class WalletMainFragment extends Fragment
     // State management
     private SharedPreferences securePrefs;
     private String currentWalletAddress = "";
-    private String currentWalletMnemonic = "";
     private String currentWalletName = "";
     
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        
-        try {
-            SecretWallet.initialize(requireContext());
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to initialize SecretWallet", e);
-        }
-        
+
         // Use centralized secure preferences from HostActivity
         securePrefs = ((com.example.earthwallet.ui.host.HostActivity) getActivity()).getSecurePrefs();
     }
@@ -116,13 +101,11 @@ public class WalletMainFragment extends Fragment
         // Create child fragments
         walletDisplayFragment = new WalletDisplayFragment();
         tokenBalancesFragment = new TokenBalancesFragment();
-        viewingKeyService = new ViewingKeyService();
-        
+
         // Add fragments to their containers
         FragmentTransaction transaction = getChildFragmentManager().beginTransaction();
         transaction.add(R.id.wallet_display_container, walletDisplayFragment);
         transaction.add(R.id.token_balances_container, tokenBalancesFragment);
-        transaction.add(viewingKeyService, "viewing_key_service"); // Invisible helper service
         transaction.commit();
     }
     
@@ -136,46 +119,17 @@ public class WalletMainFragment extends Fragment
     
     private void loadCurrentWallet() {
         try {
-            String walletsJson = securePrefs.getString("wallets", "[]");
-            JSONArray walletsArray = new JSONArray(walletsJson);
-            int selectedIndex = securePrefs.getInt("selected_wallet_index", -1);
-            
-            if (walletsArray.length() > 0) {
-                JSONObject selectedWallet;
-                if (selectedIndex >= 0 && selectedIndex < walletsArray.length()) {
-                    selectedWallet = walletsArray.getJSONObject(selectedIndex);
-                } else {
-                    selectedWallet = walletsArray.getJSONObject(0);
-                }
-                
-                currentWalletMnemonic = selectedWallet.optString("mnemonic", "");
-                currentWalletName = selectedWallet.optString("name", "Wallet");
-                currentWalletAddress = selectedWallet.optString("address", "");
-                
-                // If address is missing, derive it once and update storage
-                if (TextUtils.isEmpty(currentWalletAddress) && !TextUtils.isEmpty(currentWalletMnemonic)) {
-                    ECKey key = SecretWallet.deriveKeyFromMnemonic(currentWalletMnemonic);
-                    currentWalletAddress = SecretWallet.getAddress(key);
-                    
-                    // Update the stored wallet with the address
-                    selectedWallet.put("address", currentWalletAddress);
-                    walletsArray.put(selectedIndex >= 0 ? selectedIndex : 0, selectedWallet);
-                    securePrefs.edit().putString("wallets", walletsArray.toString()).apply();
-                    
-                    Log.d(TAG, "Migrated wallet address: " + currentWalletName + " (" + currentWalletAddress + ")");
-                } else {
-                    Log.d(TAG, "Loaded wallet: " + currentWalletName + " (" + currentWalletAddress + ")");
-                }
-            } else {
-                // No wallets available
-                currentWalletMnemonic = "";
-                currentWalletName = "No wallet";
-                currentWalletAddress = "";
-                Log.d(TAG, "No wallets found");
-            }
+            // Use SecureWalletManager instead of direct preferences access
+            currentWalletName = SecureWalletManager.getCurrentWalletName(requireContext(), securePrefs);
+            currentWalletAddress = SecureWalletManager.getWalletAddress(requireContext(), securePrefs);
+
+            // Ensure wallet has address (handles migration)
+            SecureWalletManager.ensureCurrentWalletHasAddress(requireContext(), securePrefs);
+
+
+            Log.d(TAG, "Loaded wallet: " + currentWalletName + " (" + currentWalletAddress + ")");
         } catch (Exception e) {
             Log.e(TAG, "Failed to load current wallet", e);
-            currentWalletMnemonic = "";
             currentWalletName = "Error";
             currentWalletAddress = "";
         }
@@ -198,10 +152,7 @@ public class WalletMainFragment extends Fragment
             tokenBalancesFragment.updateWalletAddress(currentWalletAddress);
         }
         
-        // Update viewing key manager fragment
-        if (viewingKeyService != null) {
-            viewingKeyService.updateWalletAddress(currentWalletAddress);
-        }
+        // ViewingKeyManager is now handled automatically by individual fragments
     }
     
     // =============================================================================
@@ -219,10 +170,8 @@ public class WalletMainFragment extends Fragment
     
     @Override
     public void onViewingKeyRequested(Tokens.TokenInfo token) {
-        // Delegate to viewing key manager fragment
-        if (viewingKeyService != null) {
-            viewingKeyService.requestViewingKey(token);
-        }
+        // Show manage viewing keys fragment where users can set viewing keys
+        showManageViewingKeysFragment();
     }
     
     @Override
@@ -235,20 +184,6 @@ public class WalletMainFragment extends Fragment
         return securePrefs;
     }
     
-    // =============================================================================
-    // ViewingKeyService.ViewingKeyServiceListener Implementation
-    // =============================================================================
-    
-    @Override
-    public void onViewingKeySet(Tokens.TokenInfo token, String viewingKey) {
-        Log.d(TAG, "Viewing key set for " + token.symbol + ", updating token balance");
-        
-        // Update token balance fragment to show "Loading..." and query balance
-        if (tokenBalancesFragment != null) {
-            tokenBalancesFragment.updateTokenBalance(token, "Loading...");
-            tokenBalancesFragment.querySingleToken(token);
-        }
-    }
     
     // =============================================================================
     // ManageViewingKeysFragment.ManageViewingKeysListener Implementation

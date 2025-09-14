@@ -21,12 +21,12 @@ import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
-import androidx.security.crypto.EncryptedSharedPreferences;
-import androidx.security.crypto.MasterKeys;
 
 import com.example.earthwallet.R;
 import com.example.earthwallet.bridge.services.SecretQueryService;
 import com.example.earthwallet.wallet.constants.Tokens;
+import com.example.earthwallet.bridge.utils.ViewingKeyManager;
+import com.example.earthwallet.wallet.services.SecureWalletManager;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -43,24 +43,22 @@ import org.json.JSONObject;
 public class TokenBalancesFragment extends Fragment {
     
     private static final String TAG = "TokenBalancesFragment";
-    private static final String PREF_FILE = "viewing_keys_prefs";
     private static final int REQ_TOKEN_BALANCE = 2001;
     
     // UI Components
     private LinearLayout tokenBalancesContainer;
     
     // State management
-    private SharedPreferences securePrefs;
     private java.util.Queue<Tokens.TokenInfo> tokenQueryQueue = new java.util.LinkedList<>();
     private boolean isQueryingToken = false;
     private String walletAddress = "";
     private Tokens.TokenInfo currentlyQueryingToken = null;
+    private ViewingKeyManager viewingKeyManager;
     
     // Interface for communication with parent
     public interface TokenBalancesListener {
         void onViewingKeyRequested(Tokens.TokenInfo token);
         void onManageViewingKeysRequested();
-        String getCurrentWalletAddress();
         SharedPreferences getSecurePrefs();
     }
     
@@ -82,13 +80,8 @@ public class TokenBalancesFragment extends Fragment {
     public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         
-        // Create separate secure preferences for viewing keys to avoid wallet corruption
-        try {
-            securePrefs = createSecurePrefs(requireContext());
-            Log.d(TAG, "Successfully created viewing keys secure preferences");
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to create viewing keys secure preferences", e);
-        }
+        // Initialize ViewingKeyManager
+        viewingKeyManager = ViewingKeyManager.getInstance(requireContext());
     }
     
     @Override
@@ -115,11 +108,9 @@ public class TokenBalancesFragment extends Fragment {
         super.onViewCreated(view, savedInstanceState);
         
         // Initialize token balances if we have a wallet address
-        if (listener != null) {
-            walletAddress = listener.getCurrentWalletAddress();
-            if (!TextUtils.isEmpty(walletAddress)) {
-                refreshTokenBalances();
-            }
+        loadCurrentWalletAddress();
+        if (!TextUtils.isEmpty(walletAddress)) {
+            refreshTokenBalances();
         }
     }
     
@@ -128,9 +119,9 @@ public class TokenBalancesFragment extends Fragment {
      */
     public void refreshTokenBalances() {
         if (TextUtils.isEmpty(walletAddress)) {
-            walletAddress = listener != null ? listener.getCurrentWalletAddress() : "";
+            loadCurrentWalletAddress();
         }
-        
+
         if (TextUtils.isEmpty(walletAddress)) {
             Log.w(TAG, "No wallet address available for token balance refresh");
             return;
@@ -213,7 +204,7 @@ public class TokenBalancesFragment extends Fragment {
             
             // Store token symbol with viewing key for result matching
             if (!TextUtils.isEmpty(walletAddress)) {
-                securePrefs.edit().putString("viewing_key_symbol_" + walletAddress + "_" + token.contract, token.symbol).apply();
+                viewingKeyManager.setViewingKey(walletAddress, token.contract, viewingKey, token.symbol);
             }
             
             // Create SNIP-20 balance query
@@ -543,34 +534,28 @@ public class TokenBalancesFragment extends Fragment {
     
     // Helper methods for viewing key management
     private String getViewingKey(String contractAddress) {
-        if (TextUtils.isEmpty(walletAddress)) {
-            return "";
-        }
-        return securePrefs.getString("viewing_key_" + walletAddress + "_" + contractAddress, "");
+        return viewingKeyManager.getViewingKey(walletAddress, contractAddress);
     }
-    
+
     private String getViewingKeyTokenSymbol(String contractAddress) {
-        if (TextUtils.isEmpty(walletAddress)) {
-            return "";
+        return viewingKeyManager.getViewingKeyTokenSymbol(walletAddress, contractAddress);
+    }
+
+    private void loadCurrentWalletAddress() {
+        // Use SecureWalletManager to get wallet address directly
+        try {
+            walletAddress = SecureWalletManager.getWalletAddress(requireContext());
+            if (!TextUtils.isEmpty(walletAddress)) {
+                Log.d(TAG, "Loaded wallet address: " + walletAddress.substring(0, Math.min(14, walletAddress.length())) + "...");
+            } else {
+                Log.w(TAG, "No wallet address available");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to load wallet address", e);
+            walletAddress = "";
         }
-        return securePrefs.getString("viewing_key_symbol_" + walletAddress + "_" + contractAddress, "");
     }
     
-    private static SharedPreferences createSecurePrefs(Context context) {
-        try {
-            String masterKeyAlias = androidx.security.crypto.MasterKeys.getOrCreate(androidx.security.crypto.MasterKeys.AES256_GCM_SPEC);
-            return androidx.security.crypto.EncryptedSharedPreferences.create(
-                PREF_FILE,
-                masterKeyAlias,
-                context,
-                androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            );
-        } catch (Exception e) {
-            Log.e("TokenBalancesFragment", "Failed to create secure preferences", e);
-            throw new RuntimeException("Secure preferences initialization failed", e);
-        }
-    }
     
     @Override
     public void onDetach() {

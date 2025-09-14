@@ -1,7 +1,7 @@
 package com.example.earthwallet.ui.pages.wallet;
 
 import com.example.earthwallet.R;
-import com.example.earthwallet.wallet.services.SecretWallet;
+import com.example.earthwallet.wallet.services.SecureWalletManager;
 
 import android.content.ClipData;
 import android.content.ClipboardManager;
@@ -71,7 +71,6 @@ public class WalletListFragment extends Fragment {
         super.onViewCreated(view, savedInstanceState);
         
         try {
-            SecretWallet.initialize(requireContext());
         } catch (Exception e) {
             Toast.makeText(requireContext(), "Wallet initialization failed", Toast.LENGTH_LONG).show();
         }
@@ -133,7 +132,7 @@ public class WalletListFragment extends Fragment {
                 String address = "";
                 if (!TextUtils.isEmpty(mnemonic)) {
                     try {
-                        address = SecretWallet.getAddressFromMnemonic(mnemonic);
+                        address = SecureWalletManager.getWalletAddress(requireContext());
                     } catch (Exception ignored) { address = ""; }
                 }
                 final String finalAddress = address;

@@ -24,16 +24,11 @@ import com.example.earthwallet.Constants;
 import com.example.earthwallet.bridge.activities.TransactionActivity;
 
 import com.example.earthwallet.bridge.services.SnipQueryService;
-import com.example.earthwallet.bridge.services.ViewingKeyService;
+import com.example.earthwallet.bridge.utils.ViewingKeyManager;
 import com.example.earthwallet.wallet.constants.Tokens;
 import com.example.earthwallet.wallet.services.SecureWalletManager;
 
-import androidx.security.crypto.EncryptedSharedPreferences;
-import androidx.security.crypto.MasterKeys;
-
 import org.json.JSONObject;
-
-import android.content.SharedPreferences;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -63,6 +58,7 @@ public class StakeUnstakeFragment extends Fragment {
     // Data
     private double erthBalance = 0.0;
     private double stakedBalance = 0.0;
+    private ViewingKeyManager viewingKeyManager;
 
     // Broadcast receiver for transaction success
     private BroadcastReceiver transactionSuccessReceiver;
@@ -80,7 +76,8 @@ public class StakeUnstakeFragment extends Fragment {
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
 
-        // No services to initialize in this simplified version
+        // Initialize ViewingKeyManager
+        viewingKeyManager = ViewingKeyManager.getInstance(requireContext());
 
         initializeViews(view);
         setupBroadcastReceiver();
@@ -260,20 +257,10 @@ public class StakeUnstakeFragment extends Fragment {
                     }
                     return;
                 }
-                
-                // Create secure preferences exactly like TokenBalancesFragment does
-                String masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC);
-                SharedPreferences securePrefs = EncryptedSharedPreferences.create(
-                    "viewing_keys_prefs",
-                    masterKeyAlias,
-                    getContext(),
-                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-                );
-                
-                // Get viewing key using exact same pattern as TokenBalancesFragment.getViewingKey()
-                String viewingKey = securePrefs.getString("viewing_key_" + walletAddress + "_" + Tokens.ERTH.contract, "");
-                Log.d(TAG, "Looking for key: viewing_key_" + walletAddress + "_" + Tokens.ERTH.contract);
+
+                // Get viewing key using ViewingKeyManager
+                String viewingKey = viewingKeyManager.getViewingKey(walletAddress, Tokens.ERTH.contract);
+                Log.d(TAG, "Looking for ERTH viewing key for wallet: " + walletAddress.substring(0, Math.min(14, walletAddress.length())) + "...");
                 Log.d(TAG, "Found viewing key: " + (viewingKey != null && !viewingKey.isEmpty()));
                 
                 if (viewingKey == null || viewingKey.isEmpty()) {

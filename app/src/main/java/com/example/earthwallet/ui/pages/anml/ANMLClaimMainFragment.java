@@ -25,7 +25,6 @@ import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
 
 import com.example.earthwallet.bridge.activities.TransactionActivity;
-import com.example.earthwallet.wallet.services.SecretWallet;
 import com.example.earthwallet.Constants;
 import com.example.earthwallet.ui.components.LoadingOverlay;
 import com.example.earthwallet.bridge.services.SecretQueryService;
@@ -73,7 +72,6 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
         super.onViewCreated(view, savedInstanceState);
 
         try {
-            SecretWallet.initialize(getContext());
         } catch (Exception e) {
             Log.e(TAG, "Failed to initialize SecretWallet", e);
         }

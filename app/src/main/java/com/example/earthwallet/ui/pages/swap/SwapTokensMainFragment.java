@@ -37,6 +37,7 @@ import androidx.security.crypto.MasterKeys;
 import com.example.earthwallet.R;
 import com.example.earthwallet.Constants;
 import com.example.earthwallet.bridge.activities.TransactionActivity;
+import com.example.earthwallet.bridge.utils.ViewingKeyManager;
 
 import com.example.earthwallet.bridge.services.SecretQueryService;
 import com.example.earthwallet.wallet.constants.Tokens;
@@ -97,6 +98,7 @@ public class SwapTokensMainFragment extends Fragment {
 
     // Broadcast receiver for transaction success
     private BroadcastReceiver transactionSuccessReceiver;
+    private ViewingKeyManager viewingKeyManager;
     
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
@@ -129,6 +131,10 @@ public class SwapTokensMainFragment extends Fragment {
         setupBroadcastReceiver();
         registerBroadcastReceiver();
         loadCurrentWalletAddress();
+
+        // Initialize viewing key manager
+        viewingKeyManager = ViewingKeyManager.getInstance(requireContext());
+
         updateTokenLogos();
         fetchBalances();
     }
@@ -1016,32 +1022,11 @@ public class SwapTokensMainFragment extends Fragment {
     }
     
     private String getViewingKeyForToken(String tokenSymbol) {
-        // Get viewing key for the token from secure storage
-        try {
-            Log.d(TAG, "getViewingKeyForToken called for: " + tokenSymbol);
-            Log.d(TAG, "securePrefs is null: " + (securePrefs == null));
-            Log.d(TAG, "currentWalletAddress: " + currentWalletAddress);
-            
-            Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenSymbol);
-            if (tokenInfo == null) {
-                Log.w(TAG, "Token info not found for: " + tokenSymbol);
-                return "";
-            }
-            
-            if (securePrefs == null) {
-                Log.e(TAG, "securePrefs is null, cannot get viewing key");
-                return "";
-            }
-            
-            String key = "viewing_key_" + currentWalletAddress + "_" + tokenInfo.contract;
-            String viewingKey = securePrefs.getString(key, "");
-            Log.d(TAG, "Viewing key lookup - key: " + key + ", found: " + !TextUtils.isEmpty(viewingKey));
-            
-            return viewingKey;
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to get viewing key for " + tokenSymbol, e);
+        Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenSymbol);
+        if (tokenInfo == null) {
             return "";
         }
+        return viewingKeyManager.getViewingKey(currentWalletAddress, tokenInfo.contract);
     }
     
     private void handleTokenBalanceResult(Intent data, String json) {

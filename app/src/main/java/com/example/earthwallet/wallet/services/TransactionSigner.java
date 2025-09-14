@@ -5,6 +5,7 @@ import org.bitcoinj.core.ECKey;
 import org.bitcoinj.core.Sha256Hash;
 import com.google.protobuf.ByteString;
 import cosmos.tx.v1beta1.Tx;
+import com.example.earthwallet.wallet.utils.WalletCrypto;
 
 /**
  * General purpose transaction signer for Secret Network
@@ -83,7 +84,7 @@ public class TransactionSigner {
      * Validates that a wallet key matches a sender address
      */
     public static void validateWalletMatchesSender(String senderAddress, ECKey walletKey) throws Exception {
-        String walletAddress = SecretWallet.getAddress(walletKey);
+        String walletAddress = WalletCrypto.getAddress(walletKey);
         
         if (!walletAddress.equals(senderAddress)) {
             throw new Exception("Wallet/sender mismatch: " +

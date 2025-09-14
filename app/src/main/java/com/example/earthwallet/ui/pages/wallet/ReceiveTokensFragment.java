@@ -21,7 +21,6 @@ import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 
 import com.example.earthwallet.R;
-import com.example.earthwallet.wallet.services.SecretWallet;
 import com.example.earthwallet.wallet.services.SecureWalletManager;
 
 import org.bitcoinj.core.ECKey;

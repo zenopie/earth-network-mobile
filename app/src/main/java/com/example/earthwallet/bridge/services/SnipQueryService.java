@@ -4,7 +4,6 @@ import android.content.Context;
 import android.text.TextUtils;
 import android.util.Log;
 
-import com.example.earthwallet.wallet.services.SecretWallet;
 import com.example.earthwallet.wallet.constants.Tokens;
 
 import org.json.JSONObject;

@@ -32,8 +32,11 @@ import com.example.earthwallet.R;
 import com.example.earthwallet.bridge.activities.TransactionActivity;
 
 import com.example.earthwallet.wallet.constants.Tokens;
-import com.example.earthwallet.wallet.services.SecretWallet;
+import com.example.earthwallet.wallet.utils.WalletCrypto;
+import com.example.earthwallet.wallet.utils.WalletNetwork;
 import com.example.earthwallet.wallet.services.SecureWalletManager;
+import com.example.earthwallet.bridge.services.SnipQueryService;
+import com.example.earthwallet.bridge.utils.ViewingKeyManager;
 
 import com.journeyapps.barcodescanner.ScanContract;
 import com.journeyapps.barcodescanner.ScanOptions;
@@ -42,6 +45,11 @@ import org.bitcoinj.core.ECKey;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
+
+import android.os.AsyncTask;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.widget.ImageView;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -59,7 +67,7 @@ public class SendTokensFragment extends Fragment implements
     WalletDisplayFragment.WalletDisplayListener {
     
     private static final String TAG = "SendTokensFragment";
-    private static final String PREF_FILE = "secret_wallet_prefs";
+    private static final String PREF_FILE = "viewing_keys_prefs";
     private static final int REQ_SEND_NATIVE = 3001;
     private static final int REQ_SEND_SNIP = 3002;
     
@@ -73,11 +81,15 @@ public class SendTokensFragment extends Fragment implements
     private EditText memoEditText;
     private Button sendButton;
     private TextView balanceText;
+    private ImageView tokenLogo;
     
     // Data
     private List<TokenOption> tokenOptions;
     private SharedPreferences securePrefs;
     private ActivityResultLauncher<ScanOptions> qrScannerLauncher;
+    private String currentWalletAddress;
+    private boolean balanceLoaded = false;
+    private ViewingKeyManager viewingKeyManager;
     
     // Interface for communication with parent
     public interface SendTokensListener {
@@ -120,60 +132,87 @@ public class SendTokensFragment extends Fragment implements
         memoEditText = view.findViewById(R.id.memoEditText);
         sendButton = view.findViewById(R.id.sendButton);
         balanceText = view.findViewById(R.id.balanceText);
+        tokenLogo = view.findViewById(R.id.tokenLogo);
         
         try {
             securePrefs = createSecurePrefs(requireContext());
+            viewingKeyManager = ViewingKeyManager.getInstance(requireContext());
         } catch (Exception e) {
             Log.e(TAG, "Failed to initialize secure preferences", e);
             Toast.makeText(getContext(), "Failed to initialize wallet", Toast.LENGTH_SHORT).show();
             return view;
         }
         
+        // Load current wallet address
+        loadCurrentWalletAddress();
+
         setupTokenSpinner();
         setupClickListeners();
-        
+
         // Force spinner background to be light
         tokenSpinner.setBackgroundColor(0xFFFFFFFF); // White background
         
         return view;
     }
+
+    @Override
+    public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
+        super.onViewCreated(view, savedInstanceState);
+
+        // Load balance and logo for initially selected token (first item in spinner)
+        if (!tokenOptions.isEmpty()) {
+            fetchTokenBalance(tokenOptions.get(0));
+            loadTokenLogo(tokenOptions.get(0));
+        }
+    }
     
     private void setupTokenSpinner() {
         tokenOptions = new ArrayList<>();
         
-        // Add native SCRT option
-        tokenOptions.add(new TokenOption("SCRT", "Native SCRT", true, null));
+        // Add native SCRT option (display as GAS)
+        tokenOptions.add(new TokenOption("SCRT", "GAS", true, null));
         
         // Add SNIP-20 tokens
         for (String symbol : Tokens.ALL_TOKENS.keySet()) {
             Tokens.TokenInfo token = Tokens.ALL_TOKENS.get(symbol);
-            tokenOptions.add(new TokenOption(symbol, symbol + " (" + token.contract.substring(0, 14) + "...)", false, token));
+            tokenOptions.add(new TokenOption(symbol, symbol, false, token));
         }
         
-        // Create adapter with custom styling to fix white text on white background
-        ArrayAdapter<TokenOption> adapter = new ArrayAdapter<TokenOption>(getContext(), android.R.layout.simple_spinner_item, tokenOptions) {
-            @Override
-            public View getView(int position, View convertView, ViewGroup parent) {
-                View view = super.getView(position, convertView, parent);
-                TextView textView = (TextView) view;
-                textView.setTextColor(0xFF333333);
-                textView.setTextSize(14);
-                return view;
-            }
-            
-            @Override
-            public View getDropDownView(int position, View convertView, ViewGroup parent) {
-                View view = super.getDropDownView(position, convertView, parent);
-                TextView textView = (TextView) view;
-                textView.setTextColor(0xFF333333);
-                textView.setTextSize(14);
-                textView.setPadding(16, 12, 16, 12);
-                view.setBackgroundColor(0xFFFFFFFF); // Force white background for dropdown items
-                return view;
-            }
-        };
-        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        // Create simple list for spinner (just token symbols like swap fragment)
+        List<String> tokenSymbols = new ArrayList<>();
+        for (TokenOption option : tokenOptions) {
+            tokenSymbols.add(option.displayName);
+        }
+
+        // Use the same adapter style as SwapTokensMainFragment
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(getContext(),
+            R.layout.spinner_item, tokenSymbols);
+        adapter.setDropDownViewResource(R.layout.spinner_dropdown_item);
         tokenSpinner.setAdapter(adapter);
+
+        // Force spinner background to be transparent to blend with input box
+        try {
+            tokenSpinner.getBackground().setAlpha(0);
+        } catch (Exception e) {
+            Log.w(TAG, "Could not set spinner background alpha", e);
+        }
+
+        // Set up spinner selection listener to load balance and logo
+        tokenSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (position < tokenOptions.size()) {
+                    TokenOption selectedToken = tokenOptions.get(position);
+                    fetchTokenBalance(selectedToken);
+                    loadTokenLogo(selectedToken);
+                }
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+                // Do nothing
+            }
+        });
     }
     
     
@@ -218,8 +257,8 @@ public class SendTokensFragment extends Fragment implements
                 String name = wallet.optString("name", "Wallet " + (i + 1));
                 
                 if (!TextUtils.isEmpty(mnemonic)) {
-                    ECKey walletKey = SecretWallet.deriveKeyFromMnemonic(mnemonic);
-                    String address = SecretWallet.getAddress(walletKey);
+                    ECKey walletKey = WalletCrypto.deriveKeyFromMnemonic(mnemonic);
+                    String address = WalletCrypto.getAddress(walletKey);
                     
                     // Don't include the current wallet in the recipient list
                     if (!address.equals(currentAddress)) {
@@ -289,11 +328,12 @@ public class SendTokensFragment extends Fragment implements
             return;
         }
         
-        TokenOption selectedToken = (TokenOption) tokenSpinner.getSelectedItem();
-        if (selectedToken == null) {
+        int selectedPosition = tokenSpinner.getSelectedItemPosition();
+        if (selectedPosition < 0 || selectedPosition >= tokenOptions.size()) {
             Toast.makeText(getContext(), "Please select a token", Toast.LENGTH_SHORT).show();
             return;
         }
+        TokenOption selectedToken = tokenOptions.get(selectedPosition);
         
         try {
             if (selectedToken.isNative) {
@@ -356,11 +396,16 @@ public class SendTokensFragment extends Fragment implements
     @Override
     public void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        
+
         if (requestCode == REQ_SEND_NATIVE || requestCode == REQ_SEND_SNIP) {
             if (resultCode == Activity.RESULT_OK) {
                 // Clear form
                 clearForm();
+                // Refresh balance after successful transaction
+                int selectedPosition = tokenSpinner.getSelectedItemPosition();
+                if (selectedPosition >= 0 && selectedPosition < tokenOptions.size()) {
+                    fetchTokenBalance(tokenOptions.get(selectedPosition));
+                }
                 // Notify parent
                 if (listener != null) {
                     listener.onSendComplete();
@@ -371,11 +416,214 @@ public class SendTokensFragment extends Fragment implements
             }
         }
     }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        // Refresh wallet address first (like TokenBalancesFragment)
+        loadCurrentWalletAddress();
+
+        // Refresh balance and logo when returning to the screen
+        int selectedPosition = tokenSpinner.getSelectedItemPosition();
+        if (selectedPosition >= 0 && selectedPosition < tokenOptions.size()) {
+            TokenOption selectedToken = tokenOptions.get(selectedPosition);
+            fetchTokenBalance(selectedToken);
+            loadTokenLogo(selectedToken);
+        }
+    }
     
     private void clearForm() {
         recipientEditText.setText("");
         amountEditText.setText("");
         memoEditText.setText("");
+    }
+
+    private void loadCurrentWalletAddress() {
+        // Use SecureWalletManager to get wallet address directly
+        try {
+            currentWalletAddress = SecureWalletManager.getWalletAddress(requireContext());
+            if (!TextUtils.isEmpty(currentWalletAddress)) {
+                Log.d(TAG, "Loaded wallet address: " + currentWalletAddress.substring(0, Math.min(14, currentWalletAddress.length())) + "...");
+            } else {
+                Log.w(TAG, "No wallet address available");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to load wallet address", e);
+            currentWalletAddress = "";
+        }
+    }
+
+    private void fetchTokenBalance(TokenOption tokenOption) {
+        Log.d(TAG, "fetchTokenBalance called for: " + tokenOption.symbol + " (isNative: " + tokenOption.isNative + ")");
+
+        if (TextUtils.isEmpty(currentWalletAddress)) {
+            Log.w(TAG, "No wallet address available for balance fetch");
+            balanceText.setText("Balance: Connect wallet");
+            return;
+        }
+
+        if (tokenOption.isNative) {
+            // Native SCRT balance using SecretWallet
+            Log.d(TAG, "Fetching native SCRT balance");
+            balanceText.setText("Balance: Loading...");
+            new FetchScrtBalanceTask().execute(WalletNetwork.DEFAULT_LCD_URL, currentWalletAddress);
+        } else {
+            // SNIP-20 token balance using SnipQueryService
+            Log.d(TAG, "Fetching SNIP-20 token balance for: " + tokenOption.symbol);
+            String viewingKey = getViewingKeyForToken(tokenOption.symbol);
+            Log.d(TAG, "Viewing key result: " + (TextUtils.isEmpty(viewingKey) ? "EMPTY" : "FOUND (" + viewingKey.length() + " chars)"));
+
+            if (TextUtils.isEmpty(viewingKey)) {
+                Log.w(TAG, "No viewing key available for " + tokenOption.symbol);
+                balanceText.setText("Balance: Set viewing key");
+                return;
+            }
+
+            balanceText.setText("Balance: Loading...");
+            fetchSnipTokenBalance(tokenOption.symbol, viewingKey);
+        }
+    }
+
+    private String getViewingKeyForToken(String tokenSymbol) {
+        Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenSymbol);
+        if (tokenInfo == null) {
+            return "";
+        }
+        return viewingKeyManager.getViewingKey(currentWalletAddress, tokenInfo.contract);
+    }
+
+    private void fetchSnipTokenBalance(String tokenSymbol, String viewingKey) {
+        Log.d(TAG, "fetchSnipTokenBalance called for: " + tokenSymbol);
+        new Thread(() -> {
+            try {
+                Log.d(TAG, "Calling SnipQueryService.queryBalance for " + tokenSymbol);
+                JSONObject result = SnipQueryService.queryBalance(
+                    getActivity(),
+                    tokenSymbol,
+                    currentWalletAddress,
+                    viewingKey
+                );
+
+                Log.d(TAG, "SnipQueryService result for " + tokenSymbol + ": " + result.toString());
+
+                // Handle result on UI thread
+                getActivity().runOnUiThread(() -> {
+                    handleSnipBalanceResult(tokenSymbol, result.toString());
+                });
+
+            } catch (Exception e) {
+                Log.e(TAG, "Token balance query failed for " + tokenSymbol + ": " + e.getMessage(), e);
+                getActivity().runOnUiThread(() -> {
+                    balanceText.setText("Balance: Error loading");
+                });
+            }
+        }).start();
+    }
+
+    private void handleSnipBalanceResult(String tokenSymbol, String json) {
+        try {
+            Log.d(TAG, "handleSnipBalanceResult for " + tokenSymbol + ", JSON: " + json);
+
+            if (TextUtils.isEmpty(json)) {
+                Log.e(TAG, "SNIP balance query result JSON is empty");
+                balanceText.setText("Balance: Error loading");
+                return;
+            }
+
+            JSONObject root = new JSONObject(json);
+            boolean success = root.optBoolean("success", false);
+            Log.d(TAG, "SNIP balance query success: " + success);
+
+            if (success) {
+                JSONObject result = root.optJSONObject("result");
+                if (result != null) {
+                    JSONObject balance = result.optJSONObject("balance");
+                    if (balance != null) {
+                        String amount = balance.optString("amount", "0");
+                        Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenSymbol);
+                        if (tokenInfo != null) {
+                            double formattedBalance = 0;
+                            if (!TextUtils.isEmpty(amount)) {
+                                try {
+                                    long rawAmount = Long.parseLong(amount);
+                                    formattedBalance = rawAmount / Math.pow(10, tokenInfo.decimals);
+                                } catch (NumberFormatException e) {
+                                    Log.e(TAG, "Failed to parse balance amount: " + amount, e);
+                                }
+                            }
+                            balanceText.setText(String.format("Balance: %.6f %s", formattedBalance, tokenSymbol));
+                        } else {
+                            balanceText.setText("Balance: Error loading");
+                        }
+                    } else {
+                        balanceText.setText("Balance: Error loading");
+                    }
+                } else {
+                    balanceText.setText("Balance: Error loading");
+                }
+            } else {
+                String error = root.optString("error", "Unknown error");
+                Log.e(TAG, "SNIP balance query failed: " + error);
+                balanceText.setText("Balance: Error loading");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to handle SNIP balance result", e);
+            balanceText.setText("Balance: Error loading");
+        }
+    }
+
+    private void loadTokenLogo(TokenOption tokenOption) {
+        if (tokenLogo == null) return;
+
+        if (tokenOption.isNative) {
+            // Native SCRT - use gas station icon
+            tokenLogo.setImageResource(R.drawable.ic_local_gas_station);
+        } else {
+            // SNIP-20 token - load from assets
+            try {
+                Tokens.TokenInfo tokenInfo = tokenOption.tokenInfo;
+                if (tokenInfo != null && !TextUtils.isEmpty(tokenInfo.logo)) {
+                    // Load logo from assets
+                    Bitmap bitmap = BitmapFactory.decodeStream(getContext().getAssets().open(tokenInfo.logo));
+                    tokenLogo.setImageBitmap(bitmap);
+                } else {
+                    // No logo available, use default wallet icon
+                    tokenLogo.setImageResource(R.drawable.ic_wallet);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to load logo for " + tokenOption.symbol + ", using default icon", e);
+                tokenLogo.setImageResource(R.drawable.ic_wallet);
+            }
+        }
+    }
+
+    /**
+     * AsyncTask to fetch SCRT balance from LCD endpoint
+     */
+    private class FetchScrtBalanceTask extends AsyncTask<String, Void, String> {
+        @Override
+        protected String doInBackground(String... params) {
+            if (params.length < 2) return "Error: missing params";
+            String lcdUrl = params[0];
+            String address = params[1];
+
+            try {
+                // Use SecretWallet's bank query method
+                long microScrt = WalletNetwork.fetchUscrtBalanceMicro(lcdUrl, address);
+                return WalletNetwork.formatScrt(microScrt);
+            } catch (Exception e) {
+                Log.e(TAG, "SCRT balance query failed", e);
+                return "Error: " + e.getMessage();
+            }
+        }
+
+        @Override
+        protected void onPostExecute(String result) {
+            if (balanceText != null) {
+                balanceText.setText("Balance: " + result);
+                balanceLoaded = true;
+            }
+        }
     }
     
     private static SharedPreferences createSecurePrefs(Context context) throws Exception {

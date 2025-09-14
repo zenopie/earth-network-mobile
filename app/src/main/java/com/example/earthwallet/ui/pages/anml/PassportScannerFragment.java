@@ -53,7 +53,7 @@ import org.json.JSONObject;
 
 import net.sf.scuba.smartcards.CardService;
 
-import com.example.earthwallet.wallet.services.SecretWallet;
+import com.example.earthwallet.wallet.services.SecureWalletManager;
 import com.example.earthwallet.Constants;
 
 public class PassportScannerFragment extends Fragment implements MRZInputFragment.MRZInputListener {
@@ -884,51 +884,9 @@ public class PassportScannerFragment extends Fragment implements MRZInputFragmen
     private String getCurrentWalletAddress() {
         Log.d(TAG, "WALLET: Getting current wallet address...");
         try {
-            SecretWallet.initialize(requireContext());
-            Log.d(TAG, "WALLET: SecretWallet initialized");
-            
-            String masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC);
-            SharedPreferences securePrefs = EncryptedSharedPreferences.create(
-                    "secret_wallet_prefs",
-                    masterKeyAlias,
-                    requireContext(),
-                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            );
-            Log.d(TAG, "WALLET: Encrypted preferences accessed");
-            
-            String mnemonic = "";
-            try {
-                String walletsJson = securePrefs.getString("wallets", "[]");
-                Log.d(TAG, "WALLET: Retrieved wallets JSON: " + walletsJson);
-                
-                org.json.JSONArray arr = new org.json.JSONArray(walletsJson);
-                int sel = securePrefs.getInt("selected_wallet_index", -1);
-                Log.d(TAG, "WALLET: Found " + arr.length() + " wallets, selected index: " + sel);
-                
-                if (arr.length() > 0) {
-                    if (sel >= 0 && sel < arr.length()) {
-                        mnemonic = arr.getJSONObject(sel).optString("mnemonic", "");
-                        Log.d(TAG, "WALLET: Using selected wallet at index " + sel);
-                    } else if (arr.length() == 1) {
-                        mnemonic = arr.getJSONObject(0).optString("mnemonic", "");
-                        Log.d(TAG, "WALLET: Using single wallet (no selection)");
-                    }
-                }
-            } catch (Exception e) {
-                Log.w(TAG, "WALLET: Error reading wallet JSON", e);
-            }
-            
-            if (!TextUtils.isEmpty(mnemonic)) {
-                Log.d(TAG, "WALLET: Mnemonic found, deriving address...");
-                String address = SecretWallet.getAddressFromMnemonic(mnemonic);
-                Log.d(TAG, "WALLET: Derived address: " + address);
-                return address;
-            } else {
-                Log.w(TAG, "WALLET: No mnemonic found");
-            }
-            
-            return null;
+            String address = SecureWalletManager.getWalletAddress(requireContext());
+            Log.d(TAG, "WALLET: Got address: " + address);
+            return address;
         } catch (Exception e) {
             Log.w(TAG, "WALLET: Failed to get wallet address", e);
             return null;

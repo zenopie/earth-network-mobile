@@ -13,7 +13,7 @@ import com.google.protobuf.ByteString;
 import cosmos.tx.v1beta1.Tx;
 
 import java.security.MessageDigest;
-import com.example.earthwallet.wallet.services.SecretWallet;
+import com.example.earthwallet.wallet.utils.WalletCrypto;
 import com.example.earthwallet.wallet.services.TransactionSigner;
 
 /**
@@ -340,7 +340,7 @@ public class SecretProtobufService {
         
         try {
             // Use the SAME address derivation method as the app uses
-            String walletAddress = SecretWallet.getAddress(walletKey);
+            String walletAddress = WalletCrypto.getAddress(walletKey);
             
             // Log comparison for debugging
             Log.w(TAG, "=== WALLET/SENDER VALIDATION ===");

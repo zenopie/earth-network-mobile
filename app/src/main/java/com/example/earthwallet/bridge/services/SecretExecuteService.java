@@ -10,7 +10,8 @@ import android.util.Log;
 import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
 
-import com.example.earthwallet.wallet.services.SecretWallet;
+import com.example.earthwallet.wallet.utils.WalletCrypto;
+import com.example.earthwallet.Constants;
 
 import org.bitcoinj.core.ECKey;
 import org.json.JSONArray;
@@ -32,7 +33,7 @@ public class SecretExecuteService {
         }
         
         // Initialize services
-        SecretWallet.initialize(context);
+        WalletCrypto.initialize(context);
         SharedPreferences securePrefs = createSecurePrefs(context);
         SecretNetworkService networkService = new SecretNetworkService();
         SecretCryptoService cryptoService = new SecretCryptoService();
@@ -44,11 +45,11 @@ public class SecretExecuteService {
             throw new Exception("No wallet mnemonic found");
         }
         
-        ECKey walletKey = SecretWallet.deriveKeyFromMnemonic(mnemonic);
-        String senderAddress = SecretWallet.getAddress(walletKey);
+        ECKey walletKey = WalletCrypto.deriveKeyFromMnemonic(mnemonic);
+        String senderAddress = WalletCrypto.getAddress(walletKey);
 
         // Fetch chain and account information
-        String lcdUrl = SecretWallet.DEFAULT_LCD_URL;
+        String lcdUrl = Constants.DEFAULT_LCD_URL;
         String chainId = networkService.fetchChainId(lcdUrl);
         JSONObject accountData = networkService.fetchAccount(lcdUrl, senderAddress);
         if (accountData == null) {
