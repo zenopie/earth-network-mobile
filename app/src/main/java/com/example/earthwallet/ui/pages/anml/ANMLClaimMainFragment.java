@@ -2,7 +2,10 @@ package com.example.earthwallet.ui.pages.anml;
 
 import com.example.earthwallet.R;
 
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 
 import android.os.Bundle;
@@ -24,6 +27,7 @@ import androidx.appcompat.app.AlertDialog;
 import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
 
+import com.example.earthwallet.bridge.activities.TransactionActivity;
 import com.example.earthwallet.wallet.services.SecretWallet;
 import com.example.earthwallet.Constants;
 import com.example.earthwallet.bridge.services.SecretQueryService;
@@ -51,6 +55,9 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
     // Request codes for launching bridge Activities
     private static final int REQ_QUERY = 1001;
     private static final int REQ_EXECUTE = 1002;
+
+    // Broadcast receiver for transaction success
+    private BroadcastReceiver transactionSuccessReceiver;
 
     public ANMLClaimMainFragment() {}
     
@@ -90,7 +97,9 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
         }
 
         initSecurePrefs();
-        
+        setupBroadcastReceiver();
+        registerBroadcastReceiver();
+
         // Start status check
         checkStatus();
     }
@@ -98,6 +107,45 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
     private void initSecurePrefs() {
         // Use centralized secure preferences from HostActivity
         securePrefs = ((com.example.earthwallet.ui.host.HostActivity) getActivity()).getSecurePrefs();
+    }
+
+    private void setupBroadcastReceiver() {
+        transactionSuccessReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                Log.d(TAG, "Received TRANSACTION_SUCCESS broadcast - refreshing ANML status immediately");
+
+                // Start multiple refresh attempts to ensure UI updates during animation
+                checkStatus(); // First immediate refresh
+
+                // Stagger additional refreshes to catch the UI during animation
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                    Log.d(TAG, "Secondary refresh during animation");
+                    checkStatus();
+                }, 100); // 100ms delay
+
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                    Log.d(TAG, "Third refresh during animation");
+                    checkStatus();
+                }, 500); // 500ms delay
+            }
+        };
+    }
+
+    private void registerBroadcastReceiver() {
+        if (getActivity() != null && transactionSuccessReceiver != null) {
+            IntentFilter filter = new IntentFilter("com.example.earthwallet.TRANSACTION_SUCCESS");
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                    requireActivity().getApplicationContext().registerReceiver(transactionSuccessReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+                } else {
+                    requireActivity().getApplicationContext().registerReceiver(transactionSuccessReceiver, filter);
+                }
+                Log.d(TAG, "Registered transaction success receiver");
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to register broadcast receiver", e);
+            }
+        }
     }
 
     private void showLoading(boolean loading) {
@@ -200,10 +248,11 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
             org.json.JSONObject exec = new org.json.JSONObject();
             exec.put("claim_anml", new org.json.JSONObject());
 
-            Intent ei = new Intent(getContext(), com.example.earthwallet.bridge.activities.TransactionActivity.class);
-            ei.putExtra(com.example.earthwallet.bridge.activities.TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.REGISTRATION_CONTRACT);
-            ei.putExtra(com.example.earthwallet.bridge.activities.TransactionActivity.EXTRA_CODE_HASH, Constants.REGISTRATION_HASH);
-            ei.putExtra(com.example.earthwallet.bridge.activities.TransactionActivity.EXTRA_EXECUTE_JSON, exec.toString());
+            Intent ei = new Intent(getContext(), TransactionActivity.class);
+            ei.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE);
+            ei.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.REGISTRATION_CONTRACT);
+            ei.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.REGISTRATION_HASH);
+            ei.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, exec.toString());
             // Funds/memo/lcd are optional; default LCD is used in the bridge
             startActivityForResult(ei, REQ_EXECUTE);
         } catch (Exception e) {
@@ -365,17 +414,40 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
     @Override
     public void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        
+
         if (requestCode == REQ_EXECUTE) {
             // Hide loading screen that might be showing
             showLoading(false);
-            
+
             if (resultCode == getActivity().RESULT_OK) {
+                Log.d(TAG, "ANML claim transaction succeeded");
                 // Transaction successful - navigate optimistically to complete screen
                 showCompleteFragment();
+                // Also refresh status (broadcast receiver will handle additional refreshes)
+                checkStatus();
             } else {
+                String error = data != null ? data.getStringExtra(TransactionActivity.EXTRA_ERROR) : "Unknown error";
+                Log.e(TAG, "ANML claim transaction failed: " + error);
                 // Transaction failed or was cancelled - refresh to ensure UI is correct
                 checkStatus();
+            }
+        }
+    }
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+
+        // Unregister broadcast receiver
+        if (transactionSuccessReceiver != null && getContext() != null) {
+            try {
+                requireActivity().getApplicationContext().unregisterReceiver(transactionSuccessReceiver);
+                Log.d(TAG, "Unregistered transaction success receiver");
+            } catch (IllegalArgumentException e) {
+                // Receiver was not registered, ignore
+                Log.d(TAG, "Receiver was not registered");
+            } catch (Exception e) {
+                Log.e(TAG, "Error unregistering receiver", e);
             }
         }
     }

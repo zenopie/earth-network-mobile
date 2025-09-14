@@ -92,7 +92,20 @@ public class StakingInfoFragment extends Fragment {
                 public void onReceive(Context context, Intent intent) {
                     Log.d(TAG, "Received transaction success broadcast - refreshing data immediately");
                     Log.d(TAG, "Fragment isVisible: " + isVisible() + ", isAdded: " + isAdded() + ", isResumed: " + isResumed());
-                    refreshData();
+
+                    // Start multiple refresh attempts to ensure UI updates during animation
+                    refreshData(); // First immediate refresh
+
+                    // Stagger additional refreshes to catch the UI during animation
+                    new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                        Log.d(TAG, "Secondary refresh during animation");
+                        refreshData();
+                    }, 100); // 100ms delay
+
+                    new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                        Log.d(TAG, "Third refresh during animation");
+                        refreshData();
+                    }, 500); // 500ms delay
                 }
             };
             IntentFilter filter = new IntentFilter("com.example.earthwallet.TRANSACTION_SUCCESS");

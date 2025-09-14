@@ -1,8 +1,10 @@
 package com.example.earthwallet.ui.pages.swap;
 
 import android.app.Activity;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.os.AsyncTask;
 import android.os.Bundle;
@@ -92,6 +94,9 @@ public class SwapTokensMainFragment extends Fragment {
     private boolean detailsVisible = false;
     private Handler inputHandler = new Handler(Looper.getMainLooper());
     private Runnable simulationRunnable;
+
+    // Broadcast receiver for transaction success
+    private BroadcastReceiver transactionSuccessReceiver;
     
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
@@ -121,6 +126,8 @@ public class SwapTokensMainFragment extends Fragment {
         initializeViews(view);
         setupSpinners();
         setupClickListeners();
+        setupBroadcastReceiver();
+        registerBroadcastReceiver();
         loadCurrentWalletAddress();
         updateTokenLogos();
         fetchBalances();
@@ -442,22 +449,26 @@ public class SwapTokensMainFragment extends Fragment {
     @Override
     public void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        
-        if (resultCode == Activity.RESULT_OK && data != null) {
+
+        if (requestCode == REQ_SNIP_EXECUTE) {
+            if (resultCode == Activity.RESULT_OK) {
+                clearAmounts();
+                fetchBalances(); // Refresh balances
+            } else {
+                String error = data != null ? data.getStringExtra(TransactionActivity.EXTRA_ERROR) : "Unknown error";
+                Toast.makeText(getContext(), "Swap failed: " + error, Toast.LENGTH_LONG).show();
+            }
+        } else if (resultCode == Activity.RESULT_OK && data != null) {
             String json;
-            
-            if (requestCode == REQ_SNIP_EXECUTE) {
-                // Use SnipExecuteActivity's result key for SNIP execution requests
-                json = data.getStringExtra(TransactionActivity.EXTRA_RESULT_JSON);
-                handleSwapExecutionResult(json);
-            } else if (requestCode == REQ_EXECUTE_SWAP || requestCode == REQUEST_SWAP_EXECUTION) {
-                // Use SecretExecuteActivity's result key for execution requests
+
+            if (requestCode == REQ_EXECUTE_SWAP || requestCode == REQUEST_SWAP_EXECUTION) {
+                // Legacy handling for old flow - can be removed later
                 json = data.getStringExtra(TransactionActivity.EXTRA_RESULT_JSON);
                 handleSwapExecutionResult(json);
             } else {
                 // Use generic result key for other requests
                 json = data.getStringExtra("EXTRA_RESULT_JSON");
-                
+
                 if (requestCode == REQ_BALANCE_QUERY) {
                     handleBalanceQueryResult(data, json);
                 } else if (requestCode == REQ_SIMULATE_SWAP || requestCode == REQUEST_SWAP_SIMULATION) {
@@ -881,6 +892,64 @@ public class SwapTokensMainFragment extends Fragment {
         }
     }
     
+    private void setupBroadcastReceiver() {
+        transactionSuccessReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                Log.d(TAG, "Received TRANSACTION_SUCCESS broadcast - refreshing swap data immediately");
+
+                // Clear amounts and start multiple refresh attempts to ensure UI updates during animation
+                clearAmounts();
+                fetchBalances(); // First immediate refresh
+
+                // Stagger additional refreshes to catch the UI during animation
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                    Log.d(TAG, "Secondary refresh during animation");
+                    fetchBalances();
+                }, 100); // 100ms delay
+
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                    Log.d(TAG, "Third refresh during animation");
+                    fetchBalances();
+                }, 500); // 500ms delay
+            }
+        };
+    }
+
+    private void registerBroadcastReceiver() {
+        if (getActivity() != null && transactionSuccessReceiver != null) {
+            IntentFilter filter = new IntentFilter("com.example.earthwallet.TRANSACTION_SUCCESS");
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                    requireActivity().getApplicationContext().registerReceiver(transactionSuccessReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+                } else {
+                    requireActivity().getApplicationContext().registerReceiver(transactionSuccessReceiver, filter);
+                }
+                Log.d(TAG, "Registered transaction success receiver");
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to register broadcast receiver", e);
+            }
+        }
+    }
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+
+        // Unregister broadcast receiver
+        if (transactionSuccessReceiver != null && getContext() != null) {
+            try {
+                requireActivity().getApplicationContext().unregisterReceiver(transactionSuccessReceiver);
+                Log.d(TAG, "Unregistered transaction success receiver");
+            } catch (IllegalArgumentException e) {
+                // Receiver was not registered, ignore
+                Log.d(TAG, "Receiver was not registered");
+            } catch (Exception e) {
+                Log.e(TAG, "Error unregistering receiver", e);
+            }
+        }
+    }
+
     private void executeSwapWithContract() {
         String fromTokenSymbol = tokenSymbols.get(fromTokenSpinner.getSelectedItemPosition());
         String toTokenSymbol = tokenSymbols.get(toTokenSpinner.getSelectedItemPosition());
@@ -916,13 +985,14 @@ public class SwapTokensMainFragment extends Fragment {
         Log.d(TAG, "Swap message: " + swapMessage);
         
         Intent intent = new Intent(getContext(), TransactionActivity.class);
+        intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SNIP_EXECUTE);
         intent.putExtra(TransactionActivity.EXTRA_TOKEN_CONTRACT, fromTokenInfo.contract);
         intent.putExtra(TransactionActivity.EXTRA_TOKEN_HASH, fromTokenInfo.hash);
         intent.putExtra(TransactionActivity.EXTRA_RECIPIENT_ADDRESS, Constants.EXCHANGE_CONTRACT);
         intent.putExtra(TransactionActivity.EXTRA_RECIPIENT_HASH, Constants.EXCHANGE_HASH);
         intent.putExtra(TransactionActivity.EXTRA_AMOUNT, String.valueOf(inputAmountMicro));
         intent.putExtra(TransactionActivity.EXTRA_MESSAGE_JSON, swapMessage);
-        
+
         startActivityForResult(intent, REQ_SNIP_EXECUTE);
     }
     

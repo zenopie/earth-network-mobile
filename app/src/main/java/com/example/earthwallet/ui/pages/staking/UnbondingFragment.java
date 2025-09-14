@@ -1,7 +1,9 @@
 package com.example.earthwallet.ui.pages.staking;
 
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.LayoutInflater;
@@ -45,6 +47,9 @@ public class UnbondingFragment extends Fragment {
     
     // Data
     private List<UnbondingEntry> unbondingEntries = new ArrayList<>();
+
+    // Broadcast receiver for transaction success
+    private BroadcastReceiver transactionSuccessReceiver;
     
     public static UnbondingFragment newInstance() {
         return new UnbondingFragment();
@@ -55,19 +60,86 @@ public class UnbondingFragment extends Fragment {
         return inflater.inflate(R.layout.fragment_unbonding, container, false);
     }
     
-    @Override
-    public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
-        super.onViewCreated(view, savedInstanceState);
-        
-        initializeViews(view);
-        
-        // Load initial data
-        refreshData();
-    }
-    
     private void initializeViews(View view) {
         unbondingEntriesContainer = view.findViewById(R.id.unbonding_entries_container);
         noUnbondingText = view.findViewById(R.id.no_unbonding_text);
+    }
+
+    private void setupBroadcastReceiver() {
+        transactionSuccessReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                Log.d(TAG, "Received TRANSACTION_SUCCESS broadcast - refreshing data immediately");
+
+                // Start multiple refresh attempts to ensure UI updates during animation
+                refreshData(); // First immediate refresh
+
+                // Stagger additional refreshes to catch the UI during animation
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                    Log.d(TAG, "Secondary refresh during animation");
+                    refreshData();
+                }, 100); // 100ms delay
+
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                    Log.d(TAG, "Third refresh during animation");
+                    refreshData();
+                }, 500); // 500ms delay
+            }
+        };
+    }
+
+    @Override
+    public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
+        super.onViewCreated(view, savedInstanceState);
+
+        initializeViews(view);
+        setupBroadcastReceiver();
+        registerBroadcastReceiver();
+
+        // Load initial data
+        refreshData();
+    }
+
+    private void registerBroadcastReceiver() {
+        if (getActivity() != null && transactionSuccessReceiver != null) {
+            IntentFilter filter = new IntentFilter("com.example.earthwallet.TRANSACTION_SUCCESS");
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                    requireActivity().getApplicationContext().registerReceiver(transactionSuccessReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+                } else {
+                    requireActivity().getApplicationContext().registerReceiver(transactionSuccessReceiver, filter);
+                }
+                Log.d(TAG, "Registered transaction success receiver");
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to register broadcast receiver", e);
+            }
+        }
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        // Refresh data when user navigates to this fragment
+        Log.d(TAG, "UnbondingFragment resumed - refreshing data");
+        refreshData();
+    }
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+
+        // Unregister broadcast receiver
+        if (transactionSuccessReceiver != null && getContext() != null) {
+            try {
+                requireActivity().getApplicationContext().unregisterReceiver(transactionSuccessReceiver);
+                Log.d(TAG, "Unregistered transaction success receiver");
+            } catch (IllegalArgumentException e) {
+                // Receiver was not registered, ignore
+                Log.d(TAG, "Receiver was not registered");
+            } catch (Exception e) {
+                Log.e(TAG, "Error unregistering receiver", e);
+            }
+        }
     }
     
     /**
@@ -266,26 +338,27 @@ public class UnbondingFragment extends Fragment {
     
     private void handleCancelUnbond(UnbondingEntry entry) {
         Log.d(TAG, "Canceling unbonding for " + entry.amount + " ERTH");
-        
+
         try {
-            // Create cancel unbond message: { cancel_unbond: { amount: "123456", unbonding_time: 1234567890 } }
+            // Create cancel unbond message: { cancel_unbond: { amount: "123456", unbonding_time: "1234567890" } }
+            // Both amount and unbonding_time should be strings to match the web app implementation
             JSONObject cancelMsg = new JSONObject();
             JSONObject cancelUnbond = new JSONObject();
-            cancelUnbond.put("amount", String.valueOf(entry.amountMicro)); // Use original micro units
-            cancelUnbond.put("unbonding_time", entry.unbondingTimeNanos); // Use original nanoseconds
+            cancelUnbond.put("amount", String.valueOf(entry.amountMicro)); // Use original micro units as string
+            cancelUnbond.put("unbonding_time", String.valueOf(entry.unbondingTimeNanos)); // Use original nanoseconds as string
             cancelMsg.put("cancel_unbond", cancelUnbond);
-            
+
             Log.d(TAG, "Cancel unbond message: " + cancelMsg.toString());
-            
-            // Use SecretExecuteActivity for canceling unbond
+
+            // Use TransactionActivity for canceling unbond
             Intent intent = new Intent(getActivity(), TransactionActivity.class);
             intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE);
             intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.STAKING_CONTRACT);
             intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.STAKING_HASH);
             intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, cancelMsg.toString());
-            
+
             startActivityForResult(intent, REQ_CANCEL_UNBOND);
-            
+
         } catch (Exception e) {
             Log.e(TAG, "Error canceling unbond", e);
             Toast.makeText(getContext(), "Failed to cancel unbond: " + e.getMessage(), Toast.LENGTH_SHORT).show();
@@ -306,7 +379,7 @@ public class UnbondingFragment extends Fragment {
             }
         } else if (requestCode == REQ_CANCEL_UNBOND) {
             if (resultCode == getActivity().RESULT_OK) {
-                Toast.makeText(getContext(), "Unbonding canceled successfully!", Toast.LENGTH_SHORT).show();
+                // Success handled by broadcast receiver - no toast needed
                 refreshData(); // Refresh to update unbonding list
             } else {
                 String error = data != null ? data.getStringExtra("error") : "Unknown error";

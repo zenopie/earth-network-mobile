@@ -1,7 +1,10 @@
 package com.example.earthwallet.ui.pages.managelp;
 
 import android.app.Activity;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.text.TextUtils;
@@ -18,6 +21,7 @@ import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 
 import com.example.earthwallet.R;
+import com.example.earthwallet.bridge.activities.TransactionActivity;
 import com.example.earthwallet.wallet.constants.Tokens;
 import com.example.earthwallet.Constants;
 
@@ -29,8 +33,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class RemoveLiquidityFragment extends Fragment {
-    
+
     private static final String TAG = "RemoveLiquidityFragment";
+    private static final int REQ_REMOVE_LIQUIDITY = 5002;
     
     private EditText removeAmountInput;
     private TextView stakedSharesText;
@@ -42,6 +47,9 @@ public class RemoveLiquidityFragment extends Fragment {
     private String currentWalletAddress = "";
     private SharedPreferences securePrefs;
     private ExecutorService executorService;
+
+    // Broadcast receiver for transaction success
+    private BroadcastReceiver transactionSuccessReceiver;
     
     public static RemoveLiquidityFragment newInstance(String tokenKey) {
         RemoveLiquidityFragment fragment = new RemoveLiquidityFragment();
@@ -85,6 +93,8 @@ public class RemoveLiquidityFragment extends Fragment {
         
         initializeViews(view);
         setupListeners();
+        setupBroadcastReceiver();
+        registerBroadcastReceiver();
         loadCurrentWalletAddress();
         loadUserShares();
         loadUnbondingRequests();
@@ -97,6 +107,48 @@ public class RemoveLiquidityFragment extends Fragment {
         removeLiquidityButton = view.findViewById(R.id.remove_liquidity_button);
     }
     
+    private void setupBroadcastReceiver() {
+        transactionSuccessReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                Log.d(TAG, "Received TRANSACTION_SUCCESS broadcast - refreshing liquidity data immediately");
+
+                // Start multiple refresh attempts to ensure UI updates during animation
+                loadUserShares();
+                loadUnbondingRequests();
+
+                // Stagger additional refreshes to catch the UI during animation
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                    Log.d(TAG, "Secondary refresh during animation");
+                    loadUserShares();
+                    loadUnbondingRequests();
+                }, 100); // 100ms delay
+
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                    Log.d(TAG, "Third refresh during animation");
+                    loadUserShares();
+                    loadUnbondingRequests();
+                }, 500); // 500ms delay
+            }
+        };
+    }
+
+    private void registerBroadcastReceiver() {
+        if (getActivity() != null && transactionSuccessReceiver != null) {
+            IntentFilter filter = new IntentFilter("com.example.earthwallet.TRANSACTION_SUCCESS");
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                    requireActivity().getApplicationContext().registerReceiver(transactionSuccessReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+                } else {
+                    requireActivity().getApplicationContext().registerReceiver(transactionSuccessReceiver, filter);
+                }
+                Log.d(TAG, "Registered transaction success receiver");
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to register broadcast receiver", e);
+            }
+        }
+    }
+
     private void setupListeners() {
         sharesMaxButton.setOnClickListener(v -> {
             if (userStakedShares > 0) {
@@ -408,14 +460,15 @@ public class RemoveLiquidityFragment extends Fragment {
             
             Log.d(TAG, "Remove liquidity message: " + msg.toString());
             
-            // Launch SecretExecuteActivity
-            Intent intent = new Intent(getContext(), com.example.earthwallet.bridge.activities.TransactionActivity.class);
-            intent.putExtra(com.example.earthwallet.bridge.activities.TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.EXCHANGE_CONTRACT);
-            intent.putExtra(com.example.earthwallet.bridge.activities.TransactionActivity.EXTRA_CODE_HASH, Constants.EXCHANGE_HASH);
-            intent.putExtra(com.example.earthwallet.bridge.activities.TransactionActivity.EXTRA_EXECUTE_JSON, msg.toString());
-            intent.putExtra(com.example.earthwallet.bridge.activities.TransactionActivity.EXTRA_MEMO, "Remove liquidity for " + tokenKey);
-            
-            startActivityForResult(intent, 1001); // REQ_REMOVE_LIQUIDITY
+            // Use TransactionActivity with SECRET_EXECUTE transaction type
+            Intent intent = new Intent(getContext(), TransactionActivity.class);
+            intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE);
+            intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.EXCHANGE_CONTRACT);
+            intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.EXCHANGE_HASH);
+            intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, msg.toString());
+            intent.putExtra(TransactionActivity.EXTRA_MEMO, "Remove liquidity for " + tokenKey);
+
+            startActivityForResult(intent, REQ_REMOVE_LIQUIDITY);
             
         } catch (Exception e) {
             Log.e(TAG, "Error creating remove liquidity message", e);
@@ -426,24 +479,17 @@ public class RemoveLiquidityFragment extends Fragment {
     @Override
     public void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        
-        if (requestCode == 1001) { // REQ_REMOVE_LIQUIDITY
+
+        if (requestCode == REQ_REMOVE_LIQUIDITY) {
             if (resultCode == Activity.RESULT_OK) {
-                android.widget.Toast.makeText(getContext(), "Liquidity removed successfully!", android.widget.Toast.LENGTH_SHORT).show();
                 Log.i(TAG, "Remove liquidity transaction succeeded");
-                
                 // Clear input field
                 removeAmountInput.setText("");
-                
-                // Refresh user shares after a short delay to allow blockchain to settle
-                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
-                    loadUserShares();
-                    loadUnbondingRequests();
-                }, 2000); // 2 second delay
-                
+                // Refresh data (broadcast receiver will also handle this)
+                loadUserShares();
+                loadUnbondingRequests();
             } else {
-                String error = (data != null) ? data.getStringExtra(com.example.earthwallet.bridge.activities.TransactionActivity.EXTRA_ERROR) : "Transaction failed";
-                android.widget.Toast.makeText(getContext(), "Failed to remove liquidity: " + error, android.widget.Toast.LENGTH_LONG).show();
+                String error = (data != null) ? data.getStringExtra(TransactionActivity.EXTRA_ERROR) : "Transaction failed";
                 Log.e(TAG, "Remove liquidity transaction failed: " + error);
             }
         }
@@ -452,6 +498,20 @@ public class RemoveLiquidityFragment extends Fragment {
     @Override
     public void onDestroy() {
         super.onDestroy();
+
+        // Unregister broadcast receiver
+        if (transactionSuccessReceiver != null && getContext() != null) {
+            try {
+                requireActivity().getApplicationContext().unregisterReceiver(transactionSuccessReceiver);
+                Log.d(TAG, "Unregistered transaction success receiver");
+            } catch (IllegalArgumentException e) {
+                // Receiver was not registered, ignore
+                Log.d(TAG, "Receiver was not registered");
+            } catch (Exception e) {
+                Log.e(TAG, "Error unregistering receiver", e);
+            }
+        }
+
         if (executorService != null && !executorService.isShutdown()) {
             executorService.shutdown();
         }

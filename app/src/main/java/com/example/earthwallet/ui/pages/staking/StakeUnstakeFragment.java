@@ -1,7 +1,9 @@
 package com.example.earthwallet.ui.pages.staking;
 
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.util.Log;
@@ -61,6 +63,9 @@ public class StakeUnstakeFragment extends Fragment {
     // Data
     private double erthBalance = 0.0;
     private double stakedBalance = 0.0;
+
+    // Broadcast receiver for transaction success
+    private BroadcastReceiver transactionSuccessReceiver;
     
     public static StakeUnstakeFragment newInstance() {
         return new StakeUnstakeFragment();
@@ -74,12 +79,14 @@ public class StakeUnstakeFragment extends Fragment {
     @Override
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
-        
+
         // No services to initialize in this simplified version
-        
+
         initializeViews(view);
+        setupBroadcastReceiver();
+        registerBroadcastReceiver();
         setupClickListeners();
-        
+
         // Load initial data
         refreshData();
     }
@@ -142,7 +149,64 @@ public class StakeUnstakeFragment extends Fragment {
         stakeButton.setOnClickListener(v -> handleStake());
         unstakeButton.setOnClickListener(v -> handleUnstake());
     }
-    
+
+    private void setupBroadcastReceiver() {
+        transactionSuccessReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                Log.d(TAG, "Received TRANSACTION_SUCCESS broadcast - refreshing data immediately");
+
+                // Start multiple refresh attempts to ensure UI updates during animation
+                refreshData(); // First immediate refresh
+
+                // Stagger additional refreshes to catch the UI during animation
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                    Log.d(TAG, "Secondary refresh during animation");
+                    refreshData();
+                }, 100); // 100ms delay
+
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                    Log.d(TAG, "Third refresh during animation");
+                    refreshData();
+                }, 500); // 500ms delay
+            }
+        };
+    }
+
+    private void registerBroadcastReceiver() {
+        if (getActivity() != null && transactionSuccessReceiver != null) {
+            IntentFilter filter = new IntentFilter("com.example.earthwallet.TRANSACTION_SUCCESS");
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                    requireActivity().getApplicationContext().registerReceiver(transactionSuccessReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+                } else {
+                    requireActivity().getApplicationContext().registerReceiver(transactionSuccessReceiver, filter);
+                }
+                Log.d(TAG, "Registered transaction success receiver");
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to register broadcast receiver", e);
+            }
+        }
+    }
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+
+        // Unregister broadcast receiver
+        if (transactionSuccessReceiver != null && getContext() != null) {
+            try {
+                requireActivity().getApplicationContext().unregisterReceiver(transactionSuccessReceiver);
+                Log.d(TAG, "Unregistered transaction success receiver");
+            } catch (IllegalArgumentException e) {
+                // Receiver was not registered, ignore
+                Log.d(TAG, "Receiver was not registered");
+            } catch (Exception e) {
+                Log.e(TAG, "Error unregistering receiver", e);
+            }
+        }
+    }
+
     /**
      * Refresh balance data
      */

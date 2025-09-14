@@ -1,5 +1,9 @@
 package com.example.earthwallet.ui.pages.managelp;
 
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.text.TextUtils;
@@ -17,6 +21,7 @@ import androidx.fragment.app.Fragment;
 
 import com.example.earthwallet.R;
 import com.example.earthwallet.Constants;
+import com.example.earthwallet.bridge.activities.TransactionActivity;
 import com.example.earthwallet.wallet.constants.Tokens;
 
 import org.json.JSONArray;
@@ -26,8 +31,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class UnbondFragment extends Fragment {
-    
+
     private static final String TAG = "UnbondFragment";
+    private static final int REQ_CLAIM_UNBOND = 5001;
     
     private String tokenKey;
     private String currentWalletAddress = "";
@@ -43,6 +49,9 @@ public class UnbondFragment extends Fragment {
     private TextView unbondingRequestsTitle;
     private LinearLayout unbondingRequestsContainer;
     private TextView noUnbondingMessage;
+
+    // Broadcast receiver for transaction success
+    private BroadcastReceiver transactionSuccessReceiver;
     
     public static UnbondFragment newInstance(String tokenKey) {
         UnbondFragment fragment = new UnbondFragment();
@@ -103,6 +112,8 @@ public class UnbondFragment extends Fragment {
         
         initializeViews(view);
         setupListeners();
+        setupBroadcastReceiver();
+        registerBroadcastReceiver();
         loadCurrentWalletAddress();
         // If pool info is available from arguments, go straight to unbonding requests
         if (erthReserveMicro > 0 && tokenBReserveMicro > 0 && totalSharesMicro > 0) {
@@ -121,10 +132,95 @@ public class UnbondFragment extends Fragment {
     }
     
     private void setupListeners() {
-        completeUnbondButton.setOnClickListener(v -> {
-            // TODO: Implement complete unbond functionality
-            Log.d(TAG, "Complete unbond button clicked");
-        });
+        completeUnbondButton.setOnClickListener(v -> handleCompleteUnbond());
+    }
+
+    private void setupBroadcastReceiver() {
+        transactionSuccessReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                Log.d(TAG, "Received TRANSACTION_SUCCESS broadcast - refreshing unbonding data immediately");
+
+                // Start multiple refresh attempts to ensure UI updates during animation
+                if (erthReserveMicro > 0 && tokenBReserveMicro > 0 && totalSharesMicro > 0) {
+                    executorService.execute(() -> loadUnbondingRequests());
+                } else {
+                    loadPoolInformationThenUnbondingRequests();
+                }
+
+                // Stagger additional refreshes to catch the UI during animation
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                    Log.d(TAG, "Secondary refresh during animation");
+                    if (erthReserveMicro > 0 && tokenBReserveMicro > 0 && totalSharesMicro > 0) {
+                        executorService.execute(() -> loadUnbondingRequests());
+                    } else {
+                        loadPoolInformationThenUnbondingRequests();
+                    }
+                }, 100); // 100ms delay
+
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                    Log.d(TAG, "Third refresh during animation");
+                    if (erthReserveMicro > 0 && tokenBReserveMicro > 0 && totalSharesMicro > 0) {
+                        executorService.execute(() -> loadUnbondingRequests());
+                    } else {
+                        loadPoolInformationThenUnbondingRequests();
+                    }
+                }, 500); // 500ms delay
+            }
+        };
+    }
+
+    private void registerBroadcastReceiver() {
+        if (getActivity() != null && transactionSuccessReceiver != null) {
+            IntentFilter filter = new IntentFilter("com.example.earthwallet.TRANSACTION_SUCCESS");
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                    requireActivity().getApplicationContext().registerReceiver(transactionSuccessReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+                } else {
+                    requireActivity().getApplicationContext().registerReceiver(transactionSuccessReceiver, filter);
+                }
+                Log.d(TAG, "Registered transaction success receiver");
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to register broadcast receiver", e);
+            }
+        }
+    }
+
+    private void handleCompleteUnbond() {
+        Log.d(TAG, "Complete unbond button clicked");
+
+        if (tokenKey == null) {
+            Log.e(TAG, "Cannot complete unbond: missing token key");
+            return;
+        }
+
+        try {
+            String tokenContract = getTokenContractAddress(tokenKey);
+            if (tokenContract == null) {
+                Log.e(TAG, "Cannot complete unbond: token contract not found for " + tokenKey);
+                return;
+            }
+
+            // Create claim unbond liquidity message: { claim_unbond_liquidity: { pool: "contract_address" } }
+            JSONObject claimMsg = new JSONObject();
+            JSONObject claimUnbondLiquidity = new JSONObject();
+            claimUnbondLiquidity.put("pool", tokenContract);
+            claimMsg.put("claim_unbond_liquidity", claimUnbondLiquidity);
+
+            Log.d(TAG, "Claiming unbonded liquidity for pool: " + tokenContract);
+
+            // Use TransactionActivity with SECRET_EXECUTE for claiming unbonded liquidity
+            Intent intent = new Intent(getActivity(), TransactionActivity.class);
+            intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE);
+            intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.EXCHANGE_CONTRACT);
+            intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.EXCHANGE_HASH);
+            intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, claimMsg.toString());
+
+            startActivityForResult(intent, REQ_CLAIM_UNBOND);
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error claiming unbonded liquidity", e);
+        }
     }
     
     private void loadCurrentWalletAddress() {
@@ -511,8 +607,42 @@ public class UnbondFragment extends Fragment {
     }
     
     @Override
+    public void onActivityResult(int requestCode, int resultCode, android.content.Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+
+        if (requestCode == REQ_CLAIM_UNBOND) {
+            if (resultCode == getActivity().RESULT_OK) {
+                Log.d(TAG, "Unbonded liquidity claimed successfully");
+                // Refresh unbonding requests to update UI
+                if (erthReserveMicro > 0 && tokenBReserveMicro > 0 && totalSharesMicro > 0) {
+                    executorService.execute(() -> loadUnbondingRequests());
+                } else {
+                    loadPoolInformationThenUnbondingRequests();
+                }
+            } else {
+                String error = data != null ? data.getStringExtra(TransactionActivity.EXTRA_ERROR) : "Unknown error";
+                Log.e(TAG, "Failed to claim unbonded liquidity: " + error);
+            }
+        }
+    }
+
+    @Override
     public void onDestroy() {
         super.onDestroy();
+
+        // Unregister broadcast receiver
+        if (transactionSuccessReceiver != null && getContext() != null) {
+            try {
+                requireActivity().getApplicationContext().unregisterReceiver(transactionSuccessReceiver);
+                Log.d(TAG, "Unregistered transaction success receiver");
+            } catch (IllegalArgumentException e) {
+                // Receiver was not registered, ignore
+                Log.d(TAG, "Receiver was not registered");
+            } catch (Exception e) {
+                Log.e(TAG, "Error unregistering receiver", e);
+            }
+        }
+
         if (executorService != null && !executorService.isShutdown()) {
             executorService.shutdown();
         }
