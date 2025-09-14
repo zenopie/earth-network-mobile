@@ -6,7 +6,6 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.SharedPreferences;
 
 import android.os.Bundle;
 import android.text.TextUtils;
@@ -21,8 +20,6 @@ import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentManager;
 import androidx.fragment.app.FragmentTransaction;
 import androidx.appcompat.app.AlertDialog;
-import androidx.security.crypto.EncryptedSharedPreferences;
-import androidx.security.crypto.MasterKeys;
 
 import com.example.earthwallet.bridge.activities.TransactionActivity;
 import com.example.earthwallet.Constants;
@@ -36,7 +33,6 @@ import org.json.JSONObject;
 
 public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragment.ANMLRegisterListener, ANMLClaimFragment.ANMLClaimListener {
     private static final String TAG = "ANMLClaimFragment";
-    private static final String PREF_FILE = "secret_wallet_prefs";
 
     private static final long ONE_DAY_MILLIS = 24L * 60L * 60L * 1000L;
 
@@ -44,7 +40,6 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
     private LoadingOverlay loadingOverlay;
     private View fragmentContainer;
     
-    private SharedPreferences securePrefs;
     private boolean suppressNextQueryDialog = false;
     private String currentRegistrationReward;
 
@@ -85,7 +80,6 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
             loadingOverlay.initializeWithFragment(this);
         }
 
-        initSecurePrefs();
         setupBroadcastReceiver();
         registerBroadcastReceiver();
 
@@ -93,10 +87,6 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
         checkStatus();
     }
 
-    private void initSecurePrefs() {
-        // Use centralized secure preferences from HostActivity
-        securePrefs = ((com.example.earthwallet.ui.host.HostActivity) getActivity()).getSecurePrefs();
-    }
 
     private void setupBroadcastReceiver() {
         transactionSuccessReceiver = new BroadcastReceiver() {
@@ -251,7 +241,7 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
         try {
             showLoading(true);
 
-            // Get wallet address using secure just-in-time mnemonic access
+            // Get wallet address using SecureWalletManager
             String address;
             try {
                 if (!com.example.earthwallet.wallet.services.SecureWalletManager.isWalletAvailable(getContext())) {
@@ -259,7 +249,7 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
                     showRegisterFragment();
                     return;
                 }
-                
+
                 address = com.example.earthwallet.wallet.services.SecureWalletManager.getWalletAddress(getContext());
                 if (TextUtils.isEmpty(address)) {
                     showLoading(false);

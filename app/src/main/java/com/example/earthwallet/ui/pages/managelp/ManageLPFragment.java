@@ -39,7 +39,6 @@ import java.util.concurrent.Executors;
 public class ManageLPFragment extends Fragment {
 
     private static final String TAG = "ManageLPFragment";
-    private static final String LCD_URL = "https://lcd.mainnet.secretsaturn.net";
     private static final int REQ_CLAIM_INDIVIDUAL = 5001;
     private static final int REQ_CLAIM_ALL = 5002;
     
@@ -221,10 +220,9 @@ public class ManageLPFragment extends Fragment {
         
         Log.d(TAG, "Exchange contract: " + Constants.EXCHANGE_CONTRACT);
         Log.d(TAG, "Exchange hash: " + Constants.EXCHANGE_HASH);
-        Log.d(TAG, "LCD URL: " + LCD_URL);
         Log.d(TAG, "Query message: " + queryMsg.toString());
         
-        // Query the exchange contract (uses hardcoded LCD endpoint)
+        // Query the exchange contract
         JSONObject result = queryService.queryContract(
             Constants.EXCHANGE_CONTRACT,
             Constants.EXCHANGE_HASH,
@@ -494,6 +492,7 @@ public class ManageLPFragment extends Fragment {
             
             // Use SecretExecuteActivity for claiming rewards
             Intent intent = new Intent(getActivity(), TransactionActivity.class);
+            intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE);
             intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.EXCHANGE_CONTRACT);
             intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.EXCHANGE_HASH);
             intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, claimMsg.toString());
@@ -538,6 +537,7 @@ public class ManageLPFragment extends Fragment {
             
             // Use SecretExecuteActivity for claiming all rewards
             Intent intent = new Intent(getActivity(), TransactionActivity.class);
+            intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE);
             intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.EXCHANGE_CONTRACT);
             intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.EXCHANGE_HASH);
             intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, claimMsg.toString());

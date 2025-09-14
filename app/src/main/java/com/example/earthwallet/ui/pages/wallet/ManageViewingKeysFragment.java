@@ -553,8 +553,9 @@ public class ManageViewingKeysFragment extends Fragment {
             msgContent.put("key", viewingKey);
             setViewingKeyMsg.put("set_viewing_key", msgContent);
             
-            // Launch SecretExecuteActivity to set viewing key on blockchain
+            // Launch TransactionActivity to set viewing key on SNIP-20 contract
             Intent intent = new Intent(getContext(), TransactionActivity.class);
+            intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE);
             intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, token.contract);
             intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, token.hash);
             intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, setViewingKeyMsg.toString());
