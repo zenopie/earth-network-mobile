@@ -80,9 +80,35 @@ public class PermitManager {
         }
 
         try {
-            return gson.fromJson(permitJson, Permit.class);
+            Permit permit = gson.fromJson(permitJson, Permit.class);
+
+            // Perform integrity checks on the retrieved permit
+            if (permit == null) {
+                Log.w(TAG, "Permit deserialization returned null");
+                return null;
+            }
+
+            // Check if permit structure is valid
+            if (!permit.isValid()) {
+                Log.w(TAG, "Retrieved permit failed basic validity check");
+                removePermit(walletAddress, contractAddress); // Remove corrupted permit
+                return null;
+            }
+
+            // Validate permit signature to ensure integrity
+            if (!validatePermitSignature(permit, walletAddress)) {
+                Log.w(TAG, "Retrieved permit failed signature validation - removing corrupted permit");
+                removePermit(walletAddress, contractAddress); // Remove corrupted/tampered permit
+                return null;
+            }
+
+            Log.d(TAG, "Permit integrity checks passed for contract: " + contractAddress);
+            return permit;
+
         } catch (Exception e) {
-            Log.e(TAG, "Failed to deserialize permit", e);
+            Log.e(TAG, "Failed to deserialize or validate permit", e);
+            // Remove potentially corrupted permit
+            removePermit(walletAddress, contractAddress);
             return null;
         }
     }
@@ -125,10 +151,10 @@ public class PermitManager {
         }
 
         try {
-            // Use SecureWalletManager to sign the permit
-            Permit signedPermit = SecureWalletManager.executeWithMnemonic(context, mnemonic -> {
-                // Get wallet key from mnemonic
-                ECKey walletKey = com.example.earthwallet.wallet.utils.WalletCrypto.deriveKeyFromMnemonic(mnemonic);
+            // Use SecureWalletManager to sign the permit with secure mnemonic handling
+            Permit signedPermit = SecureWalletManager.executeWithSecureMnemonic(context, mnemonicChars -> {
+                // Get wallet key from secure mnemonic char array
+                ECKey walletKey = com.example.earthwallet.wallet.utils.WalletCrypto.deriveKeyFromSecureMnemonic(mnemonicChars);
                 String derivedAddress = com.example.earthwallet.wallet.utils.WalletCrypto.getAddress(walletKey);
 
                 if (walletKey == null || !walletAddress.equals(derivedAddress)) {
@@ -292,15 +318,40 @@ public class PermitManager {
         }
 
         try {
-            // TODO: Implement proper signature validation
-            // This would involve:
-            // 1. Recreating the PermitSignDoc
-            // 2. Serializing it to the same JSON format used for signing
-            // 3. Verifying the signature against the public key
-            // 4. Deriving address from public key and comparing with walletAddress
+            // Implement proper signature validation
+            // 1. Recreate the PermitSignDoc used for signing
+            PermitSignDoc signDoc = new PermitSignDoc("secret-4", permit.getPermitName(),
+                permit.getAllowedTokens(), permit.getPermissions());
 
-            Log.d(TAG, "Permit signature validation not yet implemented");
-            return true; // For now, assume valid if permit structure is correct
+            // 2. Serialize to the same JSON format used for signing
+            Gson gson = new Gson();
+            String signDocJson = gson.toJson(signDoc);
+            byte[] signDocBytes = signDocJson.getBytes("UTF-8");
+
+            // 3. Decode the stored signature and public key
+            byte[] signatureBytes = Base64.getDecoder().decode(permit.getSignature());
+            byte[] publicKeyBytes = Base64.getDecoder().decode(permit.getPublicKey());
+
+            // 4. Verify the signature using the public key
+            ECKey publicKey = ECKey.fromPublicOnly(publicKeyBytes);
+            String derivedAddress = com.example.earthwallet.wallet.utils.WalletCrypto.getAddress(publicKey);
+
+            // 5. Check if derived address matches expected wallet address
+            if (!walletAddress.equals(derivedAddress)) {
+                Log.w(TAG, "Permit public key does not match wallet address");
+                return false;
+            }
+
+            // 6. Verify the signature against the sign document
+            // Hash the sign document bytes
+            org.bitcoinj.core.Sha256Hash hash = org.bitcoinj.core.Sha256Hash.of(signDocBytes);
+
+            // Parse signature bytes from raw 64-byte format (32-byte r + 32-byte s)
+            ECKey.ECDSASignature ecdsaSignature = parseRawSignature(signatureBytes);
+            boolean isValid = publicKey.verify(hash, ecdsaSignature);
+
+            Log.d(TAG, "Permit signature validation " + (isValid ? "passed" : "failed"));
+            return isValid;
 
         } catch (Exception e) {
             Log.e(TAG, "Failed to validate permit signature", e);
@@ -435,6 +486,27 @@ public class PermitManager {
     public String getViewingKey(String walletAddress, String contractAddress) {
         Log.w(TAG, "getViewingKey() is deprecated - use hasPermit() instead");
         return hasPermit(walletAddress, contractAddress) ? "permit_exists" : "";
+    }
+
+    /**
+     * Parse raw 64-byte signature format back to ECDSASignature
+     * @param rawSignature The raw signature bytes (32-byte r + 32-byte s)
+     * @return ECDSASignature object
+     */
+    private ECKey.ECDSASignature parseRawSignature(byte[] rawSignature) throws Exception {
+        if (rawSignature.length != 64) {
+            throw new Exception("Invalid raw signature length: " + rawSignature.length + " (expected 64)");
+        }
+
+        // Extract r and s components (32 bytes each)
+        byte[] rBytes = Arrays.copyOfRange(rawSignature, 0, 32);
+        byte[] sBytes = Arrays.copyOfRange(rawSignature, 32, 64);
+
+        // Convert to BigInteger
+        java.math.BigInteger r = new java.math.BigInteger(1, rBytes);
+        java.math.BigInteger s = new java.math.BigInteger(1, sBytes);
+
+        return new ECKey.ECDSASignature(r, s);
     }
 
     /**

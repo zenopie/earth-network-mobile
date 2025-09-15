@@ -36,6 +36,14 @@ public final class SecureWalletManager {
     public interface MnemonicOperation<T> {
         T execute(String mnemonic) throws Exception;
     }
+
+    /**
+     * Secure interface for operations that need access to the mnemonic as char array.
+     * More secure than String version as char arrays can be properly zeroed.
+     */
+    public interface SecureMnemonicOperation<T> {
+        T execute(char[] mnemonic) throws Exception;
+    }
     
     /**
      * Execute an operation with just-in-time mnemonic fetching and automatic cleanup.
@@ -49,6 +57,42 @@ public final class SecureWalletManager {
         // Ensure WalletCrypto is initialized before any mnemonic operations
         WalletCrypto.initialize(context);
         return executeWithMnemonic(context, null, operation);
+    }
+
+    /**
+     * Execute an operation with just-in-time secure mnemonic fetching and automatic cleanup.
+     * More secure version that uses char arrays instead of Strings.
+     *
+     * @param context Android context for fallback access to secure preferences
+     * @param operation The operation to execute with the mnemonic char array
+     * @return The result of the operation
+     * @throws Exception If mnemonic retrieval or operation execution fails
+     */
+    public static <T> T executeWithSecureMnemonic(Context context, SecureMnemonicOperation<T> operation) throws Exception {
+        // Ensure WalletCrypto is initialized before any mnemonic operations
+        WalletCrypto.initialize(context);
+        char[] mnemonicChars = null;
+        try {
+            // Fetch mnemonic and convert to char array immediately
+            String mnemonic = fetchMnemonicSecurely(context);
+            if (TextUtils.isEmpty(mnemonic)) {
+                throw new IllegalStateException("No wallet mnemonic found - wallet may not be initialized");
+            }
+
+            mnemonicChars = mnemonic.toCharArray();
+            // Clear the String immediately
+            securelyClearString(mnemonic);
+
+            // Execute the operation with the char array
+            return operation.execute(mnemonicChars);
+
+        } finally {
+            // Securely zero the char array regardless of success or failure
+            if (mnemonicChars != null) {
+                Arrays.fill(mnemonicChars, '\0');
+                mnemonicChars = null;
+            }
+        }
     }
     
     /**

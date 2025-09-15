@@ -1,8 +1,6 @@
 package com.example.earthwallet.ui.pages.wallet;
 
-import android.app.AlertDialog;
 import android.content.Context;
-import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Bundle;
@@ -22,8 +20,6 @@ import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
-import androidx.security.crypto.EncryptedSharedPreferences;
-import androidx.security.crypto.MasterKeys;
 
 import com.example.earthwallet.R;
 import com.example.earthwallet.wallet.constants.Tokens;
@@ -44,7 +40,6 @@ import java.util.List;
 public class ManagePermitsFragment extends Fragment {
     
     private static final String TAG = "ManagePermitsFragment";
-    private static final String PREF_FILE = "permits_prefs";
     
     // UI Components
     private LinearLayout permitsContainer;
@@ -105,9 +100,9 @@ public class ManagePermitsFragment extends Fragment {
             walletAddress = listener.getCurrentWalletAddress();
         }
         
-        // If we still don't have a wallet address, try to get it directly
+        // If we still don't have a wallet address, we cannot proceed
         if (TextUtils.isEmpty(walletAddress)) {
-            walletAddress = getCurrentWalletAddressDirect();
+            Log.w(TAG, "No wallet address available - cannot manage permits");
         }
         
         Log.d(TAG, "onViewCreated - walletAddress: " + walletAddress);
@@ -140,31 +135,6 @@ public class ManagePermitsFragment extends Fragment {
         }
     }
     
-    /**
-     * Get current wallet address directly from secure preferences
-     */
-    private String getCurrentWalletAddressDirect() {
-        try {
-            // Try to get from PermitManager's secure preferences or fallback to direct access
-            SharedPreferences prefs = requireContext().getSharedPreferences("secret_wallet_prefs", Context.MODE_PRIVATE);
-            String walletsJson = prefs.getString("wallets", "[]");
-            org.json.JSONArray walletsArray = new org.json.JSONArray(walletsJson);
-            int selectedIndex = prefs.getInt("selected_wallet_index", -1);
-
-            if (walletsArray.length() > 0) {
-                org.json.JSONObject selectedWallet;
-                if (selectedIndex >= 0 && selectedIndex < walletsArray.length()) {
-                    selectedWallet = walletsArray.getJSONObject(selectedIndex);
-                } else {
-                    selectedWallet = walletsArray.getJSONObject(0);
-                }
-                return selectedWallet.optString("address", "");
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to get wallet address directly", e);
-        }
-        return "";
-    }
 
     /**
      * Get all tokens with their permit status
@@ -289,8 +259,8 @@ public class ManagePermitsFragment extends Fragment {
             actionButton.setLayoutParams(buttonParams);
             
             if (tokenInfo.permit == null) {
-                // No permit - show "Create" button
-                actionButton.setText("Create");
+                // No permit - show "Add" button
+                actionButton.setText("Add");
                 android.graphics.drawable.GradientDrawable getBackground = new android.graphics.drawable.GradientDrawable();
                 getBackground.setColor(android.graphics.Color.parseColor("#4caf50"));
                 getBackground.setCornerRadius(8 * getResources().getDisplayMetrics().density);
@@ -305,7 +275,7 @@ public class ManagePermitsFragment extends Fragment {
                 removeBackground.setCornerRadius(8 * getResources().getDisplayMetrics().density);
                 actionButton.setBackground(removeBackground);
                 actionButton.setTextColor(getResources().getColor(android.R.color.white));
-                actionButton.setOnClickListener(v -> showRemoveConfirmationDialog(tokenInfo));
+                actionButton.setOnClickListener(v -> removePermit(tokenInfo));
             }
             
             tokenRow.addView(actionButton);
@@ -317,22 +287,6 @@ public class ManagePermitsFragment extends Fragment {
         }
     }
     
-    /**
-     * Show confirmation dialog before removing permit
-     */
-    private void showRemoveConfirmationDialog(TokenPermitInfo permitInfo) {
-        String message = "Are you sure you want to remove the permit for " + permitInfo.token.symbol + "?\n\n" +
-                "This will hide the token balance until you create a new permit.";
-
-        new AlertDialog.Builder(getContext())
-            .setTitle("Remove Permit")
-            .setMessage(message)
-            .setPositiveButton("Remove", (dialog, which) -> {
-                removePermit(permitInfo);
-            })
-            .setNegativeButton("Cancel", null)
-            .show();
-    }
     
     /**
      * Remove the permit for a token
@@ -410,104 +364,10 @@ public class ManagePermitsFragment extends Fragment {
     private void requestPermit(Tokens.TokenInfo token) {
         Log.i(TAG, "Requesting permit for " + token.symbol);
 
-        // Check if permit already exists
-        if (hasPermit(token.contract)) {
-            showPermitManagementDialog(token);
-        } else {
-            showCreatePermitDialog(token);
-        }
+        // Create permit directly with default permissions
+        createPermit(token);
     }
     
-    private void showCreatePermitDialog(Tokens.TokenInfo token) {
-        new AlertDialog.Builder(getContext())
-            .setTitle("Create Permit for " + token.symbol)
-            .setMessage("A permit is required to see your " + token.symbol + " balance. This will create a SNIP-24 query permit with default permissions.")
-            .setPositiveButton("Create Permit", (dialog, which) -> {
-                createPermit(token);
-            })
-            .setNeutralButton("Custom Permissions", (dialog, which) -> {
-                showCustomPermitDialog(token);
-            })
-            .setNegativeButton("Learn More", (dialog, which) -> {
-                showPermitHelpDialog(token);
-            })
-            .setCancelable(true)
-            .show();
-    }
-    
-    private void showCustomPermitDialog(Tokens.TokenInfo token) {
-        String[] permissions = {"balance", "history", "allowance"}; // lowercase to match SecretJS
-        boolean[] checkedItems = {true, true, false}; // Default: balance and history
-
-        new AlertDialog.Builder(getContext())
-            .setTitle("Select Permissions for " + token.symbol)
-            .setMultiChoiceItems(permissions, checkedItems, (dialog, which, isChecked) -> {
-                checkedItems[which] = isChecked;
-            })
-            .setPositiveButton("Create Permit", (dialog, which) -> {
-                java.util.List<String> selectedPermissions = new ArrayList<>();
-                for (int i = 0; i < permissions.length; i++) {
-                    if (checkedItems[i]) {
-                        selectedPermissions.add(permissions[i]);
-                    }
-                }
-                if (!selectedPermissions.isEmpty()) {
-                    createPermitWithPermissions(token, selectedPermissions);
-                } else {
-                    Toast.makeText(getContext(), "Please select at least one permission", Toast.LENGTH_SHORT).show();
-                }
-            })
-            .setNegativeButton("Cancel", null)
-            .show();
-    }
-    
-    private void showPermitHelpDialog(Tokens.TokenInfo token) {
-        String helpText = "SNIP-24 permits allow you to query your token information without sending transactions.\n\n" +
-                "• No transaction fees for querying\n" +
-                "• Signed locally with your wallet\n" +
-                "• Supports balance, history, and allowance queries\n" +
-                "• More user-friendly than viewing keys\n" +
-                "• Can be revoked anytime";
-
-        new AlertDialog.Builder(getContext())
-            .setTitle("About SNIP-24 Permits")
-            .setMessage(helpText)
-            .setPositiveButton("Create Permit", (dialog, which) -> {
-                createPermit(token);
-            })
-            .setNeutralButton("Custom Permissions", (dialog, which) -> {
-                showCustomPermitDialog(token);
-            })
-            .setNegativeButton("Cancel", null)
-            .show();
-    }
-    
-    private void showPermitManagementDialog(Tokens.TokenInfo token) {
-        com.example.earthwallet.bridge.models.Permit permit = permitManager.getPermit(walletAddress, token.contract);
-        String permissionsText = permit != null ? String.join(", ", permit.getPermissions()) : "none";
-        String message = "Current permit permissions: " + permissionsText + "\n\nWhat would you like to do?";
-
-        new AlertDialog.Builder(getContext())
-            .setTitle("Manage Permit - " + token.symbol)
-            .setMessage(message)
-            .setPositiveButton("Recreate", (dialog, which) -> {
-                new AlertDialog.Builder(getContext())
-                    .setTitle("Recreate Permit?")
-                    .setMessage("This will create a new permit with default permissions. Continue?")
-                    .setPositiveButton("Yes", (d, w) -> {
-                        permitManager.removePermit(walletAddress, token.contract);
-                        createPermit(token);
-                    })
-                    .setNegativeButton("No", null)
-                    .show();
-            })
-            .setNeutralButton("Custom Permissions", (dialog, which) -> {
-                permitManager.removePermit(walletAddress, token.contract);
-                showCustomPermitDialog(token);
-            })
-            .setNegativeButton("Cancel", null)
-            .show();
-    }
     
     /**
      * Create permit with default permissions (balance, history)

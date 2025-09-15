@@ -101,6 +101,28 @@ public final class WalletCrypto {
     }
 
     /**
+     * Secure version: Derive ECKey from mnemonic char array using BIP-44 path m/44'/529'/0'/0/0
+     * More secure as it minimizes String creation in memory
+     */
+    public static ECKey deriveKeyFromSecureMnemonic(char[] mnemonicChars) {
+        try {
+            // Convert char array to string only temporarily for processing
+            String mnemonic = new String(mnemonicChars);
+            List<String> words = Arrays.asList(mnemonic.trim().split("\\s+"));
+
+            // Clear the temporary string immediately
+            mnemonic = null;
+
+            DeterministicSeed seed = new DeterministicSeed(words, null, "", 0L);
+            DeterministicKeyChain chain = DeterministicKeyChain.builder().seed(seed).build();
+            List<ChildNumber> path = HDUtils.parsePath("M/44H/529H/0H/0/0");
+            return ECKey.fromPrivate(chain.getKeyByPath(path, true).getPrivKey());
+        } catch (Exception e) {
+            throw new RuntimeException("Secure key derivation failed", e);
+        }
+    }
+
+    /**
      * Get Secret Network address from ECKey
      */
     public static String getAddress(ECKey key) {

@@ -35,7 +35,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Manage SNIP-24 permits for your SNIP-20 tokens. Create permits to query token balances without transaction fees or remove them to revoke access."
+            android:text="Add or remove permits for your SNIP tokens on Secret Network."
             android:textSize="14sp"
             android:textColor="@color/wallet_row_address"
             android:layout_marginBottom="20dp"
