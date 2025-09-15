@@ -136,11 +136,14 @@ dependencies {
     // Protobuf dependencies for Cosmos SDK transaction encoding (lite version for Android)
     implementation 'com.google.protobuf:protobuf-javalite:3.21.12'
     
+    // JSON serialization for permits
+    implementation 'com.google.code.gson:gson:2.10.1'
+
     // CRITICAL CRYPTO DEPENDENCIES FOR SECRETJS COMPATIBILITY
     // x25519 ECDH support (required for SecretJS encryption compatibility)
     implementation 'org.whispersystems:curve25519-java:0.5.0'
-    
-    
+
+
     // RFC 5297 AES-SIV implementation (matches SecretJS miscreant library)
     implementation 'org.cryptomator:siv-mode:1.4.0'
     

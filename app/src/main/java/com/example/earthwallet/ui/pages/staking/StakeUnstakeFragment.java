@@ -24,7 +24,7 @@ import com.example.earthwallet.Constants;
 import com.example.earthwallet.bridge.activities.TransactionActivity;
 
 import com.example.earthwallet.bridge.services.SnipQueryService;
-import com.example.earthwallet.bridge.utils.ViewingKeyManager;
+import com.example.earthwallet.bridge.utils.PermitManager;
 import com.example.earthwallet.wallet.constants.Tokens;
 import com.example.earthwallet.wallet.services.SecureWalletManager;
 
@@ -58,7 +58,7 @@ public class StakeUnstakeFragment extends Fragment {
     // Data
     private double erthBalance = 0.0;
     private double stakedBalance = 0.0;
-    private ViewingKeyManager viewingKeyManager;
+    private PermitManager viewingKeyManager;
 
     // Broadcast receiver for transaction success
     private BroadcastReceiver transactionSuccessReceiver;
@@ -76,8 +76,8 @@ public class StakeUnstakeFragment extends Fragment {
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
 
-        // Initialize ViewingKeyManager
-        viewingKeyManager = ViewingKeyManager.getInstance(requireContext());
+        // Initialize PermitManager
+        viewingKeyManager = PermitManager.getInstance(requireContext());
 
         initializeViews(view);
         setupBroadcastReceiver();
@@ -258,7 +258,7 @@ public class StakeUnstakeFragment extends Fragment {
                     return;
                 }
 
-                // Get viewing key using ViewingKeyManager
+                // Get viewing key using PermitManager
                 String viewingKey = viewingKeyManager.getViewingKey(walletAddress, Tokens.ERTH.contract);
                 Log.d(TAG, "Looking for ERTH viewing key for wallet: " + walletAddress.substring(0, Math.min(14, walletAddress.length())) + "...");
                 Log.d(TAG, "Found viewing key: " + (viewingKey != null && !viewingKey.isEmpty()));

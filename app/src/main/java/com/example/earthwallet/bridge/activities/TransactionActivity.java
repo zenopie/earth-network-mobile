@@ -15,6 +15,7 @@ import com.example.earthwallet.bridge.services.SecretExecuteService;
 import com.example.earthwallet.bridge.services.NativeSendService;
 import com.example.earthwallet.bridge.services.MultiMessageExecuteService;
 import com.example.earthwallet.bridge.services.SnipExecuteService;
+import com.example.earthwallet.bridge.services.PermitSigningService;
 
 /**
  * Universal transaction activity that handles all transaction types
@@ -49,6 +50,7 @@ public class TransactionActivity extends AppCompatActivity {
     public static final String TYPE_NATIVE_SEND = "native_send";
     public static final String TYPE_MULTI_MESSAGE = "multi_message";
     public static final String TYPE_SNIP_EXECUTE = "snip_execute";
+    public static final String TYPE_PERMIT_SIGNING = "permit_signing";
     
     private TransactionConfirmationDialog confirmationDialog;
     private StatusModal statusModal;
@@ -162,7 +164,20 @@ public class TransactionActivity extends AppCompatActivity {
                         "SNIP Execute: " + formatJsonForDisplay(messageJson)
                     ).setContractLabel("Token Contract:");
                 }
-                
+
+            case TYPE_PERMIT_SIGNING:
+                String permitName = intent.getStringExtra("permit_name");
+                String allowedTokens = intent.getStringExtra("allowed_tokens");
+                String permissions = intent.getStringExtra("permissions");
+                if (permitName == null || allowedTokens == null || permissions == null) return null;
+
+                return new TransactionConfirmationDialog.TransactionDetails(
+                    permitName,
+                    "Create SNIP-24 Query Permit\n" +
+                    "Tokens: " + allowedTokens.replace(",", ", ") + "\n" +
+                    "Permissions: " + permissions.replace(",", ", ")
+                ).setContractLabel("Permit Name:");
+
             default:
                 return null;
         }
@@ -202,12 +217,18 @@ public class TransactionActivity extends AppCompatActivity {
                         snipIntent.putExtra("recipient_hash", getIntent().getStringExtra(EXTRA_RECIPIENT_HASH));
                         snipIntent.putExtra("amount", getIntent().getStringExtra(EXTRA_AMOUNT));
                         snipIntent.putExtra("message_json", getIntent().getStringExtra(EXTRA_MESSAGE_JSON));
-                        
+
                         String[] snipResult = SnipExecuteService.execute(this, snipIntent);
                         result = snipResult[0];
                         senderAddress = snipResult[1];
                         break;
-                        
+
+                    case TYPE_PERMIT_SIGNING:
+                        String[] permitResult = PermitSigningService.execute(this, getIntent());
+                        result = permitResult[0];
+                        senderAddress = permitResult[1];
+                        break;
+
                     default:
                         throw new Exception("Unknown transaction type: " + transactionType);
                 }

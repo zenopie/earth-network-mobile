@@ -23,7 +23,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Manage Viewing Keys"
+                android:text="Manage Permits"
                 android:textColor="#1e3a8a"
                 android:textSize="20sp"
                 android:textStyle="bold"
@@ -35,15 +35,15 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Manage viewing keys for your SNIP-20 tokens. Set viewing keys to see token balances or remove them to hide balances."
+            android:text="Manage SNIP-24 permits for your SNIP-20 tokens. Create permits to query token balances without transaction fees or remove them to revoke access."
             android:textSize="14sp"
             android:textColor="@color/wallet_row_address"
             android:layout_marginBottom="20dp"
             android:gravity="center" />
 
-        <!-- Container for viewing key items -->
+        <!-- Container for permit items -->
         <LinearLayout
-            android:id="@+id/viewing_keys_container"
+            android:id="@+id/permits_container"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical" />

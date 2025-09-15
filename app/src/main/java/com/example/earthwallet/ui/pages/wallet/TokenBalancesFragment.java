@@ -25,7 +25,7 @@ import androidx.fragment.app.Fragment;
 import com.example.earthwallet.R;
 import com.example.earthwallet.bridge.services.SecretQueryService;
 import com.example.earthwallet.wallet.constants.Tokens;
-import com.example.earthwallet.bridge.utils.ViewingKeyManager;
+import com.example.earthwallet.bridge.utils.PermitManager;
 import com.example.earthwallet.wallet.services.SecureWalletManager;
 
 import org.json.JSONArray;
@@ -53,11 +53,11 @@ public class TokenBalancesFragment extends Fragment {
     private boolean isQueryingToken = false;
     private String walletAddress = "";
     private Tokens.TokenInfo currentlyQueryingToken = null;
-    private ViewingKeyManager viewingKeyManager;
+    private PermitManager permitManager;
     
     // Interface for communication with parent
     public interface TokenBalancesListener {
-        void onViewingKeyRequested(Tokens.TokenInfo token);
+        void onPermitRequested(Tokens.TokenInfo token);
         void onManageViewingKeysRequested();
         SharedPreferences getSecurePrefs();
     }
@@ -80,8 +80,8 @@ public class TokenBalancesFragment extends Fragment {
     public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         
-        // Initialize ViewingKeyManager
-        viewingKeyManager = ViewingKeyManager.getInstance(requireContext());
+        // Initialize PermitManager
+        permitManager = PermitManager.getInstance(requireContext());
     }
     
     @Override
@@ -146,8 +146,8 @@ public class TokenBalancesFragment extends Fragment {
         for (String symbol : Tokens.ALL_TOKENS.keySet()) {
             Tokens.TokenInfo token = Tokens.getToken(symbol);
             if (token != null) {
-                String viewingKey = getViewingKey(token.contract);
-                if (!TextUtils.isEmpty(viewingKey)) {
+                // Remove old viewing key check - now using permits
+                if (hasPermit(token.contract)) {
                     // Show token immediately with "..." while we fetch the actual balance
                     addTokenBalanceView(token, "...", true);
                     tokenQueryQueue.offer(token);
@@ -189,12 +189,12 @@ public class TokenBalancesFragment extends Fragment {
     
     private void queryTokenBalance(Tokens.TokenInfo token) {
         try {
-            // Check if we have a viewing key for this token
-            String viewingKey = getViewingKey(token.contract);
-            if (TextUtils.isEmpty(viewingKey)) {
-                // Add button to get viewing key
+            // Check if we have a permit for this token
+            boolean hasPermit = permitManager.hasPermit(walletAddress, token.contract);
+            if (!hasPermit) {
+                // Add button to get permit
                 addTokenBalanceView(token, null, false);
-                
+
                 // Mark query as complete and continue with next token
                 isQueryingToken = false;
                 currentlyQueryingToken = null;
@@ -202,21 +202,12 @@ public class TokenBalancesFragment extends Fragment {
                 return;
             }
             
-            // Store token symbol with viewing key for result matching
-            if (!TextUtils.isEmpty(walletAddress)) {
-                viewingKeyManager.setViewingKey(walletAddress, token.contract, viewingKey, token.symbol);
-            }
+            // Token symbol is already stored with the permit, no need to store separately
             
-            // Create SNIP-20 balance query
-            JSONObject query = new JSONObject();
-            JSONObject balanceQuery = new JSONObject();
-            balanceQuery.put("address", walletAddress);
-            balanceQuery.put("key", viewingKey);
-            balanceQuery.put("time", System.currentTimeMillis());
-            query.put("balance", balanceQuery);
+            // Skip creating query here - permit-based query will be handled by SnipQueryService
             
             Log.d(TAG, "Querying token " + token.symbol + " balance");
-            Log.d(TAG, "Query JSON: " + query.toString());
+            // Query will be built by SnipQueryService with permit structure
             Log.d(TAG, "Contract: " + token.contract);
             Log.d(TAG, "Hash: " + token.hash);
             
@@ -235,14 +226,20 @@ public class TokenBalancesFragment extends Fragment {
                         return;
                     }
                     
-                    // Use SnipQueryService for the balance query
-                    JSONObject result = com.example.earthwallet.bridge.services.SnipQueryService.queryBalance(
+                    Log.d(TAG, "=== CALLING PERMIT-BASED QUERY ===");
+                    Log.d(TAG, "Token: " + token.symbol + ", Contract: " + token.contract);
+                    Log.d(TAG, "Wallet: " + walletAddress);
+
+                    // Use SnipQueryService for the permit-based balance query
+                    JSONObject result = com.example.earthwallet.bridge.services.SnipQueryService.queryBalanceWithPermit(
                         getActivity(), // Use HostActivity context
                         token.symbol,
-                        walletAddress,
-                        viewingKey
+                        walletAddress
                     );
-                    
+
+                    Log.d(TAG, "Query completed successfully for " + token.symbol);
+                    Log.d(TAG, "Result: " + result.toString());
+
                     // Handle result on UI thread
                     if (getActivity() != null) {
                         getActivity().runOnUiThread(() -> {
@@ -352,24 +349,24 @@ public class TokenBalancesFragment extends Fragment {
             
             if (balance == null) {
                 // No viewing key - show "Get Viewing Key" button
-                Button getViewingKeyBtn = new Button(getContext());
-                getViewingKeyBtn.setText("Get Viewing Key");
-                getViewingKeyBtn.setTextSize(11);
+                Button getPermitBtn = new Button(getContext());
+                getPermitBtn.setText("Create Permit");
+                getPermitBtn.setTextSize(11);
                 
                 // Create rounded green background programmatically
                 android.graphics.drawable.GradientDrawable background = new android.graphics.drawable.GradientDrawable();
                 background.setColor(android.graphics.Color.parseColor("#4caf50"));
                 background.setCornerRadius(12 * getResources().getDisplayMetrics().density); // 12dp corner radius
-                getViewingKeyBtn.setBackground(background);
-                
+                getPermitBtn.setBackground(background);
+
                 // Remove button shadow/elevation
-                getViewingKeyBtn.setElevation(0f);
-                getViewingKeyBtn.setStateListAnimator(null);
-                
-                getViewingKeyBtn.setTextColor(getResources().getColor(android.R.color.white));
-                getViewingKeyBtn.setPadding(16, 4, 16, 4);  // Reduced vertical padding
-                getViewingKeyBtn.setMinWidth(0);
-                getViewingKeyBtn.setMinHeight(0);
+                getPermitBtn.setElevation(0f);
+                getPermitBtn.setStateListAnimator(null);
+
+                getPermitBtn.setTextColor(getResources().getColor(android.R.color.white));
+                getPermitBtn.setPadding(16, 4, 16, 4);  // Reduced vertical padding
+                getPermitBtn.setMinWidth(0);
+                getPermitBtn.setMinHeight(0);
                 
                 // Set smaller height with top and bottom margins to prevent cutoff
                 LinearLayout.LayoutParams layoutParams = new LinearLayout.LayoutParams(
@@ -381,15 +378,15 @@ public class TokenBalancesFragment extends Fragment {
                     0, 
                     (int) (4 * getResources().getDisplayMetrics().density)  // 4dp bottom margin
                 );
-                getViewingKeyBtn.setLayoutParams(layoutParams);
-                
-                getViewingKeyBtn.setOnClickListener(v -> {
+                getPermitBtn.setLayoutParams(layoutParams);
+
+                getPermitBtn.setOnClickListener(v -> {
                     if (listener != null) {
-                        listener.onViewingKeyRequested(token);
+                        listener.onPermitRequested(token);
                     }
                 });
-                getViewingKeyBtn.setTag("get_key_btn");
-                tokenRow.addView(getViewingKeyBtn);
+                getPermitBtn.setTag("get_permit_btn");
+                tokenRow.addView(getPermitBtn);
             } else {
                 // Has viewing key - show balance text
                 TextView balanceText = new TextView(getContext());
@@ -497,11 +494,11 @@ public class TokenBalancesFragment extends Fragment {
             
             // Token view not found, add a new one
             Log.d(TAG, "Token " + token.symbol + " not found in existing views, adding new one");
-            addTokenBalanceView(token, balance, !TextUtils.isEmpty(getViewingKey(token.contract)));
+            addTokenBalanceView(token, balance, hasPermit(token.contract));
             
         } catch (Exception e) {
             Log.e(TAG, "Failed to update token balance view for " + token.symbol, e);
-            addTokenBalanceView(token, balance, !TextUtils.isEmpty(getViewingKey(token.contract)));
+            addTokenBalanceView(token, balance, hasPermit(token.contract));
         }
     }
     
@@ -533,12 +530,11 @@ public class TokenBalancesFragment extends Fragment {
     }
     
     // Helper methods for viewing key management
-    private String getViewingKey(String contractAddress) {
-        return viewingKeyManager.getViewingKey(walletAddress, contractAddress);
-    }
-
-    private String getViewingKeyTokenSymbol(String contractAddress) {
-        return viewingKeyManager.getViewingKeyTokenSymbol(walletAddress, contractAddress);
+    /**
+     * Check if permit exists for contract
+     */
+    private boolean hasPermit(String contractAddress) {
+        return permitManager.hasPermit(walletAddress, contractAddress);
     }
 
     private void loadCurrentWalletAddress() {

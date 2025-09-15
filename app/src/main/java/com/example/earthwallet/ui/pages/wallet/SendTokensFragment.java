@@ -36,7 +36,7 @@ import com.example.earthwallet.wallet.utils.WalletCrypto;
 import com.example.earthwallet.wallet.utils.WalletNetwork;
 import com.example.earthwallet.wallet.services.SecureWalletManager;
 import com.example.earthwallet.bridge.services.SnipQueryService;
-import com.example.earthwallet.bridge.utils.ViewingKeyManager;
+import com.example.earthwallet.bridge.utils.PermitManager;
 
 import com.journeyapps.barcodescanner.ScanContract;
 import com.journeyapps.barcodescanner.ScanOptions;
@@ -89,7 +89,7 @@ public class SendTokensFragment extends Fragment implements
     private ActivityResultLauncher<ScanOptions> qrScannerLauncher;
     private String currentWalletAddress;
     private boolean balanceLoaded = false;
-    private ViewingKeyManager viewingKeyManager;
+    private PermitManager viewingKeyManager;
     
     // Interface for communication with parent
     public interface SendTokensListener {
@@ -136,7 +136,7 @@ public class SendTokensFragment extends Fragment implements
         
         try {
             securePrefs = createSecurePrefs(requireContext());
-            viewingKeyManager = ViewingKeyManager.getInstance(requireContext());
+            viewingKeyManager = PermitManager.getInstance(requireContext());
         } catch (Exception e) {
             Log.e(TAG, "Failed to initialize secure preferences", e);
             Toast.makeText(getContext(), "Failed to initialize wallet", Toast.LENGTH_SHORT).show();

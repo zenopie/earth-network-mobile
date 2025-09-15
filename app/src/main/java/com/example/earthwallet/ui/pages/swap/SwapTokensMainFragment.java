@@ -34,7 +34,7 @@ import androidx.fragment.app.Fragment;
 import com.example.earthwallet.R;
 import com.example.earthwallet.Constants;
 import com.example.earthwallet.bridge.activities.TransactionActivity;
-import com.example.earthwallet.bridge.utils.ViewingKeyManager;
+import com.example.earthwallet.bridge.utils.PermitManager;
 
 import com.example.earthwallet.bridge.services.SecretQueryService;
 import com.example.earthwallet.wallet.constants.Tokens;
@@ -93,7 +93,7 @@ public class SwapTokensMainFragment extends Fragment {
 
     // Broadcast receiver for transaction success
     private BroadcastReceiver transactionSuccessReceiver;
-    private ViewingKeyManager viewingKeyManager;
+    private PermitManager viewingKeyManager;
     
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
@@ -120,7 +120,7 @@ public class SwapTokensMainFragment extends Fragment {
         loadCurrentWalletAddress();
 
         // Initialize viewing key manager
-        viewingKeyManager = ViewingKeyManager.getInstance(requireContext());
+        viewingKeyManager = PermitManager.getInstance(requireContext());
 
         updateTokenLogos();
         fetchBalances();

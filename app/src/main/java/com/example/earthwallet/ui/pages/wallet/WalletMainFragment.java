@@ -20,7 +20,7 @@ import androidx.security.crypto.MasterKeys;
 import com.example.earthwallet.R;
 import com.example.earthwallet.ui.pages.wallet.CreateWalletFragment;
 import com.example.earthwallet.ui.pages.wallet.WalletListFragment;
-import com.example.earthwallet.ui.pages.wallet.ManageViewingKeysFragment;
+import com.example.earthwallet.ui.pages.wallet.ManagePermitsFragment;
 import com.example.earthwallet.wallet.constants.Tokens;
 import com.example.earthwallet.wallet.services.SecureWalletManager;
 
@@ -42,7 +42,7 @@ public class WalletMainFragment extends Fragment
                CreateWalletFragment.CreateWalletListener,
                WalletDisplayFragment.WalletDisplayListener,
                TokenBalancesFragment.TokenBalancesListener,
-               ManageViewingKeysFragment.ManageViewingKeysListener {
+               ManagePermitsFragment.ManagePermitsListener {
     
     private static final String TAG = "WalletMainFragment";
     private static final String PREF_FILE = "secret_wallet_prefs";
@@ -152,7 +152,7 @@ public class WalletMainFragment extends Fragment
             tokenBalancesFragment.updateWalletAddress(currentWalletAddress);
         }
         
-        // ViewingKeyManager is now handled automatically by individual fragments
+        // PermitManager is now handled automatically by individual fragments
     }
     
     // =============================================================================
@@ -169,14 +169,14 @@ public class WalletMainFragment extends Fragment
     // =============================================================================
     
     @Override
-    public void onViewingKeyRequested(Tokens.TokenInfo token) {
+    public void onPermitRequested(Tokens.TokenInfo token) {
         // Show manage viewing keys fragment where users can set viewing keys
-        showManageViewingKeysFragment();
+        showManagePermitsFragment();
     }
     
     @Override
     public void onManageViewingKeysRequested() {
-        showManageViewingKeysFragment();
+        showManagePermitsFragment();
     }
     
     @Override
@@ -186,11 +186,11 @@ public class WalletMainFragment extends Fragment
     
     
     // =============================================================================
-    // ManageViewingKeysFragment.ManageViewingKeysListener Implementation
+    // ManagePermitsFragment.ManageViewingKeysListener Implementation
     // =============================================================================
     
     @Override
-    public void onViewingKeyRemoved(Tokens.TokenInfo token) {
+    public void onPermitRemoved(Tokens.TokenInfo token) {
         Log.d(TAG, "Viewing key removed for " + token.symbol + ", updating token balance");
         
         // Update token balance fragment to refresh (will hide tokens without viewing keys)
@@ -278,12 +278,12 @@ public class WalletMainFragment extends Fragment
         }
     }
     
-    private void showManageViewingKeysFragment() {
-        Log.d(TAG, "showManageViewingKeysFragment called");
+    private void showManagePermitsFragment() {
+        Log.d(TAG, "showManagePermitsFragment called");
         
         // Use the HostActivity's navigation system to show manage viewing keys as a full-screen fragment
         if (getActivity() instanceof com.example.earthwallet.ui.host.HostActivity) {
-            ManageViewingKeysFragment manageViewingKeysFragment = new ManageViewingKeysFragment();
+            ManagePermitsFragment manageViewingKeysFragment = new ManagePermitsFragment();
             
             // Create a bundle to pass the current wallet address
             Bundle args = new Bundle();
@@ -295,9 +295,9 @@ public class WalletMainFragment extends Fragment
                 transaction.replace(R.id.host_content, manageViewingKeysFragment, "manage_viewing_keys");
                 transaction.addToBackStack("manage_viewing_keys");
                 transaction.commit();
-                Log.d(TAG, "ManageViewingKeysFragment shown as full-screen using HostActivity fragment manager");
+                Log.d(TAG, "ManagePermitsFragment shown as full-screen using HostActivity fragment manager");
             } catch (Exception e) {
-                Log.e(TAG, "Failed to show ManageViewingKeysFragment via HostActivity", e);
+                Log.e(TAG, "Failed to show ManagePermitsFragment via HostActivity", e);
             }
         }
     }

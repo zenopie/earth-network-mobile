@@ -5,6 +5,7 @@ import android.text.TextUtils;
 import android.util.Log;
 
 import com.example.earthwallet.wallet.constants.Tokens;
+import com.example.earthwallet.bridge.utils.PermitManager;
 
 import org.json.JSONObject;
 
@@ -106,10 +107,61 @@ public class SnipQueryService {
     }
 
     /**
-     * Convenience method for balance queries
+     * Convenience method for balance queries with viewing key (deprecated)
+     * @deprecated Use queryBalanceWithPermit() instead
      */
+    @Deprecated
     public static JSONObject queryBalance(Context context, String tokenSymbol, String walletAddress, String viewingKey) throws Exception {
         return queryContract(context, tokenSymbol, null, null, QUERY_TYPE_BALANCE, walletAddress, viewingKey, null);
+    }
+
+    /**
+     * Query balance using SNIP-24 permit - CORRECTED structure from SecretJS analysis
+     */
+    public static JSONObject queryBalanceWithPermit(Context context, String tokenSymbol, String walletAddress) throws Exception {
+        Log.d(TAG, "=== SNIP-24 PERMIT BALANCE QUERY (CORRECTED) ===");
+        Log.d(TAG, "Token: " + tokenSymbol);
+        Log.d(TAG, "Wallet: " + walletAddress);
+
+        // Get permit manager and check for valid permit
+        PermitManager permitManager = PermitManager.getInstance(context);
+
+        // Get contract info from token symbol
+        Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenSymbol);
+        if (tokenInfo == null) {
+            throw new Exception("Unknown token: " + tokenSymbol);
+        }
+
+        String contractAddress = tokenInfo.contract;
+        String codeHash = tokenInfo.hash;
+
+        // Get valid permit for balance queries
+        com.example.earthwallet.bridge.models.Permit permit = permitManager.getValidPermitForQuery(walletAddress, contractAddress, "balance");
+        if (permit == null) {
+            throw new Exception("No valid permit found for " + tokenSymbol);
+        }
+
+        // Create the CORRECT permit query structure per SNIP-24 spec
+        JSONObject innerQuery = new JSONObject();
+        JSONObject balanceQuery = new JSONObject();
+        // NOTE: Address is NOT included in permit queries - it's derived from permit signature
+        innerQuery.put("balance", balanceQuery);
+
+        JSONObject withPermitQuery = permitManager.createWithPermitQuery(innerQuery, permit, "secret-4");
+
+        Log.d(TAG, "CORRECTED permit query: " + withPermitQuery.toString());
+
+        // Execute the query
+        SecretQueryService queryService = new SecretQueryService(context);
+        JSONObject result = queryService.queryContract(contractAddress, codeHash, withPermitQuery);
+
+        // Format result
+        JSONObject response = new JSONObject();
+        response.put("success", true);
+        response.put("result", result);
+
+        Log.d(TAG, "Permit balance query completed successfully");
+        return response;
     }
 
     /**
