@@ -225,10 +225,6 @@ public class TokenBalancesFragment extends Fragment {
                         });
                         return;
                     }
-                    
-                    Log.d(TAG, "=== CALLING PERMIT-BASED QUERY ===");
-                    Log.d(TAG, "Token: " + token.symbol + ", Contract: " + token.contract);
-                    Log.d(TAG, "Wallet: " + walletAddress);
 
                     // Use SnipQueryService for the permit-based balance query
                     JSONObject result = com.example.earthwallet.bridge.services.SnipQueryService.queryBalanceWithPermit(
@@ -236,9 +232,6 @@ public class TokenBalancesFragment extends Fragment {
                         token.symbol,
                         walletAddress
                     );
-
-                    Log.d(TAG, "Query completed successfully for " + token.symbol);
-                    Log.d(TAG, "Result: " + result.toString());
 
                     // Handle result on UI thread
                     if (getActivity() != null) {
@@ -317,7 +310,6 @@ public class TokenBalancesFragment extends Fragment {
 
     
     private void addTokenBalanceView(Tokens.TokenInfo token, String balance, boolean hasViewingKey) {
-        Log.d(TAG, "addTokenBalanceView called for " + token.symbol + " with balance: " + balance + " hasViewingKey: " + hasViewingKey);
         
         try {
             // Create a flat row for the token balance
@@ -430,7 +422,6 @@ public class TokenBalancesFragment extends Fragment {
             }
             
             tokenBalancesContainer.addView(tokenRow);
-            Log.d(TAG, "Successfully added token view for " + token.symbol + " to container. Container now has " + tokenBalancesContainer.getChildCount() + " tokens");
         } catch (Exception e) {
             Log.e(TAG, "Failed to add token balance view for " + token.symbol, e);
         }
@@ -445,7 +436,6 @@ public class TokenBalancesFragment extends Fragment {
     }
     
     private void updateTokenBalanceView(Tokens.TokenInfo token, String balance) {
-        Log.d(TAG, "updateTokenBalanceView called for " + token.symbol + " with balance: " + balance);
         
         try {
             for (int i = 0; i < tokenBalancesContainer.getChildCount(); i++) {
@@ -491,9 +481,8 @@ public class TokenBalancesFragment extends Fragment {
                     return;
                 }
             }
-            
+
             // Token view not found, add a new one
-            Log.d(TAG, "Token " + token.symbol + " not found in existing views, adding new one");
             addTokenBalanceView(token, balance, hasPermit(token.contract));
             
         } catch (Exception e) {

@@ -47,13 +47,11 @@ public class PermitSigningService {
         List<String> allowedTokens = Arrays.asList(allowedTokensStr.split(","));
         List<String> permissions = Arrays.asList(permissionsStr.split(","));
 
-        Log.d(TAG, "Permit details - Name: " + permitName +
-              ", Tokens: " + allowedTokens.size() +
-              ", Permissions: " + permissions.size());
+        Log.d(TAG, "Creating permit for " + allowedTokens.size() + " tokens");
 
         // Use SecureWalletManager for just-in-time mnemonic access with automatic cleanup
         return SecureWalletManager.executeWithMnemonic(context, mnemonic -> {
-            Log.d(TAG, "Executing permit signing with securely retrieved mnemonic");
+            Log.d(TAG, "Signing permit with wallet");
 
             // Get wallet key and address from mnemonic
             ECKey walletKey = com.example.earthwallet.wallet.utils.WalletCrypto.deriveKeyFromMnemonic(mnemonic);
@@ -72,8 +70,7 @@ public class PermitSigningService {
                 String signDocJson = gson.toJson(signDoc);
                 byte[] signDocBytes = signDocJson.getBytes("UTF-8");
 
-                Log.d(TAG, "SignDoc JSON: " + signDocJson);
-                Log.d(TAG, "SignDoc JSON length: " + signDocBytes.length + " bytes");
+                Log.d(TAG, "Permit sign document created");
 
                 // Sign the document
                 TransactionSigner.TransactionSignature signature =
@@ -90,8 +87,8 @@ public class PermitSigningService {
                 PermitManager permitManager = PermitManager.getInstance(context);
                 for (String contractAddress : allowedTokens) {
                     permitManager.setPermit(walletAddress, contractAddress, permit);
-                    Log.d(TAG, "Permit stored for contract: " + contractAddress);
                 }
+                Log.d(TAG, "Permit stored for " + allowedTokens.size() + " contracts");
 
                 // Return success result in expected format [result, senderAddress]
                 String resultJson = gson.toJson(permit);

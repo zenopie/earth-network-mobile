@@ -294,40 +294,31 @@ public class PermitManager {
      * @return A valid permit, or null if none exists or is valid
      */
     public Permit getValidPermitForQuery(String walletAddress, String contractAddress, String permission) {
-        Log.d(TAG, "=== VALIDATING PERMIT FOR QUERY ===");
-        Log.d(TAG, "Wallet: " + walletAddress);
-        Log.d(TAG, "Contract: " + contractAddress);
-        Log.d(TAG, "Required permission: " + permission);
-
         Permit permit = getPermit(walletAddress, contractAddress);
 
         if (permit == null) {
-            Log.e(TAG, "No permit found for contract: " + contractAddress);
+            Log.d(TAG, "No permit found for contract: " + contractAddress);
             return null;
         }
-        Log.d(TAG, "Permit found: " + permit.getPermitName());
 
         if (!isPermitValid(permit)) {
-            Log.e(TAG, "Permit expired for contract: " + contractAddress + " (age: " + (System.currentTimeMillis() - permit.getTimestamp()) + "ms)");
+            Log.d(TAG, "Permit expired for contract: " + contractAddress);
             removePermit(walletAddress, contractAddress); // Clean up expired permit
             return null;
         }
-        Log.d(TAG, "Permit is valid (not expired)");
 
         if (!permit.hasPermission(permission)) {
-            Log.e(TAG, "Permit lacks required permission '" + permission + "' for contract: " + contractAddress + ". Available permissions: " + permit.getPermissions());
+            Log.w(TAG, "Permit lacks required permission '" + permission + "' for contract: " + contractAddress);
             return null;
         }
-        Log.d(TAG, "Permit has required permission: " + permission);
 
         if (!validatePermitSignature(permit, walletAddress)) {
             Log.w(TAG, "Permit signature validation failed for contract: " + contractAddress);
             removePermit(walletAddress, contractAddress); // Remove invalid permit
             return null;
         }
-        Log.d(TAG, "Permit signature validation passed");
 
-        Log.d(TAG, "✅ Valid permit ready for query");
+        Log.d(TAG, "Valid permit found for " + permission + " query");
         return permit;
     }
 

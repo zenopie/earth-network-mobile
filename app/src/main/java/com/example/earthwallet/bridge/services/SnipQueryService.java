@@ -119,9 +119,7 @@ public class SnipQueryService {
      * Query balance using SNIP-24 permit - CORRECTED structure from SecretJS analysis
      */
     public static JSONObject queryBalanceWithPermit(Context context, String tokenSymbol, String walletAddress) throws Exception {
-        Log.d(TAG, "=== SNIP-24 PERMIT BALANCE QUERY (CORRECTED) ===");
-        Log.d(TAG, "Token: " + tokenSymbol);
-        Log.d(TAG, "Wallet: " + walletAddress);
+        Log.d(TAG, "Querying " + tokenSymbol + " balance with permit");
 
         // Get permit manager and check for valid permit
         PermitManager permitManager = PermitManager.getInstance(context);
@@ -149,8 +147,6 @@ public class SnipQueryService {
 
         JSONObject withPermitQuery = permitManager.createWithPermitQuery(innerQuery, permit, "secret-4");
 
-        Log.d(TAG, "CORRECTED permit query: " + withPermitQuery.toString());
-
         // Execute the query
         SecretQueryService queryService = new SecretQueryService(context);
         JSONObject result = queryService.queryContract(contractAddress, codeHash, withPermitQuery);
@@ -160,7 +156,7 @@ public class SnipQueryService {
         response.put("success", true);
         response.put("result", result);
 
-        Log.d(TAG, "Permit balance query completed successfully");
+        Log.d(TAG, "Balance query completed for " + tokenSymbol);
         return response;
     }
 
