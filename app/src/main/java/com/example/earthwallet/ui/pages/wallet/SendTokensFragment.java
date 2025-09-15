@@ -89,7 +89,7 @@ public class SendTokensFragment extends Fragment implements
     private ActivityResultLauncher<ScanOptions> qrScannerLauncher;
     private String currentWalletAddress;
     private boolean balanceLoaded = false;
-    private PermitManager viewingKeyManager;
+    private PermitManager permitManager;
     
     // Interface for communication with parent
     public interface SendTokensListener {
@@ -136,7 +136,7 @@ public class SendTokensFragment extends Fragment implements
         
         try {
             securePrefs = createSecurePrefs(requireContext());
-            viewingKeyManager = PermitManager.getInstance(requireContext());
+            permitManager = PermitManager.getInstance(requireContext());
         } catch (Exception e) {
             Log.e(TAG, "Failed to initialize secure preferences", e);
             Toast.makeText(getContext(), "Failed to initialize wallet", Toast.LENGTH_SHORT).show();
@@ -454,7 +454,6 @@ public class SendTokensFragment extends Fragment implements
     }
 
     private void fetchTokenBalance(TokenOption tokenOption) {
-        Log.d(TAG, "fetchTokenBalance called for: " + tokenOption.symbol + " (isNative: " + tokenOption.isNative + ")");
 
         if (TextUtils.isEmpty(currentWalletAddress)) {
             Log.w(TAG, "No wallet address available for balance fetch");
@@ -464,75 +463,64 @@ public class SendTokensFragment extends Fragment implements
 
         if (tokenOption.isNative) {
             // Native SCRT balance using SecretWallet
-            Log.d(TAG, "Fetching native SCRT balance");
             balanceText.setText("Balance: Loading...");
             new FetchScrtBalanceTask().execute(WalletNetwork.DEFAULT_LCD_URL, currentWalletAddress);
         } else {
-            // SNIP-20 token balance using SnipQueryService
-            Log.d(TAG, "Fetching SNIP-20 token balance for: " + tokenOption.symbol);
-            String viewingKey = getViewingKeyForToken(tokenOption.symbol);
-            Log.d(TAG, "Viewing key result: " + (TextUtils.isEmpty(viewingKey) ? "EMPTY" : "FOUND (" + viewingKey.length() + " chars)"));
-
-            if (TextUtils.isEmpty(viewingKey)) {
-                Log.w(TAG, "No viewing key available for " + tokenOption.symbol);
-                balanceText.setText("Balance: Set viewing key");
+            // SNIP-20 token balance using permit-based queries
+            if (!hasPermitForToken(tokenOption.symbol)) {
+                balanceText.setText("Balance: Create permit");
                 return;
             }
 
             balanceText.setText("Balance: Loading...");
-            fetchSnipTokenBalance(tokenOption.symbol, viewingKey);
+            fetchSnipTokenBalanceWithPermit(tokenOption.symbol);
         }
     }
 
-    private String getViewingKeyForToken(String tokenSymbol) {
+    private boolean hasPermitForToken(String tokenSymbol) {
         Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenSymbol);
         if (tokenInfo == null) {
-            return "";
+            return false;
         }
-        return viewingKeyManager.getViewingKey(currentWalletAddress, tokenInfo.contract);
+        return permitManager.hasPermit(currentWalletAddress, tokenInfo.contract);
     }
 
-    private void fetchSnipTokenBalance(String tokenSymbol, String viewingKey) {
-        Log.d(TAG, "fetchSnipTokenBalance called for: " + tokenSymbol);
+    private void fetchSnipTokenBalanceWithPermit(String tokenSymbol) {
         new Thread(() -> {
             try {
-                Log.d(TAG, "Calling SnipQueryService.queryBalance for " + tokenSymbol);
-                JSONObject result = SnipQueryService.queryBalance(
+                JSONObject result = SnipQueryService.queryBalanceWithPermit(
                     getActivity(),
                     tokenSymbol,
-                    currentWalletAddress,
-                    viewingKey
+                    currentWalletAddress
                 );
 
-                Log.d(TAG, "SnipQueryService result for " + tokenSymbol + ": " + result.toString());
-
                 // Handle result on UI thread
-                getActivity().runOnUiThread(() -> {
-                    handleSnipBalanceResult(tokenSymbol, result.toString());
-                });
+                if (getActivity() != null) {
+                    getActivity().runOnUiThread(() -> {
+                        handleSnipBalanceResult(tokenSymbol, result.toString());
+                    });
+                }
 
             } catch (Exception e) {
                 Log.e(TAG, "Token balance query failed for " + tokenSymbol + ": " + e.getMessage(), e);
-                getActivity().runOnUiThread(() -> {
-                    balanceText.setText("Balance: Error loading");
-                });
+                if (getActivity() != null) {
+                    getActivity().runOnUiThread(() -> {
+                        balanceText.setText("Balance: Error loading");
+                    });
+                }
             }
         }).start();
     }
 
     private void handleSnipBalanceResult(String tokenSymbol, String json) {
         try {
-            Log.d(TAG, "handleSnipBalanceResult for " + tokenSymbol + ", JSON: " + json);
-
             if (TextUtils.isEmpty(json)) {
-                Log.e(TAG, "SNIP balance query result JSON is empty");
                 balanceText.setText("Balance: Error loading");
                 return;
             }
 
             JSONObject root = new JSONObject(json);
             boolean success = root.optBoolean("success", false);
-            Log.d(TAG, "SNIP balance query success: " + success);
 
             if (success) {
                 JSONObject result = root.optJSONObject("result");
@@ -562,8 +550,6 @@ public class SendTokensFragment extends Fragment implements
                     balanceText.setText("Balance: Error loading");
                 }
             } else {
-                String error = root.optString("error", "Unknown error");
-                Log.e(TAG, "SNIP balance query failed: " + error);
                 balanceText.setText("Balance: Error loading");
             }
         } catch (Exception e) {

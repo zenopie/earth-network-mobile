@@ -93,7 +93,7 @@ public class SwapTokensMainFragment extends Fragment {
 
     // Broadcast receiver for transaction success
     private BroadcastReceiver transactionSuccessReceiver;
-    private PermitManager viewingKeyManager;
+    private PermitManager permitManager;
     
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
@@ -119,8 +119,8 @@ public class SwapTokensMainFragment extends Fragment {
         registerBroadcastReceiver();
         loadCurrentWalletAddress();
 
-        // Initialize viewing key manager
-        viewingKeyManager = PermitManager.getInstance(requireContext());
+        // Initialize permit manager
+        permitManager = PermitManager.getInstance(requireContext());
 
         updateTokenLogos();
         fetchBalances();
@@ -221,8 +221,8 @@ public class SwapTokensMainFragment extends Fragment {
         });
         
         fromMaxButton.setOnClickListener(v -> setMaxFromAmount());
-        fromViewingKeyButton.setOnClickListener(v -> requestViewingKey(fromToken));
-        toViewingKeyButton.setOnClickListener(v -> requestViewingKey(toToken));
+        fromViewingKeyButton.setOnClickListener(v -> requestPermit(fromToken));
+        toViewingKeyButton.setOnClickListener(v -> requestPermit(toToken));
         
         toggleButton.setOnClickListener(v -> toggleTokenPair());
         swapButton.setOnClickListener(v -> executeSwap());
@@ -388,7 +388,6 @@ public class SwapTokensMainFragment extends Fragment {
         try {
             // Use SecureWalletManager to get current wallet address
             currentWalletAddress = com.example.earthwallet.wallet.services.SecureWalletManager.getWalletAddress(getContext());
-            Log.d(TAG, "Loaded wallet address from SecureWalletManager: " + currentWalletAddress);
         } catch (Exception e) {
             Log.e(TAG, "Failed to load wallet address", e);
             currentWalletAddress = "";
@@ -396,7 +395,6 @@ public class SwapTokensMainFragment extends Fragment {
     }
     
     private void fetchBalances() {
-        Log.i(TAG, "*** FETCHBALANCES CALLED - refreshing " + fromToken + " and " + toToken + " balances ***");
 
         if (TextUtils.isEmpty(currentWalletAddress)) {
             fromBalanceText.setText("Balance: Connect wallet");
@@ -413,10 +411,8 @@ public class SwapTokensMainFragment extends Fragment {
     
     
     
-    private void requestViewingKey(String tokenSymbol) {
-        Toast.makeText(getContext(), "Requesting viewing key for " + tokenSymbol, Toast.LENGTH_SHORT).show();
-        // Use ViewingKeyService or implement inline viewing key request
-        Toast.makeText(getContext(), "Please set viewing key for " + tokenSymbol + " first", Toast.LENGTH_LONG).show();
+    private void requestPermit(String tokenSymbol) {
+        Toast.makeText(getContext(), "Please create a permit for " + tokenSymbol + " in the Wallet tab", Toast.LENGTH_LONG).show();
     }
     
     private void executeSwap() {
@@ -597,7 +593,7 @@ public class SwapTokensMainFragment extends Fragment {
             fromMaxButton.setVisibility(fromBalance > 0 ? View.VISIBLE : View.GONE);
             fromViewingKeyButton.setVisibility(View.GONE);
         } else if (fromBalance == -1) {
-            fromBalanceText.setText("Balance: Error");
+            fromBalanceText.setText("Balance: Create permit");
             fromMaxButton.setVisibility(View.GONE);
             fromViewingKeyButton.setVisibility(View.VISIBLE);
         } else {
@@ -614,7 +610,7 @@ public class SwapTokensMainFragment extends Fragment {
             toBalanceText.setText("Balance: " + df.format(toBalance));
             toViewingKeyButton.setVisibility(View.GONE);
         } else if (toBalance == -1) {
-            toBalanceText.setText("Balance: Error");
+            toBalanceText.setText("Balance: Create permit");
             toViewingKeyButton.setVisibility(View.VISIBLE);
         } else {
             toBalanceText.setText("Balance: ...");
@@ -722,10 +718,9 @@ public class SwapTokensMainFragment extends Fragment {
                 updateToBalanceDisplay();
             }
         } else {
-            // SNIP-20 token balance query using SnipQueryService directly
-            String viewingKey = getViewingKeyForToken(tokenSymbol);
-            if (TextUtils.isEmpty(viewingKey)) {
-                // No viewing key available - set balance to error state
+            // SNIP-20 token balance query using permit-based queries
+            if (!hasPermitForToken(tokenSymbol)) {
+                // No permit available - set balance to error state
                 if (isFromToken) {
                     fromBalance = -1;
                     updateFromBalanceDisplay();
@@ -735,34 +730,36 @@ public class SwapTokensMainFragment extends Fragment {
                 }
                 return;
             }
-            
+
             // Execute query in background thread
             new Thread(() -> {
                 try {
-                    JSONObject result = com.example.earthwallet.bridge.services.SnipQueryService.queryBalance(
+                    JSONObject result = com.example.earthwallet.bridge.services.SnipQueryService.queryBalanceWithPermit(
                         getActivity(), // Use HostActivity context instead of Fragment context
                         tokenSymbol,
-                        currentWalletAddress,
-                        viewingKey
+                        currentWalletAddress
                     );
-                    
+
                     // Handle result on UI thread
-                    getActivity().runOnUiThread(() -> {
-                        Log.d(TAG, "Raw SNIP query result: " + result.toString());
-                        handleSnipBalanceResult(tokenSymbol, isFromToken, result.toString());
-                    });
-                    
+                    if (getActivity() != null) {
+                        getActivity().runOnUiThread(() -> {
+                            handleSnipBalanceResult(tokenSymbol, isFromToken, result.toString());
+                        });
+                    }
+
                 } catch (Exception e) {
                     Log.e(TAG, "Token balance query failed for " + tokenSymbol + ": " + e.getMessage(), e);
-                    getActivity().runOnUiThread(() -> {
-                        if (isFromToken) {
-                            fromBalance = -1;
-                            updateFromBalanceDisplay();
-                        } else {
-                            toBalance = -1;
-                            updateToBalanceDisplay();
-                        }
-                    });
+                    if (getActivity() != null) {
+                        getActivity().runOnUiThread(() -> {
+                            if (isFromToken) {
+                                fromBalance = -1;
+                                updateFromBalanceDisplay();
+                            } else {
+                                toBalance = -1;
+                                updateToBalanceDisplay();
+                            }
+                        });
+                    }
                 }
             }).start();
         }
@@ -770,10 +767,8 @@ public class SwapTokensMainFragment extends Fragment {
     
     private void handleSnipBalanceResult(String tokenSymbol, boolean isFromToken, String json) {
         try {
-            Log.d(TAG, "handleSnipBalanceResult - tokenSymbol: " + tokenSymbol + ", isFromToken: " + isFromToken);
             
             if (TextUtils.isEmpty(json)) {
-                Log.e(TAG, "SNIP balance query result JSON is empty");
                 if (isFromToken) {
                     fromBalance = -1;
                     updateFromBalanceDisplay();
@@ -839,8 +834,6 @@ public class SwapTokensMainFragment extends Fragment {
                     }
                 }
             } else {
-                String error = root.optString("error", "Unknown error");
-                Log.e(TAG, "SNIP balance query failed: " + error);
                 if (isFromToken) {
                     fromBalance = -1;
                     updateFromBalanceDisplay();
@@ -862,25 +855,8 @@ public class SwapTokensMainFragment extends Fragment {
     }
 
     private void updateBalanceDisplay() {
-        DecimalFormat df = new DecimalFormat("#.##");
-        
-        if (fromBalance > 0) {
-            fromBalanceText.setText("Balance: " + df.format(fromBalance));
-            fromMaxButton.setVisibility(View.VISIBLE);
-            fromViewingKeyButton.setVisibility(View.GONE);
-        } else {
-            fromBalanceText.setText("Balance: Error");
-            fromMaxButton.setVisibility(View.GONE);
-            fromViewingKeyButton.setVisibility(View.VISIBLE);
-        }
-        
-        if (toBalance > 0) {
-            toBalanceText.setText("Balance: " + df.format(toBalance));
-            toViewingKeyButton.setVisibility(View.GONE);
-        } else {
-            toBalanceText.setText("Balance: Error");
-            toViewingKeyButton.setVisibility(View.VISIBLE);
-        }
+        updateFromBalanceDisplay();
+        updateToBalanceDisplay();
     }
     
     private void setupBroadcastReceiver() {
@@ -1004,12 +980,12 @@ public class SwapTokensMainFragment extends Fragment {
         }
     }
     
-    private String getViewingKeyForToken(String tokenSymbol) {
+    private boolean hasPermitForToken(String tokenSymbol) {
         Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenSymbol);
         if (tokenInfo == null) {
-            return "";
+            return false;
         }
-        return viewingKeyManager.getViewingKey(currentWalletAddress, tokenInfo.contract);
+        return permitManager.hasPermit(currentWalletAddress, tokenInfo.contract);
     }
     
     private void handleTokenBalanceResult(Intent data, String json) {
