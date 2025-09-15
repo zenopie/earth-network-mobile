@@ -58,7 +58,7 @@ public class StakeUnstakeFragment extends Fragment {
     // Data
     private double erthBalance = 0.0;
     private double stakedBalance = 0.0;
-    private PermitManager viewingKeyManager;
+    private PermitManager permitManager;
 
     // Broadcast receiver for transaction success
     private BroadcastReceiver transactionSuccessReceiver;
@@ -77,7 +77,7 @@ public class StakeUnstakeFragment extends Fragment {
         super.onViewCreated(view, savedInstanceState);
 
         // Initialize PermitManager
-        viewingKeyManager = PermitManager.getInstance(requireContext());
+        permitManager = PermitManager.getInstance(requireContext());
 
         initializeViews(view);
         setupBroadcastReceiver();
@@ -208,7 +208,6 @@ public class StakeUnstakeFragment extends Fragment {
      * Refresh balance data
      */
     public void refreshData() {
-        Log.d(TAG, "Refreshing stake/unstake data");
         
         // Query ERTH balance using SnipQueryService
         queryErthBalance();
@@ -226,7 +225,6 @@ public class StakeUnstakeFragment extends Fragment {
                             if (userInfo.has("staked_amount")) {
                                 long stakedAmountMicro = userInfo.getLong("staked_amount");
                                 stakedBalance = stakedAmountMicro / 1_000_000.0; // Convert to macro units
-                                Log.d(TAG, "Staked balance: " + stakedBalance);
                                 updateUnstakeSection();
                             }
                         }
@@ -244,13 +242,10 @@ public class StakeUnstakeFragment extends Fragment {
     }
     
     private void queryErthBalance() {
-        Log.d(TAG, "queryErthBalance called");
         new Thread(() -> {
             try {
                 String walletAddress = SecureWalletManager.getWalletAddress(getContext());
-                Log.d(TAG, "Wallet address: " + walletAddress);
                 if (walletAddress == null) {
-                    Log.w(TAG, "No wallet address available for ERTH balance query");
                     erthBalance = -1;
                     if (getActivity() != null) {
                         getActivity().runOnUiThread(this::updateStakeSection);
@@ -258,46 +253,37 @@ public class StakeUnstakeFragment extends Fragment {
                     return;
                 }
 
-                // Get viewing key using PermitManager
-                String viewingKey = viewingKeyManager.getViewingKey(walletAddress, Tokens.ERTH.contract);
-                Log.d(TAG, "Looking for ERTH viewing key for wallet: " + walletAddress.substring(0, Math.min(14, walletAddress.length())) + "...");
-                Log.d(TAG, "Found viewing key: " + (viewingKey != null && !viewingKey.isEmpty()));
-                
-                if (viewingKey == null || viewingKey.isEmpty()) {
-                    Log.d(TAG, "No ERTH viewing key available");
-                    erthBalance = -1; // Indicates "need viewing key"
+                // Check if permit exists for ERTH
+                if (!permitManager.hasPermit(walletAddress, Tokens.ERTH.contract)) {
+                    erthBalance = -1; // Indicates "need permit"
                     if (getActivity() != null) {
                         getActivity().runOnUiThread(this::updateStakeSection);
                     }
                     return;
                 }
-                
-                // Query ERTH balance using SnipQueryService exactly like TokenBalancesFragment does
-                Log.d(TAG, "Querying ERTH balance with viewing key");
-                JSONObject result = SnipQueryService.queryBalance(getContext(), "ERTH", walletAddress, viewingKey);
-                Log.d(TAG, "Query result: " + (result != null ? result.toString() : "null"));
-                
+
+                // Query ERTH balance using permit-based queries
+                JSONObject result = SnipQueryService.queryBalanceWithPermit(getContext(), "ERTH", walletAddress);
+
                 if (result != null && result.has("result") && result.getJSONObject("result").has("balance")) {
                     JSONObject balanceObj = result.getJSONObject("result").getJSONObject("balance");
                     if (balanceObj.has("amount")) {
                         String amountStr = balanceObj.getString("amount");
                         double amount = Double.parseDouble(amountStr) / 1_000_000.0; // Convert from micro to macro units
                         erthBalance = amount;
-                        Log.d(TAG, "ERTH balance updated: " + erthBalance);
                     }
                 } else {
-                    Log.w(TAG, "Invalid ERTH balance response");
                     erthBalance = 0.0;
                 }
-                
+
                 // Update UI on main thread
                 if (getActivity() != null) {
                     getActivity().runOnUiThread(this::updateStakeSection);
                 }
-                
+
             } catch (Exception e) {
                 Log.e(TAG, "Error querying ERTH balance", e);
-                erthBalance = -1; // Indicates error/need viewing key
+                erthBalance = -1; // Indicates error/need permit
                 if (getActivity() != null) {
                     getActivity().runOnUiThread(this::updateStakeSection);
                 }
@@ -307,16 +293,16 @@ public class StakeUnstakeFragment extends Fragment {
     
     private void updateStakeSection() {
         if (getActivity() == null) return;
-        
+
         getActivity().runOnUiThread(() -> {
             if (erthBalance >= 0) {
                 stakeBalanceLabel.setText(String.format("Balance: %,.0f", erthBalance));
                 stakeMaxButton.setVisibility(View.VISIBLE);
             } else {
-                stakeBalanceLabel.setText("Balance: Error");
+                stakeBalanceLabel.setText("Balance: Create permit");
                 stakeMaxButton.setVisibility(View.GONE);
             }
-            
+
             validateStakeButton();
         });
     }
@@ -340,22 +326,16 @@ public class StakeUnstakeFragment extends Fragment {
     private void validateStakeButton() {
         String amountText = stakeAmountInput.getText().toString().trim();
         boolean isValid = false;
-        
-        Log.d(TAG, "validateStakeButton - amountText: '" + amountText + "', erthBalance: " + erthBalance);
-        
+
         if (!TextUtils.isEmpty(amountText)) {
             try {
                 double amount = Double.parseDouble(amountText);
                 isValid = amount > 0 && amount <= erthBalance;
-                Log.d(TAG, "validateStakeButton - parsed amount: " + amount + ", isValid: " + isValid);
             } catch (NumberFormatException e) {
-                Log.d(TAG, "validateStakeButton - NumberFormatException: " + e.getMessage());
+                // Invalid number format
             }
-        } else {
-            Log.d(TAG, "validateStakeButton - empty amount text");
         }
-        
-        Log.d(TAG, "validateStakeButton - setting button enabled: " + isValid);
+
         stakeButton.setEnabled(isValid);
     }
     
@@ -394,7 +374,6 @@ public class StakeUnstakeFragment extends Fragment {
                 return;
             }
             
-            Log.d(TAG, "Staking " + amount + " ERTH");
             
             // Convert amount to micro units
             long amountMicro = Math.round(amount * 1_000_000);
@@ -441,7 +420,6 @@ public class StakeUnstakeFragment extends Fragment {
                 return;
             }
             
-            Log.d(TAG, "Unstaking " + amount + " ERTH");
             
             // Convert amount to micro units
             long amountMicro = Math.round(amount * 1_000_000);

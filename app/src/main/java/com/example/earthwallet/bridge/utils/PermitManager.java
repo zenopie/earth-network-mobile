@@ -9,10 +9,16 @@ import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
 
 import com.example.earthwallet.bridge.models.Permit;
+import com.example.earthwallet.bridge.models.PermitSignDoc;
+import com.example.earthwallet.wallet.services.SecureWalletManager;
+import com.example.earthwallet.wallet.services.TransactionSigner;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
+import org.bitcoinj.core.ECKey;
+
 import java.util.Arrays;
 import java.util.List;
+import java.util.Base64;
 
 /**
  * PermitManager
@@ -105,26 +111,66 @@ public class PermitManager {
 
     /**
      * Create and set a permit for multiple contracts with default permissions
+     * @param context The application context
      * @param walletAddress The wallet address
      * @param contractAddresses List of contract addresses
      * @param permitName The permit name (e.g., app name)
      * @param permissions List of permissions (balance, history, allowance)
      * @return The created permit
      */
-    public Permit createPermit(String walletAddress, List<String> contractAddresses, String permitName, List<String> permissions) {
+    public Permit createPermit(Context context, String walletAddress, List<String> contractAddresses, String permitName, List<String> permissions) {
         if (TextUtils.isEmpty(walletAddress) || contractAddresses == null || contractAddresses.isEmpty()) {
             Log.e(TAG, "Cannot create permit: invalid parameters");
             return null;
         }
 
-        Permit permit = new Permit(permitName, contractAddresses, permissions);
+        try {
+            // Use SecureWalletManager to sign the permit
+            Permit signedPermit = SecureWalletManager.executeWithMnemonic(context, mnemonic -> {
+                // Get wallet key from mnemonic
+                ECKey walletKey = com.example.earthwallet.wallet.utils.WalletCrypto.deriveKeyFromMnemonic(mnemonic);
+                String derivedAddress = com.example.earthwallet.wallet.utils.WalletCrypto.getAddress(walletKey);
 
-        // Store permit for each contract
-        for (String contractAddress : contractAddresses) {
-            setPermit(walletAddress, contractAddress, permit);
+                if (walletKey == null || !walletAddress.equals(derivedAddress)) {
+                    throw new Exception("Wallet mismatch or invalid key");
+                }
+
+                // Create permit sign document
+                PermitSignDoc signDoc = new PermitSignDoc("secret-4", permitName, contractAddresses, permissions);
+
+                // Serialize and sign
+                Gson gson = new Gson();
+                String signDocJson = gson.toJson(signDoc);
+                byte[] signDocBytes = signDocJson.getBytes("UTF-8");
+
+                // Sign the document using TransactionSigner
+                TransactionSigner.TransactionSignature signature =
+                    TransactionSigner.createSignature(signDocBytes, walletKey);
+
+                // Create signed permit
+                Permit permit = new Permit(permitName, contractAddresses, permissions);
+                permit.setSignature(Base64.getEncoder().encodeToString(signature.getBytes()));
+                permit.setPublicKey(Base64.getEncoder().encodeToString(signature.getPublicKey()));
+
+                return permit;
+            });
+
+            if (signedPermit != null) {
+                // Store signed permit for each contract
+                for (String contractAddress : contractAddresses) {
+                    setPermit(walletAddress, contractAddress, signedPermit);
+                }
+                Log.d(TAG, "Successfully created and signed permit for " + contractAddresses.size() + " contracts");
+                return signedPermit;
+            } else {
+                Log.e(TAG, "Failed to sign permit");
+                return null;
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to create signed permit", e);
+            return null;
         }
-
-        return permit;
     }
 
     /**

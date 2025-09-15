@@ -26,6 +26,7 @@ import com.example.earthwallet.R;
 import com.example.earthwallet.wallet.constants.Tokens;
 import com.example.earthwallet.Constants;
 import com.example.earthwallet.bridge.activities.TransactionActivity;
+import com.example.earthwallet.bridge.utils.PermitManager;
 
 import org.json.JSONObject;
 import org.json.JSONArray;
@@ -56,7 +57,7 @@ public class AddLiquidityFragment extends Fragment {
     private double erthBalance = 0.0;
     private String currentWalletAddress = "";
     private SharedPreferences securePrefs;
-    private SharedPreferences viewingKeysPrefs;
+    private PermitManager permitManager;
     private ExecutorService executorService;
 
     // Broadcast receiver for transaction success
@@ -94,22 +95,8 @@ public class AddLiquidityFragment extends Fragment {
             Log.e(TAG, "Failed to get securePrefs from HostActivity", e);
         }
         
-        // Initialize viewing keys preferences (separate from wallet preferences)
-        try {
-            String masterKeyAlias = androidx.security.crypto.MasterKeys.getOrCreate(androidx.security.crypto.MasterKeys.AES256_GCM_SPEC);
-            viewingKeysPrefs = androidx.security.crypto.EncryptedSharedPreferences.create(
-                "viewing_keys_prefs",
-                masterKeyAlias,
-                requireContext(),
-                androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            );
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to create viewing keys preferences", e);
-            // Safe fallback: use regular SharedPreferences for viewing keys only
-            viewingKeysPrefs = requireContext().getSharedPreferences("viewing_keys_prefs_fallback", Context.MODE_PRIVATE);
-            Log.w(TAG, "Using fallback regular SharedPreferences for viewing keys");
-        }
+        // Initialize permit manager
+        permitManager = PermitManager.getInstance(requireContext());
         
         executorService = Executors.newCachedThreadPool();
     }
@@ -329,10 +316,9 @@ public class AddLiquidityFragment extends Fragment {
                 updateErthBalanceDisplay();
             }
         } else {
-            // SNIP-20 token balance query
-            String viewingKey = getViewingKeyForToken(tokenSymbol);
-            if (TextUtils.isEmpty(viewingKey)) {
-                // No viewing key available
+            // SNIP-20 token balance query using permits
+            if (!hasPermitForToken(tokenSymbol)) {
+                // No permit available
                 if (isToken) {
                     tokenBalance = -1;
                     updateTokenBalanceDisplay();
@@ -342,24 +328,23 @@ public class AddLiquidityFragment extends Fragment {
                 }
                 return;
             }
-            
+
             // Execute query in background thread
             executorService.execute(() -> {
                 try {
-                    JSONObject result = com.example.earthwallet.bridge.services.SnipQueryService.queryBalance(
+                    JSONObject result = com.example.earthwallet.bridge.services.SnipQueryService.queryBalanceWithPermit(
                         getActivity(),
                         tokenSymbol,
-                        currentWalletAddress,
-                        viewingKey
+                        currentWalletAddress
                     );
-                    
+
                     // Handle result on UI thread
                     if (getActivity() != null) {
                         getActivity().runOnUiThread(() -> {
                             handleBalanceResult(tokenSymbol, isToken, result.toString());
                         });
                     }
-                    
+
                 } catch (Exception e) {
                     Log.e(TAG, "Token balance query failed for " + tokenSymbol + ": " + e.getMessage(), e);
                     if (getActivity() != null) {
@@ -381,7 +366,6 @@ public class AddLiquidityFragment extends Fragment {
     private void handleBalanceResult(String tokenSymbol, boolean isToken, String json) {
         try {
             if (TextUtils.isEmpty(json)) {
-                Log.e(TAG, "Balance query result JSON is empty");
                 if (isToken) {
                     tokenBalance = -1;
                     updateTokenBalanceDisplay();
@@ -438,8 +422,6 @@ public class AddLiquidityFragment extends Fragment {
                     }
                 }
             } else {
-                String error = root.optString("error", "Unknown error");
-                Log.e(TAG, "Balance query failed: " + error);
                 if (isToken) {
                     tokenBalance = -1;
                     updateTokenBalanceDisplay();
@@ -467,7 +449,7 @@ public class AddLiquidityFragment extends Fragment {
             tokenBalanceText.setText("Balance: " + df.format(tokenBalance));
             tokenMaxButton.setVisibility(tokenBalance > 0 ? View.VISIBLE : View.VISIBLE);
         } else {
-            tokenBalanceText.setText("Balance: Set viewing key");
+            tokenBalanceText.setText("Balance: Create permit");
             tokenMaxButton.setVisibility(View.GONE);
         }
     }
@@ -479,26 +461,17 @@ public class AddLiquidityFragment extends Fragment {
             erthBalanceText.setText("Balance: " + df.format(erthBalance));
             erthMaxButton.setVisibility(erthBalance > 0 ? View.VISIBLE : View.VISIBLE);
         } else {
-            erthBalanceText.setText("Balance: Set viewing key");
+            erthBalanceText.setText("Balance: Create permit");
             erthMaxButton.setVisibility(View.GONE);
         }
     }
     
-    private String getViewingKeyForToken(String tokenSymbol) {
-        try {
-            Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenSymbol);
-            if (tokenInfo == null || viewingKeysPrefs == null) {
-                return "";
-            }
-            
-            String key = "viewing_key_" + currentWalletAddress + "_" + tokenInfo.contract;
-            String viewingKey = viewingKeysPrefs.getString(key, "");
-            Log.d(TAG, "Viewing key lookup - key: " + key + ", found: " + !TextUtils.isEmpty(viewingKey));
-            return viewingKey;
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to get viewing key for " + tokenSymbol, e);
-            return "";
+    private boolean hasPermitForToken(String tokenSymbol) {
+        Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenSymbol);
+        if (tokenInfo == null) {
+            return false;
         }
+        return permitManager.hasPermit(currentWalletAddress, tokenInfo.contract);
     }
     
     private void loadPoolReserves() {

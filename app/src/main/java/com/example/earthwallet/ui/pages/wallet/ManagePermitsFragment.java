@@ -1,9 +1,7 @@
 package com.example.earthwallet.ui.pages.wallet;
 
-import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
-import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -28,12 +26,9 @@ import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
 
 import com.example.earthwallet.R;
-import com.example.earthwallet.bridge.activities.TransactionActivity;
 import com.example.earthwallet.wallet.constants.Tokens;
 
 import org.json.JSONObject;
-
-import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -50,7 +45,6 @@ public class ManagePermitsFragment extends Fragment {
     
     private static final String TAG = "ManagePermitsFragment";
     private static final String PREF_FILE = "permits_prefs";
-    private static final int REQ_CREATE_PERMIT = 2003;
     
     // UI Components
     private LinearLayout permitsContainer;
@@ -59,8 +53,6 @@ public class ManagePermitsFragment extends Fragment {
     // State management
     private com.example.earthwallet.bridge.utils.PermitManager permitManager;
     private String walletAddress = "";
-    private Tokens.TokenInfo pendingPermitToken = null;
-    private java.util.List<String> pendingPermissions = null;
     
     // Interface for communication with parent
     public interface ManagePermitsListener {
@@ -526,77 +518,36 @@ public class ManagePermitsFragment extends Fragment {
     }
 
     /**
-     * Create permit with specific permissions
+     * Create permit with specific permissions - directly using PermitManager (no transaction flow)
      */
     private void createPermitWithPermissions(Tokens.TokenInfo token, java.util.List<String> permissions) {
         try {
-            Log.d(TAG, "Starting permit creation for " + token.symbol + " with permissions: " + permissions);
+            Log.d(TAG, "Creating permit directly for " + token.symbol + " with permissions: " + permissions);
 
-            // Store pending state for result handling
-            pendingPermitToken = token;
-            pendingPermissions = permissions;
-
-            // Create permit intent using PermitSigningService
-            Intent intent = com.example.earthwallet.bridge.services.PermitSigningService.createPermitIntent(
+            // Create permit directly using PermitManager in the background
+            permitManager.createPermit(
                 getContext(),
-                "EarthWallet", // permit name
+                walletAddress,
                 java.util.Arrays.asList(token.contract),
+                "EarthWallet", // permit name
                 permissions
             );
 
-            startActivityForResult(intent, REQ_CREATE_PERMIT);
+            Toast.makeText(getContext(), "Permit created successfully for " + token.symbol + "!", Toast.LENGTH_SHORT).show();
+
+            // Notify parent if available
+            if (listener != null) {
+                listener.onPermitRequested(token);
+            }
+
+            // Refresh the display
+            loadPermits();
+
+            Log.i(TAG, "Successfully created permit for " + token.symbol);
 
         } catch (Exception e) {
             Log.e(TAG, "Failed to create permit for " + token.symbol, e);
             Toast.makeText(getContext(), "Failed to create permit: " + e.getMessage(), Toast.LENGTH_LONG).show();
-
-            // Clear pending state on error
-            pendingPermitToken = null;
-            pendingPermissions = null;
-        }
-    }
-    
-    
-    @Override
-    public void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-
-        if (requestCode == REQ_CREATE_PERMIT) {
-            if (resultCode == Activity.RESULT_OK) {
-                // Permit creation succeeded
-                if (pendingPermitToken != null) {
-                    try {
-                        Log.d(TAG, "Processing permit creation success for " + pendingPermitToken.symbol);
-
-                        Toast.makeText(getContext(), "Permit created successfully for " + pendingPermitToken.symbol + "!", Toast.LENGTH_SHORT).show();
-
-                        // Notify parent if available
-                        if (listener != null) {
-                            listener.onPermitRequested(pendingPermitToken);
-                        }
-
-                        // Refresh the display
-                        loadPermits();
-
-                        Log.i(TAG, "Successfully created permit for " + pendingPermitToken.symbol);
-                    } catch (Exception e) {
-                        Log.e(TAG, "Failed to handle permit creation result", e);
-                        Toast.makeText(getContext(), "Failed to process permit result", Toast.LENGTH_SHORT).show();
-                    }
-                } else {
-                    Log.w(TAG, "Permit creation succeeded but no pending token info");
-                    Toast.makeText(getContext(), "Permit creation completed", Toast.LENGTH_SHORT).show();
-                }
-            } else {
-                // Permit creation failed
-                String error = (data != null) ? data.getStringExtra(com.example.earthwallet.bridge.activities.TransactionActivity.EXTRA_ERROR) : "Permit creation failed";
-                Toast.makeText(getContext(), "Failed to create permit: " + error, Toast.LENGTH_SHORT).show();
-                Log.e(TAG, "Create permit failed: " + error);
-            }
-
-            // Clear pending state
-            pendingPermitToken = null;
-            pendingPermissions = null;
         }
     }
     

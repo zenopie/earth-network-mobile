@@ -25,6 +25,7 @@ import com.example.earthwallet.bridge.services.SecretQueryService;
 import com.example.earthwallet.bridge.services.SnipQueryService;
 import com.example.earthwallet.wallet.constants.Tokens;
 import com.example.earthwallet.wallet.services.SecureWalletManager;
+import com.example.earthwallet.bridge.utils.PermitManager;
 
 import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKeys;
@@ -43,7 +44,6 @@ public class StakingInfoFragment extends Fragment {
     
     private static final String TAG = "StakingInfoFragment";
     private static final int REQ_CLAIM_REWARDS = 4001;
-    private static final int REQ_GET_VIEWING_KEY = 4006;
     
     // UI Components
     private TextView stakedAmountText;
@@ -52,11 +52,11 @@ public class StakingInfoFragment extends Fragment {
     private TextView totalStakedText;
     private TextView stakingRewardsText;
     private Button claimRewardsButton;
-    private Button getViewingKeyButton;
     
     // Services
     private SecretQueryService queryService;
     private ExecutorService executorService;
+    private PermitManager permitManager;
     
     // Broadcast receiver for transaction success
     private BroadcastReceiver transactionSuccessReceiver;
@@ -84,6 +84,7 @@ public class StakingInfoFragment extends Fragment {
         // Initialize services
         queryService = new SecretQueryService(getContext());
         executorService = Executors.newCachedThreadPool();
+        permitManager = PermitManager.getInstance(requireContext());
         
         // Register broadcast receiver for immediate transaction success notifications
         if (getContext() != null) {
@@ -130,12 +131,10 @@ public class StakingInfoFragment extends Fragment {
         totalStakedText = view.findViewById(R.id.total_staked_text);
         stakingRewardsText = view.findViewById(R.id.staking_rewards_text);
         claimRewardsButton = view.findViewById(R.id.claim_rewards_button);
-        getViewingKeyButton = view.findViewById(R.id.get_viewing_key_button);
     }
     
     private void setupClickListeners() {
         claimRewardsButton.setOnClickListener(v -> handleClaimRewards());
-        getViewingKeyButton.setOnClickListener(v -> handleRequestViewingKey());
     }
     
     /**
@@ -284,31 +283,17 @@ public class StakingInfoFragment extends Fragment {
                     return;
                 }
                 
-                // Create secure preferences exactly like TokenBalancesFragment does
-                String masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC);
-                SharedPreferences securePrefs = EncryptedSharedPreferences.create(
-                    "viewing_keys_prefs",
-                    masterKeyAlias,
-                    getContext(),
-                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-                );
-                
-                // Get viewing key using exact same pattern as TokenBalancesFragment.getViewingKey()
-                String viewingKey = securePrefs.getString("viewing_key_" + walletAddress + "_" + Tokens.ERTH.contract, "");
-                
-                if (viewingKey == null || viewingKey.isEmpty()) {
-                    Log.d(TAG, "No ERTH viewing key available for Info tab");
-                    unstakedBalance = -1; // Indicates "need viewing key"
+                // Check if permit exists for ERTH
+                if (!permitManager.hasPermit(walletAddress, Tokens.ERTH.contract)) {
+                    unstakedBalance = -1; // Indicates "need permit"
                     if (getActivity() != null) {
                         getActivity().runOnUiThread(this::updateUI);
                     }
                     return;
                 }
-                
-                // Query ERTH balance using SnipQueryService exactly like TokenBalancesFragment does
-                Log.d(TAG, "Querying ERTH balance for Info tab with viewing key");
-                JSONObject result = SnipQueryService.queryBalance(getContext(), "ERTH", walletAddress, viewingKey);
+
+                // Query ERTH balance using permit-based queries
+                JSONObject result = SnipQueryService.queryBalanceWithPermit(getContext(), "ERTH", walletAddress);
                 
                 if (result != null && result.has("result") && result.getJSONObject("result").has("balance")) {
                     JSONObject balanceObj = result.getJSONObject("result").getJSONObject("balance");
@@ -316,21 +301,19 @@ public class StakingInfoFragment extends Fragment {
                         String amountStr = balanceObj.getString("amount");
                         double amount = Double.parseDouble(amountStr) / 1_000_000.0; // Convert from micro to macro units
                         unstakedBalance = amount;
-                        Log.d(TAG, "ERTH balance updated for Info tab: " + unstakedBalance);
                     }
                 } else {
-                    Log.w(TAG, "Invalid ERTH balance response for Info tab");
                     unstakedBalance = 0.0;
                 }
-                
+
                 // Update UI on main thread
                 if (getActivity() != null) {
                     getActivity().runOnUiThread(this::updateUI);
                 }
-                
+
             } catch (Exception e) {
                 Log.e(TAG, "Error querying ERTH balance for Info tab", e);
-                unstakedBalance = -1; // Indicates error/need viewing key
+                unstakedBalance = -1; // Indicates error/need permit
                 if (getActivity() != null) {
                     getActivity().runOnUiThread(this::updateUI);
                 }
@@ -350,10 +333,8 @@ public class StakingInfoFragment extends Fragment {
         if (erthBalanceText != null) {
             if (unstakedBalance >= 0) {
                 erthBalanceText.setText(String.format("%,.0f ERTH", unstakedBalance));
-                getViewingKeyButton.setVisibility(View.GONE);
             } else {
-                erthBalanceText.setText("");
-                getViewingKeyButton.setVisibility(View.VISIBLE);
+                erthBalanceText.setText("Create permit");
             }
         }
         
@@ -400,40 +381,6 @@ public class StakingInfoFragment extends Fragment {
         }
     }
     
-    private void handleRequestViewingKey() {
-        Log.d(TAG, "Requesting ERTH viewing key");
-        
-        try {
-            Tokens.TokenInfo erthToken = Tokens.getToken("ERTH");
-            if (erthToken != null) {
-                // Create viewing key request message: { create_viewing_key: { entropy: "random_string" } }
-                JSONObject viewingKeyMsg = new JSONObject();
-                JSONObject createViewingKey = new JSONObject();
-                createViewingKey.put("entropy", generateRandomEntropy());
-                viewingKeyMsg.put("create_viewing_key", createViewingKey);
-                
-                // Use TransactionActivity to set viewing key
-                Intent intent = new Intent(getActivity(), TransactionActivity.class);
-                intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE);
-                intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, erthToken.contract);
-                intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, erthToken.hash);
-                intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, viewingKeyMsg.toString());
-                
-                startActivityForResult(intent, REQ_GET_VIEWING_KEY);
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error requesting viewing key", e);
-            Toast.makeText(getContext(), "Failed to request viewing key: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-        }
-    }
-    
-    private String generateRandomEntropy() {
-        // Generate random entropy for viewing key creation
-        java.security.SecureRandom random = new java.security.SecureRandom();
-        byte[] entropy = new byte[16];
-        random.nextBytes(entropy);
-        return android.util.Base64.encodeToString(entropy, android.util.Base64.NO_WRAP);
-    }
     
     @Override
     public void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
@@ -445,15 +392,6 @@ public class StakingInfoFragment extends Fragment {
                 refreshData();
             } else {
                 String error = data != null ? data.getStringExtra("error") : "Unknown error";
-            }
-        } else if (requestCode == REQ_GET_VIEWING_KEY) {
-            if (resultCode == getActivity().RESULT_OK) {
-                Toast.makeText(getContext(), "Viewing key set successfully!", Toast.LENGTH_SHORT).show();
-                // Refresh data to show ERTH balance
-                refreshData();
-            } else {
-                String error = data != null ? data.getStringExtra("error") : "Unknown error";
-                Toast.makeText(getContext(), "Failed to set viewing key: " + error, Toast.LENGTH_LONG).show();
             }
         }
     }
