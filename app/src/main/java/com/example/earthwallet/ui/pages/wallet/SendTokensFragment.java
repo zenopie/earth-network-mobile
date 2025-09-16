@@ -381,8 +381,9 @@ public class SendTokensFragment extends Fragment implements
         }
         transferMsg.put("transfer", transfer);
         
-        // Use SnipExecuteActivity for SNIP-20 token transfer
+        // Use TransactionActivity for SNIP-20 token transfer
         Intent intent = new Intent(getActivity(), TransactionActivity.class);
+        intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SNIP_EXECUTE);
         intent.putExtra(TransactionActivity.EXTRA_TOKEN_CONTRACT, token.contract);
         intent.putExtra(TransactionActivity.EXTRA_TOKEN_HASH, token.hash);
         intent.putExtra(TransactionActivity.EXTRA_RECIPIENT_ADDRESS, recipient);
