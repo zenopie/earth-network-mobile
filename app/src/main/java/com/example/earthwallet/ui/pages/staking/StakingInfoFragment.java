@@ -397,9 +397,17 @@ public class StakingInfoFragment extends Fragment {
     }
     
     @Override
+    public void onResume() {
+        super.onResume();
+        // Refresh data when user navigates to this fragment
+        Log.d(TAG, "StakingInfoFragment resumed - refreshing data");
+        refreshData();
+    }
+
+    @Override
     public void onDestroy() {
         super.onDestroy();
-        
+
         // Unregister broadcast receiver
         if (transactionSuccessReceiver != null && getContext() != null) {
             try {
@@ -408,7 +416,7 @@ public class StakingInfoFragment extends Fragment {
                 Log.w(TAG, "Error unregistering transaction success receiver: " + e.getMessage());
             }
         }
-        
+
         if (executorService != null && !executorService.isShutdown()) {
             executorService.shutdown();
         }
