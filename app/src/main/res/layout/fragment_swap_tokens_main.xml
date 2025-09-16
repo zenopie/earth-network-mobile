@@ -86,9 +86,12 @@
                                 android:background="@drawable/card_rounded_bg"
                                 android:minWidth="0dp"
                                 android:minHeight="0dp"
-                                android:padding="8dp"
+                                android:paddingLeft="8dp"
+                                android:paddingRight="8dp"
+                                android:paddingTop="2dp"
+                                android:paddingBottom="2dp"
                                 android:text="Max"
-                                android:textColor="@color/brand_blue"
+                                android:textColor="@android:color/white"
                                 android:textSize="12sp"
                                 android:visibility="gone" />
 
