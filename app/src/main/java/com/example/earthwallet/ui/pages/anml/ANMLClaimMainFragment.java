@@ -399,8 +399,7 @@ public class ANMLClaimMainFragment extends Fragment implements ANMLRegisterFragm
                 Log.d(TAG, "ANML claim transaction succeeded");
                 // Transaction successful - navigate optimistically to complete screen
                 showCompleteFragment();
-                // Also refresh status (broadcast receiver will handle additional refreshes)
-                checkStatus();
+                // Broadcast receiver will handle status refreshes
             } else {
                 String error = data != null ? data.getStringExtra(TransactionActivity.EXTRA_ERROR) : "Unknown error";
                 Log.e(TAG, "ANML claim transaction failed: " + error);
