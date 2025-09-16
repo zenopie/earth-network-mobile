@@ -627,6 +627,18 @@ public class UnbondFragment extends Fragment {
     }
 
     @Override
+    public void onResume() {
+        super.onResume();
+        // Refresh data when tab becomes visible
+        Log.d(TAG, "UnbondFragment resumed - refreshing unbonding data");
+        if (erthReserveMicro > 0 && tokenBReserveMicro > 0 && totalSharesMicro > 0) {
+            executorService.execute(() -> loadUnbondingRequests());
+        } else {
+            loadPoolInformationThenUnbondingRequests();
+        }
+    }
+
+    @Override
     public void onDestroy() {
         super.onDestroy();
 

@@ -496,6 +496,14 @@ public class RemoveLiquidityFragment extends Fragment {
     }
     
     @Override
+    public void onResume() {
+        super.onResume();
+        // Refresh data when tab becomes visible
+        Log.d(TAG, "RemoveLiquidityFragment resumed - refreshing user shares");
+        loadUserShares();
+    }
+
+    @Override
     public void onDestroy() {
         super.onDestroy();
 

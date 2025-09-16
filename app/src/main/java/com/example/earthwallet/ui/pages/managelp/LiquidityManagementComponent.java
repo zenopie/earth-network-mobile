@@ -1,5 +1,9 @@
 package com.example.earthwallet.ui.pages.managelp;
 
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -36,6 +40,33 @@ import java.util.concurrent.Executors;
  */
 public class LiquidityManagementComponent extends Fragment {
 
+    // Centralized data structure for all tab information
+    public static class LiquidityData {
+        // Pool info
+        public double totalShares = 0.0;
+        public double userStakedShares = 0.0;
+        public double poolOwnershipPercent = 0.0;
+        public double unbondingPercent = 0.0;
+        public double userErthValue = 0.0;
+        public double userTokenValue = 0.0;
+
+        // Balances for Add tab
+        public double tokenBalance = 0.0;
+        public double erthBalance = 0.0;
+        public double erthReserve = 0.0;
+        public double tokenReserve = 0.0;
+
+        // Unbonding data
+        public java.util.List<UnbondingRequest> unbondingRequests = new java.util.ArrayList<>();
+
+        public static class UnbondingRequest {
+            public double shares;
+            public String timeRemaining;
+            public double erthValue;
+            public double tokenValue;
+        }
+    }
+
     private static final String TAG = "LiquidityManagement";
     private static final String ARG_TOKEN_KEY = "token_key";
     private static final String ARG_PENDING_REWARDS = "pending_rewards";
@@ -45,7 +76,7 @@ public class LiquidityManagementComponent extends Fragment {
     
     private TabLayout tabLayout;
     private ViewPager2 viewPager;
-    private Button closeButton;
+    private LinearLayout closeButton;
     private TextView titleText;
     private ImageView poolTokenLogo;
     private ManageLPFragment.PoolData poolData;
@@ -90,6 +121,11 @@ public class LiquidityManagementComponent extends Fragment {
     private SecretQueryService queryService;
     private ExecutorService executorService;
 
+    // Centralized data for all tabs
+    private LiquidityData liquidityData;
+    private BroadcastReceiver transactionSuccessReceiver;
+
+
     public LiquidityManagementComponent() {
         // Required empty public constructor
     }
@@ -130,10 +166,13 @@ public class LiquidityManagementComponent extends Fragment {
         initializeViews(view);
         setupTabs();  // Now tokenKey is available
         setupCloseButton();
-        
-        // Initialize services
+        setupBroadcastReceiver();
+        registerBroadcastReceiver();
+
+        // Initialize services and data
         queryService = new SecretQueryService(getContext());
         executorService = Executors.newCachedThreadPool();
+        liquidityData = new LiquidityData();
         
         if (tokenKey != null) {
             // Update pool title and logo
@@ -148,8 +187,8 @@ public class LiquidityManagementComponent extends Fragment {
                 setTokenLogo(poolLogo, tokenKey);
             }
             
-            // Query detailed pool state data
-            queryPoolState();
+            // Load all liquidity data initially
+            loadAllLiquidityData();
         }
     }
     
@@ -347,10 +386,9 @@ public class LiquidityManagementComponent extends Fragment {
                     
                     // Update the Info tab with real data
                     updateInfoTab();
-                    
-                    // Recreate tabs with pool information now that we have it
-                    Log.d(TAG, "Pool state loaded, recreating tabs with pool information");
-                    setupTabs();
+
+                    // Don't recreate tabs - just update the existing adapter
+                    Log.d(TAG, "Pool state loaded, updating existing tabs with pool information");
                 }
             }
         } catch (Exception e) {
@@ -465,11 +503,175 @@ public class LiquidityManagementComponent extends Fragment {
         }
     }
     
+
+    private void setupBroadcastReceiver() {
+        transactionSuccessReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                Log.d(TAG, "Received TRANSACTION_SUCCESS broadcast - refreshing all liquidity data");
+                // Refresh all data when any transaction completes
+                loadAllLiquidityData();
+            }
+        };
+    }
+
+    private void registerBroadcastReceiver() {
+        if (getActivity() != null && transactionSuccessReceiver != null) {
+            IntentFilter filter = new IntentFilter("com.example.earthwallet.TRANSACTION_SUCCESS");
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                    requireActivity().getApplicationContext().registerReceiver(transactionSuccessReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+                } else {
+                    requireActivity().getApplicationContext().registerReceiver(transactionSuccessReceiver, filter);
+                }
+                Log.d(TAG, "Registered transaction success receiver");
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to register broadcast receiver", e);
+            }
+        }
+    }
+
+    // Centralized method to load all data for all tabs
+    private void loadAllLiquidityData() {
+        if (tokenKey == null) return;
+
+        executorService.execute(() -> {
+            try {
+                String userAddress = SecureWalletManager.getWalletAddress(getContext());
+                if (userAddress == null) {
+                    Log.w(TAG, "No user address available");
+                    return;
+                }
+
+                String tokenContract = getTokenContract(tokenKey);
+                if (tokenContract == null) {
+                    Log.w(TAG, "No contract found for token: " + tokenKey);
+                    return;
+                }
+
+                // Query all pool data in one call
+                JSONObject queryMsg = new JSONObject();
+                JSONObject queryUserInfo = new JSONObject();
+                JSONArray poolsArray = new JSONArray();
+                poolsArray.put(tokenContract);
+                queryUserInfo.put("pools", poolsArray);
+                queryUserInfo.put("user", userAddress);
+                queryMsg.put("query_user_info", queryUserInfo);
+
+                Log.d(TAG, "Loading all liquidity data for: " + tokenKey);
+                JSONObject result = queryService.queryContract(
+                    Constants.EXCHANGE_CONTRACT,
+                    Constants.EXCHANGE_HASH,
+                    queryMsg
+                );
+
+                if (getActivity() != null) {
+                    getActivity().runOnUiThread(() -> {
+                        processAllLiquidityData(result);
+                        notifyAllTabsDataChanged();
+                    });
+                }
+
+            } catch (Exception e) {
+                Log.e(TAG, "Error loading all liquidity data", e);
+            }
+        });
+    }
+
+    private void processAllLiquidityData(JSONObject result) {
+        try {
+            if (result != null && result.has("data")) {
+                JSONArray dataArray = result.getJSONArray("data");
+                if (dataArray.length() > 0) {
+                    JSONObject poolData = dataArray.getJSONObject(0);
+
+                    // Update pool state and user info
+                    if (poolData.has("pool_info")) {
+                        poolState = poolData.getJSONObject("pool_info");
+                    }
+                    if (poolData.has("user_info")) {
+                        userInfo = poolData.getJSONObject("user_info");
+                    }
+
+                    // Process all the data into our centralized structure
+                    updateLiquidityData();
+
+                    Log.d(TAG, "Successfully processed all liquidity data");
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error processing all liquidity data", e);
+        }
+    }
+
+    private void updateLiquidityData() {
+        // Extract all data from poolState and userInfo into liquidityData
+        if (poolState != null && userInfo != null) {
+            try {
+                JSONObject state = poolState.optJSONObject("state");
+                if (state != null) {
+                    // Pool info calculations
+                    long totalSharesMicro = state.optLong("total_shares", 0);
+                    long userStakedMicro = userInfo.optLong("amount_staked", 0);
+                    long unbondingSharesMicro = state.optLong("unbonding_shares", 0);
+                    long erthReserveMicro = state.optLong("erth_reserve", 0);
+                    long tokenBReserveMicro = state.optLong("token_b_reserve", 0);
+
+                    // Convert to macro units
+                    liquidityData.totalShares = totalSharesMicro / 1000000.0;
+                    liquidityData.userStakedShares = userStakedMicro / 1000000.0;
+                    liquidityData.erthReserve = erthReserveMicro / 1000000.0;
+                    liquidityData.tokenReserve = tokenBReserveMicro / 1000000.0;
+
+                    // Calculate percentages
+                    liquidityData.poolOwnershipPercent = liquidityData.totalShares > 0 ?
+                        (liquidityData.userStakedShares / liquidityData.totalShares) * 100 : 0;
+                    liquidityData.unbondingPercent = liquidityData.totalShares > 0 ?
+                        (unbondingSharesMicro / 1000000.0 / liquidityData.totalShares) * 100 : 0;
+
+                    // Calculate underlying values
+                    liquidityData.userErthValue = (liquidityData.erthReserve * liquidityData.poolOwnershipPercent) / 100.0;
+                    liquidityData.userTokenValue = (liquidityData.tokenReserve * liquidityData.poolOwnershipPercent) / 100.0;
+
+                    Log.d(TAG, "Updated centralized liquidity data - User shares: " + liquidityData.userStakedShares +
+                          ", Pool ownership: " + liquidityData.poolOwnershipPercent + "%");
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Error updating liquidity data", e);
+            }
+        }
+    }
+
+    private void notifyAllTabsDataChanged() {
+        // Get the adapter and notify all fragments that data has changed
+        if (viewPager != null && viewPager.getAdapter() instanceof LiquidityTabsAdapter) {
+            LiquidityTabsAdapter adapter = (LiquidityTabsAdapter) viewPager.getAdapter();
+            adapter.notifyDataChanged(liquidityData);
+        }
+    }
+
+    // Getter for tabs to access centralized data
+    public LiquidityData getLiquidityData() {
+        return liquidityData;
+    }
+
     @Override
     public void onDestroy() {
         super.onDestroy();
         if (executorService != null && !executorService.isShutdown()) {
             executorService.shutdown();
+        }
+
+        // Unregister broadcast receiver
+        if (transactionSuccessReceiver != null && getContext() != null) {
+            try {
+                requireActivity().getApplicationContext().unregisterReceiver(transactionSuccessReceiver);
+                Log.d(TAG, "Unregistered transaction success receiver");
+            } catch (IllegalArgumentException e) {
+                Log.d(TAG, "Receiver was not registered");
+            } catch (Exception e) {
+                Log.e(TAG, "Error unregistering receiver", e);
+            }
         }
     }
     
