@@ -631,6 +631,19 @@ public class UnbondFragment extends Fragment {
         super.onResume();
         // Refresh data when tab becomes visible
         Log.d(TAG, "UnbondFragment resumed - refreshing unbonding data");
+        refreshUnbondingData();
+    }
+
+    @Override
+    public void onHiddenChanged(boolean hidden) {
+        super.onHiddenChanged(hidden);
+        if (!hidden && isResumed()) {
+            Log.d(TAG, "UnbondFragment became visible - refreshing unbonding data");
+            refreshUnbondingData();
+        }
+    }
+
+    private void refreshUnbondingData() {
         if (erthReserveMicro > 0 && tokenBReserveMicro > 0 && totalSharesMicro > 0) {
             executorService.execute(() -> loadUnbondingRequests());
         } else {

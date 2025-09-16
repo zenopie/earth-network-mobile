@@ -203,31 +203,8 @@ public class LiquidityManagementComponent extends Fragment {
     private void setupTabs() {
         if (tabLayout == null || viewPager == null) return;
         
-        // Create adapter with pool information if available
-        LiquidityTabsAdapter adapter;
-        if (poolState != null) {
-            try {
-                JSONObject state = poolState.optJSONObject("state");
-                if (state != null) {
-                    long erthReserve = state.optLong("erth_reserve", 0);
-                    long tokenBReserve = state.optLong("token_b_reserve", 0);
-                    long totalShares = state.optLong("total_shares", 0);
-                    
-                    Log.d(TAG, "Setting up tabs with pool info - ERTH: " + erthReserve + 
-                          ", Token: " + tokenBReserve + ", Shares: " + totalShares);
-                    adapter = new LiquidityTabsAdapter(this, tokenKey, erthReserve, tokenBReserve, totalShares);
-                } else {
-                    Log.d(TAG, "No state in poolState, using basic adapter");
-                    adapter = new LiquidityTabsAdapter(this, tokenKey);
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "Error extracting pool info, using basic adapter", e);
-                adapter = new LiquidityTabsAdapter(this, tokenKey);
-            }
-        } else {
-            Log.d(TAG, "No poolState available, using basic adapter");
-            adapter = new LiquidityTabsAdapter(this, tokenKey);
-        }
+        // Create simplified adapter
+        LiquidityTabsAdapter adapter = new LiquidityTabsAdapter(this, tokenKey);
         
         viewPager.setAdapter(adapter);
         
@@ -240,6 +217,21 @@ public class LiquidityManagementComponent extends Fragment {
                         case 3: tab.setText("Unbond"); break;
                     }
                 }).attach();
+
+        // Listen for tab changes to refresh data when Info tab becomes visible
+        viewPager.registerOnPageChangeCallback(new ViewPager2.OnPageChangeCallback() {
+            @Override
+            public void onPageSelected(int position) {
+                super.onPageSelected(position);
+                Log.d(TAG, "ViewPager page changed to position: " + position);
+
+                // When Info tab (position 0) is selected, refresh data
+                if (position == 0) {
+                    Log.d(TAG, "Info tab selected - refreshing data");
+                    loadAllLiquidityData();
+                }
+            }
+        });
     }
     
     private void setupCloseButton() {
@@ -568,7 +560,6 @@ public class LiquidityManagementComponent extends Fragment {
                 if (getActivity() != null) {
                     getActivity().runOnUiThread(() -> {
                         processAllLiquidityData(result);
-                        notifyAllTabsDataChanged();
                     });
                 }
 
@@ -642,17 +633,16 @@ public class LiquidityManagementComponent extends Fragment {
         }
     }
 
-    private void notifyAllTabsDataChanged() {
-        // Get the adapter and notify all fragments that data has changed
-        if (viewPager != null && viewPager.getAdapter() instanceof LiquidityTabsAdapter) {
-            LiquidityTabsAdapter adapter = (LiquidityTabsAdapter) viewPager.getAdapter();
-            adapter.notifyDataChanged(liquidityData);
-        }
-    }
 
     // Getter for tabs to access centralized data
     public LiquidityData getLiquidityData() {
         return liquidityData;
+    }
+
+    // Method called by InfoFragment when it becomes visible to refresh data
+    public void refreshInfoTabData() {
+        Log.d(TAG, "InfoFragment requested data refresh");
+        loadAllLiquidityData();
     }
 
     @Override
