@@ -187,6 +187,16 @@ public class StakeUnstakeFragment extends Fragment {
     }
 
     @Override
+    public void onResume() {
+        super.onResume();
+
+        // Refresh data when fragment resumes to update staked balance
+        // which may have been affected by other tabs
+        Log.d(TAG, "Fragment resumed - refreshing staked balance data");
+        refreshData();
+    }
+
+    @Override
     public void onDestroy() {
         super.onDestroy();
 

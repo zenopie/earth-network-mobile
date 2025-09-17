@@ -21,6 +21,8 @@ import androidx.fragment.app.Fragment;
 import com.example.earthwallet.R;
 import com.example.earthwallet.Constants;
 import com.example.earthwallet.bridge.activities.TransactionActivity;
+import com.example.earthwallet.bridge.services.SecretQueryService;
+import com.example.earthwallet.wallet.services.SecureWalletManager;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -47,6 +49,9 @@ public class UnbondingFragment extends Fragment {
     
     // Data
     private List<UnbondingEntry> unbondingEntries = new ArrayList<>();
+
+    // Services
+    private SecretQueryService queryService;
 
     // Broadcast receiver for transaction success
     private BroadcastReceiver transactionSuccessReceiver;
@@ -91,6 +96,9 @@ public class UnbondingFragment extends Fragment {
     @Override
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
+
+        // Initialize services
+        queryService = new SecretQueryService(getContext());
 
         initializeViews(view);
         setupBroadcastReceiver();
@@ -143,59 +151,45 @@ public class UnbondingFragment extends Fragment {
     }
     
     /**
-     * Refresh unbonding data from parent
+     * Refresh unbonding data by querying staking contract directly
      */
     public void refreshData() {
         Log.d(TAG, "Refreshing unbonding data");
-        
-        // Find the StakeEarthFragment through fragment manager
-        StakeEarthFragment stakeEarthFragment = findStakeEarthFragment();
-        if (stakeEarthFragment != null) {
-            stakeEarthFragment.queryUserStakingInfo(new StakeEarthFragment.UserStakingCallback() {
-                @Override
-                public void onStakingDataReceived(JSONObject data) {
-                    try {
-                        parseUnbondingEntries(data);
-                        updateUI();
-                    } catch (Exception e) {
-                        Log.e(TAG, "Error parsing unbonding entries", e);
-                    }
+
+        new Thread(() -> {
+            try {
+                String userAddress = SecureWalletManager.getWalletAddress(getContext());
+                if (userAddress == null) {
+                    Log.w(TAG, "No user address available");
+                    return;
                 }
-                
-                @Override
-                public void onError(String error) {
-                    Log.e(TAG, "Error querying unbonding data: " + error);
-                }
-            });
-        } else {
-            Log.e(TAG, "Could not find StakeEarthFragment");
-        }
+
+                // Create query message: { get_user_info: { address: "secret1..." } }
+                JSONObject queryMsg = new JSONObject();
+                JSONObject getUserInfo = new JSONObject();
+                getUserInfo.put("address", userAddress);
+                queryMsg.put("get_user_info", getUserInfo);
+
+                Log.d(TAG, "Querying staking contract for unbonding data");
+
+                JSONObject result = queryService.queryContract(
+                    Constants.STAKING_CONTRACT,
+                    Constants.STAKING_HASH,
+                    queryMsg
+                );
+
+                Log.d(TAG, "Unbonding query result: " + result.toString());
+
+                // Parse results
+                parseUnbondingEntries(result);
+                updateUI();
+
+            } catch (Exception e) {
+                Log.e(TAG, "Error querying unbonding data", e);
+            }
+        }).start();
     }
     
-    /**
-     * Find the StakeEarthFragment in the fragment hierarchy
-     */
-    private StakeEarthFragment findStakeEarthFragment() {
-        // For ViewPager2, we need to go up to find the actual parent
-        Fragment fragment = this;
-        while (fragment != null) {
-            if (fragment instanceof StakeEarthFragment) {
-                return (StakeEarthFragment) fragment;
-            }
-            fragment = fragment.getParentFragment();
-        }
-        
-        // If we can't find it through parent hierarchy, try through the activity's fragment manager
-        if (getActivity() != null && getActivity().getSupportFragmentManager() != null) {
-            for (Fragment f : getActivity().getSupportFragmentManager().getFragments()) {
-                if (f instanceof StakeEarthFragment) {
-                    return (StakeEarthFragment) f;
-                }
-            }
-        }
-        
-        return null;
-    }
     
     private void parseUnbondingEntries(JSONObject data) {
         unbondingEntries.clear();

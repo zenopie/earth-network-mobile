@@ -2,7 +2,7 @@
 <network-security-config>
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">lcd.erth.network</domain>
-        <domain includeSubdomains="true">maroon-wolverine.vm.scrtlabs.com</domain>
+        <domain includeSubdomains="true">pink-clam.vm.scrtlabs.com</domain>
     </domain-config>
     
     <!-- Allow all HTTPS traffic -->
