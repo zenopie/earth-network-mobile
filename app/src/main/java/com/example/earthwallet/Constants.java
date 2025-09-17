@@ -14,7 +14,7 @@ public class Constants {
     public static final String STAKING_HASH = "f3890262cc071b02dbb14f4dbd3b240aca4b0776be896fc60cfd993db97357db";
     
     // Backend base URL
-    public static final String BACKEND_BASE_URL = "https://pink-clam.vm.scrtlabs.com/api";
+    public static final String BACKEND_BASE_URL = "https://sapphire-kiwi.vm.scrtlabs.com/api";
 
     // Network constants
     public static final String DEFAULT_LCD_URL = "https://lcd.erth.network";
