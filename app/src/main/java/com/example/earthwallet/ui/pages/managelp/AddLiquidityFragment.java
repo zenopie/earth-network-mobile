@@ -138,26 +138,18 @@ public class AddLiquidityFragment extends Fragment {
         transactionSuccessReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
-                Log.d(TAG, "Received TRANSACTION_SUCCESS broadcast - refreshing liquidity data immediately");
+                Log.i(TAG, "*** BROADCAST RECEIVED: TRANSACTION_SUCCESS - AddLiquidityFragment ***");
 
-                // Clear input fields and start multiple refresh attempts
+                // Clear input fields immediately
                 tokenAmountInput.setText("");
                 erthAmountInput.setText("");
-                loadTokenBalances();
-                loadPoolReserves();
 
-                // Stagger additional refreshes to catch the UI during animation
+                // Add small delay before refreshing balances to allow blockchain state to settle
                 new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
-                    Log.d(TAG, "Secondary refresh during animation");
+                    Log.d(TAG, "Refreshing balances after transaction success");
                     loadTokenBalances();
                     loadPoolReserves();
-                }, 100); // 100ms delay
-
-                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
-                    Log.d(TAG, "Third refresh during animation");
-                    loadTokenBalances();
-                    loadPoolReserves();
-                }, 500); // 500ms delay
+                }, 200); // 200ms delay
             }
         };
     }
@@ -171,7 +163,8 @@ public class AddLiquidityFragment extends Fragment {
                 } else {
                     requireActivity().getApplicationContext().registerReceiver(transactionSuccessReceiver, filter);
                 }
-                Log.d(TAG, "Registered transaction success receiver");
+                Log.i(TAG, "*** SUCCESSFULLY REGISTERED TRANSACTION_SUCCESS BROADCAST RECEIVER ***");
+                android.widget.Toast.makeText(getContext(), "AddLiquidity: Broadcast receiver registered", android.widget.Toast.LENGTH_SHORT).show();
             } catch (Exception e) {
                 Log.e(TAG, "Failed to register broadcast receiver", e);
             }

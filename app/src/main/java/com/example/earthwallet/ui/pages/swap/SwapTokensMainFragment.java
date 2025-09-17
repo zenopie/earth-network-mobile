@@ -865,20 +865,14 @@ public class SwapTokensMainFragment extends Fragment {
             public void onReceive(Context context, Intent intent) {
                 Log.i(TAG, "*** SWAP PAGE: Received TRANSACTION_SUCCESS broadcast - refreshing balances ***");
 
-                // Clear amounts and start multiple refresh attempts to ensure UI updates during animation
+                // Clear amounts immediately
                 clearAmounts();
-                fetchBalances(); // First immediate refresh
 
-                // Stagger additional refreshes to catch the UI during animation
+                // Add small delay before refreshing balances to allow blockchain state to settle
                 new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
-                    Log.d(TAG, "Secondary refresh during animation");
+                    Log.d(TAG, "Refreshing balances after transaction success");
                     fetchBalances();
-                }, 100); // 100ms delay
-
-                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
-                    Log.d(TAG, "Third refresh during animation");
-                    fetchBalances();
-                }, 500); // 500ms delay
+                }, 200); // 200ms delay
             }
         };
     }
