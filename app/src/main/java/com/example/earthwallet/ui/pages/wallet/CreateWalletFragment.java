@@ -27,6 +27,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.List;
@@ -117,19 +118,8 @@ public class CreateWalletFragment extends Fragment {
             return;
         }
 
-        // Encrypted prefs (fallback to normal prefs if not available)
-        try {
-            String masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC);
-            securePrefs = EncryptedSharedPreferences.create(
-                    PREF_FILE,
-                    masterKeyAlias,
-                    requireContext(),
-                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            );
-        } catch (Exception e) {
-            securePrefs = requireActivity().getSharedPreferences(PREF_FILE, Context.MODE_PRIVATE);
-        }
+        // Create encrypted preferences with corrupted file cleanup
+        securePrefs = createSecurePreferences(requireContext());
         
         // Check whether a global PIN already exists
         final boolean hasExistingPin = !TextUtils.isEmpty(securePrefs.getString(KEY_PIN_HASH, ""));
@@ -361,6 +351,58 @@ public class CreateWalletFragment extends Fragment {
             Toast.makeText(requireContext(), "Wallet created and saved securely", Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
             Toast.makeText(requireContext(), "Failed to save wallet", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /**
+     * Create secure preferences with corrupted file cleanup on key mismatch
+     */
+    private static SharedPreferences createSecurePreferences(Context context) {
+        try {
+            String masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC);
+            return EncryptedSharedPreferences.create(
+                    PREF_FILE,
+                    masterKeyAlias,
+                    context,
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            );
+        } catch (GeneralSecurityException | java.io.IOException e) {
+            Log.w("CreateWalletFragment", "EncryptedSharedPreferences failed, clearing corrupted file: " + e.getMessage());
+
+            // Clear corrupted preferences file and try again
+            clearCorruptedPreferencesFile(context);
+
+            try {
+                String masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC);
+                return EncryptedSharedPreferences.create(
+                        PREF_FILE,
+                        masterKeyAlias,
+                        context,
+                        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+                );
+            } catch (GeneralSecurityException | java.io.IOException retryException) {
+                Log.e("CreateWalletFragment", "Failed to create EncryptedSharedPreferences even after cleanup", retryException);
+                throw new RuntimeException("Failed to initialize secure preferences", retryException);
+            }
+        }
+    }
+
+    /**
+     * Clear corrupted preferences file (handles key mismatch after reinstalls)
+     */
+    private static void clearCorruptedPreferencesFile(Context context) {
+        try {
+            // Delete the encrypted shared preferences file
+            String prefsPath = context.getApplicationInfo().dataDir + "/shared_prefs/" + PREF_FILE + ".xml";
+            java.io.File prefsFile = new java.io.File(prefsPath);
+            if (prefsFile.exists()) {
+                boolean deleted = prefsFile.delete();
+                Log.i("CreateWalletFragment", "Deleted corrupted preferences file: " + deleted);
+            }
+        } catch (Exception e) {
+            Log.w("CreateWalletFragment", "Failed to delete corrupted preferences file: " + e.getMessage());
         }
     }
 }
