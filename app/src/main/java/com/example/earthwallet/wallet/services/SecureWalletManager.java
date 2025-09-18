@@ -495,6 +495,39 @@ public final class SecureWalletManager {
     }
 
     /**
+     * Get all wallets with their addresses (no mnemonics exposed)
+     */
+    public static JSONArray getAllWallets(Context context) throws Exception {
+        return getAllWallets(context, null);
+    }
+
+    /**
+     * Get all wallets with their addresses using pre-initialized secure preferences
+     */
+    public static JSONArray getAllWallets(Context context, SharedPreferences securePrefs) throws Exception {
+        try {
+            SharedPreferences prefs = (securePrefs != null) ? securePrefs : createSecurePrefs(context);
+            String walletsJson = prefs.getString("wallets", "[]");
+            JSONArray walletsArray = new JSONArray(walletsJson);
+
+            // Return a copy with only safe data (name and address, no mnemonic)
+            JSONArray safeWallets = new JSONArray();
+            for (int i = 0; i < walletsArray.length(); i++) {
+                org.json.JSONObject wallet = walletsArray.getJSONObject(i);
+                org.json.JSONObject safeWallet = new org.json.JSONObject();
+                safeWallet.put("name", wallet.optString("name", "Wallet " + (i + 1)));
+                safeWallet.put("address", wallet.optString("address", ""));
+                safeWallets.put(safeWallet);
+            }
+
+            return safeWallets;
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to get all wallets", e);
+            throw new Exception("Failed to get all wallets", e);
+        }
+    }
+
+    /**
      * Create secure preferences (helper method)
      */
     private static SharedPreferences createSecurePrefs(Context context) throws Exception {

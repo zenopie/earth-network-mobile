@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/address_box_bg"
+    android:padding="16dp"
+    android:layout_marginBottom="8dp"
+    android:clickable="true"
+    android:focusable="true"
+    android:foreground="?android:attr/selectableItemBackground">
+
+    <TextView
+        android:id="@+id/contactName"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Contact Name"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:textColor="#1e3a8a"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:id="@+id/contactAddress"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="secret1abc...def123"
+        android:textSize="14sp"
+        android:textColor="#666666"
+        android:fontFamily="monospace" />
+
+</LinearLayout>

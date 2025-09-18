@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Contacts book icon -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M20,2H4C2.9,2 2,2.9 2,4v16c0,1.1 0.9,2 2,2h16c1.1,0 2,-0.9 2,-2V4C22,2.9 21.1,2 20,2zM20,20H4V4h16V20zM12,6.5c1.38,0 2.5,1.12 2.5,2.5S13.38,11.5 12,11.5S9.5,10.38 9.5,9S10.62,6.5 12,6.5zM7,17.5c0,-2.33 3.13,-3.5 5,-3.5s5,1.17 5,3.5V18H7V17.5z"/>
+</vector>

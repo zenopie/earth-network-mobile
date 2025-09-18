@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.os.Bundle;
 import android.text.TextUtils;
@@ -16,6 +15,7 @@ import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageButton;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -24,24 +24,21 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
-import androidx.security.crypto.EncryptedSharedPreferences;
-import androidx.security.crypto.MasterKeys;
 
 import com.example.earthwallet.R;
 
 import com.example.earthwallet.bridge.activities.TransactionActivity;
 
 import com.example.earthwallet.wallet.constants.Tokens;
-import com.example.earthwallet.wallet.utils.WalletCrypto;
 import com.example.earthwallet.wallet.utils.WalletNetwork;
 import com.example.earthwallet.wallet.services.SecureWalletManager;
+import com.example.earthwallet.wallet.services.ContactsManager;
 import com.example.earthwallet.bridge.services.SnipQueryService;
 import com.example.earthwallet.bridge.utils.PermitManager;
 
 import com.journeyapps.barcodescanner.ScanContract;
 import com.journeyapps.barcodescanner.ScanOptions;
 
-import org.bitcoinj.core.ECKey;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -67,15 +64,15 @@ public class SendTokensFragment extends Fragment implements
     WalletDisplayFragment.WalletDisplayListener {
     
     private static final String TAG = "SendTokensFragment";
-    private static final String PREF_FILE = "viewing_keys_prefs";
     private static final int REQ_SEND_NATIVE = 3001;
     private static final int REQ_SEND_SNIP = 3002;
     
     // UI Components
     private Spinner tokenSpinner;
     private EditText recipientEditText;
-    private Button pickWalletButton;
-    private Button scanQrButton;
+    private ImageButton pickWalletButton;
+    private ImageButton contactsButton;
+    private ImageButton scanQrButton;
     private Button clearRecipientButton;
     private EditText amountEditText;
     private EditText memoEditText;
@@ -85,7 +82,6 @@ public class SendTokensFragment extends Fragment implements
     
     // Data
     private List<TokenOption> tokenOptions;
-    private SharedPreferences securePrefs;
     private ActivityResultLauncher<ScanOptions> qrScannerLauncher;
     private String currentWalletAddress;
     private boolean balanceLoaded = false;
@@ -114,11 +110,21 @@ public class SendTokensFragment extends Fragment implements
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
         View view = inflater.inflate(R.layout.fragment_send_tokens, container, false);
-        
+
         // Initialize QR scanner launcher
         qrScannerLauncher = registerForActivityResult(new ScanContract(), result -> {
             if (result.getContents() != null) {
                 handleQRScanResult(result.getContents());
+            }
+        });
+
+        // Listen for contact selection results
+        getParentFragmentManager().setFragmentResultListener("contact_selected", this, (requestKey, result) -> {
+            String contactName = result.getString("contact_name");
+            String contactAddress = result.getString("contact_address");
+            if (contactAddress != null) {
+                recipientEditText.setText(contactAddress);
+                Toast.makeText(getContext(), "Selected: " + contactName, Toast.LENGTH_SHORT).show();
             }
         });
         
@@ -126,6 +132,7 @@ public class SendTokensFragment extends Fragment implements
         tokenSpinner = view.findViewById(R.id.tokenSpinner);
         recipientEditText = view.findViewById(R.id.recipientEditText);
         pickWalletButton = view.findViewById(R.id.pickWalletButton);
+        contactsButton = view.findViewById(R.id.contactsButton);
         scanQrButton = view.findViewById(R.id.scanQrButton);
         clearRecipientButton = view.findViewById(R.id.clearRecipientButton);
         amountEditText = view.findViewById(R.id.amountEditText);
@@ -135,10 +142,9 @@ public class SendTokensFragment extends Fragment implements
         tokenLogo = view.findViewById(R.id.tokenLogo);
         
         try {
-            securePrefs = createSecurePrefs(requireContext());
             permitManager = PermitManager.getInstance(requireContext());
         } catch (Exception e) {
-            Log.e(TAG, "Failed to initialize secure preferences", e);
+            Log.e(TAG, "Failed to initialize permit manager", e);
             Toast.makeText(getContext(), "Failed to initialize wallet", Toast.LENGTH_SHORT).show();
             return view;
         }
@@ -160,7 +166,7 @@ public class SendTokensFragment extends Fragment implements
         super.onViewCreated(view, savedInstanceState);
 
         // Load balance and logo for initially selected token (first item in spinner)
-        if (!tokenOptions.isEmpty()) {
+        if (tokenOptions != null && !tokenOptions.isEmpty()) {
             fetchTokenBalance(tokenOptions.get(0));
             loadTokenLogo(tokenOptions.get(0));
         }
@@ -169,8 +175,8 @@ public class SendTokensFragment extends Fragment implements
     private void setupTokenSpinner() {
         tokenOptions = new ArrayList<>();
         
-        // Add native SCRT option (display as GAS)
-        tokenOptions.add(new TokenOption("SCRT", "GAS", true, null));
+        // Add native SCRT option
+        tokenOptions.add(new TokenOption("SCRT", "SCRT", true, null));
         
         // Add SNIP-20 tokens
         for (String symbol : Tokens.ALL_TOKENS.keySet()) {
@@ -245,21 +251,17 @@ public class SendTokensFragment extends Fragment implements
     private void showWalletSelectionDialog() {
         try {
             List<WalletOption> walletOptions = new ArrayList<>();
-            
-            // Load all wallets from secure preferences
-            String walletsJson = securePrefs.getString("wallets", "[]");
-            JSONArray walletsArray = new JSONArray(walletsJson);
+
+            // Load all wallets using SecureWalletManager (safe - no mnemonics exposed)
+            JSONArray walletsArray = SecureWalletManager.getAllWallets(requireContext());
             String currentAddress = getCurrentWalletAddress();
-            
+
             for (int i = 0; i < walletsArray.length(); i++) {
                 JSONObject wallet = walletsArray.getJSONObject(i);
-                String mnemonic = wallet.optString("mnemonic", "");
+                String address = wallet.optString("address", "");
                 String name = wallet.optString("name", "Wallet " + (i + 1));
-                
-                if (!TextUtils.isEmpty(mnemonic)) {
-                    ECKey walletKey = WalletCrypto.deriveKeyFromMnemonic(mnemonic);
-                    String address = WalletCrypto.getAddress(walletKey);
-                    
+
+                if (!TextUtils.isEmpty(address)) {
                     // Don't include the current wallet in the recipient list
                     if (!address.equals(currentAddress)) {
                         String displayName = name + " (" + address.substring(0, 14) + "...)";
@@ -296,6 +298,17 @@ public class SendTokensFragment extends Fragment implements
             Toast.makeText(getContext(), "Failed to load wallets", Toast.LENGTH_SHORT).show();
         }
     }
+
+    private void showContactsDialog() {
+        // Navigate to contacts fragment
+        ContactsFragment contactsFragment = new ContactsFragment();
+
+        // Replace current fragment with contacts fragment
+        getParentFragmentManager().beginTransaction()
+            .replace(getId(), contactsFragment)
+            .addToBackStack(null)
+            .commit();
+    }
     
     private void setupClickListeners() {
         sendButton.setOnClickListener(v -> sendTokens());
@@ -305,6 +318,7 @@ public class SendTokensFragment extends Fragment implements
         });
         
         pickWalletButton.setOnClickListener(v -> showWalletSelectionDialog());
+        contactsButton.setOnClickListener(v -> showContactsDialog());
         scanQrButton.setOnClickListener(v -> launchQRScanner());
     }
     
@@ -613,21 +627,11 @@ public class SendTokensFragment extends Fragment implements
         }
     }
     
-    private static SharedPreferences createSecurePrefs(Context context) throws Exception {
-        String masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC);
-        return EncryptedSharedPreferences.create(
-            PREF_FILE,
-            masterKeyAlias,
-            context,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-        );
-    }
     
     @Override
     public String getCurrentWalletAddress() {
         try {
-            return SecureWalletManager.getWalletAddress(requireContext(), securePrefs);
+            return SecureWalletManager.getWalletAddress(requireContext());
         } catch (Exception e) {
             Log.e(TAG, "Failed to get current wallet address", e);
             return "";
