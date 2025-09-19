@@ -1,0 +1,532 @@
+package com.example.earthwallet.ui.host
+
+import com.example.earthwallet.R
+import android.content.Intent
+import android.content.SharedPreferences
+import android.content.pm.ActivityInfo
+import android.nfc.NfcAdapter
+import android.os.Bundle
+import android.text.TextUtils
+import android.util.Log
+import android.view.View
+import android.view.ViewGroup
+import android.view.WindowManager
+import android.widget.Button
+import androidx.appcompat.app.AppCompatActivity
+import androidx.fragment.app.Fragment
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKeys
+import com.example.earthwallet.ui.pages.wallet.CreateWalletFragment
+import com.google.android.gms.ads.AdRequest
+import com.google.android.gms.ads.FullScreenContentCallback
+import com.google.android.gms.ads.LoadAdError
+import com.google.android.gms.ads.MobileAds
+import com.google.android.gms.ads.initialization.InitializationStatus
+import com.google.android.gms.ads.initialization.OnInitializationCompleteListener
+import com.google.android.gms.ads.interstitial.InterstitialAd
+import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback
+
+class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListener {
+
+    companion object {
+        private const val PREF_FILE = "secret_wallet_prefs"
+        private const val TAG = "HostActivity"
+
+        // Test interstitial ad unit ID (use your real ad unit ID in production)
+        private const val INTERSTITIAL_AD_UNIT_ID = "ca-app-pub-3940256099942544/1033173712"
+    }
+
+    private var navWallet: Button? = null
+    private var navActions: Button? = null
+    private var bottomNavView: View? = null
+    private var hostContent: View? = null
+    private var securePrefs: SharedPreferences? = null
+
+    // AdMob interstitial ad
+    private var mInterstitialAd: InterstitialAd? = null
+    private var isAdLoaded = false
+    private var adCompletionCallback: Runnable? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_host)
+
+        navWallet = findViewById(R.id.btn_nav_wallet)
+        navActions = findViewById(R.id.btn_nav_actions)
+        hostContent = findViewById(R.id.host_content)
+
+        // Find bottom navigation view - it's included via <include> tag
+        bottomNavView = findViewById(R.id.bottom_nav)
+
+        // Wire nav buttons to swap fragments
+        navWallet?.setOnClickListener {
+            showFragment("wallet")
+            setSelectedNav(navWallet, navActions)
+        }
+        navActions?.setOnClickListener {
+            showFragment("actions")
+            setSelectedNav(navActions, navWallet)
+        }
+
+        // Initialize secure preferences for app-wide use
+        initializeSecurePreferences()
+
+        // Initialize AdMob
+        initializeAds()
+
+        // Choose default start fragment: open Actions if secure wallet exists, otherwise create wallet
+        var hasWallet = false
+        try {
+            val walletsJson = securePrefs?.getString("wallets", "[]")
+            hasWallet = !TextUtils.isEmpty(walletsJson) && walletsJson != "[]"
+        } catch (e: Exception) {
+            val flatPrefs = getSharedPreferences(PREF_FILE, MODE_PRIVATE)
+            val walletsJson = flatPrefs.getString("wallets", "[]")
+            hasWallet = !TextUtils.isEmpty(walletsJson) && walletsJson != "[]"
+        }
+
+        if (hasWallet) {
+            showFragment("actions")
+            setSelectedNav(navActions, navWallet)
+        } else {
+            showFragment("create_wallet")
+            setSelectedNav(navWallet, navActions)
+        }
+
+        // Handle intent to show a specific fragment (e.g., from other activities)
+        intent?.let {
+            if (it.hasExtra("fragment_to_show")) {
+                val fragmentToShow = it.getStringExtra("fragment_to_show")
+                fragmentToShow?.let { fragment ->
+                    showFragment(fragment)
+                    when (fragment) {
+                        "wallet" -> setSelectedNav(navWallet, navActions)
+                        "actions" -> setSelectedNav(navActions, navWallet)
+                        else -> setSelectedNav(navWallet, navActions) // Default to scanner if unknown
+                    }
+                }
+            }
+        }
+    }
+
+    private fun setSelectedNav(selected: View?, other: View?) {
+        selected?.isSelected = true
+        other?.isSelected = false
+    }
+
+    // Make this public so fragments can request navigation without creating a second bottom nav.
+    fun showFragment(tag: String) {
+        showFragment(tag, null)
+    }
+
+    fun showFragment(tag: String, arguments: Bundle?) {
+        Log.d("HostActivity", "showFragment called with tag: $tag")
+        val fm = supportFragmentManager
+        val ft = fm.beginTransaction()
+
+        val fragment: Fragment = when (tag) {
+            "wallet" -> {
+                com.example.earthwallet.ui.pages.wallet.WalletMainFragment().also {
+                    // Show navigation and status bar for normal fragments
+                    showBottomNavigation()
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                }
+            }
+            "actions" -> {
+                com.example.earthwallet.ui.nav.ActionsMainFragment().also {
+                    // Show navigation and status bar for normal fragments
+                    showBottomNavigation()
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                }
+            }
+            "scanner" -> {
+                com.example.earthwallet.ui.pages.anml.ScannerFragment().also {
+                    // Hide navigation and status bar for scanner
+                    Log.d("HostActivity", "HIDING NAVIGATION AND STATUS BAR FOR SCANNER")
+                    hideBottomNavigation()
+                    window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                }
+            }
+            "mrz_input" -> {
+                Log.d("HostActivity", "Creating MRZInputFragment")
+                com.example.earthwallet.ui.pages.anml.MRZInputFragment()
+            }
+            "camera_mrz_scanner" -> {
+                com.example.earthwallet.ui.pages.anml.CameraMRZScannerFragment()
+            }
+            "scan_failure" -> {
+                com.example.earthwallet.ui.pages.anml.ScanFailureFragment().apply {
+                    arguments?.let { setArguments(it) }
+                }
+            }
+            "create_wallet" -> {
+                CreateWalletFragment().apply {
+                    setCreateWalletListener(this@HostActivity)
+                    // Show navigation and status bar for normal fragments
+                    showBottomNavigation()
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                }
+            }
+            "swap" -> {
+                com.example.earthwallet.ui.pages.swap.SwapTokensMainFragment().also {
+                    // Show navigation and status bar for normal fragments
+                    showBottomNavigation()
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                }
+            }
+            "anml" -> {
+                com.example.earthwallet.ui.pages.anml.ANMLClaimMainFragment().also {
+                    // Show navigation and status bar for normal fragments
+                    showBottomNavigation()
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                }
+            }
+            "managelp" -> {
+                com.example.earthwallet.ui.pages.managelp.ManageLPFragment().also {
+                    // Show navigation and status bar for normal fragments
+                    showBottomNavigation()
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                }
+            }
+            "staking" -> {
+                com.example.earthwallet.ui.pages.staking.StakeEarthFragment().also {
+                    // Show navigation and status bar for normal fragments
+                    showBottomNavigation()
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                }
+            }
+            "send" -> {
+                com.example.earthwallet.ui.pages.wallet.SendTokensFragment().also {
+                    // Show navigation and status bar for normal fragments
+                    showBottomNavigation()
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                }
+            }
+            "receive" -> {
+                com.example.earthwallet.ui.pages.wallet.ReceiveTokensFragment().also {
+                    // Show navigation and status bar for normal fragments
+                    showBottomNavigation()
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                }
+            }
+            "governance" -> {
+                com.example.earthwallet.ui.pages.governance.GovernanceFragment().also {
+                    // Show navigation and status bar for normal fragments
+                    showBottomNavigation()
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                }
+            }
+            "gas_station" -> {
+                com.example.earthwallet.ui.pages.gasstation.GasStationFragment().also {
+                    // Show navigation and status bar for normal fragments
+                    showBottomNavigation()
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                }
+            }
+            "caretaker_fund" -> {
+                com.example.earthwallet.ui.pages.governance.CaretakerFundFragment().also {
+                    // Show navigation and status bar for normal fragments
+                    showBottomNavigation()
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                }
+            }
+            "deflation_fund" -> {
+                com.example.earthwallet.ui.pages.governance.DeflationFundFragment().also {
+                    // Show navigation and status bar for normal fragments
+                    showBottomNavigation()
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                }
+            }
+            else -> {
+                // Default to scanner if an unknown tag is passed
+                com.example.earthwallet.ui.pages.anml.ScannerFragment().also {
+                    // Hide navigation and status bar for scanner
+                    hideBottomNavigation()
+                    window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                }
+            }
+        }
+
+        ft.replace(R.id.host_content, fragment, tag)
+        ft.commitAllowingStateLoss()
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+
+        // Handle NFC intents and pass them to ScannerFragment if it's currently shown
+        if (intent?.action == NfcAdapter.ACTION_TECH_DISCOVERED) {
+            val currentFragment = supportFragmentManager.findFragmentById(R.id.host_content)
+            if (currentFragment is com.example.earthwallet.ui.pages.anml.ScannerFragment) {
+                currentFragment.handleNfcIntent(intent)
+            }
+        }
+    }
+
+    override fun onWalletCreated() {
+        // Navigate to actions after wallet creation
+        showFragment("actions")
+        setSelectedNav(navActions, navWallet)
+    }
+
+    override fun onCreateWalletCancelled() {
+        // Stay on create wallet or go to scanner
+        showFragment("scanner")
+        setSelectedNav(navWallet, navActions)
+    }
+
+    /**
+     * Initialize encrypted shared preferences for app-wide secure wallet access
+     */
+    private fun initializeSecurePreferences() {
+        try {
+            val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
+            securePrefs = EncryptedSharedPreferences.create(
+                PREF_FILE,
+                masterKeyAlias,
+                this,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+        } catch (e: Exception) {
+            // Fallback to regular SharedPreferences if encryption fails
+            securePrefs = getSharedPreferences(PREF_FILE, MODE_PRIVATE)
+        }
+    }
+
+    /**
+     * Get the secure preferences instance for app-wide use
+     * @return Secure SharedPreferences instance
+     */
+    fun getSecurePrefs(): SharedPreferences? {
+        return securePrefs
+    }
+
+    /**
+     * Hide bottom navigation and adjust content layout
+     */
+    fun hideBottomNavigation() {
+        try {
+            Log.d("HostActivity", "hideBottomNavigation called - bottomNavView: ${bottomNavView != null}")
+            bottomNavView?.let {
+                it.visibility = View.GONE
+                Log.d("HostActivity", "Set bottomNavView visibility to GONE")
+            }
+            hostContent?.let { content ->
+                Log.d("HostActivity", "hostContent layoutParams type: ${content.layoutParams.javaClass.simpleName}")
+                val layoutParams = content.layoutParams
+                if (layoutParams is ViewGroup.MarginLayoutParams) {
+                    // Remove bottom margin to make content full screen
+                    Log.d("HostActivity", "Original bottom margin: ${layoutParams.bottomMargin}")
+                    layoutParams.bottomMargin = 0
+                    content.layoutParams = layoutParams
+                    Log.d("HostActivity", "Set bottom margin to 0")
+                } else {
+                    Log.d("HostActivity", "LayoutParams is not MarginLayoutParams, cannot set margin")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("HostActivity", "Error hiding bottom navigation", e)
+        }
+    }
+
+    /**
+     * Show bottom navigation and restore content layout
+     */
+    fun showBottomNavigation() {
+        try {
+            Log.d("HostActivity", "showBottomNavigation called - STACK TRACE:")
+            val stackTrace = Thread.currentThread().stackTrace
+            for (i in 0 until minOf(stackTrace.size, 8)) {
+                Log.d("HostActivity", "  ${stackTrace[i]}")
+            }
+
+            bottomNavView?.let {
+                it.visibility = View.VISIBLE
+                Log.d("HostActivity", "Set bottomNavView visibility to VISIBLE")
+            }
+            hostContent?.let { content ->
+                val layoutParams = content.layoutParams
+                if (layoutParams is ViewGroup.MarginLayoutParams) {
+                    // Restore bottom margin for navigation
+                    layoutParams.bottomMargin = (56 * resources.displayMetrics.density).toInt() // 56dp in pixels
+                    content.layoutParams = layoutParams
+                    Log.d("HostActivity", "Restored bottom margin to 56dp")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("HostActivity", "Error showing bottom navigation", e)
+        }
+    }
+
+    /**
+     * Set screen orientation to landscape
+     */
+    fun setLandscapeOrientation() {
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+    }
+
+    /**
+     * Set screen orientation to portrait
+     */
+    fun setPortraitOrientation() {
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+    }
+
+    override fun onBackPressed() {
+        val currentFragment = supportFragmentManager.findFragmentById(R.id.host_content)
+        currentFragment?.let { fragment ->
+            val currentTag = fragment.tag
+            Log.d("HostActivity", "Back pressed, current fragment tag: $currentTag")
+
+            // Actions pages should navigate back to actions nav
+            if (isActionsPage(currentTag)) {
+                Log.d("HostActivity", "Current page is actions page, navigating to actions")
+                showFragment("actions")
+                setSelectedNav(navActions, navWallet)
+                return
+            }
+
+            // Wallet pages should navigate back to wallet page
+            if (isWalletPage(currentTag)) {
+                Log.d("HostActivity", "Current page is wallet page, navigating to wallet")
+                showFragment("wallet")
+                setSelectedNav(navWallet, navActions)
+                return
+            }
+        }
+
+        // Default back behavior for main pages (wallet, actions) or unknown pages
+        super.onBackPressed()
+    }
+
+    /**
+     * Check if the current page is an actions page
+     */
+    private fun isActionsPage(fragmentTag: String?): Boolean {
+        if (fragmentTag == null) return false
+        return fragmentTag in listOf(
+            "swap", "anml", "managelp", "staking", "governance",
+            "gas_station", "caretaker_fund", "deflation_fund"
+        )
+    }
+
+    /**
+     * Check if the current page is a wallet page
+     */
+    private fun isWalletPage(fragmentTag: String?): Boolean {
+        if (fragmentTag == null) return false
+        return fragmentTag in listOf("send", "receive")
+    }
+
+    /**
+     * Initialize AdMob and load interstitial ad
+     */
+    private fun initializeAds() {
+        Log.d(TAG, "Initializing AdMob")
+
+        MobileAds.initialize(this) { initializationStatus ->
+            Log.d(TAG, "AdMob initialization complete")
+            loadInterstitialAd()
+        }
+    }
+
+    /**
+     * Load an interstitial ad
+     */
+    private fun loadInterstitialAd() {
+        Log.d(TAG, "Loading interstitial ad")
+
+        val adRequest = AdRequest.Builder().build()
+
+        InterstitialAd.load(this, INTERSTITIAL_AD_UNIT_ID, adRequest,
+            object : InterstitialAdLoadCallback() {
+                override fun onAdLoaded(interstitialAd: InterstitialAd) {
+                    Log.d(TAG, "Interstitial ad loaded successfully")
+                    mInterstitialAd = interstitialAd
+                    isAdLoaded = true
+
+                    // Set up full screen content callback
+                    mInterstitialAd?.fullScreenContentCallback = object : FullScreenContentCallback() {
+                        override fun onAdClicked() {
+                            Log.d(TAG, "Interstitial ad was clicked")
+                        }
+
+                        override fun onAdDismissedFullScreenContent() {
+                            Log.d(TAG, "Interstitial ad dismissed")
+                            mInterstitialAd = null
+                            isAdLoaded = false
+
+                            // Execute the completion callback if set
+                            adCompletionCallback?.run()
+                            adCompletionCallback = null
+
+                            // Load a new ad for next time
+                            loadInterstitialAd()
+                        }
+
+                        override fun onAdFailedToShowFullScreenContent(adError: com.google.android.gms.ads.AdError) {
+                            Log.e(TAG, "Interstitial ad failed to show: ${adError.message}")
+                            mInterstitialAd = null
+                            isAdLoaded = false
+
+                            // Execute the completion callback anyway
+                            adCompletionCallback?.run()
+                            adCompletionCallback = null
+
+                            // Load a new ad for next time
+                            loadInterstitialAd()
+                        }
+
+                        override fun onAdImpression() {
+                            Log.d(TAG, "Interstitial ad recorded an impression")
+                        }
+
+                        override fun onAdShowedFullScreenContent() {
+                            Log.d(TAG, "Interstitial ad showed full screen content")
+                        }
+                    }
+                }
+
+                override fun onAdFailedToLoad(loadAdError: LoadAdError) {
+                    Log.e(TAG, "Failed to load interstitial ad: ${loadAdError.message}")
+                    mInterstitialAd = null
+                    isAdLoaded = false
+                }
+            })
+    }
+
+    /**
+     * Show interstitial ad before executing a callback
+     * @param callback The callback to execute after the ad is dismissed (or if ad fails to show)
+     */
+    fun showInterstitialAdThen(callback: Runnable?) {
+        Log.d(TAG, "showInterstitialAdThen called, isAdLoaded: $isAdLoaded")
+
+        if (mInterstitialAd != null && isAdLoaded) {
+            Log.d(TAG, "Showing interstitial ad")
+            adCompletionCallback = callback
+            mInterstitialAd?.show(this)
+        } else {
+            Log.d(TAG, "No ad loaded, executing callback immediately")
+            // No ad loaded, execute callback immediately
+            callback?.run()
+        }
+    }
+}
