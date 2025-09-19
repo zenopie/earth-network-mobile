@@ -101,6 +101,8 @@ class LoadingOverlay @JvmOverloads constructor(
         }
 
         visibility = View.VISIBLE
+        // Make sure the loading gif is visible
+        loadingGif?.visibility = View.VISIBLE
         Log.d(TAG, "Loading overlay shown")
     }
 
@@ -109,6 +111,8 @@ class LoadingOverlay @JvmOverloads constructor(
      */
     fun hide() {
         visibility = View.GONE
+        // Hide the loading gif as well
+        loadingGif?.visibility = View.GONE
         Log.d(TAG, "Loading overlay hidden")
     }
 
