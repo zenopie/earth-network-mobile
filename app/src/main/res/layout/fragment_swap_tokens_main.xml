@@ -78,39 +78,10 @@
                                 android:textColor="#333333"
                                 android:textSize="14sp" />
 
-                            <Button
-                                android:id="@+id/from_max_button"
-                                android:layout_width="wrap_content"
-                                android:layout_height="32dp"
-                                android:layout_marginStart="8dp"
-                                android:background="@drawable/card_rounded_bg"
-                                android:minWidth="0dp"
-                                android:minHeight="0dp"
-                                android:paddingLeft="8dp"
-                                android:paddingRight="8dp"
-                                android:paddingTop="2dp"
-                                android:paddingBottom="2dp"
-                                android:text="Max"
-                                android:textColor="@android:color/white"
-                                android:textSize="12sp"
-                                android:visibility="gone" />
+                            <include
+                                layout="@layout/component_small_action_button"
+                                android:id="@+id/from_max_button" />
 
-                            <Button
-                                android:id="@+id/from_viewing_key_button"
-                                android:layout_width="wrap_content"
-                                android:layout_height="24dp"
-                                android:layout_marginStart="8dp"
-                                android:background="@drawable/card_rounded_bg"
-                                android:minWidth="0dp"
-                                android:minHeight="0dp"
-                                android:paddingLeft="8dp"
-                                android:paddingRight="8dp"
-                                android:paddingTop="2dp"
-                                android:paddingBottom="2dp"
-                                android:text="Get Viewing Key"
-                                android:textColor="@color/brand_blue"
-                                android:textSize="11sp"
-                                android:visibility="gone" />
 
                         </LinearLayout>
 
@@ -227,22 +198,10 @@
                                 android:textColor="#333333"
                                 android:textSize="14sp" />
 
-                            <Button
-                                android:id="@+id/to_viewing_key_button"
-                                android:layout_width="wrap_content"
-                                android:layout_height="24dp"
-                                android:layout_marginStart="8dp"
-                                android:background="@drawable/card_rounded_bg"
-                                android:minWidth="0dp"
-                                android:minHeight="0dp"
-                                android:paddingLeft="8dp"
-                                android:paddingRight="8dp"
-                                android:paddingTop="2dp"
-                                android:paddingBottom="2dp"
-                                android:text="Get Viewing Key"
-                                android:textColor="@color/brand_blue"
-                                android:textSize="11sp"
-                                android:visibility="gone" />
+                            <include
+                                layout="@layout/component_small_action_button"
+                                android:id="@+id/to_max_button" />
+
 
                         </LinearLayout>
 

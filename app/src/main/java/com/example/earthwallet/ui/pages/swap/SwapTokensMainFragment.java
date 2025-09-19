@@ -35,6 +35,7 @@ import com.example.earthwallet.R;
 import com.example.earthwallet.Constants;
 import com.example.earthwallet.bridge.activities.TransactionActivity;
 import com.example.earthwallet.bridge.utils.PermitManager;
+import com.example.earthwallet.bridge.models.Permit;
 
 import com.example.earthwallet.bridge.services.SecretQueryService;
 import com.example.earthwallet.wallet.constants.Tokens;
@@ -72,7 +73,7 @@ public class SwapTokensMainFragment extends Fragment {
     private Spinner fromTokenSpinner, toTokenSpinner;
     private EditText fromAmountInput, toAmountInput, slippageInput;
     private TextView fromBalanceText, toBalanceText, rateText, minReceivedText;
-    private Button fromMaxButton, fromViewingKeyButton, toViewingKeyButton;
+    private Button fromMaxButton, toMaxButton;
     private ImageButton toggleButton;
     private Button swapButton, detailsToggle;
     private LinearLayout detailsContainer;
@@ -139,8 +140,7 @@ public class SwapTokensMainFragment extends Fragment {
         minReceivedText = view.findViewById(R.id.min_received_text);
         
         fromMaxButton = view.findViewById(R.id.from_max_button);
-        fromViewingKeyButton = view.findViewById(R.id.from_viewing_key_button);
-        toViewingKeyButton = view.findViewById(R.id.to_viewing_key_button);
+        toMaxButton = view.findViewById(R.id.to_max_button);
         
         toggleButton = view.findViewById(R.id.toggle_button);
         swapButton = view.findViewById(R.id.swap_button);
@@ -220,9 +220,8 @@ public class SwapTokensMainFragment extends Fragment {
             }
         });
         
-        fromMaxButton.setOnClickListener(v -> setMaxFromAmount());
-        fromViewingKeyButton.setOnClickListener(v -> requestPermit(fromToken));
-        toViewingKeyButton.setOnClickListener(v -> requestPermit(toToken));
+        fromMaxButton.setOnClickListener(v -> handleFromButtonClick());
+        toMaxButton.setOnClickListener(v -> handleToButtonClick());
         
         toggleButton.setOnClickListener(v -> toggleTokenPair());
         swapButton.setOnClickListener(v -> executeSwap());
@@ -274,6 +273,21 @@ public class SwapTokensMainFragment extends Fragment {
         simulateSwapWithContract(inputAmount);
     }
     
+    private void handleFromButtonClick() {
+        if (fromBalance >= 0) {
+            // Max button behavior
+            setMaxFromAmount();
+        } else {
+            // Add button behavior
+            requestPermit(fromToken);
+        }
+    }
+
+    private void handleToButtonClick() {
+        // To button is only for Add permit functionality
+        requestPermit(toToken);
+    }
+
     private void setMaxFromAmount() {
         if (fromBalance > 0) {
             fromAmountInput.setText(String.valueOf(fromBalance));
@@ -412,7 +426,47 @@ public class SwapTokensMainFragment extends Fragment {
     
     
     private void requestPermit(String tokenSymbol) {
-        Toast.makeText(getContext(), "Please create a permit for " + tokenSymbol + " in the Wallet tab", Toast.LENGTH_LONG).show();
+        if (permitManager == null) {
+            Toast.makeText(getContext(), "Permit manager not initialized", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenSymbol);
+        if (tokenInfo == null) {
+            Toast.makeText(getContext(), "Token not supported", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        // Create permit in background thread
+        new Thread(() -> {
+            try {
+                // Create permit with correct parameters
+                java.util.List<String> contractAddresses = java.util.Arrays.asList(tokenInfo.contract);
+                java.util.List<String> permissions = java.util.Arrays.asList("balance", "history", "allowance");
+                String permitName = "EarthWallet";
+
+                Permit permit = permitManager.createPermit(getContext(), currentWalletAddress, contractAddresses, permitName, permissions);
+
+                // Update UI on main thread
+                if (getActivity() != null) {
+                    getActivity().runOnUiThread(() -> {
+                        if (permit != null) {
+                            // Refresh balances to update the UI
+                            fetchBalances();
+                        } else {
+                            Toast.makeText(getContext(), "Failed to create permit", Toast.LENGTH_SHORT).show();
+                        }
+                    });
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Error creating permit for " + tokenSymbol, e);
+                if (getActivity() != null) {
+                    getActivity().runOnUiThread(() -> {
+                        Toast.makeText(getContext(), "Error creating permit: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                    });
+                }
+            }
+        }).start();
     }
     
     private void executeSwap() {
@@ -587,34 +641,38 @@ public class SwapTokensMainFragment extends Fragment {
     
     private void updateFromBalanceDisplay() {
         DecimalFormat df = new DecimalFormat("#.##");
-        
+
         if (fromBalance >= 0) {
             fromBalanceText.setText("Balance: " + df.format(fromBalance));
-            fromMaxButton.setVisibility(fromBalance > 0 ? View.VISIBLE : View.GONE);
-            fromViewingKeyButton.setVisibility(View.GONE);
+            if (fromBalance > 0) {
+                fromMaxButton.setText("Max");
+                fromMaxButton.setVisibility(View.VISIBLE);
+            } else {
+                fromMaxButton.setVisibility(View.GONE);
+            }
         } else if (fromBalance == -1) {
-            fromBalanceText.setText("Balance: Create permit");
-            fromMaxButton.setVisibility(View.GONE);
-            fromViewingKeyButton.setVisibility(View.VISIBLE);
+            fromBalanceText.setText("Balance: ");
+            fromMaxButton.setText("Add");
+            fromMaxButton.setVisibility(View.VISIBLE);
         } else {
             fromBalanceText.setText("Balance: ...");
             fromMaxButton.setVisibility(View.GONE);
-            fromViewingKeyButton.setVisibility(View.GONE);
         }
     }
     
     private void updateToBalanceDisplay() {
         DecimalFormat df = new DecimalFormat("#.##");
-        
+
         if (toBalance >= 0) {
             toBalanceText.setText("Balance: " + df.format(toBalance));
-            toViewingKeyButton.setVisibility(View.GONE);
+            toMaxButton.setVisibility(View.GONE);
         } else if (toBalance == -1) {
-            toBalanceText.setText("Balance: Create permit");
-            toViewingKeyButton.setVisibility(View.VISIBLE);
+            toBalanceText.setText("Balance: ");
+            toMaxButton.setText("Add");
+            toMaxButton.setVisibility(View.VISIBLE);
         } else {
             toBalanceText.setText("Balance: ...");
-            toViewingKeyButton.setVisibility(View.GONE);
+            toMaxButton.setVisibility(View.GONE);
         }
     }
     
