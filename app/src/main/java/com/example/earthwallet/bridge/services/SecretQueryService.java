@@ -34,12 +34,12 @@ public class SecretQueryService {
     private static final String TAG = "SecretQueryService";
     private static final String DEFAULT_LCD_URL = "https://lcd.erth.network";
     
-    private final SecretCryptoService cryptoService;
+    // Use SecretCryptoService Kotlin object static methods
     private final Context context;
 
     public SecretQueryService(Context context) {
         this.context = context;
-        this.cryptoService = new SecretCryptoService();
+        // Use static methods from SecretCryptoService Kotlin object
     }
     
     /**
@@ -73,7 +73,7 @@ public class SecretQueryService {
             Log.i(TAG, "Executing contract query with securely retrieved mnemonic");
             
             // Step 2: Encrypt query message (matches SecretJS ComputeQuerier.queryContract line 182)
-            byte[] encryptedQuery = cryptoService.encryptContractMessage(finalCodeHash, queryJson.toString(), mnemonic);
+            byte[] encryptedQuery = SecretCryptoService.encryptContractMessageSync(finalCodeHash, queryJson.toString(), mnemonic);
             Log.i(TAG, "Query encrypted, length: " + encryptedQuery.length + " bytes");
             
             // Extract nonce for decryption (first 32 bytes of encrypted message)
@@ -147,7 +147,7 @@ public class SecretQueryService {
         
         try {
             // Step 2: Decrypt using SecretCryptoService (matches SecretJS decrypt() method)
-            byte[] decryptedBytes = cryptoService.decryptQueryResponse(encryptedResult, nonce, mnemonic);
+            byte[] decryptedBytes = SecretCryptoService.decryptQueryResponseSync(encryptedResult, nonce, mnemonic);
             Log.i(TAG, "Decrypted " + decryptedBytes.length + " bytes from response");
             
             // Step 3: Handle SecretJS response decoding flow

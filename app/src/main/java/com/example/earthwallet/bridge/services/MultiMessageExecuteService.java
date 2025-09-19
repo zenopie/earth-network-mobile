@@ -47,7 +47,7 @@ public class MultiMessageExecuteService {
         WalletCrypto.initialize(context);
         SharedPreferences securePrefs = createSecurePrefs(context);
         // Use static methods from SecretNetworkService Kotlin object
-        SecretCryptoService cryptoService = new SecretCryptoService();
+        // Use static methods from SecretCryptoService Kotlin object
         SecretProtobufService protobufService = new SecretProtobufService();
 
         // Get wallet information
@@ -81,7 +81,7 @@ public class MultiMessageExecuteService {
             JSONObject msg = message.getJSONObject("msg");
 
             // Encrypt each contract message
-            byte[] encryptedMsg = cryptoService.encryptContractMessage(codeHash, msg.toString(), mnemonic);
+            byte[] encryptedMsg = SecretCryptoService.encryptContractMessageSync(codeHash, msg.toString(), mnemonic);
 
             // Create encrypted message object for protobuf service
             JSONObject encryptedMessage = new JSONObject();

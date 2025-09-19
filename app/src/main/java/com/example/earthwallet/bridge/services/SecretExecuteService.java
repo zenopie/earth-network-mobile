@@ -35,7 +35,7 @@ public class SecretExecuteService {
         // Initialize services
         WalletCrypto.initialize(context);
         SharedPreferences securePrefs = createSecurePrefs(context);
-        SecretCryptoService cryptoService = new SecretCryptoService();
+        // Use static methods from SecretCryptoService Kotlin object
         SecretProtobufService protobufService = new SecretProtobufService();
         
         // Get wallet information
@@ -60,13 +60,13 @@ public class SecretExecuteService {
         String sequence = accountFields[1];
 
         // Encrypt contract message
-        byte[] encryptedMessage = cryptoService.encryptContractMessage(
+        byte[] encryptedMessage = SecretCryptoService.encryptContractMessageSync(
             params.codeHash, params.execJson, mnemonic);
 
         // Build protobuf transaction
-        byte[] txBytes = protobufService.buildTransaction(senderAddress, params.contractAddr, 
-                                                        params.codeHash, encryptedMessage, 
-                                                        params.funds, params.memo, accountNumber, 
+        byte[] txBytes = protobufService.buildTransaction(senderAddress, params.contractAddr,
+                                                        params.codeHash, encryptedMessage,
+                                                        params.funds, params.memo, accountNumber,
                                                         sequence, chainId, walletKey);
 
         // Broadcast transaction

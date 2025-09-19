@@ -100,8 +100,8 @@ public class SwapTokensMainFragment extends Fragment {
     public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Initialize token list
-        tokenSymbols = new ArrayList<>(Tokens.ALL_TOKENS.keySet());
+        // Initialize token list - use getAllTokens() instead of ALL_TOKENS for full registry
+        tokenSymbols = new ArrayList<>(Tokens.getAllTokens().keySet());
     }
     
     @Override
@@ -330,12 +330,32 @@ public class SwapTokensMainFragment extends Fragment {
     private void loadTokenLogo(ImageView imageView, String tokenSymbol) {
         try {
             // Get token info and logo path
-            Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenSymbol);
+            Tokens.TokenInfo tokenInfo = Tokens.getTokenInfo(tokenSymbol);
             if (tokenInfo != null && tokenInfo.logo != null) {
-                InputStream inputStream = getContext().getAssets().open(tokenInfo.logo);
-                android.graphics.drawable.Drawable drawable = android.graphics.drawable.Drawable.createFromStream(inputStream, null);
-                imageView.setImageDrawable(drawable);
-                inputStream.close();
+                String logoPath = tokenInfo.logo;
+
+                // Handle both old format (coin/ERTH.png) and new format (erth, scrt, etc.)
+                if (!logoPath.contains("/") && !logoPath.contains(".")) {
+                    // New format - try adding coin/ prefix and .png extension
+                    logoPath = "coin/" + logoPath.toUpperCase() + ".png";
+                }
+
+                try {
+                    InputStream inputStream = getContext().getAssets().open(logoPath);
+                    android.graphics.drawable.Drawable drawable = android.graphics.drawable.Drawable.createFromStream(inputStream, null);
+                    imageView.setImageDrawable(drawable);
+                    inputStream.close();
+                } catch (Exception e2) {
+                    // Try the original logo path if the modified one failed
+                    if (!logoPath.equals(tokenInfo.logo)) {
+                        InputStream inputStream = getContext().getAssets().open(tokenInfo.logo);
+                        android.graphics.drawable.Drawable drawable = android.graphics.drawable.Drawable.createFromStream(inputStream, null);
+                        imageView.setImageDrawable(drawable);
+                        inputStream.close();
+                    } else {
+                        throw e2;
+                    }
+                }
             } else {
                 // No token info or logo path, use default
                 imageView.setImageResource(R.drawable.ic_wallet);
@@ -387,7 +407,7 @@ public class SwapTokensMainFragment extends Fragment {
                 
                 // Update minimum received
                 double minReceived = toAmount * (1 - slippage / 100);
-                Tokens.TokenInfo toTokenInfo = Tokens.getToken(toToken);
+                Tokens.TokenInfo toTokenInfo = Tokens.getTokenInfo(toToken);
                 int decimals = toTokenInfo != null ? toTokenInfo.decimals : 6;
                 DecimalFormat minDf = new DecimalFormat("#." + "0".repeat(decimals));
                 minReceivedText.setText(minDf.format(minReceived) + " " + toToken);
@@ -431,7 +451,7 @@ public class SwapTokensMainFragment extends Fragment {
             return;
         }
 
-        Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenSymbol);
+        Tokens.TokenInfo tokenInfo = Tokens.getTokenInfo(tokenSymbol);
         if (tokenInfo == null) {
             Toast.makeText(getContext(), "Token not supported", Toast.LENGTH_SHORT).show();
             return;
@@ -535,7 +555,7 @@ public class SwapTokensMainFragment extends Fragment {
                     JSONObject balance = result.optJSONObject("balance");
                     if (balance != null) {
                         String amount = balance.optString("amount", "0");
-                        Tokens.TokenInfo token = Tokens.getToken(tokenSymbol);
+                        Tokens.TokenInfo token = Tokens.getTokenInfo(tokenSymbol);
                         if (token != null) {
                             double balanceValue = Double.parseDouble(amount) / Math.pow(10, token.decimals);
                             
@@ -577,7 +597,7 @@ public class SwapTokensMainFragment extends Fragment {
                     // Parse output_amount to match React web app response format
                     String outputAmount = result.optString("output_amount", "0");
                     String toTokenSymbol = tokenSymbols.get(toTokenSpinner.getSelectedItemPosition());
-                    Tokens.TokenInfo toTokenInfo = Tokens.getToken(toTokenSymbol);
+                    Tokens.TokenInfo toTokenInfo = Tokens.getTokenInfo(toTokenSymbol);
                     if (toTokenInfo != null) {
                         double formattedOutput = Double.parseDouble(outputAmount) / Math.pow(10, toTokenInfo.decimals);
                         DecimalFormat df = new DecimalFormat("#.######");
@@ -683,7 +703,7 @@ public class SwapTokensMainFragment extends Fragment {
         Log.d(TAG, "Starting swap simulation: " + inputAmount + " " + fromTokenSymbol + " -> " + toTokenSymbol);
         
         // Get token info for from token
-        Tokens.TokenInfo fromTokenInfo = Tokens.getToken(fromTokenSymbol);
+        Tokens.TokenInfo fromTokenInfo = Tokens.getTokenInfo(fromTokenSymbol);
         if (fromTokenInfo == null) {
             Log.e(TAG, "From token not supported: " + fromTokenSymbol);
             Toast.makeText(getContext(), "Token not supported", Toast.LENGTH_SHORT).show();
@@ -693,7 +713,7 @@ public class SwapTokensMainFragment extends Fragment {
         }
         
         // Build swap simulation query to match React web app format
-        Tokens.TokenInfo toTokenInfo = Tokens.getToken(toTokenSymbol);
+        Tokens.TokenInfo toTokenInfo = Tokens.getTokenInfo(toTokenSymbol);
         if (toTokenInfo == null) {
             Toast.makeText(getContext(), "To token not supported", Toast.LENGTH_SHORT).show();
             isSimulatingSwap = false;
@@ -759,7 +779,7 @@ public class SwapTokensMainFragment extends Fragment {
             return;
         }
         
-        Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenSymbol);
+        Tokens.TokenInfo tokenInfo = Tokens.getTokenInfo(tokenSymbol);
         if (tokenInfo == null) {
             Log.w("SwapTokensMainFragment", "Token not found: " + tokenSymbol);
             return;
@@ -846,7 +866,7 @@ public class SwapTokensMainFragment extends Fragment {
                     JSONObject balance = result.optJSONObject("balance");
                     if (balance != null) {
                         String amount = balance.optString("amount", "0");
-                        Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenSymbol);
+                        Tokens.TokenInfo tokenInfo = Tokens.getTokenInfo(tokenSymbol);
                         if (tokenInfo != null) {
                             // Always process amount, even if it's "0" or empty (like wallet display does)
                             double formattedBalance = 0;
@@ -974,7 +994,7 @@ public class SwapTokensMainFragment extends Fragment {
         String toTokenSymbol = tokenSymbols.get(toTokenSpinner.getSelectedItemPosition());
         double inputAmount = Double.parseDouble(fromAmountInput.getText().toString());
         
-        Tokens.TokenInfo fromTokenInfo = Tokens.getToken(fromTokenSymbol);
+        Tokens.TokenInfo fromTokenInfo = Tokens.getTokenInfo(fromTokenSymbol);
         if (fromTokenInfo == null) {
             Toast.makeText(getContext(), "Token not supported", Toast.LENGTH_SHORT).show();
             return;
@@ -982,7 +1002,7 @@ public class SwapTokensMainFragment extends Fragment {
         
         // Build swap execution message to match React web app format
         // Use SNIP execution with "send" message like the React app's snip() function
-        Tokens.TokenInfo toTokenInfo = Tokens.getToken(toTokenSymbol);
+        Tokens.TokenInfo toTokenInfo = Tokens.getTokenInfo(toTokenSymbol);
         if (toTokenInfo == null) {
             Toast.makeText(getContext(), "To token not supported", Toast.LENGTH_SHORT).show();
             return;
@@ -1023,7 +1043,7 @@ public class SwapTokensMainFragment extends Fragment {
             double minOutput = expectedOutput * (1.0 - slippage);
             
             String toTokenSymbol = tokenSymbols.get(toTokenSpinner.getSelectedItemPosition());
-            Tokens.TokenInfo toTokenInfo = Tokens.getToken(toTokenSymbol);
+            Tokens.TokenInfo toTokenInfo = Tokens.getTokenInfo(toTokenSymbol);
             int decimals = toTokenInfo != null ? toTokenInfo.decimals : 6;
             
             return String.valueOf((long)(minOutput * Math.pow(10, decimals)));
@@ -1033,7 +1053,7 @@ public class SwapTokensMainFragment extends Fragment {
     }
     
     private boolean hasPermitForToken(String tokenSymbol) {
-        Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenSymbol);
+        Tokens.TokenInfo tokenInfo = Tokens.getTokenInfo(tokenSymbol);
         if (tokenInfo == null) {
             return false;
         }
@@ -1067,7 +1087,7 @@ public class SwapTokensMainFragment extends Fragment {
                         }
                     }
                     
-                    Tokens.TokenInfo tokenInfo = Tokens.getToken(tokenSymbol);
+                    Tokens.TokenInfo tokenInfo = Tokens.getTokenInfo(tokenSymbol);
                     if (tokenInfo != null) {
                         double balanceValue = Double.parseDouble(balanceStr) / Math.pow(10, tokenInfo.decimals);
                         
