@@ -135,8 +135,8 @@ public class ANMLRegisterFragment extends Fragment {
             BigDecimal microPoolAmount = new BigDecimal(registrationReward);
             BigDecimal macroPoolAmount = microPoolAmount.divide(new BigDecimal("1000000"), 8, RoundingMode.DOWN);
             
-            // Calculate 0.1% of the registration reward pool (user's actual reward)
-            BigDecimal actualReward = macroPoolAmount.multiply(new BigDecimal("0.001")).setScale(6, RoundingMode.HALF_UP);
+            // Calculate 1% of the registration reward pool (user's actual reward)
+            BigDecimal actualReward = macroPoolAmount.multiply(new BigDecimal("0.01")).setScale(6, RoundingMode.HALF_UP);
             
             // Format for display - round to 2 decimal places
             DecimalFormat df = new DecimalFormat("#,##0.##");

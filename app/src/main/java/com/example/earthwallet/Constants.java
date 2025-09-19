@@ -3,7 +3,7 @@ package com.example.earthwallet;
 public class Constants {
     // Registration contract details (from desktop app)
     public static final String REGISTRATION_CONTRACT = "secret12q72eas34u8fyg68k6wnerk2nd6l5gaqppld6p";
-    public static final String REGISTRATION_HASH = "3f19502de44fa43454f39ed0787cca2686adfb652e21195fba0b91c422d027dd";
+    public static final String REGISTRATION_HASH = "e6f9a7a7a6060721b0cf511d78a423c216fb961668ceeb7289dc189a94a7b730";
     
     // Exchange contract details
     public static final String EXCHANGE_CONTRACT = "secret1rj2phrf6x3v7526jrz60m2dcq58slyq2269kra";
