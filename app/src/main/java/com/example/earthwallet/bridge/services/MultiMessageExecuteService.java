@@ -46,7 +46,7 @@ public class MultiMessageExecuteService {
         // Initialize services
         WalletCrypto.initialize(context);
         SharedPreferences securePrefs = createSecurePrefs(context);
-        SecretNetworkService networkService = new SecretNetworkService();
+        // Use static methods from SecretNetworkService Kotlin object
         SecretCryptoService cryptoService = new SecretCryptoService();
         SecretProtobufService protobufService = new SecretProtobufService();
 
@@ -61,13 +61,13 @@ public class MultiMessageExecuteService {
 
         // Fetch chain and account information
         String lcdUrl = Constants.DEFAULT_LCD_URL;
-        String chainId = networkService.fetchChainId(lcdUrl);
-        JSONObject accountData = networkService.fetchAccount(lcdUrl, senderAddress);
+        String chainId = SecretNetworkService.fetchChainIdSync(lcdUrl);
+        JSONObject accountData = SecretNetworkService.fetchAccountSync(lcdUrl, senderAddress);
         if (accountData == null) {
             throw new Exception("Account not found: " + senderAddress);
         }
 
-        String[] accountFields = networkService.parseAccountFields(accountData);
+        String[] accountFields = SecretNetworkService.parseAccountFieldsAsArray(accountData);
         String accountNumber = accountFields[0];
         String sequence = accountFields[1];
 
@@ -100,10 +100,10 @@ public class MultiMessageExecuteService {
             accountNumber, sequence, chainId, walletKey);
 
         // Broadcast transaction
-        String response = networkService.broadcastTransactionModern(lcdUrl, txBytes);
+        String response = SecretNetworkService.broadcastTransactionModernSync(lcdUrl, txBytes);
 
         // Enhance response with detailed results
-        String enhancedResponse = enhanceTransactionResponse(response, lcdUrl, networkService);
+        String enhancedResponse = enhanceTransactionResponse(response, lcdUrl);
 
         // Validate response
         validateTransactionResponse(enhancedResponse);
@@ -112,7 +112,7 @@ public class MultiMessageExecuteService {
         return new String[]{enhancedResponse, senderAddress};
     }
 
-    private static String enhanceTransactionResponse(String initialResponse, String lcdUrl, SecretNetworkService networkService) {
+    private static String enhanceTransactionResponse(String initialResponse, String lcdUrl) {
         try {
             JSONObject response = new JSONObject(initialResponse);
             if (response.has("tx_response")) {
@@ -123,7 +123,7 @@ public class MultiMessageExecuteService {
                 if (code == 0 && !txHash.isEmpty()) {
                     try {
                         Thread.sleep(2000);
-                        String detailedResponse = networkService.queryTransactionByHash(lcdUrl, txHash);
+                        String detailedResponse = SecretNetworkService.queryTransactionByHashSync(lcdUrl, txHash);
                         if (detailedResponse != null) {
                             return detailedResponse;
                         }

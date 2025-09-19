@@ -34,13 +34,11 @@ public class SecretQueryService {
     private static final String TAG = "SecretQueryService";
     private static final String DEFAULT_LCD_URL = "https://lcd.erth.network";
     
-    private final SecretNetworkService networkService;
     private final SecretCryptoService cryptoService;
     private final Context context;
-    
+
     public SecretQueryService(Context context) {
         this.context = context;
-        this.networkService = new SecretNetworkService();
         this.cryptoService = new SecretCryptoService();
     }
     
