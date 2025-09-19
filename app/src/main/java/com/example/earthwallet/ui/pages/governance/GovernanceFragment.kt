@@ -23,13 +23,13 @@ class GovernanceFragment : Fragment() {
         container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
+        Log.d(TAG, "GovernanceFragment accessed directly - should navigate via Actions menu instead")
+
         // Create a simple layout programmatically since we don't need the full layout anymore
         return TextView(context).apply {
             text = "Please use the governance options from the Actions menu."
             setPadding(32, 32, 32, 32)
             textSize = 16f
         }
-
-        Log.d(TAG, "GovernanceFragment accessed directly - should navigate via Actions menu instead")
     }
 }
