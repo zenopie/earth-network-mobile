@@ -438,7 +438,7 @@ class SwapTokensMainFragment : Fragment() {
                 val permissions = listOf("balance", "history", "allowance")
                 val permitName = "EarthWallet"
 
-                val permit = permitManager?.createPermit(context, currentWalletAddress, contractAddresses, permitName, permissions)
+                val permit = permitManager?.createPermit(requireContext(), currentWalletAddress, contractAddresses, permitName, permissions)
 
                 // Update UI on main thread
                 activity?.runOnUiThread {
