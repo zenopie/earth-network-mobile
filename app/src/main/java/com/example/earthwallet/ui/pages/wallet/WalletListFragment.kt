@@ -18,6 +18,7 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKeys
 import com.example.earthwallet.R
 import com.example.earthwallet.wallet.services.SecureWalletManager
+import com.example.earthwallet.wallet.utils.BiometricAuthManager
 import org.json.JSONArray
 import org.json.JSONObject
 import java.nio.charset.StandardCharsets
@@ -149,6 +150,41 @@ class WalletListFragment : Fragment() {
     }
 
     private fun askPinAndShowMnemonic(walletIndex: Int) {
+        // Check if biometric authentication should be used
+        if (BiometricAuthManager.shouldUseBiometricAuth(requireContext())) {
+            authenticateWithBiometric(walletIndex)
+        } else {
+            authenticateWithPin(walletIndex)
+        }
+    }
+
+    private fun authenticateWithBiometric(walletIndex: Int) {
+        BiometricAuthManager.authenticateUser(
+            fragment = this,
+            title = "Authenticate",
+            subtitle = "Use your biometric credential to view wallet recovery phrase",
+            callback = object : BiometricAuthManager.BiometricAuthCallback {
+                override fun onAuthenticationSucceeded() {
+                    showMnemonic(walletIndex)
+                }
+
+                override fun onAuthenticationError(errorMessage: String) {
+                    if (errorMessage == "Use PIN instead") {
+                        // User chose to use PIN instead
+                        authenticateWithPin(walletIndex)
+                    } else if (errorMessage != "Authentication cancelled") {
+                        Toast.makeText(requireContext(), errorMessage, Toast.LENGTH_SHORT).show()
+                    }
+                }
+
+                override fun onAuthenticationFailed() {
+                    Toast.makeText(requireContext(), "Authentication failed. Try again.", Toast.LENGTH_SHORT).show()
+                }
+            }
+        )
+    }
+
+    private fun authenticateWithPin(walletIndex: Int) {
         val pinEdit = EditText(requireContext())
         pinEdit.hint = "Enter PIN"
         pinEdit.inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD
@@ -169,25 +205,7 @@ class WalletListFragment : Fragment() {
                     for (b in digest) sb.append(String.format("%02x", b))
                     val pinHash = sb.toString()
                     if (SecureWalletManager.verifyPinHash(requireContext(), pinHash)) {
-                        try {
-                            SecureWalletManager.executeWithWalletMnemonic(requireContext(), walletIndex) { mnemonic ->
-                                activity?.runOnUiThread {
-                                    val tv = TextView(requireContext())
-                                    tv.text = mnemonic
-                                    val pad = (12 * resources.displayMetrics.density).toInt()
-                                    tv.setPadding(pad, pad, pad, pad)
-                                    tv.setTextIsSelectable(true)
-                                    AlertDialog.Builder(requireContext())
-                                        .setTitle("Recovery Phrase")
-                                        .setView(tv)
-                                        .setPositiveButton("Close", null)
-                                        .show()
-                                }
-                                null // Return type for MnemonicOperation
-                            }
-                        } catch (e: Exception) {
-                            Toast.makeText(requireContext(), "Failed to retrieve mnemonic", Toast.LENGTH_SHORT).show()
-                        }
+                        showMnemonic(walletIndex)
                     } else {
                         Toast.makeText(requireContext(), "Invalid PIN", Toast.LENGTH_SHORT).show()
                     }
@@ -197,6 +215,28 @@ class WalletListFragment : Fragment() {
             }
             .setNegativeButton("Cancel", null)
             .show()
+    }
+
+    private fun showMnemonic(walletIndex: Int) {
+        try {
+            SecureWalletManager.executeWithWalletMnemonic(requireContext(), walletIndex) { mnemonic ->
+                activity?.runOnUiThread {
+                    val tv = TextView(requireContext())
+                    tv.text = mnemonic
+                    val pad = (12 * resources.displayMetrics.density).toInt()
+                    tv.setPadding(pad, pad, pad, pad)
+                    tv.setTextIsSelectable(true)
+                    AlertDialog.Builder(requireContext())
+                        .setTitle("Recovery Phrase")
+                        .setView(tv)
+                        .setPositiveButton("Close", null)
+                        .show()
+                }
+                null // Return type for MnemonicOperation
+            }
+        } catch (e: Exception) {
+            Toast.makeText(requireContext(), "Failed to retrieve mnemonic", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun deleteWalletAtIndex(index: Int) {

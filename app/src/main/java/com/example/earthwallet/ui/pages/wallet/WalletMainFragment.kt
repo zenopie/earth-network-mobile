@@ -6,6 +6,7 @@ import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageButton
 import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentTransaction
@@ -31,7 +32,8 @@ class WalletMainFragment : Fragment(),
     CreateWalletFragment.CreateWalletListener,
     WalletDisplayFragment.WalletDisplayListener,
     TokenBalancesFragment.TokenBalancesListener,
-    ManagePermitsFragment.ManagePermitsListener {
+    ManagePermitsFragment.ManagePermitsListener,
+    WalletSettingsFragment.WalletSettingsListener {
 
     companion object {
         private const val TAG = "WalletMainFragment"
@@ -70,6 +72,10 @@ class WalletMainFragment : Fragment(),
 
         // Set up wallet name click listener
         walletNameText.setOnClickListener { showWalletListFragment() }
+
+        // Set up settings button click listener
+        val settingsBtn = view.findViewById<ImageButton>(R.id.btn_wallet_settings)
+        settingsBtn.setOnClickListener { showWalletSettingsFragment() }
 
         // Initialize child fragments
         initializeChildFragments()
@@ -240,6 +246,26 @@ class WalletMainFragment : Fragment(),
             .replace(R.id.host_content, managePermitsFragment)
             .addToBackStack("manage_permits")
             .commit()
+    }
+
+    private fun showWalletSettingsFragment() {
+        val walletSettingsFragment = WalletSettingsFragment.newInstance()
+        walletSettingsFragment.setWalletSettingsListener(this)
+
+        requireActivity().supportFragmentManager
+            .beginTransaction()
+            .replace(R.id.host_content, walletSettingsFragment)
+            .addToBackStack("wallet_settings")
+            .commit()
+    }
+
+    // =============================================================================
+    // WalletSettingsFragment.WalletSettingsListener Implementation
+    // =============================================================================
+
+    override fun onBackPressed() {
+        // Navigate back from wallet settings fragment
+        requireActivity().supportFragmentManager.popBackStack()
     }
 
     // =============================================================================

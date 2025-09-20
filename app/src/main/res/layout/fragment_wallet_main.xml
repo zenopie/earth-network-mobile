@@ -10,7 +10,10 @@
         android:id="@+id/wallet_activity_content"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:padding="30dp"
+        android:paddingTop="30dp"
+        android:paddingBottom="30dp"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
         android:background="@android:color/white">
 
         <ScrollView
@@ -24,21 +27,37 @@
                 android:orientation="vertical"
                 android:gravity="center">
 
-                <!-- Wallet Name Header -->
-                <TextView
-                    android:id="@+id/wallet_name_text"
-                    android:layout_width="wrap_content"
+                <!-- Wallet Header -->
+                <RelativeLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="My Wallet"
-                    android:textSize="24sp"
-                    android:textStyle="bold"
-                    android:textColor="#1e3a8a"
-                    android:layout_gravity="center"
-                    android:layout_marginBottom="4dp"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:background="?android:attr/selectableItemBackground"
-                    android:padding="8dp" />
+                    android:layout_marginBottom="4dp">
+
+                    <TextView
+                        android:id="@+id/wallet_name_text"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_centerInParent="true"
+                        android:text="My Wallet"
+                        android:textSize="24sp"
+                        android:textStyle="bold"
+                        android:textColor="#1e3a8a"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:background="?android:attr/selectableItemBackground"
+                        android:padding="8dp" />
+
+                    <ImageButton
+                        android:id="@+id/btn_wallet_settings"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:layout_alignParentEnd="true"
+                        android:layout_centerVertical="true"
+                        android:src="@drawable/ic_gear"
+                        android:background="?android:attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="Wallet Settings" />
+
+                </RelativeLayout>
 
                 <!-- Wallet Display Fragment Container -->
                 <FrameLayout

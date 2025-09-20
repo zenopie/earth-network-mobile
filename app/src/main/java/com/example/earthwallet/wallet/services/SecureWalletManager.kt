@@ -703,6 +703,80 @@ object SecureWalletManager {
     }
 
     /**
+     * Check if biometric authentication is enabled
+     */
+    @Throws(Exception::class)
+    fun isBiometricAuthEnabled(context: Context): Boolean {
+        return isBiometricAuthEnabled(context, null)
+    }
+
+    /**
+     * Check if biometric authentication is enabled using pre-initialized secure preferences
+     */
+    @Throws(Exception::class)
+    fun isBiometricAuthEnabled(context: Context, securePrefs: SharedPreferences?): Boolean {
+        val prefs = securePrefs ?: createSecurePrefs(context)
+        return prefs.getBoolean("biometric_auth_enabled", false)
+    }
+
+    /**
+     * Set biometric authentication enabled/disabled
+     */
+    @Throws(Exception::class)
+    fun setBiometricAuthEnabled(context: Context, enabled: Boolean) {
+        setBiometricAuthEnabled(context, null, enabled)
+    }
+
+    /**
+     * Set biometric authentication enabled/disabled using pre-initialized secure preferences
+     */
+    @Throws(Exception::class)
+    fun setBiometricAuthEnabled(context: Context, securePrefs: SharedPreferences?, enabled: Boolean) {
+        val prefs = securePrefs ?: createSecurePrefs(context)
+        val editor = prefs.edit()
+        editor.putBoolean("biometric_auth_enabled", enabled)
+        editor.apply()
+        Log.d(TAG, "Biometric authentication ${if (enabled) "enabled" else "disabled"}")
+    }
+
+    /**
+     * Check if transaction authentication is enabled
+     */
+    @Throws(Exception::class)
+    fun isTransactionAuthEnabled(context: Context): Boolean {
+        return isTransactionAuthEnabled(context, null)
+    }
+
+    /**
+     * Check if transaction authentication is enabled using pre-initialized secure preferences
+     */
+    @Throws(Exception::class)
+    fun isTransactionAuthEnabled(context: Context, securePrefs: SharedPreferences?): Boolean {
+        val prefs = securePrefs ?: createSecurePrefs(context)
+        return prefs.getBoolean("transaction_auth_enabled", false)
+    }
+
+    /**
+     * Set transaction authentication enabled/disabled
+     */
+    @Throws(Exception::class)
+    fun setTransactionAuthEnabled(context: Context, enabled: Boolean) {
+        setTransactionAuthEnabled(context, null, enabled)
+    }
+
+    /**
+     * Set transaction authentication enabled/disabled using pre-initialized secure preferences
+     */
+    @Throws(Exception::class)
+    fun setTransactionAuthEnabled(context: Context, securePrefs: SharedPreferences?, enabled: Boolean) {
+        val prefs = securePrefs ?: createSecurePrefs(context)
+        val editor = prefs.edit()
+        editor.putBoolean("transaction_auth_enabled", enabled)
+        editor.apply()
+        Log.d(TAG, "Transaction authentication ${if (enabled) "enabled" else "disabled"}")
+    }
+
+    /**
      * Select a wallet by index
      */
     @Throws(Exception::class)

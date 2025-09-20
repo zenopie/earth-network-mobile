@@ -5,8 +5,13 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.TextUtils
 import android.util.Log
+import android.widget.EditText
+import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.fragment.app.Fragment
 import com.example.earthwallet.R
 import com.example.earthwallet.ui.components.TransactionConfirmationDialog
 import com.example.earthwallet.ui.components.StatusModal
@@ -15,7 +20,11 @@ import com.example.earthwallet.bridge.services.NativeSendService
 import com.example.earthwallet.bridge.services.MultiMessageExecuteService
 import com.example.earthwallet.bridge.services.SnipExecuteService
 import com.example.earthwallet.bridge.services.PermitSigningService
+import com.example.earthwallet.wallet.services.SecureWalletManager
+import com.example.earthwallet.wallet.utils.BiometricAuthManager
 import org.json.JSONObject
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 
 /**
  * Universal transaction activity that handles all transaction types
@@ -85,9 +94,8 @@ class TransactionActivity : AppCompatActivity() {
 
         confirmationDialog?.show(details, object : TransactionConfirmationDialog.OnConfirmationListener {
             override fun onConfirmed() {
-                // User confirmed - show loading and execute transaction
-                statusModal?.show(StatusModal.State.LOADING)
-                executeTransaction()
+                // User confirmed - check if transaction authentication is required
+                checkTransactionAuthentication()
             }
 
             override fun onCancelled() {
@@ -185,6 +193,107 @@ class TransactionActivity : AppCompatActivity() {
 
             else -> null
         }
+    }
+
+    private fun checkTransactionAuthentication() {
+        try {
+            // Check if transaction authentication is enabled
+            if (!SecureWalletManager.isTransactionAuthEnabled(this)) {
+                // No authentication required, proceed directly
+                statusModal?.show(StatusModal.State.LOADING)
+                executeTransaction()
+                return
+            }
+
+            // Check if biometric authentication should be used
+            if (BiometricAuthManager.shouldUseBiometricAuth(this)) {
+                authenticateWithBiometric()
+            } else {
+                authenticateWithPin()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking transaction authentication", e)
+            // If there's an error checking auth settings, proceed without auth
+            statusModal?.show(StatusModal.State.LOADING)
+            executeTransaction()
+        }
+    }
+
+    private fun authenticateWithBiometric() {
+        BiometricAuthManager.authenticateUser(
+            activity = this,
+            title = "Authenticate Transaction",
+            subtitle = "Use your biometric credential to authorize this transaction",
+            callback = object : BiometricAuthManager.BiometricAuthCallback {
+                override fun onAuthenticationSucceeded() {
+                    // Authentication successful, proceed with transaction
+                    statusModal?.show(StatusModal.State.LOADING)
+                    executeTransaction()
+                }
+
+                override fun onAuthenticationError(errorMessage: String) {
+                    if (errorMessage == "Use PIN instead") {
+                        // User chose to use PIN instead
+                        authenticateWithPin()
+                    } else if (errorMessage != "Authentication cancelled") {
+                        Toast.makeText(this@TransactionActivity, errorMessage, Toast.LENGTH_SHORT).show()
+                        finishWithError("Authentication failed")
+                    } else {
+                        // User cancelled authentication
+                        finishWithError("Transaction cancelled")
+                    }
+                }
+
+                override fun onAuthenticationFailed() {
+                    Toast.makeText(this@TransactionActivity, "Authentication failed. Try again.", Toast.LENGTH_SHORT).show()
+                    finishWithError("Authentication failed")
+                }
+            }
+        )
+    }
+
+    private fun authenticateWithPin() {
+        val pinEdit = EditText(this)
+        pinEdit.hint = "Enter PIN"
+        pinEdit.inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD
+
+        AlertDialog.Builder(this)
+            .setTitle("Authenticate Transaction")
+            .setMessage("Enter your PIN to authorize this transaction")
+            .setView(pinEdit)
+            .setPositiveButton("OK") { _, _ ->
+                val pin = pinEdit.text.toString().trim()
+                if (TextUtils.isEmpty(pin)) {
+                    Toast.makeText(this, "Enter PIN", Toast.LENGTH_SHORT).show()
+                    finishWithError("PIN required")
+                    return@setPositiveButton
+                }
+
+                try {
+                    val md = MessageDigest.getInstance("SHA-256")
+                    val digest = md.digest(pin.toByteArray(StandardCharsets.UTF_8))
+                    val sb = StringBuilder()
+                    for (b in digest) sb.append(String.format("%02x", b))
+                    val pinHash = sb.toString()
+
+                    if (SecureWalletManager.verifyPinHash(this, pinHash)) {
+                        // PIN correct, proceed with transaction
+                        statusModal?.show(StatusModal.State.LOADING)
+                        executeTransaction()
+                    } else {
+                        Toast.makeText(this, "Invalid PIN", Toast.LENGTH_SHORT).show()
+                        finishWithError("Invalid PIN")
+                    }
+                } catch (e: Exception) {
+                    Toast.makeText(this, "Error checking PIN", Toast.LENGTH_SHORT).show()
+                    finishWithError("Authentication error")
+                }
+            }
+            .setNegativeButton("Cancel") { _, _ ->
+                finishWithError("Transaction cancelled")
+            }
+            .setCancelable(false)
+            .show()
     }
 
     private fun executeTransaction() {
