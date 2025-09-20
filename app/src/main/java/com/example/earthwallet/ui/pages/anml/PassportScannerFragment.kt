@@ -20,7 +20,6 @@ import android.view.ViewGroup
 import android.widget.*
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
-import androidx.security.crypto.EncryptedSharedPreferences
 import com.example.earthwallet.Constants
 import com.example.earthwallet.wallet.services.SecureWalletManager
 import net.sf.scuba.smartcards.CardService
@@ -403,8 +402,8 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
                 val expiryDate = dateFormat.parse(mrzInfo.dateOfExpiry)
 
                 val displayFormat = SimpleDateFormat("dd/MM/yyyy", Locale.US)
-                passportData.dateOfBirth = displayFormat.format(dobDate)
-                passportData.dateOfExpiry = displayFormat.format(expiryDate)
+                passportData.dateOfBirth = dobDate?.let { displayFormat.format(it) } ?: mrzInfo.dateOfBirth
+                passportData.dateOfExpiry = expiryDate?.let { displayFormat.format(it) } ?: mrzInfo.dateOfExpiry
             } catch (e: ParseException) {
                 Log.e(TAG, "Error parsing dates", e)
                 passportData.dateOfBirth = mrzInfo.dateOfBirth

@@ -15,7 +15,6 @@ import android.widget.Button
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
-import androidx.security.crypto.EncryptedSharedPreferences
 import com.example.earthwallet.wallet.utils.SecurePreferencesUtil
 import com.example.earthwallet.ui.utils.WindowInsetsUtil
 import com.example.earthwallet.ui.pages.wallet.CreateWalletFragment

@@ -3,7 +3,6 @@ package com.example.earthwallet.wallet.utils
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
-import androidx.security.crypto.EncryptedSharedPreferences
 
 /**
  * PinSecurityManager
@@ -47,7 +46,6 @@ object PinSecurityManager {
 
         val failedAttempts = prefs.getInt(KEY_FAILED_ATTEMPTS, 0)
         val lockoutUntil = prefs.getLong(KEY_LOCKOUT_UNTIL, 0L)
-        val lockoutCount = prefs.getInt(KEY_LOCKOUT_COUNT, 0)
 
         val isLockedOut = currentTime < lockoutUntil
         val remainingLockoutTime = if (isLockedOut) lockoutUntil - currentTime else 0L

@@ -14,7 +14,6 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
-import androidx.security.crypto.EncryptedSharedPreferences
 import com.example.earthwallet.R
 import com.example.earthwallet.wallet.services.SecureWalletManager
 import com.example.earthwallet.wallet.utils.BiometricAuthManager

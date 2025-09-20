@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.text.TextUtils
 import android.util.Log
-import androidx.security.crypto.EncryptedSharedPreferences
 import com.example.earthwallet.wallet.utils.SecurePreferencesUtil
 import com.example.earthwallet.bridge.models.Permit
 import com.example.earthwallet.bridge.models.PermitSignDoc
@@ -177,8 +176,8 @@ class PermitManager private constructor(context: Context) {
                 val walletKey = com.example.earthwallet.wallet.utils.WalletCrypto.deriveKeyFromSecureMnemonic(mnemonicChars)
                 val derivedAddress = com.example.earthwallet.wallet.utils.WalletCrypto.getAddress(walletKey)
 
-                if (walletKey == null || walletAddress != derivedAddress) {
-                    throw Exception("Wallet mismatch or invalid key")
+                if (walletAddress != derivedAddress) {
+                    throw Exception("Wallet address mismatch")
                 }
 
                 // Create permit sign document
@@ -199,17 +198,12 @@ class PermitManager private constructor(context: Context) {
                 permit
             }
 
-            if (signedPermit != null) {
-                // Store signed permit for each contract
-                for (contractAddress in contractAddresses) {
-                    setPermit(walletAddress, contractAddress, signedPermit)
-                }
-                Log.d(TAG, "Successfully created and signed permit for ${contractAddresses.size} contracts")
-                signedPermit
-            } else {
-                Log.e(TAG, "Failed to sign permit")
-                null
+            // Store signed permit for each contract
+            for (contractAddress in contractAddresses) {
+                setPermit(walletAddress, contractAddress, signedPermit)
             }
+            Log.d(TAG, "Successfully created and signed permit for ${contractAddresses.size} contracts")
+            signedPermit
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to create signed permit", e)

@@ -6,7 +6,6 @@ import android.os.Build
 import android.text.TextUtils
 import android.util.Base64
 import android.util.Log
-import androidx.security.crypto.EncryptedSharedPreferences
 import com.example.earthwallet.wallet.utils.SecurePreferencesUtil
 import com.example.earthwallet.wallet.utils.HardwareKeyManager
 import com.example.earthwallet.wallet.utils.WalletCrypto
@@ -47,6 +46,7 @@ object SecureWalletManager {
 
     /**
      * Execute an operation with just-in-time mnemonic fetching and automatic cleanup.
+     * Uses hardware-backed encryption with key rotation for enhanced security.
      *
      * @param context Android context for fallback access to secure preferences
      * @param operation The operation to execute with the mnemonic
@@ -63,6 +63,7 @@ object SecureWalletManager {
     /**
      * Execute an operation with just-in-time secure mnemonic fetching and automatic cleanup.
      * More secure version that uses char arrays instead of Strings.
+     * Uses hardware-backed encryption with key rotation for enhanced security.
      *
      * @param context Android context for fallback access to secure preferences
      * @param operation The operation to execute with the mnemonic char array
@@ -75,6 +76,10 @@ object SecureWalletManager {
         WalletCrypto.initialize(context)
         var mnemonicChars: CharArray? = null
         return try {
+            // Initialize hardware key manager only when actually needed for mnemonic operations
+            HardwareKeyManager.initializeEncryptionKey(context)
+            Log.d(TAG, "Executing secure mnemonic operation with hardware-backed encryption")
+
             // Fetch mnemonic and convert to char array immediately
             val mnemonic = fetchMnemonicSecurely(context)
             if (TextUtils.isEmpty(mnemonic)) {
@@ -99,6 +104,7 @@ object SecureWalletManager {
 
     /**
      * Execute an operation with just-in-time mnemonic fetching and automatic cleanup.
+     * Uses hardware-backed encryption with key rotation for enhanced security.
      *
      * @param context Android context for fallback access to secure preferences
      * @param securePrefs Pre-initialized secure preferences instance (preferred)
@@ -116,6 +122,10 @@ object SecureWalletManager {
         WalletCrypto.initialize(context)
         var mnemonic: String? = null
         return try {
+            // Initialize hardware key manager only when actually using mnemonic
+            HardwareKeyManager.initializeEncryptionKey(context)
+            Log.d(TAG, "Executing mnemonic operation with hardware-backed encryption")
+
             // Fetch mnemonic just-in-time using provided securePrefs or fallback to context
             mnemonic = if (securePrefs != null) {
                 fetchMnemonicFromPrefs(securePrefs)
@@ -133,7 +143,6 @@ object SecureWalletManager {
         } finally {
             // Securely zero the mnemonic regardless of success or failure
             mnemonic?.let { securelyClearString(it) }
-            mnemonic = null
         }
     }
 
@@ -280,7 +289,7 @@ object SecureWalletManager {
             val available = !TextUtils.isEmpty(mnemonic)
 
             // Clear the mnemonic immediately after checking
-            mnemonic?.let { securelyClearString(it) }
+            securelyClearString(mnemonic)
 
             available
         } catch (e: Exception) {
@@ -652,10 +661,15 @@ object SecureWalletManager {
     }
 
     /**
-     * Verify PIN hash against stored hash using pre-initialized secure preferences
+     * Verify PIN hash against stored hash using pre-initialized secure preferences.
+     * Uses hardware-backed encryption with key rotation for enhanced security.
      */
     @Throws(Exception::class)
     fun verifyPinHash(context: Context, securePrefs: SharedPreferences?, pinHash: String): Boolean {
+        // Initialize hardware key manager for TEE security with key rotation
+        HardwareKeyManager.initializeEncryptionKey(context)
+        Log.d(TAG, "Verifying PIN with hardware-backed encryption")
+
         val prefs = securePrefs ?: createSecurePrefs(context)
         val storedHash = prefs.getString("pin_hash", "") ?: ""
         return storedHash == pinHash
@@ -670,10 +684,15 @@ object SecureWalletManager {
     }
 
     /**
-     * Set PIN hash securely using pre-initialized secure preferences
+     * Set PIN hash securely using pre-initialized secure preferences.
+     * Uses hardware-backed encryption with key rotation for enhanced security.
      */
     @Throws(Exception::class)
     fun setPinHash(context: Context, securePrefs: SharedPreferences?, pinHash: String) {
+        // Initialize hardware key manager for TEE security with key rotation
+        HardwareKeyManager.initializeEncryptionKey(context)
+        Log.d(TAG, "Setting PIN with hardware-backed encryption")
+
         val prefs = securePrefs ?: createSecurePrefs(context)
         val editor = prefs.edit()
         editor.putString("pin_hash", pinHash)
@@ -843,7 +862,6 @@ object SecureWalletManager {
         } finally {
             // Securely zero the mnemonic regardless of success or failure
             mnemonic?.let { securelyClearString(it) }
-            mnemonic = null
         }
     }
 

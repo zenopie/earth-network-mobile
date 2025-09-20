@@ -16,7 +16,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.*
 import androidx.fragment.app.Fragment
-import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import com.example.earthwallet.R
 import com.example.earthwallet.Constants
 import com.example.earthwallet.bridge.activities.TransactionActivity
@@ -41,7 +42,6 @@ class GasStationFragment : Fragment() {
     companion object {
         private const val TAG = "GasStationFragment"
         // Removed - using PermitManager instead of viewing keys
-        private const val REQ_SWAP_FOR_GAS = 4001
         private const val REQUEST_REGISTRATION_CHECK = 4002
         private const val REQUEST_FAUCET_CLAIM = 4003
     }
@@ -72,8 +72,19 @@ class GasStationFragment : Fragment() {
     private val inputHandler = Handler(Looper.getMainLooper())
     private var simulationRunnable: Runnable? = null
 
+    // Activity Result Launcher for transaction activity
+    private lateinit var swapForGasLauncher: ActivityResultLauncher<Intent>
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Initialize activity result launcher
+        swapForGasLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+                val json = result.data?.getStringExtra(TransactionActivity.EXTRA_RESULT_JSON)
+                handleSwapForGasResult(json)
+            }
+        }
 
         // Using PermitManager instead of viewing keys
 
@@ -403,7 +414,7 @@ class GasStationFragment : Fragment() {
         updateScrtBalanceDisplay()
     }
 
-    private fun handleTokenBalanceResult(tokenSymbol: String, isFromToken: Boolean, json: String) {
+    private fun handleTokenBalanceResult(tokenSymbol: String, @Suppress("UNUSED_PARAMETER") isFromToken: Boolean, json: String) {
         try {
             if (TextUtils.isEmpty(json)) {
                 Log.e(TAG, "Balance query result JSON is empty")
@@ -602,7 +613,7 @@ class GasStationFragment : Fragment() {
             intent.putExtra(TransactionActivity.EXTRA_AMOUNT, inputAmountMicro.toString())
             intent.putExtra(TransactionActivity.EXTRA_MESSAGE_JSON, swapForGasMessage)
 
-            startActivityForResult(intent, REQ_SWAP_FOR_GAS)
+            swapForGasLauncher.launch(intent)
 
         } catch (e: NumberFormatException) {
             Toast.makeText(requireContext(), "Invalid amount", Toast.LENGTH_SHORT).show()
@@ -632,16 +643,6 @@ class GasStationFragment : Fragment() {
         swapForGasButton?.text = "Swap for Gas"
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-
-        if (resultCode == Activity.RESULT_OK && data != null) {
-            if (requestCode == REQ_SWAP_FOR_GAS) {
-                val json = data.getStringExtra(TransactionActivity.EXTRA_RESULT_JSON)
-                handleSwapForGasResult(json)
-            }
-        }
-    }
 
     private fun handleSwapForGasResult(json: String?) {
         Log.d(TAG, "handleSwapForGasResult called with JSON: $json")
@@ -651,18 +652,18 @@ class GasStationFragment : Fragment() {
         try {
             val root = JSONObject(json ?: "")
 
-            var success = false
-            if (root.has("tx_response")) {
+            val success = if (root.has("tx_response")) {
                 val txResponse = root.getJSONObject("tx_response")
                 val code = txResponse.optInt("code", -1)
-                success = (code == 0)
+                val isSuccess = (code == 0)
 
-                if (success) {
+                if (isSuccess) {
                     val txHash = txResponse.optString("txhash", "")
                     Log.d(TAG, "Gas swap transaction hash: $txHash")
                 }
+                isSuccess
             } else {
-                success = root.optBoolean("success", false)
+                root.optBoolean("success", false)
             }
 
             if (success) {

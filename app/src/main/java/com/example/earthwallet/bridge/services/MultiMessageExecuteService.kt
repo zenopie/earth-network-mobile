@@ -6,7 +6,6 @@ import android.content.SharedPreferences
 import android.text.TextUtils
 import android.util.Base64
 import android.util.Log
-import androidx.security.crypto.EncryptedSharedPreferences
 import com.example.earthwallet.wallet.utils.SecurePreferencesUtil
 import com.example.earthwallet.wallet.utils.WalletCrypto
 import com.example.earthwallet.Constants

@@ -5,7 +5,6 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.text.TextUtils
 import android.util.Log
-import androidx.security.crypto.EncryptedSharedPreferences
 import com.example.earthwallet.wallet.utils.SecurePreferencesUtil
 import com.example.earthwallet.wallet.utils.WalletCrypto
 import com.example.earthwallet.Constants
@@ -53,15 +52,19 @@ object SecretExecuteService {
         val accountNumber = accountFields[0]
         val sequence = accountFields[1]
 
+        // Validate required parameters
+        val codeHash = params.codeHash ?: throw Exception("Code hash is required")
+        val execJson = params.execJson ?: throw Exception("Execution JSON is required")
+        val contractAddr = params.contractAddr ?: throw Exception("Contract address is required")
+
         // Encrypt contract message
         val encryptedMessage = SecretCryptoService.encryptContractMessageSync(
-            params.codeHash!!, params.execJson!!, mnemonic
+            codeHash, execJson, mnemonic
         )
 
         // Build protobuf transaction
         val txBytes = protobufService.buildTransaction(
-            senderAddress, params.contractAddr!!,
-            params.codeHash!!, encryptedMessage,
+            senderAddress, contractAddr, codeHash, encryptedMessage,
             params.getFundsOrEmpty(), params.getMemoOrEmpty(), accountNumber,
             sequence, chainId, walletKey
         )
