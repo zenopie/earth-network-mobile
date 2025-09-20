@@ -430,7 +430,6 @@ class StakeUnstakeFragment : Fragment() {
 
         if (requestCode == REQ_STAKE_ERTH) {
             if (resultCode == Activity.RESULT_OK) {
-                Toast.makeText(context, "Staking successful!", Toast.LENGTH_SHORT).show()
                 stakeAmountInput.setText("") // Clear input
                 refreshData() // Refresh balances
             } else {
@@ -439,7 +438,6 @@ class StakeUnstakeFragment : Fragment() {
             }
         } else if (requestCode == REQ_UNSTAKE_ERTH) {
             if (resultCode == Activity.RESULT_OK) {
-                Toast.makeText(context, "Unstaking successful! Tokens are now unbonding.", Toast.LENGTH_SHORT).show()
                 unstakeAmountInput.setText("") // Clear input
                 refreshData() // Refresh balances
             } else {

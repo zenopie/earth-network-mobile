@@ -428,8 +428,6 @@ class ManagePermitsFragment : Fragment() {
                 permissions
             )
 
-            Toast.makeText(context, "Permit created successfully for ${token.symbol}!", Toast.LENGTH_SHORT).show()
-
             // Notify parent if available
             listener?.onPermitRequested(token)
 

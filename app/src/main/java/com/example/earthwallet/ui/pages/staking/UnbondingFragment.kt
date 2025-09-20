@@ -355,7 +355,6 @@ class UnbondingFragment : Fragment() {
 
         if (requestCode == REQ_CLAIM_UNBONDED) {
             if (resultCode == Activity.RESULT_OK) {
-                Toast.makeText(context, "Unbonded tokens claimed successfully!", Toast.LENGTH_SHORT).show()
                 refreshData() // Refresh to update unbonding list
             } else {
                 val error = data?.getStringExtra("error") ?: "Unknown error"

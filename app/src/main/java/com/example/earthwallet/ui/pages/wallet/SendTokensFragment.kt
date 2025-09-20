@@ -214,7 +214,6 @@ class SendTokensFragment : Fragment(), WalletDisplayFragment.WalletDisplayListen
         // Validate that the scanned content is a valid Secret Network address
         if (content.startsWith("secret1") && content.length >= 45) {
             recipientEditText.setText(content)
-            Toast.makeText(context, "Address scanned successfully!", Toast.LENGTH_SHORT).show()
             Log.d(TAG, "QR code scanned: ${content.substring(0, 14)}...")
         } else {
             Toast.makeText(context, "Invalid Secret Network address in QR code", Toast.LENGTH_LONG).show()

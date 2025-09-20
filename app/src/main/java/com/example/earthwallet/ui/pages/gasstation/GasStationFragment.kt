@@ -667,7 +667,6 @@ class GasStationFragment : Fragment() {
             }
 
             if (success) {
-                Toast.makeText(context, "Gas swap successful!", Toast.LENGTH_SHORT).show()
                 clearAmounts()
                 fetchBalances() // Refresh balances
             } else {

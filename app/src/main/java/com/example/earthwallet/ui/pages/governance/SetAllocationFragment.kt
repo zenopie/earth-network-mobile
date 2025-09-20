@@ -461,8 +461,6 @@ class SetAllocationFragment : Fragment() {
         if (requestCode == 1001 || requestCode == 1002) { // Caretaker or Deflation fund allocation
             if (resultCode == Activity.RESULT_OK) {
                 // Success - allocation was set
-                Toast.makeText(context, "Allocation preferences set successfully!", Toast.LENGTH_SHORT).show()
-
                 // Go back to previous fragment
                 activity?.supportFragmentManager?.popBackStack()
             } else {

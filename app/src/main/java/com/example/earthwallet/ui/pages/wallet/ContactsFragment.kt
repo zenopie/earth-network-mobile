@@ -169,7 +169,6 @@ class ContactsFragment : Fragment() {
         if (success) {
             loadContacts() // Reload contacts from manager
             hideAddContactForm()
-            Toast.makeText(context, "Contact saved successfully", Toast.LENGTH_SHORT).show()
         } else {
             Toast.makeText(context, "Failed to save contact (duplicate or invalid)", Toast.LENGTH_SHORT).show()
         }

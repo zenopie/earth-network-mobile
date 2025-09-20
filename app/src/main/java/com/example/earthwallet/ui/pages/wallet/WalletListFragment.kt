@@ -121,7 +121,6 @@ class WalletListFragment : Fragment() {
                 row.setOnClickListener {
                     try {
                         SecureWalletManager.selectWallet(requireContext(), index)
-                        Toast.makeText(requireContext(), "Wallet selected: $walletName", Toast.LENGTH_SHORT).show()
                         listener?.onWalletSelected(index)
                     } catch (e: Exception) {
                         Toast.makeText(requireContext(), "Failed to select wallet", Toast.LENGTH_SHORT).show()
