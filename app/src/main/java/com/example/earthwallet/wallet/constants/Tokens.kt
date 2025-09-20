@@ -74,74 +74,7 @@ object Tokens {
     private val tokenRegistry = mapOf(
         "erth" to ERTH,
         "anml" to ANML,
-        "sscrt" to SSCRT,
-        // SCRT (native token)
-        "uscrt" to TokenInfo(
-            contract = "",
-            hash = "",
-            decimals = 6,
-            symbol = "SCRT",
-            logo = "scrt",
-            coingeckoId = "secret"
-        ),
-
-        // stkd-SCRT
-        "stkd-scrt" to TokenInfo(
-            contract = "secret1k6u0cy4feepm6pehnz804zmwakuwdapm69tuc4",
-            hash = "f6be719b3c6feb498d3554ca0398eb6b7e7db262acb33f84a8f12106da6bbb09",
-            decimals = 6,
-            symbol = "stkd-SCRT",
-            logo = "stkd-scrt",
-            coingeckoId = "stkd-scrt"
-        ),
-
-        // BUTT
-        "butt" to TokenInfo(
-            contract = "secret1yxcexylwyxlq58umhgsjgstgcg2a0ytfy4d9lt",
-            hash = "f7b6982bb50e11ff036dd9a4f03d7e86a0c35e4df0e1b5af8e8f8b3e76e1c3e",
-            decimals = 6,
-            symbol = "BUTT",
-            logo = "butt",
-            coingeckoId = "buttcoin-2"
-        ),
-
-        // SHD
-        "shd" to TokenInfo(
-            contract = "secret1qfql357amn448duf5gvp9gr48sxx9tsnhupu3d",
-            hash = "be2d98a5b4c68ad6b4b4c60c1b68b9f4a4e3b8b0c9e7b88b2b3d9e1c3e6b4f4a",
-            decimals = 8,
-            symbol = "SHD",
-            logo = "shd",
-            coingeckoId = "shade-protocol"
-        ),
-
-        // SILK
-        "silk" to TokenInfo(
-            contract = "secret1fl449muk5yq8dlad7a22nje4p5d2pnsgymhjfd",
-            hash = "ad91060456344fc8d8e93c0600a3957b8158605c044b3bef7048510b3157b807",
-            decimals = 6,
-            symbol = "SILK",
-            logo = "silk",
-            coingeckoId = "silk-bcec1136-561c-4706-a42c-8b67d0d7f7d2"
-        )
-    )
-
-    // Liquidity Pairs Registry
-    private val liquidityPairRegistry = mapOf(
-        "scrt-stkd-scrt" to TokenInfo(
-            contract = "secret1w8d0ntrhrys4yzcfxnwprts7gfg5gfw86ccdpf",
-            hash = "c7fe5b89b3f4e8c5d9e7b8b0a3f5c9e1b3d7f4a8c2e6b9f0d4e8a1c5e9b3d7f4",
-            decimals = 6,
-            symbol = "SCRT-stkd-SCRT",
-            logo = "scrt-stkd-scrt",
-            lp = LpInfo(
-                contract = "secret1w8d0ntrhrys4yzcfxnwprts7gfg5gfw86ccdpf",
-                hash = "c7fe5b89b3f4e8c5d9e7b8b0a3f5c9e1b3d7f4a8c2e6b9f0d4e8a1c5e9b3d7f4",
-                decimals = 6,
-                asset0 = "uscrt",
-                asset1 = "stkd-scrt"
-            )
-        )
+        "sscrt" to SSCRT
     )
 
     /**
@@ -176,12 +109,6 @@ object Tokens {
         "ANML" to ANML,
         "sSCRT" to SSCRT
     )
-
-    /**
-     * Get all liquidity pairs
-     */
-    @JvmStatic
-    fun getAllLiquidityPairs(): Map<String, TokenInfo> = liquidityPairRegistry
 
     /**
      * Check if a token is supported

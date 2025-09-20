@@ -150,12 +150,8 @@ class WalletDisplayFragment : Fragment() {
     }
 
     private fun formatAddress(address: String): String {
-        // Format address like: secret1abc...xyz
-        return if (address.length > 20) {
-            "${address.substring(0, 9)}...${address.substring(address.length - 6)}"
-        } else {
-            address
-        }
+        // Display full address without truncation
+        return address
     }
 
     private fun copyAddressToClipboard() {

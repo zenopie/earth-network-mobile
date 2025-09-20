@@ -15,6 +15,7 @@ import androidx.fragment.app.Fragment
 import com.example.earthwallet.R
 import com.example.earthwallet.ui.components.TransactionConfirmationDialog
 import com.example.earthwallet.ui.components.StatusModal
+import com.example.earthwallet.ui.components.PinEntryDialog
 import com.example.earthwallet.bridge.services.SecretExecuteService
 import com.example.earthwallet.bridge.services.NativeSendService
 import com.example.earthwallet.bridge.services.MultiMessageExecuteService
@@ -253,47 +254,39 @@ class TransactionActivity : AppCompatActivity() {
     }
 
     private fun authenticateWithPin() {
-        val pinEdit = EditText(this)
-        pinEdit.hint = "Enter PIN"
-        pinEdit.inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD
+        val pinDialog = PinEntryDialog(this)
+        pinDialog.show(
+            mode = PinEntryDialog.PinMode.AUTHENTICATE,
+            title = "Authenticate Transaction",
+            message = "Enter your PIN to authorize this transaction",
+            listener = object : PinEntryDialog.PinEntryListener {
+                override fun onPinEntered(pin: String) {
+                    try {
+                        val md = MessageDigest.getInstance("SHA-256")
+                        val digest = md.digest(pin.toByteArray(StandardCharsets.UTF_8))
+                        val sb = StringBuilder()
+                        for (b in digest) sb.append(String.format("%02x", b))
+                        val pinHash = sb.toString()
 
-        AlertDialog.Builder(this)
-            .setTitle("Authenticate Transaction")
-            .setMessage("Enter your PIN to authorize this transaction")
-            .setView(pinEdit)
-            .setPositiveButton("OK") { _, _ ->
-                val pin = pinEdit.text.toString().trim()
-                if (TextUtils.isEmpty(pin)) {
-                    Toast.makeText(this, "Enter PIN", Toast.LENGTH_SHORT).show()
-                    finishWithError("PIN required")
-                    return@setPositiveButton
-                }
-
-                try {
-                    val md = MessageDigest.getInstance("SHA-256")
-                    val digest = md.digest(pin.toByteArray(StandardCharsets.UTF_8))
-                    val sb = StringBuilder()
-                    for (b in digest) sb.append(String.format("%02x", b))
-                    val pinHash = sb.toString()
-
-                    if (SecureWalletManager.verifyPinHash(this, pinHash)) {
-                        // PIN correct, proceed with transaction
-                        statusModal?.show(StatusModal.State.LOADING)
-                        executeTransaction()
-                    } else {
-                        Toast.makeText(this, "Invalid PIN", Toast.LENGTH_SHORT).show()
-                        finishWithError("Invalid PIN")
+                        if (SecureWalletManager.verifyPinHash(this@TransactionActivity, pinHash)) {
+                            // PIN correct, proceed with transaction
+                            statusModal?.show(StatusModal.State.LOADING)
+                            executeTransaction()
+                        } else {
+                            Toast.makeText(this@TransactionActivity, "Invalid PIN", Toast.LENGTH_SHORT).show()
+                            finishWithError("Invalid PIN")
+                        }
+                    } catch (e: Exception) {
+                        Toast.makeText(this@TransactionActivity, "Error checking PIN", Toast.LENGTH_SHORT).show()
+                        finishWithError("Authentication error")
                     }
-                } catch (e: Exception) {
-                    Toast.makeText(this, "Error checking PIN", Toast.LENGTH_SHORT).show()
-                    finishWithError("Authentication error")
+                }
+
+                override fun onPinCancelled() {
+                    finishWithError("Transaction cancelled")
                 }
             }
-            .setNegativeButton("Cancel") { _, _ ->
-                finishWithError("Transaction cancelled")
-            }
-            .setCancelable(false)
-            .show()
+        )
     }
 
     private fun executeTransaction() {
