@@ -305,8 +305,9 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             )
         } catch (e: Exception) {
-            // Fallback to regular SharedPreferences if encryption fails
-            securePrefs = getSharedPreferences(PREF_FILE, MODE_PRIVATE)
+            // Do not fallback to insecure storage - fail secure
+            Log.e(TAG, "Failed to initialize secure preferences", e)
+            throw RuntimeException("Secure preferences initialization failed", e)
         }
     }
 

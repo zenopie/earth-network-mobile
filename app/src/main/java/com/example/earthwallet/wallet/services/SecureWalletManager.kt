@@ -442,6 +442,51 @@ object SecureWalletManager {
         }
     }
 
+    /**
+     * Ensure all wallets have addresses (migrate legacy wallets)
+     */
+    @Throws(Exception::class)
+    fun ensureAllWalletsHaveAddresses(context: Context) {
+        ensureAllWalletsHaveAddresses(context, null)
+    }
+
+    /**
+     * Ensure all wallets have addresses using pre-initialized secure preferences
+     */
+    @Throws(Exception::class)
+    fun ensureAllWalletsHaveAddresses(context: Context, securePrefs: SharedPreferences?) {
+        try {
+            val prefs = securePrefs ?: createSecurePrefs(context)
+            val walletsJson = prefs.getString("wallets", "[]") ?: "[]"
+            val walletsArray = JSONArray(walletsJson)
+            var modified = false
+
+            for (i in 0 until walletsArray.length()) {
+                val wallet = walletsArray.getJSONObject(i)
+                val currentAddress = wallet.optString("address", "")
+                val currentMnemonic = wallet.optString("mnemonic", "")
+
+                // If address is missing, derive it and update storage
+                if (TextUtils.isEmpty(currentAddress) && !TextUtils.isEmpty(currentMnemonic)) {
+                    val address = WalletCrypto.getAddressFromMnemonic(currentMnemonic)
+                    wallet.put("address", address)
+                    walletsArray.put(i, wallet)
+                    modified = true
+                    Log.d(TAG, "Migrated wallet address for: ${wallet.optString("name", "Unknown")}")
+                }
+            }
+
+            // Save changes if any wallets were modified
+            if (modified) {
+                prefs.edit().putString("wallets", walletsArray.toString()).apply()
+                Log.d(TAG, "Completed wallet address migration")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to ensure all wallets have addresses", e)
+            throw Exception("Failed to ensure all wallets have addresses", e)
+        }
+    }
+
     // =========================================================================
     // Wallet Creation Methods
     // =========================================================================
@@ -554,6 +599,181 @@ object SecureWalletManager {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to get all wallets", e)
             throw Exception("Failed to get all wallets", e)
+        }
+    }
+
+    /**
+     * Delete wallet at specific index
+     */
+    @Throws(Exception::class)
+    fun deleteWallet(context: Context, walletIndex: Int) {
+        deleteWallet(context, null, walletIndex)
+    }
+
+    /**
+     * Delete wallet at specific index using pre-initialized secure preferences
+     */
+    @Throws(Exception::class)
+    fun deleteWallet(context: Context, securePrefs: SharedPreferences?, walletIndex: Int) {
+        val prefs = securePrefs ?: createSecurePrefs(context)
+        val walletsJson = prefs.getString("wallets", "[]") ?: "[]"
+        val walletsArray = JSONArray(walletsJson)
+
+        if (walletIndex < 0 || walletIndex >= walletsArray.length()) {
+            throw IllegalArgumentException("Invalid wallet index: $walletIndex")
+        }
+
+        // Remove wallet at index
+        val newArray = JSONArray()
+        for (i in 0 until walletsArray.length()) {
+            if (i != walletIndex) {
+                newArray.put(walletsArray.getJSONObject(i))
+            }
+        }
+
+        // Update selected wallet index
+        val currentSelected = prefs.getInt("selected_wallet_index", -1)
+        val newSelected = when {
+            newArray.length() == 0 -> -1
+            walletIndex < currentSelected -> currentSelected - 1
+            walletIndex == currentSelected -> if (currentSelected >= newArray.length()) newArray.length() - 1 else currentSelected
+            else -> currentSelected
+        }
+
+        // Save changes
+        val editor = prefs.edit()
+        editor.putString("wallets", newArray.toString())
+        editor.putInt("selected_wallet_index", newSelected)
+        editor.apply()
+    }
+
+    /**
+     * Verify PIN hash against stored hash
+     */
+    @Throws(Exception::class)
+    fun verifyPinHash(context: Context, pinHash: String): Boolean {
+        return verifyPinHash(context, null, pinHash)
+    }
+
+    /**
+     * Verify PIN hash against stored hash using pre-initialized secure preferences
+     */
+    @Throws(Exception::class)
+    fun verifyPinHash(context: Context, securePrefs: SharedPreferences?, pinHash: String): Boolean {
+        val prefs = securePrefs ?: createSecurePrefs(context)
+        val storedHash = prefs.getString("pin_hash", "") ?: ""
+        return storedHash == pinHash
+    }
+
+    /**
+     * Set PIN hash securely
+     */
+    @Throws(Exception::class)
+    fun setPinHash(context: Context, pinHash: String) {
+        setPinHash(context, null, pinHash)
+    }
+
+    /**
+     * Set PIN hash securely using pre-initialized secure preferences
+     */
+    @Throws(Exception::class)
+    fun setPinHash(context: Context, securePrefs: SharedPreferences?, pinHash: String) {
+        val prefs = securePrefs ?: createSecurePrefs(context)
+        val editor = prefs.edit()
+        editor.putString("pin_hash", pinHash)
+        editor.apply()
+    }
+
+    /**
+     * Check if PIN is already set
+     */
+    @Throws(Exception::class)
+    fun hasPinSet(context: Context): Boolean {
+        return hasPinSet(context, null)
+    }
+
+    /**
+     * Check if PIN is already set using pre-initialized secure preferences
+     */
+    @Throws(Exception::class)
+    fun hasPinSet(context: Context, securePrefs: SharedPreferences?): Boolean {
+        val prefs = securePrefs ?: createSecurePrefs(context)
+        val storedHash = prefs.getString("pin_hash", "") ?: ""
+        return storedHash.isNotEmpty()
+    }
+
+    /**
+     * Select a wallet by index
+     */
+    @Throws(Exception::class)
+    fun selectWallet(context: Context, walletIndex: Int) {
+        selectWallet(context, null, walletIndex)
+    }
+
+    /**
+     * Select a wallet by index using pre-initialized secure preferences
+     */
+    @Throws(Exception::class)
+    fun selectWallet(context: Context, securePrefs: SharedPreferences?, walletIndex: Int) {
+        val prefs = securePrefs ?: createSecurePrefs(context)
+        val walletsJson = prefs.getString("wallets", "[]") ?: "[]"
+        val walletsArray = JSONArray(walletsJson)
+
+        if (walletIndex < 0 || walletIndex >= walletsArray.length()) {
+            throw IllegalArgumentException("Invalid wallet index: $walletIndex")
+        }
+
+        val editor = prefs.edit()
+        editor.putInt("selected_wallet_index", walletIndex)
+        editor.apply()
+
+        Log.d(TAG, "Selected wallet at index: $walletIndex")
+    }
+
+    /**
+     * Execute an operation with a specific wallet's mnemonic by index
+     */
+    @Throws(Exception::class)
+    fun <T> executeWithWalletMnemonic(context: Context, walletIndex: Int, operation: MnemonicOperation<T>): T {
+        return executeWithWalletMnemonic(context, null, walletIndex, operation)
+    }
+
+    /**
+     * Execute an operation with a specific wallet's mnemonic by index using pre-initialized secure preferences
+     */
+    @Throws(Exception::class)
+    fun <T> executeWithWalletMnemonic(
+        context: Context,
+        securePrefs: SharedPreferences?,
+        walletIndex: Int,
+        operation: MnemonicOperation<T>
+    ): T {
+        // Ensure WalletCrypto is initialized before any mnemonic operations
+        WalletCrypto.initialize(context)
+        var mnemonic: String? = null
+        return try {
+            val prefs = securePrefs ?: createSecurePrefs(context)
+            val walletsJson = prefs.getString("wallets", "[]") ?: "[]"
+            val walletsArray = JSONArray(walletsJson)
+
+            if (walletIndex < 0 || walletIndex >= walletsArray.length()) {
+                throw IllegalArgumentException("Invalid wallet index: $walletIndex")
+            }
+
+            val wallet = walletsArray.getJSONObject(walletIndex)
+            mnemonic = wallet.optString("mnemonic", "")
+
+            if (TextUtils.isEmpty(mnemonic)) {
+                throw IllegalStateException("No mnemonic found for wallet at index $walletIndex")
+            }
+
+            // Execute the operation with the specific wallet's mnemonic
+            operation.execute(mnemonic)
+
+        } finally {
+            // Securely zero the mnemonic regardless of success or failure
+            mnemonic?.let { securelyClearString(it) }
+            mnemonic = null
         }
     }
 

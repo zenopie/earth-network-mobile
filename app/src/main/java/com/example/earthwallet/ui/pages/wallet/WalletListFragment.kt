@@ -38,7 +38,7 @@ class WalletListFragment : Fragment() {
         fun newInstance(): WalletListFragment = WalletListFragment()
     }
 
-    private lateinit var securePrefs: SharedPreferences
+    // Removed - using SecureWalletManager instead
     private lateinit var container: LinearLayout
     private lateinit var inflater: LayoutInflater
 
@@ -69,7 +69,6 @@ class WalletListFragment : Fragment() {
         this.inflater = LayoutInflater.from(requireContext())
         this.container = view.findViewById(R.id.wallet_list_container)
 
-        initSecurePrefs()
         loadAndRenderWallets()
 
         // Wire Add button (new wallet flow)
@@ -79,20 +78,7 @@ class WalletListFragment : Fragment() {
         }
     }
 
-    private fun initSecurePrefs() {
-        try {
-            val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
-            securePrefs = EncryptedSharedPreferences.create(
-                PREF_FILE,
-                masterKeyAlias,
-                requireContext(),
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            )
-        } catch (e: Exception) {
-            securePrefs = requireActivity().getSharedPreferences(PREF_FILE, Context.MODE_PRIVATE)
-        }
-    }
+    // Removed - using SecureWalletManager instead of direct preferences access
 
     fun loadAndRenderWallets() {
         // Remove any rows except the title (first child)
@@ -101,8 +87,10 @@ class WalletListFragment : Fragment() {
         }
 
         try {
-            val walletsJson = securePrefs.getString("wallets", "[]") ?: "[]"
-            val arr = JSONArray(walletsJson)
+            // Ensure all existing wallets have addresses migrated
+            SecureWalletManager.ensureAllWalletsHaveAddresses(requireContext())
+
+            val arr = SecureWalletManager.getAllWallets(requireContext())
             if (arr.length() == 0) {
                 val empty = TextView(requireContext())
                 empty.text = "No wallets found"
@@ -115,16 +103,8 @@ class WalletListFragment : Fragment() {
                 val obj = arr.getJSONObject(i)
                 val index = i
                 val walletName = obj.optString("name", "Wallet $i")
-                val mnemonic = obj.optString("mnemonic", "")
-                var address = ""
-                if (!TextUtils.isEmpty(mnemonic)) {
-                    try {
-                        address = SecureWalletManager.getWalletAddress(requireContext()) ?: ""
-                    } catch (ignored: Exception) {
-                        address = ""
-                    }
-                }
-                val finalAddress = address
+                val address = obj.optString("address", "")
+                val finalAddress = if (TextUtils.isEmpty(address)) "No address" else address
 
                 val row = inflater.inflate(R.layout.item_wallet_row, container, false)
                 val tvName = row.findViewById<TextView>(R.id.wallet_row_name)
@@ -133,14 +113,20 @@ class WalletListFragment : Fragment() {
                 val btnDelete = row.findViewById<ImageButton>(R.id.wallet_row_delete)
 
                 tvName.text = walletName
-                tvAddr.text = if (TextUtils.isEmpty(finalAddress)) "No address" else finalAddress
+                tvAddr.text = finalAddress
 
                 btnShow.setOnClickListener { askPinAndShowMnemonic(index) }
                 btnDelete.setOnClickListener { confirmDeleteWallet(index) }
 
                 // Row click to select the wallet
                 row.setOnClickListener {
-                    listener?.onWalletSelected(index)
+                    try {
+                        SecureWalletManager.selectWallet(requireContext(), index)
+                        Toast.makeText(requireContext(), "Wallet selected: $walletName", Toast.LENGTH_SHORT).show()
+                        listener?.onWalletSelected(index)
+                    } catch (e: Exception) {
+                        Toast.makeText(requireContext(), "Failed to select wallet", Toast.LENGTH_SHORT).show()
+                    }
                 }
 
                 container.addView(row)
@@ -182,28 +168,25 @@ class WalletListFragment : Fragment() {
                     val sb = StringBuilder()
                     for (b in digest) sb.append(String.format("%02x", b))
                     val pinHash = sb.toString()
-                    val stored = securePrefs.getString("pin_hash", "")
-                    if (stored != null && stored == pinHash) {
-                        val walletsJson = securePrefs.getString("wallets", "[]") ?: "[]"
-                        val arr = JSONArray(walletsJson)
-                        if (walletIndex >= 0 && walletIndex < arr.length()) {
-                            val mnem = arr.getJSONObject(walletIndex).optString("mnemonic", "")
-                            if (TextUtils.isEmpty(mnem)) {
-                                Toast.makeText(requireContext(), "No mnemonic stored", Toast.LENGTH_SHORT).show()
-                                return@setPositiveButton
+                    if (SecureWalletManager.verifyPinHash(requireContext(), pinHash)) {
+                        try {
+                            SecureWalletManager.executeWithWalletMnemonic(requireContext(), walletIndex) { mnemonic ->
+                                activity?.runOnUiThread {
+                                    val tv = TextView(requireContext())
+                                    tv.text = mnemonic
+                                    val pad = (12 * resources.displayMetrics.density).toInt()
+                                    tv.setPadding(pad, pad, pad, pad)
+                                    tv.setTextIsSelectable(true)
+                                    AlertDialog.Builder(requireContext())
+                                        .setTitle("Recovery Phrase")
+                                        .setView(tv)
+                                        .setPositiveButton("Close", null)
+                                        .show()
+                                }
+                                null // Return type for MnemonicOperation
                             }
-                            val tv = TextView(requireContext())
-                            tv.text = mnem
-                            val pad = (12 * resources.displayMetrics.density).toInt()
-                            tv.setPadding(pad, pad, pad, pad)
-                            tv.setTextIsSelectable(true)
-                            AlertDialog.Builder(requireContext())
-                                .setTitle("Recovery Phrase")
-                                .setView(tv)
-                                .setPositiveButton("Close", null)
-                                .show()
-                        } else {
-                            Toast.makeText(requireContext(), "Wallet not found", Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) {
+                            Toast.makeText(requireContext(), "Failed to retrieve mnemonic", Toast.LENGTH_SHORT).show()
                         }
                     } else {
                         Toast.makeText(requireContext(), "Invalid PIN", Toast.LENGTH_SHORT).show()
@@ -218,37 +201,7 @@ class WalletListFragment : Fragment() {
 
     private fun deleteWalletAtIndex(index: Int) {
         try {
-            val walletsJson = securePrefs.getString("wallets", "[]") ?: "[]"
-            val arr = JSONArray(walletsJson)
-            if (index < 0 || index >= arr.length()) {
-                Toast.makeText(requireContext(), "Invalid wallet index", Toast.LENGTH_SHORT).show()
-                return
-            }
-
-            val newArr = JSONArray()
-            for (i in 0 until arr.length()) {
-                if (i == index) continue
-                newArr.put(arr.getJSONObject(i))
-            }
-
-            val sel = securePrefs.getInt("selected_wallet_index", -1)
-            val newSel = when {
-                arr.length() == 1 -> -1
-                sel == index -> maxOf(0, index - 1)
-                sel > index -> sel - 1
-                else -> sel
-            }
-
-            val ed = securePrefs.edit()
-            ed.putString("wallets", newArr.toString())
-            ed.putInt("selected_wallet_index", newSel)
-            if (newArr.length() > 0) {
-                ed.putString("wallet_name", newArr.getJSONObject(maxOf(0, newSel)).optString("name", ""))
-            } else {
-                ed.remove("wallet_name")
-            }
-            ed.apply()
-
+            SecureWalletManager.deleteWallet(requireContext(), index)
             Toast.makeText(requireContext(), "Wallet deleted", Toast.LENGTH_SHORT).show()
             loadAndRenderWallets()
         } catch (e: Exception) {

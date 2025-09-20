@@ -41,7 +41,7 @@ class GasStationFragment : Fragment() {
 
     companion object {
         private const val TAG = "GasStationFragment"
-        private const val PREF_FILE = "viewing_keys_prefs"
+        // Removed - using PermitManager instead of viewing keys
         private const val REQ_SWAP_FOR_GAS = 4001
         private const val REQUEST_REGISTRATION_CHECK = 4002
         private const val REQUEST_FAUCET_CLAIM = 4003
@@ -55,13 +55,13 @@ class GasStationFragment : Fragment() {
     private var scrtBalanceText: TextView? = null
     private var faucetStatusText: TextView? = null
     private var fromMaxButton: Button? = null
-    private var fromViewingKeyButton: Button? = null
+    // Removed - using PermitManager instead of viewing keys
     private var fromTokenLogo: ImageView? = null
     private var swapForGasButton: Button? = null
     private var faucetButton: Button? = null
 
     // State
-    private var securePrefs: SharedPreferences? = null
+    // Removed - using PermitManager instead of viewing keys
     private var currentWalletAddress = ""
     private var tokenSymbols: List<String> = listOf()
     private var fromToken = "sSCRT"
@@ -76,13 +76,7 @@ class GasStationFragment : Fragment() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Create secure preferences for viewing keys
-        try {
-            securePrefs = createSecurePrefs(requireContext())
-            Log.d(TAG, "Successfully created viewing keys secure preferences")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to create viewing keys secure preferences", e)
-        }
+        // Using PermitManager instead of viewing keys
 
         // Initialize token list (exclude SCRT since we're converting TO SCRT)
         tokenSymbols = ArrayList(Tokens.getAllTokens().keys).apply {
@@ -116,7 +110,7 @@ class GasStationFragment : Fragment() {
         faucetStatusText = view.findViewById(R.id.faucet_status_text)
 
         fromMaxButton = view.findViewById(R.id.from_max_button)
-        fromViewingKeyButton = view.findViewById(R.id.from_viewing_key_button)
+        // Removed - using PermitManager instead of viewing keys
         fromTokenLogo = view.findViewById(R.id.from_token_logo)
 
         swapForGasButton = view.findViewById(R.id.swap_for_gas_button)
@@ -158,7 +152,7 @@ class GasStationFragment : Fragment() {
         })
 
         fromMaxButton?.setOnClickListener { setMaxFromAmount() }
-        fromViewingKeyButton?.setOnClickListener { requestViewingKey(fromToken) }
+        // Removed - using PermitManager instead of viewing keys
 
         swapForGasButton?.setOnClickListener { executeSwapForGas() }
         faucetButton?.setOnClickListener { claimFaucet() }
@@ -380,21 +374,13 @@ class GasStationFragment : Fragment() {
             return
         }
 
-        val viewingKey = getViewingKeyForToken(tokenSymbol)
-        if (TextUtils.isEmpty(viewingKey)) {
-            fromBalance = -1.0
-            updateFromBalanceDisplay()
-            return
-        }
-
-        // Execute query in background thread
+        // Execute query in background thread using PermitManager
         Thread {
             try {
-                val result = com.example.earthwallet.bridge.services.SnipQueryService.queryBalance(
+                val result = com.example.earthwallet.bridge.services.SnipQueryService.queryBalanceWithPermit(
                     requireContext(),
                     tokenSymbol,
-                    currentWalletAddress,
-                    viewingKey
+                    currentWalletAddress
                 )
 
                 activity?.runOnUiThread {
@@ -474,17 +460,14 @@ class GasStationFragment : Fragment() {
             fromBalance >= 0 -> {
                 fromBalanceText?.text = "Balance: ${df.format(fromBalance)}"
                 fromMaxButton?.visibility = if (fromBalance > 0) View.VISIBLE else View.GONE
-                fromViewingKeyButton?.visibility = View.GONE
             }
             fromBalance == -1.0 -> {
                 fromBalanceText?.text = "Balance: Error"
                 fromMaxButton?.visibility = View.GONE
-                fromViewingKeyButton?.visibility = View.VISIBLE
             }
             else -> {
                 fromBalanceText?.text = "Balance: ..."
                 fromMaxButton?.visibility = View.GONE
-                fromViewingKeyButton?.visibility = View.GONE
             }
         }
     }
@@ -571,24 +554,9 @@ class GasStationFragment : Fragment() {
         }
     }
 
-    private fun getViewingKeyForToken(tokenSymbol: String): String {
-        return try {
-            val tokenInfo = Tokens.getTokenInfo(tokenSymbol)
-            if (tokenInfo == null || securePrefs == null) {
-                ""
-            } else {
-                val key = "viewing_key_${currentWalletAddress}_${tokenInfo.contract}"
-                securePrefs!!.getString(key, "") ?: ""
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to get viewing key for $tokenSymbol", e)
-            ""
-        }
-    }
+    // Removed - using PermitManager for token access
 
-    private fun requestViewingKey(tokenSymbol: String) {
-        Toast.makeText(requireContext(), "Please set viewing key for $tokenSymbol first", Toast.LENGTH_LONG).show()
-    }
+    // Removed - using PermitManager for token access
 
     private fun executeSwapForGas() {
         val fromAmountStr = fromAmountInput?.text.toString()
@@ -711,19 +679,5 @@ class GasStationFragment : Fragment() {
         }
     }
 
-    private fun createSecurePrefs(context: Context): SharedPreferences {
-        return try {
-            val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
-            EncryptedSharedPreferences.create(
-                PREF_FILE,
-                masterKeyAlias,
-                context,
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to create secure preferences", e)
-            throw RuntimeException("Secure preferences initialization failed", e)
-        }
-    }
+    // Removed - using PermitManager instead of viewing keys
 }

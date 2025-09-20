@@ -138,7 +138,7 @@ class CreateWalletFragment : Fragment() {
     private var mnemonicWords: List<String>? = null
 
     // Secure prefs
-    private lateinit var securePrefs: SharedPreferences
+    // Removed - using SecureWalletManager instead
 
     // Interface for communication with parent activity
     interface CreateWalletListener {
@@ -168,11 +168,10 @@ class CreateWalletFragment : Fragment() {
             return
         }
 
-        // Create encrypted preferences with corrupted file cleanup
-        securePrefs = createSecurePreferences(requireContext())
+        // Using SecureWalletManager instead of direct preferences access
 
         // Check whether a global PIN already exists
-        val hasExistingPin = !TextUtils.isEmpty(securePrefs.getString(KEY_PIN_HASH, ""))
+        val hasExistingPin = SecureWalletManager.hasPinSet(requireContext())
 
         // Wire up steps
         stepIntro = view.findViewById(R.id.step_intro)
@@ -366,10 +365,10 @@ class CreateWalletFragment : Fragment() {
 
     private fun saveMnemonicAndPin(pin: String?, walletName: String) {
         try {
-            val existingPinHash = securePrefs.getString(KEY_PIN_HASH, "")
-            var pinHash = existingPinHash
+            val hasExistingPin = SecureWalletManager.hasPinSet(requireContext())
+            var pinHash = ""
 
-            if (TextUtils.isEmpty(existingPinHash)) {
+            if (!hasExistingPin) {
                 if (pin == null) {
                     Toast.makeText(requireContext(), "No existing PIN found; please create a PIN", Toast.LENGTH_SHORT).show()
                     return
@@ -384,14 +383,12 @@ class CreateWalletFragment : Fragment() {
             }
 
             // Create wallet using SecureWalletManager
-            mnemonic?.let { SecureWalletManager.createWallet(requireContext(), securePrefs, walletName, it) }
+            mnemonic?.let { SecureWalletManager.createWallet(requireContext(), walletName, it) }
 
-            val ed = securePrefs.edit()
-            ed.putString(KEY_WALLET_NAME, walletName)
-            if (TextUtils.isEmpty(existingPinHash)) {
-                ed.putString(KEY_PIN_HASH, pinHash)
+            // Set PIN hash if this is the first wallet
+            if (!hasExistingPin) {
+                SecureWalletManager.setPinHash(requireContext(), pinHash)
             }
-            ed.apply()
 
             Toast.makeText(requireContext(), "Wallet created and saved securely", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
