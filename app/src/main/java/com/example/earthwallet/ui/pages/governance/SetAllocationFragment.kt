@@ -90,7 +90,7 @@ class SetAllocationFragment : Fragment() {
         }
 
         // Initialize services
-        queryService = SecretQueryService(context)
+        queryService = SecretQueryService(requireContext())
         executorService = Executors.newCachedThreadPool()
     }
 

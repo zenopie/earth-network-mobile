@@ -198,7 +198,7 @@ class TokenBalancesFragment : Fragment() {
             Thread {
                 try {
                     // Check wallet availability without retrieving mnemonic
-                    if (!SecureWalletManager.isWalletAvailable(activity)) {
+                    if (!SecureWalletManager.isWalletAvailable(requireContext())) {
                         activity?.runOnUiThread {
                             Log.e(TAG, "No wallet found for token balance query")
                             addTokenBalanceView(token, "Error", false)

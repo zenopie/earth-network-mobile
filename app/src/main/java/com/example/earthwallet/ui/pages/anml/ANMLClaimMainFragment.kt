@@ -226,13 +226,13 @@ class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListe
             // Get wallet address using SecureWalletManager
             val address: String
             try {
-                if (!SecureWalletManager.isWalletAvailable(context)) {
+                if (!SecureWalletManager.isWalletAvailable(requireContext())) {
                     showLoading(false)
                     showRegisterFragment()
                     return
                 }
 
-                address = SecureWalletManager.getWalletAddress(context) ?: ""
+                address = SecureWalletManager.getWalletAddress(requireContext()) ?: ""
                 if (TextUtils.isEmpty(address)) {
                     showLoading(false)
                     showRegisterFragment()
@@ -255,7 +255,7 @@ class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListe
             Thread {
                 try {
                     // Check wallet availability without retrieving mnemonic
-                    if (!SecureWalletManager.isWalletAvailable(context)) {
+                    if (!SecureWalletManager.isWalletAvailable(requireContext())) {
                         activity?.runOnUiThread {
                             showLoading(false)
                             errorText?.let { errorText ->
@@ -266,7 +266,7 @@ class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListe
                         return@Thread
                     }
 
-                    val queryService = SecretQueryService(context)
+                    val queryService = SecretQueryService(requireContext())
                     val result = queryService.queryContract(
                         Constants.REGISTRATION_CONTRACT,
                         Constants.REGISTRATION_HASH,

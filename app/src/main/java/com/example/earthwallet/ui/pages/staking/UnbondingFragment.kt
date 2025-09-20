@@ -90,7 +90,7 @@ class UnbondingFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
 
         // Initialize services
-        queryService = SecretQueryService(context)
+        queryService = SecretQueryService(requireContext())
 
         initializeViews(view)
         setupBroadcastReceiver()
@@ -148,7 +148,7 @@ class UnbondingFragment : Fragment() {
 
         Thread {
             try {
-                val userAddress = SecureWalletManager.getWalletAddress(context)
+                val userAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (userAddress == null) {
                     Log.w(TAG, "No user address available")
                     return@Thread

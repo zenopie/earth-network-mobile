@@ -63,7 +63,7 @@ class CaretakerFundFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
 
         // Initialize services
-        queryService = SecretQueryService(context)
+        queryService = SecretQueryService(requireContext())
         executorService = Executors.newCachedThreadPool()
 
         initializeViews(view)
@@ -129,7 +129,7 @@ class CaretakerFundFragment : Fragment() {
         executorService?.execute {
             try {
                 // First check if we have a wallet
-                val walletAddress = SecureWalletManager.getWalletAddress(context)
+                val walletAddress = SecureWalletManager.getWalletAddress(requireContext())
                 Log.d(TAG, "Loading allocations with wallet: ${walletAddress ?: "null"}")
 
                 if (walletAddress.isNullOrEmpty()) {
@@ -286,7 +286,7 @@ class CaretakerFundFragment : Fragment() {
     private fun loadUserAllocations() {
         executorService?.execute {
             try {
-                val userAddress = SecureWalletManager.getWalletAddress(context)
+                val userAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (userAddress.isNullOrEmpty()) {
                     activity?.runOnUiThread {
                         Toast.makeText(context, "Wallet address not available", Toast.LENGTH_SHORT).show()

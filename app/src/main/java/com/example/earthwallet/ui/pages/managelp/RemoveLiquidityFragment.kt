@@ -219,7 +219,7 @@ class RemoveLiquidityFragment : Fragment() {
                 queryUserInfo.put("user", currentWalletAddress)
                 queryMsg.put("query_user_info", queryUserInfo)
 
-                val queryService = SecretQueryService(context)
+                val queryService = SecretQueryService(requireContext())
                 val result = queryService.queryContract(
                     Constants.EXCHANGE_CONTRACT,
                     Constants.EXCHANGE_HASH,
@@ -342,7 +342,7 @@ class RemoveLiquidityFragment : Fragment() {
 
                 Log.d(TAG, "Querying unbonding requests for $tokenKey with message: $queryMsg")
 
-                val queryService = SecretQueryService(context)
+                val queryService = SecretQueryService(requireContext())
                 val result = queryService.queryContract(
                     Constants.EXCHANGE_CONTRACT,
                     Constants.EXCHANGE_HASH,

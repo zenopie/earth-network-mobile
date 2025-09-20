@@ -74,7 +74,7 @@ class StakingInfoFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
 
         // Initialize services
-        queryService = SecretQueryService(context)
+        queryService = SecretQueryService(requireContext())
         executorService = Executors.newCachedThreadPool()
         permitManager = PermitManager.getInstance(requireContext())
 
@@ -148,7 +148,7 @@ class StakingInfoFragment : Fragment() {
     }
 
     private fun queryStakingInfo() {
-        val userAddress = SecureWalletManager.getWalletAddress(context)
+        val userAddress = SecureWalletManager.getWalletAddress(requireContext())
         if (TextUtils.isEmpty(userAddress)) {
             Log.w(TAG, "No user address available")
             return
@@ -260,7 +260,7 @@ class StakingInfoFragment : Fragment() {
         Log.d(TAG, "Querying ERTH balance for Info tab")
         Thread {
             try {
-                val walletAddress = SecureWalletManager.getWalletAddress(context)
+                val walletAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (walletAddress == null) {
                     Log.w(TAG, "No wallet address available for ERTH balance query")
                     unstakedBalance = -1.0

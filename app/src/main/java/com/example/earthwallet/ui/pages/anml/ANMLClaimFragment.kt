@@ -63,7 +63,7 @@ class ANMLClaimFragment : Fragment() {
         adFreeIndicatorContainer?.setOnClickListener { showAdFreeExplanation() }
 
         // Initialize query service
-        queryService = SecretQueryService(context)
+        queryService = SecretQueryService(requireContext())
 
         // Check staking status and fetch ANML price when fragment is created
         checkStakingStatus()
@@ -189,7 +189,7 @@ class ANMLClaimFragment : Fragment() {
     private fun checkStakingStatus() {
         Thread {
             try {
-                val userAddress = SecureWalletManager.getWalletAddress(context)
+                val userAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (userAddress.isNullOrEmpty()) {
                     Log.w(TAG, "No user address available for staking check")
                     return@Thread

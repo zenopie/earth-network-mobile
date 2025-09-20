@@ -76,7 +76,7 @@ class StakeEarthFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
 
         // Initialize services
-        queryService = SecretQueryService(context)
+        queryService = SecretQueryService(requireContext())
         executorService = Executors.newCachedThreadPool()
 
         initializeViews(view)
@@ -123,7 +123,7 @@ class StakeEarthFragment : Fragment() {
     fun queryUserStakingInfo(callback: UserStakingCallback?) {
         executorService?.execute {
             try {
-                val userAddress = SecureWalletManager.getWalletAddress(context)
+                val userAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (userAddress.isNullOrEmpty()) {
                     Log.w(TAG, "No user address available")
                     return@execute

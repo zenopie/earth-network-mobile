@@ -98,7 +98,7 @@ class ReceiveTokensFragment : Fragment() {
             val address = SecureWalletManager.getWalletAddress(requireContext())
             if (!TextUtils.isEmpty(address)) {
                 addressText?.text = address
-                generateQRCode(address)
+                generateQRCode(address!!)
             } else {
                 addressText?.text = "No wallet address available"
             }

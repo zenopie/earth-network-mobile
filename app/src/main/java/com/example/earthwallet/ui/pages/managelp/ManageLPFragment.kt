@@ -69,7 +69,7 @@ class ManageLPFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
 
         // Initialize services
-        queryService = SecretQueryService(context)
+        queryService = SecretQueryService(requireContext())
         executorService = Executors.newCachedThreadPool()
 
         initializeViews(view)
@@ -179,7 +179,7 @@ class ManageLPFragment : Fragment() {
         // Get actual user address
         val userAddress: String
         try {
-            userAddress = SecureWalletManager.getWalletAddress(context) ?: ""
+            userAddress = SecureWalletManager.getWalletAddress(requireContext()) ?: ""
             Log.d(TAG, "User address: $userAddress")
 
             if (userAddress.isEmpty()) {

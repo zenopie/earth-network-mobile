@@ -397,7 +397,7 @@ class SwapTokensMainFragment : Fragment() {
     private fun loadCurrentWalletAddress() {
         try {
             // Use SecureWalletManager to get current wallet address
-            currentWalletAddress = com.example.earthwallet.wallet.services.SecureWalletManager.getWalletAddress(context) ?: ""
+            currentWalletAddress = com.example.earthwallet.wallet.services.SecureWalletManager.getWalletAddress(requireContext()) ?: ""
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load wallet address", e)
             currentWalletAddress = ""
@@ -709,7 +709,7 @@ class SwapTokensMainFragment : Fragment() {
         Thread {
             try {
                 // Check wallet availability using the correct wallet preferences
-                if (!com.example.earthwallet.wallet.services.SecureWalletManager.isWalletAvailable(context)) {
+                if (!com.example.earthwallet.wallet.services.SecureWalletManager.isWalletAvailable(requireContext())) {
                     activity?.runOnUiThread {
                         Toast.makeText(context, "No wallet found", Toast.LENGTH_SHORT).show()
                         isSimulatingSwap = false
@@ -719,7 +719,7 @@ class SwapTokensMainFragment : Fragment() {
                 }
 
                 val queryObj = JSONObject(queryJson)
-                val queryService = SecretQueryService(context)
+                val queryService = SecretQueryService(requireContext())
                 val result = queryService.queryContract(
                     Constants.EXCHANGE_CONTRACT,
                     Constants.EXCHANGE_HASH,

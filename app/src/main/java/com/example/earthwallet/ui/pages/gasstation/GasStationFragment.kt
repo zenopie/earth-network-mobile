@@ -228,9 +228,9 @@ class GasStationFragment : Fragment() {
         // Use SecretQueryService in background thread
         Thread {
             try {
-                if (!com.example.earthwallet.wallet.services.SecureWalletManager.isWalletAvailable(context)) {
+                if (!com.example.earthwallet.wallet.services.SecureWalletManager.isWalletAvailable(requireContext())) {
                     activity?.runOnUiThread {
-                        Toast.makeText(context, "No wallet found", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(requireContext(), "No wallet found", Toast.LENGTH_SHORT).show()
                         isSimulating = false
                         updateSwapButton()
                     }
@@ -238,7 +238,7 @@ class GasStationFragment : Fragment() {
                 }
 
                 val queryObj = JSONObject(queryJson)
-                val queryService = SecretQueryService(context)
+                val queryService = SecretQueryService(requireContext())
                 val result = queryService.queryContract(
                     Constants.EXCHANGE_CONTRACT,
                     Constants.EXCHANGE_HASH,
@@ -258,7 +258,7 @@ class GasStationFragment : Fragment() {
             } catch (e: Exception) {
                 Log.e(TAG, "Gas swap simulation failed", e)
                 activity?.runOnUiThread {
-                    Toast.makeText(context, "Simulation failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(requireContext(), "Simulation failed: ${e.message}", Toast.LENGTH_SHORT).show()
                     isSimulating = false
                     updateSwapButton()
                 }
@@ -348,7 +348,7 @@ class GasStationFragment : Fragment() {
 
     private fun loadCurrentWalletAddress() {
         try {
-            currentWalletAddress = com.example.earthwallet.wallet.services.SecureWalletManager.getWalletAddress(context) ?: ""
+            currentWalletAddress = com.example.earthwallet.wallet.services.SecureWalletManager.getWalletAddress(requireContext()) ?: ""
             Log.d(TAG, "Loaded wallet address: $currentWalletAddress")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load wallet address", e)
@@ -509,7 +509,7 @@ class GasStationFragment : Fragment() {
                 )
 
                 val queryObj = JSONObject(queryJson)
-                val queryService = SecretQueryService(context)
+                val queryService = SecretQueryService(requireContext())
                 val result = queryService.queryContract(
                     Constants.REGISTRATION_CONTRACT,
                     Constants.REGISTRATION_HASH,
@@ -587,7 +587,7 @@ class GasStationFragment : Fragment() {
     }
 
     private fun requestViewingKey(tokenSymbol: String) {
-        Toast.makeText(context, "Please set viewing key for $tokenSymbol first", Toast.LENGTH_LONG).show()
+        Toast.makeText(requireContext(), "Please set viewing key for $tokenSymbol first", Toast.LENGTH_LONG).show()
     }
 
     private fun executeSwapForGas() {
@@ -597,7 +597,7 @@ class GasStationFragment : Fragment() {
         try {
             val inputAmount = fromAmountStr.toDouble()
             if (inputAmount <= 0 || inputAmount > fromBalance) {
-                Toast.makeText(context, "Invalid amount", Toast.LENGTH_SHORT).show()
+                Toast.makeText(requireContext(), "Invalid amount", Toast.LENGTH_SHORT).show()
                 return
             }
 
@@ -607,7 +607,7 @@ class GasStationFragment : Fragment() {
             val fromTokenSymbol = tokenSymbols[fromTokenSpinner?.selectedItemPosition ?: 0]
             val fromTokenInfo = Tokens.getTokenInfo(fromTokenSymbol)
             if (fromTokenInfo == null) {
-                Toast.makeText(context, "Token not supported", Toast.LENGTH_SHORT).show()
+                Toast.makeText(requireContext(), "Token not supported", Toast.LENGTH_SHORT).show()
                 resetSwapButton()
                 return
             }
@@ -626,7 +626,7 @@ class GasStationFragment : Fragment() {
             Log.d(TAG, "Amount: $inputAmountMicro")
             Log.d(TAG, "Message: $swapForGasMessage")
 
-            val intent = Intent(context, TransactionActivity::class.java)
+            val intent = Intent(requireContext(), TransactionActivity::class.java)
             intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SNIP_EXECUTE)
             intent.putExtra(TransactionActivity.EXTRA_TOKEN_CONTRACT, fromTokenInfo.contract)
             intent.putExtra(TransactionActivity.EXTRA_TOKEN_HASH, fromTokenInfo.hash)
@@ -638,14 +638,14 @@ class GasStationFragment : Fragment() {
             startActivityForResult(intent, REQ_SWAP_FOR_GAS)
 
         } catch (e: NumberFormatException) {
-            Toast.makeText(context, "Invalid amount", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), "Invalid amount", Toast.LENGTH_SHORT).show()
             resetSwapButton()
         }
     }
 
     private fun claimFaucet() {
         if (!isRegistered || !canClaimFaucet) {
-            Toast.makeText(context, "Faucet not available", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), "Faucet not available", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -653,7 +653,7 @@ class GasStationFragment : Fragment() {
         faucetButton?.text = "Claiming..."
 
         // Implement faucet claiming logic - this would typically call a backend API
-        Toast.makeText(context, "Faucet functionality not implemented yet", Toast.LENGTH_SHORT).show()
+        Toast.makeText(requireContext(), "Faucet functionality not implemented yet", Toast.LENGTH_SHORT).show()
 
         // Reset button
         faucetButton?.isEnabled = true

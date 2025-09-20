@@ -234,7 +234,7 @@ class StakeUnstakeFragment : Fragment() {
     private fun queryErthBalance() {
         Thread {
             try {
-                val walletAddress = SecureWalletManager.getWalletAddress(context)
+                val walletAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (walletAddress == null) {
                     erthBalance = -1.0
                     activity?.runOnUiThread { updateStakeSection() }

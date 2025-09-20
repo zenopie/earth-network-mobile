@@ -53,7 +53,7 @@ class InfoFragment : Fragment() {
         }
         Log.d(TAG, "InfoFragment created with tokenKey: $tokenKey")
 
-        queryService = SecretQueryService(context)
+        queryService = SecretQueryService(requireContext())
         executorService = Executors.newCachedThreadPool()
     }
 
@@ -107,7 +107,7 @@ class InfoFragment : Fragment() {
 
         executorService?.execute {
             try {
-                val userAddress = SecureWalletManager.getWalletAddress(context)
+                val userAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (userAddress == null) {
                     Log.w(TAG, "No user address available")
                     return@execute

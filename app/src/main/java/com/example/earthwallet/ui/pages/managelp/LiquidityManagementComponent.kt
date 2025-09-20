@@ -160,7 +160,7 @@ class LiquidityManagementComponent : Fragment() {
         registerBroadcastReceiver()
 
         // Initialize services and data
-        queryService = SecretQueryService(context)
+        queryService = SecretQueryService(requireContext())
         executorService = Executors.newCachedThreadPool()
         liquidityData = LiquidityData()
 
@@ -301,7 +301,7 @@ class LiquidityManagementComponent : Fragment() {
 
         executorService?.execute {
             try {
-                val userAddress = SecureWalletManager.getWalletAddress(context)
+                val userAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (userAddress == null) {
                     Log.w(TAG, "No user address available")
                     return@execute
@@ -485,7 +485,7 @@ class LiquidityManagementComponent : Fragment() {
 
         executorService?.execute {
             try {
-                val userAddress = SecureWalletManager.getWalletAddress(context)
+                val userAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (userAddress == null) {
                     Log.w(TAG, "No user address available")
                     return@execute
