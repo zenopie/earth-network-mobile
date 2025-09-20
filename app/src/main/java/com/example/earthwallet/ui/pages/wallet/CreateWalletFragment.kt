@@ -1,7 +1,6 @@
 package com.example.earthwallet.ui.pages.wallet
 
 import android.content.Context
-import android.content.SharedPreferences
 import android.os.Bundle
 import android.text.Editable
 import android.text.InputType
@@ -16,14 +15,9 @@ import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.Toast
 import androidx.fragment.app.Fragment
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKeys
 import com.example.earthwallet.R
 import com.example.earthwallet.wallet.services.SecureWalletManager
-import java.io.File
-import java.io.IOException
 import java.nio.charset.StandardCharsets
-import java.security.GeneralSecurityException
 import java.security.MessageDigest
 
 /**
@@ -39,74 +33,8 @@ import java.security.MessageDigest
 class CreateWalletFragment : Fragment() {
 
     companion object {
-        private const val PREF_FILE = "secret_wallet_prefs"
-        private const val KEY_MNEMONIC = "mnemonic"
-        private const val KEY_PIN_HASH = "pin_hash"
-        private const val KEY_WALLET_NAME = "wallet_name"
-
         @JvmStatic
         fun newInstance(): CreateWalletFragment = CreateWalletFragment()
-
-        /**
-         * Create secure preferences with corrupted file cleanup on key mismatch
-         */
-        private fun createSecurePreferences(context: Context): SharedPreferences {
-            return try {
-                val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
-                EncryptedSharedPreferences.create(
-                    PREF_FILE,
-                    masterKeyAlias,
-                    context,
-                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-                )
-            } catch (e: GeneralSecurityException) {
-                Log.w("CreateWalletFragment", "EncryptedSharedPreferences failed, clearing corrupted file: ${e.message}")
-                handleEncryptedPrefsError(context, e)
-            } catch (e: IOException) {
-                Log.w("CreateWalletFragment", "EncryptedSharedPreferences failed, clearing corrupted file: ${e.message}")
-                handleEncryptedPrefsError(context, e)
-            }
-        }
-
-        private fun handleEncryptedPrefsError(context: Context, originalException: Exception): SharedPreferences {
-            // Clear corrupted preferences file and try again
-            clearCorruptedPreferencesFile(context)
-
-            return try {
-                val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
-                EncryptedSharedPreferences.create(
-                    PREF_FILE,
-                    masterKeyAlias,
-                    context,
-                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-                )
-            } catch (retryException: GeneralSecurityException) {
-                Log.e("CreateWalletFragment", "Failed to create EncryptedSharedPreferences even after cleanup", retryException)
-                throw RuntimeException("Failed to initialize secure preferences", retryException)
-            } catch (retryException: IOException) {
-                Log.e("CreateWalletFragment", "Failed to create EncryptedSharedPreferences even after cleanup", retryException)
-                throw RuntimeException("Failed to initialize secure preferences", retryException)
-            }
-        }
-
-        /**
-         * Clear corrupted preferences file (handles key mismatch after reinstalls)
-         */
-        private fun clearCorruptedPreferencesFile(context: Context) {
-            try {
-                // Delete the encrypted shared preferences file
-                val prefsPath = "${context.applicationInfo.dataDir}/shared_prefs/${PREF_FILE}.xml"
-                val prefsFile = File(prefsPath)
-                if (prefsFile.exists()) {
-                    val deleted = prefsFile.delete()
-                    Log.i("CreateWalletFragment", "Deleted corrupted preferences file: $deleted")
-                }
-            } catch (e: Exception) {
-                Log.w("CreateWalletFragment", "Failed to delete corrupted preferences file: ${e.message}")
-            }
-        }
     }
 
     // Steps' containers

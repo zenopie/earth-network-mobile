@@ -12,10 +12,12 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.Button
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
 import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKeys
+import com.example.earthwallet.wallet.utils.SecurePreferencesUtil
+import com.example.earthwallet.ui.utils.WindowInsetsUtil
 import com.example.earthwallet.ui.pages.wallet.CreateWalletFragment
 import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.FullScreenContentCallback
@@ -74,8 +76,11 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
         // Initialize AdMob
         initializeAds()
 
+        // Setup modern back pressed handling
+        setupBackPressedCallback()
+
         // Choose default start fragment: open Actions if secure wallet exists, otherwise create wallet
-        var hasWallet = false
+        var hasWallet: Boolean
         try {
             val walletsJson = securePrefs?.getString("wallets", "[]")
             hasWallet = !TextUtils.isEmpty(walletsJson) && walletsJson != "[]"
@@ -129,16 +134,14 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
                 com.example.earthwallet.ui.pages.wallet.WalletMainFragment().also {
                     // Show navigation and status bar for normal fragments
                     showBottomNavigation()
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                    WindowInsetsUtil.showSystemBars(window)
                 }
             }
             "actions" -> {
                 com.example.earthwallet.ui.nav.ActionsMainFragment().also {
                     // Show navigation and status bar for normal fragments
                     showBottomNavigation()
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                    WindowInsetsUtil.showSystemBars(window)
                 }
             }
             "scanner" -> {
@@ -146,8 +149,7 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
                     // Hide navigation and status bar for scanner
                     Log.d("HostActivity", "HIDING NAVIGATION AND STATUS BAR FOR SCANNER")
                     hideBottomNavigation()
-                    window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                    WindowInsetsUtil.hideSystemBars(window)
                 }
             }
             "mrz_input" -> {
@@ -167,88 +169,77 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
                     setCreateWalletListener(this@HostActivity)
                     // Show navigation and status bar for normal fragments
                     showBottomNavigation()
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                    WindowInsetsUtil.showSystemBars(window)
                 }
             }
             "swap" -> {
                 com.example.earthwallet.ui.pages.swap.SwapTokensMainFragment().also {
                     // Show navigation and status bar for normal fragments
                     showBottomNavigation()
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                    WindowInsetsUtil.showSystemBars(window)
                 }
             }
             "anml" -> {
                 com.example.earthwallet.ui.pages.anml.ANMLClaimMainFragment().also {
                     // Show navigation and status bar for normal fragments
                     showBottomNavigation()
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                    WindowInsetsUtil.showSystemBars(window)
                 }
             }
             "managelp" -> {
                 com.example.earthwallet.ui.pages.managelp.ManageLPFragment().also {
                     // Show navigation and status bar for normal fragments
                     showBottomNavigation()
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                    WindowInsetsUtil.showSystemBars(window)
                 }
             }
             "staking" -> {
                 com.example.earthwallet.ui.pages.staking.StakeEarthFragment().also {
                     // Show navigation and status bar for normal fragments
                     showBottomNavigation()
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                    WindowInsetsUtil.showSystemBars(window)
                 }
             }
             "send" -> {
                 com.example.earthwallet.ui.pages.wallet.SendTokensFragment().also {
                     // Show navigation and status bar for normal fragments
                     showBottomNavigation()
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                    WindowInsetsUtil.showSystemBars(window)
                 }
             }
             "receive" -> {
                 com.example.earthwallet.ui.pages.wallet.ReceiveTokensFragment().also {
                     // Show navigation and status bar for normal fragments
                     showBottomNavigation()
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                    WindowInsetsUtil.showSystemBars(window)
                 }
             }
             "governance" -> {
                 com.example.earthwallet.ui.pages.governance.GovernanceFragment().also {
                     // Show navigation and status bar for normal fragments
                     showBottomNavigation()
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                    WindowInsetsUtil.showSystemBars(window)
                 }
             }
             "gas_station" -> {
                 com.example.earthwallet.ui.pages.gasstation.GasStationFragment().also {
                     // Show navigation and status bar for normal fragments
                     showBottomNavigation()
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                    WindowInsetsUtil.showSystemBars(window)
                 }
             }
             "caretaker_fund" -> {
                 com.example.earthwallet.ui.pages.governance.CaretakerFundFragment().also {
                     // Show navigation and status bar for normal fragments
                     showBottomNavigation()
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                    WindowInsetsUtil.showSystemBars(window)
                 }
             }
             "deflation_fund" -> {
                 com.example.earthwallet.ui.pages.governance.DeflationFundFragment().also {
                     // Show navigation and status bar for normal fragments
                     showBottomNavigation()
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-                    window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                    WindowInsetsUtil.showSystemBars(window)
                 }
             }
             else -> {
@@ -256,8 +247,7 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
                 com.example.earthwallet.ui.pages.anml.ScannerFragment().also {
                     // Hide navigation and status bar for scanner
                     hideBottomNavigation()
-                    window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+                    WindowInsetsUtil.hideSystemBars(window)
                 }
             }
         }
@@ -296,14 +286,7 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
      */
     private fun initializeSecurePreferences() {
         try {
-            val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
-            securePrefs = EncryptedSharedPreferences.create(
-                PREF_FILE,
-                masterKeyAlias,
-                this,
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            )
+            securePrefs = SecurePreferencesUtil.createEncryptedPreferences(this, PREF_FILE)
         } catch (e: Exception) {
             // Do not fallback to insecure storage - fail secure
             Log.e(TAG, "Failed to initialize secure preferences", e)
@@ -311,13 +294,6 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
         }
     }
 
-    /**
-     * Get the secure preferences instance for app-wide use
-     * @return Secure SharedPreferences instance
-     */
-    fun getSecurePrefs(): SharedPreferences? {
-        return securePrefs
-    }
 
     /**
      * Hide bottom navigation and adjust content layout
@@ -390,31 +366,37 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
     }
 
-    override fun onBackPressed() {
-        val currentFragment = supportFragmentManager.findFragmentById(R.id.host_content)
-        currentFragment?.let { fragment ->
-            val currentTag = fragment.tag
-            Log.d("HostActivity", "Back pressed, current fragment tag: $currentTag")
+    private fun setupBackPressedCallback() {
+        val callback = object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val currentFragment = supportFragmentManager.findFragmentById(R.id.host_content)
+                currentFragment?.let { fragment ->
+                    val currentTag = fragment.tag
+                    Log.d("HostActivity", "Back pressed, current fragment tag: $currentTag")
 
-            // Actions pages should navigate back to actions nav
-            if (isActionsPage(currentTag)) {
-                Log.d("HostActivity", "Current page is actions page, navigating to actions")
-                showFragment("actions")
-                setSelectedNav(navActions, navWallet)
-                return
-            }
+                    // Actions pages should navigate back to actions nav
+                    if (isActionsPage(currentTag)) {
+                        Log.d("HostActivity", "Current page is actions page, navigating to actions")
+                        showFragment("actions")
+                        setSelectedNav(navActions, navWallet)
+                        return
+                    }
 
-            // Wallet pages should navigate back to wallet page
-            if (isWalletPage(currentTag)) {
-                Log.d("HostActivity", "Current page is wallet page, navigating to wallet")
-                showFragment("wallet")
-                setSelectedNav(navWallet, navActions)
-                return
+                    // Wallet pages should navigate back to wallet page
+                    if (isWalletPage(currentTag)) {
+                        Log.d("HostActivity", "Current page is wallet page, navigating to wallet")
+                        showFragment("wallet")
+                        setSelectedNav(navWallet, navActions)
+                        return
+                    }
+                }
+
+                // Default back behavior for main pages (wallet, actions) or unknown pages
+                finish()
             }
         }
 
-        // Default back behavior for main pages (wallet, actions) or unknown pages
-        super.onBackPressed()
+        onBackPressedDispatcher.addCallback(this, callback)
     }
 
     /**
@@ -442,7 +424,7 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
     private fun initializeAds() {
         Log.d(TAG, "Initializing AdMob")
 
-        MobileAds.initialize(this) { initializationStatus ->
+        MobileAds.initialize(this) { _ ->
             Log.d(TAG, "AdMob initialization complete")
             loadInterstitialAd()
         }

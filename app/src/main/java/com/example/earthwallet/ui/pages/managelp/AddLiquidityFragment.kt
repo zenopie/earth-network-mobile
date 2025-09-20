@@ -5,7 +5,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.content.SharedPreferences
 import android.graphics.drawable.Drawable
 import android.os.Bundle
 import android.os.Handler
@@ -23,12 +22,15 @@ import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import com.example.earthwallet.R
 import com.example.earthwallet.Constants
 import com.example.earthwallet.bridge.activities.TransactionActivity
 import com.example.earthwallet.bridge.services.SecretQueryService
 import com.example.earthwallet.bridge.utils.PermitManager
 import com.example.earthwallet.wallet.constants.Tokens
+import com.example.earthwallet.wallet.services.SecureWalletManager
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.DecimalFormat
@@ -39,7 +41,6 @@ class AddLiquidityFragment : Fragment() {
 
     companion object {
         private const val TAG = "AddLiquidityFragment"
-        private const val REQ_ADD_LIQUIDITY = 4001
 
         @JvmStatic
         fun newInstance(tokenKey: String): AddLiquidityFragment {
@@ -66,12 +67,14 @@ class AddLiquidityFragment : Fragment() {
     private var tokenBalance = 0.0
     private var erthBalance = 0.0
     private var currentWalletAddress = ""
-    private var securePrefs: SharedPreferences? = null
     private var permitManager: PermitManager? = null
     private var executorService: ExecutorService? = null
 
     // Broadcast receiver for transaction success
     private var transactionSuccessReceiver: BroadcastReceiver? = null
+
+    // Activity Result Launcher for transaction activity
+    private lateinit var addLiquidityLauncher: ActivityResultLauncher<Intent>
 
     // Pool reserves for ratio calculation
     private var erthReserve = 0.0
@@ -84,20 +87,27 @@ class AddLiquidityFragment : Fragment() {
             tokenKey = it.getString("token_key")
         }
 
-        // Get secure preferences from HostActivity
-        try {
-            if (activity is com.example.earthwallet.ui.host.HostActivity) {
-                securePrefs = (activity as com.example.earthwallet.ui.host.HostActivity).getSecurePrefs()
-                Log.d(TAG, "Successfully got securePrefs from HostActivity")
-            } else {
-                Log.e(TAG, "Activity is not HostActivity")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to get securePrefs from HostActivity", e)
-        }
+        // Use SecureWalletManager for secure operations
+        Log.d(TAG, "Using SecureWalletManager for secure operations")
 
         // Initialize permit manager
         permitManager = PermitManager.getInstance(requireContext())
+
+        // Initialize Activity Result Launcher
+        addLiquidityLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == Activity.RESULT_OK) {
+                Log.i(TAG, "Add liquidity transaction succeeded")
+                // Clear input fields
+                tokenAmountInput.setText("")
+                erthAmountInput.setText("")
+                // Refresh data (broadcast receiver will also handle this)
+                loadTokenBalances()
+                loadPoolReserves()
+            } else {
+                val error = result.data?.getStringExtra(TransactionActivity.EXTRA_ERROR) ?: "Transaction failed"
+                Log.e(TAG, "Add liquidity transaction failed: $error")
+            }
+        }
 
         executorService = Executors.newCachedThreadPool()
     }
@@ -225,7 +235,7 @@ class AddLiquidityFragment : Fragment() {
     private fun loadTokenLogo(imageView: ImageView, tokenSymbol: String) {
         try {
             val tokenInfo = Tokens.getTokenInfo(tokenSymbol)
-            if (tokenInfo != null && tokenInfo.logo != null) {
+            if (tokenInfo != null) {
                 val inputStream = context!!.assets.open(tokenInfo.logo)
                 val drawable = Drawable.createFromStream(inputStream, null)
                 imageView.setImageDrawable(drawable)
@@ -241,23 +251,15 @@ class AddLiquidityFragment : Fragment() {
 
     private fun loadCurrentWalletAddress() {
         try {
-            securePrefs?.let { prefs ->
-                val walletsJson = prefs.getString("wallets", "[]") ?: "[]"
-                val walletsArray = JSONArray(walletsJson)
-                val selectedIndex = prefs.getInt("selected_wallet_index", -1)
-
-                if (walletsArray.length() > 0) {
-                    val selectedWallet = if (selectedIndex >= 0 && selectedIndex < walletsArray.length()) {
-                        walletsArray.getJSONObject(selectedIndex)
-                    } else {
-                        walletsArray.getJSONObject(0)
-                    }
-                    currentWalletAddress = selectedWallet.optString("address", "")
-                    Log.d(TAG, "Loaded wallet address: $currentWalletAddress")
-                }
+            currentWalletAddress = SecureWalletManager.getWalletAddress(requireContext()) ?: ""
+            if (currentWalletAddress.isNotEmpty()) {
+                Log.d(TAG, "Loaded wallet address: ${currentWalletAddress.substring(0, minOf(14, currentWalletAddress.length))}...")
+            } else {
+                Log.w(TAG, "No wallet address available")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load wallet address", e)
+            currentWalletAddress = ""
         }
     }
 
@@ -713,7 +715,7 @@ class AddLiquidityFragment : Fragment() {
             intent.putExtra(TransactionActivity.EXTRA_MESSAGES, messages.toString())
             intent.putExtra(TransactionActivity.EXTRA_MEMO, "Add liquidity: $tokenAmount $tokenKey + $erthAmount ERTH")
 
-            startActivityForResult(intent, REQ_ADD_LIQUIDITY)
+            addLiquidityLauncher.launch(intent)
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to execute add liquidity transaction", e)
@@ -771,50 +773,17 @@ class AddLiquidityFragment : Fragment() {
     }
 
     /**
-     * Get current wallet address directly from secure preferences
+     * Get current wallet address using SecureWalletManager
      */
     private fun getCurrentWalletAddress(): String {
         return try {
-            securePrefs?.let { prefs ->
-                val walletsJson = prefs.getString("wallets", "[]") ?: "[]"
-                val walletsArray = JSONArray(walletsJson)
-                val selectedIndex = prefs.getInt("selected_wallet_index", -1)
-
-                if (walletsArray.length() > 0) {
-                    val selectedWallet = if (selectedIndex >= 0 && selectedIndex < walletsArray.length()) {
-                        walletsArray.getJSONObject(selectedIndex)
-                    } else {
-                        walletsArray.getJSONObject(0)
-                    }
-                    selectedWallet.optString("address", "")
-                } else {
-                    ""
-                }
-            } ?: ""
+            SecureWalletManager.getWalletAddress(requireContext()) ?: ""
         } catch (e: Exception) {
             Log.e(TAG, "Failed to get wallet address", e)
             ""
         }
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-
-        if (requestCode == REQ_ADD_LIQUIDITY) {
-            if (resultCode == Activity.RESULT_OK) {
-                Log.i(TAG, "Add liquidity transaction succeeded")
-                // Clear input fields
-                tokenAmountInput.setText("")
-                erthAmountInput.setText("")
-                // Refresh data (broadcast receiver will also handle this)
-                loadTokenBalances()
-                loadPoolReserves()
-            } else {
-                val error = data?.getStringExtra(TransactionActivity.EXTRA_ERROR) ?: "Transaction failed"
-                Log.e(TAG, "Add liquidity transaction failed: $error")
-            }
-        }
-    }
 
     override fun onDestroy() {
         super.onDestroy()

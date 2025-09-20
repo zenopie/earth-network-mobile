@@ -6,7 +6,7 @@ import android.content.SharedPreferences
 import android.text.TextUtils
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKeys
+import com.example.earthwallet.wallet.utils.SecurePreferencesUtil
 import com.example.earthwallet.wallet.utils.WalletCrypto
 import com.example.earthwallet.Constants
 import org.bitcoinj.core.ECKey
@@ -167,14 +167,7 @@ object SecretExecuteService {
     @Throws(RuntimeException::class)
     private fun createSecurePrefs(context: Context): SharedPreferences {
         return try {
-            val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
-            EncryptedSharedPreferences.create(
-                PREF_FILE,
-                masterKeyAlias,
-                context,
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            )
+            SecurePreferencesUtil.createEncryptedPreferences(context, PREF_FILE)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to create secure preferences", e)
             throw RuntimeException("Secure preferences initialization failed", e)

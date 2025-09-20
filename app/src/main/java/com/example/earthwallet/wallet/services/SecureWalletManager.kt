@@ -2,10 +2,13 @@ package com.example.earthwallet.wallet.services
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.Build
 import android.text.TextUtils
+import android.util.Base64
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKeys
+import com.example.earthwallet.wallet.utils.SecurePreferencesUtil
+import com.example.earthwallet.wallet.utils.HardwareKeyManager
 import com.example.earthwallet.wallet.utils.WalletCrypto
 import org.json.JSONArray
 import org.json.JSONObject
@@ -169,14 +172,7 @@ object SecureWalletManager {
     private fun fetchMnemonicSecurely(context: Context): String {
         return try {
             // Use encrypted preferences for secure wallet storage
-            val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
-            val securePrefs = EncryptedSharedPreferences.create(
-                PREF_FILE,
-                masterKeyAlias,
-                context,
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            )
+            val securePrefs = SecurePreferencesUtil.createEncryptedPreferences(context, PREF_FILE)
 
             // Get mnemonic for the selected wallet (matches existing multi-wallet logic)
             val walletsJson = securePrefs.getString("wallets", "[]") ?: "[]"
@@ -857,18 +853,8 @@ object SecureWalletManager {
     @Throws(Exception::class)
     private fun createSecurePrefs(context: Context): SharedPreferences {
         return try {
-            val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
-            EncryptedSharedPreferences.create(
-                PREF_FILE,
-                masterKeyAlias,
-                context,
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            )
-        } catch (e: GeneralSecurityException) {
-            Log.e(TAG, "Failed to create secure preferences", e)
-            throw Exception("Failed to create secure preferences", e)
-        } catch (e: IOException) {
+            SecurePreferencesUtil.createEncryptedPreferences(context, PREF_FILE)
+        } catch (e: Exception) {
             Log.e(TAG, "Failed to create secure preferences", e)
             throw Exception("Failed to create secure preferences", e)
         }

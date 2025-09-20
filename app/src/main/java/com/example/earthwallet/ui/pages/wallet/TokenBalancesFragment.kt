@@ -57,7 +57,6 @@ class TokenBalancesFragment : Fragment() {
     interface TokenBalancesListener {
         fun onPermitRequested(token: Tokens.TokenInfo)
         fun onManageViewingKeysRequested()
-        fun getSecurePrefs(): SharedPreferences
     }
 
     private var listener: TokenBalancesListener? = null

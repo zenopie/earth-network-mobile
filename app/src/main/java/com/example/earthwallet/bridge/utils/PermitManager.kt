@@ -5,7 +5,7 @@ import android.content.SharedPreferences
 import android.text.TextUtils
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKeys
+import com.example.earthwallet.wallet.utils.SecurePreferencesUtil
 import com.example.earthwallet.bridge.models.Permit
 import com.example.earthwallet.bridge.models.PermitSignDoc
 import com.example.earthwallet.wallet.services.SecureWalletManager
@@ -54,14 +54,7 @@ class PermitManager private constructor(context: Context) {
          */
         private fun createSecurePrefs(context: Context): SharedPreferences {
             return try {
-                val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
-                EncryptedSharedPreferences.create(
-                    PREF_FILE,
-                    masterKeyAlias,
-                    context,
-                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-                )
+                SecurePreferencesUtil.createEncryptedPreferences(context, PREF_FILE)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to create secure preferences", e)
                 throw RuntimeException("Secure preferences initialization failed", e)

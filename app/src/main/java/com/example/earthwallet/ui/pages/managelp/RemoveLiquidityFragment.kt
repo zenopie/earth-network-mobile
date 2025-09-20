@@ -5,7 +5,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.content.SharedPreferences
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -19,9 +18,12 @@ import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import com.example.earthwallet.R
 import com.example.earthwallet.bridge.activities.TransactionActivity
 import com.example.earthwallet.wallet.constants.Tokens
+import com.example.earthwallet.wallet.services.SecureWalletManager
 import com.example.earthwallet.Constants
 import com.example.earthwallet.bridge.services.SecretQueryService
 import org.json.JSONObject
@@ -34,7 +36,6 @@ class RemoveLiquidityFragment : Fragment() {
 
     companion object {
         private const val TAG = "RemoveLiquidityFragment"
-        private const val REQ_REMOVE_LIQUIDITY = 5002
 
         @JvmStatic
         fun newInstance(tokenKey: String): RemoveLiquidityFragment {
@@ -54,9 +55,11 @@ class RemoveLiquidityFragment : Fragment() {
     private var tokenKey: String? = null
     private var userStakedShares = 0.0
     private var currentWalletAddress = ""
-    private var securePrefs: SharedPreferences? = null
     private var executorService: ExecutorService? = null
     private var transactionSuccessReceiver: BroadcastReceiver? = null
+
+    // Activity Result Launcher for transaction activity
+    private lateinit var removeLiquidityLauncher: ActivityResultLauncher<Intent>
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -64,16 +67,22 @@ class RemoveLiquidityFragment : Fragment() {
             tokenKey = it.getString("token_key")
         }
 
-        // Get secure preferences from HostActivity
-        try {
-            if (activity is com.example.earthwallet.ui.host.HostActivity) {
-                securePrefs = (activity as com.example.earthwallet.ui.host.HostActivity).getSecurePrefs()
-                Log.d(TAG, "Successfully got securePrefs from HostActivity")
+        // Use SecureWalletManager for secure operations
+        Log.d(TAG, "Using SecureWalletManager for secure operations")
+
+        // Initialize Activity Result Launcher
+        removeLiquidityLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == Activity.RESULT_OK) {
+                Log.i(TAG, "Remove liquidity transaction succeeded")
+                // Clear input field
+                removeAmountInput.setText("")
+                // Refresh data (broadcast receiver will also handle this)
+                loadUserShares()
+                loadUnbondingRequests()
             } else {
-                Log.e(TAG, "Activity is not HostActivity")
+                val error = result.data?.getStringExtra(TransactionActivity.EXTRA_ERROR) ?: "Transaction failed"
+                Log.e(TAG, "Remove liquidity transaction failed: $error")
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to get securePrefs from HostActivity", e)
         }
 
         executorService = Executors.newCachedThreadPool()
@@ -179,23 +188,15 @@ class RemoveLiquidityFragment : Fragment() {
 
     private fun loadCurrentWalletAddress() {
         try {
-            securePrefs?.let { prefs ->
-                val walletsJson = prefs.getString("wallets", "[]") ?: "[]"
-                val walletsArray = JSONArray(walletsJson)
-                val selectedIndex = prefs.getInt("selected_wallet_index", -1)
-
-                if (walletsArray.length() > 0) {
-                    val selectedWallet = if (selectedIndex >= 0 && selectedIndex < walletsArray.length()) {
-                        walletsArray.getJSONObject(selectedIndex)
-                    } else {
-                        walletsArray.getJSONObject(0)
-                    }
-                    currentWalletAddress = selectedWallet.optString("address", "")
-                    Log.d(TAG, "Loaded wallet address: $currentWalletAddress")
-                }
+            currentWalletAddress = SecureWalletManager.getWalletAddress(requireContext()) ?: ""
+            if (currentWalletAddress.isNotEmpty()) {
+                Log.d(TAG, "Loaded wallet address: ${currentWalletAddress.substring(0, minOf(14, currentWalletAddress.length))}...")
+            } else {
+                Log.w(TAG, "No wallet address available")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load wallet address", e)
+            currentWalletAddress = ""
         }
     }
 
@@ -453,7 +454,7 @@ class RemoveLiquidityFragment : Fragment() {
             intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, msg.toString())
             intent.putExtra(TransactionActivity.EXTRA_MEMO, "Remove liquidity for $tokenKey")
 
-            startActivityForResult(intent, REQ_REMOVE_LIQUIDITY)
+            removeLiquidityLauncher.launch(intent)
 
         } catch (e: Exception) {
             Log.e(TAG, "Error creating remove liquidity message", e)
@@ -461,23 +462,6 @@ class RemoveLiquidityFragment : Fragment() {
         }
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-
-        if (requestCode == REQ_REMOVE_LIQUIDITY) {
-            if (resultCode == Activity.RESULT_OK) {
-                Log.i(TAG, "Remove liquidity transaction succeeded")
-                // Clear input field
-                removeAmountInput.setText("")
-                // Refresh data (broadcast receiver will also handle this)
-                loadUserShares()
-                loadUnbondingRequests()
-            } else {
-                val error = data?.getStringExtra(TransactionActivity.EXTRA_ERROR) ?: "Transaction failed"
-                Log.e(TAG, "Remove liquidity transaction failed: $error")
-            }
-        }
-    }
 
     override fun onResume() {
         super.onResume()

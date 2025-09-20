@@ -5,7 +5,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.content.SharedPreferences
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -18,11 +17,14 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.fragment.app.Fragment
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import com.example.earthwallet.R
 import com.example.earthwallet.Constants
 import com.example.earthwallet.bridge.activities.TransactionActivity
 import com.example.earthwallet.bridge.services.SecretQueryService
 import com.example.earthwallet.wallet.constants.Tokens
+import com.example.earthwallet.wallet.services.SecureWalletManager
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ExecutorService
@@ -32,7 +34,6 @@ class UnbondFragment : Fragment() {
 
     companion object {
         private const val TAG = "UnbondFragment"
-        private const val REQ_CLAIM_UNBOND = 5001
 
         @JvmStatic
         fun newInstance(tokenKey: String): UnbondFragment {
@@ -58,7 +59,6 @@ class UnbondFragment : Fragment() {
 
     private var tokenKey: String? = null
     private var currentWalletAddress = ""
-    private var securePrefs: SharedPreferences? = null
     private var executorService: ExecutorService? = null
 
     // Pool information for calculating estimated values
@@ -74,6 +74,9 @@ class UnbondFragment : Fragment() {
     // Broadcast receiver for transaction success
     private var transactionSuccessReceiver: BroadcastReceiver? = null
 
+    // Activity Result Launcher for transaction activity
+    private lateinit var claimUnbondLauncher: ActivityResultLauncher<Intent>
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         arguments?.let { args ->
@@ -86,16 +89,23 @@ class UnbondFragment : Fragment() {
             Log.d(TAG, "Pool info from arguments - ERTH: $erthReserveMicro, Token: $tokenBReserveMicro, Shares: $totalSharesMicro")
         }
 
-        // Get secure preferences from HostActivity
-        try {
-            if (activity is com.example.earthwallet.ui.host.HostActivity) {
-                securePrefs = (activity as com.example.earthwallet.ui.host.HostActivity).getSecurePrefs()
-                Log.d(TAG, "Successfully got securePrefs from HostActivity")
+        // Use SecureWalletManager for secure operations
+        Log.d(TAG, "Using SecureWalletManager for secure operations")
+
+        // Initialize Activity Result Launcher
+        claimUnbondLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == Activity.RESULT_OK) {
+                Log.d(TAG, "Unbonded liquidity claimed successfully")
+                // Refresh unbonding requests to update UI
+                if (erthReserveMicro > 0 && tokenBReserveMicro > 0 && totalSharesMicro > 0) {
+                    executorService?.execute { loadUnbondingRequests() }
+                } else {
+                    loadPoolInformationThenUnbondingRequests()
+                }
             } else {
-                Log.e(TAG, "Activity is not HostActivity")
+                val error = result.data?.getStringExtra(TransactionActivity.EXTRA_ERROR) ?: "Unknown error"
+                Log.e(TAG, "Failed to claim unbonded liquidity: $error")
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to get securePrefs from HostActivity", e)
         }
 
         executorService = Executors.newCachedThreadPool()
@@ -213,7 +223,7 @@ class UnbondFragment : Fragment() {
             intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.EXCHANGE_HASH)
             intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, claimMsg.toString())
 
-            startActivityForResult(intent, REQ_CLAIM_UNBOND)
+            claimUnbondLauncher.launch(intent)
 
         } catch (e: Exception) {
             Log.e(TAG, "Error claiming unbonded liquidity", e)
@@ -222,23 +232,15 @@ class UnbondFragment : Fragment() {
 
     private fun loadCurrentWalletAddress() {
         try {
-            securePrefs?.let { prefs ->
-                val walletsJson = prefs.getString("wallets", "[]") ?: "[]"
-                val walletsArray = JSONArray(walletsJson)
-                val selectedIndex = prefs.getInt("selected_wallet_index", -1)
-
-                if (walletsArray.length() > 0) {
-                    val selectedWallet = if (selectedIndex >= 0 && selectedIndex < walletsArray.length()) {
-                        walletsArray.getJSONObject(selectedIndex)
-                    } else {
-                        walletsArray.getJSONObject(0)
-                    }
-                    currentWalletAddress = selectedWallet.optString("address", "")
-                    Log.d(TAG, "Loaded wallet address: $currentWalletAddress")
-                }
+            currentWalletAddress = SecureWalletManager.getWalletAddress(requireContext()) ?: ""
+            if (currentWalletAddress.isNotEmpty()) {
+                Log.d(TAG, "Loaded wallet address: ${currentWalletAddress.substring(0, minOf(14, currentWalletAddress.length))}...")
+            } else {
+                Log.w(TAG, "No wallet address available")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load wallet address", e)
+            currentWalletAddress = ""
         }
     }
 
@@ -446,7 +448,7 @@ class UnbondFragment : Fragment() {
         completeUnbondButton.visibility = if (hasCompletedRequests) View.VISIBLE else View.GONE
     }
 
-    private fun createUnbondingRequestView(request: JSONObject, index: Int): View? {
+    private fun createUnbondingRequestView(request: JSONObject, @Suppress("UNUSED_PARAMETER") index: Int): View? {
         return try {
             val view = LayoutInflater.from(context).inflate(R.layout.item_unbonding_request, unbondingRequestsContainer, false)
 
@@ -565,24 +567,6 @@ class UnbondFragment : Fragment() {
         return tokenInfo?.contract
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-
-        if (requestCode == REQ_CLAIM_UNBOND) {
-            if (resultCode == Activity.RESULT_OK) {
-                Log.d(TAG, "Unbonded liquidity claimed successfully")
-                // Refresh unbonding requests to update UI
-                if (erthReserveMicro > 0 && tokenBReserveMicro > 0 && totalSharesMicro > 0) {
-                    executorService?.execute { loadUnbondingRequests() }
-                } else {
-                    loadPoolInformationThenUnbondingRequests()
-                }
-            } else {
-                val error = data?.getStringExtra(TransactionActivity.EXTRA_ERROR) ?: "Unknown error"
-                Log.e(TAG, "Failed to claim unbonded liquidity: $error")
-            }
-        }
-    }
 
     override fun onResume() {
         super.onResume()

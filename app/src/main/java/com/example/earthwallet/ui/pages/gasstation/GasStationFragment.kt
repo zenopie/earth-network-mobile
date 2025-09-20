@@ -17,7 +17,6 @@ import android.view.ViewGroup
 import android.widget.*
 import androidx.fragment.app.Fragment
 import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKeys
 import com.example.earthwallet.R
 import com.example.earthwallet.Constants
 import com.example.earthwallet.bridge.activities.TransactionActivity

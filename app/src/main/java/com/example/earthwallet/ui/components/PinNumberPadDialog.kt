@@ -2,12 +2,14 @@ package com.example.earthwallet.ui.components
 
 import android.app.Dialog
 import android.content.Context
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.widget.Button
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import com.example.earthwallet.R
+import com.example.earthwallet.wallet.utils.PinSecurityManager
 
 /**
  * General Purpose PIN Entry Dialog
@@ -32,6 +34,8 @@ class PinEntryDialog(private val context: Context) {
         fun onPinCancelled()
         fun onPinCreated(pin: String) { /* Optional override for CREATE mode */ }
         fun onPinVerified(pin: String) { /* Optional override for VERIFY mode */ }
+        fun onPinSecurityLockout(lockoutMessage: String) { /* Called when PIN is locked out */ }
+        fun onPinAuthenticationFailed(remainingAttempts: Int) { /* Called on failed PIN with remaining attempts */ }
     }
 
     private var dialog: AlertDialog? = null
@@ -41,6 +45,10 @@ class PinEntryDialog(private val context: Context) {
     private var minPinLength: Int = 4
     private var maxPinLength: Int = 6
     private var allowCancel: Boolean = true
+
+    companion object {
+        private const val TAG = "PinEntryDialog"
+    }
 
     // UI elements
     private lateinit var pinTitle: TextView
@@ -82,6 +90,21 @@ class PinEntryDialog(private val context: Context) {
         this.minPinLength = minLength
         this.maxPinLength = maxLength
         this.allowCancel = allowCancel
+
+        // Check PIN security before showing dialog (only for AUTHENTICATE mode)
+        if (mode == PinMode.AUTHENTICATE) {
+            try {
+                val securityStatus = PinSecurityManager.checkPinSecurity(context)
+                if (securityStatus.isLockedOut) {
+                    Log.w(TAG, "PIN entry blocked due to lockout: ${securityStatus.lockoutMessage}")
+                    listener.onPinSecurityLockout(securityStatus.lockoutMessage ?: "Account locked")
+                    return
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to check PIN security", e)
+                // Continue with normal PIN entry if security check fails
+            }
+        }
 
         val view = LayoutInflater.from(context).inflate(R.layout.dialog_pin_number_pad, null)
         initializeViews(view)
@@ -140,8 +163,7 @@ class PinEntryDialog(private val context: Context) {
                 val pin = currentPin.toString()
                 when (mode) {
                     PinMode.AUTHENTICATE -> {
-                        listener?.onPinEntered(pin)
-                        dismiss()
+                        handleAuthenticationAttempt(pin)
                     }
                     PinMode.CREATE -> {
                         listener?.onPinCreated(pin)
@@ -227,6 +249,85 @@ class PinEntryDialog(private val context: Context) {
 
         // Enable/disable confirm button
         confirmButton.isEnabled = currentPin.length >= minPinLength
+
+        // Update security warning message for AUTHENTICATE mode
+        if (mode == PinMode.AUTHENTICATE) {
+            try {
+                val warningMessage = PinSecurityManager.getLockoutStatusMessage(context)
+                if (warningMessage != null) {
+                    pinMessage.text = warningMessage
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to get lockout status", e)
+            }
+        }
+    }
+
+    /**
+     * Handle PIN authentication attempt with security checks
+     */
+    private fun handleAuthenticationAttempt(pin: String) {
+        try {
+            // First notify the listener (they will validate the PIN)
+            listener?.onPinEntered(pin)
+            // Don't dismiss here - let the listener handle success/failure
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during PIN authentication", e)
+            // Clear PIN and show error
+            currentPin.clear()
+            updatePinDisplay()
+        }
+    }
+
+    /**
+     * Call this method when PIN authentication fails
+     * Should be called by the listener after PIN validation fails
+     */
+    fun onAuthenticationFailed() {
+        try {
+            // Record the failed attempt
+            val securityStatus = PinSecurityManager.recordFailedAttempt(context)
+
+            // Clear the entered PIN
+            currentPin.clear()
+            updatePinDisplay()
+
+            if (securityStatus.isLockedOut) {
+                // Account is now locked out
+                Log.w(TAG, "Account locked out after failed PIN attempt")
+                listener?.onPinSecurityLockout(securityStatus.lockoutMessage ?: "Account locked")
+                dismiss()
+            } else {
+                // Show warning about remaining attempts
+                val remaining = 3 - securityStatus.failedAttempts // MAX_ATTEMPTS_BEFORE_LOCKOUT
+                listener?.onPinAuthenticationFailed(remaining)
+
+                // Update UI to show warning
+                pinMessage.text = "Incorrect PIN. $remaining attempts remaining."
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to handle authentication failure", e)
+            // Fallback: just clear the PIN
+            currentPin.clear()
+            updatePinDisplay()
+        }
+    }
+
+    /**
+     * Call this method when PIN authentication succeeds
+     * Should be called by the listener after PIN validation succeeds
+     */
+    fun onAuthenticationSucceeded() {
+        try {
+            // Record the successful attempt (clears lockout state)
+            PinSecurityManager.recordSuccessfulAttempt(context)
+            Log.i(TAG, "PIN authentication succeeded - clearing lockout state")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to record successful PIN attempt", e)
+        }
+
+        // Dismiss the dialog
+        dismiss()
     }
 
     fun dismiss() {

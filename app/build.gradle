@@ -6,28 +6,28 @@ plugins {
 }
 
 android {
-    namespace 'com.example.earthwallet'
-    compileSdk 34
+    namespace = 'com.example.earthwallet'
+    compileSdk = 34
 
     defaultConfig {
-        applicationId "com.example.earthwallet"
-        minSdk 23
-        targetSdk 34
-        versionCode 1
-        versionName "1.0"
+        applicationId = "com.example.earthwallet"
+        minSdk = 23
+        targetSdk = 34
+        versionCode = 1
+        versionName = "1.0"
 
-        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
         release {
-            minifyEnabled false
+            minifyEnabled = false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
     kotlinOptions {
@@ -38,20 +38,20 @@ android {
     }
     
     lint {
-        abortOnError false
-        checkReleaseBuilds false
-        disable 'NotificationPermission'
+        abortOnError = false
+        checkReleaseBuilds = false
+        disable = ['NotificationPermission']
     }
 
     sourceSets {
         debug {
             java {
-                srcDirs 'build/generated/source/proto/debug/java'
+                srcDirs = ['build/generated/source/proto/debug/java']
             }
         }
         release {
             java {
-                srcDirs 'build/generated/source/proto/release/java'
+                srcDirs = ['build/generated/source/proto/release/java']
             }
         }
     }

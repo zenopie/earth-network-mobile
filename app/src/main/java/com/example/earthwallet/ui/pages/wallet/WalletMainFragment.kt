@@ -48,16 +48,13 @@ class WalletMainFragment : Fragment(),
     private lateinit var walletNameText: TextView
 
     // State management
-    private lateinit var securePrefs: SharedPreferences
     private var currentWalletAddress = ""
     private var currentWalletName = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Use centralized secure preferences from HostActivity
-        securePrefs = (activity as com.example.earthwallet.ui.host.HostActivity).getSecurePrefs()
-            ?: throw IllegalStateException("Failed to get secure preferences")
+        // SecureWalletManager handles secure preferences internally
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
@@ -113,11 +110,11 @@ class WalletMainFragment : Fragment(),
     private fun loadCurrentWallet() {
         try {
             // Use SecureWalletManager instead of direct preferences access
-            currentWalletName = SecureWalletManager.getCurrentWalletName(requireContext(), securePrefs)
-            currentWalletAddress = SecureWalletManager.getWalletAddress(requireContext(), securePrefs) ?: ""
+            currentWalletName = SecureWalletManager.getCurrentWalletName(requireContext())
+            currentWalletAddress = SecureWalletManager.getWalletAddress(requireContext()) ?: ""
 
             // Ensure wallet has address (handles migration)
-            SecureWalletManager.ensureCurrentWalletHasAddress(requireContext(), securePrefs)
+            SecureWalletManager.ensureCurrentWalletHasAddress(requireContext())
 
             Log.d(TAG, "Loaded wallet: $currentWalletName ($currentWalletAddress)")
         } catch (e: Exception) {
@@ -162,9 +159,6 @@ class WalletMainFragment : Fragment(),
         showManagePermitsFragment()
     }
 
-    override fun getSecurePrefs(): SharedPreferences {
-        return securePrefs
-    }
 
     // =============================================================================
     // ManagePermitsFragment.ManagePermitsListener Implementation

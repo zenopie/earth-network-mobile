@@ -7,7 +7,7 @@ import android.content.SharedPreferences
 import android.nfc.NfcAdapter
 import android.nfc.Tag
 import android.nfc.tech.IsoDep
-import android.os.AsyncTask
+import kotlinx.coroutines.*
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -21,7 +21,6 @@ import android.widget.*
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKeys
 import com.example.earthwallet.Constants
 import com.example.earthwallet.wallet.services.SecureWalletManager
 import net.sf.scuba.smartcards.CardService
@@ -188,62 +187,62 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
     // Called by parent activity when NFC tag is detected
     fun handleNfcTag(tag: Tag?) {
         if (tag != null) {
-            Log.d(TAG, "NFC tag discovered, starting ReadPassportTask")
-            ReadPassportTask().execute(tag)
+            Log.d(TAG, "NFC tag discovered, starting passport reading coroutine")
+            readPassportAsync(tag)
         }
     }
 
-    private inner class ReadPassportTask : AsyncTask<Tag, Void, PassportData?>() {
-        override fun onPreExecute() {
-            super.onPreExecute()
-            Log.d(TAG, "ReadPassportTask onPreExecute - showing loading spinner")
-            // Show simple progress bar
-            progressBar?.visibility = View.VISIBLE
-            resultContainer?.visibility = View.GONE
-        }
+    private fun readPassportAsync(tag: Tag) {
+        Log.d(TAG, "Starting passport reading coroutine - showing loading spinner")
 
-        override fun doInBackground(vararg params: Tag): PassportData? {
-            return if (params.isNotEmpty() && params[0] != null) {
-                readPassport(params[0])
-            } else {
-                null
-            }
-        }
+        // Show progress bar on UI thread
+        progressBar?.visibility = View.VISIBLE
+        resultContainer?.visibility = View.GONE
 
-        override fun onPostExecute(passportData: PassportData?) {
-            super.onPostExecute(passportData)
-            Log.d(TAG, "onPostExecute called with passportData=$passportData")
-
-            if (passportData != null) {
-                Log.d(TAG, "Passport data read successfully")
-
-                // Hide progress bar
-                progressBar?.visibility = View.GONE
-
-                // Check if verification was successful
-                val verificationSuccessful = isVerificationSuccessful(passportData)
-                Log.d(TAG, "Verification successful: $verificationSuccessful")
-
-                // Navigate based on result
-                if (verificationSuccessful) {
-                    Log.d(TAG, "Scan successful, navigating back to ANML")
-                    navigateBackToANML()
-                } else {
-                    Log.d(TAG, "Verification failed, navigating to failure screen")
-                    val failureReason = getFailureReason(passportData)
-                    val failureDetails = getFailureDetails(passportData)
-                    navigateToFailureScreen(failureReason, failureDetails)
+        // Launch coroutine for background work
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                val passportData = withContext(Dispatchers.IO) {
+                    readPassport(tag)
                 }
 
-            } else {
-                Log.d(TAG, "Failed to read passport data")
-                // Hide progress bar
-                progressBar?.visibility = View.GONE
+                Log.d(TAG, "Passport reading completed with passportData=$passportData")
 
-                // Navigate to failure screen
-                Log.d(TAG, "Scan failed, navigating to failure screen")
-                navigateToFailureScreen("Failed to read passport",
-                    "Please ensure your passport is placed correctly on the back of your device and try again.")
+                if (passportData != null) {
+                    Log.d(TAG, "Passport data read successfully")
+
+                    // Hide progress bar
+                    progressBar?.visibility = View.GONE
+
+                    // Check if verification was successful
+                    val verificationSuccessful = isVerificationSuccessful(passportData)
+                    Log.d(TAG, "Verification successful: $verificationSuccessful")
+
+                    // Navigate based on result
+                    if (verificationSuccessful) {
+                        Log.d(TAG, "Scan successful, navigating back to ANML")
+                        navigateBackToANML()
+                    } else {
+                        Log.d(TAG, "Verification failed, navigating to failure screen")
+                        val failureReason = getFailureReason(passportData)
+                        val failureDetails = getFailureDetails(passportData)
+                        navigateToFailureScreen(failureReason, failureDetails)
+                    }
+                } else {
+                    Log.d(TAG, "Failed to read passport data")
+                    // Hide progress bar
+                    progressBar?.visibility = View.GONE
+
+                    // Navigate to failure screen
+                    Log.d(TAG, "Scan failed, navigating to failure screen")
+                    navigateToFailureScreen("Failed to read passport",
+                        "Please ensure your passport is placed correctly on the back of your device and try again.")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Exception during passport reading", e)
+                progressBar?.visibility = View.GONE
+                navigateToFailureScreen("Error reading passport",
+                    "An error occurred: ${e.message}")
             }
         }
     }
