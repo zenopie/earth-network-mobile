@@ -84,7 +84,7 @@ object HardwareKeyManager {
      */
     @RequiresApi(Build.VERSION_CODES.M)
     @Throws(Exception::class)
-    fun initializeEncryptionKey(context: Context): String {
+    fun initializeEncryptionKey(): String {
         return try {
             val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
             keyStore.load(null)
@@ -122,7 +122,7 @@ object HardwareKeyManager {
                 .build()
 
             keyGenerator.init(keyGenParameterSpec)
-            val secretKey = keyGenerator.generateKey()
+            keyGenerator.generateKey()
 
             Log.i(TAG, "Generated new hardware-backed encryption key")
             MNEMONIC_ENCRYPTION_KEY_ALIAS
@@ -144,7 +144,6 @@ object HardwareKeyManager {
             keyStore.load(null)
 
             val secretKey = keyStore.getKey(MNEMONIC_ENCRYPTION_KEY_ALIAS, null) as SecretKey
-                ?: throw Exception("Hardware encryption key not found")
 
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.ENCRYPT_MODE, secretKey)
@@ -185,7 +184,6 @@ object HardwareKeyManager {
             keyStore.load(null)
 
             val secretKey = keyStore.getKey(encryptedData.keyAlias, null) as SecretKey
-                ?: throw Exception("Hardware decryption key not found: ${encryptedData.keyAlias}")
 
             val cipher = Cipher.getInstance(TRANSFORMATION)
             val gcmParameterSpec = GCMParameterSpec(GCM_TAG_LENGTH * 8, encryptedData.iv)
@@ -195,7 +193,7 @@ object HardwareKeyManager {
             val enhancedPlaintext = String(decryptedBytes, Charsets.UTF_8)
 
             // Extract original plaintext by removing entropy additions
-            val originalPlaintext = extractOriginalFromEnhanced(enhancedPlaintext, context)
+            val originalPlaintext = extractOriginalFromEnhanced(enhancedPlaintext)
 
             // Clear decrypted data from memory
             decryptedBytes.fill(0)
@@ -210,94 +208,8 @@ object HardwareKeyManager {
         }
     }
 
-    /**
-     * Rotate the hardware encryption key (for periodic security updates)
-     */
-    @RequiresApi(Build.VERSION_CODES.M)
-    @Throws(Exception::class)
-    fun rotateEncryptionKey(context: Context, currentEncryptedData: EncryptedData): EncryptedData {
-        return try {
-            Log.i(TAG, "Starting key rotation process")
 
-            // Decrypt with old key
-            val plaintext = decryptWithHardwareKey(currentEncryptedData, context)
 
-            // Delete old key
-            val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
-            keyStore.load(null)
-            keyStore.deleteEntry(currentEncryptedData.keyAlias)
-
-            // Generate new key with updated alias
-            val newKeyAlias = "${MNEMONIC_ENCRYPTION_KEY_ALIAS}_${System.currentTimeMillis()}"
-            generateKeyWithAlias(newKeyAlias)
-
-            // Encrypt with new key
-            val newEncryptedData = encryptWithAliasedKey(plaintext, newKeyAlias, context)
-
-            // Clear plaintext from memory
-            plaintext.toCharArray().fill('\u0000')
-
-            Log.i(TAG, "Key rotation completed successfully")
-            newEncryptedData
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Key rotation failed", e)
-            throw Exception("Key rotation failed: ${e.message}", e)
-        }
-    }
-
-    /**
-     * Generate a key with specific alias
-     */
-    @RequiresApi(Build.VERSION_CODES.M)
-    private fun generateKeyWithAlias(keyAlias: String) {
-        val keyGenerator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
-
-        val keyGenParameterSpec = KeyGenParameterSpec.Builder(
-            keyAlias,
-            KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
-        )
-            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-            .setKeySize(256)
-            .setRandomizedEncryptionRequired(true)
-            .apply {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    setIsStrongBoxBacked(true)
-                }
-            }
-            .build()
-
-        keyGenerator.init(keyGenParameterSpec)
-        keyGenerator.generateKey()
-    }
-
-    /**
-     * Encrypt with specific key alias
-     */
-    @RequiresApi(Build.VERSION_CODES.M)
-    private fun encryptWithAliasedKey(plaintext: String, keyAlias: String, context: Context): EncryptedData {
-        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
-        keyStore.load(null)
-
-        val secretKey = keyStore.getKey(keyAlias, null) as SecretKey
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, secretKey)
-
-        val enhancedPlaintext = enhanceWithEntropy(plaintext, context)
-        val plaintextBytes = enhancedPlaintext.toByteArray(Charsets.UTF_8)
-        val ciphertext = cipher.doFinal(plaintextBytes)
-        val iv = cipher.iv
-
-        enhancedPlaintext.toCharArray().fill('\u0000')
-
-        return EncryptedData(
-            ciphertext = ciphertext,
-            iv = iv,
-            keyAlias = keyAlias,
-            encryptionTimestamp = System.currentTimeMillis()
-        )
-    }
 
     /**
      * Enhance plaintext with additional entropy sources
@@ -315,7 +227,7 @@ object HardwareKeyManager {
     /**
      * Extract original plaintext from entropy-enhanced data
      */
-    private fun extractOriginalFromEnhanced(enhancedPlaintext: String, context: Context): String {
+    private fun extractOriginalFromEnhanced(enhancedPlaintext: String): String {
         val entropyEndMarker = "|ENTROPY_END|"
         val index = enhancedPlaintext.indexOf(entropyEndMarker)
 
@@ -346,52 +258,5 @@ object HardwareKeyManager {
         }
     }
 
-    /**
-     * Check if hardware key needs rotation (based on age)
-     *
-     * NOTE: Set to 2 minutes for testing purposes
-     * In production, change this back to a longer interval (e.g., 90 days)
-     */
-    fun shouldRotateKey(encryptedData: EncryptedData): Boolean {
-        val keyAgeMs = System.currentTimeMillis() - encryptedData.encryptionTimestamp
-        val maxKeyAgeMs = 2L * 60L * 1000L // 2 minutes for testing (change to 90L * 24L * 60L * 60L * 1000L for production)
 
-        return keyAgeMs > maxKeyAgeMs
-    }
-
-    /**
-     * Clean up old/unused hardware keys
-     */
-    @RequiresApi(Build.VERSION_CODES.M)
-    fun cleanupOldKeys() {
-        try {
-            val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
-            keyStore.load(null)
-
-            val aliases = keyStore.aliases().toList()
-            val currentTime = System.currentTimeMillis()
-
-            aliases.forEach { alias ->
-                if (alias.startsWith(MNEMONIC_ENCRYPTION_KEY_ALIAS) &&
-                    alias != MNEMONIC_ENCRYPTION_KEY_ALIAS) {
-
-                    // Extract timestamp from alias
-                    val timestampStr = alias.substringAfterLast("_")
-                    val keyTimestamp = timestampStr.toLongOrNull()
-
-                    if (keyTimestamp != null) {
-                        val keyAge = currentTime - keyTimestamp
-                        val maxKeyAge = 5L * 60L * 1000L // 5 minutes for testing (change to 180L * 24L * 60L * 60L * 1000L for production)
-
-                        if (keyAge > maxKeyAge) {
-                            keyStore.deleteEntry(alias)
-                            Log.d(TAG, "Cleaned up old key: $alias")
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to cleanup old keys", e)
-        }
-    }
 }

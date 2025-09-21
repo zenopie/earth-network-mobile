@@ -77,7 +77,7 @@ object SecureWalletManager {
         var mnemonicChars: CharArray? = null
         return try {
             // Initialize hardware key manager only when actually needed for mnemonic operations
-            HardwareKeyManager.initializeEncryptionKey(context)
+            HardwareKeyManager.initializeEncryptionKey()
             Log.d(TAG, "Executing secure mnemonic operation with hardware-backed encryption")
 
             // Fetch mnemonic and convert to char array immediately
@@ -123,7 +123,7 @@ object SecureWalletManager {
         var mnemonic: String? = null
         return try {
             // Initialize hardware key manager only when actually using mnemonic
-            HardwareKeyManager.initializeEncryptionKey(context)
+            HardwareKeyManager.initializeEncryptionKey()
             Log.d(TAG, "Executing mnemonic operation with hardware-backed encryption")
 
             // Fetch mnemonic just-in-time using provided securePrefs or fallback to context
@@ -666,8 +666,8 @@ object SecureWalletManager {
      */
     @Throws(Exception::class)
     fun verifyPinHash(context: Context, securePrefs: SharedPreferences?, pinHash: String): Boolean {
-        // Initialize hardware key manager for TEE security with key rotation
-        HardwareKeyManager.initializeEncryptionKey(context)
+        // Initialize hardware key manager for TEE security
+        HardwareKeyManager.initializeEncryptionKey()
         Log.d(TAG, "Verifying PIN with hardware-backed encryption")
 
         val prefs = securePrefs ?: createSecurePrefs(context)
@@ -689,8 +689,8 @@ object SecureWalletManager {
      */
     @Throws(Exception::class)
     fun setPinHash(context: Context, securePrefs: SharedPreferences?, pinHash: String) {
-        // Initialize hardware key manager for TEE security with key rotation
-        HardwareKeyManager.initializeEncryptionKey(context)
+        // Initialize hardware key manager for TEE security
+        HardwareKeyManager.initializeEncryptionKey()
         Log.d(TAG, "Setting PIN with hardware-backed encryption")
 
         val prefs = securePrefs ?: createSecurePrefs(context)

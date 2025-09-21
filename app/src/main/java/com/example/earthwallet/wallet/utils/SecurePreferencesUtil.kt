@@ -44,7 +44,7 @@ object SecurePreferencesUtil {
         init {
             // Initialize hardware encryption key
             try {
-                HardwareKeyManager.initializeEncryptionKey(context)
+                HardwareKeyManager.initializeEncryptionKey()
                 Log.d(TAG, "Hardware-backed preferences initialized for: $fileName")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to initialize hardware encryption", e)
@@ -66,25 +66,8 @@ object SecurePreferencesUtil {
                     encryptionTimestamp = jsonObj.getLong("timestamp")
                 )
 
-                // Check for key rotation
-                if (HardwareKeyManager.shouldRotateKey(encryptedData)) {
-                    Log.d(TAG, "Performing key rotation for: $key")
-                    val decryptedValue = HardwareKeyManager.decryptWithHardwareKey(encryptedData, context)
-                    val newEncryptedData = HardwareKeyManager.rotateEncryptionKey(context, encryptedData)
-
-                    // Save rotated data
-                    val newJson = JSONObject().apply {
-                        put("ciphertext", Base64.encodeToString(newEncryptedData.ciphertext, Base64.DEFAULT))
-                        put("iv", Base64.encodeToString(newEncryptedData.iv, Base64.DEFAULT))
-                        put("keyAlias", newEncryptedData.keyAlias)
-                        put("timestamp", newEncryptedData.encryptionTimestamp)
-                    }
-                    plainPrefs.edit().putString(key + ENCRYPTED_SUFFIX, newJson.toString()).apply()
-
-                    decryptedValue
-                } else {
-                    HardwareKeyManager.decryptWithHardwareKey(encryptedData, context)
-                }
+                // Decrypt without key rotation
+                HardwareKeyManager.decryptWithHardwareKey(encryptedData, context)
             } catch (e: Exception) {
                 Log.e(TAG, "Decryption failed for key: $key", e)
                 defValue
