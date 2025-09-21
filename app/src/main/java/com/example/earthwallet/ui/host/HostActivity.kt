@@ -17,9 +17,12 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
 import com.example.earthwallet.wallet.services.SessionManager
 import com.example.earthwallet.wallet.services.SecureWalletManager
+import com.example.earthwallet.wallet.services.UpdateManager
 import com.example.earthwallet.ui.utils.WindowInsetsUtil
 import com.example.earthwallet.ui.pages.wallet.CreateWalletFragment
 import com.example.earthwallet.ui.pages.auth.PinEntryFragment
+import com.example.earthwallet.ui.components.ForceUpdateDialog
+import androidx.lifecycle.Observer
 import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.FullScreenContentCallback
 import com.google.android.gms.ads.LoadAdError
@@ -50,6 +53,10 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
     private var isAdLoaded = false
     private var adCompletionCallback: Runnable? = null
 
+    // Update management
+    private lateinit var updateManager: UpdateManager
+    private var forceUpdateDialog: android.app.Dialog? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_host)
@@ -73,6 +80,9 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
 
         // Initialize AdMob
         initializeAds()
+
+        // Initialize update manager
+        initializeUpdateManager()
 
         // Setup modern back pressed handling
         setupBackPressedCallback()
@@ -548,6 +558,68 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
         // PIN was successfully entered and verified in PinEntryFragment
         // Session has already been started, just navigate to appropriate screen
         initializeSessionAndNavigate(pin)
+    }
+
+    /**
+     * Initialize update manager and check for updates
+     */
+    private fun initializeUpdateManager() {
+        updateManager = UpdateManager.getInstance(this)
+
+        // Observe update info
+        updateManager.updateInfo.observe(this, Observer { updateInfo ->
+            updateInfo?.let {
+                if (it.isUpdateAvailable) {
+                    showUpdateDialog(it)
+                }
+            }
+        })
+
+        // Check for updates on app start
+        updateManager.checkForUpdates()
+    }
+
+    /**
+     * Show update dialog based on update info
+     */
+    private fun showUpdateDialog(updateInfo: UpdateManager.UpdateInfo) {
+        // Dismiss any existing dialog
+        forceUpdateDialog?.dismiss()
+
+        if (updateInfo.isForceUpdate) {
+            // Show blocking force update dialog
+            forceUpdateDialog = ForceUpdateDialog.showBlockingForceUpdateDialog(
+                context = this,
+                updateInfo = updateInfo
+            )
+        } else {
+            // Show regular update dialog
+            forceUpdateDialog = ForceUpdateDialog.showUpdateDialog(
+                context = this,
+                updateInfo = updateInfo,
+                onUpdateClicked = {
+                    updateManager.navigateToUpdate(updateInfo)
+                },
+                onLaterClicked = {
+                    // User chose to update later
+                    Log.d(TAG, "User postponed update")
+                }
+            )
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        updateManager.cleanup()
+        forceUpdateDialog?.dismiss()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Check for updates when returning to app (in case user updated from Play Store)
+        if (::updateManager.isInitialized) {
+            updateManager.checkForUpdates()
+        }
     }
 
 }

@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="24dp"
+    android:background="@drawable/dialog_background">
+
+    <!-- Update Icon -->
+    <ImageView
+        android:layout_width="64dp"
+        android:layout_height="64dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginBottom="16dp"
+        android:src="@drawable/ic_system_update_24"
+        android:contentDescription="Update Icon"
+        android:tint="#1976D2" />
+
+    <!-- Title -->
+    <TextView
+        android:id="@+id/update_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="12dp"
+        android:text="Update Available"
+        android:textAlignment="center"
+        android:textColor="#212121"
+        android:textSize="20sp"
+        android:textStyle="bold" />
+
+    <!-- Version Info -->
+    <TextView
+        android:id="@+id/version_info"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="16dp"
+        android:text="Current: 1.0.0 → Latest: 1.1.0"
+        android:textAlignment="center"
+        android:textColor="#757575"
+        android:textSize="14sp" />
+
+    <!-- Message -->
+    <TextView
+        android:id="@+id/update_message"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="24dp"
+        android:lineSpacingExtra="4dp"
+        android:text="A new version is available with improvements and bug fixes. Update now to get the latest features."
+        android:textAlignment="center"
+        android:textColor="#212121"
+        android:textSize="16sp" />
+
+    <!-- Buttons -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:weightSum="2">
+
+        <!-- Later Button -->
+        <Button
+            android:id="@+id/btn_later"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/button_outline"
+            android:text="Later"
+            android:textColor="#1976D2"
+            android:textSize="16sp"
+            android:paddingVertical="12dp" />
+
+        <!-- Update Button -->
+        <Button
+            android:id="@+id/btn_update"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/button_primary"
+            android:text="Update"
+            android:textColor="@android:color/white"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:paddingVertical="12dp" />
+
+    </LinearLayout>
+
+</LinearLayout>
