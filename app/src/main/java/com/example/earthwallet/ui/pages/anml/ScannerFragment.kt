@@ -5,6 +5,7 @@ import android.content.Intent
 import android.nfc.NfcAdapter
 import android.nfc.Tag
 import android.nfc.tech.IsoDep
+import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -67,7 +68,12 @@ class ScannerFragment : Fragment(), PassportScannerFragment.PassportScannerListe
     // Handle NFC intents from parent activity
     fun handleNfcIntent(intent: Intent) {
         if (NfcAdapter.ACTION_TECH_DISCOVERED == intent.action) {
-            val tag = intent.getParcelableExtra<Tag>(NfcAdapter.EXTRA_TAG)
+            val tag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(NfcAdapter.EXTRA_TAG, Tag::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra<Tag>(NfcAdapter.EXTRA_TAG)
+            }
             tag?.let { passportScannerFragment?.handleNfcTag(it) }
         }
     }

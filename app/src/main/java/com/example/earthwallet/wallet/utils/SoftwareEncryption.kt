@@ -1,24 +1,22 @@
 package com.example.earthwallet.wallet.utils
 
 import android.content.Context
-import android.content.pm.PackageManager
-import android.os.Build
-import android.util.Base64
 import android.util.Log
 import java.nio.charset.StandardCharsets
-import java.security.MessageDigest
 import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
+import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
  * SoftwareEncryption
  *
- * Provides software-based AES encryption using device-derived keys as fallback
- * when hardware-backed encryption is not available.
+ * Provides software-based AES encryption using PIN-derived keys with PBKDF2.
+ * Offers strong protection against backup extraction attacks.
  */
 object SoftwareEncryption {
 
@@ -27,6 +25,7 @@ object SoftwareEncryption {
     private const val GCM_IV_LENGTH = 12
     private const val GCM_TAG_LENGTH = 16
     private const val KEY_LENGTH = 32 // 256 bits
+    private const val PBKDF2_ITERATIONS = 100_000 // Industry standard for mobile
 
     /**
      * Data class for software encrypted data
@@ -58,17 +57,17 @@ object SoftwareEncryption {
     }
 
     /**
-     * Encrypt data using device-derived key
+     * Encrypt data using PIN-derived key with PBKDF2
      */
     @Throws(Exception::class)
-    fun encrypt(plaintext: String, context: Context): EncryptedData {
+    fun encrypt(plaintext: String, pin: String, context: Context): EncryptedData {
         return try {
             // Generate random salt for this encryption
             val salt = ByteArray(16)
             SecureRandom().nextBytes(salt)
 
-            // Derive key from device characteristics + salt
-            val key = deriveKeyFromDevice(context, salt)
+            // Derive key from PIN + salt using PBKDF2
+            val key = deriveKeyFromPin(pin, salt)
 
             // Generate random IV
             val iv = ByteArray(GCM_IV_LENGTH)
@@ -86,7 +85,7 @@ object SoftwareEncryption {
             plaintextBytes.fill(0)
             key.encoded?.fill(0)
 
-            Log.d(TAG, "Successfully encrypted data with software-based key")
+            Log.d(TAG, "Successfully encrypted data with PIN-derived key")
 
             EncryptedData(
                 ciphertext = ciphertext,
@@ -101,13 +100,13 @@ object SoftwareEncryption {
     }
 
     /**
-     * Decrypt data using device-derived key
+     * Decrypt data using PIN-derived key with PBKDF2
      */
     @Throws(Exception::class)
-    fun decrypt(encryptedData: EncryptedData, context: Context): String {
+    fun decrypt(encryptedData: EncryptedData, pin: String, context: Context): String {
         return try {
-            // Derive the same key using stored salt
-            val key = deriveKeyFromDevice(context, encryptedData.salt)
+            // Derive the same key using stored salt and PIN
+            val key = deriveKeyFromPin(pin, encryptedData.salt)
 
             // Decrypt
             val cipher = Cipher.getInstance(TRANSFORMATION)
@@ -121,7 +120,7 @@ object SoftwareEncryption {
             decryptedBytes.fill(0)
             key.encoded?.fill(0)
 
-            Log.d(TAG, "Successfully decrypted data with software-based key")
+            Log.d(TAG, "Successfully decrypted data with PIN-derived key")
             result
 
         } catch (e: Exception) {
@@ -131,87 +130,26 @@ object SoftwareEncryption {
     }
 
     /**
-     * Derive encryption key from device characteristics and salt
+     * Derive encryption key from PIN using PBKDF2 with salt
      */
     @Throws(Exception::class)
-    private fun deriveKeyFromDevice(context: Context, salt: ByteArray): SecretKey {
+    private fun deriveKeyFromPin(pin: String, salt: ByteArray): SecretKey {
         return try {
-            // Collect device characteristics
-            val deviceId = getDeviceIdentifier(context)
-            val appSignature = getAppSignature(context)
-            val deviceInfo = "${Build.MODEL}_${Build.MANUFACTURER}_${Build.FINGERPRINT}"
+            val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+            val spec = PBEKeySpec(pin.toCharArray(), salt, PBKDF2_ITERATIONS, KEY_LENGTH * 8)
+            val key = factory.generateSecret(spec)
 
-            // Combine all sources with salt
-            val keyMaterial = "$deviceId|$appSignature|$deviceInfo".toByteArray(StandardCharsets.UTF_8)
-            val saltedMaterial = keyMaterial + salt
+            // Clear the PIN from the spec
+            spec.clearPassword()
 
-            // Hash to create consistent key
-            val digest = MessageDigest.getInstance("SHA-256")
-            val keyBytes = digest.digest(saltedMaterial)
-
-            // Clear intermediate data
-            keyMaterial.fill(0)
-            saltedMaterial.fill(0)
-
-            SecretKeySpec(keyBytes, "AES")
+            SecretKeySpec(key.encoded, "AES")
 
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to derive device key", e)
-            throw Exception("Device key derivation failed: ${e.message}", e)
+            Log.e(TAG, "Failed to derive PIN-based key", e)
+            throw Exception("PIN key derivation failed: ${e.message}", e)
         }
     }
 
-    /**
-     * Get device identifier (Android ID or fallback)
-     */
-    private fun getDeviceIdentifier(context: Context): String {
-        return try {
-            android.provider.Settings.Secure.getString(
-                context.contentResolver,
-                android.provider.Settings.Secure.ANDROID_ID
-            ) ?: "unknown_device_${System.currentTimeMillis()}"
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to get Android ID", e)
-            "fallback_device_${Build.MODEL.hashCode()}"
-        }
-    }
-
-    /**
-     * Get app signature for additional entropy
-     */
-    private fun getAppSignature(context: Context): String {
-        return try {
-            val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                context.packageManager.getPackageInfo(
-                    context.packageName,
-                    PackageManager.GET_SIGNING_CERTIFICATES
-                )
-            } else {
-                @Suppress("DEPRECATION")
-                context.packageManager.getPackageInfo(
-                    context.packageName,
-                    PackageManager.GET_SIGNATURES
-                )
-            }
-
-            val signature = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                packageInfo.signingInfo?.apkContentsSigners?.firstOrNull()?.toByteArray()
-            } else {
-                @Suppress("DEPRECATION")
-                packageInfo.signatures?.firstOrNull()?.toByteArray()
-            }
-
-            signature?.let {
-                MessageDigest.getInstance("SHA-256").digest(it).let {
-                    Base64.encodeToString(it, Base64.NO_WRAP).take(16)
-                }
-            } ?: "unknown_signature"
-
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to get app signature", e)
-            "fallback_signature"
-        }
-    }
 
     /**
      * Check if software encryption is available

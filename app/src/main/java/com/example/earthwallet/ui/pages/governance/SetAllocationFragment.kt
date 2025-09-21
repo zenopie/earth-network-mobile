@@ -14,6 +14,8 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
 import com.example.earthwallet.Constants
 import com.example.earthwallet.R
@@ -48,6 +50,10 @@ class SetAllocationFragment : Fragment() {
             return fragment
         }
     }
+
+    // Activity Result Launchers
+    private lateinit var caretakerFundLauncher: ActivityResultLauncher<Intent>
+    private lateinit var deflationFundLauncher: ActivityResultLauncher<Intent>
 
     // UI Components
     private lateinit var titleText: TextView
@@ -87,6 +93,19 @@ class SetAllocationFragment : Fragment() {
         arguments?.let {
             fundType = it.getString(ARG_FUND_TYPE)
             fundTitle = it.getString(ARG_FUND_TITLE)
+        }
+
+        // Initialize activity result launchers
+        caretakerFundLauncher = registerForActivityResult(
+            ActivityResultContracts.StartActivityForResult()
+        ) { result ->
+            handleTransactionResult(result.resultCode, result.data)
+        }
+
+        deflationFundLauncher = registerForActivityResult(
+            ActivityResultContracts.StartActivityForResult()
+        ) { result ->
+            handleTransactionResult(result.resultCode, result.data)
         }
 
         // Initialize services
@@ -435,7 +454,7 @@ class SetAllocationFragment : Fragment() {
                     intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.REGISTRATION_HASH)
                     intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, executeMsg.toString())
 
-                    startActivityForResult(intent, 1001) // Request code for caretaker fund
+                    caretakerFundLauncher.launch(intent)
                 }
                 FUND_TYPE_DEFLATION -> {
                     // Execute on staking contract
@@ -445,7 +464,7 @@ class SetAllocationFragment : Fragment() {
                     intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.STAKING_HASH)
                     intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, executeMsg.toString())
 
-                    startActivityForResult(intent, 1002) // Request code for deflation fund
+                    deflationFundLauncher.launch(intent)
                 }
             }
 
@@ -455,29 +474,25 @@ class SetAllocationFragment : Fragment() {
         }
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-
-        if (requestCode == 1001 || requestCode == 1002) { // Caretaker or Deflation fund allocation
-            if (resultCode == Activity.RESULT_OK) {
-                // Success - allocation was set
-                // Go back to previous fragment
-                activity?.supportFragmentManager?.popBackStack()
-            } else {
-                // Handle errors
-                var error = "Unknown error"
-                data?.let {
-                    val errorStr = it.getStringExtra(TransactionActivity.EXTRA_ERROR)
-                    if (!errorStr.isNullOrEmpty()) {
-                        error = errorStr
-                    } else {
-                        error = "Transaction cancelled or failed"
-                    }
+    private fun handleTransactionResult(resultCode: Int, data: Intent?) {
+        if (resultCode == Activity.RESULT_OK) {
+            // Success - allocation was set
+            // Go back to previous fragment
+            activity?.supportFragmentManager?.popBackStack()
+        } else {
+            // Handle errors
+            var error = "Unknown error"
+            data?.let {
+                val errorStr = it.getStringExtra(TransactionActivity.EXTRA_ERROR)
+                if (!errorStr.isNullOrEmpty()) {
+                    error = errorStr
+                } else {
+                    error = "Transaction cancelled or failed"
                 }
-
-                Log.e(TAG, "Error setting allocation: $error")
-                Toast.makeText(context, "Error setting allocation: $error", Toast.LENGTH_LONG).show()
             }
+
+            Log.e(TAG, "Error setting allocation: $error")
+            Toast.makeText(context, "Error setting allocation: $error", Toast.LENGTH_LONG).show()
         }
     }
 

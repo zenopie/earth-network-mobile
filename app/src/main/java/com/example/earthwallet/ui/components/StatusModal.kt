@@ -21,7 +21,7 @@ import com.example.earthwallet.R
  * A general-purpose status modal that can display loading, success, or error states
  * Similar to the React StatusModal component but adapted for Android
  */
-class StatusModal(private var context: Context?, theme: Theme = Theme.LIGHT) {
+class StatusModal(private var context: Context?) {
 
     companion object {
         private const val TAG = "StatusModal"
@@ -307,7 +307,7 @@ class StatusModal(private var context: Context?, theme: Theme = Theme.LIGHT) {
                 val ctx = context!!
                 if (ctx is android.app.Activity) {
                     if (!ctx.isDestroyed) {
-                        Glide.with(ctx).clear(loadingSpinner!!)
+                        Glide.with(ctx.applicationContext).clear(loadingSpinner!!)
                     }
                 } else {
                     Glide.with(ctx).clear(loadingSpinner!!)

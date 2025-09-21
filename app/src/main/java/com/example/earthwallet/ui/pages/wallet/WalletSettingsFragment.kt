@@ -8,6 +8,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.ImageButton
+import android.widget.RadioGroup
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
@@ -31,7 +32,6 @@ class WalletSettingsFragment : Fragment() {
     private lateinit var switchBiometricAuth: Switch
     private lateinit var switchTransactionAuth: Switch
     private lateinit var tvBiometricStatus: TextView
-    private lateinit var tvSecurityLevel: TextView
     private lateinit var btnRemoveAppData: Button
 
     // Interface for communication with parent activity
@@ -56,7 +56,6 @@ class WalletSettingsFragment : Fragment() {
         switchBiometricAuth = view.findViewById(R.id.switch_biometric_auth)
         switchTransactionAuth = view.findViewById(R.id.switch_transaction_auth)
         tvBiometricStatus = view.findViewById(R.id.tv_biometric_status)
-        tvSecurityLevel = view.findViewById(R.id.tv_security_level)
         btnRemoveAppData = view.findViewById(R.id.btn_remove_app_data)
 
         // Setup back button
@@ -66,10 +65,10 @@ class WalletSettingsFragment : Fragment() {
         }
 
         // Initialize security level display
-        initializeSecurityLevel()
 
         // Initialize biometric settings
         initializeBiometricSettings()
+
 
         // Setup biometric toggle listener
         switchBiometricAuth.setOnCheckedChangeListener { _, isChecked ->
@@ -81,20 +80,13 @@ class WalletSettingsFragment : Fragment() {
             handleTransactionAuthToggle(isChecked)
         }
 
+
         // Setup remove app data button listener
         btnRemoveAppData.setOnClickListener {
             showRemoveAppDataDialog()
         }
     }
 
-    private fun initializeSecurityLevel() {
-        try {
-            val securityMessage = SecureWalletManager.getSecurityStatusMessage(requireContext())
-            tvSecurityLevel.text = securityMessage
-        } catch (e: Exception) {
-            tvSecurityLevel.text = "⚠️ Unable to determine security level"
-        }
-    }
 
     private fun initializeBiometricSettings() {
         val biometricManager = BiometricManager.from(requireContext())
@@ -236,18 +228,10 @@ class WalletSettingsFragment : Fragment() {
             .show()
     }
 
+
     private fun clearAppData() {
         try {
             val context = requireContext()
-
-            // Clear all wallet data using SecureWalletManager
-            try {
-                // Clear hardware-backed encrypted preferences using SecurePreferencesUtil
-                val securePrefs = com.example.earthwallet.wallet.utils.SecurePreferencesUtil.createEncryptedPreferences(context, "secret_wallet_prefs")
-                securePrefs.edit().clear().apply()
-            } catch (e: Exception) {
-                // Hardware preferences might not exist, continue
-            }
 
             // Clear software-encrypted preferences
             try {
@@ -275,20 +259,6 @@ class WalletSettingsFragment : Fragment() {
                 dbFolder.listFiles()?.forEach { file ->
                     file.delete()
                 }
-            }
-
-            // Clear Android Keystore entries
-            try {
-                val keyStore = java.security.KeyStore.getInstance("AndroidKeyStore")
-                keyStore.load(null)
-                val aliases = keyStore.aliases().toList()
-                for (alias in aliases) {
-                    if (alias.contains("mnemonic_encryption") || alias.contains("secret_wallet")) {
-                        keyStore.deleteEntry(alias)
-                    }
-                }
-            } catch (e: Exception) {
-                // Keystore clearing might fail, but continue
             }
 
             Toast.makeText(context, "App data cleared successfully. Please restart the app.", Toast.LENGTH_LONG).show()

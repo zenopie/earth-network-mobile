@@ -539,49 +539,4 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
             callback?.run()
         }
     }
-
-    // =============================================================================
-    // PinEntryFragment.PinEntryListener Implementation
-    // =============================================================================
-
-    override fun onPinEntered(pin: String) {
-        // PIN was successfully entered and verified in PinEntryFragment
-        // Session has already been started, just navigate to appropriate screen
-        initializeSessionAndNavigate(pin)
-    }
-
-    override fun onForgotPin() {
-        // User chose to reset/clear app data
-        android.app.AlertDialog.Builder(this)
-            .setTitle("Reset App Data")
-            .setMessage("This will permanently delete all wallets and app data. This action cannot be undone. Are you sure?")
-            .setPositiveButton("Reset") { _, _ ->
-                // Clear all app data
-                try {
-                    val prefs = getSharedPreferences("secret_wallet_prefs_software", MODE_PRIVATE)
-                    prefs.edit().clear().apply()
-                    
-                    // Clear other preference files if they exist
-                    val prefsDir = applicationInfo.dataDir + "/shared_prefs"
-                    val prefsFolder = java.io.File(prefsDir)
-                    if (prefsFolder.exists()) {
-                        prefsFolder.listFiles()?.forEach { file ->
-                            if (file.name.endsWith(".xml")) {
-                                file.delete()
-                            }
-                        }
-                    }
-                    
-                    android.widget.Toast.makeText(this, "App data cleared. Please restart the app.", android.widget.Toast.LENGTH_LONG).show()
-                    
-                    // Exit the app
-                    finishAffinity()
-                } catch (e: Exception) {
-                    android.widget.Toast.makeText(this, "Failed to clear app data: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
-                }
-            }
-            .setNegativeButton("Cancel", null)
-            .setIcon(android.R.drawable.ic_dialog_alert)
-            .show()
-    }
 }

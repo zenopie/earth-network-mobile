@@ -900,13 +900,4 @@ object SecureWalletManager {
         return SessionManager.createSessionPreferences(context)
     }
 
-
-    /**
-     * Verify PIN hash without requiring a session (for login)
-     */
-    @Throws(Exception::class)
-    fun verifyPinHashWithoutSession(context: Context, pinHash: String): Boolean {
-        val softwarePrefs = context.getSharedPreferences(PREF_FILE + "_software", Context.MODE_PRIVATE)
-        val storedHash = softwarePrefs.getString("pin_hash", "") ?: ""
-        return storedHash == pinHash
-    }}
+}

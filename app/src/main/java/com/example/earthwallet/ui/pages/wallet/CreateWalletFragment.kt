@@ -18,6 +18,8 @@ import android.widget.Toast
 import androidx.fragment.app.Fragment
 import com.example.earthwallet.R
 import com.example.earthwallet.wallet.services.SecureWalletManager
+import com.example.earthwallet.wallet.services.SessionManager
+import com.example.earthwallet.ui.host.HostActivity
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 
@@ -55,7 +57,6 @@ class CreateWalletFragment : Fragment() {
 
     // Pin step
     private lateinit var walletNameInput: EditText
-    private lateinit var encryptionLevelGroup: RadioGroup
     private lateinit var pinInput: EditText
     private lateinit var pinConfirmInput: EditText
     private lateinit var btnPinNext: Button
@@ -128,7 +129,6 @@ class CreateWalletFragment : Fragment() {
         btnConfirmNext = view.findViewById(R.id.btn_confirm_next)
 
         walletNameInput = view.findViewById(R.id.wallet_name_input)
-        encryptionLevelGroup = view.findViewById(R.id.encryption_level_group)
         pinInput = view.findViewById(R.id.pin_input)
         pinConfirmInput = view.findViewById(R.id.pin_confirm_input)
         btnPinNext = view.findViewById(R.id.btn_pin_next)
@@ -225,7 +225,8 @@ class CreateWalletFragment : Fragment() {
         }
 
         btnDone.setOnClickListener {
-            listener?.onWalletCreated()
+            // onWalletCreated() was already called when wallet was saved
+            // Just close this screen since UI is already refreshed
         }
 
         // Initialize UI state
@@ -296,47 +297,53 @@ class CreateWalletFragment : Fragment() {
 
     private fun saveMnemonicAndPin(pin: String?, walletName: String) {
         try {
-            // Check selected encryption level for testing
-            val selectedEncryptionId = encryptionLevelGroup.checkedRadioButtonId
-            val forceHardwareEncryption = selectedEncryptionId == R.id.radio_hardware_encryption
-            val forceSoftwareEncryption = selectedEncryptionId == R.id.radio_software_encryption
-
-            if (forceSoftwareEncryption) {
-                // Set persistent preference for software encryption
-                SecureWalletManager.setEncryptionPreference(requireContext(), true)
-                Toast.makeText(requireContext(), "Testing: Using software encryption", Toast.LENGTH_SHORT).show()
-                saveMnemonicWithSoftwareEncryption(pin, walletName)
-                return
-            } else if (forceHardwareEncryption) {
-                // Set persistent preference for hardware encryption
-                SecureWalletManager.setEncryptionPreference(requireContext(), false)
-                Toast.makeText(requireContext(), "Testing: Using hardware encryption", Toast.LENGTH_SHORT).show()
-            }
-
             val hasExistingPin = SecureWalletManager.hasPinSet(requireContext())
-            var pinHash = ""
 
             if (!hasExistingPin) {
                 if (pin == null) {
                     Toast.makeText(requireContext(), "No existing PIN found; please create a PIN", Toast.LENGTH_SHORT).show()
                     return
                 }
+
+                // For first-time setup, store PIN hash directly to storage
                 val md = MessageDigest.getInstance("SHA-256")
                 val digest = md.digest(pin.toByteArray(StandardCharsets.UTF_8))
                 val sb = StringBuilder()
                 for (b in digest) {
                     sb.append(String.format("%02x", b))
                 }
-                pinHash = sb.toString()
+                val pinHash = sb.toString()
+
+                // Store PIN hash directly in shared preferences (not through session)
+                val prefs = requireContext().getSharedPreferences("secret_wallet_prefs_software", Context.MODE_PRIVATE)
+                prefs.edit().putString("pin_hash", pinHash).apply()
+
+                // Start session with the PIN
+                SessionManager.startSession(requireContext(), pin)
+            } else {
+                // PIN already exists - we need to get it from user input
+                // For now, assume PIN is provided (TODO: proper PIN entry flow)
+                if (pin == null) {
+                    Toast.makeText(requireContext(), "Please enter existing PIN", Toast.LENGTH_SHORT).show()
+                    return
+                }
+
+                // Start session with existing PIN
+                SessionManager.startSession(requireContext(), pin)
             }
 
-            // Create wallet using SecureWalletManager
+            // Create wallet using SecureWalletManager (now with active session)
             mnemonic?.let { SecureWalletManager.createWallet(requireContext(), walletName, it) }
 
-            // Set PIN hash if this is the first wallet
-            if (!hasExistingPin) {
-                SecureWalletManager.setPinHash(requireContext(), pinHash)
+            // Initialize HostActivity session for navigation
+            (activity as? HostActivity)?.let { hostActivity ->
+                pin?.let { userPin ->
+                    hostActivity.initializeSessionAndNavigate(userPin)
+                }
             }
+
+            // Notify that wallet was created so UI can refresh
+            listener?.onWalletCreated()
 
             Toast.makeText(requireContext(), "Wallet created and saved securely", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
@@ -344,38 +351,4 @@ class CreateWalletFragment : Fragment() {
         }
     }
 
-    private fun saveMnemonicWithSoftwareEncryption(pin: String?, walletName: String) {
-        try {
-            val hasExistingPin = SecureWalletManager.hasPinSet(requireContext())
-            var pinHash = ""
-
-            if (!hasExistingPin) {
-                if (pin == null) {
-                    Toast.makeText(requireContext(), "No existing PIN found; please create a PIN", Toast.LENGTH_SHORT).show()
-                    return
-                }
-                val md = MessageDigest.getInstance("SHA-256")
-                val digest = md.digest(pin.toByteArray(StandardCharsets.UTF_8))
-                val sb = StringBuilder()
-                for (b in digest) {
-                    sb.append(String.format("%02x", b))
-                }
-                pinHash = sb.toString()
-
-                // Force software encryption by using software preferences
-                val softwarePrefs = requireContext().getSharedPreferences("secret_wallet_prefs_software", Context.MODE_PRIVATE)
-                SecureWalletManager.setPinHash(requireContext(), softwarePrefs, pinHash)
-            }
-
-            // Force creation with software encryption storage
-            val softwarePrefs = requireContext().getSharedPreferences("secret_wallet_prefs_software", Context.MODE_PRIVATE)
-            mnemonic?.let { SecureWalletManager.createWallet(requireContext(), softwarePrefs, walletName, it) }
-
-            Toast.makeText(requireContext(), "Wallet created with software encryption", Toast.LENGTH_SHORT).show()
-
-        } catch (e: Exception) {
-            Log.e("CreateWalletFragment", "Failed to save with software encryption", e)
-            Toast.makeText(requireContext(), "Failed to save wallet with software encryption: ${e.message}", Toast.LENGTH_LONG).show()
-        }
-    }
 }

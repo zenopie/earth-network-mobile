@@ -1,14 +1,19 @@
 package com.example.earthwallet.ui.pages.anml
 
 import com.example.earthwallet.R
+import android.os.Build
 import android.os.Bundle
 import android.text.TextUtils
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.Button
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.Fragment
 import com.google.android.material.textfield.TextInputEditText
 
@@ -51,9 +56,13 @@ class MRZInputFragment : Fragment() {
         (activity as? com.example.earthwallet.ui.host.HostActivity)?.let { hostActivity ->
             hostActivity.hideBottomNavigation()
 
-            // Hide status bar
-            activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+            // Hide status bar using modern approach
+            activity?.window?.let { window ->
+                WindowCompat.setDecorFitsSystemWindows(window, false)
+                val controller = WindowInsetsControllerCompat(window, window.decorView)
+                controller.hide(WindowInsetsCompat.Type.statusBars())
+                controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
         }
 
         // Initialize UI elements

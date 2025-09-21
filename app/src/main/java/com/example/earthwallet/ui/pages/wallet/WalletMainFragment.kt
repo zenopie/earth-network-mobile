@@ -56,9 +56,6 @@ class WalletMainFragment : Fragment(),
     private var currentWalletAddress = ""
     private var currentWalletName = ""
 
-    // Performance optimization
-    private var isWalletDataCached = false
-    private var isLoadingWalletData = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -113,26 +110,11 @@ class WalletMainFragment : Fragment(),
      * Forces refresh when wallet has actually changed
      */
     private fun refreshWalletsUI() {
-        Log.d(TAG, "Refreshing wallet UI (cache invalidated)")
-        isWalletDataCached = false // Invalidate cache
-        loadCurrentWallet(forceRefresh = true)
+        Log.d(TAG, "Refreshing wallet UI")
+        loadCurrentWallet()
     }
 
-    private fun loadCurrentWallet(forceRefresh: Boolean = false) {
-        // Use cached data if available and not forcing refresh
-        if (isWalletDataCached && !forceRefresh) {
-            Log.d(TAG, "Using cached wallet data: $currentWalletName")
-            updateChildFragments()
-            return
-        }
-
-        // Prevent multiple simultaneous loads
-        if (isLoadingWalletData) {
-            Log.d(TAG, "Wallet data already loading, skipping")
-            return
-        }
-
-        isLoadingWalletData = true
+    private fun loadCurrentWallet() {
 
         lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -149,8 +131,6 @@ class WalletMainFragment : Fragment(),
                     if (isAdded) { // Check if fragment is still attached
                         currentWalletName = walletName
                         currentWalletAddress = walletAddress
-                        isWalletDataCached = true
-                        isLoadingWalletData = false
 
                         Log.d(TAG, "Loaded wallet: $currentWalletName ($currentWalletAddress)")
                         updateChildFragments()
@@ -163,7 +143,6 @@ class WalletMainFragment : Fragment(),
                         Log.e(TAG, "Failed to load current wallet", e)
                         currentWalletName = "Error"
                         currentWalletAddress = ""
-                        isLoadingWalletData = false
                         updateChildFragments()
                     }
                 }
@@ -315,14 +294,8 @@ class WalletMainFragment : Fragment(),
 
     override fun onResume() {
         super.onResume()
-        // Only load wallet data if not already cached (much faster for navigation)
-        // Full refresh only happens when wallet actually changes via refreshWalletsUI()
-        if (!isWalletDataCached) {
-            Log.d(TAG, "onResume: Loading wallet data (not cached)")
-            loadCurrentWallet()
-        } else {
-            Log.d(TAG, "onResume: Using cached wallet data")
-            updateChildFragments()
-        }
+        // Always load fresh wallet data
+        Log.d(TAG, "onResume: Loading wallet data")
+        loadCurrentWallet()
     }
 }

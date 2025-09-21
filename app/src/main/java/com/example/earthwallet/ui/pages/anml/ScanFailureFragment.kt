@@ -1,15 +1,20 @@
 package com.example.earthwallet.ui.pages.anml
 
 import android.graphics.drawable.AnimatedVectorDrawable
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.Fragment
 import com.example.earthwallet.R
 
@@ -59,9 +64,13 @@ class ScanFailureFragment : Fragment() {
         (activity as? com.example.earthwallet.ui.host.HostActivity)?.let { hostActivity ->
             hostActivity.hideBottomNavigation()
 
-            // Hide status bar
-            activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+            // Hide status bar using modern approach
+            activity?.window?.let { window ->
+                WindowCompat.setDecorFitsSystemWindows(window, false)
+                val controller = WindowInsetsControllerCompat(window, window.decorView)
+                controller.hide(WindowInsetsCompat.Type.statusBars())
+                controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
         }
 
         // Set failure reason and details
@@ -99,10 +108,13 @@ class ScanFailureFragment : Fragment() {
 
     private fun navigateBackToANML() {
         (activity as? com.example.earthwallet.ui.host.HostActivity)?.let { hostActivity ->
-            // Show bottom navigation and status bar
+            // Show bottom navigation and status bar using modern approach
             hostActivity.showBottomNavigation()
-            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-            activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+            activity?.window?.let { window ->
+                WindowCompat.setDecorFitsSystemWindows(window, true)
+                val controller = WindowInsetsControllerCompat(window, window.decorView)
+                controller.show(WindowInsetsCompat.Type.statusBars())
+            }
 
             // Navigate to ANML page
             hostActivity.showFragment("anml")
