@@ -94,11 +94,9 @@ class TokenBalancesFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        // Initialize token balances if we have a wallet address
+        // Load current wallet address for initialization
         loadCurrentWalletAddress()
-        if (!TextUtils.isEmpty(walletAddress)) {
-            refreshTokenBalances()
-        }
+        // Note: Don't call refreshTokenBalances() here - let parent fragment control when to refresh
     }
 
     /**

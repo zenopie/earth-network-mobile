@@ -7,9 +7,14 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageButton
+import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentTransaction
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.example.earthwallet.R
 import com.example.earthwallet.wallet.constants.Tokens
 import com.example.earthwallet.wallet.services.SecureWalletManager
@@ -50,6 +55,10 @@ class WalletMainFragment : Fragment(),
     // State management
     private var currentWalletAddress = ""
     private var currentWalletName = ""
+
+    // Performance optimization
+    private var isWalletDataCached = false
+    private var isLoadingWalletData = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -101,26 +110,64 @@ class WalletMainFragment : Fragment(),
 
     /**
      * Refresh wallet UI - loads current wallet and updates all child fragments
+     * Forces refresh when wallet has actually changed
      */
     private fun refreshWalletsUI() {
-        loadCurrentWallet()
-        updateChildFragments()
+        Log.d(TAG, "Refreshing wallet UI (cache invalidated)")
+        isWalletDataCached = false // Invalidate cache
+        loadCurrentWallet(forceRefresh = true)
     }
 
-    private fun loadCurrentWallet() {
-        try {
-            // Use SecureWalletManager instead of direct preferences access
-            currentWalletName = SecureWalletManager.getCurrentWalletName(requireContext())
-            currentWalletAddress = SecureWalletManager.getWalletAddress(requireContext()) ?: ""
+    private fun loadCurrentWallet(forceRefresh: Boolean = false) {
+        // Use cached data if available and not forcing refresh
+        if (isWalletDataCached && !forceRefresh) {
+            Log.d(TAG, "Using cached wallet data: $currentWalletName")
+            updateChildFragments()
+            return
+        }
 
-            // Ensure wallet has address (handles migration)
-            SecureWalletManager.ensureCurrentWalletHasAddress(requireContext())
+        // Prevent multiple simultaneous loads
+        if (isLoadingWalletData) {
+            Log.d(TAG, "Wallet data already loading, skipping")
+            return
+        }
 
-            Log.d(TAG, "Loaded wallet: $currentWalletName ($currentWalletAddress)")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to load current wallet", e)
-            currentWalletName = "Error"
-            currentWalletAddress = ""
+        isLoadingWalletData = true
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                Log.d(TAG, "Loading wallet data in background...")
+
+                // Heavy operations on background thread
+                val walletName = SecureWalletManager.getCurrentWalletName(requireContext())
+                val walletAddress = SecureWalletManager.getWalletAddress(requireContext()) ?: ""
+
+                // No migration needed - app hasn't been released yet
+
+                // Update UI on main thread
+                withContext(Dispatchers.Main) {
+                    if (isAdded) { // Check if fragment is still attached
+                        currentWalletName = walletName
+                        currentWalletAddress = walletAddress
+                        isWalletDataCached = true
+                        isLoadingWalletData = false
+
+                        Log.d(TAG, "Loaded wallet: $currentWalletName ($currentWalletAddress)")
+                        updateChildFragments()
+                    }
+                }
+
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    if (isAdded) {
+                        Log.e(TAG, "Failed to load current wallet", e)
+                        currentWalletName = "Error"
+                        currentWalletAddress = ""
+                        isLoadingWalletData = false
+                        updateChildFragments()
+                    }
+                }
+            }
         }
     }
 
@@ -132,7 +179,7 @@ class WalletMainFragment : Fragment(),
         // Update wallet display fragment
         walletDisplayFragment?.updateWalletInfo()
 
-        // Update token balances fragment
+        // Update token balances fragment - only if address actually changed
         tokenBalancesFragment?.updateWalletAddress(currentWalletAddress)
 
         // PermitManager is now handled automatically by individual fragments
@@ -268,7 +315,14 @@ class WalletMainFragment : Fragment(),
 
     override fun onResume() {
         super.onResume()
-        // Refresh wallet info when returning to this fragment
-        refreshWalletsUI()
+        // Only load wallet data if not already cached (much faster for navigation)
+        // Full refresh only happens when wallet actually changes via refreshWalletsUI()
+        if (!isWalletDataCached) {
+            Log.d(TAG, "onResume: Loading wallet data (not cached)")
+            loadCurrentWallet()
+        } else {
+            Log.d(TAG, "onResume: Using cached wallet data")
+            updateChildFragments()
+        }
     }
 }
