@@ -213,6 +213,40 @@
                     android:textColor="@color/sidebar_text"
                     android:textColorHint="#AAAAAA" />
  
+                <!-- Encryption Level Selector (Testing) -->
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Encryption Level (Testing)"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/sidebar_text"
+                    android:layout_marginBottom="8dp" />
+
+                <RadioGroup
+                    android:id="@+id/encryption_level_group"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:layout_marginBottom="16dp">
+
+                    <RadioButton
+                        android:id="@+id/radio_hardware_encryption"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="🔒 Hardware Encryption (Recommended)"
+                        android:textColor="@color/sidebar_text"
+                        android:checked="true" />
+
+                    <RadioButton
+                        android:id="@+id/radio_software_encryption"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="🔐 Software Encryption (Fallback)"
+                        android:textColor="@color/sidebar_text" />
+
+                </RadioGroup>
+
                 <EditText
                     android:id="@+id/pin_input"
                     android:layout_width="match_parent"

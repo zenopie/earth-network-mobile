@@ -181,6 +181,16 @@ object SecureWalletManager {
      */
     @Throws(Exception::class)
     private fun fetchMnemonicSecurely(context: Context): String {
+        // Check if user has set a persistent encryption preference
+        if (hasEncryptionPreference(context)) {
+            val forceSoftwareEncryption = getEncryptionPreference(context)
+            if (forceSoftwareEncryption) {
+                // User explicitly chose software encryption, use it directly
+                return trySecureFallbackRetrieval(context)
+            }
+            // User explicitly chose hardware encryption, attempt hardware first
+        }
+
         return try {
             // Use encrypted preferences for secure wallet storage
             val securePrefs = SecurePreferencesUtil.createEncryptedPreferences(context, PREF_FILE)
@@ -381,22 +391,93 @@ object SecureWalletManager {
     }
 
     // =========================================================================
+    // Encryption Preference Management
+    // =========================================================================
+
+    /**
+     * Set preferred encryption method for the app
+     */
+    @Throws(Exception::class)
+    fun setEncryptionPreference(context: Context, preferSoftware: Boolean) {
+        try {
+            val prefs = context.getSharedPreferences("app_settings", Context.MODE_PRIVATE)
+            prefs.edit().putBoolean("prefer_software_encryption", preferSoftware).apply()
+            Log.d(TAG, "Set encryption preference: preferSoftware=$preferSoftware")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to set encryption preference", e)
+            throw Exception("Failed to set encryption preference", e)
+        }
+    }
+
+    /**
+     * Get preferred encryption method for the app
+     */
+    fun getEncryptionPreference(context: Context): Boolean {
+        return try {
+            val prefs = context.getSharedPreferences("app_settings", Context.MODE_PRIVATE)
+            val preferSoftware = prefs.getBoolean("prefer_software_encryption", false)
+            Log.d(TAG, "Got encryption preference: preferSoftware=$preferSoftware")
+            preferSoftware
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to get encryption preference", e)
+            false // Default to hardware encryption
+        }
+    }
+
+    /**
+     * Check if encryption preference has been set
+     */
+    fun hasEncryptionPreference(context: Context): Boolean {
+        return try {
+            val prefs = context.getSharedPreferences("app_settings", Context.MODE_PRIVATE)
+            prefs.contains("prefer_software_encryption")
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    // =========================================================================
     // Security Level Detection
     // =========================================================================
 
     /**
-     * Get current security level for wallet storage
+     * Get current security level for wallet storage based on stored preference
      */
     @Throws(Exception::class)
     fun getSecurityLevel(context: Context): SecurityLevel {
+        // Check if user has set a specific encryption preference
+        if (hasEncryptionPreference(context)) {
+            val preferSoftware = getEncryptionPreference(context)
+            if (preferSoftware) {
+                Log.d(TAG, "Using software encryption (user preference)")
+                return if (SoftwareEncryption.isAvailable()) {
+                    SecurityLevel.SOFTWARE_ENCRYPTED
+                } else {
+                    SecurityLevel.INSECURE
+                }
+            } else {
+                Log.d(TAG, "Using hardware encryption (user preference)")
+                return try {
+                    createSecurePrefs(context)
+                    SecurityLevel.HARDWARE_BACKED
+                } catch (e: Exception) {
+                    Log.w(TAG, "Hardware encryption preferred but not available: ${e.message}")
+                    // Fall back to software if hardware fails
+                    if (SoftwareEncryption.isAvailable()) {
+                        SecurityLevel.SOFTWARE_ENCRYPTED
+                    } else {
+                        SecurityLevel.INSECURE
+                    }
+                }
+            }
+        }
+
+        // No preference set - auto-detect
         return try {
-            // Check if hardware-backed encryption is working
             createSecurePrefs(context)
             SecurityLevel.HARDWARE_BACKED
         } catch (e: Exception) {
             Log.w(TAG, "Hardware encryption not available: ${e.message}")
-
-            // Check if software encryption is available
             if (SoftwareEncryption.isAvailable()) {
                 SecurityLevel.SOFTWARE_ENCRYPTED
             } else {

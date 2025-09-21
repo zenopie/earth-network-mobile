@@ -1,9 +1,12 @@
 package com.example.earthwallet.ui.pages.wallet
 
+import android.app.AlertDialog
+import android.content.Context
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Button
 import android.widget.ImageButton
 import android.widget.Switch
 import android.widget.TextView
@@ -29,6 +32,7 @@ class WalletSettingsFragment : Fragment() {
     private lateinit var switchTransactionAuth: Switch
     private lateinit var tvBiometricStatus: TextView
     private lateinit var tvSecurityLevel: TextView
+    private lateinit var btnRemoveAppData: Button
 
     // Interface for communication with parent activity
     interface WalletSettingsListener {
@@ -53,6 +57,7 @@ class WalletSettingsFragment : Fragment() {
         switchTransactionAuth = view.findViewById(R.id.switch_transaction_auth)
         tvBiometricStatus = view.findViewById(R.id.tv_biometric_status)
         tvSecurityLevel = view.findViewById(R.id.tv_security_level)
+        btnRemoveAppData = view.findViewById(R.id.btn_remove_app_data)
 
         // Setup back button
         val btnBack = view.findViewById<ImageButton>(R.id.btn_back)
@@ -74,6 +79,11 @@ class WalletSettingsFragment : Fragment() {
         // Setup transaction auth toggle listener
         switchTransactionAuth.setOnCheckedChangeListener { _, isChecked ->
             handleTransactionAuthToggle(isChecked)
+        }
+
+        // Setup remove app data button listener
+        btnRemoveAppData.setOnClickListener {
+            showRemoveAppDataDialog()
         }
     }
 
@@ -211,6 +221,83 @@ class WalletSettingsFragment : Fragment() {
             }
 
             Toast.makeText(requireContext(), "Failed to save transaction auth setting", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun showRemoveAppDataDialog() {
+        AlertDialog.Builder(requireContext())
+            .setTitle("Clear All App Data")
+            .setMessage("⚠️ This will permanently delete:\n\n• All wallets and mnemonics\n• PIN and security settings\n• All app preferences\n• Viewing keys and permits\n\nThis action cannot be undone. Are you sure?")
+            .setPositiveButton("Clear Data") { _, _ ->
+                clearAppData()
+            }
+            .setNegativeButton("Cancel", null)
+            .setIcon(android.R.drawable.ic_dialog_alert)
+            .show()
+    }
+
+    private fun clearAppData() {
+        try {
+            val context = requireContext()
+
+            // Clear all wallet data using SecureWalletManager
+            try {
+                // Clear hardware-backed encrypted preferences using SecurePreferencesUtil
+                val securePrefs = com.example.earthwallet.wallet.utils.SecurePreferencesUtil.createEncryptedPreferences(context, "secret_wallet_prefs")
+                securePrefs.edit().clear().apply()
+            } catch (e: Exception) {
+                // Hardware preferences might not exist, continue
+            }
+
+            // Clear software-encrypted preferences
+            try {
+                val softwarePrefs = context.getSharedPreferences("secret_wallet_prefs_software", Context.MODE_PRIVATE)
+                softwarePrefs.edit().clear().apply()
+            } catch (e: Exception) {
+                // Software preferences might not exist, continue
+            }
+
+            // Clear all shared preferences files
+            val prefsDir = context.applicationInfo.dataDir + "/shared_prefs"
+            val prefsFolder = java.io.File(prefsDir)
+            if (prefsFolder.exists()) {
+                prefsFolder.listFiles()?.forEach { file ->
+                    if (file.name.endsWith(".xml")) {
+                        file.delete()
+                    }
+                }
+            }
+
+            // Clear app databases
+            val dbDir = context.applicationInfo.dataDir + "/databases"
+            val dbFolder = java.io.File(dbDir)
+            if (dbFolder.exists()) {
+                dbFolder.listFiles()?.forEach { file ->
+                    file.delete()
+                }
+            }
+
+            // Clear Android Keystore entries
+            try {
+                val keyStore = java.security.KeyStore.getInstance("AndroidKeyStore")
+                keyStore.load(null)
+                val aliases = keyStore.aliases().toList()
+                for (alias in aliases) {
+                    if (alias.contains("mnemonic_encryption") || alias.contains("secret_wallet")) {
+                        keyStore.deleteEntry(alias)
+                    }
+                }
+            } catch (e: Exception) {
+                // Keystore clearing might fail, but continue
+            }
+
+            Toast.makeText(context, "App data cleared successfully. Please restart the app.", Toast.LENGTH_LONG).show()
+
+            // Exit the app
+            requireActivity().finishAffinity()
+
+        } catch (e: Exception) {
+            Toast.makeText(requireContext(), "Failed to clear app data: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 }

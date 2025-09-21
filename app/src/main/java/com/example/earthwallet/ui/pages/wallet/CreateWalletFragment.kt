@@ -13,6 +13,7 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.RadioGroup
 import android.widget.Toast
 import androidx.fragment.app.Fragment
 import com.example.earthwallet.R
@@ -54,6 +55,7 @@ class CreateWalletFragment : Fragment() {
 
     // Pin step
     private lateinit var walletNameInput: EditText
+    private lateinit var encryptionLevelGroup: RadioGroup
     private lateinit var pinInput: EditText
     private lateinit var pinConfirmInput: EditText
     private lateinit var btnPinNext: Button
@@ -126,6 +128,7 @@ class CreateWalletFragment : Fragment() {
         btnConfirmNext = view.findViewById(R.id.btn_confirm_next)
 
         walletNameInput = view.findViewById(R.id.wallet_name_input)
+        encryptionLevelGroup = view.findViewById(R.id.encryption_level_group)
         pinInput = view.findViewById(R.id.pin_input)
         pinConfirmInput = view.findViewById(R.id.pin_confirm_input)
         btnPinNext = view.findViewById(R.id.btn_pin_next)
@@ -293,6 +296,23 @@ class CreateWalletFragment : Fragment() {
 
     private fun saveMnemonicAndPin(pin: String?, walletName: String) {
         try {
+            // Check selected encryption level for testing
+            val selectedEncryptionId = encryptionLevelGroup.checkedRadioButtonId
+            val forceHardwareEncryption = selectedEncryptionId == R.id.radio_hardware_encryption
+            val forceSoftwareEncryption = selectedEncryptionId == R.id.radio_software_encryption
+
+            if (forceSoftwareEncryption) {
+                // Set persistent preference for software encryption
+                SecureWalletManager.setEncryptionPreference(requireContext(), true)
+                Toast.makeText(requireContext(), "Testing: Using software encryption", Toast.LENGTH_SHORT).show()
+                saveMnemonicWithSoftwareEncryption(pin, walletName)
+                return
+            } else if (forceHardwareEncryption) {
+                // Set persistent preference for hardware encryption
+                SecureWalletManager.setEncryptionPreference(requireContext(), false)
+                Toast.makeText(requireContext(), "Testing: Using hardware encryption", Toast.LENGTH_SHORT).show()
+            }
+
             val hasExistingPin = SecureWalletManager.hasPinSet(requireContext())
             var pinHash = ""
 
@@ -321,6 +341,41 @@ class CreateWalletFragment : Fragment() {
             Toast.makeText(requireContext(), "Wallet created and saved securely", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             Toast.makeText(requireContext(), "Failed to save wallet", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun saveMnemonicWithSoftwareEncryption(pin: String?, walletName: String) {
+        try {
+            val hasExistingPin = SecureWalletManager.hasPinSet(requireContext())
+            var pinHash = ""
+
+            if (!hasExistingPin) {
+                if (pin == null) {
+                    Toast.makeText(requireContext(), "No existing PIN found; please create a PIN", Toast.LENGTH_SHORT).show()
+                    return
+                }
+                val md = MessageDigest.getInstance("SHA-256")
+                val digest = md.digest(pin.toByteArray(StandardCharsets.UTF_8))
+                val sb = StringBuilder()
+                for (b in digest) {
+                    sb.append(String.format("%02x", b))
+                }
+                pinHash = sb.toString()
+
+                // Force software encryption by using software preferences
+                val softwarePrefs = requireContext().getSharedPreferences("secret_wallet_prefs_software", Context.MODE_PRIVATE)
+                SecureWalletManager.setPinHash(requireContext(), softwarePrefs, pinHash)
+            }
+
+            // Force creation with software encryption storage
+            val softwarePrefs = requireContext().getSharedPreferences("secret_wallet_prefs_software", Context.MODE_PRIVATE)
+            mnemonic?.let { SecureWalletManager.createWallet(requireContext(), softwarePrefs, walletName, it) }
+
+            Toast.makeText(requireContext(), "Wallet created with software encryption", Toast.LENGTH_SHORT).show()
+
+        } catch (e: Exception) {
+            Log.e("CreateWalletFragment", "Failed to save with software encryption", e)
+            Toast.makeText(requireContext(), "Failed to save wallet with software encryption: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 }

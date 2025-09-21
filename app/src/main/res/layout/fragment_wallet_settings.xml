@@ -168,7 +168,54 @@
             android:layout_marginBottom="16dp"
             android:visibility="gone" />
 
-        <!-- Additional Settings can be added here -->
+        <!-- Developer/Testing Section -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Developer Tools"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="#1e3a8a"
+            android:layout_marginTop="24dp"
+            android:layout_marginBottom="16dp" />
+
+        <!-- Remove App Data Button -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:background="@drawable/card_rounded_bg"
+            android:layout_marginBottom="16dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Clear All App Data"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="#d32f2f"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="⚠️ This will delete all wallets, settings, and app data. Use for testing only."
+                android:textSize="14sp"
+                android:textColor="#666666"
+                android:layout_marginBottom="12dp" />
+
+            <Button
+                android:id="@+id/btn_remove_app_data"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Clear App Data"
+                android:textColor="@android:color/white"
+                android:background="@drawable/button_rounded_green"
+                android:backgroundTint="#d32f2f"
+                android:padding="12dp" />
+
+        </LinearLayout>
 
     </LinearLayout>
 
