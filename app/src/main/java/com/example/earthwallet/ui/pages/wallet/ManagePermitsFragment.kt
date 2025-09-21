@@ -388,10 +388,9 @@ class ManagePermitsFragment : Fragment() {
      * Public method to update wallet address
      */
     fun updateWalletAddress(newAddress: String) {
-        if (newAddress != walletAddress) {
-            walletAddress = newAddress
-            loadPermits()
-        }
+        walletAddress = newAddress
+        // Always refresh - no caching
+        loadPermits()
     }
 
     /**

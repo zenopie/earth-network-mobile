@@ -113,18 +113,11 @@ class WalletDisplayFragment : Fragment() {
         listener?.let { listener ->
             val newAddress = listener.getCurrentWalletAddress()
 
-            // Only refresh balance if address changed or balance not yet loaded
-            if (newAddress != currentAddress || !balanceLoaded) {
-                currentAddress = newAddress
-                updateUI()
-                refreshBalance()
-                generateQRCode()
-            } else {
-                // Address hasn't changed, just update UI without fetching balance
-                currentAddress = newAddress
-                updateUI()
-                generateQRCode()
-            }
+            // Always refresh - no caching
+            currentAddress = newAddress
+            updateUI()
+            refreshBalance()
+            generateQRCode()
         }
     }
 

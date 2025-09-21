@@ -123,9 +123,10 @@ class TokenBalancesFragment : Fragment() {
         // Clear existing token displays
         tokenBalancesContainer.removeAllViews()
 
-        // Clear any existing queue and reset state
+        // Clear any existing queue and reset state properly
         tokenQueryQueue.clear()
         isQueryingToken = false
+        currentlyQueryingToken = null
 
         // Add tokens with viewing keys to the queue and display them immediately with "..."
         for (symbol in Tokens.ALL_TOKENS.keys) {
@@ -148,14 +149,12 @@ class TokenBalancesFragment : Fragment() {
      * Public method to update wallet address and refresh if changed
      */
     fun updateWalletAddress(newAddress: String) {
-        if (newAddress != walletAddress) {
-            walletAddress = newAddress
-            // Only refresh if view is ready
-            if (::tokenBalancesContainer.isInitialized) {
-                refreshTokenBalances()
-            } else {
-                Log.w(TAG, "Wallet address updated but view not ready, refresh deferred")
-            }
+        walletAddress = newAddress
+        // Always refresh - no caching
+        if (::tokenBalancesContainer.isInitialized) {
+            refreshTokenBalances()
+        } else {
+            Log.w(TAG, "Wallet address updated but view not ready, refresh deferred")
         }
     }
 
@@ -213,9 +212,9 @@ class TokenBalancesFragment : Fragment() {
                         walletAddress
                     )
 
-                    // Handle result on UI thread
+                    // Handle result on UI thread with the specific token
                     activity?.runOnUiThread {
-                        handleTokenBalanceResult(result.toString())
+                        handleTokenBalanceResult(token, result.toString())
                     }
 
                 } catch (e: Exception) {
@@ -240,46 +239,43 @@ class TokenBalancesFragment : Fragment() {
         }
     }
 
-    private fun handleTokenBalanceResult(json: String) {
+    private fun handleTokenBalanceResult(token: Tokens.TokenInfo, json: String) {
         try {
-            // Use the currently querying token instead of trying to parse from result
-            currentlyQueryingToken?.let { token ->
-                Log.d(TAG, "Token balance query result for ${token.symbol}: $json")
+            Log.d(TAG, "Token balance query result for ${token.symbol}: $json")
 
-                if (!TextUtils.isEmpty(json)) {
-                    val root = JSONObject(json)
-                    val success = root.optBoolean("success", false)
+            if (!TextUtils.isEmpty(json)) {
+                val root = JSONObject(json)
+                val success = root.optBoolean("success", false)
 
-                    if (success) {
-                        val result = root.optJSONObject("result")
-                        if (result != null) {
-                            val balance = result.optJSONObject("balance")
-                            if (balance != null) {
-                                val amount = balance.optString("amount", "0")
-                                val formattedBalance = Tokens.formatTokenAmount(amount, token)
-                                updateTokenBalanceView(token, formattedBalance)
-                            } else {
-                                updateTokenBalanceView(token, "!")
-                            }
+                if (success) {
+                    val result = root.optJSONObject("result")
+                    if (result != null) {
+                        val balance = result.optJSONObject("balance")
+                        if (balance != null) {
+                            val amount = balance.optString("amount", "0")
+                            val formattedBalance = Tokens.formatTokenAmount(amount, token)
+                            updateTokenBalanceView(token, formattedBalance)
                         } else {
                             updateTokenBalanceView(token, "!")
                         }
                     } else {
                         updateTokenBalanceView(token, "!")
                     }
+                } else {
+                    updateTokenBalanceView(token, "!")
                 }
-            } ?: Log.w(TAG, "No currently querying token, cannot process result")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse token balance result", e)
-            currentlyQueryingToken?.let { token ->
-                updateTokenBalanceView(token, "!")
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse token balance result for ${token.symbol}", e)
+            updateTokenBalanceView(token, "!")
         }
 
-        // Mark query as complete and continue with next token
-        isQueryingToken = false
-        currentlyQueryingToken = null
-        processNextTokenQuery()
+        // Only advance the queue if this is still the current token being queried
+        if (currentlyQueryingToken == token) {
+            isQueryingToken = false
+            currentlyQueryingToken = null
+            processNextTokenQuery()
+        }
     }
 
     private fun addTokenBalanceView(token: Tokens.TokenInfo, balance: String?, hasPermit: Boolean) {
