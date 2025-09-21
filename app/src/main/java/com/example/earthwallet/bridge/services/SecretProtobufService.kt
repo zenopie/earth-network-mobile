@@ -45,7 +45,8 @@ class SecretProtobufService {
         accountNumber: String,
         sequence: String,
         chainId: String,
-        walletKey: ECKey
+        walletKey: ECKey,
+        feeGranter: String? = null
     ): ByteArray {
 
         // Convert single message to messages array for unified processing
@@ -64,7 +65,7 @@ class SecretProtobufService {
             throw Exception("Failed to create single message array: ${e.message}")
         }
 
-        return buildMultiMessageTransaction(messagesArray, memo, accountNumber, sequence, chainId, walletKey)
+        return buildMultiMessageTransaction(messagesArray, memo, accountNumber, sequence, chainId, walletKey, feeGranter)
     }
 
     /**
@@ -77,14 +78,15 @@ class SecretProtobufService {
         accountNumber: String,
         sequence: String,
         chainId: String,
-        walletKey: ECKey
+        walletKey: ECKey,
+        feeGranter: String? = null
     ): ByteArray {
 
         Log.i(TAG, "Building Secret Network protobuf transaction with ${messages.length()} message(s)")
 
         return try {
             encodeMultiMessageTransactionToProtobuf(
-                messages, memo, accountNumber, sequence, chainId, walletKey
+                messages, memo, accountNumber, sequence, chainId, walletKey, feeGranter
             )
         } catch (e: Exception) {
             Log.e(TAG, "Failed to build multi-message protobuf transaction", e)
@@ -102,7 +104,8 @@ class SecretProtobufService {
         accountNumber: String,
         sequence: String,
         chainId: String,
-        walletKey: ECKey
+        walletKey: ECKey,
+        feeGranter: String? = null
     ): ByteArray {
 
         Log.i(TAG, "Creating multi-message protobuf transaction")
@@ -161,8 +164,7 @@ class SecretProtobufService {
         val txBody = txBodyBuilder.build()
 
         // 3. Create AuthInfo with fee and signature info
-        // Completely omit payer and granter fields to match CosmJS protobuf encoding
-        val fee = Tx.Fee.newBuilder()
+        val feeBuilder = Tx.Fee.newBuilder()
             .setGasLimit(5000000)  // Increased from 200K to 5M to match SecretJS contract execution
             .addAmount(
                 CoinOuterClass.Coin.newBuilder()
@@ -170,8 +172,13 @@ class SecretProtobufService {
                     .setAmount("100000")
                     .build()
             )
-            // Don't set payer or granter at all - let protobuf omit these fields entirely
-            .build()
+
+        // Add fee granter if provided (for gasless transactions)
+        if (!feeGranter.isNullOrEmpty()) {
+            feeBuilder.setGranter(feeGranter)
+        }
+
+        val fee = feeBuilder.build()
 
         val signerInfo = Tx.SignerInfo.newBuilder()
             .setPublicKey(

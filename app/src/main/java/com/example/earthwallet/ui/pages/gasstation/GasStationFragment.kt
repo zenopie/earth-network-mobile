@@ -58,6 +58,8 @@ class GasStationFragment : Fragment() {
     private var fromTokenLogo: ImageView? = null
     private var swapForGasButton: Button? = null
     private var faucetButton: Button? = null
+    private var faucetInfoButton: TextView? = null
+    private var faucetTooltipContainer: LinearLayout? = null
 
     // State
     // Removed - using PermitManager instead of viewing keys
@@ -69,8 +71,12 @@ class GasStationFragment : Fragment() {
     private var isSimulating = false
     private var isRegistered = false
     private var canClaimFaucet = false
+    private var hasGasGrant = false
     private val inputHandler = Handler(Looper.getMainLooper())
     private var simulationRunnable: Runnable? = null
+
+    // Fee granter address from backend
+    private val FEE_GRANTER_ADDRESS = "secret1ktpxcznqcls64t8tjyv3atwhndscgw08yp2jas"
 
     // Activity Result Launcher for transaction activity
     private lateinit var swapForGasLauncher: ActivityResultLauncher<Intent>
@@ -125,6 +131,8 @@ class GasStationFragment : Fragment() {
 
         swapForGasButton = view.findViewById(R.id.swap_for_gas_button)
         faucetButton = view.findViewById(R.id.faucet_button)
+        faucetInfoButton = view.findViewById(R.id.faucet_info_button)
+        faucetTooltipContainer = view.findViewById(R.id.faucet_tooltip_container)
     }
 
     private fun setupSpinner() {
@@ -166,6 +174,7 @@ class GasStationFragment : Fragment() {
 
         swapForGasButton?.setOnClickListener { executeSwapForGas() }
         faucetButton?.setOnClickListener { claimFaucet() }
+        faucetInfoButton?.setOnClickListener { toggleFaucetTooltip() }
     }
 
     private fun onTokenSelectionChanged() {
@@ -206,6 +215,15 @@ class GasStationFragment : Fragment() {
         if (fromTokenInfo == null) {
             Log.e(TAG, "From token not supported: $fromTokenSymbol")
             Toast.makeText(context, "Token not supported", Toast.LENGTH_SHORT).show()
+            isSimulating = false
+            updateSwapButton()
+            return
+        }
+
+        if (fromTokenSymbol == "sSCRT") {
+            // For sSCRT unwrap, it's 1:1 conversion to SCRT
+            val df = DecimalFormat("#.######")
+            expectedScrtInput?.setText(df.format(inputAmount))
             isSimulating = false
             updateSwapButton()
             return
@@ -348,6 +366,10 @@ class GasStationFragment : Fragment() {
                      expectedScrtStr != "0"
 
         swapForGasButton?.isEnabled = enabled
+
+        // Update button text based on selected token
+        val fromTokenSymbol = tokenSymbols[fromTokenSpinner?.selectedItemPosition ?: 0]
+        swapForGasButton?.text = if (fromTokenSymbol == "sSCRT") "Unwrap" else "Swap for Gas"
     }
 
     private fun loadCurrentWalletAddress() {
@@ -493,28 +515,28 @@ class GasStationFragment : Fragment() {
             return
         }
 
-        // Check registration status using registration contract query
+        // Check faucet eligibility using API endpoint
         Thread {
             try {
-                val queryJson = String.format(
-                    "{\"query_registration_status\": {\"address\": \"%s\"}}",
-                    currentWalletAddress
-                )
+                val url = "${Constants.BACKEND_BASE_URL}/faucet-eligibility/$currentWalletAddress"
+                val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                connection.requestMethod = "GET"
+                connection.connectTimeout = 10000
+                connection.readTimeout = 10000
 
-                val queryObj = JSONObject(queryJson)
-                val queryService = SecretQueryService(requireContext())
-                val result = queryService.queryContract(
-                    Constants.REGISTRATION_CONTRACT,
-                    Constants.REGISTRATION_HASH,
-                    queryObj
-                )
+                val responseCode = connection.responseCode
+                val response = if (responseCode == 200) {
+                    connection.inputStream.bufferedReader().use { it.readText() }
+                } else {
+                    connection.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+                }
 
                 activity?.runOnUiThread {
-                    handleRegistrationStatusResult(result.toString())
+                    handleFaucetEligibilityResult(responseCode, response)
                 }
 
             } catch (e: Exception) {
-                Log.e(TAG, "Registration status check failed", e)
+                Log.e(TAG, "Faucet eligibility check failed", e)
                 activity?.runOnUiThread {
                     updateFaucetStatus(false, false)
                 }
@@ -522,24 +544,19 @@ class GasStationFragment : Fragment() {
         }.start()
     }
 
-    private fun handleRegistrationStatusResult(json: String) {
+    private fun handleFaucetEligibilityResult(responseCode: Int, response: String) {
         try {
-            val root = JSONObject(json)
-            val registrationStatus = root.optBoolean("registration_status", false)
-
-            if (registrationStatus) {
-                // Check if they can claim faucet (once per week)
-                val lastClaim = root.optLong("last_claim", 0)
-                val now = System.currentTimeMillis() * 1000000 // Convert to nanoseconds
-                val oneWeekInNanos = 7L * 24 * 60 * 60 * 1000 * 1000000 // One week in nanoseconds
-                val canClaim = (now - lastClaim) > oneWeekInNanos
-
-                updateFaucetStatus(true, canClaim)
+            if (responseCode == 200) {
+                val root = JSONObject(response)
+                val registered = root.optBoolean("registered", false)
+                val eligible = root.optBoolean("eligible", false)
+                updateFaucetStatus(registered, eligible)
             } else {
+                Log.e(TAG, "Faucet eligibility API error: $responseCode - $response")
                 updateFaucetStatus(false, false)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse registration status result", e)
+            Log.e(TAG, "Failed to parse faucet eligibility result", e)
             updateFaucetStatus(false, false)
         }
     }
@@ -580,9 +597,14 @@ class GasStationFragment : Fragment() {
             }
 
             swapForGasButton?.isEnabled = false
-            swapForGasButton?.text = "Swapping..."
-
             val fromTokenSymbol = tokenSymbols[fromTokenSpinner?.selectedItemPosition ?: 0]
+
+            if (fromTokenSymbol == "sSCRT") {
+                swapForGasButton?.text = "Unwrapping..."
+            } else {
+                swapForGasButton?.text = "Swapping..."
+            }
+
             val fromTokenInfo = Tokens.getTokenInfo(fromTokenSymbol)
             if (fromTokenInfo == null) {
                 Toast.makeText(requireContext(), "Token not supported", Toast.LENGTH_SHORT).show()
@@ -590,28 +612,50 @@ class GasStationFragment : Fragment() {
                 return
             }
 
-            // Build the swap_for_gas message
-            val swapForGasMessage = String.format(
-                "{\"swap_for_gas\": {\"from\": \"%s\", \"amount\": \"%s\"}}",
-                currentWalletAddress,
-                (inputAmount * 10.0.pow(fromTokenInfo.decimals)).toLong().toString()
-            )
-
             val inputAmountMicro = (inputAmount * 10.0.pow(fromTokenInfo.decimals)).toLong()
+
+            val message: String
+            val recipientContract: String
+            val recipientHash: String
+
+            if (fromTokenSymbol == "sSCRT") {
+                // Use unwrap for sSCRT -> SCRT
+                message = String.format(
+                    "{\"redeem\": {\"amount\": \"%s\"}}",
+                    inputAmountMicro.toString()
+                )
+                recipientContract = fromTokenInfo.contract
+                recipientHash = fromTokenInfo.hash
+            } else {
+                // Use the swap_for_gas message for other tokens
+                message = String.format(
+                    "{\"swap_for_gas\": {\"from\": \"%s\", \"amount\": \"%s\"}}",
+                    currentWalletAddress,
+                    inputAmountMicro.toString()
+                )
+                recipientContract = Constants.EXCHANGE_CONTRACT
+                recipientHash = Constants.EXCHANGE_HASH
+            }
 
             Log.d(TAG, "Starting swap for gas execution")
             Log.d(TAG, "From token: $fromTokenSymbol")
             Log.d(TAG, "Amount: $inputAmountMicro")
-            Log.d(TAG, "Message: $swapForGasMessage")
+            Log.d(TAG, "Message: $message")
 
             val intent = Intent(requireContext(), TransactionActivity::class.java)
             intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SNIP_EXECUTE)
             intent.putExtra(TransactionActivity.EXTRA_TOKEN_CONTRACT, fromTokenInfo.contract)
             intent.putExtra(TransactionActivity.EXTRA_TOKEN_HASH, fromTokenInfo.hash)
-            intent.putExtra(TransactionActivity.EXTRA_RECIPIENT_ADDRESS, Constants.EXCHANGE_CONTRACT)
-            intent.putExtra(TransactionActivity.EXTRA_RECIPIENT_HASH, Constants.EXCHANGE_HASH)
+            intent.putExtra(TransactionActivity.EXTRA_RECIPIENT_ADDRESS, recipientContract)
+            intent.putExtra(TransactionActivity.EXTRA_RECIPIENT_HASH, recipientHash)
             intent.putExtra(TransactionActivity.EXTRA_AMOUNT, inputAmountMicro.toString())
-            intent.putExtra(TransactionActivity.EXTRA_MESSAGE_JSON, swapForGasMessage)
+            intent.putExtra(TransactionActivity.EXTRA_MESSAGE_JSON, message)
+
+            // Add fee granter for gasless transactions when available
+            if (hasGasGrant) {
+                intent.putExtra(TransactionActivity.EXTRA_FEE_GRANTER, FEE_GRANTER_ADDRESS)
+                Log.d(TAG, "Using fee granter for gasless transaction: $FEE_GRANTER_ADDRESS")
+            }
 
             swapForGasLauncher.launch(intent)
 
@@ -630,17 +674,84 @@ class GasStationFragment : Fragment() {
         faucetButton?.isEnabled = false
         faucetButton?.text = "Claiming..."
 
-        // Implement faucet claiming logic - this would typically call a backend API
-        Toast.makeText(requireContext(), "Faucet functionality not implemented yet", Toast.LENGTH_SHORT).show()
+        Thread {
+            try {
+                val url = "${Constants.BACKEND_BASE_URL}/faucet-gas"
+                val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                connection.requestMethod = "POST"
+                connection.setRequestProperty("Content-Type", "application/json")
+                connection.connectTimeout = 10000
+                connection.readTimeout = 10000
+                connection.doOutput = true
 
-        // Reset button
-        faucetButton?.isEnabled = true
+                val requestBody = JSONObject()
+                requestBody.put("address", currentWalletAddress)
+
+                connection.outputStream.use { os ->
+                    os.write(requestBody.toString().toByteArray())
+                }
+
+                val responseCode = connection.responseCode
+                val response = if (responseCode == 200) {
+                    connection.inputStream.bufferedReader().use { it.readText() }
+                } else {
+                    connection.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+                }
+
+                activity?.runOnUiThread {
+                    handleFaucetClaimResult(responseCode, response)
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Faucet claim failed", e)
+                activity?.runOnUiThread {
+                    Toast.makeText(requireContext(), "Faucet claim failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                    resetFaucetButton()
+                }
+            }
+        }.start()
+    }
+
+    private fun handleFaucetClaimResult(responseCode: Int, response: String) {
+        try {
+            if (responseCode == 200) {
+                val root = JSONObject(response)
+                val success = root.optBoolean("success", false)
+
+                if (success) {
+                    canClaimFaucet = false
+                    hasGasGrant = true
+                    Toast.makeText(requireContext(), "Gas allowance granted!", Toast.LENGTH_SHORT).show()
+                    Log.d(TAG, "Gas allowance granted: $response")
+
+                    // Refresh balances and faucet eligibility
+                    fetchBalances()
+                    checkRegistrationStatus()
+                } else {
+                    val error = root.optString("error", "Unknown error")
+                    Toast.makeText(requireContext(), "Faucet error: $error", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                Log.e(TAG, "Faucet API error: $responseCode - $response")
+                Toast.makeText(requireContext(), "Faucet request failed", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse faucet claim result", e)
+            Toast.makeText(requireContext(), "Faucet claim failed", Toast.LENGTH_SHORT).show()
+        }
+
+        resetFaucetButton()
+    }
+
+    private fun resetFaucetButton() {
+        faucetButton?.isEnabled = isRegistered && canClaimFaucet
         faucetButton?.text = "Faucet"
     }
 
     private fun resetSwapButton() {
         swapForGasButton?.isEnabled = true
-        swapForGasButton?.text = "Swap for Gas"
+        val fromTokenSymbol = tokenSymbols[fromTokenSpinner?.selectedItemPosition ?: 0]
+        swapForGasButton?.text = if (fromTokenSymbol == "sSCRT") "Unwrap" else "Swap for Gas"
     }
 
 
@@ -676,6 +787,11 @@ class GasStationFragment : Fragment() {
             Log.e(TAG, "Failed to parse gas swap result", e)
             Toast.makeText(context, "Gas swap failed", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private fun toggleFaucetTooltip() {
+        val isVisible = faucetTooltipContainer?.visibility == View.VISIBLE
+        faucetTooltipContainer?.visibility = if (isVisible) View.GONE else View.VISIBLE
     }
 
     // Removed - using PermitManager instead of viewing keys

@@ -56,6 +56,7 @@ class TransactionActivity : AppCompatActivity() {
         const val EXTRA_RESULT_JSON = "result_json"
         const val EXTRA_SENDER_ADDRESS = "sender_address"
         const val EXTRA_ERROR = "error"
+        const val EXTRA_FEE_GRANTER = "fee_granter"
 
         // Transaction types
         const val TYPE_SECRET_EXECUTE = "secret_execute"
