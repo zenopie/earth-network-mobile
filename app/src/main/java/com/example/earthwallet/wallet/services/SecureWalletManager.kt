@@ -9,6 +9,8 @@ import android.util.Log
 import com.example.earthwallet.wallet.utils.SecurePreferencesUtil
 import com.example.earthwallet.wallet.utils.HardwareKeyManager
 import com.example.earthwallet.wallet.utils.WalletCrypto
+import com.example.earthwallet.wallet.utils.SoftwareEncryption
+import com.example.earthwallet.wallet.utils.SecurityLevel
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -202,42 +204,95 @@ object SecureWalletManager {
                 return legacyMnemonic
             }
 
-            Log.w(TAG, "No mnemonic found in secure preferences, trying fallback")
-            tryFallbackMnemonicRetrieval(context)
+            Log.w(TAG, "No mnemonic found in secure preferences, trying software fallback")
+            trySecureFallbackRetrieval(context)
 
         } catch (e: GeneralSecurityException) {
-            Log.w(TAG, "Failed to access encrypted preferences: ${e.message}")
-            tryFallbackMnemonicRetrieval(context)
+            Log.w(TAG, "Hardware encryption failed, using software fallback: ${e.message}")
+            trySecureFallbackRetrieval(context)
         } catch (e: IOException) {
-            Log.w(TAG, "Failed to access encrypted preferences: ${e.message}")
-            tryFallbackMnemonicRetrieval(context)
+            Log.w(TAG, "Hardware encryption failed, using software fallback: ${e.message}")
+            trySecureFallbackRetrieval(context)
         }
     }
 
     /**
-     * Fallback mnemonic retrieval using plain SharedPreferences (matches existing fallback logic)
+     * Secure fallback mnemonic retrieval using software encryption
      */
     @Throws(Exception::class)
-    private fun tryFallbackMnemonicRetrieval(context: Context): String {
+    private fun trySecureFallbackRetrieval(context: Context): String {
         return try {
-            val flatPrefs = context.getSharedPreferences(PREF_FILE, Context.MODE_PRIVATE)
-            val walletsJson = flatPrefs.getString("wallets", "[]") ?: "[]"
-            val arr = JSONArray(walletsJson)
+            Log.w(TAG, "Using software encryption fallback - security level reduced")
 
-            if (arr.length() > 0) {
-                val sel = flatPrefs.getInt("selected_wallet_index", -1)
-                if (sel >= 0 && sel < arr.length()) {
-                    return arr.getJSONObject(sel).optString("mnemonic", "")
-                } else {
-                    return arr.getJSONObject(0).optString("mnemonic", "")
+            if (!SoftwareEncryption.isAvailable()) {
+                throw Exception("Software encryption not available on this device")
+            }
+
+            val softwarePrefs = context.getSharedPreferences(PREF_FILE + "_software", Context.MODE_PRIVATE)
+
+            // Try to get encrypted wallet data
+            val encryptedWalletsJson = softwarePrefs.getString("wallets_encrypted", null)
+            if (encryptedWalletsJson != null) {
+                val encryptedData = parseSoftwareEncryptedData(encryptedWalletsJson)
+                val walletsJson = SoftwareEncryption.decrypt(encryptedData, context)
+                val arr = JSONArray(walletsJson)
+
+                if (arr.length() > 0) {
+                    val sel = softwarePrefs.getInt("selected_wallet_index", -1)
+                    if (sel >= 0 && sel < arr.length()) {
+                        return arr.getJSONObject(sel).optString("mnemonic", "")
+                    } else {
+                        return arr.getJSONObject(0).optString("mnemonic", "")
+                    }
                 }
             }
 
-            flatPrefs.getString("mnemonic", "") ?: ""
+            // No encrypted data found
+            throw Exception("No encrypted wallet data found in software fallback storage")
 
         } catch (e: Exception) {
-            Log.e(TAG, "All mnemonic retrieval methods failed", e)
-            throw Exception("Failed to retrieve wallet mnemonic from secure or fallback storage", e)
+            Log.e(TAG, "Software encryption fallback failed", e)
+            throw Exception("Failed to retrieve wallet mnemonic from software encrypted storage", e)
+        }
+    }
+
+    /**
+     * Parse software encrypted data from JSON string
+     */
+    @Throws(Exception::class)
+    private fun parseSoftwareEncryptedData(jsonString: String): SoftwareEncryption.EncryptedData {
+        return try {
+            val json = JSONObject(jsonString)
+            SoftwareEncryption.EncryptedData(
+                ciphertext = android.util.Base64.decode(json.getString("ciphertext"), android.util.Base64.DEFAULT),
+                iv = android.util.Base64.decode(json.getString("iv"), android.util.Base64.DEFAULT),
+                salt = android.util.Base64.decode(json.getString("salt"), android.util.Base64.DEFAULT)
+            )
+        } catch (e: Exception) {
+            throw Exception("Failed to parse software encrypted data", e)
+        }
+    }
+
+    /**
+     * Save data using software encryption fallback
+     */
+    @Throws(Exception::class)
+    private fun saveSoftwareEncryptedData(context: Context, key: String, data: String) {
+        try {
+            val encryptedData = SoftwareEncryption.encrypt(data, context)
+            val json = JSONObject().apply {
+                put("ciphertext", android.util.Base64.encodeToString(encryptedData.ciphertext, android.util.Base64.DEFAULT))
+                put("iv", android.util.Base64.encodeToString(encryptedData.iv, android.util.Base64.DEFAULT))
+                put("salt", android.util.Base64.encodeToString(encryptedData.salt, android.util.Base64.DEFAULT))
+            }
+
+            val softwarePrefs = context.getSharedPreferences(PREF_FILE + "_software", Context.MODE_PRIVATE)
+            softwarePrefs.edit().putString(key, json.toString()).apply()
+
+            Log.d(TAG, "Saved data using software encryption fallback")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save software encrypted data", e)
+            throw Exception("Failed to save data using software encryption", e)
         }
     }
 
@@ -322,6 +377,55 @@ object SecureWalletManager {
     fun getWalletAddress(context: Context, securePrefs: SharedPreferences): String? {
         return executeWithMnemonic(context, securePrefs) { mnemonic ->
             WalletCrypto.getAddressFromMnemonic(mnemonic)
+        }
+    }
+
+    // =========================================================================
+    // Security Level Detection
+    // =========================================================================
+
+    /**
+     * Get current security level for wallet storage
+     */
+    @Throws(Exception::class)
+    fun getSecurityLevel(context: Context): SecurityLevel {
+        return try {
+            // Check if hardware-backed encryption is working
+            createSecurePrefs(context)
+            SecurityLevel.HARDWARE_BACKED
+        } catch (e: Exception) {
+            Log.w(TAG, "Hardware encryption not available: ${e.message}")
+
+            // Check if software encryption is available
+            if (SoftwareEncryption.isAvailable()) {
+                SecurityLevel.SOFTWARE_ENCRYPTED
+            } else {
+                SecurityLevel.INSECURE
+            }
+        }
+    }
+
+    /**
+     * Check if hardware-backed security is available
+     */
+    fun isHardwareSecurityAvailable(): Boolean {
+        return try {
+            HardwareKeyManager.isHardwareBackedKeystoreAvailable()
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Get security status message for UI display
+     */
+    @Throws(Exception::class)
+    fun getSecurityStatusMessage(context: Context): String {
+        val level = getSecurityLevel(context)
+        return when (level) {
+            SecurityLevel.HARDWARE_BACKED -> "🔒 ${level.displayName}: ${level.description}"
+            SecurityLevel.SOFTWARE_ENCRYPTED -> "🔐 ${level.displayName}: ${level.description}"
+            SecurityLevel.INSECURE -> "⚠️ ${level.displayName}: ${level.description}"
         }
     }
 
@@ -514,7 +618,7 @@ object SecureWalletManager {
     }
 
     /**
-     * Create a new wallet with name and mnemonic using pre-initialized secure preferences
+     * Create a new wallet with name and mnemonic using secure storage with fallback
      */
     @Throws(Exception::class)
     fun createWallet(context: Context, securePrefs: SharedPreferences?, walletName: String, mnemonic: String) {
@@ -524,12 +628,6 @@ object SecureWalletManager {
             // Derive address from mnemonic
             val address = WalletCrypto.getAddressFromMnemonic(mnemonic)
 
-            val prefs = securePrefs ?: createSecurePrefs(context)
-
-            // Load existing wallets
-            val walletsJson = prefs.getString("wallets", "[]") ?: "[]"
-            val walletsArray = JSONArray(walletsJson)
-
             // Create new wallet object
             val newWallet = JSONObject().apply {
                 put("name", walletName)
@@ -537,19 +635,60 @@ object SecureWalletManager {
                 put("address", address)
             }
 
-            // Add to wallets array
-            walletsArray.put(newWallet)
+            // Try hardware-backed storage first
+            try {
+                val prefs = securePrefs ?: createSecurePrefs(context)
 
-            // Set as selected wallet (index of new wallet)
-            val newIndex = walletsArray.length() - 1
+                // Load existing wallets
+                val walletsJson = prefs.getString("wallets", "[]") ?: "[]"
+                val walletsArray = JSONArray(walletsJson)
 
-            // Save to preferences
-            val editor = prefs.edit()
-            editor.putString("wallets", walletsArray.toString())
-            editor.putInt("selected_wallet_index", newIndex)
-            editor.apply()
+                // Add to wallets array
+                walletsArray.put(newWallet)
+                val newIndex = walletsArray.length() - 1
 
-            Log.d(TAG, "Created new wallet: $walletName ($address)")
+                // Save to hardware-backed preferences
+                val editor = prefs.edit()
+                editor.putString("wallets", walletsArray.toString())
+                editor.putInt("selected_wallet_index", newIndex)
+                editor.apply()
+
+                Log.d(TAG, "Created new wallet with hardware encryption: $walletName ($address)")
+
+            } catch (e: Exception) {
+                Log.w(TAG, "Hardware storage failed, using software fallback: ${e.message}")
+
+                // Fall back to software encryption
+                if (SoftwareEncryption.isAvailable()) {
+                    val softwarePrefs = context.getSharedPreferences(PREF_FILE + "_software", Context.MODE_PRIVATE)
+
+                    // Load existing wallets from software storage
+                    val existingWalletsJson = try {
+                        val encryptedJson = softwarePrefs.getString("wallets_encrypted", null)
+                        if (encryptedJson != null) {
+                            val encryptedData = parseSoftwareEncryptedData(encryptedJson)
+                            SoftwareEncryption.decrypt(encryptedData, context)
+                        } else {
+                            "[]"
+                        }
+                    } catch (ex: Exception) {
+                        "[]"
+                    }
+
+                    val walletsArray = JSONArray(existingWalletsJson)
+                    walletsArray.put(newWallet)
+                    val newIndex = walletsArray.length() - 1
+
+                    // Save encrypted wallet data
+                    saveSoftwareEncryptedData(context, "wallets_encrypted", walletsArray.toString())
+                    softwarePrefs.edit().putInt("selected_wallet_index", newIndex).apply()
+
+                    Log.d(TAG, "Created new wallet with software encryption: $walletName ($address)")
+                } else {
+                    throw Exception("Neither hardware nor software encryption available")
+                }
+            }
+
         } catch (e: Exception) {
             Log.e(TAG, "Failed to create wallet", e)
             throw Exception("Failed to create wallet: ${e.message}", e)

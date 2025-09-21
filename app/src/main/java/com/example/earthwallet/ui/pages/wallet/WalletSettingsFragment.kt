@@ -28,6 +28,7 @@ class WalletSettingsFragment : Fragment() {
     private lateinit var switchBiometricAuth: Switch
     private lateinit var switchTransactionAuth: Switch
     private lateinit var tvBiometricStatus: TextView
+    private lateinit var tvSecurityLevel: TextView
 
     // Interface for communication with parent activity
     interface WalletSettingsListener {
@@ -51,12 +52,16 @@ class WalletSettingsFragment : Fragment() {
         switchBiometricAuth = view.findViewById(R.id.switch_biometric_auth)
         switchTransactionAuth = view.findViewById(R.id.switch_transaction_auth)
         tvBiometricStatus = view.findViewById(R.id.tv_biometric_status)
+        tvSecurityLevel = view.findViewById(R.id.tv_security_level)
 
         // Setup back button
         val btnBack = view.findViewById<ImageButton>(R.id.btn_back)
         btnBack.setOnClickListener {
             listener?.onBackPressed()
         }
+
+        // Initialize security level display
+        initializeSecurityLevel()
 
         // Initialize biometric settings
         initializeBiometricSettings()
@@ -69,6 +74,15 @@ class WalletSettingsFragment : Fragment() {
         // Setup transaction auth toggle listener
         switchTransactionAuth.setOnCheckedChangeListener { _, isChecked ->
             handleTransactionAuthToggle(isChecked)
+        }
+    }
+
+    private fun initializeSecurityLevel() {
+        try {
+            val securityMessage = SecureWalletManager.getSecurityStatusMessage(requireContext())
+            tvSecurityLevel.text = securityMessage
+        } catch (e: Exception) {
+            tvSecurityLevel.text = "⚠️ Unable to determine security level"
         }
     }
 

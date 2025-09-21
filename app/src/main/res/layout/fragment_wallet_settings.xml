@@ -50,6 +50,35 @@
             android:textColor="#1e3a8a"
             android:layout_marginBottom="16dp" />
 
+        <!-- Security Level Display -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:background="@drawable/card_rounded_bg"
+            android:layout_marginBottom="16dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Encryption Level"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="#333333"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:id="@+id/tv_security_level"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="🔒 Hardware Secured: Encrypted with hardware-backed keys"
+                android:textSize="14sp"
+                android:textColor="#666666"
+                android:lineSpacingExtra="2dp" />
+
+        </LinearLayout>
+
         <!-- Biometric Authentication Toggle -->
         <LinearLayout
             android:layout_width="match_parent"
