@@ -3,13 +3,15 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:padding="20dp"
-    android:background="@android:color/white">
+    android:background="@android:color/white"
+    android:fillViewport="true">
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="match_parent"
         android:orientation="vertical"
-        android:gravity="center_horizontal">
+        android:gravity="center"
+        android:layout_gravity="center">
 
         <!-- Header -->
         <TextView
@@ -290,19 +292,6 @@
             android:layout_marginTop="16dp"
             android:visibility="gone" />
 
-        <!-- Forgot PIN option -->
-        <TextView
-            android:id="@+id/tv_forgot_pin"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Forgot PIN? Clear app data"
-            android:textSize="14sp"
-            android:textColor="#1976d2"
-            android:layout_marginTop="24dp"
-            android:padding="8dp"
-            android:background="?android:attr/selectableItemBackground"
-            android:clickable="true"
-            android:focusable="true" />
 
     </LinearLayout>
 

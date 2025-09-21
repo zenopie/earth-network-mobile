@@ -152,7 +152,7 @@ class WalletMainFragment : Fragment(),
 
     private fun updateChildFragments() {
         // Update wallet name display
-        val displayName = if (currentWalletName.isEmpty()) "My Wallet" else currentWalletName
+        val displayName = if (currentWalletName.isEmpty()) " " else currentWalletName
         walletNameText.text = displayName
 
         // Update wallet display fragment

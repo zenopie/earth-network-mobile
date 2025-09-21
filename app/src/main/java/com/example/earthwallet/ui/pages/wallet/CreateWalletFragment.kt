@@ -225,8 +225,8 @@ class CreateWalletFragment : Fragment() {
         }
 
         btnDone.setOnClickListener {
-            // onWalletCreated() was already called when wallet was saved
-            // Just close this screen since UI is already refreshed
+            // Navigate back to wallet main
+            listener?.onWalletCreated()
         }
 
         // Initialize UI state
@@ -321,15 +321,12 @@ class CreateWalletFragment : Fragment() {
                 // Start session with the PIN
                 SessionManager.startSession(requireContext(), pin)
             } else {
-                // PIN already exists - we need to get it from user input
-                // For now, assume PIN is provided (TODO: proper PIN entry flow)
-                if (pin == null) {
-                    Toast.makeText(requireContext(), "Please enter existing PIN", Toast.LENGTH_SHORT).show()
+                // PIN already exists - session should already be active
+                if (!SessionManager.isSessionActive()) {
+                    Toast.makeText(requireContext(), "No active session. Please restart the app.", Toast.LENGTH_SHORT).show()
                     return
                 }
-
-                // Start session with existing PIN
-                SessionManager.startSession(requireContext(), pin)
+                // Session is already active, no need to start it again
             }
 
             // Create wallet using SecureWalletManager (now with active session)

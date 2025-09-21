@@ -37,7 +37,6 @@ class PinEntryFragment : Fragment() {
     // UI Components
     private lateinit var pinInput: EditText
     private lateinit var tvError: TextView
-    private lateinit var tvForgotPin: TextView
 
     // PIN dots
     private lateinit var pinDots: Array<View>
@@ -52,7 +51,6 @@ class PinEntryFragment : Fragment() {
     // Interface for communication with parent activity
     interface PinEntryListener {
         fun onPinEntered(pin: String)
-        fun onForgotPin()
     }
 
     private var listener: PinEntryListener? = null
@@ -74,7 +72,6 @@ class PinEntryFragment : Fragment() {
         // Initialize UI components
         initializeViews(view)
         setupNumberPad()
-        setupForgotPin()
 
         // Focus on hidden input to show keyboard if needed
         pinInput.requestFocus()
@@ -83,7 +80,6 @@ class PinEntryFragment : Fragment() {
     private fun initializeViews(view: View) {
         pinInput = view.findViewById(R.id.pin_input)
         tvError = view.findViewById(R.id.tv_error)
-        tvForgotPin = view.findViewById(R.id.tv_forgot_pin)
         btnBackspace = view.findViewById(R.id.btn_backspace)
 
         // Initialize PIN dots
@@ -130,11 +126,6 @@ class PinEntryFragment : Fragment() {
         pinInput.isFocusable = false
     }
 
-    private fun setupForgotPin() {
-        tvForgotPin.setOnClickListener {
-            listener?.onForgotPin()
-        }
-    }
 
     private fun addDigit(digit: String) {
         if (currentPin.length < 6) {
@@ -247,4 +238,5 @@ class PinEntryFragment : Fragment() {
     private fun hideError() {
         tvError.visibility = View.GONE
     }
+
 }

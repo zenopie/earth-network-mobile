@@ -23,7 +23,7 @@
             android:id="@+id/addressText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Loading..."
+            android:text=" "
             android:textSize="14sp"
             android:textColor="#333333"
             android:gravity="center"
@@ -125,7 +125,7 @@
                 android:id="@+id/balanceText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Loading..."
+                android:text=" "
                 android:textSize="28sp"
                 android:textColor="#4caf50"
                 android:textStyle="bold" />

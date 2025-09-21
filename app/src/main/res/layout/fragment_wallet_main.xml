@@ -38,7 +38,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_centerInParent="true"
-                        android:text="My Wallet"
+                        android:text=" "
                         android:textSize="24sp"
                         android:textStyle="bold"
                         android:textColor="#1e3a8a"

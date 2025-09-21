@@ -144,8 +144,8 @@ class WalletDisplayFragment : Fragment() {
             addressText.text = formatAddress(currentAddress)
             addressContainer.visibility = View.VISIBLE
         } else {
-            addressText.text = "No wallet"
-            addressContainer.visibility = View.GONE
+            addressText.text = " "
+            addressContainer.visibility = View.VISIBLE
         }
     }
 
@@ -170,7 +170,7 @@ class WalletDisplayFragment : Fragment() {
         }
 
         // Show loading state
-        balanceText.text = "Loading..."
+        balanceText.text = " "
 
         // Fetch balance using coroutines instead of AsyncTask
         lifecycleScope.launch {
