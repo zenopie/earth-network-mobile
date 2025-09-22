@@ -231,7 +231,8 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
 
                 // Navigate based on result
                 if (verificationSuccessful) {
-                    Log.d(TAG, "Scan successful, navigating back to ANML")
+                    Log.d(TAG, "Scan successful, clearing MRZ data and navigating back to ANML")
+                    clearMRZData()
                     navigateBackToANML()
                 } else {
                     Log.d(TAG, "Verification failed, navigating to failure screen")
@@ -330,6 +331,12 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
             return "Backend server not connected"
         }
 
+        // Check if we have a specific failure reason from backend
+        val backendFailureReason = passportData.failureReason
+        if (!backendFailureReason.isNullOrEmpty() && httpCode in 200..299) {
+            return backendFailureReason
+        }
+
         // Check specific HTTP error codes
         return when {
             httpCode >= 500 -> "Backend server error ($httpCode)"
@@ -399,16 +406,12 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
         if (httpCode in 200..299) {
             val passiveAuthPassed = passportData.passiveAuthenticationPassed
             if (passiveAuthPassed != true) {
-                details = "Your passport could not be authenticated. This could mean:\n• The passport data is corrupted\n• Unsupported passport type\n• Security verification failed\n\nTry scanning again or contact support if the issue persists."
-
-                // Add trust chain information if available
-                val trustStatus = passportData.trustChainStatus
-                val trustReason = passportData.trustChainFailureReason
-                if (!trustStatus.isNullOrEmpty()) {
-                    details += "\n\nTrust chain status: $trustStatus"
-                }
-                if (!trustReason.isNullOrEmpty()) {
-                    details += "\nReason: $trustReason"
+                // Use backend failure reason if available, otherwise show generic message
+                val backendFailureReason = passportData.failureReason
+                if (!backendFailureReason.isNullOrEmpty()) {
+                    details = backendFailureReason
+                } else {
+                    details = "Your passport could not be authenticated. This could mean:\n• The passport data is corrupted\n• Unsupported passport type\n• Security verification failed\n\nTry scanning again or contact support if the issue persists."
                 }
             } else {
                 details = "The verification process completed but failed for an unknown reason. Please try again."
@@ -667,6 +670,7 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
         try {
             val root = JSONObject(jsonBody)
             pd.passiveAuthenticationPassed = root.optBoolean("passive_authentication_passed", false)
+            pd.failureReason = root.optString("failure_reason", "").takeIf { it.isNotEmpty() }
             val details = root.optJSONObject("details")
             if (details != null) {
                 val trust = details.optJSONObject("trust_chain")
@@ -746,6 +750,28 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
         }
     }
 
+    /**
+     * Clear MRZ data from SharedPreferences and memory for privacy/security
+     */
+    private fun clearMRZData() {
+        Log.d(TAG, "Clearing MRZ data for privacy/security")
+
+        // Clear from memory
+        passportNumber = null
+        dateOfBirth = null
+        dateOfExpiry = null
+
+        // Clear from SharedPreferences
+        val prefs = requireActivity().getSharedPreferences("mrz_data", Activity.MODE_PRIVATE)
+        val editor = prefs.edit()
+        editor.remove("passportNumber")
+        editor.remove("dateOfBirth")
+        editor.remove("dateOfExpiry")
+        editor.apply()
+
+        Log.d(TAG, "MRZ data cleared successfully")
+    }
+
     // Backend HTTP result holder
     private class BackendResult {
         var code: Int = 0
@@ -768,6 +794,7 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
         var backendHttpCode: Int? = null
         var backendRawResponse: String? = null
         var passiveAuthenticationPassed: Boolean? = null
+        var failureReason: String? = null  // Human readable error from backend
         var trustChainStatus: String? = null
         var trustChainFailureReason: String? = null
         var sodSignatureStatus: String? = null
