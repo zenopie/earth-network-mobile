@@ -14,7 +14,7 @@ object Constants {
     const val STAKING_HASH = "f3890262cc071b02dbb14f4dbd3b240aca4b0776be896fc60cfd993db97357db"
 
     // Backend base URL
-    const val BACKEND_BASE_URL = "http://10.189.84.13:8000/api"
+    const val BACKEND_BASE_URL = "http://maroon-spoonbill.vm.scrtlabs.com:8000/api"
 
     // Network constants
     const val DEFAULT_LCD_URL = "https://lcd.erth.network"
