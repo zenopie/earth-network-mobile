@@ -118,8 +118,8 @@ dependencies {
     // Remove these - not needed for icons
     implementation('org.bitcoinj:bitcoinj-core:0.16.3') { exclude group: 'org.bouncycastle' }
     
-    // JMRTD library for reading ePassports - latest version
-    implementation ('org.jmrtd:jmrtd:0.7.35') {
+    // JMRTD library for reading ePassports - stable version
+    implementation ('org.jmrtd:jmrtd:0.7.18') {
         exclude group: 'org.bouncycastle', module: 'bcprov-jdk15on'
         exclude group: 'org.bouncycastle', module: 'bcprov-jdk14'
         exclude group: 'org.bouncycastle', module: 'bcpkix-jdk15on'
