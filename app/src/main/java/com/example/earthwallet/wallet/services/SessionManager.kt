@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.util.Log
 import com.example.earthwallet.wallet.utils.SoftwareEncryption
 import com.example.earthwallet.wallet.utils.SecurePreferencesUtil
+import com.example.earthwallet.wallet.utils.WalletStorageVersion
 import org.json.JSONArray
 import org.json.JSONObject
 import android.util.Base64
@@ -24,7 +25,7 @@ object SessionManager {
     // Session state
     private var isSessionActive = false
     private var sessionPin: String? = null
-    private var decryptedWalletData: String? = null
+    private var versionedWalletStorage: WalletStorageVersion.VersionedWalletStorage? = null
     private var otherPrefsData = mutableMapOf<String, Any?>()
 
     /**
@@ -49,11 +50,14 @@ object SessionManager {
             val encryptedWalletsJson = softwarePrefs.getString("wallets_encrypted", null)
             if (encryptedWalletsJson != null) {
                 val encryptedData = parseSoftwareEncryptedData(encryptedWalletsJson)
-                decryptedWalletData = SoftwareEncryption.decrypt(encryptedData, pin, context)
-                Log.d(TAG, "Successfully decrypted wallet data for session")
+                val decryptedStorageJson = SoftwareEncryption.decrypt(encryptedData, pin, context)
+
+                // Parse with versioning support
+                versionedWalletStorage = WalletStorageVersion.parseWalletStorage(decryptedStorageJson)
+                Log.d(TAG, "Successfully decrypted and parsed versioned wallet storage v${versionedWalletStorage!!.version}")
             } else {
-                decryptedWalletData = "[]" // Empty wallet array
-                Log.d(TAG, "No encrypted wallet data found, starting with empty session")
+                versionedWalletStorage = WalletStorageVersion.createVersionedStorage(JSONArray())
+                Log.d(TAG, "No encrypted wallet data found, starting with empty versioned storage v${WalletStorageVersion.CURRENT_VERSION}")
             }
 
             // Load other preferences data (non-encrypted)
@@ -92,7 +96,8 @@ object SessionManager {
         if (!isSessionActive) {
             throw IllegalStateException("No active session - call startSession() first")
         }
-        return decryptedWalletData ?: "[]"
+        val storage = versionedWalletStorage ?: throw IllegalStateException("No wallet storage available")
+        return WalletStorageVersion.getWalletsArray(storage).toString()
     }
 
     /**
@@ -107,21 +112,15 @@ object SessionManager {
         val pin = sessionPin ?: throw IllegalStateException("Session PIN not available")
 
         try {
-            // Update in-memory data
-            decryptedWalletData = newWalletData
+            // Parse new wallet data as JSONArray and update versioned storage
+            val newWalletsArray = JSONArray(newWalletData)
+            val currentStorage = versionedWalletStorage ?: throw IllegalStateException("No wallet storage available")
+            versionedWalletStorage = WalletStorageVersion.updateWallets(currentStorage, newWalletsArray)
 
-            // Re-encrypt and save to storage
-            val encryptedData = SoftwareEncryption.encrypt(newWalletData, pin, context)
-            val json = JSONObject().apply {
-                put("ciphertext", Base64.encodeToString(encryptedData.ciphertext, Base64.DEFAULT))
-                put("iv", Base64.encodeToString(encryptedData.iv, Base64.DEFAULT))
-                put("salt", Base64.encodeToString(encryptedData.salt, Base64.DEFAULT))
-            }
+            // Save to encrypted storage
+            saveVersionedStorageToEncryption(context, pin)
 
-            val softwarePrefs = context.getSharedPreferences(PREF_FILE + "_software", Context.MODE_PRIVATE)
-            softwarePrefs.edit().putString("wallets_encrypted", json.toString()).apply()
-
-            Log.d(TAG, "Updated and re-encrypted wallet data")
+            Log.d(TAG, "Updated and re-encrypted versioned wallet data")
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to update wallet data", e)
@@ -196,7 +195,7 @@ object SessionManager {
         }
         sessionPin = null
 
-        decryptedWalletData = null
+        versionedWalletStorage = null
         otherPrefsData.clear()
         isSessionActive = false
 
@@ -235,6 +234,30 @@ object SessionManager {
         } catch (e: Exception) {
             throw Exception("Failed to parse software encrypted data", e)
         }
+    }
+
+    /**
+     * Save versioned wallet storage to encrypted storage
+     */
+    @Throws(Exception::class)
+    private fun saveVersionedStorageToEncryption(context: Context, pin: String) {
+        val storage = versionedWalletStorage ?: throw IllegalStateException("No wallet storage available")
+
+        // Serialize versioned storage to JSON
+        val storageJson = WalletStorageVersion.serializeWalletStorage(storage)
+
+        // Encrypt and save
+        val encryptedData = SoftwareEncryption.encrypt(storageJson, pin, context)
+        val json = JSONObject().apply {
+            put("ciphertext", Base64.encodeToString(encryptedData.ciphertext, Base64.DEFAULT))
+            put("iv", Base64.encodeToString(encryptedData.iv, Base64.DEFAULT))
+            put("salt", Base64.encodeToString(encryptedData.salt, Base64.DEFAULT))
+        }
+
+        val softwarePrefs = context.getSharedPreferences(PREF_FILE + "_software", Context.MODE_PRIVATE)
+        softwarePrefs.edit().putString("wallets_encrypted", json.toString()).apply()
+
+        Log.d(TAG, "Saved versioned wallet storage v${storage.version} to encrypted storage")
     }
 }
 

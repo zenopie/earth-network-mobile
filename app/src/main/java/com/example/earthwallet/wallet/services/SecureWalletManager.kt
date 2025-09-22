@@ -8,6 +8,7 @@ import android.util.Base64
 import android.util.Log
 import com.example.earthwallet.wallet.utils.WalletCrypto
 import com.example.earthwallet.wallet.utils.SoftwareEncryption
+import com.example.earthwallet.wallet.utils.WalletStorageVersion
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -909,4 +910,47 @@ object SecureWalletManager {
         val softwarePrefs = context.getSharedPreferences(PREF_FILE + "_software", Context.MODE_PRIVATE)
         val storedHash = softwarePrefs.getString("pin_hash", "") ?: ""
         return storedHash == pinHash
-    }}
+    }
+
+    /**
+     * Get wallet storage version information (for debugging/admin purposes)
+     */
+    @Throws(Exception::class)
+    fun getStorageVersionInfo(context: Context): JSONObject {
+        return try {
+            if (!SessionManager.isSessionActive()) {
+                // Read encrypted storage to check version without decrypting
+                val softwarePrefs = context.getSharedPreferences(PREF_FILE + "_software", Context.MODE_PRIVATE)
+                val encryptedWalletsJson = softwarePrefs.getString("wallets_encrypted", null)
+
+                JSONObject().apply {
+                    put("session_active", false)
+                    put("has_encrypted_storage", encryptedWalletsJson != null)
+                    put("current_version", WalletStorageVersion.CURRENT_VERSION)
+                    put("min_supported_version", WalletStorageVersion.MIN_SUPPORTED_VERSION)
+                    put("storage_version", "unknown - session required to decrypt")
+                }
+            } else {
+                // Get version from active session
+                val sessionPrefs = SessionManager.createSessionPreferences(context)
+                val walletsJson = sessionPrefs.getString("wallets", "[]") ?: "[]"
+
+                // This will be versioned storage format since SessionManager handles migration
+                JSONObject().apply {
+                    put("session_active", true)
+                    put("current_version", WalletStorageVersion.CURRENT_VERSION)
+                    put("min_supported_version", WalletStorageVersion.MIN_SUPPORTED_VERSION)
+                    put("storage_version", WalletStorageVersion.CURRENT_VERSION) // Always current in session
+                    put("wallet_count", JSONArray(walletsJson).length())
+                    put("needs_migration", false) // Already migrated in session
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to get storage version info", e)
+            JSONObject().apply {
+                put("error", e.message)
+                put("current_version", WalletStorageVersion.CURRENT_VERSION)
+            }
+        }
+    }
+}
