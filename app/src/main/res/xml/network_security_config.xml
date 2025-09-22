@@ -3,6 +3,7 @@
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">lcd.erth.network</domain>
         <domain includeSubdomains="true">sapphire-kiwi.vm.scrtlabs.com</domain>
+        <domain includeSubdomains="false">10.189.84.13</domain>
     </domain-config>
     
     <!-- Allow all HTTPS traffic -->

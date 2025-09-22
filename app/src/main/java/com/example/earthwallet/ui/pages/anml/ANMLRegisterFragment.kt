@@ -104,6 +104,7 @@ class ANMLRegisterFragment : Fragment() {
             }
 
             button.setOnClickListener {
+                Log.d(TAG, "Register button clicked - listener: $listener")
                 listener?.onRegisterRequested()
             }
         }

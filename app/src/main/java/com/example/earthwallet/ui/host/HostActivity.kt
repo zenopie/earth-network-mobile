@@ -251,6 +251,11 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
             }
         }
 
+        // Set arguments on the fragment if provided
+        arguments?.let {
+            fragment.arguments = it
+        }
+
         ft.replace(R.id.host_content, fragment, tag)
         ft.commitAllowingStateLoss()
     }
@@ -264,6 +269,22 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
             val currentFragment = supportFragmentManager.findFragmentById(R.id.host_content)
             if (currentFragment is com.example.earthwallet.ui.pages.anml.ScannerFragment) {
                 currentFragment.handleNfcIntent(intent)
+            }
+        }
+
+        // Handle fragment navigation from other activities
+        intent?.let {
+            if (it.hasExtra("fragment_to_show")) {
+                val fragmentToShow = it.getStringExtra("fragment_to_show")
+                Log.d(TAG, "onNewIntent: navigating to fragment: $fragmentToShow")
+                fragmentToShow?.let { fragment ->
+                    showFragment(fragment)
+                    when (fragment) {
+                        "wallet" -> setSelectedNav(navWallet, navActions)
+                        "actions" -> setSelectedNav(navActions, navWallet)
+                        else -> setSelectedNav(navWallet, navActions) // Default to wallet nav for other fragments
+                    }
+                }
             }
         }
     }

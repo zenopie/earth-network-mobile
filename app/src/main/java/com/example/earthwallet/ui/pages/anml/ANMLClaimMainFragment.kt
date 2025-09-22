@@ -196,6 +196,7 @@ class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListe
     }
 
     override fun onRegisterRequested() {
+        Log.d(TAG, "onRegisterRequested called - starting camera_mrz_scanner")
         val i = Intent(context, com.example.earthwallet.ui.host.HostActivity::class.java)
         i.putExtra("fragment_to_show", "camera_mrz_scanner")
         startActivity(i)
