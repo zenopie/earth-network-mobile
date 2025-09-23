@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.utils
+package network.erth.wallet.ui.utils
 
 import android.os.Build
 import android.view.View

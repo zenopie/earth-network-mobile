@@ -1,13 +1,13 @@
-package com.example.earthwallet.bridge.services
+package network.erth.wallet.bridge.services
 
 import android.content.Context
 import android.content.Intent
 import android.util.Log
-import com.example.earthwallet.bridge.models.Permit
-import com.example.earthwallet.bridge.models.PermitSignDoc
-import com.example.earthwallet.bridge.utils.PermitManager
-import com.example.earthwallet.wallet.services.TransactionSigner
-import com.example.earthwallet.wallet.services.SecureWalletManager
+import network.erth.wallet.bridge.models.Permit
+import network.erth.wallet.bridge.models.PermitSignDoc
+import network.erth.wallet.bridge.utils.PermitManager
+import network.erth.wallet.wallet.services.TransactionSigner
+import network.erth.wallet.wallet.services.SecureWalletManager
 import com.google.gson.Gson
 import org.bitcoinj.core.ECKey
 import java.util.Base64
@@ -49,8 +49,8 @@ object PermitSigningService {
         return SecureWalletManager.executeWithMnemonic(context) { mnemonic ->
 
             // Get wallet key and address from mnemonic
-            val walletKey = com.example.earthwallet.wallet.utils.WalletCrypto.deriveKeyFromMnemonic(mnemonic)
-            val walletAddress = com.example.earthwallet.wallet.utils.WalletCrypto.getAddress(walletKey)
+            val walletKey = network.erth.wallet.wallet.utils.WalletCrypto.deriveKeyFromMnemonic(mnemonic)
+            val walletAddress = network.erth.wallet.wallet.utils.WalletCrypto.getAddress(walletKey)
 
             if (walletKey == null || walletAddress == null) {
                 throw Exception("No wallet available for signing")
@@ -103,8 +103,8 @@ object PermitSigningService {
         allowedTokens: List<String>,
         permissions: List<String>
     ): Intent {
-        return Intent(context, com.example.earthwallet.bridge.activities.TransactionActivity::class.java).apply {
-            putExtra(com.example.earthwallet.bridge.activities.TransactionActivity.EXTRA_TRANSACTION_TYPE, "permit_signing")
+        return Intent(context, network.erth.wallet.bridge.activities.TransactionActivity::class.java).apply {
+            putExtra(network.erth.wallet.bridge.activities.TransactionActivity.EXTRA_TRANSACTION_TYPE, "permit_signing")
             putExtra("permit_name", permitName)
             putExtra("allowed_tokens", allowedTokens.joinToString(","))
             putExtra("permissions", permissions.joinToString(","))

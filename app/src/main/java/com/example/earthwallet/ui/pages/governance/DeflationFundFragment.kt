@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.pages.governance
+package network.erth.wallet.ui.pages.governance
 
 import android.os.Bundle
 import android.util.Log
@@ -10,11 +10,11 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
-import com.example.earthwallet.Constants
-import com.example.earthwallet.R
-import com.example.earthwallet.bridge.services.SecretQueryService
-import com.example.earthwallet.ui.components.PieChartView
-import com.example.earthwallet.wallet.services.SecureWalletManager
+import network.erth.wallet.Constants
+import network.erth.wallet.R
+import network.erth.wallet.bridge.services.SecretQueryService
+import network.erth.wallet.ui.components.PieChartView
+import network.erth.wallet.wallet.services.SecureWalletManager
 import com.google.android.material.tabs.TabLayout
 import org.json.JSONArray
 import org.json.JSONObject

@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.components
+package network.erth.wallet.ui.components
 
 import android.app.Dialog
 import android.content.Context
@@ -8,8 +8,8 @@ import android.view.View
 import android.widget.Button
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
-import com.example.earthwallet.R
-import com.example.earthwallet.wallet.utils.PinSecurityManager
+import network.erth.wallet.R
+import network.erth.wallet.wallet.utils.PinSecurityManager
 
 /**
  * General Purpose PIN Entry Dialog

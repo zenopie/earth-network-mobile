@@ -1,6 +1,6 @@
-package com.example.earthwallet.ui.pages.anml
+package network.erth.wallet.ui.pages.anml
 
-import com.example.earthwallet.R
+import network.erth.wallet.R
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
@@ -19,7 +19,7 @@ import java.text.DecimalFormat
 import java.io.IOException
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
-import com.example.earthwallet.Constants
+import network.erth.wallet.Constants
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.OkHttpClient

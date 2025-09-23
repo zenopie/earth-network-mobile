@@ -1,4 +1,4 @@
-package com.example.earthwallet.bridge.models
+package network.erth.wallet.bridge.models
 
 import com.google.gson.annotations.SerializedName
 

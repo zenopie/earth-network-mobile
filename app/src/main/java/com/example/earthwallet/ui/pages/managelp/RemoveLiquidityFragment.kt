@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.pages.managelp
+package network.erth.wallet.ui.pages.managelp
 
 import android.app.Activity
 import android.content.BroadcastReceiver
@@ -20,12 +20,12 @@ import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
-import com.example.earthwallet.R
-import com.example.earthwallet.bridge.activities.TransactionActivity
-import com.example.earthwallet.wallet.constants.Tokens
-import com.example.earthwallet.wallet.services.SecureWalletManager
-import com.example.earthwallet.Constants
-import com.example.earthwallet.bridge.services.SecretQueryService
+import network.erth.wallet.R
+import network.erth.wallet.bridge.activities.TransactionActivity
+import network.erth.wallet.wallet.constants.Tokens
+import network.erth.wallet.wallet.services.SecureWalletManager
+import network.erth.wallet.Constants
+import network.erth.wallet.bridge.services.SecretQueryService
 import org.json.JSONObject
 import org.json.JSONArray
 import java.text.DecimalFormat
@@ -133,7 +133,7 @@ class RemoveLiquidityFragment : Fragment() {
 
     private fun registerBroadcastReceiver() {
         if (activity != null && transactionSuccessReceiver != null) {
-            val filter = IntentFilter("com.example.earthwallet.TRANSACTION_SUCCESS")
+            val filter = IntentFilter("network.erth.wallet.TRANSACTION_SUCCESS")
             try {
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
                     requireActivity().applicationContext.registerReceiver(transactionSuccessReceiver, filter, Context.RECEIVER_NOT_EXPORTED)

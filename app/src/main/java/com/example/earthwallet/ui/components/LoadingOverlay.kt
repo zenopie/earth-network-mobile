@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.components
+package network.erth.wallet.ui.components
 
 import android.content.Context
 import android.util.AttributeSet
@@ -11,7 +11,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.resource.bitmap.CenterCrop
-import com.example.earthwallet.R
+import network.erth.wallet.R
 
 /**
  * A reusable loading overlay component that displays a loading gif

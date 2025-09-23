@@ -1,4 +1,4 @@
-package com.example.earthwallet.wallet.utils
+package network.erth.wallet.wallet.utils
 
 import android.content.Context
 import android.util.Log
@@ -8,7 +8,7 @@ import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
-import com.example.earthwallet.wallet.services.SecureWalletManager
+import network.erth.wallet.wallet.services.SecureWalletManager
 
 /**
  * BiometricAuthManager

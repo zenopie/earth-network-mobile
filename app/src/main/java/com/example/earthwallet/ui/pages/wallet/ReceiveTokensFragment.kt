@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.pages.wallet
+package network.erth.wallet.ui.pages.wallet
 
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -16,8 +16,8 @@ import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
-import com.example.earthwallet.R
-import com.example.earthwallet.wallet.services.SecureWalletManager
+import network.erth.wallet.R
+import network.erth.wallet.wallet.services.SecureWalletManager
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.WriterException
 import com.google.zxing.qrcode.QRCodeWriter

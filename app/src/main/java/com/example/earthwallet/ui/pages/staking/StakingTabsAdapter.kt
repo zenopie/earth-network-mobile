@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.pages.staking
+package network.erth.wallet.ui.pages.staking
 
 import androidx.fragment.app.Fragment
 import androidx.viewpager2.adapter.FragmentStateAdapter

@@ -1,4 +1,4 @@
-package com.example.earthwallet.wallet.services
+package network.erth.wallet.wallet.services
 
 import android.content.Context
 import android.text.TextUtils

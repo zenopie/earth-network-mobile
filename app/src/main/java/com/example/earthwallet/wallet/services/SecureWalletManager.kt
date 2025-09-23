@@ -1,4 +1,4 @@
-package com.example.earthwallet.wallet.services
+package network.erth.wallet.wallet.services
 
 import android.content.Context
 import android.content.SharedPreferences
@@ -6,9 +6,9 @@ import android.os.Build
 import android.text.TextUtils
 import android.util.Base64
 import android.util.Log
-import com.example.earthwallet.wallet.utils.WalletCrypto
-import com.example.earthwallet.wallet.utils.SoftwareEncryption
-import com.example.earthwallet.wallet.utils.WalletStorageVersion
+import network.erth.wallet.wallet.utils.WalletCrypto
+import network.erth.wallet.wallet.utils.SoftwareEncryption
+import network.erth.wallet.wallet.utils.WalletStorageVersion
 import org.json.JSONArray
 import org.json.JSONObject
 

@@ -1,12 +1,12 @@
-package com.example.earthwallet.ui.pages.wallet
+package network.erth.wallet.ui.pages.wallet
 
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
-import com.example.earthwallet.R
-import com.example.earthwallet.wallet.services.ContactsManager
+import network.erth.wallet.R
+import network.erth.wallet.wallet.services.ContactsManager
 
 /**
  * ContactsAdapter

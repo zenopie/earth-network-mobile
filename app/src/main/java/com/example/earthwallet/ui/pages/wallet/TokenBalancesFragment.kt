@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.pages.wallet
+package network.erth.wallet.ui.pages.wallet
 
 import android.app.Activity
 import android.content.Context
@@ -18,12 +18,12 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
-import com.example.earthwallet.R
-import com.example.earthwallet.bridge.services.SecretQueryService
-import com.example.earthwallet.bridge.services.SnipQueryService
-import com.example.earthwallet.bridge.utils.PermitManager
-import com.example.earthwallet.wallet.constants.Tokens
-import com.example.earthwallet.wallet.services.SecureWalletManager
+import network.erth.wallet.R
+import network.erth.wallet.bridge.services.SecretQueryService
+import network.erth.wallet.bridge.services.SnipQueryService
+import network.erth.wallet.bridge.utils.PermitManager
+import network.erth.wallet.wallet.constants.Tokens
+import network.erth.wallet.wallet.services.SecureWalletManager
 import org.json.JSONObject
 import java.util.*
 

@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.pages.wallet
+package network.erth.wallet.ui.pages.wallet
 
 import android.app.Activity
 import android.app.AlertDialog
@@ -15,13 +15,13 @@ import android.widget.*
 import androidx.activity.result.ActivityResultLauncher
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
-import com.example.earthwallet.R
-import com.example.earthwallet.bridge.activities.TransactionActivity
-import com.example.earthwallet.bridge.services.SnipQueryService
-import com.example.earthwallet.bridge.utils.PermitManager
-import com.example.earthwallet.wallet.constants.Tokens
-import com.example.earthwallet.wallet.services.SecureWalletManager
-import com.example.earthwallet.wallet.utils.WalletNetwork
+import network.erth.wallet.R
+import network.erth.wallet.bridge.activities.TransactionActivity
+import network.erth.wallet.bridge.services.SnipQueryService
+import network.erth.wallet.bridge.utils.PermitManager
+import network.erth.wallet.wallet.constants.Tokens
+import network.erth.wallet.wallet.services.SecureWalletManager
+import network.erth.wallet.wallet.utils.WalletNetwork
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.Dispatchers

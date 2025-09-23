@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.pages.managelp
+package network.erth.wallet.ui.pages.managelp
 
 import android.os.Bundle
 import android.util.Log
@@ -7,11 +7,11 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import androidx.fragment.app.Fragment
-import com.example.earthwallet.R
-import com.example.earthwallet.Constants
-import com.example.earthwallet.bridge.services.SecretQueryService
-import com.example.earthwallet.wallet.constants.Tokens
-import com.example.earthwallet.wallet.services.SecureWalletManager
+import network.erth.wallet.R
+import network.erth.wallet.Constants
+import network.erth.wallet.bridge.services.SecretQueryService
+import network.erth.wallet.wallet.constants.Tokens
+import network.erth.wallet.wallet.services.SecureWalletManager
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ExecutorService

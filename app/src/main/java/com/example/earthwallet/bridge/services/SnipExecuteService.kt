@@ -1,4 +1,4 @@
-package com.example.earthwallet.bridge.services
+package network.erth.wallet.bridge.services
 
 import android.content.Context
 import android.content.Intent

@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.pages.governance
+package network.erth.wallet.ui.pages.governance
 
 import android.os.Bundle
 import android.view.LayoutInflater

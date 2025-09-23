@@ -1,6 +1,6 @@
-package com.example.earthwallet.ui.pages.anml
+package network.erth.wallet.ui.pages.anml
 
-import com.example.earthwallet.R
+import network.erth.wallet.R
 import android.os.Build
 import android.os.Bundle
 import android.text.TextUtils
@@ -52,7 +52,7 @@ class MRZInputFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
 
         // Hide bottom navigation and status bar
-        (activity as? com.example.earthwallet.ui.host.HostActivity)?.let { hostActivity ->
+        (activity as? network.erth.wallet.ui.host.HostActivity)?.let { hostActivity ->
             hostActivity.hideBottomNavigation()
 
             // Hide status bar using modern approach
@@ -100,7 +100,7 @@ class MRZInputFragment : Fragment() {
                 }
 
                 // Navigate to scanner fragment - let HostActivity handle UI state
-                (activity as? com.example.earthwallet.ui.host.HostActivity)?.let { hostActivity ->
+                (activity as? network.erth.wallet.ui.host.HostActivity)?.let { hostActivity ->
                     hostActivity.showFragment("scanner")
                 }
 

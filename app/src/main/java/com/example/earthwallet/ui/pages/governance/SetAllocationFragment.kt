@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.pages.governance
+package network.erth.wallet.ui.pages.governance
 
 import android.app.Activity
 import android.content.Intent
@@ -17,10 +17,10 @@ import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
-import com.example.earthwallet.Constants
-import com.example.earthwallet.R
-import com.example.earthwallet.bridge.activities.TransactionActivity
-import com.example.earthwallet.bridge.services.SecretQueryService
+import network.erth.wallet.Constants
+import network.erth.wallet.R
+import network.erth.wallet.bridge.activities.TransactionActivity
+import network.erth.wallet.bridge.services.SecretQueryService
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ExecutorService

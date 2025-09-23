@@ -1,4 +1,4 @@
-package com.example.earthwallet.wallet.services
+package network.erth.wallet.wallet.services
 
 import android.content.Context
 import android.content.Intent
@@ -7,7 +7,7 @@ import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
-import com.example.earthwallet.wallet.utils.UpdateConfig
+import network.erth.wallet.wallet.utils.UpdateConfig
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.io.BufferedReader
@@ -111,7 +111,7 @@ class UpdateManager private constructor(private val context: Context) {
      *   "current_version": "1.2.0",
      *   "minimum_version": "1.0.0",
      *   "update_message": "New features and bug fixes",
-     *   "download_url": "https://play.google.com/store/apps/details?id=com.example.earthwallet"
+     *   "download_url": "https://play.google.com/store/apps/details?id=network.erth.wallet"
      * }
      */
     private suspend fun fetchUpdateData(updateUrl: String): JSONObject? = withContext(Dispatchers.IO) {

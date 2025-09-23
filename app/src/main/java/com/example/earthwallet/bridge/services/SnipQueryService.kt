@@ -1,9 +1,9 @@
-package com.example.earthwallet.bridge.services
+package network.erth.wallet.bridge.services
 
 import android.content.Context
 import android.text.TextUtils
-import com.example.earthwallet.wallet.constants.Tokens
-import com.example.earthwallet.bridge.utils.PermitManager
+import network.erth.wallet.wallet.constants.Tokens
+import network.erth.wallet.bridge.utils.PermitManager
 import org.json.JSONObject
 
 /**
@@ -83,7 +83,7 @@ object SnipQueryService {
 
         // Execute native query with secure mnemonic handling
         // Use HostActivity context if available for centralized securePrefs access
-        val queryContext = if (context is com.example.earthwallet.ui.host.HostActivity) {
+        val queryContext = if (context is network.erth.wallet.ui.host.HostActivity) {
             context
         } else {
             context

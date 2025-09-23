@@ -1,6 +1,6 @@
-package com.example.earthwallet.ui.pages.anml
+package network.erth.wallet.ui.pages.anml
 
-import com.example.earthwallet.R
+import network.erth.wallet.R
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.os.Bundle

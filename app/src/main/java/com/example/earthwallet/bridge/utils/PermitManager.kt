@@ -1,14 +1,14 @@
-package com.example.earthwallet.bridge.utils
+package network.erth.wallet.bridge.utils
 
 import android.content.Context
 import android.content.SharedPreferences
 import android.text.TextUtils
 import android.util.Log
-import com.example.earthwallet.wallet.utils.SecurePreferencesUtil
-import com.example.earthwallet.bridge.models.Permit
-import com.example.earthwallet.bridge.models.PermitSignDoc
-import com.example.earthwallet.wallet.services.SecureWalletManager
-import com.example.earthwallet.wallet.services.TransactionSigner
+import network.erth.wallet.wallet.utils.SecurePreferencesUtil
+import network.erth.wallet.bridge.models.Permit
+import network.erth.wallet.bridge.models.PermitSignDoc
+import network.erth.wallet.wallet.services.SecureWalletManager
+import network.erth.wallet.wallet.services.TransactionSigner
 import com.google.gson.Gson
 import org.bitcoinj.core.ECKey
 import org.bitcoinj.core.Sha256Hash
@@ -168,8 +168,8 @@ class PermitManager private constructor(context: Context) {
             // Use SecureWalletManager to sign the permit with secure mnemonic handling
             val signedPermit = SecureWalletManager.executeWithSecureMnemonic(context) { mnemonicChars ->
                 // Get wallet key from secure mnemonic char array
-                val walletKey = com.example.earthwallet.wallet.utils.WalletCrypto.deriveKeyFromSecureMnemonic(mnemonicChars)
-                val derivedAddress = com.example.earthwallet.wallet.utils.WalletCrypto.getAddress(walletKey)
+                val walletKey = network.erth.wallet.wallet.utils.WalletCrypto.deriveKeyFromSecureMnemonic(mnemonicChars)
+                val derivedAddress = network.erth.wallet.wallet.utils.WalletCrypto.getAddress(walletKey)
 
                 if (walletAddress != derivedAddress) {
                     throw Exception("Wallet address mismatch")
@@ -339,7 +339,7 @@ class PermitManager private constructor(context: Context) {
 
             // 4. Verify the signature using the public key
             val publicKey = ECKey.fromPublicOnly(publicKeyBytes)
-            val derivedAddress = com.example.earthwallet.wallet.utils.WalletCrypto.getAddress(publicKey)
+            val derivedAddress = network.erth.wallet.wallet.utils.WalletCrypto.getAddress(publicKey)
 
             // 5. Check if derived address matches expected wallet address
             if (walletAddress != derivedAddress) {

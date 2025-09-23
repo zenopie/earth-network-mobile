@@ -1,6 +1,6 @@
-package com.example.earthwallet.ui.pages.anml
+package network.erth.wallet.ui.pages.anml
 
-import com.example.earthwallet.R
+import network.erth.wallet.R
 import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -19,11 +19,11 @@ import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
 import androidx.appcompat.app.AlertDialog
-import com.example.earthwallet.bridge.activities.TransactionActivity
-import com.example.earthwallet.Constants
-import com.example.earthwallet.ui.components.LoadingOverlay
-import com.example.earthwallet.bridge.services.SecretQueryService
-import com.example.earthwallet.wallet.services.SecureWalletManager
+import network.erth.wallet.bridge.activities.TransactionActivity
+import network.erth.wallet.Constants
+import network.erth.wallet.ui.components.LoadingOverlay
+import network.erth.wallet.bridge.services.SecretQueryService
+import network.erth.wallet.wallet.services.SecureWalletManager
 import org.json.JSONObject
 
 class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListener, ANMLClaimFragment.ANMLClaimListener {
@@ -93,7 +93,7 @@ class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListe
 
     private fun registerBroadcastReceiver() {
         if (activity != null && transactionSuccessReceiver != null) {
-            val filter = IntentFilter("com.example.earthwallet.TRANSACTION_SUCCESS")
+            val filter = IntentFilter("network.erth.wallet.TRANSACTION_SUCCESS")
             try {
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
                     requireActivity().applicationContext.registerReceiver(transactionSuccessReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
@@ -192,7 +192,7 @@ class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListe
     }
 
     override fun onRegisterRequested() {
-        val i = Intent(context, com.example.earthwallet.ui.host.HostActivity::class.java)
+        val i = Intent(context, network.erth.wallet.ui.host.HostActivity::class.java)
         i.putExtra("fragment_to_show", "camera_mrz_scanner")
         startActivity(i)
     }

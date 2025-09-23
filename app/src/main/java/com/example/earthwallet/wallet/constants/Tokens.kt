@@ -1,4 +1,4 @@
-package com.example.earthwallet.wallet.constants
+package network.erth.wallet.wallet.constants
 
 /**
  * Token constants for SNIP-20 tokens on Secret Network

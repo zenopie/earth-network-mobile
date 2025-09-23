@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.pages.gasstation
+package network.erth.wallet.ui.pages.gasstation
 
 import android.app.Activity
 import android.content.Context
@@ -18,11 +18,11 @@ import android.widget.*
 import androidx.fragment.app.Fragment
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
-import com.example.earthwallet.R
-import com.example.earthwallet.Constants
-import com.example.earthwallet.bridge.activities.TransactionActivity
-import com.example.earthwallet.bridge.services.SecretQueryService
-import com.example.earthwallet.wallet.constants.Tokens
+import network.erth.wallet.R
+import network.erth.wallet.Constants
+import network.erth.wallet.bridge.activities.TransactionActivity
+import network.erth.wallet.bridge.services.SecretQueryService
+import network.erth.wallet.wallet.constants.Tokens
 import org.json.JSONObject
 import java.io.InputStream
 import java.text.DecimalFormat
@@ -254,7 +254,7 @@ class GasStationFragment : Fragment() {
         // Use SecretQueryService in background thread
         Thread {
             try {
-                if (!com.example.earthwallet.wallet.services.SecureWalletManager.isWalletAvailable(requireContext())) {
+                if (!network.erth.wallet.wallet.services.SecureWalletManager.isWalletAvailable(requireContext())) {
                     activity?.runOnUiThread {
                         Toast.makeText(requireContext(), "No wallet found", Toast.LENGTH_SHORT).show()
                         isSimulating = false
@@ -372,7 +372,7 @@ class GasStationFragment : Fragment() {
 
     private fun loadCurrentWalletAddress() {
         try {
-            currentWalletAddress = com.example.earthwallet.wallet.services.SecureWalletManager.getWalletAddress(requireContext()) ?: ""
+            currentWalletAddress = network.erth.wallet.wallet.services.SecureWalletManager.getWalletAddress(requireContext()) ?: ""
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load wallet address", e)
             currentWalletAddress = ""
@@ -404,7 +404,7 @@ class GasStationFragment : Fragment() {
         // Execute query in background thread using PermitManager
         Thread {
             try {
-                val result = com.example.earthwallet.bridge.services.SnipQueryService.queryBalanceWithPermit(
+                val result = network.erth.wallet.bridge.services.SnipQueryService.queryBalanceWithPermit(
                     requireContext(),
                     tokenSymbol,
                     currentWalletAddress

@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.pages.wallet
+package network.erth.wallet.ui.pages.wallet
 
 import android.content.Context
 import android.graphics.BitmapFactory
@@ -18,9 +18,9 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
-import com.example.earthwallet.R
-import com.example.earthwallet.bridge.utils.PermitManager
-import com.example.earthwallet.wallet.constants.Tokens
+import network.erth.wallet.R
+import network.erth.wallet.bridge.utils.PermitManager
+import network.erth.wallet.wallet.constants.Tokens
 import kotlin.math.round
 
 /**
@@ -95,7 +95,7 @@ class ManagePermitsFragment : Fragment() {
         // Final fallback: get wallet address directly from SecureWalletManager
         if (TextUtils.isEmpty(walletAddress)) {
             try {
-                walletAddress = com.example.earthwallet.wallet.services.SecureWalletManager.getWalletAddress(requireContext()) ?: ""
+                walletAddress = network.erth.wallet.wallet.services.SecureWalletManager.getWalletAddress(requireContext()) ?: ""
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to load wallet address directly", e)
             }
@@ -437,6 +437,6 @@ class ManagePermitsFragment : Fragment() {
      */
     private class TokenPermitInfo {
         lateinit var token: Tokens.TokenInfo
-        var permit: com.example.earthwallet.bridge.models.Permit? = null
+        var permit: network.erth.wallet.bridge.models.Permit? = null
     }
 }

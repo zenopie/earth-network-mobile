@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.pages.anml
+package network.erth.wallet.ui.pages.anml
 
 import android.graphics.drawable.AnimatedVectorDrawable
 import android.os.Build
@@ -15,7 +15,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.Fragment
-import com.example.earthwallet.R
+import network.erth.wallet.R
 
 class ScanFailureFragment : Fragment() {
 
@@ -59,7 +59,7 @@ class ScanFailureFragment : Fragment() {
 
 
         // Hide bottom navigation and status bar
-        (activity as? com.example.earthwallet.ui.host.HostActivity)?.let { hostActivity ->
+        (activity as? network.erth.wallet.ui.host.HostActivity)?.let { hostActivity ->
             hostActivity.hideBottomNavigation()
 
             // Hide status bar using modern approach
@@ -96,14 +96,14 @@ class ScanFailureFragment : Fragment() {
     }
 
     private fun navigateToScanner() {
-        (activity as? com.example.earthwallet.ui.host.HostActivity)?.let { hostActivity ->
+        (activity as? network.erth.wallet.ui.host.HostActivity)?.let { hostActivity ->
             // Navigate to scanner (which will handle the UI state)
             hostActivity.showFragment("scanner")
         }
     }
 
     private fun navigateBackToANML() {
-        (activity as? com.example.earthwallet.ui.host.HostActivity)?.let { hostActivity ->
+        (activity as? network.erth.wallet.ui.host.HostActivity)?.let { hostActivity ->
             // Show bottom navigation and status bar using modern approach
             hostActivity.showBottomNavigation()
             activity?.window?.let { window ->

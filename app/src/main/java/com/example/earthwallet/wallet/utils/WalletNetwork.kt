@@ -1,4 +1,4 @@
-package com.example.earthwallet.wallet.utils
+package network.erth.wallet.wallet.utils
 
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream

@@ -1,6 +1,6 @@
-package com.example.earthwallet.ui.host
+package network.erth.wallet.ui.host
 
-import com.example.earthwallet.R
+import network.erth.wallet.R
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.ActivityInfo
@@ -15,13 +15,13 @@ import android.widget.Button
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
-import com.example.earthwallet.wallet.services.SessionManager
-import com.example.earthwallet.wallet.services.SecureWalletManager
-import com.example.earthwallet.wallet.services.UpdateManager
-import com.example.earthwallet.ui.utils.WindowInsetsUtil
-import com.example.earthwallet.ui.pages.wallet.CreateWalletFragment
-import com.example.earthwallet.ui.pages.auth.PinEntryFragment
-import com.example.earthwallet.ui.components.ForceUpdateDialog
+import network.erth.wallet.wallet.services.SessionManager
+import network.erth.wallet.wallet.services.SecureWalletManager
+import network.erth.wallet.wallet.services.UpdateManager
+import network.erth.wallet.ui.utils.WindowInsetsUtil
+import network.erth.wallet.ui.pages.wallet.CreateWalletFragment
+import network.erth.wallet.ui.pages.auth.PinEntryFragment
+import network.erth.wallet.ui.components.ForceUpdateDialog
 import androidx.lifecycle.Observer
 import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.FullScreenContentCallback
@@ -122,34 +122,34 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
 
         val fragment: Fragment = when (tag) {
             "wallet" -> {
-                com.example.earthwallet.ui.pages.wallet.WalletMainFragment().also {
+                network.erth.wallet.ui.pages.wallet.WalletMainFragment().also {
                     // Show navigation and status bar for normal fragments
                     showBottomNavigation()
                     WindowInsetsUtil.showSystemBars(window)
                 }
             }
             "actions" -> {
-                com.example.earthwallet.ui.nav.ActionsMainFragment().also {
+                network.erth.wallet.ui.nav.ActionsMainFragment().also {
                     // Show navigation and status bar for normal fragments
                     showBottomNavigation()
                     WindowInsetsUtil.showSystemBars(window)
                 }
             }
             "scanner" -> {
-                com.example.earthwallet.ui.pages.anml.ScannerFragment().also {
+                network.erth.wallet.ui.pages.anml.ScannerFragment().also {
                     // Hide navigation and status bar for scanner
                     hideBottomNavigation()
                     WindowInsetsUtil.hideSystemBars(window)
                 }
             }
             "mrz_input" -> {
-                com.example.earthwallet.ui.pages.anml.MRZInputFragment()
+                network.erth.wallet.ui.pages.anml.MRZInputFragment()
             }
             "camera_mrz_scanner" -> {
-                com.example.earthwallet.ui.pages.anml.CameraMRZScannerFragment()
+                network.erth.wallet.ui.pages.anml.CameraMRZScannerFragment()
             }
             "scan_failure" -> {
-                com.example.earthwallet.ui.pages.anml.ScanFailureFragment().apply {
+                network.erth.wallet.ui.pages.anml.ScanFailureFragment().apply {
                     arguments?.let { setArguments(it) }
                 }
             }
@@ -169,70 +169,70 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
                 }
             }
             "swap" -> {
-                com.example.earthwallet.ui.pages.swap.SwapTokensMainFragment().also {
+                network.erth.wallet.ui.pages.swap.SwapTokensMainFragment().also {
                     // Show navigation and status bar for normal fragments
                     showBottomNavigation()
                     WindowInsetsUtil.showSystemBars(window)
                 }
             }
             "anml" -> {
-                com.example.earthwallet.ui.pages.anml.ANMLClaimMainFragment().also {
+                network.erth.wallet.ui.pages.anml.ANMLClaimMainFragment().also {
                     // Show navigation and status bar for normal fragments
                     showBottomNavigation()
                     WindowInsetsUtil.showSystemBars(window)
                 }
             }
             "managelp" -> {
-                com.example.earthwallet.ui.pages.managelp.ManageLPFragment().also {
+                network.erth.wallet.ui.pages.managelp.ManageLPFragment().also {
                     // Show navigation and status bar for normal fragments
                     showBottomNavigation()
                     WindowInsetsUtil.showSystemBars(window)
                 }
             }
             "staking" -> {
-                com.example.earthwallet.ui.pages.staking.StakeEarthFragment().also {
+                network.erth.wallet.ui.pages.staking.StakeEarthFragment().also {
                     // Show navigation and status bar for normal fragments
                     showBottomNavigation()
                     WindowInsetsUtil.showSystemBars(window)
                 }
             }
             "send" -> {
-                com.example.earthwallet.ui.pages.wallet.SendTokensFragment().also {
+                network.erth.wallet.ui.pages.wallet.SendTokensFragment().also {
                     // Show navigation and status bar for normal fragments
                     showBottomNavigation()
                     WindowInsetsUtil.showSystemBars(window)
                 }
             }
             "receive" -> {
-                com.example.earthwallet.ui.pages.wallet.ReceiveTokensFragment().also {
+                network.erth.wallet.ui.pages.wallet.ReceiveTokensFragment().also {
                     // Show navigation and status bar for normal fragments
                     showBottomNavigation()
                     WindowInsetsUtil.showSystemBars(window)
                 }
             }
             "governance" -> {
-                com.example.earthwallet.ui.pages.governance.GovernanceFragment().also {
+                network.erth.wallet.ui.pages.governance.GovernanceFragment().also {
                     // Show navigation and status bar for normal fragments
                     showBottomNavigation()
                     WindowInsetsUtil.showSystemBars(window)
                 }
             }
             "gas_station" -> {
-                com.example.earthwallet.ui.pages.gasstation.GasStationFragment().also {
+                network.erth.wallet.ui.pages.gasstation.GasStationFragment().also {
                     // Show navigation and status bar for normal fragments
                     showBottomNavigation()
                     WindowInsetsUtil.showSystemBars(window)
                 }
             }
             "caretaker_fund" -> {
-                com.example.earthwallet.ui.pages.governance.CaretakerFundFragment().also {
+                network.erth.wallet.ui.pages.governance.CaretakerFundFragment().also {
                     // Show navigation and status bar for normal fragments
                     showBottomNavigation()
                     WindowInsetsUtil.showSystemBars(window)
                 }
             }
             "deflation_fund" -> {
-                com.example.earthwallet.ui.pages.governance.DeflationFundFragment().also {
+                network.erth.wallet.ui.pages.governance.DeflationFundFragment().also {
                     // Show navigation and status bar for normal fragments
                     showBottomNavigation()
                     WindowInsetsUtil.showSystemBars(window)
@@ -240,7 +240,7 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
             }
             else -> {
                 // Default to scanner if an unknown tag is passed
-                com.example.earthwallet.ui.pages.anml.ScannerFragment().also {
+                network.erth.wallet.ui.pages.anml.ScannerFragment().also {
                     // Hide navigation and status bar for scanner
                     hideBottomNavigation()
                     WindowInsetsUtil.hideSystemBars(window)
@@ -264,7 +264,7 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
         // Handle NFC intents and pass them to ScannerFragment if it's currently shown
         if (intent?.action == NfcAdapter.ACTION_TECH_DISCOVERED) {
             val currentFragment = supportFragmentManager.findFragmentById(R.id.host_content)
-            if (currentFragment is com.example.earthwallet.ui.pages.anml.ScannerFragment) {
+            if (currentFragment is network.erth.wallet.ui.pages.anml.ScannerFragment) {
                 currentFragment.handleNfcIntent(intent)
             }
         }

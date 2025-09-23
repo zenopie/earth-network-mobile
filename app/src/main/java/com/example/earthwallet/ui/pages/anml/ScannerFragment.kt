@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.pages.anml
+package network.erth.wallet.ui.pages.anml
 
 import android.app.PendingIntent
 import android.content.Intent
@@ -12,7 +12,7 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
-import com.example.earthwallet.R
+import network.erth.wallet.R
 
 class ScannerFragment : Fragment(), PassportScannerFragment.PassportScannerListener {
 

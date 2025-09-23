@@ -1,9 +1,9 @@
-package com.example.earthwallet.bridge.services
+package network.erth.wallet.bridge.services
 
 import android.util.Base64
 import android.util.Log
-import com.example.earthwallet.wallet.services.TransactionSigner
-import com.example.earthwallet.wallet.utils.WalletCrypto
+import network.erth.wallet.wallet.services.TransactionSigner
+import network.erth.wallet.wallet.utils.WalletCrypto
 import com.google.protobuf.Any
 import com.google.protobuf.ByteString
 import cosmos.base.v1beta1.CoinOuterClass

@@ -1,11 +1,11 @@
-package com.example.earthwallet.wallet.services
+package network.erth.wallet.wallet.services
 
 import android.util.Log
 import org.bitcoinj.core.ECKey
 import org.bitcoinj.core.Sha256Hash
 import com.google.protobuf.ByteString
 import cosmos.tx.v1beta1.Tx
-import com.example.earthwallet.wallet.utils.WalletCrypto
+import network.erth.wallet.wallet.utils.WalletCrypto
 import kotlin.math.max
 import kotlin.math.min
 

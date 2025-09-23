@@ -1,6 +1,6 @@
-package com.example.earthwallet.wallet.utils
+package network.erth.wallet.wallet.utils
 
-import com.example.earthwallet.Constants
+import network.erth.wallet.Constants
 
 /**
  * Configuration for app update management
@@ -26,7 +26,7 @@ object UpdateConfig {
      *   "current_version": "1.2.0",
      *   "minimum_version": "1.0.0",
      *   "update_message": "New features and bug fixes",
-     *   "download_url": "https://play.google.com/store/apps/details?id=com.example.earthwallet"
+     *   "download_url": "https://play.google.com/store/apps/details?id=network.erth.wallet"
      * }
      */
     val CUSTOM_UPDATE_URL: String? = "${Constants.BACKEND_BASE_URL}/app/version"

@@ -1,6 +1,6 @@
-package com.example.earthwallet.ui.nav
+package network.erth.wallet.ui.nav
 
-import com.example.earthwallet.R
+import network.erth.wallet.R
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -33,7 +33,7 @@ class ActionsMainFragment : Fragment() {
         // Swap Tokens button
         val swapTokens = view.findViewById<Button>(R.id.btn_swap_tokens)
         swapTokens?.setOnClickListener {
-            (activity as? com.example.earthwallet.ui.host.HostActivity)?.let {
+            (activity as? network.erth.wallet.ui.host.HostActivity)?.let {
                 it.showFragment("swap")
             } ?: run {
                 Toast.makeText(context, "Navigation not available", Toast.LENGTH_SHORT).show()
@@ -43,7 +43,7 @@ class ActionsMainFragment : Fragment() {
         // ANML Claim button - request parent HostActivity to show ANML fragment
         val anml = view.findViewById<Button>(R.id.btn_anml_claim)
         anml?.setOnClickListener {
-            (activity as? com.example.earthwallet.ui.host.HostActivity)?.let {
+            (activity as? network.erth.wallet.ui.host.HostActivity)?.let {
                 it.showFragment("anml")
             } ?: run {
                 Toast.makeText(context, "Navigation not available", Toast.LENGTH_SHORT).show()
@@ -53,7 +53,7 @@ class ActionsMainFragment : Fragment() {
         // Gas Station button - request parent HostActivity to show Gas Station fragment
         val gasStation = view.findViewById<Button>(R.id.btn_gas_station)
         gasStation?.setOnClickListener {
-            (activity as? com.example.earthwallet.ui.host.HostActivity)?.let {
+            (activity as? network.erth.wallet.ui.host.HostActivity)?.let {
                 it.showFragment("gas_station")
             } ?: run {
                 Toast.makeText(context, "Navigation not available", Toast.LENGTH_SHORT).show()
@@ -63,7 +63,7 @@ class ActionsMainFragment : Fragment() {
         // Manage LP button - request parent HostActivity to show ManageLP fragment
         val manageLP = view.findViewById<Button>(R.id.btn_manage_lp)
         manageLP?.setOnClickListener {
-            (activity as? com.example.earthwallet.ui.host.HostActivity)?.let {
+            (activity as? network.erth.wallet.ui.host.HostActivity)?.let {
                 it.showFragment("managelp")
             } ?: run {
                 Toast.makeText(context, "Navigation not available", Toast.LENGTH_SHORT).show()
@@ -73,7 +73,7 @@ class ActionsMainFragment : Fragment() {
         // Stake ERTH button - request parent HostActivity to show Staking fragment
         val stakeERTH = view.findViewById<Button>(R.id.btn_stake_erth)
         stakeERTH?.setOnClickListener {
-            (activity as? com.example.earthwallet.ui.host.HostActivity)?.let {
+            (activity as? network.erth.wallet.ui.host.HostActivity)?.let {
                 it.showFragment("staking")
             } ?: run {
                 Toast.makeText(context, "Navigation not available", Toast.LENGTH_SHORT).show()
@@ -92,7 +92,7 @@ class ActionsMainFragment : Fragment() {
         // Caretaker Fund button
         val caretakerFund = view.findViewById<Button>(R.id.btn_caretaker_fund)
         caretakerFund?.setOnClickListener {
-            (activity as? com.example.earthwallet.ui.host.HostActivity)?.let {
+            (activity as? network.erth.wallet.ui.host.HostActivity)?.let {
                 it.showFragment("caretaker_fund")
             } ?: run {
                 Toast.makeText(context, "Navigation not available", Toast.LENGTH_SHORT).show()
@@ -102,7 +102,7 @@ class ActionsMainFragment : Fragment() {
         // Deflation Fund button
         val deflationFund = view.findViewById<Button>(R.id.btn_deflation_fund)
         deflationFund?.setOnClickListener {
-            (activity as? com.example.earthwallet.ui.host.HostActivity)?.let {
+            (activity as? network.erth.wallet.ui.host.HostActivity)?.let {
                 it.showFragment("deflation_fund")
             } ?: run {
                 Toast.makeText(context, "Navigation not available", Toast.LENGTH_SHORT).show()

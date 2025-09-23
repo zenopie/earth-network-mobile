@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.pages.wallet
+package network.erth.wallet.ui.pages.wallet
 
 import android.content.Context
 import android.content.SharedPreferences
@@ -14,9 +14,9 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
-import com.example.earthwallet.R
-import com.example.earthwallet.wallet.services.SecureWalletManager
-import com.example.earthwallet.wallet.utils.BiometricAuthManager
+import network.erth.wallet.R
+import network.erth.wallet.wallet.services.SecureWalletManager
+import network.erth.wallet.wallet.utils.BiometricAuthManager
 import org.json.JSONArray
 import org.json.JSONObject
 import java.nio.charset.StandardCharsets

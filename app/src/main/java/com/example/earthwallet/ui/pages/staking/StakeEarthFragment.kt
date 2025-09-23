@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.pages.staking
+package network.erth.wallet.ui.pages.staking
 
 import android.content.Context
 import android.os.Bundle
@@ -8,10 +8,10 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.fragment.app.Fragment
 import androidx.viewpager2.widget.ViewPager2
-import com.example.earthwallet.R
-import com.example.earthwallet.Constants
-import com.example.earthwallet.bridge.services.SecretQueryService
-import com.example.earthwallet.wallet.services.SecureWalletManager
+import network.erth.wallet.R
+import network.erth.wallet.Constants
+import network.erth.wallet.bridge.services.SecretQueryService
+import network.erth.wallet.wallet.services.SecureWalletManager
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
 import org.json.JSONObject

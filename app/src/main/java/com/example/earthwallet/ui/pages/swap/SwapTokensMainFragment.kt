@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.pages.swap
+package network.erth.wallet.ui.pages.swap
 
 import android.app.Activity
 import android.content.BroadcastReceiver
@@ -17,13 +17,13 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.*
 import androidx.fragment.app.Fragment
-import com.example.earthwallet.R
-import com.example.earthwallet.Constants
-import com.example.earthwallet.bridge.activities.TransactionActivity
-import com.example.earthwallet.bridge.utils.PermitManager
-import com.example.earthwallet.bridge.models.Permit
-import com.example.earthwallet.bridge.services.SecretQueryService
-import com.example.earthwallet.wallet.constants.Tokens
+import network.erth.wallet.R
+import network.erth.wallet.Constants
+import network.erth.wallet.bridge.activities.TransactionActivity
+import network.erth.wallet.bridge.utils.PermitManager
+import network.erth.wallet.bridge.models.Permit
+import network.erth.wallet.bridge.services.SecretQueryService
+import network.erth.wallet.wallet.constants.Tokens
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.InputStream
@@ -396,7 +396,7 @@ class SwapTokensMainFragment : Fragment() {
     private fun loadCurrentWalletAddress() {
         try {
             // Use SecureWalletManager to get current wallet address
-            currentWalletAddress = com.example.earthwallet.wallet.services.SecureWalletManager.getWalletAddress(requireContext()) ?: ""
+            currentWalletAddress = network.erth.wallet.wallet.services.SecureWalletManager.getWalletAddress(requireContext()) ?: ""
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load wallet address", e)
             currentWalletAddress = ""
@@ -695,7 +695,7 @@ class SwapTokensMainFragment : Fragment() {
         Thread {
             try {
                 // Check wallet availability using the correct wallet preferences
-                if (!com.example.earthwallet.wallet.services.SecureWalletManager.isWalletAvailable(requireContext())) {
+                if (!network.erth.wallet.wallet.services.SecureWalletManager.isWalletAvailable(requireContext())) {
                     activity?.runOnUiThread {
                         Toast.makeText(context, "No wallet found", Toast.LENGTH_SHORT).show()
                         isSimulatingSwap = false
@@ -770,7 +770,7 @@ class SwapTokensMainFragment : Fragment() {
             // Execute query in background thread
             Thread {
                 try {
-                    val result = com.example.earthwallet.bridge.services.SnipQueryService.queryBalanceWithPermit(
+                    val result = network.erth.wallet.bridge.services.SnipQueryService.queryBalanceWithPermit(
                         requireContext(), // Use context instead of Fragment context
                         tokenSymbol,
                         currentWalletAddress
@@ -906,7 +906,7 @@ class SwapTokensMainFragment : Fragment() {
 
     private fun registerBroadcastReceiver() {
         if (activity != null && transactionSuccessReceiver != null) {
-            val filter = IntentFilter("com.example.earthwallet.TRANSACTION_SUCCESS")
+            val filter = IntentFilter("network.erth.wallet.TRANSACTION_SUCCESS")
             try {
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
                     requireActivity().applicationContext.registerReceiver(transactionSuccessReceiver, filter, Context.RECEIVER_NOT_EXPORTED)

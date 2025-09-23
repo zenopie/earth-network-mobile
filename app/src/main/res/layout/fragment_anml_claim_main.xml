@@ -47,7 +47,7 @@
     </ScrollView>
 
     <!-- Overlay loading container using reusable component -->
-    <com.example.earthwallet.ui.components.LoadingOverlay
+    <network.erth.wallet.ui.components.LoadingOverlay
         android:id="@+id/loading_overlay"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />

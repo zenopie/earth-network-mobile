@@ -1,6 +1,6 @@
-package com.example.earthwallet.ui.pages.anml
+package network.erth.wallet.ui.pages.anml
 
-import com.example.earthwallet.R
+import network.erth.wallet.R
 import android.Manifest
 import android.content.Context
 import android.content.SharedPreferences
@@ -59,7 +59,7 @@ class CameraMRZScannerFragment : Fragment() {
         // Hide bottom navigation and status bar - keep portrait orientation
         try {
             val activity = activity
-            if (activity is com.example.earthwallet.ui.host.HostActivity) {
+            if (activity is network.erth.wallet.ui.host.HostActivity) {
                 activity.hideBottomNavigation()
 
                 // Hide status bar
@@ -77,7 +77,7 @@ class CameraMRZScannerFragment : Fragment() {
 
         backButton?.setOnClickListener {
             val activity = activity
-            if (activity is com.example.earthwallet.ui.host.HostActivity) {
+            if (activity is network.erth.wallet.ui.host.HostActivity) {
                 activity.showBottomNavigation()
 
                 // Show status bar
@@ -90,7 +90,7 @@ class CameraMRZScannerFragment : Fragment() {
 
         manualEntryButton?.setOnClickListener {
             val activity = activity
-            if (activity is com.example.earthwallet.ui.host.HostActivity) {
+            if (activity is network.erth.wallet.ui.host.HostActivity) {
                 // Show status bar before navigating
                 activity.window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
                 activity.window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
@@ -141,7 +141,7 @@ class CameraMRZScannerFragment : Fragment() {
                 Toast.makeText(context, "Camera permission is required to scan passport", Toast.LENGTH_LONG).show()
                 // Go back to ANML screen and restore UI
                 val activity = activity
-                if (activity is com.example.earthwallet.ui.host.HostActivity) {
+                if (activity is network.erth.wallet.ui.host.HostActivity) {
                     activity.showBottomNavigation()
 
                     // Show status bar
@@ -295,7 +295,7 @@ class CameraMRZScannerFragment : Fragment() {
         // Navigate to manual entry screen with captured data
         activity?.runOnUiThread {
             val activity = activity
-            if (activity is com.example.earthwallet.ui.host.HostActivity) {
+            if (activity is network.erth.wallet.ui.host.HostActivity) {
                 // Show status bar before navigating
                 activity.window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
                 activity.window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)

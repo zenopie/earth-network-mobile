@@ -1,4 +1,4 @@
-package com.example.earthwallet.bridge.models
+package network.erth.wallet.bridge.models
 
 /**
  * SNIP-24 Permit data model

@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.pages.wallet
+package network.erth.wallet.ui.pages.wallet
 
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -18,8 +18,8 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
-import com.example.earthwallet.R
-import com.example.earthwallet.wallet.utils.WalletNetwork
+import network.erth.wallet.R
+import network.erth.wallet.wallet.utils.WalletNetwork
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -202,7 +202,7 @@ class WalletDisplayFragment : Fragment() {
         try {
             // Use HostActivity's showFragment method to ensure bottom navigation is shown
             val activity = activity
-            if (activity is com.example.earthwallet.ui.host.HostActivity) {
+            if (activity is network.erth.wallet.ui.host.HostActivity) {
                 activity.showFragment("send")
             } else {
                 // Fallback for non-HostActivity contexts
@@ -224,7 +224,7 @@ class WalletDisplayFragment : Fragment() {
         try {
             // Use HostActivity's showFragment method to ensure bottom navigation is shown
             val activity = activity
-            if (activity is com.example.earthwallet.ui.host.HostActivity) {
+            if (activity is network.erth.wallet.ui.host.HostActivity) {
                 activity.showFragment("receive")
             } else {
                 // Fallback for non-HostActivity contexts

@@ -1,13 +1,13 @@
-package com.example.earthwallet.bridge.services
+package network.erth.wallet.bridge.services
 
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.text.TextUtils
 import android.util.Log
-import com.example.earthwallet.wallet.utils.SecurePreferencesUtil
-import com.example.earthwallet.wallet.utils.WalletCrypto
-import com.example.earthwallet.Constants
+import network.erth.wallet.wallet.utils.SecurePreferencesUtil
+import network.erth.wallet.wallet.utils.WalletCrypto
+import network.erth.wallet.Constants
 import org.bitcoinj.core.ECKey
 import org.json.JSONArray
 import org.json.JSONObject

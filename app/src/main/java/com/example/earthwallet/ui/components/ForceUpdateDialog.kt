@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.components
+package network.erth.wallet.ui.components
 
 import android.app.AlertDialog
 import android.content.Context
@@ -7,8 +7,8 @@ import android.net.Uri
 import android.view.LayoutInflater
 import android.widget.Button
 import android.widget.TextView
-import com.example.earthwallet.R
-import com.example.earthwallet.wallet.services.UpdateManager
+import network.erth.wallet.R
+import network.erth.wallet.wallet.services.UpdateManager
 
 /**
  * Dialog for forcing app updates when minimum version requirements are not met

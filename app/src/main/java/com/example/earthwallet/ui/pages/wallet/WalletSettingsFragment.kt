@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.pages.wallet
+package network.erth.wallet.ui.pages.wallet
 
 import android.app.AlertDialog
 import android.content.Context
@@ -15,8 +15,8 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.biometric.BiometricManager
 import androidx.fragment.app.Fragment
-import com.example.earthwallet.R
-import com.example.earthwallet.wallet.services.SecureWalletManager
+import network.erth.wallet.R
+import network.erth.wallet.wallet.services.SecureWalletManager
 
 /**
  * WalletSettingsFragment

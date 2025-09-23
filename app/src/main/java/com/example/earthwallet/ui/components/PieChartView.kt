@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.components
+package network.erth.wallet.ui.components
 
 import android.content.Context
 import android.graphics.Canvas

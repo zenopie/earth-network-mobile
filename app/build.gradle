@@ -13,11 +13,11 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android {
-    namespace = 'com.example.earthwallet'
+    namespace = 'network.erth.wallet'
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.earthwallet"
+        applicationId = "network.erth.wallet"
         minSdk = 23
         targetSdk = 34
         versionCode = 1

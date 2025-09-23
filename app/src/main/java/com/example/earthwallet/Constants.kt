@@ -1,4 +1,4 @@
-package com.example.earthwallet
+package network.erth.wallet
 
 object Constants {
     // Registration contract details (from desktop app)

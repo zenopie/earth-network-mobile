@@ -4,7 +4,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@android:color/white"
-    tools:context="com.example.earthwallet.ui.pages.gasstation.GasStationFragment">
+    tools:context="network.erth.wallet.ui.pages.gasstation.GasStationFragment">
 
     <ScrollView
         android:layout_width="match_parent"

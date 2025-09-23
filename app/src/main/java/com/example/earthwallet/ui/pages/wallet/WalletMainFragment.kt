@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.pages.wallet
+package network.erth.wallet.ui.pages.wallet
 
 import android.content.SharedPreferences
 import android.os.Bundle
@@ -15,9 +15,9 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import com.example.earthwallet.R
-import com.example.earthwallet.wallet.constants.Tokens
-import com.example.earthwallet.wallet.services.SecureWalletManager
+import network.erth.wallet.R
+import network.erth.wallet.wallet.constants.Tokens
+import network.erth.wallet.wallet.services.SecureWalletManager
 
 /**
  * WalletMainFragment

@@ -1,4 +1,4 @@
-package com.example.earthwallet.bridge.activities
+package network.erth.wallet.bridge.activities
 
 import android.app.Activity
 import android.content.Intent
@@ -12,17 +12,17 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
-import com.example.earthwallet.R
-import com.example.earthwallet.ui.components.TransactionConfirmationDialog
-import com.example.earthwallet.ui.components.StatusModal
-import com.example.earthwallet.ui.components.PinEntryDialog
-import com.example.earthwallet.bridge.services.SecretExecuteService
-import com.example.earthwallet.bridge.services.NativeSendService
-import com.example.earthwallet.bridge.services.MultiMessageExecuteService
-import com.example.earthwallet.bridge.services.SnipExecuteService
-import com.example.earthwallet.bridge.services.PermitSigningService
-import com.example.earthwallet.wallet.services.SecureWalletManager
-import com.example.earthwallet.wallet.utils.BiometricAuthManager
+import network.erth.wallet.R
+import network.erth.wallet.ui.components.TransactionConfirmationDialog
+import network.erth.wallet.ui.components.StatusModal
+import network.erth.wallet.ui.components.PinEntryDialog
+import network.erth.wallet.bridge.services.SecretExecuteService
+import network.erth.wallet.bridge.services.NativeSendService
+import network.erth.wallet.bridge.services.MultiMessageExecuteService
+import network.erth.wallet.bridge.services.SnipExecuteService
+import network.erth.wallet.bridge.services.PermitSigningService
+import network.erth.wallet.wallet.services.SecureWalletManager
+import network.erth.wallet.wallet.utils.BiometricAuthManager
 import org.json.JSONObject
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
@@ -353,7 +353,7 @@ class TransactionActivity : AppCompatActivity() {
 
     private fun handleTransactionSuccess(result: String, senderAddress: String) {
         // Send immediate broadcast for any listening fragments to refresh during animation
-        val broadcast = Intent("com.example.earthwallet.TRANSACTION_SUCCESS")
+        val broadcast = Intent("network.erth.wallet.TRANSACTION_SUCCESS")
         broadcast.putExtra("result", result)
         broadcast.putExtra("senderAddress", senderAddress)
         sendBroadcast(broadcast)

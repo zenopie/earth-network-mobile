@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.pages.wallet
+package network.erth.wallet.ui.pages.wallet
 
 import android.content.Context
 import android.os.Bundle
@@ -16,10 +16,10 @@ import android.widget.EditText
 import android.widget.RadioGroup
 import android.widget.Toast
 import androidx.fragment.app.Fragment
-import com.example.earthwallet.R
-import com.example.earthwallet.wallet.services.SecureWalletManager
-import com.example.earthwallet.wallet.services.SessionManager
-import com.example.earthwallet.ui.host.HostActivity
+import network.erth.wallet.R
+import network.erth.wallet.wallet.services.SecureWalletManager
+import network.erth.wallet.wallet.services.SessionManager
+import network.erth.wallet.ui.host.HostActivity
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 

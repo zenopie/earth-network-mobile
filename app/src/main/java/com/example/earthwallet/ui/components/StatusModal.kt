@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.components
+package network.erth.wallet.ui.components
 
 import android.app.Dialog
 import android.content.Context
@@ -15,7 +15,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.Window
 import android.widget.ImageView
-import com.example.earthwallet.R
+import network.erth.wallet.R
 
 /**
  * A general-purpose status modal that can display loading, success, or error states

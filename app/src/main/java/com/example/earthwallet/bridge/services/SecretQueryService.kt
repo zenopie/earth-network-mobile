@@ -1,10 +1,10 @@
-package com.example.earthwallet.bridge.services
+package network.erth.wallet.bridge.services
 
 import android.content.Context
 import android.text.TextUtils
 import android.util.Base64
 import android.util.Log
-import com.example.earthwallet.wallet.services.SecureWalletManager
+import network.erth.wallet.wallet.services.SecureWalletManager
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream

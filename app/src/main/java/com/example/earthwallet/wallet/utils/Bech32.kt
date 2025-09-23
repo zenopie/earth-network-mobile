@@ -1,4 +1,4 @@
-package com.example.earthwallet.wallet.utils
+package network.erth.wallet.wallet.utils
 
 /**
  * Minimal Bech32 encoder with convertBits helper (BIP-0173).

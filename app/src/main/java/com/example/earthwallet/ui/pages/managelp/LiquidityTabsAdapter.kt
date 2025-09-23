@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.pages.managelp
+package network.erth.wallet.ui.pages.managelp
 
 import androidx.fragment.app.Fragment
 import androidx.viewpager2.adapter.FragmentStateAdapter

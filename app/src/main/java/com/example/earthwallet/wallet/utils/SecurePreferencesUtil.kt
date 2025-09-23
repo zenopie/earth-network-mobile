@@ -1,8 +1,8 @@
-package com.example.earthwallet.wallet.utils
+package network.erth.wallet.wallet.utils
 
 import android.content.Context
 import android.content.SharedPreferences
-import com.example.earthwallet.wallet.services.SessionManager
+import network.erth.wallet.wallet.services.SessionManager
 
 /**
  * SecurePreferencesUtil

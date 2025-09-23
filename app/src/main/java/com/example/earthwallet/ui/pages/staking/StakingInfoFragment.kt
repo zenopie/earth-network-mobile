@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.pages.staking
+package network.erth.wallet.ui.pages.staking
 
 import android.app.Activity
 import android.content.BroadcastReceiver
@@ -17,14 +17,14 @@ import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
-import com.example.earthwallet.R
-import com.example.earthwallet.Constants
-import com.example.earthwallet.bridge.activities.TransactionActivity
-import com.example.earthwallet.bridge.services.SecretQueryService
-import com.example.earthwallet.bridge.services.SnipQueryService
-import com.example.earthwallet.bridge.utils.PermitManager
-import com.example.earthwallet.wallet.constants.Tokens
-import com.example.earthwallet.wallet.services.SecureWalletManager
+import network.erth.wallet.R
+import network.erth.wallet.Constants
+import network.erth.wallet.bridge.activities.TransactionActivity
+import network.erth.wallet.bridge.services.SecretQueryService
+import network.erth.wallet.bridge.services.SnipQueryService
+import network.erth.wallet.bridge.utils.PermitManager
+import network.erth.wallet.wallet.constants.Tokens
+import network.erth.wallet.wallet.services.SecureWalletManager
 import org.json.JSONObject
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -96,7 +96,7 @@ class StakingInfoFragment : Fragment() {
                     }, 500) // 500ms delay
                 }
             }
-            val filter = IntentFilter("com.example.earthwallet.TRANSACTION_SUCCESS")
+            val filter = IntentFilter("network.erth.wallet.TRANSACTION_SUCCESS")
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
                 requireActivity().applicationContext.registerReceiver(transactionSuccessReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
             } else {

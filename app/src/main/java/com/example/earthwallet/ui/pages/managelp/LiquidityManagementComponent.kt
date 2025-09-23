@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.pages.managelp
+package network.erth.wallet.ui.pages.managelp
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -17,10 +17,10 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.viewpager2.widget.ViewPager2
-import com.example.earthwallet.R
-import com.example.earthwallet.Constants
-import com.example.earthwallet.bridge.services.SecretQueryService
-import com.example.earthwallet.wallet.services.SecureWalletManager
+import network.erth.wallet.R
+import network.erth.wallet.Constants
+import network.erth.wallet.bridge.services.SecretQueryService
+import network.erth.wallet.wallet.services.SecureWalletManager
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
 import org.json.JSONArray
@@ -455,7 +455,7 @@ class LiquidityManagementComponent : Fragment() {
 
     private fun registerBroadcastReceiver() {
         if (activity != null && transactionSuccessReceiver != null) {
-            val filter = IntentFilter("com.example.earthwallet.TRANSACTION_SUCCESS")
+            val filter = IntentFilter("network.erth.wallet.TRANSACTION_SUCCESS")
             try {
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
                     requireActivity().applicationContext.registerReceiver(transactionSuccessReceiver, filter, Context.RECEIVER_NOT_EXPORTED)

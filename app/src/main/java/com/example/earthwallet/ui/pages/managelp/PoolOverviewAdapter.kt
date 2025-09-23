@@ -1,4 +1,4 @@
-package com.example.earthwallet.ui.pages.managelp
+package network.erth.wallet.ui.pages.managelp
 
 import android.content.Context
 import android.graphics.drawable.Drawable
@@ -9,7 +9,7 @@ import android.widget.Button
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
-import com.example.earthwallet.R
+import network.erth.wallet.R
 import java.io.IOException
 import java.text.DecimalFormat
 

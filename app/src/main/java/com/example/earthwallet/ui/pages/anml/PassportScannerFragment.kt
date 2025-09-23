@@ -1,6 +1,6 @@
-package com.example.earthwallet.ui.pages.anml
+package network.erth.wallet.ui.pages.anml
 
-import com.example.earthwallet.R
+import network.erth.wallet.R
 import android.app.Activity
 import android.content.Intent
 import android.content.SharedPreferences
@@ -19,8 +19,8 @@ import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
 import androidx.fragment.app.FragmentTransaction
-import com.example.earthwallet.Constants
-import com.example.earthwallet.wallet.services.SecureWalletManager
+import network.erth.wallet.Constants
+import network.erth.wallet.wallet.services.SecureWalletManager
 import net.sf.scuba.smartcards.CardService
 import org.jmrtd.BACKey
 import org.jmrtd.BACKeySpec
@@ -264,8 +264,8 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
      * Navigate back to ANML main page
      */
     private fun navigateBackToANML() {
-        if (activity is com.example.earthwallet.ui.host.HostActivity) {
-            val hostActivity = activity as com.example.earthwallet.ui.host.HostActivity
+        if (activity is network.erth.wallet.ui.host.HostActivity) {
+            val hostActivity = activity as network.erth.wallet.ui.host.HostActivity
             // Navigate to ANML page
             hostActivity.showFragment("anml")
         }
@@ -275,8 +275,8 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
      * Navigate to failure screen with specific reason and details
      */
     private fun navigateToFailureScreen(reason: String, details: String) {
-        if (activity is com.example.earthwallet.ui.host.HostActivity) {
-            val hostActivity = activity as com.example.earthwallet.ui.host.HostActivity
+        if (activity is network.erth.wallet.ui.host.HostActivity) {
+            val hostActivity = activity as network.erth.wallet.ui.host.HostActivity
 
             // Create failure fragment with details
             val bundle = Bundle()
