@@ -150,7 +150,6 @@ class LiquidityManagementComponent : Fragment() {
             volume = args.getString(ARG_VOLUME)
             apr = args.getString(ARG_APR)
 
-            Log.d(TAG, "Managing liquidity for token: $tokenKey")
         }
 
         initializeViews(view)
@@ -206,11 +205,9 @@ class LiquidityManagementComponent : Fragment() {
         viewPager!!.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
                 super.onPageSelected(position)
-                Log.d(TAG, "ViewPager page changed to position: $position")
 
                 // When Info tab (position 0) is selected, refresh data
                 if (position == 0) {
-                    Log.d(TAG, "Info tab selected - refreshing data")
                     loadAllLiquidityData()
                 }
             }
@@ -219,7 +216,6 @@ class LiquidityManagementComponent : Fragment() {
 
     private fun setupCloseButton() {
         closeButton?.setOnClickListener {
-            Log.d(TAG, "Closing liquidity management")
             // Return to pool overview
             if (parentFragment is ManageLPFragment) {
                 (parentFragment as ManageLPFragment).toggleManageLiquidity(null)
@@ -303,14 +299,12 @@ class LiquidityManagementComponent : Fragment() {
             try {
                 val userAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (userAddress == null) {
-                    Log.w(TAG, "No user address available")
                     return@execute
                 }
 
                 // Get token contract address based on tokenKey
                 val tokenContract = getTokenContract(tokenKey!!)
                 if (tokenContract == null) {
-                    Log.w(TAG, "No contract found for token: $tokenKey")
                     return@execute
                 }
 
@@ -323,7 +317,6 @@ class LiquidityManagementComponent : Fragment() {
                 queryUserInfo.put("user", userAddress)
                 queryMsg.put("query_user_info", queryUserInfo)
 
-                Log.d(TAG, "Querying detailed pool state for: $tokenKey")
                 val result = queryService!!.queryContract(
                     Constants.EXCHANGE_CONTRACT,
                     Constants.EXCHANGE_HASH,
@@ -359,7 +352,6 @@ class LiquidityManagementComponent : Fragment() {
                     updateInfoTab()
 
                     // Don't recreate tabs - just update the existing adapter
-                    Log.d(TAG, "Pool state loaded, updating existing tabs with pool information")
                 }
             }
         } catch (e: Exception) {
@@ -414,7 +406,6 @@ class LiquidityManagementComponent : Fragment() {
                 // Calculate underlying values like React app
                 calculateUnderlyingValues(state, ownershipPercent)
 
-                Log.d(TAG, "Updated Info tab with real pool state data")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error updating info tab", e)
@@ -456,7 +447,6 @@ class LiquidityManagementComponent : Fragment() {
     private fun setupBroadcastReceiver() {
         transactionSuccessReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
-                Log.d(TAG, "Received TRANSACTION_SUCCESS broadcast - refreshing all liquidity data")
                 // Refresh all data when any transaction completes
                 loadAllLiquidityData()
             }
@@ -472,7 +462,6 @@ class LiquidityManagementComponent : Fragment() {
                 } else {
                     requireActivity().applicationContext.registerReceiver(transactionSuccessReceiver, filter)
                 }
-                Log.d(TAG, "Registered transaction success receiver")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to register broadcast receiver", e)
             }
@@ -487,13 +476,11 @@ class LiquidityManagementComponent : Fragment() {
             try {
                 val userAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (userAddress == null) {
-                    Log.w(TAG, "No user address available")
                     return@execute
                 }
 
                 val tokenContract = getTokenContract(tokenKey!!)
                 if (tokenContract == null) {
-                    Log.w(TAG, "No contract found for token: $tokenKey")
                     return@execute
                 }
 
@@ -506,7 +493,6 @@ class LiquidityManagementComponent : Fragment() {
                 queryUserInfo.put("user", userAddress)
                 queryMsg.put("query_user_info", queryUserInfo)
 
-                Log.d(TAG, "Loading all liquidity data for: $tokenKey")
                 val result = queryService!!.queryContract(
                     Constants.EXCHANGE_CONTRACT,
                     Constants.EXCHANGE_HASH,
@@ -541,7 +527,6 @@ class LiquidityManagementComponent : Fragment() {
                     // Process all the data into our centralized structure
                     updateLiquidityData()
 
-                    Log.d(TAG, "Successfully processed all liquidity data")
                 }
             }
         } catch (e: Exception) {
@@ -581,7 +566,6 @@ class LiquidityManagementComponent : Fragment() {
                     liquidityData!!.userErthValue = (liquidityData!!.erthReserve * liquidityData!!.poolOwnershipPercent) / 100.0
                     liquidityData!!.userTokenValue = (liquidityData!!.tokenReserve * liquidityData!!.poolOwnershipPercent) / 100.0
 
-                    Log.d(TAG, "Updated centralized liquidity data - User shares: ${liquidityData!!.userStakedShares}" +
                           ", Pool ownership: ${liquidityData!!.poolOwnershipPercent}%")
                 }
             } catch (e: Exception) {
@@ -597,7 +581,6 @@ class LiquidityManagementComponent : Fragment() {
 
     // Method called by InfoFragment when it becomes visible to refresh data
     fun refreshInfoTabData() {
-        Log.d(TAG, "InfoFragment requested data refresh")
         loadAllLiquidityData()
     }
 
@@ -611,9 +594,7 @@ class LiquidityManagementComponent : Fragment() {
         if (transactionSuccessReceiver != null && context != null) {
             try {
                 requireActivity().applicationContext.unregisterReceiver(transactionSuccessReceiver)
-                Log.d(TAG, "Unregistered transaction success receiver")
             } catch (e: IllegalArgumentException) {
-                Log.d(TAG, "Receiver was not registered")
             } catch (e: Exception) {
                 Log.e(TAG, "Error unregistering receiver", e)
             }
@@ -634,7 +615,6 @@ class LiquidityManagementComponent : Fragment() {
     }
 
     private fun handleAddLiquidity() {
-        Log.d(TAG, "Adding liquidity")
 
         if (erthAmountInput == null || tokenAmountInput == null) return
 
@@ -642,29 +622,24 @@ class LiquidityManagementComponent : Fragment() {
         val tokenAmount = tokenAmountInput!!.text.toString()
 
         if (erthAmount.isEmpty() || tokenAmount.isEmpty()) {
-            Log.w(TAG, "Amount inputs are empty")
             return
         }
 
-        Log.d(TAG, "Adding liquidity: $erthAmount ERTH, $tokenAmount token")
 
         // TODO: Implement actual liquidity provision
         // This should call the exchange contract to provide liquidity
     }
 
     private fun handleRemoveLiquidity() {
-        Log.d(TAG, "Removing liquidity")
 
         if (removeAmountInput == null) return
 
         val removeAmount = removeAmountInput!!.text.toString()
 
         if (removeAmount.isEmpty()) {
-            Log.w(TAG, "Remove amount is empty")
             return
         }
 
-        Log.d(TAG, "Removing liquidity: $removeAmount shares")
 
         // TODO: Implement actual liquidity removal
         // This should call the exchange contract to remove liquidity
@@ -697,7 +672,6 @@ class LiquidityManagementComponent : Fragment() {
             erthValueText?.text = String.format("%.6f", userErthValue)
             tokenValueText?.text = String.format("%.6f", userTokenBValue)
 
-            Log.d(TAG, String.format("Calculated underlying values - ERTH: %.6f, %s: %.6f (%.4f%% ownership)",
                     userErthValue, tokenKey, userTokenBValue, ownershipPercent))
 
         } catch (e: Exception) {
@@ -711,7 +685,6 @@ class LiquidityManagementComponent : Fragment() {
             val assetPath = "coin/${tokenKey.uppercase()}.png"
             loadImageFromAssets(assetPath, imageView)
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to load token logo for $tokenKey: ${e.message}")
             // Fallback to default
             imageView.setImageResource(R.drawable.ic_token_default)
         }
@@ -723,9 +696,7 @@ class LiquidityManagementComponent : Fragment() {
             val drawable = Drawable.createFromStream(inputStream, null)
             imageView.setImageDrawable(drawable)
             inputStream.close()
-            Log.d(TAG, "Successfully loaded logo from: $assetPath")
         } catch (e: IOException) {
-            Log.w(TAG, "Failed to load asset: $assetPath, using default")
             imageView.setImageResource(R.drawable.ic_token_default)
         }
     }

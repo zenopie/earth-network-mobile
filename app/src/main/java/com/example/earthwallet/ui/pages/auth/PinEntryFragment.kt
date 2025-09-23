@@ -188,7 +188,6 @@ class PinEntryFragment : Fragment() {
                     // Notify HostActivity to navigate
                     (activity as? HostActivity)?.initializeSessionAndNavigate(currentPin)
 
-                    Log.d(TAG, "PIN verified successfully, session started")
 
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to start session", e)

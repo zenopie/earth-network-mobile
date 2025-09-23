@@ -57,7 +57,6 @@ class ReceiveTokensFragment : Fragment() {
             parentFragment is ReceiveTokensListener -> parentFragment as ReceiveTokensListener
             context is ReceiveTokensListener -> context
             else -> {
-                Log.w(TAG, "Parent does not implement ReceiveTokensListener")
                 null
             }
         }
@@ -131,7 +130,6 @@ class ReceiveTokensFragment : Fragment() {
                 if (qrBitmap != null) {
                     qrCodeView?.setImageBitmap(qrBitmap)
                     qrCodeView?.visibility = View.VISIBLE
-                    Log.d(TAG, "QR code generated successfully for address: ${address.substring(0, 14)}...")
                 } else {
                     qrCodeView?.visibility = View.GONE
                     Log.e(TAG, "Failed to generate QR code bitmap")

@@ -2,7 +2,6 @@ package com.example.earthwallet.bridge.services
 
 import android.content.Context
 import android.text.TextUtils
-import android.util.Log
 import com.example.earthwallet.wallet.constants.Tokens
 import com.example.earthwallet.bridge.utils.PermitManager
 import org.json.JSONObject
@@ -53,10 +52,6 @@ object SnipQueryService {
         viewingKey: String?,
         customQuery: String?
     ): JSONObject {
-        Log.i(TAG, "Starting SNIP query service")
-        Log.i(TAG, "Token symbol: ${tokenSymbol ?: "null"}")
-        Log.i(TAG, "Contract: $contractAddress")
-        Log.i(TAG, "Query type: $queryType")
 
         // Validate required parameters
         if (TextUtils.isEmpty(queryType)) {
@@ -85,15 +80,12 @@ object SnipQueryService {
         val queryObj = buildQuery(queryType, walletAddress, viewingKey, customQuery)
             ?: throw IllegalArgumentException("Failed to build query JSON")
 
-        Log.i(TAG, "Query JSON: $queryObj")
 
         // Execute native query with secure mnemonic handling
         // Use HostActivity context if available for centralized securePrefs access
         val queryContext = if (context is com.example.earthwallet.ui.host.HostActivity) {
-            Log.d(TAG, "Using HostActivity context for SecretQueryService")
             context
         } else {
-            Log.d(TAG, "Using provided context for SecretQueryService: ${context.javaClass.simpleName}")
             context
         }
 
@@ -109,7 +101,6 @@ object SnipQueryService {
         response.put("success", true)
         response.put("result", result)
 
-        Log.i(TAG, "SNIP query completed successfully")
         return response
     }
 
@@ -130,7 +121,6 @@ object SnipQueryService {
     @JvmStatic
     @Throws(Exception::class)
     fun queryBalanceWithPermit(context: Context, tokenSymbol: String, walletAddress: String): JSONObject {
-        Log.d(TAG, "Querying $tokenSymbol balance with permit")
 
         // Get permit manager and check for valid permit
         val permitManager = PermitManager.getInstance(context)
@@ -163,7 +153,6 @@ object SnipQueryService {
         response.put("success", true)
         response.put("result", result)
 
-        Log.d(TAG, "Balance query completed for $tokenSymbol")
         return response
     }
 

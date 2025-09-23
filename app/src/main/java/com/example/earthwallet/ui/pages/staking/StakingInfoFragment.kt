@@ -82,20 +82,16 @@ class StakingInfoFragment : Fragment() {
         context?.let {
             transactionSuccessReceiver = object : BroadcastReceiver() {
                 override fun onReceive(context: Context, intent: Intent) {
-                    Log.d(TAG, "Received transaction success broadcast - refreshing data immediately")
-                    Log.d(TAG, "Fragment isVisible: $isVisible, isAdded: $isAdded, isResumed: $isResumed")
 
                     // Start multiple refresh attempts to ensure UI updates during animation
                     refreshData() // First immediate refresh
 
                     // Stagger additional refreshes to catch the UI during animation
                     Handler(Looper.getMainLooper()).postDelayed({
-                        Log.d(TAG, "Secondary refresh during animation")
                         refreshData()
                     }, 100) // 100ms delay
 
                     Handler(Looper.getMainLooper()).postDelayed({
-                        Log.d(TAG, "Third refresh during animation")
                         refreshData()
                     }, 500) // 500ms delay
                 }
@@ -132,7 +128,6 @@ class StakingInfoFragment : Fragment() {
      * Refresh staking data from contract
      */
     fun refreshData() {
-        Log.d(TAG, "Refreshing staking info data")
 
         executorService?.execute {
             try {
@@ -150,7 +145,6 @@ class StakingInfoFragment : Fragment() {
     private fun queryStakingInfo() {
         val userAddress = SecureWalletManager.getWalletAddress(requireContext())
         if (TextUtils.isEmpty(userAddress)) {
-            Log.w(TAG, "No user address available")
             return
         }
 
@@ -160,7 +154,6 @@ class StakingInfoFragment : Fragment() {
         getUserInfo.put("address", userAddress)
         queryMsg.put("get_user_info", getUserInfo)
 
-        Log.d(TAG, "Querying staking contract for user info")
 
         val result = queryService!!.queryContract(
             Constants.STAKING_CONTRACT,
@@ -168,7 +161,6 @@ class StakingInfoFragment : Fragment() {
             queryMsg
         )
 
-        Log.d(TAG, "Staking query result: $result")
 
         // Parse results
         parseStakingResult(result)
@@ -180,7 +172,6 @@ class StakingInfoFragment : Fragment() {
             var dataObj = result
             if (result.has("error") && result.has("decryption_error")) {
                 val decryptionError = result.getString("decryption_error")
-                Log.d(TAG, "Processing decryption_error for staking data")
 
                 // Extract JSON from error message if needed
                 val jsonMarker = "base64=Value "
@@ -205,14 +196,12 @@ class StakingInfoFragment : Fragment() {
             if (dataObj.has("staking_rewards_due")) {
                 val stakingRewardsMicro = dataObj.getLong("staking_rewards_due")
                 stakingRewards = stakingRewardsMicro / 1_000_000.0 // Convert to macro units
-                Log.d(TAG, "Staking rewards: $stakingRewards ERTH")
             }
 
             // Extract total staked (micro units)
             if (dataObj.has("total_staked")) {
                 val totalStakedMicro = dataObj.getLong("total_staked")
                 totalStakedBalance = totalStakedMicro / 1_000_000.0 // Convert to macro units
-                Log.d(TAG, "Total staked: $totalStakedBalance ERTH")
 
                 // Calculate APR like in React app
                 calculateAPR(totalStakedMicro)
@@ -224,7 +213,6 @@ class StakingInfoFragment : Fragment() {
                 if (userInfo.has("staked_amount")) {
                     val stakedAmountMicro = userInfo.getLong("staked_amount")
                     stakedBalance = stakedAmountMicro / 1_000_000.0 // Convert to macro units
-                    Log.d(TAG, "User staked amount: $stakedBalance ERTH")
                 }
             } else {
                 stakedBalance = 0.0
@@ -253,16 +241,13 @@ class StakingInfoFragment : Fragment() {
         val annualGrowth = dailyGrowth * daysPerYear
 
         apr = annualGrowth * 100 // Convert to percentage
-        Log.d(TAG, "Calculated APR: $apr%")
     }
 
     private fun queryErthBalance() {
-        Log.d(TAG, "Querying ERTH balance for Info tab")
         Thread {
             try {
                 val walletAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (walletAddress == null) {
-                    Log.w(TAG, "No wallet address available for ERTH balance query")
                     unstakedBalance = -1.0
                     activity?.runOnUiThread { updateUI() }
                     return@Thread
@@ -327,7 +312,6 @@ class StakingInfoFragment : Fragment() {
     }
 
     private fun handleClaimRewards() {
-        Log.d(TAG, "Claiming staking rewards")
 
         try {
             // Create claim message: { claim: {} }
@@ -366,7 +350,6 @@ class StakingInfoFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         // Refresh data when user navigates to this fragment
-        Log.d(TAG, "StakingInfoFragment resumed - refreshing data")
         refreshData()
     }
 
@@ -378,7 +361,6 @@ class StakingInfoFragment : Fragment() {
             try {
                 requireActivity().applicationContext.unregisterReceiver(transactionSuccessReceiver)
             } catch (e: Exception) {
-                Log.w(TAG, "Error unregistering transaction success receiver: ${e.message}")
             }
         }
 

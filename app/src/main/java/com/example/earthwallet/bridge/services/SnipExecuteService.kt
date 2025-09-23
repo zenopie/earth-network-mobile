@@ -74,14 +74,9 @@ object SnipExecuteService {
         messageJson: String
     ): String {
         try {
-            Log.i(TAG, "Building SNIP send message")
-            Log.i(TAG, "Recipient: $recipient")
-            Log.i(TAG, "Amount: $amount")
-            Log.i(TAG, "Message JSON: $messageJson")
 
             // Encode message JSON to base64
             val encodedMessage = Base64.encodeToString(messageJson.toByteArray(), Base64.NO_WRAP)
-            Log.i(TAG, "Encoded message: $encodedMessage")
 
             // Build SNIP send message
             val sendMsg = JSONObject()
@@ -96,7 +91,6 @@ object SnipExecuteService {
             sendMsg.put("send", sendData)
 
             val result = sendMsg.toString()
-            Log.i(TAG, "SNIP send message: $result")
             return result
 
         } catch (e: Exception) {

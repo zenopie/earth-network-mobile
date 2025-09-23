@@ -68,12 +68,10 @@ class RemoveLiquidityFragment : Fragment() {
         }
 
         // Use SecureWalletManager for secure operations
-        Log.d(TAG, "Using SecureWalletManager for secure operations")
 
         // Initialize Activity Result Launcher
         removeLiquidityLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == Activity.RESULT_OK) {
-                Log.i(TAG, "Remove liquidity transaction succeeded")
                 // Clear input field
                 removeAmountInput.setText("")
                 // Refresh data (broadcast receiver will also handle this)
@@ -114,7 +112,6 @@ class RemoveLiquidityFragment : Fragment() {
     private fun setupBroadcastReceiver() {
         transactionSuccessReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
-                Log.d(TAG, "Received TRANSACTION_SUCCESS broadcast - refreshing liquidity data immediately")
 
                 // Start multiple refresh attempts to ensure UI updates during animation
                 loadUserShares()
@@ -122,13 +119,11 @@ class RemoveLiquidityFragment : Fragment() {
 
                 // Stagger additional refreshes to catch the UI during animation
                 Handler(Looper.getMainLooper()).postDelayed({
-                    Log.d(TAG, "Secondary refresh during animation")
                     loadUserShares()
                     loadUnbondingRequests()
                 }, 100) // 100ms delay
 
                 Handler(Looper.getMainLooper()).postDelayed({
-                    Log.d(TAG, "Third refresh during animation")
                     loadUserShares()
                     loadUnbondingRequests()
                 }, 500) // 500ms delay
@@ -145,7 +140,6 @@ class RemoveLiquidityFragment : Fragment() {
                 } else {
                     requireActivity().applicationContext.registerReceiver(transactionSuccessReceiver, filter)
                 }
-                Log.d(TAG, "Registered transaction success receiver")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to register broadcast receiver", e)
             }
@@ -190,9 +184,7 @@ class RemoveLiquidityFragment : Fragment() {
         try {
             currentWalletAddress = SecureWalletManager.getWalletAddress(requireContext()) ?: ""
             if (currentWalletAddress.isNotEmpty()) {
-                Log.d(TAG, "Loaded wallet address: ${currentWalletAddress.substring(0, minOf(14, currentWalletAddress.length))}...")
             } else {
-                Log.w(TAG, "No wallet address available")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load wallet address", e)
@@ -245,7 +237,6 @@ class RemoveLiquidityFragment : Fragment() {
             // Handle the SecretQueryService error case where data is in the error message
             if (result.has("error") && result.has("decryption_error")) {
                 val decryptionError = result.getString("decryption_error")
-                Log.d(TAG, "Got decryption error, checking for base64 data: $decryptionError")
 
                 // Look for "base64=" in the error message and extract the array
                 val base64Marker = "base64=Value "
@@ -255,7 +246,6 @@ class RemoveLiquidityFragment : Fragment() {
                     val endIndex = decryptionError.indexOf(" of type org.json.JSONArray", startIndex)
                     if (endIndex != -1) {
                         val jsonArrayString = decryptionError.substring(startIndex, endIndex)
-                        Log.d(TAG, "Extracted JSON array from error: ${jsonArrayString.substring(0, minOf(100, jsonArrayString.length))}")
 
                         try {
                             val poolsData = JSONArray(jsonArrayString)
@@ -266,7 +256,6 @@ class RemoveLiquidityFragment : Fragment() {
                                     val config = poolInfo.getJSONObject("pool_info").getJSONObject("config")
                                     val tokenSymbol = config.getString("token_b_symbol")
                                     if (tokenKey == tokenSymbol) {
-                                        Log.d(TAG, "Found matching pool for $tokenKey")
                                         extractUserShares(poolInfo)
                                         return
                                     }
@@ -301,7 +290,6 @@ class RemoveLiquidityFragment : Fragment() {
             // Convert from microunits to regular units (divide by 10^6)
             userStakedShares = userStakedRaw / 1000000.0
 
-            Log.d(TAG, "User staked shares loaded: $userStakedShares")
 
             updateSharesDisplay()
 
@@ -325,7 +313,6 @@ class RemoveLiquidityFragment : Fragment() {
 
     private fun loadUnbondingRequests() {
         if (tokenKey == null || TextUtils.isEmpty(currentWalletAddress)) {
-            Log.d(TAG, "Cannot load unbonding requests: missing token key or wallet address")
             return
         }
 
@@ -341,7 +328,6 @@ class RemoveLiquidityFragment : Fragment() {
                 queryUnbonding.put("token", tokenContract)
                 queryMsg.put("query_unbonding", queryUnbonding)
 
-                Log.d(TAG, "Querying unbonding requests for $tokenKey with message: $queryMsg")
 
                 val queryService = SecretQueryService(requireContext())
                 val result = queryService.queryContract(
@@ -350,7 +336,6 @@ class RemoveLiquidityFragment : Fragment() {
                     queryMsg
                 )
 
-                Log.d(TAG, "Unbonding query result: $result")
 
                 activity?.runOnUiThread {
                     parseUnbondingRequests(result)
@@ -367,7 +352,6 @@ class RemoveLiquidityFragment : Fragment() {
             // Handle the SecretQueryService error case where data is in the error message
             if (result.has("error") && result.has("decryption_error")) {
                 val decryptionError = result.getString("decryption_error")
-                Log.d(TAG, "Parsing unbonding from decryption error: ${decryptionError.substring(0, minOf(200, decryptionError.length))}")
 
                 // Look for "base64=Value " in the error message and extract the JSON
                 val base64Marker = "base64=Value "
@@ -377,11 +361,9 @@ class RemoveLiquidityFragment : Fragment() {
                     val endIndex = decryptionError.indexOf(" of type", startIndex)
                     if (endIndex != -1) {
                         val jsonString = decryptionError.substring(startIndex, endIndex)
-                        Log.d(TAG, "Extracted unbonding JSON: $jsonString")
 
                         try {
                             val unbondingArray = JSONArray(jsonString)
-                            Log.d(TAG, "Found ${unbondingArray.length()} unbonding requests")
 
                             // TODO: Display unbonding requests in UI
                             displayUnbondingRequests(unbondingArray)
@@ -397,10 +379,8 @@ class RemoveLiquidityFragment : Fragment() {
             if (result.has("data")) {
                 val data = result.get("data")
                 if (data is JSONArray) {
-                    Log.d(TAG, "Found ${data.length()} unbonding requests in data")
                     displayUnbondingRequests(data)
                 } else {
-                    Log.d(TAG, "No unbonding requests found")
                 }
             }
         } catch (e: Exception) {
@@ -410,11 +390,9 @@ class RemoveLiquidityFragment : Fragment() {
 
     private fun displayUnbondingRequests(unbondingArray: JSONArray) {
         // TODO: Add UI elements to show unbonding requests with amount and remaining time
-        Log.d(TAG, "Displaying ${unbondingArray.length()} unbonding requests")
         for (i in 0 until unbondingArray.length()) {
             try {
                 val request = unbondingArray.getJSONObject(i)
-                Log.d(TAG, "Unbonding request $i: $request")
             } catch (e: Exception) {
                 Log.e(TAG, "Error processing unbonding request $i", e)
             }
@@ -444,7 +422,6 @@ class RemoveLiquidityFragment : Fragment() {
             removeLiquidity.put("pool", tokenContract)
             msg.put("remove_liquidity", removeLiquidity)
 
-            Log.d(TAG, "Remove liquidity message: $msg")
 
             // Use TransactionActivity with SECRET_EXECUTE transaction type
             val intent = Intent(context, TransactionActivity::class.java)
@@ -466,7 +443,6 @@ class RemoveLiquidityFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         // Refresh data when tab becomes visible
-        Log.d(TAG, "RemoveLiquidityFragment resumed - refreshing user shares")
         loadUserShares()
     }
 
@@ -477,10 +453,8 @@ class RemoveLiquidityFragment : Fragment() {
         if (transactionSuccessReceiver != null && context != null) {
             try {
                 requireActivity().applicationContext.unregisterReceiver(transactionSuccessReceiver)
-                Log.d(TAG, "Unregistered transaction success receiver")
             } catch (e: IllegalArgumentException) {
                 // Receiver was not registered, ignore
-                Log.d(TAG, "Receiver was not registered")
             } catch (e: Exception) {
                 Log.e(TAG, "Error unregistering receiver", e)
             }

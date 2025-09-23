@@ -55,20 +55,17 @@ class CameraMRZScannerFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        Log.d(TAG, "onViewCreated called")
 
         // Hide bottom navigation and status bar - keep portrait orientation
         try {
             val activity = activity
             if (activity is com.example.earthwallet.ui.host.HostActivity) {
-                Log.d(TAG, "Hiding navigation and status bar")
                 activity.hideBottomNavigation()
 
                 // Hide status bar
                 activity.window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
                 activity.window.clearFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
 
-                Log.d(TAG, "UI setup completed")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error setting up UI", e)
@@ -78,7 +75,6 @@ class CameraMRZScannerFragment : Fragment() {
         val backButton = view.findViewById<Button>(R.id.btn_back)
         val manualEntryButton = view.findViewById<Button>(R.id.btn_manual_entry)
 
-        Log.d(TAG, "Views found - previewView: ${previewView != null}, " +
                    "backButton: ${backButton != null}, " +
                    "manualEntryButton: ${manualEntryButton != null}")
 
@@ -96,7 +92,6 @@ class CameraMRZScannerFragment : Fragment() {
         }
 
         manualEntryButton?.setOnClickListener {
-            Log.d(TAG, "Manual entry button clicked")
             val activity = activity
             if (activity is com.example.earthwallet.ui.host.HostActivity) {
                 // Show status bar before navigating
@@ -120,18 +115,15 @@ class CameraMRZScannerFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        Log.d(TAG, "onResume called")
 
         // Check if we need to start camera (in case permission was granted while paused)
         if (allPermissionsGranted() && previewView != null && cameraProviderFuture == null) {
-            Log.d(TAG, "Permission available on resume, starting camera")
             startCamera()
         }
     }
 
     override fun onPause() {
         super.onPause()
-        Log.d(TAG, "onPause called")
     }
 
     private fun allPermissionsGranted(): Boolean {
@@ -141,13 +133,11 @@ class CameraMRZScannerFragment : Fragment() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         if (requestCode == CAMERA_PERMISSION_REQUEST_CODE) {
             if (allPermissionsGranted()) {
-                Log.d(TAG, "Camera permission granted, starting camera...")
                 // Add a small delay to ensure views are ready
                 view?.post {
                     if (isAdded && !isDetached && context != null) {
                         startCamera()
                     } else {
-                        Log.w(TAG, "Fragment not ready to start camera after permission grant")
                     }
                 }
             } else {
@@ -169,7 +159,6 @@ class CameraMRZScannerFragment : Fragment() {
     }
 
     private fun startCamera() {
-        Log.d(TAG, "Starting camera...")
         if (context == null || previewView == null) {
             Log.e(TAG, "Context or previewView is null, cannot start camera")
             return
@@ -186,12 +175,10 @@ class CameraMRZScannerFragment : Fragment() {
                 try {
                     // Double-check that we're still in a valid state
                     if (context == null || previewView == null || !isAdded) {
-                        Log.w(TAG, "Fragment not in valid state when camera provider ready")
                         return@addListener
                     }
 
                     val cameraProvider = cameraProviderFuture?.get()
-                    Log.d(TAG, "Camera provider obtained, binding preview...")
                     cameraProvider?.let { bindPreview(it) }
                 } catch (e: ExecutionException) {
                     Log.e(TAG, "Error starting camera", e)
@@ -205,7 +192,6 @@ class CameraMRZScannerFragment : Fragment() {
     }
 
     private fun bindPreview(cameraProvider: ProcessCameraProvider) {
-        Log.d(TAG, "Binding camera preview...")
 
         if (context == null || previewView == null) {
             Log.e(TAG, "Context or preview view is null, cannot bind camera")
@@ -219,7 +205,6 @@ class CameraMRZScannerFragment : Fragment() {
                 .requireLensFacing(CameraSelector.LENS_FACING_BACK)
                 .build()
 
-            Log.d(TAG, "Setting surface provider...")
             preview.setSurfaceProvider(previewView!!.surfaceProvider)
 
             imageAnalysis = ImageAnalysis.Builder()
@@ -231,9 +216,7 @@ class CameraMRZScannerFragment : Fragment() {
             // Unbind all use cases before rebinding
             cameraProvider.unbindAll()
 
-            Log.d(TAG, "Binding to lifecycle...")
             val camera = cameraProvider.bindToLifecycle(this as LifecycleOwner, cameraSelector, preview, imageAnalysis)
-            Log.d(TAG, "Camera successfully bound!")
         } catch (e: Exception) {
             Log.e(TAG, "Error binding camera", e)
         }
@@ -272,7 +255,6 @@ class CameraMRZScannerFragment : Fragment() {
             if (line1.startsWith("P<") && line2.length >= 36) {
                 val mrzInfo = parseMRZ(line1, line2)
                 if (mrzInfo?.isValid() == true) {
-                    Log.d(TAG, "MRZ detected and parsed successfully")
                     onMRZDetected(mrzInfo)
                     return
                 }
@@ -312,7 +294,6 @@ class CameraMRZScannerFragment : Fragment() {
             apply()
         }
 
-        Log.d(TAG, "MRZ data saved, navigating to manual entry")
 
         // Navigate to manual entry screen with captured data
         activity?.runOnUiThread {
@@ -328,20 +309,15 @@ class CameraMRZScannerFragment : Fragment() {
     }
 
     private fun stopCamera() {
-        Log.d(TAG, "Attempting to stop camera...")
         try {
             imageAnalysis?.let {
-                Log.d(TAG, "Clearing image analyzer")
                 it.clearAnalyzer()
                 imageAnalysis = null
             }
             if (cameraProviderFuture?.isDone == true) {
-                Log.d(TAG, "Unbinding camera provider")
                 val cameraProvider = cameraProviderFuture?.get()
                 cameraProvider?.unbindAll()
-                Log.d(TAG, "Camera successfully stopped and unbound")
             } else {
-                Log.w(TAG, "Camera provider future is null or not done")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping camera", e)

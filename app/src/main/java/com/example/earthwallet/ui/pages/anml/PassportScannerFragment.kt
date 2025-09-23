@@ -104,7 +104,6 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
         val savedPassportNumber = prefs.getString("passportNumber", null)
         val savedDateOfBirth = prefs.getString("dateOfBirth", null)
         val savedDateOfExpiry = prefs.getString("dateOfExpiry", null)
-        Log.d(TAG, "Retrieved MRZ data from SharedPreferences: passportNumber=$savedPassportNumber, " +
                 "dateOfBirth=$savedDateOfBirth, dateOfExpiry=$savedDateOfExpiry")
 
         // Use saved data if available
@@ -112,7 +111,6 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
             passportNumber = savedPassportNumber
             dateOfBirth = savedDateOfBirth
             dateOfExpiry = savedDateOfExpiry
-            Log.d(TAG, "Using MRZ data from SharedPreferences")
         }
 
         // Check if from MRZ input activity intent
@@ -121,14 +119,12 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
                 val intentPassportNumber = intent.getStringExtra("passportNumber")
                 val intentDateOfBirth = intent.getStringExtra("dateOfBirth")
                 val intentDateOfExpiry = intent.getStringExtra("dateOfExpiry")
-                Log.d(TAG, "Retrieved MRZ data from intent: passportNumber=$intentPassportNumber, " +
                         "dateOfBirth=$intentDateOfBirth, dateOfExpiry=$intentDateOfExpiry")
 
                 if (!isEmpty(intentPassportNumber) && !isEmpty(intentDateOfBirth) && !isEmpty(intentDateOfExpiry)) {
                     passportNumber = intentPassportNumber
                     dateOfBirth = intentDateOfBirth
                     dateOfExpiry = intentDateOfExpiry
-                    Log.d(TAG, "Using MRZ data from intent")
 
                     // Save to SharedPreferences for future use
                     val editor = prefs.edit()
@@ -136,22 +132,17 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
                     editor.putString("dateOfBirth", dateOfBirth)
                     editor.putString("dateOfExpiry", dateOfExpiry)
                     editor.apply()
-                    Log.d(TAG, "Saved new MRZ data to SharedPreferences")
                 }
             }
         }
 
         // Check if MRZ data is available
-        Log.d(TAG, "Checking MRZ data: passportNumber=$passportNumber (isEmpty=${isEmpty(passportNumber)}), " +
                 "dateOfBirth=$dateOfBirth (isEmpty=${isEmpty(dateOfBirth)}), " +
                 "dateOfExpiry=$dateOfExpiry (isEmpty=${isEmpty(dateOfExpiry)})")
         if (!isMRZDataValid()) {
-            Log.d(TAG, "MRZ data is incomplete, showing MRZ input fragment")
             showMRZInputFragment()
             return
         }
-        Log.d(TAG, "MRZ data is complete, proceeding with NFC setup")
-        Log.d(TAG, "Current MRZ data: passportNumber=$passportNumber, dateOfBirth=$dateOfBirth, dateOfExpiry=$dateOfExpiry")
 
         // Initialize UI elements
         progressBar = view.findViewById(R.id.progress_bar)
@@ -177,7 +168,6 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
 
         // Use backend URL from Constants
         backendUrl = "${Constants.BACKEND_BASE_URL}/verify"
-        Log.d(TAG, "Backend URL = $backendUrl")
 
         // Long-press title to configure backend URL
         val title = view.findViewById<TextView>(R.id.title_text)
@@ -193,7 +183,6 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
     // Called by parent activity when NFC tag is detected
     fun handleNfcTag(tag: Tag?) {
         if (tag != null) {
-            Log.d(TAG, "NFC tag discovered, starting ReadPassportTask")
             ReadPassportTask().execute(tag)
         }
     }
@@ -201,7 +190,6 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
     private inner class ReadPassportTask : AsyncTask<Tag, Void, PassportData?>() {
         override fun onPreExecute() {
             super.onPreExecute()
-            Log.d(TAG, "ReadPassportTask onPreExecute - showing loading spinner")
             // Show simple progress bar
             progressBar?.visibility = View.VISIBLE
             resultContainer?.visibility = View.GONE
@@ -217,36 +205,29 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
 
         override fun onPostExecute(passportData: PassportData?) {
             super.onPostExecute(passportData)
-            Log.d(TAG, "onPostExecute called with passportData=$passportData")
 
             if (passportData != null) {
-                Log.d(TAG, "Passport data read successfully")
 
                 // Hide progress bar
                 progressBar?.visibility = View.GONE
 
                 // Check if verification was successful
                 val verificationSuccessful = isVerificationSuccessful(passportData)
-                Log.d(TAG, "Verification successful: $verificationSuccessful")
 
                 // Navigate based on result
                 if (verificationSuccessful) {
-                    Log.d(TAG, "Scan successful, clearing MRZ data and navigating back to ANML")
                     clearMRZData()
                     navigateBackToANML()
                 } else {
-                    Log.d(TAG, "Verification failed, navigating to failure screen")
                     val failureReason = getFailureReason(passportData)
                     val failureDetails = getFailureDetails(passportData)
                     navigateToFailureScreen(failureReason, failureDetails)
                 }
             } else {
-                Log.d(TAG, "Failed to read passport data")
                 // Hide progress bar
                 progressBar?.visibility = View.GONE
 
                 // Navigate to failure screen
-                Log.d(TAG, "Scan failed, navigating to failure screen")
                 navigateToFailureScreen(
                     "Failed to read passport",
                     "Please ensure your passport is placed correctly on the back of your device and try again."
@@ -266,24 +247,20 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
         // Check if backend was contacted successfully
         val httpCode = passportData.backendHttpCode
         if (httpCode == null) {
-            Log.d(TAG, "Backend was not contacted (no HTTP code)")
             return false
         }
 
         // Check HTTP response code
         if (httpCode < 200 || httpCode >= 300) {
-            Log.d(TAG, "Backend returned error HTTP code: $httpCode")
             return false
         }
 
         // Check if passive authentication passed
         val passiveAuthPassed = passportData.passiveAuthenticationPassed
         if (passiveAuthPassed == true) {
-            Log.d(TAG, "Passive authentication passed")
             return true
         }
 
-        Log.d(TAG, "Verification failed - passive authentication: $passiveAuthPassed")
         return false
     }
 
@@ -310,8 +287,6 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
             bundle.putString("failure_reason", reason)
             bundle.putString("failure_details", details)
 
-            Log.d(TAG, "Navigating to failure screen with reason: $reason")
-            Log.d(TAG, "Details: $details")
 
             // Navigate with arguments
             hostActivity.showFragment("scan_failure", bundle)
@@ -462,20 +437,16 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
     // All the passport reading logic remains the same
     private fun readPassport(tag: Tag): PassportData? {
         return try {
-            Log.d(TAG, "Starting passport reading process")
             val isoDep = IsoDep.get(tag)
             if (isoDep == null) {
-                Log.d(TAG, "isoDep is null")
                 return null
             }
-            Log.d(TAG, "Connecting to passport")
             isoDep.connect()
             isoDep.timeout = 5000
 
             val cardService = CardService.getInstance(isoDep)
             cardService.open()
 
-            Log.d(TAG, "Creating passport service")
             val passportService = PassportService(
                 cardService,
                 PassportService.NORMAL_MAX_TRANCEIVE_LENGTH,
@@ -485,10 +456,8 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
             )
             passportService.open()
 
-            Log.d(TAG, "Selecting passport application")
             passportService.sendSelectApplet(false)
 
-            Log.d(TAG, "Creating BAC key with documentNumber=$passportNumber, " +
                     "dateOfBirth=$dateOfBirth, dateOfExpiry=$dateOfExpiry")
 
             if (isEmpty(passportNumber) || isEmpty(dateOfBirth) || isEmpty(dateOfExpiry)) {
@@ -502,26 +471,20 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
 
             val bacKey: BACKeySpec = BACKey(documentNumber, birthDate, expiryDate)
 
-            Log.d(TAG, "Performing BAC")
             passportService.doBAC(bacKey)
 
-            Log.d(TAG, "Reading DG1")
             val dg1In = passportService.getInputStream(PassportService.EF_DG1)
             if (dg1In == null) {
-                Log.d(TAG, "dg1In is null")
                 return null
             }
             val dg1Bytes = readAllBytes(dg1In)
             val dg1File = DG1File(ByteArrayInputStream(dg1Bytes))
             val mrzInfo = dg1File.mrzInfo
-            Log.d(TAG, "MRZ info retrieved: $mrzInfo")
 
-            Log.d(TAG, "Reading SOD")
             val sodIn = passportService.getInputStream(PassportService.EF_SOD)
             val sodBytes = if (sodIn != null) {
                 readAllBytes(sodIn)
             } else {
-                Log.d(TAG, "sodIn is null")
                 null
             }
 
@@ -535,18 +498,13 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
                 passportData.gender = mrzInfo.gender.toString()
                 passportData.dateOfExpiry = mrzInfo.dateOfExpiry
                 passportData.issuingState = mrzInfo.issuingState
-                Log.d(TAG, "Passport data set successfully")
             } else {
-                Log.d(TAG, "mrzInfo is null")
             }
 
             try {
-                Log.d(TAG, "Sending DG1, SOD, and address to backend for verification")
                 val walletAddress = getCurrentWalletAddress()
-                Log.d(TAG, "Using wallet address: $walletAddress")
                 val verification = sendToBackend(dg1Bytes, sodBytes, walletAddress)
                 if (verification != null) {
-                    Log.d(TAG, "Backend verification response: HTTP ${verification.code}: ${verification.body}")
                     passportData.backendHttpCode = verification.code
                     passportData.backendRawResponse = verification.body
                     parseAndAttachVerification(passportData, verification.body)
@@ -556,25 +514,21 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
             }
 
             try {
-                Log.d(TAG, "Closing passport service")
                 passportService.close()
             } catch (e: Exception) {
                 Log.e(TAG, "Error closing passport service", e)
             }
             try {
-                Log.d(TAG, "Closing card service")
                 cardService.close()
             } catch (e: Exception) {
                 Log.e(TAG, "Error closing card service", e)
             }
             try {
-                Log.d(TAG, "Closing ISO-DEP")
                 isoDep.close()
             } catch (e: Exception) {
                 Log.e(TAG, "Error closing ISO-DEP", e)
             }
 
-            Log.d(TAG, "Passport reading completed successfully")
             passportData
         } catch (e: Exception) {
             Log.e(TAG, "Error reading passport", e)
@@ -603,7 +557,6 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
             throw IllegalArgumentException("dg1Bytes is required")
         }
         if (backendUrl.isBlank()) {
-            Log.w(TAG, "Backend URL not set. Skipping verification call.")
             return null
         }
 
@@ -619,10 +572,6 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
         payload.put("sod", sodB64)
         payload.put("address", address ?: "")
 
-        Log.d(TAG, "BACKEND REQUEST: URL = $backendUrl")
-        Log.d(TAG, "BACKEND REQUEST: DG1 size = ${dg1Bytes.size} bytes")
-        Log.d(TAG, "BACKEND REQUEST: SOD size = ${sodBytes?.size ?: 0} bytes")
-        Log.d(TAG, "BACKEND REQUEST: Address = ${address ?: "null"}")
 
         val url = URL(backendUrl)
         val conn = url.openConnection() as HttpURLConnection
@@ -643,7 +592,6 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
             os.close()
 
             val responseCode = conn.responseCode
-            Log.d(TAG, "BACKEND RESPONSE: HTTP status = $responseCode")
 
             val responseStream = if (responseCode >= 400) conn.errorStream else conn.inputStream
             var responseBody = ""
@@ -652,8 +600,6 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
                 responseBody = String(respBytes, Charsets.UTF_8)
             }
 
-            Log.d(TAG, "BACKEND RESPONSE: Body length = ${responseBody.length}")
-            Log.d(TAG, "BACKEND RESPONSE: Body = $responseBody")
 
             val result = BackendResult()
             result.code = responseCode
@@ -739,13 +685,10 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
     }
 
     private fun getCurrentWalletAddress(): String? {
-        Log.d(TAG, "WALLET: Getting current wallet address...")
         return try {
             val address = SecureWalletManager.getWalletAddress(requireContext())
-            Log.d(TAG, "WALLET: Got address: $address")
             address
         } catch (e: Exception) {
-            Log.w(TAG, "WALLET: Failed to get wallet address", e)
             null
         }
     }
@@ -754,7 +697,6 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
      * Clear MRZ data from SharedPreferences and memory for privacy/security
      */
     private fun clearMRZData() {
-        Log.d(TAG, "Clearing MRZ data for privacy/security")
 
         // Clear from memory
         passportNumber = null
@@ -769,7 +711,6 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
         editor.remove("dateOfExpiry")
         editor.apply()
 
-        Log.d(TAG, "MRZ data cleared successfully")
     }
 
     // Backend HTTP result holder

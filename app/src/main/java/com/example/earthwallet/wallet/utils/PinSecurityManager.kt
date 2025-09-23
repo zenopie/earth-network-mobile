@@ -54,7 +54,6 @@ object PinSecurityManager {
             formatLockoutMessage(remainingLockoutTime)
         } else null
 
-        Log.d(TAG, "PIN security check - Failed attempts: $failedAttempts, Locked out: $isLockedOut")
 
         return PinSecurityStatus(
             isLockedOut = isLockedOut,
@@ -76,7 +75,6 @@ object PinSecurityManager {
         val failedAttempts = prefs.getInt(KEY_FAILED_ATTEMPTS, 0) + 1
         val lockoutCount = prefs.getInt(KEY_LOCKOUT_COUNT, 0)
 
-        Log.w(TAG, "Recording failed PIN attempt #$failedAttempts")
 
         val editor = prefs.edit()
         editor.putInt(KEY_FAILED_ATTEMPTS, failedAttempts)
@@ -92,7 +90,6 @@ object PinSecurityManager {
             editor.putLong(KEY_LOCKOUT_UNTIL, lockoutUntil)
             editor.putInt(KEY_FAILED_ATTEMPTS, 0) // Reset for next cycle
 
-            Log.w(TAG, "PIN lockout triggered - Duration: ${lockoutDuration}ms, Count: $newLockoutCount")
         }
 
         editor.apply()
@@ -107,7 +104,6 @@ object PinSecurityManager {
     fun recordSuccessfulAttempt(context: Context) {
         val prefs = getSecurePrefs(context)
 
-        Log.i(TAG, "Recording successful PIN attempt - clearing all lockout state")
 
         val editor = prefs.edit()
         editor.putInt(KEY_FAILED_ATTEMPTS, 0)
@@ -125,7 +121,6 @@ object PinSecurityManager {
     fun resetPinSecurity(context: Context) {
         val prefs = getSecurePrefs(context)
 
-        Log.i(TAG, "Resetting PIN security state (admin function)")
 
         val editor = prefs.edit()
         editor.clear()

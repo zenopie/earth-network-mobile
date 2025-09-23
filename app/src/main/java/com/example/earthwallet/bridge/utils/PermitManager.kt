@@ -97,25 +97,21 @@ class PermitManager private constructor(context: Context) {
 
             // Perform integrity checks on the retrieved permit
             if (permit == null) {
-                Log.w(TAG, "Permit deserialization returned null")
                 return null
             }
 
             // Check if permit structure is valid
             if (!permit.isValid()) {
-                Log.w(TAG, "Retrieved permit failed basic validity check")
                 removePermit(walletAddress, contractAddress) // Remove corrupted permit
                 return null
             }
 
             // Validate permit signature to ensure integrity
             if (!validatePermitSignature(permit, walletAddress)) {
-                Log.w(TAG, "Retrieved permit failed signature validation - removing corrupted permit")
                 removePermit(walletAddress, contractAddress) // Remove corrupted/tampered permit
                 return null
             }
 
-            Log.d(TAG, "Permit integrity checks passed for contract: $contractAddress")
             permit
 
         } catch (e: Exception) {
@@ -142,7 +138,6 @@ class PermitManager private constructor(context: Context) {
             val key = "permit_${walletAddress}_$contractAddress"
             val permitJson = gson.toJson(permit)
             securePrefs.edit().putString(key, permitJson).apply()
-            Log.d(TAG, "Permit set for contract: $contractAddress")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to serialize permit", e)
         }
@@ -202,7 +197,6 @@ class PermitManager private constructor(context: Context) {
             for (contractAddress in contractAddresses) {
                 setPermit(walletAddress, contractAddress, signedPermit)
             }
-            Log.d(TAG, "Successfully created and signed permit for ${contractAddresses.size} contracts")
             signedPermit
 
         } catch (e: Exception) {
@@ -234,7 +228,6 @@ class PermitManager private constructor(context: Context) {
 
         val key = "permit_${walletAddress}_$contractAddress"
         securePrefs.edit().remove(key).apply()
-        Log.d(TAG, "Permit removed for contract: $contractAddress")
     }
 
     /**
@@ -277,7 +270,6 @@ class PermitManager private constructor(context: Context) {
                                 permits[contractAddress] = permit
                             }
                         } catch (e: Exception) {
-                            Log.w(TAG, "Failed to deserialize permit for contract: $contractAddress", e)
                         }
                     }
                 }
@@ -311,7 +303,6 @@ class PermitManager private constructor(context: Context) {
             }
 
             editor.apply()
-            Log.d(TAG, "All permits cleared for wallet: $walletAddress")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to clear permits", e)
         }
@@ -325,7 +316,6 @@ class PermitManager private constructor(context: Context) {
      */
     fun validatePermitSignature(permit: Permit, walletAddress: String): Boolean {
         if (!permit.isValid() || TextUtils.isEmpty(walletAddress)) {
-            Log.w(TAG, "Invalid permit or wallet address for validation")
             return false
         }
 
@@ -353,7 +343,6 @@ class PermitManager private constructor(context: Context) {
 
             // 5. Check if derived address matches expected wallet address
             if (walletAddress != derivedAddress) {
-                Log.w(TAG, "Permit public key does not match wallet address")
                 return false
             }
 
@@ -365,7 +354,6 @@ class PermitManager private constructor(context: Context) {
             val ecdsaSignature = parseRawSignature(signatureBytes)
             val isValid = publicKey.verify(hash, ecdsaSignature)
 
-            Log.d(TAG, "Permit signature validation ${if (isValid) "passed" else "failed"}")
             isValid
 
         } catch (e: Exception) {
@@ -409,28 +397,23 @@ class PermitManager private constructor(context: Context) {
         val permit = getPermit(walletAddress, contractAddress)
 
         if (permit == null) {
-            Log.d(TAG, "No permit found for contract: $contractAddress")
             return null
         }
 
         if (!isPermitValid(permit)) {
-            Log.d(TAG, "Permit expired for contract: $contractAddress")
             removePermit(walletAddress, contractAddress) // Clean up expired permit
             return null
         }
 
         if (!permit.hasPermission(permission)) {
-            Log.w(TAG, "Permit lacks required permission '$permission' for contract: $contractAddress")
             return null
         }
 
         if (!validatePermitSignature(permit, walletAddress)) {
-            Log.w(TAG, "Permit signature validation failed for contract: $contractAddress")
             removePermit(walletAddress, contractAddress) // Remove invalid permit
             return null
         }
 
-        Log.d(TAG, "Valid permit found for $permission query")
         return permit
     }
 
@@ -500,7 +483,6 @@ class PermitManager private constructor(context: Context) {
      */
     @Deprecated("Use hasPermit() instead")
     fun getViewingKey(walletAddress: String, contractAddress: String): String {
-        Log.w(TAG, "getViewingKey() is deprecated - use hasPermit() instead")
         return if (hasPermit(walletAddress, contractAddress)) "permit_exists" else ""
     }
 

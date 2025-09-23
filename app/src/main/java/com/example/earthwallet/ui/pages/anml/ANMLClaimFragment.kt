@@ -80,7 +80,6 @@ class ANMLClaimFragment : Fragment() {
             button.setOnClickListener {
                 if (isHighStaker) {
                     // High stakers (>=250K ERTH staked) skip the ad
-                    Log.d(TAG, "User is high staker, skipping ad")
                     listener?.onClaimRequested()
                 } else {
                     // Show interstitial ad and start transaction confirmation simultaneously
@@ -103,14 +102,12 @@ class ANMLClaimFragment : Fragment() {
     }
 
     private fun fetchAnmlPriceAndUpdateDisplay() {
-        Log.d(TAG, "fetchAnmlPriceAndUpdateDisplay called")
 
         if (httpClient == null) {
             httpClient = OkHttpClient()
         }
 
         val url = "${Constants.BACKEND_BASE_URL}/anml-price"
-        Log.d(TAG, "Fetching ANML price from: $url")
 
         val request = Request.Builder()
             .url(url)
@@ -126,20 +123,16 @@ class ANMLClaimFragment : Fragment() {
             }
 
             override fun onResponse(call: Call, response: Response) {
-                Log.d(TAG, "ANML price response received with code: ${response.code()}")
                 response.use { resp ->
                     if (resp.isSuccessful && resp.body() != null) {
                         try {
                             val responseBody = resp.body()!!.string()
-                            Log.d(TAG, "ANML price response body: $responseBody")
                             val json = JSONObject(responseBody)
                             val price = json.getDouble("price")
-                            Log.d(TAG, "Parsed ANML price: $price")
 
                             // Update UI on main thread
                             activity?.runOnUiThread {
                                 updateAnmlPriceDisplay(price)
-                            } ?: Log.w(TAG, "Activity is null, cannot update UI")
                         } catch (e: JSONException) {
                             Log.e(TAG, "Failed to parse ANML price response", e)
                             // Update UI on main thread with error message
@@ -148,7 +141,6 @@ class ANMLClaimFragment : Fragment() {
                             }
                         }
                     } else {
-                        Log.w(TAG, "ANML price request failed with code: ${resp.code()}")
                         // Update UI on main thread with error message
                         activity?.runOnUiThread {
                             anmlPriceText?.text = "Price unavailable"
@@ -174,7 +166,6 @@ class ANMLClaimFragment : Fragment() {
             }
 
             val priceDisplay = priceFormat.format(price)
-            Log.d(TAG, "Displaying ANML price: $priceDisplay")
             anmlPriceText?.text = priceDisplay
 
         } catch (e: Exception) {
@@ -191,7 +182,6 @@ class ANMLClaimFragment : Fragment() {
             try {
                 val userAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (userAddress.isNullOrEmpty()) {
-                    Log.w(TAG, "No user address available for staking check")
                     return@Thread
                 }
 
@@ -201,7 +191,6 @@ class ANMLClaimFragment : Fragment() {
                 getUserInfo.put("address", userAddress)
                 queryMsg.put("get_user_info", getUserInfo)
 
-                Log.d(TAG, "Checking staking status for address: $userAddress")
 
                 val result = queryService?.queryContract(
                     Constants.STAKING_CONTRACT,
@@ -209,7 +198,6 @@ class ANMLClaimFragment : Fragment() {
                     queryMsg
                 )
 
-                Log.d(TAG, "Staking query result: $result")
 
                 // Parse staked amount
                 if (result?.has("user_info") == true && !result.isNull("user_info")) {
@@ -218,25 +206,20 @@ class ANMLClaimFragment : Fragment() {
                         val stakedAmountMicro = userInfo.getLong("staked_amount")
                         val stakedAmountMacro = stakedAmountMicro / 1_000_000.0 // Convert to macro units
 
-                        Log.d(TAG, "User has $stakedAmountMacro ERTH staked")
 
                         // Check if user has >= 250K ERTH staked
                         if (stakedAmountMacro >= 250_000.0) {
                             isHighStaker = true
-                            Log.d(TAG, "User is high staker (>=250K ERTH), will skip ads")
                         } else {
                             isHighStaker = false
-                            Log.d(TAG, "User is not high staker, will show ads")
                         }
 
                         // Update UI on main thread
                         activity?.runOnUiThread { updateAdFreeIndicator() }
                     } else {
-                        Log.d(TAG, "No staked_amount found, user is not staking")
                         isHighStaker = false
                     }
                 } else {
-                    Log.d(TAG, "No user_info found, user is not staking")
                     isHighStaker = false
 
                     // Update UI on main thread
@@ -261,11 +244,9 @@ class ANMLClaimFragment : Fragment() {
             if (isHighStaker) {
                 statusText.text = "Ad-Free Experience"
                 statusText.setTextColor(resources.getColor(android.R.color.holo_green_dark, null))
-                Log.d(TAG, "User is ad-free")
             } else {
                 statusText.text = "Ads Active"
                 statusText.setTextColor(resources.getColor(android.R.color.holo_orange_dark, null))
-                Log.d(TAG, "User will see ads")
             }
         }
     }

@@ -96,7 +96,6 @@ class ManagePermitsFragment : Fragment() {
         if (TextUtils.isEmpty(walletAddress)) {
             try {
                 walletAddress = com.example.earthwallet.wallet.services.SecureWalletManager.getWalletAddress(requireContext()) ?: ""
-                Log.d(TAG, "Loaded wallet address directly: ${if (walletAddress.isNotEmpty()) walletAddress.substring(0, 14) + "..." else "EMPTY"}")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to load wallet address directly", e)
             }
@@ -104,11 +103,8 @@ class ManagePermitsFragment : Fragment() {
 
         // If we still don't have a wallet address, we cannot proceed
         if (TextUtils.isEmpty(walletAddress)) {
-            Log.w(TAG, "No wallet address available - cannot manage permits")
         }
 
-        Log.d(TAG, "onViewCreated - walletAddress: $walletAddress")
-        Log.d(TAG, "Number of tokens in ALL_TOKENS: ${Tokens.ALL_TOKENS.size}")
 
         // Load and display permits
         loadPermits()
@@ -119,7 +115,6 @@ class ManagePermitsFragment : Fragment() {
      */
     private fun loadPermits() {
         if (TextUtils.isEmpty(walletAddress)) {
-            Log.w(TAG, "No wallet address available")
             showEmptyState()
             return
         }
@@ -145,25 +140,21 @@ class ManagePermitsFragment : Fragment() {
         val allTokens = mutableListOf<TokenPermitInfo>()
 
         try {
-            Log.d(TAG, "Loading all tokens with permit status, wallet address: $walletAddress")
 
             // Check each token to see if it has a permit
             for (symbol in Tokens.ALL_TOKENS.keys) {
                 val token = Tokens.getTokenInfo(symbol)
                 if (token != null) {
                     val permit = permitManager.getPermit(walletAddress, token.contract)
-                    Log.d(TAG, "Token $symbol (${token.contract}) permit: ${if (permit == null) "NONE" else "EXISTS"}")
 
                     val tokenInfo = TokenPermitInfo().apply {
                         this.token = token
                         this.permit = permit
                     }
                     allTokens.add(tokenInfo)
-                    Log.d(TAG, "Added token $symbol (has permit: ${permit != null})")
                 }
             }
 
-            Log.d(TAG, "Loaded ${allTokens.size} tokens total")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load tokens", e)
         }
@@ -230,7 +221,6 @@ class ManagePermitsFragment : Fragment() {
                         }
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "Failed to load logo for ${tokenInfo.token.symbol}: ${tokenInfo.token.logo}", e)
                     // Add a default icon
                     logoView.setImageResource(R.drawable.ic_token_default)
                     tokenRow.addView(logoView)
@@ -342,7 +332,6 @@ class ManagePermitsFragment : Fragment() {
             // Reload the permits list
             loadPermits()
 
-            Log.i(TAG, "Successfully removed permit for ${permitInfo.token.symbol}")
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to remove permit for ${permitInfo.token.symbol}", e)
@@ -397,7 +386,6 @@ class ManagePermitsFragment : Fragment() {
      * Request permit creation for a token
      */
     private fun requestPermit(token: Tokens.TokenInfo) {
-        Log.i(TAG, "Requesting permit for ${token.symbol}")
 
         // Create permit directly with default permissions
         createPermit(token)
@@ -416,7 +404,6 @@ class ManagePermitsFragment : Fragment() {
      */
     private fun createPermitWithPermissions(token: Tokens.TokenInfo, permissions: List<String>) {
         try {
-            Log.d(TAG, "Creating permit directly for ${token.symbol} with permissions: $permissions")
 
             // Create permit directly using PermitManager in the background
             permitManager.createPermit(
@@ -433,7 +420,6 @@ class ManagePermitsFragment : Fragment() {
             // Refresh the display
             loadPermits()
 
-            Log.i(TAG, "Successfully created permit for ${token.symbol}")
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to create permit for ${token.symbol}", e)

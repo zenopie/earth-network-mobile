@@ -132,18 +132,13 @@ class DeflationFundFragment : Fragment() {
             try {
                 // First check if we have a wallet
                 val walletAddress = SecureWalletManager.getWalletAddress(requireContext())
-                Log.d(TAG, "Loading allocations with wallet: ${walletAddress ?: "null"}")
 
                 if (walletAddress.isNullOrEmpty()) {
-                    Log.w(TAG, "No wallet address available - query may fail")
                 }
                 // Query current allocations from staking contract
                 val queryMsg = JSONObject()
                 queryMsg.put("query_allocation_options", JSONObject())
 
-                Log.d(TAG, "Querying deflation fund allocations from: ${Constants.STAKING_CONTRACT}")
-                Log.d(TAG, "Using hash: ${Constants.STAKING_HASH}")
-                Log.d(TAG, "Query message: $queryMsg")
 
                 val result = queryService!!.queryContract(
                     Constants.STAKING_CONTRACT,
@@ -151,7 +146,6 @@ class DeflationFundFragment : Fragment() {
                     queryMsg
                 )
 
-                Log.d(TAG, "Allocation query result: $result")
 
                 activity?.runOnUiThread {
                     try {
@@ -161,7 +155,6 @@ class DeflationFundFragment : Fragment() {
                         if (result.has("data") && result.getJSONArray("data").length() > 0) {
                             // SecretQueryService wrapped response
                             val dataArray = result.getJSONArray("data")
-                            Log.d(TAG, "Processing SecretQueryService wrapped response with ${dataArray.length()} items")
 
                             // First pass: collect all raw amounts to calculate total
                             var totalAmount = 0L
@@ -171,11 +164,9 @@ class DeflationFundFragment : Fragment() {
                                 try {
                                     totalAmount += amountStr.toLong()
                                 } catch (e: NumberFormatException) {
-                                    Log.w(TAG, "Invalid amount format: $amountStr")
                                 }
                             }
 
-                            Log.d(TAG, "Deflation fund total amount: $totalAmount")
 
                             // Second pass: calculate percentages with proper rounding to ensure 100% total
                             val rawAmounts = LongArray(dataArray.length())
@@ -189,7 +180,6 @@ class DeflationFundFragment : Fragment() {
                                 try {
                                     rawAmounts[i] = amountStr.toLong()
                                 } catch (e: NumberFormatException) {
-                                    Log.w(TAG, "Invalid amount format: $amountStr")
                                     rawAmounts[i] = 0
                                 }
                             }
@@ -233,20 +223,17 @@ class DeflationFundFragment : Fragment() {
                                 transformed.put("allocation_id", allocationIds[i])
                                 transformed.put("amount_allocated", percentages[i])
 
-                                Log.d(TAG, "Deflation fund item: allocation_id=${allocationIds[i]}, raw_amount=${rawAmounts[i]} -> ${percentages[i]}%")
                                 currentAllocations!!.put(transformed)
                             }
                         } else if (result.toString().startsWith("[")) {
                             // Direct array response (fallback)
                             val directArray = JSONArray(result.toString())
-                            Log.d(TAG, "Processing direct array response with ${directArray.length()} items")
                             currentAllocations = directArray
                         } else if (result.has("allocations")) {
                             // DeflationFund style response (old format)
                             currentAllocations = result.getJSONArray("allocations")
                         }
 
-                        Log.d(TAG, "Processed allocations: $currentAllocations")
                         updateActualAllocationsUI()
                     } catch (e: Exception) {
                         Log.e(TAG, "Error processing allocation data", e)
@@ -291,7 +278,6 @@ class DeflationFundFragment : Fragment() {
                 userQuery.put("address", userAddress)
                 queryMsg.put("query_user_allocations", userQuery)
 
-                Log.d(TAG, "Querying user allocations for: $userAddress")
 
                 val result = queryService!!.queryContract(
                     Constants.STAKING_CONTRACT,
@@ -299,7 +285,6 @@ class DeflationFundFragment : Fragment() {
                     queryMsg
                 )
 
-                Log.d(TAG, "User allocation query result: $result")
 
                 activity?.runOnUiThread {
                     try {
@@ -309,7 +294,6 @@ class DeflationFundFragment : Fragment() {
                         if (result.has("data") && result.getJSONArray("data").length() > 0) {
                             // SecretQueryService wrapped response with percentage field
                             val dataArray = result.getJSONArray("data")
-                            Log.d(TAG, "Processing user allocations with ${dataArray.length()} items")
 
                             for (i in 0 until dataArray.length()) {
                                 val item = dataArray.getJSONObject(i)
@@ -323,25 +307,21 @@ class DeflationFundFragment : Fragment() {
                                 try {
                                     percentage = percentageStr.toInt()
                                 } catch (e: NumberFormatException) {
-                                    Log.w(TAG, "Invalid percentage format: $percentageStr")
                                 }
 
                                 transformed.put("allocation_id", allocationId)
                                 transformed.put("amount_allocated", percentage)
 
-                                Log.d(TAG, "User allocation item: allocation_id=$allocationId, percentage=$percentage%")
                                 userAllocations!!.put(transformed)
                             }
                         } else if (result.toString().startsWith("[")) {
                             // Fallback: direct array response format
                             userAllocations = JSONArray(result.toString())
-                            Log.d(TAG, "Processing user allocations array with ${userAllocations!!.length()} items")
                         } else if (result.has("percentages")) {
                             // Fallback for older format
                             userAllocations = result.getJSONArray("percentages")
                         }
 
-                        Log.d(TAG, "Processed user allocations: $userAllocations")
                         updatePreferredAllocationsUI()
                     } catch (e: Exception) {
                         Log.e(TAG, "Error processing user allocation data", e)

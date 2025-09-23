@@ -338,7 +338,6 @@ class SwapTokensMainFragment : Fragment() {
             }
         } catch (e: Exception) {
             // If logo not found, use default wallet icon
-            Log.d(TAG, "Logo not found for $tokenSymbol, using default icon")
             imageView?.setImageResource(R.drawable.ic_wallet)
         }
     }
@@ -551,11 +550,9 @@ class SwapTokensMainFragment : Fragment() {
     }
 
     private fun handleSwapSimulationResult(json: String?) {
-        Log.d(TAG, "handleSwapSimulationResult called with JSON: $json")
         try {
             val root = JSONObject(json ?: "")
             val success = root.optBoolean("success", false)
-            Log.d(TAG, "Swap simulation success: $success")
 
             if (success) {
                 val result = root.optJSONObject("result")
@@ -572,7 +569,6 @@ class SwapTokensMainFragment : Fragment() {
                         toAmountInput?.setText(df.format(formattedOutput))
                         updateDetailsDisplay()
 
-                        Log.d(TAG, "Swap simulation successful - input: ${fromAmountInput?.text} " +
                             "${tokenSymbols[fromTokenSpinner?.selectedItemPosition ?: 0]}, output: " +
                             "${df.format(formattedOutput)} $toTokenSymbol")
                     }
@@ -590,7 +586,6 @@ class SwapTokensMainFragment : Fragment() {
     }
 
     private fun handleSwapExecutionResult(json: String?) {
-        Log.d(TAG, "handleSwapExecutionResult called with JSON: $json")
 
         try {
             val root = JSONObject(json ?: "")
@@ -601,16 +596,13 @@ class SwapTokensMainFragment : Fragment() {
                 val txResponse = root.getJSONObject("tx_response")
                 val code = txResponse.optInt("code", -1)
                 success = (code == 0)
-                Log.d(TAG, "Transaction code: $code, success: $success")
 
                 if (success) {
                     val txHash = txResponse.optString("txhash", "")
-                    Log.d(TAG, "Transaction hash: $txHash")
                 }
             } else {
                 // Fallback to old success field
                 success = root.optBoolean("success", false)
-                Log.d(TAG, "Using fallback success field: $success")
             }
 
             if (success) {
@@ -674,7 +666,6 @@ class SwapTokensMainFragment : Fragment() {
         val fromTokenSymbol = tokenSymbols[fromTokenSpinner?.selectedItemPosition ?: 0]
         val toTokenSymbol = tokenSymbols[toTokenSpinner?.selectedItemPosition ?: 0]
 
-        Log.d(TAG, "Starting swap simulation: $inputAmount $fromTokenSymbol -> $toTokenSymbol")
 
         // Get token info for from token
         val fromTokenInfo = Tokens.getTokenInfo(fromTokenSymbol)
@@ -702,8 +693,6 @@ class SwapTokensMainFragment : Fragment() {
             toTokenInfo.contract
         )
 
-        Log.d(TAG, "Swap simulation query: $queryJson")
-        Log.d(TAG, "Exchange contract: ${Constants.EXCHANGE_CONTRACT}")
 
         // Use SecretQueryService directly in background thread to avoid Activity transition
         Thread {
@@ -749,13 +738,11 @@ class SwapTokensMainFragment : Fragment() {
 
     private fun fetchTokenBalanceWithContract(tokenSymbol: String, isFromToken: Boolean) {
         if (TextUtils.isEmpty(currentWalletAddress)) {
-            Log.w("SwapTokensMainFragment", "No wallet address available")
             return
         }
 
         val tokenInfo = Tokens.getTokenInfo(tokenSymbol)
         if (tokenInfo == null) {
-            Log.w("SwapTokensMainFragment", "Token not found: $tokenSymbol")
             return
         }
 
@@ -843,7 +830,6 @@ class SwapTokensMainFragment : Fragment() {
                                 try {
                                     formattedBalance = amount.toDouble() / 10.0.pow(info.decimals)
                                 } catch (e: NumberFormatException) {
-                                    Log.w(TAG, "Invalid amount format: $amount, using 0")
                                 }
                             }
                             if (isFromToken) {
@@ -909,14 +895,12 @@ class SwapTokensMainFragment : Fragment() {
     private fun setupBroadcastReceiver() {
         transactionSuccessReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
-                Log.i(TAG, "*** SWAP PAGE: Received TRANSACTION_SUCCESS broadcast - refreshing balances ***")
 
                 // Clear amounts immediately
                 clearAmounts()
 
                 // Add small delay before refreshing balances to allow blockchain state to settle
                 Handler(Looper.getMainLooper()).postDelayed({
-                    Log.d(TAG, "Refreshing balances after transaction success")
                     fetchBalances()
                 }, 200) // 200ms delay
             }
@@ -932,7 +916,6 @@ class SwapTokensMainFragment : Fragment() {
                 } else {
                     requireActivity().applicationContext.registerReceiver(transactionSuccessReceiver, filter)
                 }
-                Log.d(TAG, "Registered transaction success receiver")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to register broadcast receiver", e)
             }
@@ -946,10 +929,8 @@ class SwapTokensMainFragment : Fragment() {
         if (transactionSuccessReceiver != null && context != null) {
             try {
                 requireActivity().applicationContext.unregisterReceiver(transactionSuccessReceiver)
-                Log.d(TAG, "Unregistered transaction success receiver")
             } catch (e: IllegalArgumentException) {
                 // Receiver was not registered, ignore
-                Log.d(TAG, "Receiver was not registered")
             } catch (e: Exception) {
                 Log.e(TAG, "Error unregistering receiver", e)
             }
@@ -984,11 +965,6 @@ class SwapTokensMainFragment : Fragment() {
 
         val inputAmountMicro = (inputAmount * 10.0.pow(fromTokenInfo.decimals)).toLong()
 
-        Log.d(TAG, "Starting SNIP swap execution")
-        Log.d(TAG, "From token: $fromTokenSymbol (${fromTokenInfo.contract})")
-        Log.d(TAG, "To exchange: ${Constants.EXCHANGE_CONTRACT}")
-        Log.d(TAG, "Amount: $inputAmountMicro")
-        Log.d(TAG, "Swap message: $swapMessage")
 
         val intent = Intent(context, TransactionActivity::class.java)
         intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SNIP_EXECUTE)

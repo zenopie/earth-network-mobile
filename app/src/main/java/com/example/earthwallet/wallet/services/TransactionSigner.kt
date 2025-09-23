@@ -26,22 +26,18 @@ object TransactionSigner {
     @JvmStatic
     @Throws(Exception::class)
     fun signTransaction(signDoc: Tx.SignDoc, walletKey: ECKey): ByteArray {
-        Log.d(TAG, "Signing transaction with wallet key")
 
         try {
             // 1. Serialize SignDoc for signing
             val signDocBytes = signDoc.toByteArray()
-            Log.d(TAG, "SignDoc serialized: ${signDocBytes.size} bytes")
 
             // 2. Create signature
             val signature = createSignature(signDocBytes, walletKey)
-            Log.d(TAG, "Signature created: ${signature.length} bytes")
 
             // 3. Build final transaction
             val txRaw = buildSignedTransaction(signDoc, signature)
 
             val txBytes = txRaw.toByteArray()
-            Log.i(TAG, "Signed transaction ready: ${txBytes.size} bytes")
 
             return txBytes
 
@@ -57,7 +53,6 @@ object TransactionSigner {
     @JvmStatic
     @Throws(Exception::class)
     fun createSignature(data: ByteArray, walletKey: ECKey): TransactionSignature {
-        Log.d(TAG, "Creating signature for ${data.size} bytes of data")
 
         // Hash the data
         val hash = Sha256Hash.of(data)
@@ -102,7 +97,6 @@ object TransactionSigner {
                 "Wallet derives to: $walletAddress")
         }
 
-        Log.d(TAG, "✅ Wallet validation passed")
     }
 
     /**
@@ -118,7 +112,6 @@ object TransactionSigner {
             // Use raw 64-byte format for Cosmos compatibility
             signatureBytes = createRawSignature(ecdsaSignature)
 
-            Log.d(TAG, "Signature created: ${signatureBytes.size} bytes (Raw format)")
         }
 
         /**

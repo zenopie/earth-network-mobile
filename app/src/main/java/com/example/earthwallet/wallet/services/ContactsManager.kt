@@ -58,12 +58,10 @@ object ContactsManager {
     @JvmStatic
     fun addContact(context: Context, name: String, address: String): Boolean {
         if (TextUtils.isEmpty(name) || TextUtils.isEmpty(address)) {
-            Log.w(TAG, "Cannot add contact with empty name or address")
             return false
         }
 
         if (!address.startsWith("secret1")) {
-            Log.w(TAG, "Invalid Secret Network address: $address")
             return false
         }
 
@@ -73,11 +71,9 @@ object ContactsManager {
             // Check for duplicates
             for (contact in contacts) {
                 if (contact.name.equals(name, ignoreCase = true)) {
-                    Log.w(TAG, "Contact name already exists: $name")
                     return false
                 }
                 if (contact.address == address) {
-                    Log.w(TAG, "Contact address already exists: $address")
                     return false
                 }
             }
@@ -133,11 +129,9 @@ object ContactsManager {
             for (contact in contacts) {
                 if (contact != oldContact) {
                     if (contact.name.equals(newName, ignoreCase = true)) {
-                        Log.w(TAG, "Contact name already exists: $newName")
                         return false
                     }
                     if (contact.address == newAddress) {
-                        Log.w(TAG, "Contact address already exists: $newAddress")
                         return false
                     }
                 }
@@ -201,7 +195,6 @@ object ContactsManager {
         return try {
             val prefs = context.getSharedPreferences(PREF_FILE, Context.MODE_PRIVATE)
             prefs.edit().remove(CONTACTS_KEY).apply()
-            Log.d(TAG, "All contacts cleared")
             true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to clear contacts", e)
@@ -224,7 +217,6 @@ object ContactsManager {
 
             val prefs = context.getSharedPreferences(PREF_FILE, Context.MODE_PRIVATE)
             prefs.edit().putString(CONTACTS_KEY, contactsArray.toString()).apply()
-            Log.d(TAG, "Saved ${contacts.size} contacts")
             true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to save contacts", e)

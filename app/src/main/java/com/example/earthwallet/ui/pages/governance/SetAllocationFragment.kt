@@ -443,7 +443,6 @@ class SetAllocationFragment : Fragment() {
             setAllocation.put("percentages", percentages)
             executeMsg.put("set_allocation", setAllocation)
 
-            Log.d(TAG, "Setting $fundTitle allocations: $executeMsg")
 
             when (fundType) {
                 FUND_TYPE_CARETAKER -> {

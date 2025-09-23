@@ -1,6 +1,5 @@
 package com.example.earthwallet.wallet.utils
 
-import android.util.Log
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.InputStream

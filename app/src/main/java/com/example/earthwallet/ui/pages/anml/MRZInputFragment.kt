@@ -4,7 +4,6 @@ import com.example.earthwallet.R
 import android.os.Build
 import android.os.Bundle
 import android.text.TextUtils
-import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -90,7 +89,6 @@ class MRZInputFragment : Fragment() {
                 val dateOfExpiry = getTextFromEditText(dateOfExpiryEditText)
 
                 // Do not log sensitive MRZ values in cleartext during demos
-                Log.d("MRZInputFragment", "Saving MRZ data and navigating to scanner")
 
                 // Save MRZ data to SharedPreferences for the scanner to use
                 val scannerPrefs = context?.getSharedPreferences("mrz_data", android.content.Context.MODE_PRIVATE)

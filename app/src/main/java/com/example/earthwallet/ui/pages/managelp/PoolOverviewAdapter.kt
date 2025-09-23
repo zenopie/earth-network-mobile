@@ -2,7 +2,6 @@ package com.example.earthwallet.ui.pages.managelp
 
 import android.content.Context
 import android.graphics.drawable.Drawable
-import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -126,7 +125,6 @@ class PoolOverviewAdapter(
                 loadImageFromAssets(itemView.context, assetPath)
 
             } catch (e: Exception) {
-                Log.w("PoolOverviewAdapter", "Failed to load token logo for $tokenKey: ${e.message}")
                 // Fallback to default
                 tokenLogo.setImageResource(R.drawable.ic_token_default)
             }
@@ -138,9 +136,7 @@ class PoolOverviewAdapter(
                 val drawable = Drawable.createFromStream(inputStream, null)
                 tokenLogo.setImageDrawable(drawable)
                 inputStream.close()
-                Log.d("PoolOverviewAdapter", "Successfully loaded logo from: $assetPath")
             } catch (e: IOException) {
-                Log.w("PoolOverviewAdapter", "Failed to load asset: $assetPath, using default")
                 tokenLogo.setImageResource(R.drawable.ic_token_default)
             }
         }
@@ -178,7 +174,6 @@ class PoolOverviewAdapter(
                     }
                 }
             } catch (e: NumberFormatException) {
-                Log.w("PoolOverviewAdapter", "Failed to format number: $numberStr")
                 numberStr // Return as-is if parsing fails
             }
         }

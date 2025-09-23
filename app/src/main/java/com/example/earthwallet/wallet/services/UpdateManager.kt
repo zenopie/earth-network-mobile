@@ -54,7 +54,6 @@ class UpdateManager private constructor(private val context: Context) {
      */
     fun checkForUpdates(updateCheckUrl: String? = null) {
         if (!UpdateConfig.AUTO_CHECK_ENABLED) {
-            Log.d(TAG, "Auto update check disabled")
             return
         }
 
@@ -84,9 +83,7 @@ class UpdateManager private constructor(private val context: Context) {
                     )
 
                     _updateInfo.postValue(updateInfo)
-                    Log.d(TAG, "Update check completed: $updateInfo")
                 } else {
-                    Log.w(TAG, "Failed to fetch update data")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error checking for updates", e)
@@ -132,7 +129,6 @@ class UpdateManager private constructor(private val context: Context) {
                 reader.close()
                 JSONObject(response)
             } else {
-                Log.w(TAG, "Update check failed with response code: ${connection.responseCode}")
                 null
             }
         } catch (e: Exception) {

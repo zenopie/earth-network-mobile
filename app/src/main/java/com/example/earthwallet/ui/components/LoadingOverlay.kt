@@ -44,7 +44,6 @@ class LoadingOverlay @JvmOverloads constructor(
         // Initially hidden
         visibility = View.GONE
 
-        Log.d(TAG, "LoadingOverlay initialized")
     }
 
     /**
@@ -62,7 +61,6 @@ class LoadingOverlay @JvmOverloads constructor(
                         .override(1600, 1600) // Double the original size (800dp -> 1600dp)
                         .into(gif)
                     isInitialized = true
-                    Log.d(TAG, "Loading gif initialized with fragment at 2x size")
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to initialize loading gif with fragment", e)
                 }
@@ -84,7 +82,6 @@ class LoadingOverlay @JvmOverloads constructor(
                         .override(1600, 1600) // Double the original size (800dp -> 1600dp)
                         .into(gif)
                     isInitialized = true
-                    Log.d(TAG, "Loading gif initialized with activity at 2x size")
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to initialize loading gif with activity", e)
                 }
@@ -97,13 +94,11 @@ class LoadingOverlay @JvmOverloads constructor(
      */
     fun show() {
         if (!isInitialized) {
-            Log.w(TAG, "LoadingOverlay not initialized with Glide - call initializeWithFragment() or initializeWithActivity() first")
         }
 
         visibility = View.VISIBLE
         // Make sure the loading gif is visible
         loadingGif?.visibility = View.VISIBLE
-        Log.d(TAG, "Loading overlay shown")
     }
 
     /**
@@ -113,7 +108,6 @@ class LoadingOverlay @JvmOverloads constructor(
         visibility = View.GONE
         // Hide the loading gif as well
         loadingGif?.visibility = View.GONE
-        Log.d(TAG, "Loading overlay hidden")
     }
 
     /**
@@ -140,9 +134,7 @@ class LoadingOverlay @JvmOverloads constructor(
         loadingGif?.let { gif ->
             try {
                 Glide.with(this.context).clear(gif)
-                Log.d(TAG, "LoadingOverlay resources cleaned up")
             } catch (e: Exception) {
-                Log.w(TAG, "Error cleaning up LoadingOverlay resources", e)
             }
         }
     }

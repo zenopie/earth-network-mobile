@@ -136,19 +136,16 @@ class StakeUnstakeFragment : Fragment() {
     private fun setupBroadcastReceiver() {
         transactionSuccessReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
-                Log.d(TAG, "Received TRANSACTION_SUCCESS broadcast - refreshing data immediately")
 
                 // Start multiple refresh attempts to ensure UI updates during animation
                 refreshData() // First immediate refresh
 
                 // Stagger additional refreshes to catch the UI during animation
                 Handler(Looper.getMainLooper()).postDelayed({
-                    Log.d(TAG, "Secondary refresh during animation")
                     refreshData()
                 }, 100) // 100ms delay
 
                 Handler(Looper.getMainLooper()).postDelayed({
-                    Log.d(TAG, "Third refresh during animation")
                     refreshData()
                 }, 500) // 500ms delay
             }
@@ -164,7 +161,6 @@ class StakeUnstakeFragment : Fragment() {
                 } else {
                     requireActivity().applicationContext.registerReceiver(transactionSuccessReceiver, filter)
                 }
-                Log.d(TAG, "Registered transaction success receiver")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to register broadcast receiver", e)
             }
@@ -176,7 +172,6 @@ class StakeUnstakeFragment : Fragment() {
 
         // Refresh data when fragment resumes to update staked balance
         // which may have been affected by other tabs
-        Log.d(TAG, "Fragment resumed - refreshing staked balance data")
         refreshData()
     }
 
@@ -187,10 +182,8 @@ class StakeUnstakeFragment : Fragment() {
         if (transactionSuccessReceiver != null && context != null) {
             try {
                 requireActivity().applicationContext.unregisterReceiver(transactionSuccessReceiver)
-                Log.d(TAG, "Unregistered transaction success receiver")
             } catch (e: IllegalArgumentException) {
                 // Receiver was not registered, ignore
-                Log.d(TAG, "Receiver was not registered")
             } catch (e: Exception) {
                 Log.e(TAG, "Error unregistering receiver", e)
             }

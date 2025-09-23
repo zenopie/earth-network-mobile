@@ -108,17 +108,14 @@ class TokenBalancesFragment : Fragment() {
         }
 
         if (TextUtils.isEmpty(walletAddress)) {
-            Log.w(TAG, "No wallet address available for token balance refresh")
             return
         }
 
         // Check if view is ready before proceeding
         if (!::tokenBalancesContainer.isInitialized) {
-            Log.w(TAG, "TokenBalancesContainer is null, view not ready yet. Skipping refresh.")
             return
         }
 
-        Log.d(TAG, "refreshTokenBalances called for address: $walletAddress")
 
         // Clear existing token displays
         tokenBalancesContainer.removeAllViews()
@@ -155,7 +152,6 @@ class TokenBalancesFragment : Fragment() {
         if (::tokenBalancesContainer.isInitialized) {
             refreshTokenBalances()
         } else {
-            Log.w(TAG, "Wallet address updated but view not ready, refresh deferred")
         }
     }
 
@@ -178,7 +174,6 @@ class TokenBalancesFragment : Fragment() {
             val hasPermit = permitManager.hasPermit(walletAddress, token.contract)
             if (!hasPermit) {
                 // Token should not have been queued if no permit - skip it
-                Log.w(TAG, "Token ${token.symbol} was queued without permit, skipping")
 
                 // Mark query as complete and continue with next token
                 isQueryingToken = false
@@ -187,9 +182,6 @@ class TokenBalancesFragment : Fragment() {
                 return
             }
 
-            Log.d(TAG, "Querying token ${token.symbol} balance")
-            Log.d(TAG, "Contract: ${token.contract}")
-            Log.d(TAG, "Hash: ${token.hash}")
 
             // Use SnipQueryService for cleaner token balance queries
             Thread {
@@ -242,7 +234,6 @@ class TokenBalancesFragment : Fragment() {
 
     private fun handleTokenBalanceResult(token: Tokens.TokenInfo, json: String) {
         try {
-            Log.d(TAG, "Token balance query result for ${token.symbol}: $json")
 
             if (!TextUtils.isEmpty(json)) {
                 val root = JSONObject(json)
@@ -322,7 +313,6 @@ class TokenBalancesFragment : Fragment() {
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Could not load icon for ${token.symbol}: ${e.message}")
                 iconView.setImageResource(R.drawable.ic_token_default)
             }
 
@@ -472,9 +462,7 @@ class TokenBalancesFragment : Fragment() {
         try {
             walletAddress = SecureWalletManager.getWalletAddress(requireContext()) ?: ""
             if (!TextUtils.isEmpty(walletAddress)) {
-                Log.d(TAG, "Loaded wallet address: ${walletAddress.substring(0, minOf(14, walletAddress.length))}...")
             } else {
-                Log.w(TAG, "No wallet address available")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load wallet address", e)

@@ -3,7 +3,6 @@ package com.example.earthwallet.bridge.services
 import android.content.Context
 import android.content.Intent
 import android.text.TextUtils
-import android.util.Log
 import com.example.earthwallet.Constants
 import com.example.earthwallet.bridge.activities.TransactionActivity
 import com.example.earthwallet.wallet.services.SecureWalletManager
@@ -20,7 +19,6 @@ object NativeSendService {
     @JvmStatic
     @Throws(Exception::class)
     fun execute(context: Context, intent: Intent): Array<String> {
-        Log.d(TAG, "Starting native SCRT send transaction")
 
         // Parse intent parameters
         val recipientAddress = intent.getStringExtra(TransactionActivity.EXTRA_RECIPIENT_ADDRESS)
@@ -37,7 +35,6 @@ object NativeSendService {
             throw Exception("Invalid amount")
         }
 
-        Log.d(TAG, "Sending $amount uscrt to $recipientAddress")
 
         // Use SecureWalletManager to execute with mnemonic
         return SecureWalletManager.executeWithMnemonic(context) { mnemonic ->
@@ -52,12 +49,10 @@ object NativeSendService {
             val accountData = SecretNetworkService.fetchAccountSync(lcdUrl, senderAddress)
                 ?: throw Exception("Account not found: $senderAddress")
 
-            Log.d(TAG, "Account data: ${accountData.toString()}")
 
             val accountNumber = accountData.optString("account_number")
             val sequence = accountData.optString("sequence")
 
-            Log.d(TAG, "Creating native send transaction with account_number: $accountNumber, sequence: $sequence")
 
             // Build native send transaction using protobuf service
             val protobufService = SecretProtobufService()
@@ -74,7 +69,6 @@ object NativeSendService {
 
             // Broadcast transaction
             val response = SecretNetworkService.broadcastTransactionModernSync(lcdUrl, txBytes)
-            Log.d(TAG, "Broadcast response: $response")
 
             // Enhance response with detailed results
             val enhancedResponse = enhanceTransactionResponse(response, lcdUrl)
@@ -110,7 +104,6 @@ object NativeSendService {
                 initialResponse
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to enhance response: ${e.message}")
             initialResponse
         }
     }

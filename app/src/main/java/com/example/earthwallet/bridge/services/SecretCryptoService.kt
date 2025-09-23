@@ -47,15 +47,11 @@ object SecretCryptoService {
         msgJson: String,
         mnemonic: String
     ): ByteArray = withContext(Dispatchers.Default) {
-        Log.i(TAG, "Starting SecretJS-compatible encryption (no contract pubkey needed)")
-        Log.i(TAG, "Input code hash: ${codeHash ?: "null"}")
-        Log.i(TAG, "Input message JSON: $msgJson")
 
         try {
             // Generate 32-byte nonce (matches SecretJS encryption.ts line 106)
             val nonce = ByteArray(32)
             SecureRandom().nextBytes(nonce)
-            Log.i(TAG, "Generated 32-byte nonce")
 
             // Get the curve25519 provider (use BEST for native fallback to pure Java)
             val curve25519 = Curve25519.getInstance(Curve25519.BEST)
@@ -89,11 +85,9 @@ object SecretCryptoService {
 
             // Use consensus IO public key (matches SecretJS encryption.ts line 89)
             val consensusIoPubKey = Base64.decode(MAINNET_CONSENSUS_IO_PUBKEY_B64, Base64.NO_WRAP)
-            Log.i(TAG, "Using consensus IO public key for ECDH")
 
             // Compute x25519 ECDH shared secret using encryption private key (matches SecretJS encryption.ts line 91)
             val txEncryptionIkm = curve25519.calculateAgreement(consensusIoPubKey, x25519PrivKey)
-            Log.i(TAG, "Computed x25519 shared secret directly using curve25519 library")
 
             // Derive encryption key using HKDF (matches SecretJS encryption.ts lines 92-98)
             val keyMaterial = ByteArray(txEncryptionIkm.size + nonce.size)
@@ -101,7 +95,6 @@ object SecretCryptoService {
             System.arraycopy(nonce, 0, keyMaterial, txEncryptionIkm.size, nonce.size)
 
             val txEncryptionKey = hkdf(keyMaterial, HKDF_SALT, "", 32)
-            Log.i(TAG, "Derived encryption key using HKDF")
 
             // Create plaintext: contractCodeHash + JSON.stringify(msg) (matches SecretJS encryption.ts line 116)
             val plaintext = if (!codeHash.isNullOrEmpty()) {
@@ -111,17 +104,8 @@ object SecretCryptoService {
             }
             val plaintextBytes = plaintext.toByteArray(StandardCharsets.UTF_8)
 
-            Log.i(TAG, "=== MESSAGE STRUCTURE DEBUG ===")
-            Log.i(TAG, "Code hash: \"${codeHash ?: "null"}\"")
-            Log.i(TAG, "Message JSON: \"$msgJson\"")
-            Log.i(TAG, "Final plaintext: \"$plaintext\"")
-            Log.i(TAG, "Plaintext bytes length: ${plaintextBytes.size}")
-            Log.i(TAG, "Plaintext hex: ${plaintextBytes.toHexString()}")
-            Log.i(TAG, "Expected SecretJS format: contractCodeHash + JSON.stringify(msg)")
-            Log.i(TAG, "=== END MESSAGE DEBUG ===")
 
             // Encrypt using RFC 5297 AES-SIV (matches SecretJS miscreant library exactly)
-            Log.i(TAG, "Using RFC 5297 AES-SIV encryption - deriving keys like miscreant")
             val ciphertext = try {
                 // Split the 32-byte key in half like AES-SIV RFC 5297 standard
                 // miscreant library likely uses this simple approach, not HKDF
@@ -139,7 +123,6 @@ object SecretCryptoService {
                 throw Exception("AES-SIV encryption failed: ${e.message}")
             }
 
-            Log.i(TAG, "AES-SIV encryption successful using HKDF-derived keys (matches miscreant)")
 
             // Create encrypted message format: nonce(32) + wallet_pubkey(32) + siv_ciphertext
             // This matches SecretJS encryption.ts line 121: [...nonce, ...this.pubkey, ...ciphertext]
@@ -148,13 +131,6 @@ object SecretCryptoService {
             System.arraycopy(walletPubkey32, 0, encryptedMsg, 32, 32)
             System.arraycopy(ciphertext, 0, encryptedMsg, 64, ciphertext.size)
 
-            Log.i(TAG, "=== FINAL ENCRYPTED MESSAGE DEBUG ===")
-            Log.i(TAG, "Nonce (32 bytes): ${nonce.toHexString()}")
-            Log.i(TAG, "Wallet pubkey (32 bytes): ${walletPubkey32.toHexString()}")
-            Log.i(TAG, "SIV ciphertext (${ciphertext.size} bytes): ${ciphertext.toHexString()}")
-            Log.i(TAG, "Final message length: ${encryptedMsg.size} bytes (32+32+${ciphertext.size})")
-            Log.i(TAG, "SecretJS format: nonce(32) || wallet_pubkey(32) || siv_ciphertext")
-            Log.i(TAG, "=== END ENCRYPTED MESSAGE DEBUG ===")
 
             encryptedMsg
         } catch (e: Exception) {
@@ -202,9 +178,6 @@ object SecretCryptoService {
         nonce: ByteArray,
         mnemonic: String
     ): ByteArray = withContext(Dispatchers.Default) {
-        Log.i(TAG, "Starting SecretJS-compatible response decryption")
-        Log.i(TAG, "Encrypted response length: ${encryptedResponse.size} bytes")
-        Log.i(TAG, "Nonce length: ${nonce.size} bytes")
 
         try {
             // Get the curve25519 provider
@@ -230,7 +203,6 @@ object SecretCryptoService {
 
             // Compute the same x25519 ECDH shared secret as encryption
             val txEncryptionIkm = curve25519.calculateAgreement(consensusIoPubKey, x25519PrivKey)
-            Log.i(TAG, "Recomputed x25519 shared secret for decryption")
 
             // Derive the same encryption key using HKDF (same as encryption)
             val keyMaterial = ByteArray(txEncryptionIkm.size + nonce.size)
@@ -238,7 +210,6 @@ object SecretCryptoService {
             System.arraycopy(nonce, 0, keyMaterial, txEncryptionIkm.size, nonce.size)
 
             val txEncryptionKey = hkdf(keyMaterial, HKDF_SALT, "", 32)
-            Log.i(TAG, "Derived same decryption key using HKDF")
 
             // Decrypt using RFC 5297 AES-SIV (reverse of encryption)
             val plaintextBytes = try {
@@ -259,8 +230,6 @@ object SecretCryptoService {
                 throw Exception("Decryption failed: ${e.message}")
             }
 
-            Log.i(TAG, "AES-SIV decryption successful, got ${plaintextBytes.size} plaintext bytes")
-            Log.i(TAG, "Decrypted plaintext (UTF-8): ${String(plaintextBytes, StandardCharsets.UTF_8)}")
 
             plaintextBytes
         } catch (e: Exception) {

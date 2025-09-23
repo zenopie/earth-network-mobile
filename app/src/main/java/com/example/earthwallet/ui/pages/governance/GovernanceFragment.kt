@@ -1,7 +1,6 @@
 package com.example.earthwallet.ui.pages.governance
 
 import android.os.Bundle
-import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -23,7 +22,6 @@ class GovernanceFragment : Fragment() {
         container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
-        Log.d(TAG, "GovernanceFragment accessed directly - should navigate via Actions menu instead")
 
         // Create a simple layout programmatically since we don't need the full layout anymore
         return TextView(context).apply {

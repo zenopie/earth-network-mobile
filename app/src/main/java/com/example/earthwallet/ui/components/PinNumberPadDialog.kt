@@ -96,7 +96,6 @@ class PinEntryDialog(private val context: Context) {
             try {
                 val securityStatus = PinSecurityManager.checkPinSecurity(context)
                 if (securityStatus.isLockedOut) {
-                    Log.w(TAG, "PIN entry blocked due to lockout: ${securityStatus.lockoutMessage}")
                     listener.onPinSecurityLockout(securityStatus.lockoutMessage ?: "Account locked")
                     return
                 }
@@ -294,7 +293,6 @@ class PinEntryDialog(private val context: Context) {
 
             if (securityStatus.isLockedOut) {
                 // Account is now locked out
-                Log.w(TAG, "Account locked out after failed PIN attempt")
                 listener?.onPinSecurityLockout(securityStatus.lockoutMessage ?: "Account locked")
                 dismiss()
             } else {
@@ -321,7 +319,6 @@ class PinEntryDialog(private val context: Context) {
         try {
             // Record the successful attempt (clears lockout state)
             PinSecurityManager.recordSuccessfulAttempt(context)
-            Log.i(TAG, "PIN authentication succeeded - clearing lockout state")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to record successful PIN attempt", e)
         }

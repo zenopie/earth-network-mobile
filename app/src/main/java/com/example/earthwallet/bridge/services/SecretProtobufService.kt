@@ -83,7 +83,6 @@ class SecretProtobufService {
         feeGranter: String? = null
     ): ByteArray {
 
-        Log.i(TAG, "Building Secret Network protobuf transaction with ${messages.length()} message(s)")
 
         return try {
             encodeMultiMessageTransactionToProtobuf(
@@ -109,7 +108,6 @@ class SecretProtobufService {
         feeGranter: String? = null
     ): ByteArray {
 
-        Log.i(TAG, "Creating multi-message protobuf transaction")
 
         // Get sender from first message (all messages should have same sender)
         val firstMessage = messages.getJSONObject(0)
@@ -157,7 +155,6 @@ class SecretProtobufService {
                 .build()
 
             txBodyBuilder.addMessages(messageAny)
-            Log.i(TAG, "Added message ${i + 1} to transaction: $contract")
         }
 
         // 2. Complete TxBody with memo
@@ -220,14 +217,12 @@ class SecretProtobufService {
 
         // Use the general purpose signer
         val txBytes = TransactionSigner.signTransaction(signDoc, walletKey)
-        Log.i(TAG, "Clean protobuf transaction created, size: ${txBytes.size} bytes")
 
         // Debug: Log raw transaction bytes in hex for comparison
         val hex = StringBuilder()
         for (b in txBytes) {
             hex.append(String.format("%02x", b))
         }
-        Log.i(TAG, "Raw transaction hex: $hex")
 
         return txBytes
     }
@@ -377,10 +372,6 @@ class SecretProtobufService {
             val walletAddress = WalletCrypto.getAddress(walletKey)
 
             // Log comparison for debugging
-            Log.w(TAG, "=== WALLET/SENDER VALIDATION ===")
-            Log.w(TAG, "Provided sender: $sender")
-            Log.w(TAG, "Wallet address:  $walletAddress")
-            Log.w(TAG, "MATCH: ${walletAddress == sender}")
 
             if (walletAddress != sender) {
                 val errorMsg = """
@@ -394,7 +385,6 @@ class SecretProtobufService {
                 throw Exception(errorMsg)
             }
 
-            Log.i(TAG, "✅ Wallet validation passed - addresses match perfectly")
 
         } catch (e: Exception) {
             if (e.message?.contains("SIGNATURE WILL FAIL") == true) {
@@ -429,7 +419,6 @@ class SecretProtobufService {
                 result.put("success", true)
                 result.put("message", "All ${messages.length()} transactions completed successfully")
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to create result JSON", e)
             }
             callback.onSuccess(result)
             return
@@ -437,7 +426,6 @@ class SecretProtobufService {
 
         try {
             val message = messages.getJSONObject(currentIndex)
-            Log.i(TAG, "Executing transaction ${currentIndex + 1}/${messages.length()}")
 
             // Extract message details
             val sender = message.getString("sender")
@@ -448,7 +436,6 @@ class SecretProtobufService {
             // Create a simple transaction executor (this would normally use SecretExecuteActivity)
             executeSingleMessage(sender, contract, codeHash, msg, object : ProtobufCallback {
                 override fun onSuccess(result: JSONObject) {
-                    Log.i(TAG, "Transaction ${currentIndex + 1} completed successfully")
                     // Continue with next transaction
                     executeMultipleTransactionsSequentially(messages, currentIndex + 1, callback)
                 }
@@ -503,7 +490,6 @@ class SecretProtobufService {
         chainId: String,
         walletKey: ECKey
     ): ByteArray {
-        Log.i(TAG, "Building native SCRT send transaction")
 
         // Validate wallet matches sender
         validateWalletMatchesSender(sender, walletKey)
@@ -609,7 +595,6 @@ class SecretProtobufService {
         // Sign the transaction - TransactionSigner returns complete signed transaction bytes
         val txBytes = TransactionSigner.signTransaction(signDoc, walletKey)
 
-        Log.i(TAG, "Native send transaction built successfully")
         return txBytes
     }
 }

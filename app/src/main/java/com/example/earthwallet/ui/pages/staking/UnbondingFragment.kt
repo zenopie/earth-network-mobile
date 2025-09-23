@@ -67,19 +67,16 @@ class UnbondingFragment : Fragment() {
     private fun setupBroadcastReceiver() {
         transactionSuccessReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
-                Log.d(TAG, "Received TRANSACTION_SUCCESS broadcast - refreshing data immediately")
 
                 // Start multiple refresh attempts to ensure UI updates during animation
                 refreshData() // First immediate refresh
 
                 // Stagger additional refreshes to catch the UI during animation
                 Handler(Looper.getMainLooper()).postDelayed({
-                    Log.d(TAG, "Secondary refresh during animation")
                     refreshData()
                 }, 100) // 100ms delay
 
                 Handler(Looper.getMainLooper()).postDelayed({
-                    Log.d(TAG, "Third refresh during animation")
                     refreshData()
                 }, 500) // 500ms delay
             }
@@ -109,7 +106,6 @@ class UnbondingFragment : Fragment() {
                 } else {
                     requireActivity().applicationContext.registerReceiver(transactionSuccessReceiver, filter)
                 }
-                Log.d(TAG, "Registered transaction success receiver")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to register broadcast receiver", e)
             }
@@ -119,7 +115,6 @@ class UnbondingFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         // Refresh data when user navigates to this fragment
-        Log.d(TAG, "UnbondingFragment resumed - refreshing data")
         refreshData()
     }
 
@@ -130,10 +125,8 @@ class UnbondingFragment : Fragment() {
         if (transactionSuccessReceiver != null && context != null) {
             try {
                 requireActivity().applicationContext.unregisterReceiver(transactionSuccessReceiver)
-                Log.d(TAG, "Unregistered transaction success receiver")
             } catch (e: IllegalArgumentException) {
                 // Receiver was not registered, ignore
-                Log.d(TAG, "Receiver was not registered")
             } catch (e: Exception) {
                 Log.e(TAG, "Error unregistering receiver", e)
             }
@@ -144,13 +137,11 @@ class UnbondingFragment : Fragment() {
      * Refresh unbonding data by querying staking contract directly
      */
     fun refreshData() {
-        Log.d(TAG, "Refreshing unbonding data")
 
         Thread {
             try {
                 val userAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (userAddress == null) {
-                    Log.w(TAG, "No user address available")
                     return@Thread
                 }
 
@@ -160,7 +151,6 @@ class UnbondingFragment : Fragment() {
                 getUserInfo.put("address", userAddress)
                 queryMsg.put("get_user_info", getUserInfo)
 
-                Log.d(TAG, "Querying staking contract for unbonding data")
 
                 val result = queryService!!.queryContract(
                     Constants.STAKING_CONTRACT,
@@ -168,7 +158,6 @@ class UnbondingFragment : Fragment() {
                     queryMsg
                 )
 
-                Log.d(TAG, "Unbonding query result: $result")
 
                 // Parse results
                 parseUnbondingEntries(result)
@@ -188,7 +177,6 @@ class UnbondingFragment : Fragment() {
             var dataObj = data
             if (data.has("error") && data.has("decryption_error")) {
                 val decryptionError = data.getString("decryption_error")
-                Log.d(TAG, "Processing decryption_error for unbonding entries")
 
                 // Extract JSON from error message if needed
                 val jsonMarker = "base64=Value "
@@ -234,7 +222,6 @@ class UnbondingFragment : Fragment() {
                         )
                     )
 
-                    Log.d(TAG, "Unbonding entry: $amount ERTH, available at ${Date(unbondingTimeMillis)}")
                 }
             }
 
@@ -299,7 +286,6 @@ class UnbondingFragment : Fragment() {
     }
 
     private fun handleClaimUnbonded() {
-        Log.d(TAG, "Claiming unbonded tokens")
 
         try {
             // Create claim unbonded message: { claim_unbonded: {} }
@@ -322,7 +308,6 @@ class UnbondingFragment : Fragment() {
     }
 
     private fun handleCancelUnbond(entry: UnbondingEntry) {
-        Log.d(TAG, "Canceling unbonding for ${entry.amount} ERTH")
 
         try {
             // Create cancel unbond message: { cancel_unbond: { amount: "123456", unbonding_time: "1234567890" } }
@@ -333,7 +318,6 @@ class UnbondingFragment : Fragment() {
             cancelUnbond.put("unbonding_time", entry.unbondingTimeNanos.toString()) // Use original nanoseconds as string
             cancelMsg.put("cancel_unbond", cancelUnbond)
 
-            Log.d(TAG, "Cancel unbond message: $cancelMsg")
 
             // Use TransactionActivity for canceling unbond
             val intent = Intent(activity, TransactionActivity::class.java)

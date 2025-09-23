@@ -121,7 +121,6 @@ object SecretExecuteService {
                 initialResponse
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to enhance response: ${e.message}")
             initialResponse
         }
     }

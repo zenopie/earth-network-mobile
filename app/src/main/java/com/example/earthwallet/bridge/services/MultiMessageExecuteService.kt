@@ -24,7 +24,6 @@ object MultiMessageExecuteService {
     @JvmStatic
     @Throws(Exception::class)
     fun execute(context: Context, intent: Intent): Array<String> {
-        Log.i(TAG, "Starting multi-message transaction execution")
 
         // Parse intent parameters
         val messagesJson = intent.getStringExtra("messages")
@@ -40,7 +39,6 @@ object MultiMessageExecuteService {
             throw Exception("Empty messages array provided")
         }
 
-        Log.i(TAG, "Processing ${messages.length()} messages in single transaction")
 
         // Initialize services
         WalletCrypto.initialize(context)
@@ -105,7 +103,6 @@ object MultiMessageExecuteService {
         // Validate response
         validateTransactionResponse(enhancedResponse)
 
-        Log.i(TAG, "Multi-message transaction completed successfully")
         return arrayOf(enhancedResponse, senderAddress)
     }
 
@@ -133,7 +130,6 @@ object MultiMessageExecuteService {
                 initialResponse
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to enhance response: ${e.message}")
             initialResponse
         }
     }

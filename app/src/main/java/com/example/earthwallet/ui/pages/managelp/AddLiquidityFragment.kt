@@ -88,7 +88,6 @@ class AddLiquidityFragment : Fragment() {
         }
 
         // Use SecureWalletManager for secure operations
-        Log.d(TAG, "Using SecureWalletManager for secure operations")
 
         // Initialize permit manager
         permitManager = PermitManager.getInstance(requireContext())
@@ -96,7 +95,6 @@ class AddLiquidityFragment : Fragment() {
         // Initialize Activity Result Launcher
         addLiquidityLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == Activity.RESULT_OK) {
-                Log.i(TAG, "Add liquidity transaction succeeded")
                 // Clear input fields
                 tokenAmountInput.setText("")
                 erthAmountInput.setText("")
@@ -145,7 +143,6 @@ class AddLiquidityFragment : Fragment() {
     private fun setupBroadcastReceiver() {
         transactionSuccessReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
-                Log.i(TAG, "*** BROADCAST RECEIVED: TRANSACTION_SUCCESS - AddLiquidityFragment ***")
 
                 // Clear input fields immediately
                 tokenAmountInput.setText("")
@@ -153,7 +150,6 @@ class AddLiquidityFragment : Fragment() {
 
                 // Add small delay before refreshing balances to allow blockchain state to settle
                 Handler(Looper.getMainLooper()).postDelayed({
-                    Log.d(TAG, "Refreshing balances after transaction success")
                     loadTokenBalances()
                     loadPoolReserves()
                 }, 200) // 200ms delay
@@ -170,7 +166,6 @@ class AddLiquidityFragment : Fragment() {
                 } else {
                     requireActivity().applicationContext.registerReceiver(transactionSuccessReceiver, filter)
                 }
-                Log.i(TAG, "*** SUCCESSFULLY REGISTERED TRANSACTION_SUCCESS BROADCAST RECEIVER ***")
                 Toast.makeText(context, "AddLiquidity: Broadcast receiver registered", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to register broadcast receiver", e)
@@ -244,7 +239,6 @@ class AddLiquidityFragment : Fragment() {
                 imageView.setImageResource(R.drawable.ic_wallet)
             }
         } catch (e: Exception) {
-            Log.d(TAG, "Logo not found for $tokenSymbol, using default icon")
             imageView.setImageResource(R.drawable.ic_wallet)
         }
     }
@@ -253,9 +247,7 @@ class AddLiquidityFragment : Fragment() {
         try {
             currentWalletAddress = SecureWalletManager.getWalletAddress(requireContext()) ?: ""
             if (currentWalletAddress.isNotEmpty()) {
-                Log.d(TAG, "Loaded wallet address: ${currentWalletAddress.substring(0, minOf(14, currentWalletAddress.length))}...")
             } else {
-                Log.w(TAG, "No wallet address available")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load wallet address", e)
@@ -279,13 +271,11 @@ class AddLiquidityFragment : Fragment() {
 
     private fun fetchTokenBalance(tokenSymbol: String, isToken: Boolean) {
         if (TextUtils.isEmpty(currentWalletAddress)) {
-            Log.w(TAG, "No wallet address available")
             return
         }
 
         val tokenInfo = Tokens.getTokenInfo(tokenSymbol)
         if (tokenInfo == null) {
-            Log.w(TAG, "Token not found: $tokenSymbol")
             return
         }
 
@@ -371,7 +361,6 @@ class AddLiquidityFragment : Fragment() {
                                 try {
                                     formattedBalance = amount.toDouble() / Math.pow(10.0, tokenInfo.decimals.toDouble())
                                 } catch (e: NumberFormatException) {
-                                    Log.w(TAG, "Invalid amount format: $amount, using 0")
                                 }
                             }
                             if (isToken) {
@@ -494,7 +483,6 @@ class AddLiquidityFragment : Fragment() {
             // Handle the SecretQueryService error case where data is in the error message
             if (result.has("error") && result.has("decryption_error")) {
                 val decryptionError = result.getString("decryption_error")
-                Log.d(TAG, "Got decryption error, checking for base64 data: $decryptionError")
 
                 // Look for "base64=" in the error message and extract the array
                 val base64Marker = "base64=Value "
@@ -504,7 +492,6 @@ class AddLiquidityFragment : Fragment() {
                     val endIndex = decryptionError.indexOf(" of type org.json.JSONArray", startIndex)
                     if (endIndex != -1) {
                         val jsonArrayString = decryptionError.substring(startIndex, endIndex)
-                        Log.d(TAG, "Extracted JSON array from error: ${jsonArrayString.substring(0, minOf(100, jsonArrayString.length))}")
 
                         try {
                             val poolsData = JSONArray(jsonArrayString)
@@ -515,7 +502,6 @@ class AddLiquidityFragment : Fragment() {
                                     val config = poolInfo.getJSONObject("pool_info").getJSONObject("config")
                                     val tokenSymbol = config.getString("token_b_symbol")
                                     if (tokenKey == tokenSymbol) {
-                                        Log.d(TAG, "Found matching pool for $tokenKey")
                                         extractReserves(poolInfo)
                                         return
                                     }
@@ -552,7 +538,6 @@ class AddLiquidityFragment : Fragment() {
             erthReserve = erthReserveRaw / 1000000.0
             tokenReserve = tokenReserveRaw / 1000000.0
 
-            Log.d(TAG, "Pool reserves loaded - ERTH: $erthReserve, $tokenKey: $tokenReserve")
 
         } catch (e: Exception) {
             Log.e(TAG, "Error extracting reserves from pool info", e)
@@ -583,7 +568,6 @@ class AddLiquidityFragment : Fragment() {
                 isUpdatingRatio = false
             }
         } catch (e: NumberFormatException) {
-            Log.w(TAG, "Invalid token amount format: $tokenAmountStr")
         }
     }
 
@@ -606,7 +590,6 @@ class AddLiquidityFragment : Fragment() {
                 isUpdatingRatio = false
             }
         } catch (e: NumberFormatException) {
-            Log.w(TAG, "Invalid ERTH amount format: $erthAmountStr")
         }
     }
 
@@ -663,7 +646,6 @@ class AddLiquidityFragment : Fragment() {
      */
     private fun executeAddLiquidity(tokenAmount: Double, erthAmount: Double) {
         try {
-            Log.d(TAG, "Executing add liquidity: $tokenAmount $tokenKey + $erthAmount ERTH")
 
             val tokenInfo = Tokens.getTokenInfo(tokenKey!!)
             val erthInfo = Tokens.getTokenInfo("ERTH")
@@ -707,7 +689,6 @@ class AddLiquidityFragment : Fragment() {
             )
             messages.put(addLiquidityMsg)
 
-            Log.d(TAG, "Multi-message array: $messages")
 
             // Launch MultiMessageExecuteActivity
             val intent = Intent(context, TransactionActivity::class.java)
@@ -792,10 +773,8 @@ class AddLiquidityFragment : Fragment() {
         if (transactionSuccessReceiver != null && context != null) {
             try {
                 requireActivity().applicationContext.unregisterReceiver(transactionSuccessReceiver)
-                Log.d(TAG, "Unregistered transaction success receiver")
             } catch (e: IllegalArgumentException) {
                 // Receiver was not registered, ignore
-                Log.d(TAG, "Receiver was not registered")
             } catch (e: Exception) {
                 Log.e(TAG, "Error unregistering receiver", e)
             }

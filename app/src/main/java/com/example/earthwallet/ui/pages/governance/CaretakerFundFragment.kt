@@ -130,19 +130,14 @@ class CaretakerFundFragment : Fragment() {
             try {
                 // First check if we have a wallet
                 val walletAddress = SecureWalletManager.getWalletAddress(requireContext())
-                Log.d(TAG, "Loading allocations with wallet: ${walletAddress ?: "null"}")
 
                 if (walletAddress.isNullOrEmpty()) {
-                    Log.w(TAG, "No wallet address available - query may fail")
                 }
 
                 // Query current allocations from registration contract
                 val queryMsg = JSONObject()
                 queryMsg.put("query_allocation_options", JSONObject())
 
-                Log.d(TAG, "Querying caretaker fund allocations from: ${Constants.REGISTRATION_CONTRACT}")
-                Log.d(TAG, "Using hash: ${Constants.REGISTRATION_HASH}")
-                Log.d(TAG, "Query message: $queryMsg")
 
                 val result = queryService!!.queryContract(
                     Constants.REGISTRATION_CONTRACT,
@@ -150,7 +145,6 @@ class CaretakerFundFragment : Fragment() {
                     queryMsg
                 )
 
-                Log.d(TAG, "Allocation query result: $result")
 
                 activity?.runOnUiThread {
                     try {
@@ -159,7 +153,6 @@ class CaretakerFundFragment : Fragment() {
 
                         if (result.has("data") && result.getJSONArray("data").length() > 0) {
                             val dataArray = result.getJSONArray("data")
-                            Log.d(TAG, "Processing SecretQueryService wrapped response with ${dataArray.length()} items")
 
                             // First pass: collect all raw amounts to calculate total (CaretakerFund format with state wrapper)
                             var totalAmount = 0L
@@ -173,7 +166,6 @@ class CaretakerFundFragment : Fragment() {
                                 }
                             }
 
-                            Log.d(TAG, "Caretaker fund total amount: $totalAmount")
 
                             // Second pass: calculate percentages with proper distribution
                             val rawAmounts = LongArray(dataArray.length())
@@ -238,13 +230,11 @@ class CaretakerFundFragment : Fragment() {
                                 transformed.put("allocation_id", allocationIds[i])
                                 transformed.put("amount_allocated", percentages[i])
 
-                                Log.d(TAG, "Caretaker fund item: allocation_id=${allocationIds[i]}, raw_amount=${rawAmounts[i]} -> ${percentages[i]}%")
                                 currentAllocations!!.put(transformed)
                             }
                         } else if (result.toString().startsWith("[")) {
                             // Direct array response (fallback)
                             val directArray = JSONArray(result.toString())
-                            Log.d(TAG, "Processing direct array response with ${directArray.length()} items")
                             currentAllocations = directArray
                         } else if (result.has("allocations")) {
                             // Old format
@@ -255,10 +245,8 @@ class CaretakerFundFragment : Fragment() {
                             defaultAllocation.put("allocation_id", 1)
                             defaultAllocation.put("amount_allocated", 100)
                             currentAllocations!!.put(defaultAllocation)
-                            Log.d(TAG, "Using default caretaker fund allocation: 100% to Registration Rewards")
                         }
 
-                        Log.d(TAG, "Processed allocations: $currentAllocations")
                         updateActualAllocationsUI()
                     } catch (e: Exception) {
                         Log.e(TAG, "Error processing allocation data", e)
@@ -300,7 +288,6 @@ class CaretakerFundFragment : Fragment() {
                 userQuery.put("address", userAddress)
                 queryMsg.put("query_user_allocations", userQuery)
 
-                Log.d(TAG, "Querying user allocations for: $userAddress")
 
                 val result = queryService!!.queryContract(
                     Constants.REGISTRATION_CONTRACT,
@@ -308,7 +295,6 @@ class CaretakerFundFragment : Fragment() {
                     queryMsg
                 )
 
-                Log.d(TAG, "User allocation query result: $result")
 
                 activity?.runOnUiThread {
                     try {
@@ -316,7 +302,6 @@ class CaretakerFundFragment : Fragment() {
 
                         if (result.has("data") && result.getJSONArray("data").length() > 0) {
                             val dataArray = result.getJSONArray("data")
-                            Log.d(TAG, "Processing user allocations with ${dataArray.length()} items")
 
                             for (i in 0 until dataArray.length()) {
                                 val item = dataArray.getJSONObject(i)
@@ -329,23 +314,19 @@ class CaretakerFundFragment : Fragment() {
                                 try {
                                     percentage = percentageStr.toInt()
                                 } catch (e: NumberFormatException) {
-                                    Log.w(TAG, "Invalid percentage format: $percentageStr")
                                 }
 
                                 transformed.put("allocation_id", allocationId)
                                 transformed.put("amount_allocated", percentage)
 
-                                Log.d(TAG, "User allocation item: allocation_id=$allocationId, percentage=$percentage%")
                                 userAllocations!!.put(transformed)
                             }
                         } else if (result.toString().startsWith("[")) {
                             userAllocations = JSONArray(result.toString())
-                            Log.d(TAG, "Processing user allocations array with ${userAllocations!!.length()} items")
                         } else if (result.has("percentages")) {
                             userAllocations = result.getJSONArray("percentages")
                         }
 
-                        Log.d(TAG, "Processed user allocations: $userAllocations")
                         updatePreferredAllocationsUI()
                     } catch (e: Exception) {
                         Log.e(TAG, "Error processing user allocation data", e)

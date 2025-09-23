@@ -356,7 +356,6 @@ class TransactionActivity : AppCompatActivity() {
         val broadcast = Intent("com.example.earthwallet.TRANSACTION_SUCCESS")
         broadcast.putExtra("result", result)
         broadcast.putExtra("senderAddress", senderAddress)
-        Log.d(TAG, "Sending TRANSACTION_SUCCESS broadcast immediately")
         sendBroadcast(broadcast)
 
         // Show success animation

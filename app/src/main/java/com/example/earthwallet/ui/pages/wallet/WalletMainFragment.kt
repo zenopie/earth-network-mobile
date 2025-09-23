@@ -110,7 +110,6 @@ class WalletMainFragment : Fragment(),
      * Forces refresh when wallet has actually changed
      */
     private fun refreshWalletsUI() {
-        Log.d(TAG, "Refreshing wallet UI")
         loadCurrentWallet()
     }
 
@@ -118,7 +117,6 @@ class WalletMainFragment : Fragment(),
 
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                Log.d(TAG, "Loading wallet data in background...")
 
                 // Heavy operations on background thread
                 val walletName = SecureWalletManager.getCurrentWalletName(requireContext())
@@ -132,7 +130,6 @@ class WalletMainFragment : Fragment(),
                         currentWalletName = walletName
                         currentWalletAddress = walletAddress
 
-                        Log.d(TAG, "Loaded wallet: $currentWalletName ($currentWalletAddress)")
                         updateChildFragments()
                     }
                 }
@@ -191,7 +188,6 @@ class WalletMainFragment : Fragment(),
     // =============================================================================
 
     override fun onPermitRemoved(token: Tokens.TokenInfo) {
-        Log.d(TAG, "Viewing key removed for ${token.symbol}, updating token balance")
 
         // Update token balance fragment to refresh (will hide tokens without viewing keys)
         tokenBalancesFragment?.refreshTokenBalances()
@@ -202,7 +198,6 @@ class WalletMainFragment : Fragment(),
     // =============================================================================
 
     override fun onWalletSelected(walletIndex: Int) {
-        Log.d(TAG, "Wallet selected at index: $walletIndex")
         refreshWalletsUI() // Reload and refresh all child fragments
 
         // Navigate back from wallet list fragment
@@ -218,7 +213,6 @@ class WalletMainFragment : Fragment(),
     // =============================================================================
 
     override fun onWalletCreated() {
-        Log.d(TAG, "New wallet created")
         refreshWalletsUI() // Reload and refresh all child fragments
 
         // Hide create wallet fragment
@@ -295,7 +289,6 @@ class WalletMainFragment : Fragment(),
     override fun onResume() {
         super.onResume()
         // Always load fresh wallet data
-        Log.d(TAG, "onResume: Loading wallet data")
         loadCurrentWallet()
     }
 }

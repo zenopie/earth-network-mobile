@@ -34,7 +34,6 @@ object SessionManager {
     @Throws(Exception::class)
     fun startSession(context: Context, pin: String) {
         try {
-            Log.d(TAG, "Starting session with PIN-based decryption")
 
             if (!SoftwareEncryption.isAvailable()) {
                 throw Exception("Software encryption not available")
@@ -54,17 +53,14 @@ object SessionManager {
 
                 // Parse with versioning support
                 versionedWalletStorage = WalletStorageVersion.parseWalletStorage(decryptedStorageJson)
-                Log.d(TAG, "Successfully decrypted and parsed versioned wallet storage v${versionedWalletStorage!!.version}")
             } else {
                 versionedWalletStorage = WalletStorageVersion.createVersionedStorage(JSONArray())
-                Log.d(TAG, "No encrypted wallet data found, starting with empty versioned storage v${WalletStorageVersion.CURRENT_VERSION}")
             }
 
             // Load other preferences data (non-encrypted)
             loadOtherPrefsData(softwarePrefs)
 
             isSessionActive = true
-            Log.d(TAG, "Session started successfully")
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start session", e)
@@ -77,7 +73,6 @@ object SessionManager {
      * End the current session and clear sensitive data from memory
      */
     fun endSession() {
-        Log.d(TAG, "Ending session")
         clearSession()
     }
 
@@ -120,7 +115,6 @@ object SessionManager {
             // Save to encrypted storage
             saveVersionedStorageToEncryption(context, pin)
 
-            Log.d(TAG, "Updated and re-encrypted versioned wallet data")
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to update wallet data", e)
@@ -166,7 +160,6 @@ object SessionManager {
             }
 
             editor.apply()
-            Log.d(TAG, "Updated preferences data for key: $key")
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to update preferences data for key: $key", e)
@@ -199,7 +192,6 @@ object SessionManager {
         otherPrefsData.clear()
         isSessionActive = false
 
-        Log.d(TAG, "Session data cleared from memory")
     }
 
     /**
@@ -216,7 +208,6 @@ object SessionManager {
             }
         }
 
-        Log.d(TAG, "Loaded ${otherPrefsData.size} preference items")
     }
 
     /**
@@ -257,7 +248,6 @@ object SessionManager {
         val softwarePrefs = context.getSharedPreferences(PREF_FILE + "_software", Context.MODE_PRIVATE)
         softwarePrefs.edit().putString("wallets_encrypted", json.toString()).apply()
 
-        Log.d(TAG, "Saved versioned wallet storage v${storage.version} to encrypted storage")
     }
 }
 

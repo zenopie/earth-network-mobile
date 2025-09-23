@@ -60,7 +60,6 @@ class ManageLPFragment : Fragment() {
     private val allPoolsData = mutableListOf<PoolData>()
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
-        Log.d(TAG, "Creating ManageLP view")
         rootView = inflater.inflate(R.layout.fragment_manage_lp, container, false)
         return rootView
     }
@@ -115,7 +114,6 @@ class ManageLPFragment : Fragment() {
     }
 
     private fun refreshPoolData() {
-        Log.d(TAG, "Refreshing pool data with real contract queries")
 
         // Show loading overlay
         showLoading(true)
@@ -148,7 +146,6 @@ class ManageLPFragment : Fragment() {
     }
 
     private fun queryExchangeContract() {
-        Log.d(TAG, "Querying exchange contract for pool data")
 
         // Get all token contracts except ERTH (like React app)
         val poolContracts = mutableListOf<String>()
@@ -160,13 +157,11 @@ class ManageLPFragment : Fragment() {
                 if (token != null) {
                     poolContracts.add(token.contract)
                     tokenKeys.add(symbol)
-                    Log.d(TAG, "Added pool contract: $symbol -> ${token.contract}")
                 }
             }
         }
 
         if (poolContracts.isEmpty()) {
-            Log.w(TAG, "No pool contracts found, loading empty data")
             // Update UI with empty data
             activity?.runOnUiThread {
                 allPoolsData.clear()
@@ -180,10 +175,8 @@ class ManageLPFragment : Fragment() {
         val userAddress: String
         try {
             userAddress = SecureWalletManager.getWalletAddress(requireContext()) ?: ""
-            Log.d(TAG, "User address: $userAddress")
 
             if (userAddress.isEmpty()) {
-                Log.w(TAG, "No user address available, cannot query pools")
                 return
             }
         } catch (e: Exception) {
@@ -198,9 +191,6 @@ class ManageLPFragment : Fragment() {
         queryUserInfo.put("user", userAddress)
         queryMsg.put("query_user_info", queryUserInfo)
 
-        Log.d(TAG, "Exchange contract: ${Constants.EXCHANGE_CONTRACT}")
-        Log.d(TAG, "Exchange hash: ${Constants.EXCHANGE_HASH}")
-        Log.d(TAG, "Query message: $queryMsg")
 
         // Query the exchange contract
         val result = queryService!!.queryContract(
@@ -209,21 +199,18 @@ class ManageLPFragment : Fragment() {
             queryMsg
         )
 
-        Log.d(TAG, "Query result: $result")
 
         // Process the results
         processPoolQueryResults(result, tokenKeys)
     }
 
     private fun processPoolQueryResults(result: JSONObject, tokenKeys: List<String>) {
-        Log.d(TAG, "Processing pool query results")
 
         val newPoolData = mutableListOf<PoolData>()
 
         // Handle the decryption_error case where data is embedded in error message
         if (result.has("error") && result.has("decryption_error")) {
             val decryptionError = result.getString("decryption_error")
-            Log.d(TAG, "Processing decryption_error for unbonding shares")
 
             // Look for base64-decoded JSON in the error message
             val jsonMarker = "base64=Value "
@@ -251,7 +238,6 @@ class ManageLPFragment : Fragment() {
             processPoolArray(poolResults, tokenKeys, newPoolData)
             updatePoolDataOnUI(newPoolData)
         } else {
-            Log.w(TAG, "No valid pool data found in result")
             updatePoolDataOnUI(newPoolData)
         }
     }
@@ -290,7 +276,6 @@ class ManageLPFragment : Fragment() {
                         val unbondingSharesMicro = state.getLong("unbonding_shares")
                         val unbondingSharesMacro = unbondingSharesMicro / 1000000.0
                         unbondingShares = String.format("%.2f", unbondingSharesMacro)
-                        Log.d(TAG, "$tokenKey unbonding shares: $unbondingShares")
                     }
 
                     // Calculate liquidity (2 * ERTH reserve)
@@ -341,7 +326,6 @@ class ManageLPFragment : Fragment() {
             allPoolsData.addAll(newPoolData)
             updateTotalRewards()
             poolAdapter.notifyDataSetChanged()
-            Log.d(TAG, "Updated UI with ${newPoolData.size} pools")
         }
     }
 
@@ -353,7 +337,6 @@ class ManageLPFragment : Fragment() {
                 val rewards = pool.pendingRewards.replace(",", "").toDouble()
                 totalRewards += rewards
             } catch (e: NumberFormatException) {
-                Log.w(TAG, "Error parsing rewards for pool: ${pool.tokenKey}")
             }
         }
 
@@ -367,7 +350,6 @@ class ManageLPFragment : Fragment() {
 
     fun toggleManageLiquidity(poolData: PoolData?) {
         if (poolData != null) {
-            Log.d(TAG, "Toggle manage liquidity for: ${poolData.tokenKey}")
         }
 
         if (isManagingLiquidity) {
@@ -409,7 +391,6 @@ class ManageLPFragment : Fragment() {
             .replace(R.id.liquidity_management_container, liquidityComponent)
             .commit()
 
-        Log.d(TAG, "Showing liquidity management for: ${poolData.tokenKey}")
 
         updateTitleBackground()
     }
@@ -427,7 +408,6 @@ class ManageLPFragment : Fragment() {
     }
 
     private fun handleClaimRewards(poolData: PoolData) {
-        Log.d(TAG, "Claiming rewards for pool: ${poolData.tokenKey}")
 
         try {
             // Get token contract for this pool
@@ -445,7 +425,6 @@ class ManageLPFragment : Fragment() {
             claimRewards.put("pools", pools)
             claimMsg.put("claim_rewards", claimRewards)
 
-            Log.d(TAG, "Claiming rewards for pool ${poolData.tokenKey} with message: $claimMsg")
 
             // Use SecretExecuteActivity for claiming rewards
             val intent = Intent(activity, TransactionActivity::class.java)
@@ -462,7 +441,6 @@ class ManageLPFragment : Fragment() {
     }
 
     private fun handleClaimAll() {
-        Log.d(TAG, "Claiming all rewards")
 
         try {
             // Collect all pools with rewards > 0
@@ -472,15 +450,12 @@ class ManageLPFragment : Fragment() {
                     val rewards = pool.pendingRewards.replace(",", "").toDouble()
                     if (rewards > 0 && pool.tokenInfo != null) {
                         poolsWithRewards.put(pool.tokenInfo!!.contract)
-                        Log.d(TAG, "Adding pool ${pool.tokenKey} to claim all (rewards: $rewards)")
                     }
                 } catch (e: NumberFormatException) {
-                    Log.w(TAG, "Error parsing rewards for pool: ${pool.tokenKey}")
                 }
             }
 
             if (poolsWithRewards.length() == 0) {
-                Log.w(TAG, "No pools with rewards to claim")
                 return
             }
 
@@ -490,7 +465,6 @@ class ManageLPFragment : Fragment() {
             claimRewards.put("pools", poolsWithRewards)
             claimMsg.put("claim_rewards", claimRewards)
 
-            Log.d(TAG, "Claiming all rewards with message: $claimMsg")
 
             // Use SecretExecuteActivity for claiming all rewards
             val intent = Intent(activity, TransactionActivity::class.java)
@@ -522,7 +496,6 @@ class ManageLPFragment : Fragment() {
 
         if (requestCode == REQ_CLAIM_INDIVIDUAL || requestCode == REQ_CLAIM_ALL) {
             if (resultCode == Activity.RESULT_OK) {
-                Log.d(TAG, "Claim transaction completed successfully")
                 // Refresh pool data and UI to reflect new balances
                 refreshPoolData()
                 // Also refresh the pool overview display immediately

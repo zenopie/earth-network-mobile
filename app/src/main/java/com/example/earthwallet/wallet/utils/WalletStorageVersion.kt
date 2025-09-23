@@ -54,7 +54,6 @@ object WalletStorageVersion {
             put(KEY_LAST_MIGRATION, CURRENT_VERSION)
         }
 
-        Log.d(TAG, "Creating new versioned wallet storage v$CURRENT_VERSION with ${wallets.length()} wallets")
 
         return VersionedWalletStorage(
             version = CURRENT_VERSION,
@@ -70,7 +69,6 @@ object WalletStorageVersion {
     @Throws(Exception::class)
     fun parseWalletStorage(storageJson: String): VersionedWalletStorage {
         if (storageJson.isBlank()) {
-            Log.d(TAG, "Empty storage, creating new versioned storage")
             return createVersionedStorage(JSONArray())
         }
 
@@ -85,14 +83,12 @@ object WalletStorageVersion {
             val wallets = json.getJSONArray(KEY_WALLETS)
             val metadata = json.optJSONObject(KEY_METADATA) ?: JSONObject()
 
-            Log.d(TAG, "Loaded versioned wallet storage v$version with ${wallets.length()} wallets")
 
             val storage = VersionedWalletStorage(version, wallets, metadata)
 
             // Check if migration is needed
             when {
                 version < CURRENT_VERSION -> {
-                    Log.i(TAG, "Migration needed from v$version to v$CURRENT_VERSION")
                     migrateStorage(storage)
                 }
                 version > CURRENT_VERSION -> {
@@ -137,7 +133,6 @@ object WalletStorageVersion {
     @JvmStatic
     @Throws(Exception::class)
     private fun migrateStorage(oldStorage: VersionedWalletStorage): VersionedWalletStorage {
-        Log.i(TAG, "Starting migration from v${oldStorage.version} to v$CURRENT_VERSION")
 
         if (oldStorage.version < MIN_SUPPORTED_VERSION) {
             throw Exception("Wallet storage version ${oldStorage.version} is too old (minimum supported: $MIN_SUPPORTED_VERSION)")
@@ -153,13 +148,11 @@ object WalletStorageVersion {
                 // Add more migration functions as needed
                 else -> throw Exception("No migration available for version $targetVersion")
             }
-            Log.d(TAG, "Migrated to v$targetVersion")
         }
 
         // Update metadata
         currentStorage.metadata.put(KEY_LAST_MIGRATION, System.currentTimeMillis())
 
-        Log.i(TAG, "Migration completed successfully to v$CURRENT_VERSION")
         return currentStorage
     }
 
@@ -170,7 +163,6 @@ object WalletStorageVersion {
     @JvmStatic
     @Throws(Exception::class)
     private fun migrateToV2(storage: VersionedWalletStorage): VersionedWalletStorage {
-        Log.d(TAG, "Migrating to v2 (example future migration)")
 
         // Example: Add a new field to each wallet
         val migratedWallets = JSONArray()
@@ -193,7 +185,6 @@ object WalletStorageVersion {
     @JvmStatic
     @Throws(Exception::class)
     private fun migrateToV3(storage: VersionedWalletStorage): VersionedWalletStorage {
-        Log.d(TAG, "Migrating to v3 (example future migration)")
 
         // Example future migration logic
         return storage.copy(version = 3)
@@ -241,7 +232,6 @@ object WalletStorageVersion {
         return try {
             // Basic validation
             if (storage.version < MIN_SUPPORTED_VERSION || storage.version > CURRENT_VERSION) {
-                Log.w(TAG, "Invalid storage version: ${storage.version}")
                 return false
             }
 
@@ -249,7 +239,6 @@ object WalletStorageVersion {
             for (i in 0 until storage.wallets.length()) {
                 val wallet = storage.wallets.getJSONObject(i)
                 if (!wallet.has("name") || !wallet.has("mnemonic") || !wallet.has("address")) {
-                    Log.w(TAG, "Invalid wallet at index $i: missing required fields")
                     return false
                 }
             }

@@ -215,7 +215,6 @@ class GasStationFragment : Fragment() {
         isSimulating = true
 
         val fromTokenSymbol = tokenSymbols[fromTokenSpinner?.selectedItemPosition ?: 0]
-        Log.d(TAG, "Starting gas swap simulation: $inputAmount $fromTokenSymbol -> SCRT")
 
         val fromTokenInfo = Tokens.getTokenInfo(fromTokenSymbol)
         if (fromTokenInfo == null) {
@@ -251,7 +250,6 @@ class GasStationFragment : Fragment() {
             sscrtTokenInfo.contract
         )
 
-        Log.d(TAG, "Gas swap simulation query: $queryJson")
 
         // Use SecretQueryService in background thread
         Thread {
@@ -295,7 +293,6 @@ class GasStationFragment : Fragment() {
     }
 
     private fun handleSimulationResult(json: String) {
-        Log.d(TAG, "handleSimulationResult called with JSON: $json")
         try {
             val root = JSONObject(json)
             val success = root.optBoolean("success", false)
@@ -311,7 +308,6 @@ class GasStationFragment : Fragment() {
                         val df = DecimalFormat("#.######")
                         expectedScrtInput?.setText(df.format(scrtOutput))
 
-                        Log.d(TAG, "Gas swap simulation successful - input: ${fromAmountInput?.text} " +
                                 "${tokenSymbols[fromTokenSpinner?.selectedItemPosition ?: 0]}, " +
                                 "output: ${df.format(scrtOutput)} SCRT")
                     }
@@ -357,7 +353,6 @@ class GasStationFragment : Fragment() {
                 imageView?.setImageResource(R.drawable.ic_wallet)
             }
         } catch (e: Exception) {
-            Log.d(TAG, "Logo not found for $tokenSymbol, using default icon")
             imageView?.setImageResource(R.drawable.ic_wallet)
         }
     }
@@ -381,7 +376,6 @@ class GasStationFragment : Fragment() {
     private fun loadCurrentWalletAddress() {
         try {
             currentWalletAddress = com.example.earthwallet.wallet.services.SecureWalletManager.getWalletAddress(requireContext()) ?: ""
-            Log.d(TAG, "Loaded wallet address: $currentWalletAddress")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load wallet address", e)
             currentWalletAddress = ""
@@ -402,13 +396,11 @@ class GasStationFragment : Fragment() {
 
     private fun fetchTokenBalance(tokenSymbol: String, isFromToken: Boolean) {
         if (TextUtils.isEmpty(currentWalletAddress)) {
-            Log.w(TAG, "No wallet address available")
             return
         }
 
         val tokenInfo = Tokens.getTokenInfo(tokenSymbol)
         if (tokenInfo == null) {
-            Log.w(TAG, "Token not found: $tokenSymbol")
             return
         }
 
@@ -422,7 +414,6 @@ class GasStationFragment : Fragment() {
                 )
 
                 activity?.runOnUiThread {
-                    Log.d(TAG, "Token balance result: $result")
                     handleTokenBalanceResult(tokenSymbol, isFromToken, result.toString())
                 }
 
@@ -467,7 +458,6 @@ class GasStationFragment : Fragment() {
                                 try {
                                     formattedBalance = amount.toDouble() / 10.0.pow(info.decimals)
                                 } catch (e: NumberFormatException) {
-                                    Log.w(TAG, "Invalid amount format: $amount")
                                 }
                             }
                             fromBalance = formattedBalance
@@ -667,10 +657,6 @@ class GasStationFragment : Fragment() {
                 recipientHash = Constants.EXCHANGE_HASH
             }
 
-            Log.d(TAG, "Starting swap for gas execution")
-            Log.d(TAG, "From token: $fromTokenSymbol")
-            Log.d(TAG, "Amount: $inputAmountMicro")
-            Log.d(TAG, "Message: $message")
 
             val intent = Intent(requireContext(), TransactionActivity::class.java)
             intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SNIP_EXECUTE)
@@ -684,7 +670,6 @@ class GasStationFragment : Fragment() {
             // Add fee granter for gasless transactions when available
             if (hasGasGrant) {
                 intent.putExtra(TransactionActivity.EXTRA_FEE_GRANTER, FEE_GRANTER_ADDRESS)
-                Log.d(TAG, "Using fee granter for gasless transaction: $FEE_GRANTER_ADDRESS")
             }
 
             swapForGasLauncher.launch(intent)
@@ -754,7 +739,6 @@ class GasStationFragment : Fragment() {
                     canClaimFaucet = false
                     hasGasGrant = true
                     Toast.makeText(requireContext(), "Gas allowance granted!", Toast.LENGTH_SHORT).show()
-                    Log.d(TAG, "Gas allowance granted: $response")
 
                     // Refresh balances and faucet eligibility
                     fetchBalances()
@@ -789,7 +773,6 @@ class GasStationFragment : Fragment() {
 
 
     private fun handleSwapForGasResult(json: String?) {
-        Log.d(TAG, "handleSwapForGasResult called with JSON: $json")
 
         resetSwapButton()
 
@@ -803,7 +786,6 @@ class GasStationFragment : Fragment() {
 
                 if (isSuccess) {
                     val txHash = txResponse.optString("txhash", "")
-                    Log.d(TAG, "Gas swap transaction hash: $txHash")
                 }
                 isSuccess
             } else {

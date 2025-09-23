@@ -83,7 +83,6 @@ class SendTokensFragment : Fragment(), WalletDisplayFragment.WalletDisplayListen
             parentFragment is SendTokensListener -> parentFragment as SendTokensListener
             context is SendTokensListener -> context
             else -> {
-                Log.w(TAG, "Parent does not implement SendTokensListener")
                 null
             }
         }
@@ -176,7 +175,6 @@ class SendTokensFragment : Fragment(), WalletDisplayFragment.WalletDisplayListen
         try {
             tokenSpinner.background.alpha = 0
         } catch (e: Exception) {
-            Log.w(TAG, "Could not set spinner background alpha", e)
         }
 
         // Set up spinner selection listener to load balance and logo
@@ -214,10 +212,8 @@ class SendTokensFragment : Fragment(), WalletDisplayFragment.WalletDisplayListen
         // Validate that the scanned content is a valid Secret Network address
         if (content.startsWith("secret1") && content.length >= 45) {
             recipientEditText.setText(content)
-            Log.d(TAG, "QR code scanned: ${content.substring(0, 14)}...")
         } else {
             Toast.makeText(context, "Invalid Secret Network address in QR code", Toast.LENGTH_LONG).show()
-            Log.w(TAG, "Invalid QR code content: $content")
         }
     }
 
@@ -427,9 +423,7 @@ class SendTokensFragment : Fragment(), WalletDisplayFragment.WalletDisplayListen
         try {
             currentWalletAddress = SecureWalletManager.getWalletAddress(requireContext())
             if (!TextUtils.isEmpty(currentWalletAddress)) {
-                Log.d(TAG, "Loaded wallet address: ${currentWalletAddress?.substring(0, minOf(14, currentWalletAddress?.length ?: 0))}...")
             } else {
-                Log.w(TAG, "No wallet address available")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load wallet address", e)
@@ -439,7 +433,6 @@ class SendTokensFragment : Fragment(), WalletDisplayFragment.WalletDisplayListen
 
     private fun fetchTokenBalance(tokenOption: TokenOption) {
         if (TextUtils.isEmpty(currentWalletAddress)) {
-            Log.w(TAG, "No wallet address available for balance fetch")
             balanceText.text = "Balance: Connect wallet"
             return
         }
@@ -566,7 +559,6 @@ class SendTokensFragment : Fragment(), WalletDisplayFragment.WalletDisplayListen
                     tokenLogo.setImageResource(R.drawable.ic_wallet)
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to load logo for ${tokenOption.symbol}, using default icon", e)
                 tokenLogo.setImageResource(R.drawable.ic_wallet)
             }
         }

@@ -51,7 +51,6 @@ class InfoFragment : Fragment() {
         arguments?.let {
             tokenKey = it.getString("token_key")
         }
-        Log.d(TAG, "InfoFragment created with tokenKey: $tokenKey")
 
         queryService = SecretQueryService(requireContext())
         executorService = Executors.newCachedThreadPool()
@@ -85,20 +84,17 @@ class InfoFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        Log.d(TAG, "InfoFragment resumed - refreshing data")
         refreshData()
     }
 
     override fun onHiddenChanged(hidden: Boolean) {
         super.onHiddenChanged(hidden)
         if (!hidden && isResumed) {
-            Log.d(TAG, "InfoFragment became visible - refreshing data")
             refreshData()
         }
     }
 
     fun refreshData() {
-        Log.d(TAG, "Refreshing pool info data for: $tokenKey")
         loadPoolData()
     }
 
@@ -109,13 +105,11 @@ class InfoFragment : Fragment() {
             try {
                 val userAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (userAddress == null) {
-                    Log.w(TAG, "No user address available")
                     return@execute
                 }
 
                 val tokenContract = getTokenContract(tokenKey!!)
                 if (tokenContract == null) {
-                    Log.w(TAG, "No contract found for token: $tokenKey")
                     return@execute
                 }
 
@@ -171,7 +165,6 @@ class InfoFragment : Fragment() {
 
     private fun updateUI(poolState: JSONObject?, userInfo: JSONObject?) {
         if (poolState == null || userInfo == null) {
-            Log.d(TAG, "Pool state or user info is null")
             return
         }
 
@@ -209,7 +202,6 @@ class InfoFragment : Fragment() {
                 erthValueText.text = String.format("%.6f", userErthValue)
                 tokenValueText.text = String.format("%.6f", userTokenBValue)
 
-                Log.d(TAG, "Updated InfoFragment UI with fresh data")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error updating UI", e)

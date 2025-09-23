@@ -57,7 +57,6 @@ class StakeEarthFragment : Fragment() {
             parentFragment is StakeEarthListener -> parentFragment as StakeEarthListener
             context is StakeEarthListener -> context
             else -> {
-                Log.w(TAG, "Parent does not implement StakeEarthListener")
                 null
             }
         }
@@ -111,7 +110,6 @@ class StakeEarthFragment : Fragment() {
      * Public method to refresh staking data across all fragments
      */
     fun refreshStakingData() {
-        Log.d(TAG, "Refreshing staking data for all fragments")
 
         // With ViewPager2, we need to notify fragments differently
         stakingAdapter?.notifyDataSetChanged()
@@ -125,7 +123,6 @@ class StakeEarthFragment : Fragment() {
             try {
                 val userAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (userAddress.isNullOrEmpty()) {
-                    Log.w(TAG, "No user address available")
                     return@execute
                 }
 
@@ -135,8 +132,6 @@ class StakeEarthFragment : Fragment() {
                 getUserInfo.put("address", userAddress)
                 queryMsg.put("get_user_info", getUserInfo)
 
-                Log.d(TAG, "Querying staking contract: ${Constants.STAKING_CONTRACT}")
-                Log.d(TAG, "Query message: ${queryMsg}")
 
                 val result = queryService?.queryContract(
                     Constants.STAKING_CONTRACT,
@@ -144,7 +139,6 @@ class StakeEarthFragment : Fragment() {
                     queryMsg
                 )
 
-                Log.d(TAG, "Staking query result: $result")
 
                 if (callback != null && activity != null && result != null) {
                     activity?.runOnUiThread { callback.onStakingDataReceived(result) }

@@ -85,7 +85,6 @@ object SoftwareEncryption {
             plaintextBytes.fill(0)
             key.encoded?.fill(0)
 
-            Log.d(TAG, "Successfully encrypted data with PIN-derived key")
 
             EncryptedData(
                 ciphertext = ciphertext,
@@ -120,7 +119,6 @@ object SoftwareEncryption {
             decryptedBytes.fill(0)
             key.encoded?.fill(0)
 
-            Log.d(TAG, "Successfully decrypted data with PIN-derived key")
             result
 
         } catch (e: Exception) {
@@ -160,7 +158,6 @@ object SoftwareEncryption {
             keyGen.init(256)
             true
         } catch (e: Exception) {
-            Log.w(TAG, "Software encryption not available", e)
             false
         }
     }

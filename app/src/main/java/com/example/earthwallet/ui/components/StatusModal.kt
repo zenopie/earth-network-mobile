@@ -61,13 +61,11 @@ class StatusModal(private var context: Context?) {
 
         // Set overlay background color for light theme
         view.setBackgroundColor(0xCCFFFFFF.toInt()) // Semi-transparent white
-        Log.d(TAG, "Set light theme background")
 
         // Make dialog non-cancelable by default
         dialog?.setCancelable(false)
         dialog?.setCanceledOnTouchOutside(false)
 
-        Log.d(TAG, "Dialog initialized with theme: $modalTheme")
 
         // Find views
         loadingSpinner = view.findViewById(R.id.loading_spinner)
@@ -95,7 +93,6 @@ class StatusModal(private var context: Context?) {
             return
         }
 
-        Log.d(TAG, "Showing modal with state: $state")
         currentState = state
         isShowing = true
 
@@ -104,19 +101,15 @@ class StatusModal(private var context: Context?) {
         dialog?.let { dialog ->
             if (!dialog.isShowing()) {
                 try {
-                    Log.d(TAG, "Attempting to show dialog...")
                     dialog.show()
-                    Log.d(TAG, "Dialog shown successfully")
                 } catch (e: Exception) {
                     Log.e(TAG, "Error showing dialog", e)
                     isShowing = false
                     return
                 }
             } else {
-                Log.w(TAG, "Dialog is already showing")
             }
         } ?: run {
-            Log.w(TAG, "Dialog is null")
         }
 
         // Auto-close success and error states after delay
@@ -137,7 +130,6 @@ class StatusModal(private var context: Context?) {
             return
         }
 
-        Log.d(TAG, "Updating modal state to: $state")
         currentState = state
         updateView(state)
 
@@ -178,10 +170,8 @@ class StatusModal(private var context: Context?) {
     }
 
     private fun setupLoadingAnimation() {
-        Log.d(TAG, "Setting up loading animation - spinner: ${loadingSpinner != null}, context: ${context != null}")
 
         if (loadingSpinner != null && context != null) {
-            Log.d(TAG, "Setting up light theme animation with Glide")
             // Use GIF for light theme - scale it 2x larger
             Glide.with(context!!)
                 .asGif()
@@ -190,7 +180,6 @@ class StatusModal(private var context: Context?) {
                 .override(1600, 1600) // Double the original size (800dp -> 1600dp)
                 .into(loadingSpinner!!)
         } else {
-            Log.w(TAG, "Cannot setup loading animation - missing dependencies")
         }
     }
 
@@ -252,7 +241,6 @@ class StatusModal(private var context: Context?) {
      * Close the modal
      */
     fun close() {
-        Log.d(TAG, "Closing modal")
 
         dialog?.let { dialog ->
             if (dialog.isShowing()) {
@@ -297,7 +285,6 @@ class StatusModal(private var context: Context?) {
      * Clean up resources
      */
     fun destroy() {
-        Log.d(TAG, "Destroying modal")
         handler.removeCallbacksAndMessages(null)
 
         // Clear Glide resources - but only if activity is not destroyed
@@ -313,7 +300,6 @@ class StatusModal(private var context: Context?) {
                     Glide.with(ctx).clear(loadingSpinner!!)
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Could not clear Glide resources: ${e.message}")
             }
         }
 

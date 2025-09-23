@@ -1,6 +1,5 @@
 package com.example.earthwallet.ui.pages.staking
 
-import android.util.Log
 import androidx.fragment.app.Fragment
 import androidx.viewpager2.adapter.FragmentStateAdapter
 
@@ -15,26 +14,20 @@ class StakingTabsAdapter(fragment: Fragment) : FragmentStateAdapter(fragment) {
     }
 
     init {
-        Log.d(TAG, "StakingTabsAdapter created")
     }
 
     override fun createFragment(position: Int): Fragment {
-        Log.d(TAG, "createFragment called for position: $position")
         return when (position) {
             0 -> {
-                Log.d(TAG, "Creating StakingInfoFragment")
                 StakingInfoFragment.newInstance()
             }
             1 -> {
-                Log.d(TAG, "Creating StakeUnstakeFragment")
                 StakeUnstakeFragment.newInstance()
             }
             2 -> {
-                Log.d(TAG, "Creating UnbondingFragment")
                 UnbondingFragment.newInstance()
             }
             else -> {
-                Log.d(TAG, "Creating default StakingInfoFragment")
                 StakingInfoFragment.newInstance()
             }
         }

@@ -75,19 +75,16 @@ class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListe
     private fun setupBroadcastReceiver() {
         transactionSuccessReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
-                Log.d(TAG, "Received TRANSACTION_SUCCESS broadcast - refreshing ANML status immediately")
 
                 // Start multiple refresh attempts to ensure UI updates during animation
                 checkStatus() // First immediate refresh
 
                 // Stagger additional refreshes to catch the UI during animation
                 Handler(Looper.getMainLooper()).postDelayed({
-                    Log.d(TAG, "Secondary refresh during animation")
                     checkStatus()
                 }, 100) // 100ms delay
 
                 Handler(Looper.getMainLooper()).postDelayed({
-                    Log.d(TAG, "Third refresh during animation")
                     checkStatus()
                 }, 500) // 500ms delay
             }
@@ -103,7 +100,6 @@ class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListe
                 } else {
                     requireActivity().applicationContext.registerReceiver(transactionSuccessReceiver, filter)
                 }
-                Log.d(TAG, "Registered transaction success receiver")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to register broadcast receiver", e)
             }
@@ -196,7 +192,6 @@ class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListe
     }
 
     override fun onRegisterRequested() {
-        Log.d(TAG, "onRegisterRequested called - starting camera_mrz_scanner")
         val i = Intent(context, com.example.earthwallet.ui.host.HostActivity::class.java)
         i.putExtra("fragment_to_show", "camera_mrz_scanner")
         startActivity(i)
@@ -369,7 +364,6 @@ class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListe
             showLoading(false)
 
             if (resultCode == Activity.RESULT_OK) {
-                Log.d(TAG, "ANML claim transaction succeeded")
                 // Transaction successful - navigate optimistically to complete screen
                 showCompleteFragment()
                 // Broadcast receiver will handle status refreshes
@@ -394,10 +388,8 @@ class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListe
         if (transactionSuccessReceiver != null && context != null) {
             try {
                 requireActivity().applicationContext.unregisterReceiver(transactionSuccessReceiver)
-                Log.d(TAG, "Unregistered transaction success receiver")
             } catch (e: IllegalArgumentException) {
                 // Receiver was not registered, ignore
-                Log.d(TAG, "Receiver was not registered")
             } catch (e: Exception) {
                 Log.e(TAG, "Error unregistering receiver", e)
             }

@@ -31,7 +31,6 @@ object PermitSigningService {
     @JvmStatic
     @Throws(Exception::class)
     fun execute(context: Context, intent: Intent): Array<String> {
-        Log.d(TAG, "Starting permit signing")
 
         // Extract parameters
         val permitName = intent.getStringExtra("permit_name")
@@ -45,11 +44,9 @@ object PermitSigningService {
         val allowedTokens = allowedTokensStr.split(",")
         val permissions = permissionsStr.split(",")
 
-        Log.d(TAG, "Creating permit for ${allowedTokens.size} tokens")
 
         // Use SecureWalletManager for just-in-time mnemonic access with automatic cleanup
         return SecureWalletManager.executeWithMnemonic(context) { mnemonic ->
-            Log.d(TAG, "Signing permit with wallet")
 
             // Get wallet key and address from mnemonic
             val walletKey = com.example.earthwallet.wallet.utils.WalletCrypto.deriveKeyFromMnemonic(mnemonic)
@@ -68,7 +65,6 @@ object PermitSigningService {
                 val signDocJson = gson.toJson(signDoc)
                 val signDocBytes = signDocJson.toByteArray(Charsets.UTF_8)
 
-                Log.d(TAG, "Permit sign document created")
 
                 // Sign the document
                 val signature = TransactionSigner.createSignature(signDocBytes, walletKey)
@@ -79,14 +75,12 @@ object PermitSigningService {
                     this.publicKey = Base64.getEncoder().encodeToString(signature.getPublicKey())
                 }
 
-                Log.d(TAG, "Permit signed successfully")
 
                 // Store permit for each token contract
                 val permitManager = PermitManager.getInstance(context)
                 for (contractAddress in allowedTokens) {
                     permitManager.setPermit(walletAddress, contractAddress, permit)
                 }
-                Log.d(TAG, "Permit stored for ${allowedTokens.size} contracts")
 
                 // Return success result in expected format [result, senderAddress]
                 val resultJson = gson.toJson(permit)

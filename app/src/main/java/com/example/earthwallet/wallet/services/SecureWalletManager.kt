@@ -94,7 +94,6 @@ object SecureWalletManager {
         WalletCrypto.initialize(context)
         var mnemonicChars: CharArray? = null
         return try {
-            Log.d(TAG, "Executing secure mnemonic operation with session manager")
 
             // Fetch mnemonic from active session
             val mnemonic = fetchMnemonicFromSession(context)
@@ -137,7 +136,6 @@ object SecureWalletManager {
         WalletCrypto.initialize(context)
         var mnemonic: String? = null
         return try {
-            Log.d(TAG, "Executing mnemonic operation with session manager")
 
             // Fetch mnemonic from active session
             mnemonic = fetchMnemonicFromSession(context)
@@ -210,10 +208,8 @@ object SecureWalletManager {
             // but clearing the char array we created helps minimize exposure.
             // The original String will be garbage collected eventually.
 
-            Log.d(TAG, "Mnemonic cleared from memory (best effort)")
 
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to securely clear mnemonic: ${e.message}")
         }
     }
 
@@ -243,7 +239,6 @@ object SecureWalletManager {
 
             available
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to check wallet availability: ${e.message}")
             false
         }
     }
@@ -416,7 +411,6 @@ object SecureWalletManager {
                     selectedWallet.put("address", address)
                     walletsArray.put(index, selectedWallet)
                     sessionPrefs.edit().putString("wallets", walletsArray.toString()).apply()
-                    Log.d(TAG, "Migrated wallet address for: ${selectedWallet.optString("name", "Unknown")}")
                 }
             }
         } catch (e: Exception) {
@@ -459,14 +453,12 @@ object SecureWalletManager {
                     wallet.put("address", address)
                     walletsArray.put(i, wallet)
                     modified = true
-                    Log.d(TAG, "Migrated wallet address for: ${wallet.optString("name", "Unknown")}")
                 }
             }
 
             // Save changes if any wallets were modified
             if (modified) {
                 sessionPrefs.edit().putString("wallets", walletsArray.toString()).apply()
-                Log.d(TAG, "Completed wallet address migration")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to ensure all wallets have addresses", e)
@@ -534,7 +526,6 @@ object SecureWalletManager {
             editor.putInt("selected_wallet_index", newIndex)
             editor.apply()
 
-            Log.d(TAG, "Created new wallet: $walletName ($address)")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to create wallet: $walletName", e)
             throw Exception("Failed to create wallet: ${e.message}")
@@ -553,7 +544,6 @@ object SecureWalletManager {
             WalletCrypto.deriveKeyFromMnemonic(mnemonic)
             true
         } catch (e: Exception) {
-            Log.d(TAG, "Invalid mnemonic: ${e.message}")
             false
         }
     }
@@ -660,7 +650,6 @@ object SecureWalletManager {
      */
     @Throws(Exception::class)
     fun verifyPinHash(context: Context, securePrefs: SharedPreferences?, pinHash: String): Boolean {
-        Log.d(TAG, "Verifying PIN with session")
 
         if (!SessionManager.isSessionActive()) {
             throw IllegalStateException("No active session - call startSession() first")
@@ -684,7 +673,6 @@ object SecureWalletManager {
      */
     @Throws(Exception::class)
     fun setPinHash(context: Context, securePrefs: SharedPreferences?, pinHash: String) {
-        Log.d(TAG, "Setting PIN with session")
 
         if (!SessionManager.isSessionActive()) {
             throw IllegalStateException("No active session - call startSession() first")
@@ -755,7 +743,6 @@ object SecureWalletManager {
         val editor = sessionPrefs.edit()
         editor.putBoolean("biometric_auth_enabled", enabled)
         editor.apply()
-        Log.d(TAG, "Biometric authentication ${if (enabled) "enabled" else "disabled"}")
     }
 
     /**
@@ -798,7 +785,6 @@ object SecureWalletManager {
         val editor = sessionPrefs.edit()
         editor.putBoolean("transaction_auth_enabled", enabled)
         editor.apply()
-        Log.d(TAG, "Transaction authentication ${if (enabled) "enabled" else "disabled"}")
     }
 
     /**
@@ -823,7 +809,6 @@ object SecureWalletManager {
             val walletsJson = sessionPrefs.getString("wallets", "[]") ?: "[]"
             val walletsArray = JSONArray(walletsJson)
 
-            Log.d(TAG, "selectWallet: walletIndex=$walletIndex, walletsCount=${walletsArray.length()}")
 
             if (walletIndex < 0 || walletIndex >= walletsArray.length()) {
                 throw IllegalArgumentException("Invalid wallet index: $walletIndex (total wallets: ${walletsArray.length()})")
@@ -833,7 +818,6 @@ object SecureWalletManager {
             editor.putInt("selected_wallet_index", walletIndex)
             editor.apply()
 
-            Log.d(TAG, "Successfully selected wallet at index: $walletIndex")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to select wallet at index $walletIndex", e)
             throw e

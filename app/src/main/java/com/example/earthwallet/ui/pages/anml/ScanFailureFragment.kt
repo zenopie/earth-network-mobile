@@ -3,7 +3,6 @@ package com.example.earthwallet.ui.pages.anml
 import android.graphics.drawable.AnimatedVectorDrawable
 import android.os.Build
 import android.os.Bundle
-import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -58,7 +57,6 @@ class ScanFailureFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        Log.d(TAG, "ScanFailureFragment created with reason: $failureReason")
 
         // Hide bottom navigation and status bar
         (activity as? com.example.earthwallet.ui.host.HostActivity)?.let { hostActivity ->
@@ -89,12 +87,10 @@ class ScanFailureFragment : Fragment() {
         val backToAnmlButton = view.findViewById<Button>(R.id.btn_back_to_anml)
 
         tryAgainButton?.setOnClickListener {
-            Log.d(TAG, "Try Again button clicked")
             navigateToScanner()
         }
 
         backToAnmlButton?.setOnClickListener {
-            Log.d(TAG, "Back to ANML button clicked")
             navigateBackToANML()
         }
     }

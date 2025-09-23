@@ -45,7 +45,6 @@ object SecretNetworkService {
         val defaultNodeInfo = obj.getJSONObject("default_node_info")
         val chainId = defaultNodeInfo.getString("network")
 
-        Log.i(TAG, "Retrieved chain ID: $chainId")
         chainId
     }
 
@@ -61,15 +60,12 @@ object SecretNetworkService {
 
             if (obj.has("account")) {
                 val account = obj.getJSONObject("account")
-                Log.i(TAG, "Successfully retrieved account data")
                 account
             } else {
-                Log.w(TAG, "No account field in response")
                 null
             }
         } catch (e: Exception) {
             if (e.message?.contains("404") == true) {
-                Log.w(TAG, "Account not found (404) - may not exist or be funded")
                 null
             } else {
                 throw e
@@ -115,7 +111,6 @@ object SecretNetworkService {
         // This is the exact same key used in SecretJS encryption.ts
         val consensusIoKey = "79++5YOHfm0SwhlpUDClv7cuCjq9xBZlWqSjDJWkRG8="
 
-        Log.i(TAG, "Using hardcoded mainnet consensus IO key (matches SecretJS exactly)")
         consensusIoKey
     }
 
@@ -124,7 +119,6 @@ object SecretNetworkService {
      */
     suspend fun broadcastTransactionModern(lcdUrl: String, txBytes: ByteArray): String = withContext(Dispatchers.IO) {
         val modernUrl = joinUrl(lcdUrl, "/cosmos/tx/v1beta1/txs")
-        Log.i(TAG, "Broadcasting to modern endpoint: $modernUrl")
 
         val txBytesBase64 = Base64.encodeToString(txBytes, Base64.NO_WRAP)
 
@@ -141,7 +135,6 @@ object SecretNetworkService {
      */
     suspend fun broadcastTransactionLegacy(lcdUrl: String, signedTx: JSONObject): String = withContext(Dispatchers.IO) {
         val legacyUrl = joinUrl(lcdUrl, "/txs")
-        Log.i(TAG, "Broadcasting to legacy endpoint: $legacyUrl")
 
         val txBody = JSONObject().apply {
             put("tx", signedTx)
@@ -155,14 +148,12 @@ object SecretNetworkService {
      * Queries transaction details by hash with retry logic and timeout
      */
     suspend fun queryTransactionByHash(lcdUrl: String, txHash: String): String? {
-        Log.i(TAG, "Querying transaction: $txHash")
 
         return try {
             withTimeout(TRANSACTION_QUERY_TIMEOUT_MS) {
                 repeat(TRANSACTION_QUERY_MAX_RETRIES) { retryCount ->
                     try {
                         val queryUrl = joinUrl(lcdUrl, "/cosmos/tx/v1beta1/txs/$txHash")
-                        Log.d(TAG, "Query attempt ${retryCount + 1}/$TRANSACTION_QUERY_MAX_RETRIES for txhash: $txHash")
 
                         val response = httpGet(queryUrl)
 
@@ -179,34 +170,26 @@ object SecretNetworkService {
 
                             if (rawLog.isNotEmpty() || (logs?.length() ?: 0) > 0 ||
                                 data.isNotEmpty() || (events?.length() ?: 0) > 0) {
-                                Log.i(TAG, "Transaction query successful with execution data")
                                 return@withTimeout response
                             } else {
-                                Log.d(TAG, "Transaction found but no execution data yet")
                             }
                         } else {
-                            Log.w(TAG, "Response missing tx_response field")
                         }
 
                     } catch (e: Exception) {
-                        Log.w(TAG, "Query attempt ${retryCount + 1} failed: ${e.message}")
 
                         if (e.message?.contains("404") == true) {
-                            Log.d(TAG, "Transaction not found yet (404) - will retry")
                         }
                     }
 
                     if (retryCount < TRANSACTION_QUERY_MAX_RETRIES - 1) {
-                        Log.d(TAG, "Waiting ${TRANSACTION_QUERY_RETRY_DELAY_MS}ms before retry...")
                         delay(TRANSACTION_QUERY_RETRY_DELAY_MS)
                     }
                 }
 
-                Log.w(TAG, "Transaction query failed after $TRANSACTION_QUERY_MAX_RETRIES attempts")
                 null
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Transaction query timed out: ${e.message}")
             null
         }
     }

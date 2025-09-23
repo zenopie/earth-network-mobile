@@ -43,7 +43,6 @@ object WalletCrypto {
                 val inputStream = assetManager.open("org/bitcoinj/crypto/wordlist/english.txt")
                 MnemonicCode.INSTANCE = MnemonicCode(inputStream, null)
                 inputStream.close()
-                Log.d(TAG, "MnemonicCode initialized with English word list from assets.")
                 isInitialized = true
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to initialize MnemonicCode from assets: ${e.message}", e)

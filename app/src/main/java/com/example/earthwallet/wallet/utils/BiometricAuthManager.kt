@@ -63,7 +63,6 @@ object BiometricAuthManager {
         val biometricPrompt = BiometricPrompt(fragment, executor, object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                 super.onAuthenticationError(errorCode, errString)
-                Log.d(TAG, "Authentication error: $errString")
 
                 when (errorCode) {
                     BiometricPrompt.ERROR_USER_CANCELED,
@@ -83,13 +82,11 @@ object BiometricAuthManager {
 
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                 super.onAuthenticationSucceeded(result)
-                Log.d(TAG, "Authentication succeeded")
                 callback.onAuthenticationSucceeded()
             }
 
             override fun onAuthenticationFailed() {
                 super.onAuthenticationFailed()
-                Log.d(TAG, "Authentication failed")
                 callback.onAuthenticationFailed()
             }
         })
@@ -128,7 +125,6 @@ object BiometricAuthManager {
         val biometricPrompt = BiometricPrompt(activity, executor, object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                 super.onAuthenticationError(errorCode, errString)
-                Log.d(TAG, "Authentication error: $errString")
 
                 when (errorCode) {
                     BiometricPrompt.ERROR_USER_CANCELED,
@@ -148,13 +144,11 @@ object BiometricAuthManager {
 
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                 super.onAuthenticationSucceeded(result)
-                Log.d(TAG, "Authentication succeeded")
                 callback.onAuthenticationSucceeded()
             }
 
             override fun onAuthenticationFailed() {
                 super.onAuthenticationFailed()
-                Log.d(TAG, "Authentication failed")
                 callback.onAuthenticationFailed()
             }
         })

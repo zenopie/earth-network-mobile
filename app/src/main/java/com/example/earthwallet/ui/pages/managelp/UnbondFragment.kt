@@ -86,16 +86,13 @@ class UnbondFragment : Fragment() {
             tokenBReserveMicro = args.getLong("token_b_reserve", 0)
             totalSharesMicro = args.getLong("total_shares", 0)
 
-            Log.d(TAG, "Pool info from arguments - ERTH: $erthReserveMicro, Token: $tokenBReserveMicro, Shares: $totalSharesMicro")
         }
 
         // Use SecureWalletManager for secure operations
-        Log.d(TAG, "Using SecureWalletManager for secure operations")
 
         // Initialize Activity Result Launcher
         claimUnbondLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == Activity.RESULT_OK) {
-                Log.d(TAG, "Unbonded liquidity claimed successfully")
                 // Refresh unbonding requests to update UI
                 if (erthReserveMicro > 0 && tokenBReserveMicro > 0 && totalSharesMicro > 0) {
                     executorService?.execute { loadUnbondingRequests() }
@@ -146,7 +143,6 @@ class UnbondFragment : Fragment() {
     private fun setupBroadcastReceiver() {
         transactionSuccessReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
-                Log.d(TAG, "Received TRANSACTION_SUCCESS broadcast - refreshing unbonding data immediately")
 
                 // Start multiple refresh attempts to ensure UI updates during animation
                 if (erthReserveMicro > 0 && tokenBReserveMicro > 0 && totalSharesMicro > 0) {
@@ -157,7 +153,6 @@ class UnbondFragment : Fragment() {
 
                 // Stagger additional refreshes to catch the UI during animation
                 Handler(Looper.getMainLooper()).postDelayed({
-                    Log.d(TAG, "Secondary refresh during animation")
                     if (erthReserveMicro > 0 && tokenBReserveMicro > 0 && totalSharesMicro > 0) {
                         executorService?.execute { loadUnbondingRequests() }
                     } else {
@@ -166,7 +161,6 @@ class UnbondFragment : Fragment() {
                 }, 100) // 100ms delay
 
                 Handler(Looper.getMainLooper()).postDelayed({
-                    Log.d(TAG, "Third refresh during animation")
                     if (erthReserveMicro > 0 && tokenBReserveMicro > 0 && totalSharesMicro > 0) {
                         executorService?.execute { loadUnbondingRequests() }
                     } else {
@@ -186,7 +180,6 @@ class UnbondFragment : Fragment() {
                 } else {
                     requireActivity().applicationContext.registerReceiver(transactionSuccessReceiver, filter)
                 }
-                Log.d(TAG, "Registered transaction success receiver")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to register broadcast receiver", e)
             }
@@ -194,7 +187,6 @@ class UnbondFragment : Fragment() {
     }
 
     private fun handleCompleteUnbond() {
-        Log.d(TAG, "Complete unbond button clicked")
 
         if (tokenKey == null) {
             Log.e(TAG, "Cannot complete unbond: missing token key")
@@ -214,7 +206,6 @@ class UnbondFragment : Fragment() {
             claimUnbondLiquidity.put("pool", tokenContract)
             claimMsg.put("claim_unbond_liquidity", claimUnbondLiquidity)
 
-            Log.d(TAG, "Claiming unbonded liquidity for pool: $tokenContract")
 
             // Use TransactionActivity with SECRET_EXECUTE for claiming unbonded liquidity
             val intent = Intent(activity, TransactionActivity::class.java)
@@ -234,9 +225,7 @@ class UnbondFragment : Fragment() {
         try {
             currentWalletAddress = SecureWalletManager.getWalletAddress(requireContext()) ?: ""
             if (currentWalletAddress.isNotEmpty()) {
-                Log.d(TAG, "Loaded wallet address: ${currentWalletAddress.substring(0, minOf(14, currentWalletAddress.length))}...")
             } else {
-                Log.w(TAG, "No wallet address available")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load wallet address", e)
@@ -246,7 +235,6 @@ class UnbondFragment : Fragment() {
 
     private fun loadPoolInformationThenUnbondingRequests() {
         if (tokenKey == null || TextUtils.isEmpty(currentWalletAddress)) {
-            Log.d(TAG, "Cannot load pool information: missing token key or wallet address")
             return
         }
 
@@ -261,7 +249,6 @@ class UnbondFragment : Fragment() {
                 queryPool.put("pool", tokenContract)
                 queryMsg.put("query_pool", queryPool)
 
-                Log.d(TAG, "Querying pool information for $tokenKey")
 
                 val queryService = SecretQueryService(requireContext())
                 val result = queryService.queryContract(
@@ -270,7 +257,6 @@ class UnbondFragment : Fragment() {
                     queryMsg
                 )
 
-                Log.d(TAG, "Pool query result: $result")
                 parsePoolInformation(result)
 
                 // Now load unbonding requests after pool info is loaded
@@ -289,7 +275,6 @@ class UnbondFragment : Fragment() {
             // Handle the SecretQueryService error case where data is in the error message
             if (result.has("error") && result.has("decryption_error")) {
                 val decryptionError = result.getString("decryption_error")
-                Log.d(TAG, "Parsing pool info from decryption error")
 
                 // Look for "base64=Value " in the error message
                 val base64Marker = "base64=Value "
@@ -299,7 +284,6 @@ class UnbondFragment : Fragment() {
                     val endIndex = decryptionError.indexOf(" of type", startIndex)
                     if (endIndex != -1) {
                         val jsonString = decryptionError.substring(startIndex, endIndex)
-                        Log.d(TAG, "Extracted pool JSON: $jsonString")
 
                         try {
                             val poolData = JSONObject(jsonString)
@@ -307,7 +291,6 @@ class UnbondFragment : Fragment() {
                             tokenBReserveMicro = poolData.optLong("token_b_reserve", 0)
                             totalSharesMicro = poolData.optLong("total_shares", 0)
 
-                            Log.d(TAG, "Pool info loaded - ERTH: $erthReserveMicro, Token: $tokenBReserveMicro, Shares: $totalSharesMicro")
                         } catch (e: Exception) {
                             Log.e(TAG, "Error parsing pool JSON", e)
                         }
@@ -322,7 +305,6 @@ class UnbondFragment : Fragment() {
                 tokenBReserveMicro = poolData.optLong("token_b_reserve", 0)
                 totalSharesMicro = poolData.optLong("total_shares", 0)
 
-                Log.d(TAG, "Pool info loaded from data - ERTH: $erthReserveMicro, Token: $tokenBReserveMicro, Shares: $totalSharesMicro")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error parsing pool information", e)
@@ -331,7 +313,6 @@ class UnbondFragment : Fragment() {
 
     private fun loadUnbondingRequests() {
         if (tokenKey == null || TextUtils.isEmpty(currentWalletAddress)) {
-            Log.d(TAG, "Cannot load unbonding requests: missing token key or wallet address")
             return
         }
 
@@ -346,7 +327,6 @@ class UnbondFragment : Fragment() {
             queryUnbondingRequests.put("user", currentWalletAddress)
             queryMsg.put("query_unbonding_requests", queryUnbondingRequests)
 
-            Log.d(TAG, "Querying unbonding requests for $tokenKey with message: $queryMsg")
 
             val queryService = SecretQueryService(requireContext())
             val result = queryService.queryContract(
@@ -355,7 +335,6 @@ class UnbondFragment : Fragment() {
                 queryMsg
             )
 
-            Log.d(TAG, "Unbonding query result: $result")
 
             activity?.runOnUiThread {
                 parseUnbondingRequests(result)
@@ -373,7 +352,6 @@ class UnbondFragment : Fragment() {
             // Handle the SecretQueryService error case where data is in the error message
             if (result.has("error") && result.has("decryption_error")) {
                 val decryptionError = result.getString("decryption_error")
-                Log.d(TAG, "Parsing unbonding from decryption error: ${decryptionError.substring(0, minOf(200, decryptionError.length))}")
 
                 // Look for "base64=Value " in the error message and extract the JSON
                 val base64Marker = "base64=Value "
@@ -383,7 +361,6 @@ class UnbondFragment : Fragment() {
                     val endIndex = decryptionError.indexOf(" of type", startIndex)
                     if (endIndex != -1) {
                         val jsonString = decryptionError.substring(startIndex, endIndex)
-                        Log.d(TAG, "Extracted unbonding JSON: $jsonString")
 
                         try {
                             unbondingArray = JSONArray(jsonString)
@@ -403,10 +380,8 @@ class UnbondFragment : Fragment() {
             }
 
             if (unbondingArray != null && unbondingArray.length() > 0) {
-                Log.d(TAG, "Found ${unbondingArray.length()} unbonding requests")
                 displayUnbondingRequests(unbondingArray)
             } else {
-                Log.d(TAG, "No unbonding requests found")
                 showNoUnbondingMessage()
             }
 
@@ -513,7 +488,6 @@ class UnbondFragment : Fragment() {
                 estimatedText.visibility = View.GONE
             }
 
-            Log.d(TAG, "Created unbonding request view: $displayAmount, $estimatedValues, $status, $timeRemaining")
 
             view
         } catch (e: Exception) {
@@ -571,14 +545,12 @@ class UnbondFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         // Refresh data when tab becomes visible
-        Log.d(TAG, "UnbondFragment resumed - refreshing unbonding data")
         refreshUnbondingData()
     }
 
     override fun onHiddenChanged(hidden: Boolean) {
         super.onHiddenChanged(hidden)
         if (!hidden && isResumed) {
-            Log.d(TAG, "UnbondFragment became visible - refreshing unbonding data")
             refreshUnbondingData()
         }
     }
@@ -598,10 +570,8 @@ class UnbondFragment : Fragment() {
         if (transactionSuccessReceiver != null && context != null) {
             try {
                 requireActivity().applicationContext.unregisterReceiver(transactionSuccessReceiver)
-                Log.d(TAG, "Unregistered transaction success receiver")
             } catch (e: IllegalArgumentException) {
                 // Receiver was not registered, ignore
-                Log.d(TAG, "Receiver was not registered")
             } catch (e: Exception) {
                 Log.e(TAG, "Error unregistering receiver", e)
             }

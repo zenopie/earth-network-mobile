@@ -117,7 +117,6 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
     }
 
     fun showFragment(tag: String, arguments: Bundle?) {
-        Log.d("HostActivity", "showFragment called with tag: $tag")
         val fm = supportFragmentManager
         val ft = fm.beginTransaction()
 
@@ -139,13 +138,11 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
             "scanner" -> {
                 com.example.earthwallet.ui.pages.anml.ScannerFragment().also {
                     // Hide navigation and status bar for scanner
-                    Log.d("HostActivity", "HIDING NAVIGATION AND STATUS BAR FOR SCANNER")
                     hideBottomNavigation()
                     WindowInsetsUtil.hideSystemBars(window)
                 }
             }
             "mrz_input" -> {
-                Log.d("HostActivity", "Creating MRZInputFragment")
                 com.example.earthwallet.ui.pages.anml.MRZInputFragment()
             }
             "camera_mrz_scanner" -> {
@@ -276,7 +273,6 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
         intent?.let {
             if (it.hasExtra("fragment_to_show")) {
                 val fragmentToShow = it.getStringExtra("fragment_to_show")
-                Log.d(TAG, "onNewIntent: navigating to fragment: $fragmentToShow")
                 fragmentToShow?.let { fragment ->
                     showFragment(fragment)
                     when (fragment) {
@@ -358,22 +354,16 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
      */
     fun hideBottomNavigation() {
         try {
-            Log.d("HostActivity", "hideBottomNavigation called - bottomNavView: ${bottomNavView != null}")
             bottomNavView?.let {
                 it.visibility = View.GONE
-                Log.d("HostActivity", "Set bottomNavView visibility to GONE")
             }
             hostContent?.let { content ->
-                Log.d("HostActivity", "hostContent layoutParams type: ${content.layoutParams.javaClass.simpleName}")
                 val layoutParams = content.layoutParams
                 if (layoutParams is ViewGroup.MarginLayoutParams) {
                     // Remove bottom margin to make content full screen
-                    Log.d("HostActivity", "Original bottom margin: ${layoutParams.bottomMargin}")
                     layoutParams.bottomMargin = 0
                     content.layoutParams = layoutParams
-                    Log.d("HostActivity", "Set bottom margin to 0")
                 } else {
-                    Log.d("HostActivity", "LayoutParams is not MarginLayoutParams, cannot set margin")
                 }
             }
         } catch (e: Exception) {
@@ -386,15 +376,12 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
      */
     fun showBottomNavigation() {
         try {
-            Log.d("HostActivity", "showBottomNavigation called - STACK TRACE:")
             val stackTrace = Thread.currentThread().stackTrace
             for (i in 0 until minOf(stackTrace.size, 8)) {
-                Log.d("HostActivity", "  ${stackTrace[i]}")
             }
 
             bottomNavView?.let {
                 it.visibility = View.VISIBLE
-                Log.d("HostActivity", "Set bottomNavView visibility to VISIBLE")
             }
             hostContent?.let { content ->
                 val layoutParams = content.layoutParams
@@ -402,7 +389,6 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
                     // Restore bottom margin for navigation
                     layoutParams.bottomMargin = (56 * resources.displayMetrics.density).toInt() // 56dp in pixels
                     content.layoutParams = layoutParams
-                    Log.d("HostActivity", "Restored bottom margin to 56dp")
                 }
             }
         } catch (e: Exception) {
@@ -430,11 +416,9 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
                 val currentFragment = supportFragmentManager.findFragmentById(R.id.host_content)
                 currentFragment?.let { fragment ->
                     val currentTag = fragment.tag
-                    Log.d("HostActivity", "Back pressed, current fragment tag: $currentTag")
 
                     // Actions pages should navigate back to actions nav
                     if (isActionsPage(currentTag)) {
-                        Log.d("HostActivity", "Current page is actions page, navigating to actions")
                         showFragment("actions")
                         setSelectedNav(navActions, navWallet)
                         return
@@ -442,7 +426,6 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
 
                     // Wallet pages should navigate back to wallet page
                     if (isWalletPage(currentTag)) {
-                        Log.d("HostActivity", "Current page is wallet page, navigating to wallet")
                         showFragment("wallet")
                         setSelectedNav(navWallet, navActions)
                         return
@@ -480,10 +463,8 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
      * Initialize AdMob and load interstitial ad
      */
     private fun initializeAds() {
-        Log.d(TAG, "Initializing AdMob")
 
         MobileAds.initialize(this) { _ ->
-            Log.d(TAG, "AdMob initialization complete")
             loadInterstitialAd()
         }
     }
@@ -492,25 +473,21 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
      * Load an interstitial ad
      */
     private fun loadInterstitialAd() {
-        Log.d(TAG, "Loading interstitial ad")
 
         val adRequest = AdRequest.Builder().build()
 
         InterstitialAd.load(this, INTERSTITIAL_AD_UNIT_ID, adRequest,
             object : InterstitialAdLoadCallback() {
                 override fun onAdLoaded(interstitialAd: InterstitialAd) {
-                    Log.d(TAG, "Interstitial ad loaded successfully")
                     mInterstitialAd = interstitialAd
                     isAdLoaded = true
 
                     // Set up full screen content callback
                     mInterstitialAd?.fullScreenContentCallback = object : FullScreenContentCallback() {
                         override fun onAdClicked() {
-                            Log.d(TAG, "Interstitial ad was clicked")
                         }
 
                         override fun onAdDismissedFullScreenContent() {
-                            Log.d(TAG, "Interstitial ad dismissed")
                             mInterstitialAd = null
                             isAdLoaded = false
 
@@ -536,11 +513,9 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
                         }
 
                         override fun onAdImpression() {
-                            Log.d(TAG, "Interstitial ad recorded an impression")
                         }
 
                         override fun onAdShowedFullScreenContent() {
-                            Log.d(TAG, "Interstitial ad showed full screen content")
                         }
                     }
                 }
@@ -558,14 +533,11 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
      * @param callback The callback to execute after the ad is dismissed (or if ad fails to show)
      */
     fun showInterstitialAdThen(callback: Runnable?) {
-        Log.d(TAG, "showInterstitialAdThen called, isAdLoaded: $isAdLoaded")
 
         if (mInterstitialAd != null && isAdLoaded) {
-            Log.d(TAG, "Showing interstitial ad")
             adCompletionCallback = callback
             mInterstitialAd?.show(this)
         } else {
-            Log.d(TAG, "No ad loaded, executing callback immediately")
             // No ad loaded, execute callback immediately
             callback?.run()
         }
@@ -623,7 +595,6 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
                 },
                 onLaterClicked = {
                     // User chose to update later
-                    Log.d(TAG, "User postponed update")
                 }
             )
         }

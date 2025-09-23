@@ -104,7 +104,6 @@ class ANMLRegisterFragment : Fragment() {
             }
 
             button.setOnClickListener {
-                Log.d(TAG, "Register button clicked - listener: $listener")
                 listener?.onRegisterRequested()
             }
         }
@@ -132,16 +131,13 @@ class ANMLRegisterFragment : Fragment() {
             var rewardDisplay = "${df.format(actualReward)} ERTH"
 
             // Add USD value if ERTH price is available
-            Log.d(TAG, "Current ERTH price: $currentErthPrice")
             currentErthPrice?.let { price ->
                 if (price > 0) {
                     val usdValue = actualReward.multiply(BigDecimal(price.toString()))
                     val usdFormat = DecimalFormat("$#,##0.##")
                     val usdDisplay = usdFormat.format(usdValue)
-                    Log.d(TAG, "Calculated USD value: $usdDisplay")
                     rewardDisplay += " ($usdDisplay)"
                 } else {
-                    Log.d(TAG, "No ERTH price available, showing ERTH only")
                 }
             }
 
@@ -158,14 +154,12 @@ class ANMLRegisterFragment : Fragment() {
     }
 
     private fun fetchErthPriceAndUpdateDisplay() {
-        Log.d(TAG, "fetchErthPriceAndUpdateDisplay called")
 
         if (httpClient == null) {
             httpClient = OkHttpClient()
         }
 
         val url = "${Constants.BACKEND_BASE_URL}/erth-price"
-        Log.d(TAG, "Fetching ERTH price from: $url")
 
         val request = Request.Builder()
             .url(url)
@@ -184,7 +178,6 @@ class ANMLRegisterFragment : Fragment() {
                             val responseBody = resp.body()!!.string()
                             val json = JSONObject(responseBody)
                             val price = json.getDouble("price")
-                            Log.d(TAG, "Parsed ERTH price: $price")
 
                             // Update UI on main thread
                             activity?.runOnUiThread {
@@ -195,7 +188,6 @@ class ANMLRegisterFragment : Fragment() {
                             Log.e(TAG, "Failed to parse ERTH price response", e)
                         }
                     } else {
-                        Log.w(TAG, "ERTH price request failed with code: ${resp.code()}")
                     }
                 }
             }
