@@ -3,14 +3,16 @@
     android:id="@+id/host_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/sidebar_bg">
+    android:background="@color/sidebar_bg"
+    android:fitsSystemWindows="true">
 
     <!-- Content container where fragments will be swapped -->
     <FrameLayout
         android:id="@+id/host_content"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_marginBottom="56dp" />
+        android:layout_marginBottom="56dp"
+        android:fitsSystemWindows="true" />
 
     <!-- Persistent bottom navigation overlay -->
     <include

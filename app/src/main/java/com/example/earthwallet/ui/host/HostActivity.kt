@@ -61,6 +61,9 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_host)
 
+        // Ensure proper window insets handling for release builds
+        WindowInsetsUtil.showSystemBars(window)
+
         navWallet = findViewById(R.id.btn_nav_wallet)
         navActions = findViewById(R.id.btn_nav_actions)
         hostContent = findViewById(R.id.host_content)

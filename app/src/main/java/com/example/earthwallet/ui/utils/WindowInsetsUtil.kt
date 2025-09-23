@@ -48,6 +48,9 @@ object WindowInsetsUtil {
             // Use deprecated flags for older versions
             @Suppress("DEPRECATION")
             window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+            // Ensure proper status bar handling for older Android versions
+            @Suppress("DEPRECATION")
+            window.clearFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS)
         }
     }
 

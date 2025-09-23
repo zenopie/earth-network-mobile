@@ -18,6 +18,8 @@
         <!-- Ensure no window title or action bar is shown as a fallback -->
         <item name="windowActionBar">false</item>
         <item name="android:windowNoTitle">true</item>
+        <!-- Properly handle window insets for status bar -->
+        <item name="android:fitsSystemWindows">true</item>
         <!-- Customize your theme here. -->
     </style>
 <!-- NoDisplay variant that is still AppCompat-compatible (transparent/translucent, no UI) -->
