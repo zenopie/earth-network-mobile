@@ -75,9 +75,6 @@ class CameraMRZScannerFragment : Fragment() {
         val backButton = view.findViewById<Button>(R.id.btn_back)
         val manualEntryButton = view.findViewById<Button>(R.id.btn_manual_entry)
 
-                   "backButton: ${backButton != null}, " +
-                   "manualEntryButton: ${manualEntryButton != null}")
-
         backButton?.setOnClickListener {
             val activity = activity
             if (activity is com.example.earthwallet.ui.host.HostActivity) {

@@ -1,5 +1,7 @@
 package com.example.earthwallet.wallet.utils
 
+import com.example.earthwallet.Constants
+
 /**
  * Configuration for app update management
  */
@@ -27,7 +29,7 @@ object UpdateConfig {
      *   "download_url": "https://play.google.com/store/apps/details?id=com.example.earthwallet"
      * }
      */
-    val CUSTOM_UPDATE_URL: String? = null
+    val CUSTOM_UPDATE_URL: String? = "${Constants.BACKEND_BASE_URL}/app/version"
 
     /**
      * App store URLs for different platforms

@@ -307,9 +307,6 @@ class GasStationFragment : Fragment() {
                         val scrtOutput = outputAmount.toDouble() / 10.0.pow(tokenInfo.decimals)
                         val df = DecimalFormat("#.######")
                         expectedScrtInput?.setText(df.format(scrtOutput))
-
-                                "${tokenSymbols[fromTokenSpinner?.selectedItemPosition ?: 0]}, " +
-                                "output: ${df.format(scrtOutput)} SCRT")
                     }
                 }
             } else {

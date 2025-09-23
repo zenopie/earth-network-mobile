@@ -568,9 +568,6 @@ class SwapTokensMainFragment : Fragment() {
                         // Update output amount without requesting focus to avoid dismissing keyboard
                         toAmountInput?.setText(df.format(formattedOutput))
                         updateDetailsDisplay()
-
-                            "${tokenSymbols[fromTokenSpinner?.selectedItemPosition ?: 0]}, output: " +
-                            "${df.format(formattedOutput)} $toTokenSymbol")
                     }
                 }
             } else {

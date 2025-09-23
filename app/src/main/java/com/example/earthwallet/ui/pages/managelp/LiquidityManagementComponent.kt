@@ -565,8 +565,6 @@ class LiquidityManagementComponent : Fragment() {
                     // Calculate underlying values
                     liquidityData!!.userErthValue = (liquidityData!!.erthReserve * liquidityData!!.poolOwnershipPercent) / 100.0
                     liquidityData!!.userTokenValue = (liquidityData!!.tokenReserve * liquidityData!!.poolOwnershipPercent) / 100.0
-
-                          ", Pool ownership: ${liquidityData!!.poolOwnershipPercent}%")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error updating liquidity data", e)
@@ -671,8 +669,6 @@ class LiquidityManagementComponent : Fragment() {
             // Update UI with calculated values (6 decimal places like React)
             erthValueText?.text = String.format("%.6f", userErthValue)
             tokenValueText?.text = String.format("%.6f", userTokenBValue)
-
-                    userErthValue, tokenKey, userTokenBValue, ownershipPercent))
 
         } catch (e: Exception) {
             Log.e(TAG, "Error calculating underlying values", e)

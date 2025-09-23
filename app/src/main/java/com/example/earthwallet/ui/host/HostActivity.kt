@@ -38,8 +38,8 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
         private const val PREF_FILE = "secret_wallet_prefs"
         private const val TAG = "HostActivity"
 
-        // Test interstitial ad unit ID (use your real ad unit ID in production)
-        private const val INTERSTITIAL_AD_UNIT_ID = "ca-app-pub-3940256099942544/1033173712"
+        // Production interstitial ad unit ID
+        private const val INTERSTITIAL_AD_UNIT_ID = "ca-app-pub-8662126294069074/2582864792"
     }
 
     private var navWallet: Button? = null
@@ -579,25 +579,15 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
         // Dismiss any existing dialog
         forceUpdateDialog?.dismiss()
 
-        if (updateInfo.isForceUpdate) {
-            // Show blocking force update dialog
-            forceUpdateDialog = ForceUpdateDialog.showBlockingForceUpdateDialog(
-                context = this,
-                updateInfo = updateInfo
-            )
-        } else {
-            // Show regular update dialog
-            forceUpdateDialog = ForceUpdateDialog.showUpdateDialog(
-                context = this,
-                updateInfo = updateInfo,
-                onUpdateClicked = {
-                    updateManager.navigateToUpdate(updateInfo)
-                },
-                onLaterClicked = {
-                    // User chose to update later
-                }
-            )
-        }
+        // Show update dialog using our custom ForceUpdateDialog
+        val dialog = ForceUpdateDialog(
+            context = this,
+            updateInfo = updateInfo,
+            onUpdateClick = {
+                // Track update button clicks if needed
+            }
+        )
+        dialog.show()
     }
 
     override fun onDestroy() {

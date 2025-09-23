@@ -133,6 +133,7 @@ class ANMLClaimFragment : Fragment() {
                             // Update UI on main thread
                             activity?.runOnUiThread {
                                 updateAnmlPriceDisplay(price)
+                            }
                         } catch (e: JSONException) {
                             Log.e(TAG, "Failed to parse ANML price response", e)
                             // Update UI on main thread with error message

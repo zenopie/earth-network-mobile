@@ -104,7 +104,6 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
         val savedPassportNumber = prefs.getString("passportNumber", null)
         val savedDateOfBirth = prefs.getString("dateOfBirth", null)
         val savedDateOfExpiry = prefs.getString("dateOfExpiry", null)
-                "dateOfBirth=$savedDateOfBirth, dateOfExpiry=$savedDateOfExpiry")
 
         // Use saved data if available
         if (!isEmpty(savedPassportNumber) && !isEmpty(savedDateOfBirth) && !isEmpty(savedDateOfExpiry)) {
@@ -119,7 +118,6 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
                 val intentPassportNumber = intent.getStringExtra("passportNumber")
                 val intentDateOfBirth = intent.getStringExtra("dateOfBirth")
                 val intentDateOfExpiry = intent.getStringExtra("dateOfExpiry")
-                        "dateOfBirth=$intentDateOfBirth, dateOfExpiry=$intentDateOfExpiry")
 
                 if (!isEmpty(intentPassportNumber) && !isEmpty(intentDateOfBirth) && !isEmpty(intentDateOfExpiry)) {
                     passportNumber = intentPassportNumber
@@ -137,8 +135,6 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
         }
 
         // Check if MRZ data is available
-                "dateOfBirth=$dateOfBirth (isEmpty=${isEmpty(dateOfBirth)}), " +
-                "dateOfExpiry=$dateOfExpiry (isEmpty=${isEmpty(dateOfExpiry)})")
         if (!isMRZDataValid()) {
             showMRZInputFragment()
             return
@@ -457,8 +453,6 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
             passportService.open()
 
             passportService.sendSelectApplet(false)
-
-                    "dateOfBirth=$dateOfBirth, dateOfExpiry=$dateOfExpiry")
 
             if (isEmpty(passportNumber) || isEmpty(dateOfBirth) || isEmpty(dateOfExpiry)) {
                 Log.e(TAG, "MRZ data is incomplete, cannot create BAC key")
