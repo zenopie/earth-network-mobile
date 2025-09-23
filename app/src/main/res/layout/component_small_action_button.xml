@@ -4,6 +4,8 @@
     android:layout_height="32dp"
     android:layout_marginStart="8dp"
     android:background="@drawable/card_rounded_bg"
+    android:elevation="0dp"
+    android:stateListAnimator="@null"
     android:minWidth="0dp"
     android:minHeight="0dp"
     android:paddingLeft="8dp"

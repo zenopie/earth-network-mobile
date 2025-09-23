@@ -88,19 +88,9 @@
                                 android:textColor="#333333"
                                 android:textSize="14sp" />
 
-                            <Button
-                                android:id="@+id/from_max_button"
-                                android:layout_width="wrap_content"
-                                android:layout_height="32dp"
-                                android:layout_marginStart="8dp"
-                                android:background="@drawable/card_rounded_bg"
-                                android:minWidth="0dp"
-                                android:minHeight="0dp"
-                                android:padding="8dp"
-                                android:text="Max"
-                                android:textColor="@color/brand_blue"
-                                android:textSize="12sp"
-                                android:visibility="gone" />
+                            <include
+                                layout="@layout/component_small_action_button"
+                                android:id="@+id/from_max_button" />
 
                             <Button
                                 android:id="@+id/from_viewing_key_button"
@@ -292,25 +282,26 @@
                     <Button
                         android:id="@+id/faucet_button"
                         android:layout_width="wrap_content"
-                        android:layout_height="32dp"
+                        android:layout_height="40dp"
                         android:backgroundTint="@color/brand_blue"
                         android:enabled="false"
                         android:minWidth="0dp"
-                        android:paddingHorizontal="12dp"
+                        android:paddingHorizontal="16dp"
+                        android:paddingVertical="4dp"
                         android:text="Faucet"
                         android:textColor="@android:color/white"
-                        android:textSize="12sp" />
+                        android:textSize="14sp" />
 
                     <TextView
                         android:id="@+id/faucet_info_button"
-                        android:layout_width="16dp"
-                        android:layout_height="16dp"
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
                         android:layout_marginStart="6dp"
                         android:background="@drawable/card_rounded_bg"
                         android:gravity="center"
                         android:text="?"
                         android:textColor="@color/brand_blue"
-                        android:textSize="10sp"
+                        android:textSize="14sp"
                         android:textStyle="bold"
                         android:clickable="true"
                         android:focusable="true" />

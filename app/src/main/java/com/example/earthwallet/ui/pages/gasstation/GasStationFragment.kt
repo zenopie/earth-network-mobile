@@ -126,6 +126,7 @@ class GasStationFragment : Fragment() {
         faucetStatusText = view.findViewById(R.id.faucet_status_text)
 
         fromMaxButton = view.findViewById(R.id.from_max_button)
+        fromMaxButton?.text = "Max"
         // Removed - using PermitManager instead of viewing keys
         fromTokenLogo = view.findViewById(R.id.from_token_logo)
 
@@ -133,6 +134,11 @@ class GasStationFragment : Fragment() {
         faucetButton = view.findViewById(R.id.faucet_button)
         faucetInfoButton = view.findViewById(R.id.faucet_info_button)
         faucetTooltipContainer = view.findViewById(R.id.faucet_tooltip_container)
+
+        // Initialize faucet button as disabled
+        faucetButton?.isEnabled = false
+        faucetButton?.alpha = 0.5f
+        faucetStatusText?.text = "Checking eligibility..."
     }
 
     private fun setupSpinner() {
@@ -511,7 +517,9 @@ class GasStationFragment : Fragment() {
 
     private fun checkRegistrationStatus() {
         if (TextUtils.isEmpty(currentWalletAddress)) {
-            updateFaucetStatus(false, false)
+            faucetButton?.isEnabled = false
+            faucetButton?.alpha = 0.5f
+            faucetStatusText?.text = "Connect wallet to check eligibility"
             return
         }
 
@@ -538,7 +546,9 @@ class GasStationFragment : Fragment() {
             } catch (e: Exception) {
                 Log.e(TAG, "Faucet eligibility check failed", e)
                 activity?.runOnUiThread {
-                    updateFaucetStatus(false, false)
+                    faucetButton?.isEnabled = false
+                    faucetButton?.alpha = 0.5f
+                    faucetStatusText?.text = "Error checking eligibility"
                 }
             }
         }.start()
@@ -550,33 +560,53 @@ class GasStationFragment : Fragment() {
                 val root = JSONObject(response)
                 val registered = root.optBoolean("registered", false)
                 val eligible = root.optBoolean("eligible", false)
-                updateFaucetStatus(registered, eligible)
+                val cooldownPassed = root.optBoolean("cooldown_passed", false)
+                val nextAvailable = root.optString("next_available_datetime", null)
+
+                updateFaucetStatus(registered, eligible, nextAvailable)
             } else {
                 Log.e(TAG, "Faucet eligibility API error: $responseCode - $response")
-                updateFaucetStatus(false, false)
+                faucetButton?.isEnabled = false
+                faucetButton?.alpha = 0.5f
+                faucetStatusText?.text = "Error checking eligibility"
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse faucet eligibility result", e)
-            updateFaucetStatus(false, false)
+            faucetButton?.isEnabled = false
+            faucetButton?.alpha = 0.5f
+            faucetStatusText?.text = "Error checking eligibility"
         }
     }
 
-    private fun updateFaucetStatus(registered: Boolean, canClaim: Boolean) {
+    private fun updateFaucetStatus(registered: Boolean, canClaim: Boolean, nextAvailable: String?) {
         isRegistered = registered
         canClaimFaucet = canClaim
+
+        // Only enable button if user is registered AND can claim (eligible)
+        val isEligible = registered && canClaim
+        faucetButton?.isEnabled = isEligible
+        faucetButton?.alpha = if (isEligible) 1.0f else 0.5f
 
         when {
             registered && canClaim -> {
                 faucetStatusText?.text = "✓ Registered ✓ Available to use"
-                faucetButton?.isEnabled = true
             }
             registered && !canClaim -> {
-                faucetStatusText?.text = "✓ Registered ✗ Already used this week"
-                faucetButton?.isEnabled = false
+                val cooldownText = if (nextAvailable != null) {
+                    try {
+                        val nextDate = java.time.LocalDateTime.parse(nextAvailable)
+                        val formatter = java.time.format.DateTimeFormatter.ofPattern("MMM dd, HH:mm")
+                        "✓ Registered ✗ Next available: ${nextDate.format(formatter)}"
+                    } catch (e: Exception) {
+                        "✓ Registered ✗ Already used this week"
+                    }
+                } else {
+                    "✓ Registered ✗ Already used this week"
+                }
+                faucetStatusText?.text = cooldownText
             }
             else -> {
                 faucetStatusText?.text = "✗ Not registered"
-                faucetButton?.isEnabled = false
             }
         }
     }
@@ -666,10 +696,12 @@ class GasStationFragment : Fragment() {
     }
 
     private fun claimFaucet() {
-        if (!isRegistered || !canClaimFaucet) {
-            Toast.makeText(requireContext(), "Faucet not available", Toast.LENGTH_SHORT).show()
+        if (TextUtils.isEmpty(currentWalletAddress)) {
+            Toast.makeText(requireContext(), "Connect wallet first", Toast.LENGTH_SHORT).show()
             return
         }
+
+        // Let backend handle all verification - just show status for user convenience
 
         faucetButton?.isEnabled = false
         faucetButton?.text = "Claiming..."
@@ -745,6 +777,7 @@ class GasStationFragment : Fragment() {
 
     private fun resetFaucetButton() {
         faucetButton?.isEnabled = isRegistered && canClaimFaucet
+        faucetButton?.alpha = if (isRegistered && canClaimFaucet) 1.0f else 0.5f
         faucetButton?.text = "Faucet"
     }
 

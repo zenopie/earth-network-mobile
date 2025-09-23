@@ -128,16 +128,17 @@ class TokenBalancesFragment : Fragment() {
         isQueryingToken = false
         currentlyQueryingToken = null
 
-        // Add tokens with viewing keys to the queue and display them immediately with "..."
+        // Add tokens with permits to the queue and display them immediately with "..."
         for (symbol in Tokens.ALL_TOKENS.keys) {
             val token = Tokens.getTokenInfo(symbol)
             if (token != null) {
-                // Remove old viewing key check - now using permits
+                // Only show tokens that have permits - hide others entirely
                 if (hasPermit(token.contract)) {
                     // Show token immediately with "..." while we fetch the actual balance
                     addTokenBalanceView(token, "...", true)
                     tokenQueryQueue.offer(token)
                 }
+                // Tokens without permits are simply not shown (no "Get Permit" button)
             }
         }
 
@@ -176,8 +177,8 @@ class TokenBalancesFragment : Fragment() {
             // Check if we have a permit for this token
             val hasPermit = permitManager.hasPermit(walletAddress, token.contract)
             if (!hasPermit) {
-                // Add button to get permit
-                addTokenBalanceView(token, null, false)
+                // Token should not have been queued if no permit - skip it
+                Log.w(TAG, "Token ${token.symbol} was queued without permit, skipping")
 
                 // Mark query as complete and continue with next token
                 isQueryingToken = false

@@ -7,6 +7,7 @@ import com.example.earthwallet.wallet.utils.WalletCrypto
 import com.google.protobuf.Any
 import com.google.protobuf.ByteString
 import cosmos.base.v1beta1.CoinOuterClass
+import cosmos.bank.v1beta1.MsgSend
 import cosmos.crypto.secp256k1.PubKey
 import cosmos.tx.signing.v1beta1.SignMode
 import cosmos.tx.v1beta1.Tx
@@ -486,5 +487,129 @@ class SecretProtobufService {
         } catch (e: Exception) {
             callback.onError("Execution failed: ${e.message}")
         }
+    }
+
+    /**
+     * Builds a protobuf transaction for native SCRT transfers using bank.MsgSend
+     */
+    @Throws(Exception::class)
+    fun buildNativeSendTransaction(
+        sender: String,
+        recipient: String,
+        amount: String,
+        memo: String,
+        accountNumber: String,
+        sequence: String,
+        chainId: String,
+        walletKey: ECKey
+    ): ByteArray {
+        Log.i(TAG, "Building native SCRT send transaction")
+
+        // Validate wallet matches sender
+        validateWalletMatchesSender(sender, walletKey)
+
+        return try {
+            encodeNativeSendToProtobuf(
+                sender, recipient, amount, memo, accountNumber, sequence, chainId, walletKey
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to build native send protobuf transaction", e)
+            throw Exception("Native send protobuf transaction building failed: ${e.message}")
+        }
+    }
+
+    /**
+     * Creates a protobuf transaction with bank.MsgSend for native SCRT transfers
+     */
+    @Throws(Exception::class)
+    private fun encodeNativeSendToProtobuf(
+        sender: String,
+        recipient: String,
+        amount: String,
+        memo: String,
+        accountNumber: String,
+        sequence: String,
+        chainId: String,
+        walletKey: ECKey
+    ): ByteArray {
+        // Create the coin
+        val coin = CoinOuterClass.Coin.newBuilder()
+            .setDenom("uscrt")
+            .setAmount(amount)
+            .build()
+
+        // Create the MsgSend message
+        val msgSend = MsgSend.newBuilder()
+            .setFromAddress(sender)
+            .setToAddress(recipient)
+            .addAmount(coin)
+            .build()
+
+        // Convert to Any for inclusion in transaction
+        val msgSendAny = Any.newBuilder()
+            .setTypeUrl("/cosmos.bank.v1beta1.MsgSend")
+            .setValue(msgSend.toByteString())
+            .build()
+
+        // Build transaction body
+        val txBody = Tx.TxBody.newBuilder()
+            .addMessages(msgSendAny)
+            .setMemo(memo)
+            .build()
+
+        // Create public key
+        val pubKey = PubKey.newBuilder()
+            .setKey(ByteString.copyFrom(walletKey.pubKey))
+            .build()
+
+        val pubKeyAny = Any.newBuilder()
+            .setTypeUrl("/cosmos.crypto.secp256k1.PubKey")
+            .setValue(pubKey.toByteString())
+            .build()
+
+        // Create signature info
+        val singleSignature = Tx.ModeInfo.Single.newBuilder()
+            .setMode(SignMode.SIGN_MODE_DIRECT_VALUE)
+            .build()
+
+        val modeInfo = Tx.ModeInfo.newBuilder()
+            .setSingle(singleSignature)
+            .build()
+
+        val signerInfo = Tx.SignerInfo.newBuilder()
+            .setPublicKey(pubKeyAny)
+            .setModeInfo(modeInfo)
+            .setSequence(sequence.toLong())
+            .build()
+
+        // Create fee for native send (need actual fee amount)
+        val feeCoin = CoinOuterClass.Coin.newBuilder()
+            .setDenom("uscrt")
+            .setAmount("5000") // 0.005 SCRT fee
+            .build()
+
+        val fee = Tx.Fee.newBuilder()
+            .setGasLimit(200000)
+            .addAmount(feeCoin)
+            .build()
+
+        val authInfo = Tx.AuthInfo.newBuilder()
+            .addSignerInfos(signerInfo)
+            .setFee(fee)
+            .build()
+
+        // Create SignDoc for signing
+        val signDoc = Tx.SignDoc.newBuilder()
+            .setBodyBytes(txBody.toByteString())
+            .setAuthInfoBytes(authInfo.toByteString())
+            .setChainId(chainId)
+            .setAccountNumber(accountNumber.toLong())
+            .build()
+
+        // Sign the transaction - TransactionSigner returns complete signed transaction bytes
+        val txBytes = TransactionSigner.signTransaction(signDoc, walletKey)
+
+        Log.i(TAG, "Native send transaction built successfully")
+        return txBytes
     }
 }
