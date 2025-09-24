@@ -47,6 +47,7 @@ class PinEntryFragment : Fragment() {
 
     // Current PIN input
     private var currentPin = ""
+    private var autoSubmitRunnable: Runnable? = null
 
     // Interface for communication with parent activity
     interface PinEntryListener {
@@ -133,20 +134,26 @@ class PinEntryFragment : Fragment() {
             updatePinDots()
             hideError()
 
-            // Auto-submit when PIN reaches 4-6 digits
+            // Cancel any pending auto-submit
+            autoSubmitRunnable?.let { view?.removeCallbacks(it) }
+
+            // Auto-submit when PIN reaches 4-6 digits, with delay to allow more digits
             if (currentPin.length >= 4) {
-                // Add a small delay for better UX
-                view?.postDelayed({
+                autoSubmitRunnable = Runnable {
                     if (currentPin.length >= 4) {
                         verifyPin()
                     }
-                }, 100)
+                }
+                view?.postDelayed(autoSubmitRunnable!!, 800) // Wait 800ms for more input
             }
         }
     }
 
     private fun removeDigit() {
         if (currentPin.isNotEmpty()) {
+            // Cancel any pending auto-submit
+            autoSubmitRunnable?.let { view?.removeCallbacks(it) }
+
             currentPin = currentPin.dropLast(1)
             updatePinDots()
             hideError()
@@ -164,8 +171,8 @@ class PinEntryFragment : Fragment() {
     }
 
     private fun verifyPin() {
-        if (currentPin.length < 4) {
-            showError("PIN must be at least 4 digits")
+        if (currentPin.length < 4 || currentPin.length > 6) {
+            showError("PIN must be 4-6 digits")
             return
         }
 

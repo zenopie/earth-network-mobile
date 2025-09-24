@@ -215,8 +215,8 @@ class CreateWalletFragment : Fragment() {
                     Toast.makeText(requireContext(), "PINs do not match", Toast.LENGTH_SHORT).show()
                     return@setOnClickListener
                 }
-                if (pin.length < 4) {
-                    Toast.makeText(requireContext(), "PIN should be at least 4 digits", Toast.LENGTH_SHORT).show()
+                if (pin.length < 4 || pin.length > 6) {
+                    Toast.makeText(requireContext(), "PIN should be 4-6 digits", Toast.LENGTH_SHORT).show()
                     return@setOnClickListener
                 }
                 saveMnemonicAndPin(pin, walletName)
