@@ -61,6 +61,15 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_host)
 
+        // Clear any restored fragments that may have been recreated without a session
+        if (savedInstanceState != null && !SessionManager.isSessionActive()) {
+            supportFragmentManager.fragments.forEach { fragment ->
+                if (fragment != null) {
+                    supportFragmentManager.beginTransaction().remove(fragment).commitNowAllowingStateLoss()
+                }
+            }
+        }
+
         // Ensure proper window insets handling for release builds
         WindowInsetsUtil.showSystemBars(window)
 

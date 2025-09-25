@@ -23,6 +23,7 @@ import network.erth.wallet.bridge.activities.TransactionActivity
 import network.erth.wallet.bridge.utils.PermitManager
 import network.erth.wallet.bridge.models.Permit
 import network.erth.wallet.bridge.services.SecretQueryService
+import network.erth.wallet.wallet.services.SessionManager
 import network.erth.wallet.wallet.constants.Tokens
 import org.json.JSONArray
 import org.json.JSONObject
@@ -109,8 +110,18 @@ class SwapTokensMainFragment : Fragment() {
         registerBroadcastReceiver()
         loadCurrentWalletAddress()
 
-        // Initialize permit manager
-        permitManager = PermitManager.getInstance(requireContext())
+        // Initialize permit manager only if session is active
+        if (SessionManager.isSessionActive()) {
+            try {
+                permitManager = PermitManager.getInstance(requireContext())
+            } catch (e: Exception) {
+                Log.e("SwapTokensMainFragment", "Failed to initialize PermitManager", e)
+                permitManager = null
+            }
+        } else {
+            Log.d("SwapTokensMainFragment", "No active session - PermitManager will be initialized after login")
+            permitManager = null
+        }
 
         updateTokenLogos()
         fetchBalances()

@@ -51,7 +51,7 @@ class TokenBalancesFragment : Fragment() {
     private var isQueryingToken = false
     private var walletAddress = ""
     private var currentlyQueryingToken: Tokens.TokenInfo? = null
-    private lateinit var permitManager: PermitManager
+    private var permitManager: PermitManager? = null
 
     // Interface for communication with parent
     interface TokenBalancesListener {
@@ -73,8 +73,14 @@ class TokenBalancesFragment : Fragment() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Initialize PermitManager
-        permitManager = PermitManager.getInstance(requireContext())
+        // Initialize PermitManager only if session is active
+        try {
+            permitManager = PermitManager.getInstance(requireContext())
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize PermitManager", e)
+            permitManager = null
+            // Continue without permit manager - no tokens will be shown until session is active
+        }
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
@@ -132,7 +138,7 @@ class TokenBalancesFragment : Fragment() {
                 // Only show tokens that have permits - hide others entirely
                 if (hasPermit(token.contract)) {
                     // Show token immediately with "..." while we fetch the actual balance
-                    addTokenBalanceView(token, "...", true)
+                    addTokenBalanceView(token, "...")
                     tokenQueryQueue.offer(token)
                 }
                 // Tokens without permits are simply not shown (no "Get Permit" button)
@@ -171,7 +177,7 @@ class TokenBalancesFragment : Fragment() {
     private fun queryTokenBalance(token: Tokens.TokenInfo) {
         try {
             // Check if we have a permit for this token
-            val hasPermit = permitManager.hasPermit(walletAddress, token.contract)
+            val hasPermit = permitManager?.hasPermit(walletAddress, token.contract) ?: false
             if (!hasPermit) {
                 // Token should not have been queued if no permit - skip it
 
@@ -190,7 +196,7 @@ class TokenBalancesFragment : Fragment() {
                     if (!SecureWalletManager.isWalletAvailable(requireContext())) {
                         activity?.runOnUiThread {
                             Log.e(TAG, "No wallet found for token balance query")
-                            addTokenBalanceView(token, "Error", false)
+                            addTokenBalanceView(token, "Error")
                             isQueryingToken = false
                             currentlyQueryingToken = null
                             processNextTokenQuery()
@@ -213,7 +219,7 @@ class TokenBalancesFragment : Fragment() {
                 } catch (e: Exception) {
                     Log.e(TAG, "Token balance query failed for ${token.symbol}", e)
                     activity?.runOnUiThread {
-                        addTokenBalanceView(token, "Error", false)
+                        addTokenBalanceView(token, "Error")
                         isQueryingToken = false
                         currentlyQueryingToken = null
                         processNextTokenQuery()
@@ -223,7 +229,7 @@ class TokenBalancesFragment : Fragment() {
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to query token balance for ${token.symbol}", e)
-            addTokenBalanceView(token, "Error", false)
+            addTokenBalanceView(token, "Error")
 
             // Mark query as complete and continue with next token
             isQueryingToken = false
@@ -270,7 +276,7 @@ class TokenBalancesFragment : Fragment() {
         }
     }
 
-    private fun addTokenBalanceView(token: Tokens.TokenInfo, balance: String?, hasPermit: Boolean) {
+    private fun addTokenBalanceView(token: Tokens.TokenInfo, balance: String?) {
         try {
             val tokenCard = LinearLayout(context)
             tokenCard.orientation = LinearLayout.HORIZONTAL
@@ -330,36 +336,22 @@ class TokenBalancesFragment : Fragment() {
 
             infoContainer.addView(symbolText)
 
-            // Balance or action
-            if (hasPermit && balance != null) {
-                val balanceText = TextView(context)
-                balanceText.text = balance
-                balanceText.tag = "balance"
+            // Balance display (only show tokens with permits and balances)
+            val balanceText = TextView(context)
+            balanceText.text = balance ?: "..."
+            balanceText.tag = "balance"
 
-                if ("!" == balance) {
-                    balanceText.setTextColor(resources.getColor(android.R.color.holo_red_dark))
-                    balanceText.textSize = 20f
-                } else {
-                    balanceText.setTextColor(resources.getColor(R.color.sidebar_text))
-                    balanceText.textSize = 16f
-                }
-
-                tokenCard.addView(iconView)
-                tokenCard.addView(infoContainer)
-                tokenCard.addView(balanceText)
+            if ("!" == balance) {
+                balanceText.setTextColor(resources.getColor(android.R.color.holo_red_dark))
+                balanceText.textSize = 20f
             } else {
-                // Show "Get Permit" button
-                val getPermitButton = Button(context)
-                getPermitButton.text = "Get Permit"
-                getPermitButton.tag = "get_key_btn"
-                getPermitButton.setOnClickListener {
-                    listener?.onPermitRequested(token)
-                }
-
-                tokenCard.addView(iconView)
-                tokenCard.addView(infoContainer)
-                tokenCard.addView(getPermitButton)
+                balanceText.setTextColor(resources.getColor(R.color.sidebar_text))
+                balanceText.textSize = 16f
             }
+
+            tokenCard.addView(iconView)
+            tokenCard.addView(infoContainer)
+            tokenCard.addView(balanceText)
 
             tokenBalancesContainer.addView(tokenCard)
 
@@ -413,11 +405,11 @@ class TokenBalancesFragment : Fragment() {
             }
 
             // Token view not found, add a new one
-            addTokenBalanceView(token, balance, hasPermit(token.contract))
+            addTokenBalanceView(token, balance)
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to update token balance view for ${token.symbol}", e)
-            addTokenBalanceView(token, balance, hasPermit(token.contract))
+            addTokenBalanceView(token, balance)
         }
     }
 
@@ -454,7 +446,7 @@ class TokenBalancesFragment : Fragment() {
      * Check if permit exists for contract
      */
     private fun hasPermit(contractAddress: String): Boolean {
-        return permitManager.hasPermit(walletAddress, contractAddress)
+        return permitManager?.hasPermit(walletAddress, contractAddress) ?: false
     }
 
     private fun loadCurrentWalletAddress() {
