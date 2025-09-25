@@ -21,6 +21,7 @@
     <color name="white">#FFFFFF</color>
     <color name="green_primary">#4CAF50</color>
     <color name="green_hover">#45a049</color>
+    <color name="sky_blue">#87CEEB</color>
     
     <!-- Camera overlay colors -->
     <color name="black_overlay">#80000000</color>
