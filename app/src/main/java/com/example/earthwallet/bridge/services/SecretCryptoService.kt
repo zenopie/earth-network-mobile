@@ -28,7 +28,7 @@ object SecretCryptoService {
     private const val TAG = "SecretCryptoService"
 
     // Hardcoded consensus IO public key from SecretJS (mainnetConsensusIoPubKey)
-    private const val MAINNET_CONSENSUS_IO_PUBKEY_B64 = "UyAkgs8Z55YD2091/RjSnmdMH4yF9PKc5lWqjV78nS8="
+    private const val MAINNET_CONSENSUS_IO_PUBKEY_B64 = "OXDCbUQIpNSfknDX6FvjK7ewuDBe67PleZyT38f5SEs="
 
     // HKDF constants (matches SecretJS encryption.ts line 18-20)
     private val HKDF_SALT = "000000000000000000024bead8df69990852c202db0e0097c1a12ea637d7e96d".hexStringToByteArray()
