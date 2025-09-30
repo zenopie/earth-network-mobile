@@ -281,10 +281,11 @@ class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListe
 
                 } catch (e: Exception) {
                     Log.e(TAG, "Registration status query failed", e)
+                    val fullError = "Failed to check status:\n${e.javaClass.simpleName}: ${e.message}\n${e.stackTrace.take(3).joinToString("\n")}"
                     activity?.runOnUiThread {
                         showLoading(false)
                         errorText?.let { errorText ->
-                            errorText.text = "Failed to check status: ${e.message}"
+                            errorText.text = fullError
                             errorText.visibility = View.VISIBLE
                         }
                     }
@@ -293,8 +294,9 @@ class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListe
         } catch (e: Exception) {
             Log.e(TAG, "checkStatus failed", e)
             showLoading(false)
+            val fullError = "Failed to check status:\n${e.javaClass.simpleName}: ${e.message}\n${e.stackTrace.take(3).joinToString("\n")}"
             errorText?.let { errorText ->
-                errorText.text = "Failed to check status: ${e.message}"
+                errorText.text = fullError
                 errorText.visibility = View.VISIBLE
             }
         }

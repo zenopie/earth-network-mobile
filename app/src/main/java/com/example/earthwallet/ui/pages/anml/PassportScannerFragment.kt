@@ -350,28 +350,9 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
             else -> ""
         }
 
-        // If we have a raw response, try to extract useful error info
-        if (!rawResponse.isNullOrEmpty() && httpCode >= 400) {
-            // Try to extract error message from JSON response
-            try {
-                val response = JSONObject(rawResponse)
-                val error = response.optString("error", "")
-                val message = response.optString("message", "")
-
-                if (error.isNotEmpty()) {
-                    details += "\n\nServer error: $error"
-                }
-                if (message.isNotEmpty() && message != error) {
-                    details += "\nDetails: $message"
-                }
-            } catch (e: Exception) {
-                // If we can't parse JSON, show first 200 chars of raw response
-                if (rawResponse.length > 200) {
-                    details += "\n\nServer response: ${rawResponse.substring(0, 200)}..."
-                } else {
-                    details += "\n\nServer response: $rawResponse"
-                }
-            }
+        // If we have a raw response, show it in full
+        if (!rawResponse.isNullOrEmpty()) {
+            details += "\n\nFull server response:\n$rawResponse"
         }
 
         if (httpCode in 200..299) {
