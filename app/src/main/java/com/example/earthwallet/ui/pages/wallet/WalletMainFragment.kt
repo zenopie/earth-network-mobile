@@ -83,14 +83,8 @@ class WalletMainFragment : Fragment(),
         // Initialize child fragments
         initializeChildFragments()
 
-        // Load current wallet info but don't update child fragments yet
-        // (they need their views to be created first)
-        loadCurrentWallet()
-
-        // Delay updating child fragments until they are ready
-        view.post {
-            updateChildFragments()
-        }
+        // Don't load wallet here - onResume will handle it
+        // This prevents duplicate calls when fragment is first created
     }
 
     private fun initializeChildFragments() {
@@ -114,11 +108,13 @@ class WalletMainFragment : Fragment(),
     }
 
     private fun loadCurrentWallet(onComplete: (() -> Unit)? = null) {
+        Log.d(TAG, "loadCurrentWallet called")
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 // Heavy operations on background thread
                 val walletName = SecureWalletManager.getCurrentWalletName(requireContext())
                 val walletAddress = SecureWalletManager.getWalletAddress(requireContext()) ?: ""
+                Log.d(TAG, "loadCurrentWallet loaded: name=$walletName, address=$walletAddress")
 
                 // Update UI on main thread
                 withContext(Dispatchers.Main) {
@@ -150,6 +146,7 @@ class WalletMainFragment : Fragment(),
     }
 
     private fun updateChildFragments() {
+        Log.d(TAG, "updateChildFragments called")
         // Update wallet name display
         val displayName = if (currentWalletName.isEmpty()) " " else currentWalletName
         walletNameText.text = displayName

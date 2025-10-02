@@ -113,6 +113,7 @@ class TokenBalancesFragment : Fragment() {
      * Public method to refresh token balances from parent fragment
      */
     fun refreshTokenBalances() {
+        Log.d(TAG, "refreshTokenBalances called on instance ${System.identityHashCode(this)}")
         if (TextUtils.isEmpty(walletAddress)) {
             loadCurrentWalletAddress()
         }
@@ -130,6 +131,7 @@ class TokenBalancesFragment : Fragment() {
         balanceQueryJob?.cancel()
 
         // Clear existing token displays
+        Log.d(TAG, "Clearing all views, current count: ${tokenBalancesContainer.childCount}")
         tokenBalancesContainer.removeAllViews()
 
         // Capture the current wallet address for this query session
@@ -190,6 +192,7 @@ class TokenBalancesFragment : Fragment() {
      * Public method to update wallet address and refresh if changed
      */
     fun updateWalletAddress(newAddress: String) {
+        Log.d(TAG, "updateWalletAddress called with: $newAddress on instance ${System.identityHashCode(this)}")
         // Cancel any in-flight queries for the old wallet
         balanceQueryJob?.cancel()
 
@@ -233,6 +236,7 @@ class TokenBalancesFragment : Fragment() {
 
     private fun addTokenBalanceView(token: Tokens.TokenInfo, balance: String?) {
         try {
+            Log.d(TAG, "addTokenBalanceView called for ${token.symbol} with balance: $balance, current container size: ${tokenBalancesContainer.childCount}")
             val tokenCard = LinearLayout(context)
             tokenCard.orientation = LinearLayout.HORIZONTAL
             tokenCard.setPadding(16, 12, 16, 12)
@@ -359,12 +363,13 @@ class TokenBalancesFragment : Fragment() {
                 }
             }
 
-            // Token view not found, add a new one
-            addTokenBalanceView(token, balance)
+            // Token view not found - this could be from a cancelled/old query
+            // Only add a new view if we're not in the middle of a refresh
+            // (Check if container is empty, which means we just cleared it)
+            Log.d(TAG, "Token view not found for ${token.symbol}, container has ${tokenBalancesContainer.childCount} children")
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to update token balance view for ${token.symbol}", e)
-            addTokenBalanceView(token, balance)
         }
     }
 
@@ -388,8 +393,8 @@ class TokenBalancesFragment : Fragment() {
         // Launch a single token query
         lifecycleScope.launch {
             try {
-                // Show loading state
-                addTokenBalanceView(token, "...")
+                // Show loading state - update existing view if it exists
+                updateTokenBalanceView(token, "...")
 
                 val result = withContext(Dispatchers.IO) {
                     // Verify wallet hasn't changed
@@ -414,7 +419,7 @@ class TokenBalancesFragment : Fragment() {
             } catch (e: Exception) {
                 Log.e(TAG, "Single token query failed for ${token.symbol}", e)
                 if (currentWalletAddress == walletAddress) {
-                    addTokenBalanceView(token, "Error")
+                    updateTokenBalanceView(token, "Error")
                 }
             }
         }
