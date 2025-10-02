@@ -18,6 +18,12 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
 import network.erth.wallet.R
 import network.erth.wallet.bridge.services.SecretQueryService
 import network.erth.wallet.bridge.services.SnipQueryService
@@ -46,11 +52,9 @@ class TokenBalancesFragment : Fragment() {
     // UI Components
     private lateinit var tokenBalancesContainer: LinearLayout
 
-    // State management
-    private val tokenQueryQueue: Queue<Tokens.TokenInfo> = LinkedList()
-    private var isQueryingToken = false
+    // State management - using coroutines for cancellable queries
+    private var balanceQueryJob: Job? = null
     private var walletAddress = ""
-    private var currentlyQueryingToken: Tokens.TokenInfo? = null
     private var permitManager: PermitManager? = null
 
     // Interface for communication with parent
@@ -122,125 +126,83 @@ class TokenBalancesFragment : Fragment() {
             return
         }
 
+        // Cancel any existing query job
+        balanceQueryJob?.cancel()
 
         // Clear existing token displays
         tokenBalancesContainer.removeAllViews()
 
-        // Clear any existing queue and reset state properly
-        tokenQueryQueue.clear()
-        isQueryingToken = false
-        currentlyQueryingToken = null
+        // Capture the current wallet address for this query session
+        val currentWalletAddress = walletAddress
 
-        // Add tokens with permits to the queue and display them immediately with "..."
-        for (symbol in Tokens.ALL_TOKENS.keys) {
-            val token = Tokens.getTokenInfo(symbol)
-            if (token != null) {
-                // Only show tokens that have permits - hide others entirely
-                if (hasPermit(token.contract)) {
-                    // Show token immediately with "..." while we fetch the actual balance
-                    addTokenBalanceView(token, "...")
-                    tokenQueryQueue.offer(token)
+        // Start new query job with coroutines
+        balanceQueryJob = lifecycleScope.launch {
+            // Add tokens with permits to the UI and query them
+            for (symbol in Tokens.ALL_TOKENS.keys) {
+                val token = Tokens.getTokenInfo(symbol) ?: continue
+
+                // Only show tokens that have permits
+                if (!hasPermit(token.contract)) continue
+
+                // Show token immediately with "..." while we fetch the actual balance
+                addTokenBalanceView(token, "...")
+
+                // Query balance in background
+                try {
+                    val result = withContext(Dispatchers.IO) {
+                        // Verify wallet hasn't changed before querying
+                        if (currentWalletAddress != walletAddress) {
+                            throw CancellationException("Wallet changed during query")
+                        }
+
+                        // Check if wallet is still available
+                        if (!SecureWalletManager.isWalletAvailable(requireContext())) {
+                            throw Exception("No wallet found")
+                        }
+
+                        // Query balance with permit
+                        SnipQueryService.queryBalanceWithPermit(
+                            requireContext(),
+                            token.symbol,
+                            currentWalletAddress
+                        )
+                    }
+
+                    // Validate wallet still matches before displaying result
+                    if (currentWalletAddress == walletAddress) {
+                        handleTokenBalanceResult(token, result.toString())
+                    }
+
+                } catch (e: CancellationException) {
+                    // Query was cancelled, ignore
+                    Log.d(TAG, "Token balance query cancelled for ${token.symbol}")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Token balance query failed for ${token.symbol}", e)
+                    if (currentWalletAddress == walletAddress) {
+                        addTokenBalanceView(token, "Error")
+                    }
                 }
-                // Tokens without permits are simply not shown (no "Get Permit" button)
             }
         }
-
-        // Start processing the queue
-        processNextTokenQuery()
     }
 
     /**
      * Public method to update wallet address and refresh if changed
      */
     fun updateWalletAddress(newAddress: String) {
+        // Cancel any in-flight queries for the old wallet
+        balanceQueryJob?.cancel()
+
         walletAddress = newAddress
         // Always refresh - no caching
         if (::tokenBalancesContainer.isInitialized) {
             refreshTokenBalances()
-        } else {
         }
     }
 
-    private fun processNextTokenQuery() {
-        if (isQueryingToken || tokenQueryQueue.isEmpty()) {
-            return
-        }
-
-        val token = tokenQueryQueue.poll()
-        if (token != null) {
-            isQueryingToken = true
-            currentlyQueryingToken = token
-            queryTokenBalance(token)
-        }
-    }
-
-    private fun queryTokenBalance(token: Tokens.TokenInfo) {
-        try {
-            // Check if we have a permit for this token
-            val hasPermit = permitManager?.hasPermit(walletAddress, token.contract) ?: false
-            if (!hasPermit) {
-                // Token should not have been queued if no permit - skip it
-
-                // Mark query as complete and continue with next token
-                isQueryingToken = false
-                currentlyQueryingToken = null
-                processNextTokenQuery()
-                return
-            }
-
-
-            // Use SnipQueryService for cleaner token balance queries
-            Thread {
-                try {
-                    // Check wallet availability without retrieving mnemonic
-                    if (!SecureWalletManager.isWalletAvailable(requireContext())) {
-                        activity?.runOnUiThread {
-                            Log.e(TAG, "No wallet found for token balance query")
-                            addTokenBalanceView(token, "Error")
-                            isQueryingToken = false
-                            currentlyQueryingToken = null
-                            processNextTokenQuery()
-                        }
-                        return@Thread
-                    }
-
-                    // Use SnipQueryService for the permit-based balance query
-                    val result = SnipQueryService.queryBalanceWithPermit(
-                        requireContext(), // Use HostActivity context
-                        token.symbol,
-                        walletAddress
-                    )
-
-                    // Handle result on UI thread with the specific token
-                    activity?.runOnUiThread {
-                        handleTokenBalanceResult(token, result.toString())
-                    }
-
-                } catch (e: Exception) {
-                    Log.e(TAG, "Token balance query failed for ${token.symbol}", e)
-                    activity?.runOnUiThread {
-                        addTokenBalanceView(token, "Error")
-                        isQueryingToken = false
-                        currentlyQueryingToken = null
-                        processNextTokenQuery()
-                    }
-                }
-            }.start()
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to query token balance for ${token.symbol}", e)
-            addTokenBalanceView(token, "Error")
-
-            // Mark query as complete and continue with next token
-            isQueryingToken = false
-            currentlyQueryingToken = null
-            processNextTokenQuery()
-        }
-    }
 
     private fun handleTokenBalanceResult(token: Tokens.TokenInfo, json: String) {
         try {
-
             if (!TextUtils.isEmpty(json)) {
                 val root = JSONObject(json)
                 val success = root.optBoolean("success", false)
@@ -266,13 +228,6 @@ class TokenBalancesFragment : Fragment() {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse token balance result for ${token.symbol}", e)
             updateTokenBalanceView(token, "!")
-        }
-
-        // Only advance the queue if this is still the current token being queried
-        if (currentlyQueryingToken == token) {
-            isQueryingToken = false
-            currentlyQueryingToken = null
-            processNextTokenQuery()
         }
     }
 
@@ -421,22 +376,46 @@ class TokenBalancesFragment : Fragment() {
     }
 
     /**
-     * Public method to query a single token balance (called from parent after viewing key is set)
+     * Public method to query a single token balance (called from parent after permit is set)
      */
     fun querySingleToken(token: Tokens.TokenInfo) {
-        if (!TextUtils.isEmpty(walletAddress)) {
-            // Add to front of queue for priority processing
-            val tempQueue: Queue<Tokens.TokenInfo> = LinkedList()
-            tempQueue.offer(token)
-            while (!tokenQueryQueue.isEmpty()) {
-                tempQueue.offer(tokenQueryQueue.poll())
-            }
-            tokenQueryQueue.clear()
-            tokenQueryQueue.addAll(tempQueue)
+        if (TextUtils.isEmpty(walletAddress)) {
+            return
+        }
 
-            // Start processing if not already processing
-            if (!isQueryingToken) {
-                processNextTokenQuery()
+        val currentWalletAddress = walletAddress
+
+        // Launch a single token query
+        lifecycleScope.launch {
+            try {
+                // Show loading state
+                addTokenBalanceView(token, "...")
+
+                val result = withContext(Dispatchers.IO) {
+                    // Verify wallet hasn't changed
+                    if (currentWalletAddress != walletAddress) {
+                        throw CancellationException("Wallet changed during query")
+                    }
+
+                    SnipQueryService.queryBalanceWithPermit(
+                        requireContext(),
+                        token.symbol,
+                        currentWalletAddress
+                    )
+                }
+
+                // Validate wallet still matches before displaying
+                if (currentWalletAddress == walletAddress) {
+                    handleTokenBalanceResult(token, result.toString())
+                }
+
+            } catch (e: CancellationException) {
+                Log.d(TAG, "Single token query cancelled for ${token.symbol}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Single token query failed for ${token.symbol}", e)
+                if (currentWalletAddress == walletAddress) {
+                    addTokenBalanceView(token, "Error")
+                }
             }
         }
     }

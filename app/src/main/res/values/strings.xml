@@ -1,7 +1,7 @@
 <resources>
     <string name="app_name">Earth Wallet</string>
     <string name="scan_passport">Scan Passport</string>
-    <string name="place_passport">Place your passport on the back of the device</string>
+    <string name="place_passport">Place the inside of the back cover of the passport on the back of the device</string>
     <string name="scanning">Scanning passport…</string>
     <string name="scan_complete">Scan Complete</string>
     <string name="passport_number">Passport Number</string>

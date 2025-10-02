@@ -109,20 +109,16 @@ class WalletMainFragment : Fragment(),
      * Refresh wallet UI - loads current wallet and updates all child fragments
      * Forces refresh when wallet has actually changed
      */
-    private fun refreshWalletsUI() {
-        loadCurrentWallet()
+    private fun refreshWalletsUI(onComplete: (() -> Unit)? = null) {
+        loadCurrentWallet(onComplete)
     }
 
-    private fun loadCurrentWallet() {
-
+    private fun loadCurrentWallet(onComplete: (() -> Unit)? = null) {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-
                 // Heavy operations on background thread
                 val walletName = SecureWalletManager.getCurrentWalletName(requireContext())
                 val walletAddress = SecureWalletManager.getWalletAddress(requireContext()) ?: ""
-
-                // No migration needed - app hasn't been released yet
 
                 // Update UI on main thread
                 withContext(Dispatchers.Main) {
@@ -131,6 +127,9 @@ class WalletMainFragment : Fragment(),
                         currentWalletAddress = walletAddress
 
                         updateChildFragments()
+
+                        // Notify completion after UI is updated
+                        onComplete?.invoke()
                     }
                 }
 
@@ -141,6 +140,9 @@ class WalletMainFragment : Fragment(),
                         currentWalletName = "Error"
                         currentWalletAddress = ""
                         updateChildFragments()
+
+                        // Still notify completion even on error
+                        onComplete?.invoke()
                     }
                 }
             }
@@ -198,10 +200,11 @@ class WalletMainFragment : Fragment(),
     // =============================================================================
 
     override fun onWalletSelected(walletIndex: Int) {
-        refreshWalletsUI() // Reload and refresh all child fragments
-
-        // Navigate back from wallet list fragment
-        requireActivity().supportFragmentManager.popBackStack()
+        // Reload and refresh all child fragments, then navigate back
+        refreshWalletsUI {
+            // Navigate back only after wallet is fully loaded
+            requireActivity().supportFragmentManager.popBackStack()
+        }
     }
 
     override fun onCreateWalletRequested() {
@@ -213,10 +216,11 @@ class WalletMainFragment : Fragment(),
     // =============================================================================
 
     override fun onWalletCreated() {
-        refreshWalletsUI() // Reload and refresh all child fragments
-
-        // Hide create wallet fragment
-        requireActivity().supportFragmentManager.popBackStack()
+        // Reload and refresh all child fragments, then hide create wallet fragment
+        refreshWalletsUI {
+            // Navigate back only after wallet is fully loaded
+            requireActivity().supportFragmentManager.popBackStack()
+        }
     }
 
     override fun onCreateWalletCancelled() {
