@@ -421,9 +421,33 @@ class SwapForGasFragment : Fragment() {
     }
 
     private fun fetchNativeScrtBalance() {
-        // For now, set SCRT balance to placeholder - implement native balance query later
-        scrtBalance = 0.0
-        updateScrtBalanceDisplay()
+        if (TextUtils.isEmpty(currentWalletAddress)) {
+            scrtBalance = 0.0
+            updateScrtBalanceDisplay()
+            return
+        }
+
+        // Query native SCRT balance in background thread
+        Thread {
+            try {
+                val microScrt = network.erth.wallet.wallet.utils.WalletNetwork.fetchUscrtBalanceMicro(
+                    network.erth.wallet.wallet.utils.WalletNetwork.DEFAULT_LCD_URL,
+                    currentWalletAddress
+                )
+                val scrtAmount = microScrt.toDouble() / 1_000_000.0
+
+                activity?.runOnUiThread {
+                    scrtBalance = scrtAmount
+                    updateScrtBalanceDisplay()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "SCRT balance query failed", e)
+                activity?.runOnUiThread {
+                    scrtBalance = -1.0
+                    updateScrtBalanceDisplay()
+                }
+            }
+        }.start()
     }
 
     private fun handleTokenBalanceResult(tokenSymbol: String, @Suppress("UNUSED_PARAMETER") isFromToken: Boolean, json: String) {

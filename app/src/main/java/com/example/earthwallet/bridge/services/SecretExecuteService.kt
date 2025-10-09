@@ -64,6 +64,7 @@ object SecretExecuteService {
 
         // Build protobuf transaction
         val feeGranter = intent.getStringExtra("fee_granter")
+        Log.d(TAG, "SecretExecuteService: feeGranter from intent = $feeGranter")
         val txBytes = protobufService.buildTransaction(
             senderAddress, contractAddr, codeHash, encryptedMessage,
             params.getFundsOrEmpty(), params.getMemoOrEmpty(), accountNumber,

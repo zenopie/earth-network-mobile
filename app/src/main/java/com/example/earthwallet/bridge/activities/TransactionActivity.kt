@@ -324,6 +324,7 @@ class TransactionActivity : AppCompatActivity() {
                         snipIntent.putExtra("recipient_hash", intent.getStringExtra(EXTRA_RECIPIENT_HASH))
                         snipIntent.putExtra("amount", intent.getStringExtra(EXTRA_AMOUNT))
                         snipIntent.putExtra("message_json", intent.getStringExtra(EXTRA_MESSAGE_JSON))
+                        snipIntent.putExtra("fee_granter", intent.getStringExtra(EXTRA_FEE_GRANTER))
 
                         val snipResult = SnipExecuteService.execute(this, snipIntent)
                         result = snipResult[0]

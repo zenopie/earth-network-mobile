@@ -173,7 +173,10 @@ class SecretProtobufService {
 
         // Add fee granter if provided (for gasless transactions)
         if (!feeGranter.isNullOrEmpty()) {
+            Log.d(TAG, "Setting fee granter: $feeGranter")
             feeBuilder.setGranter(feeGranter)
+            // Set payer to empty string to indicate fees should come from granter, not signer
+            feeBuilder.setPayer("")
         }
 
         val fee = feeBuilder.build()

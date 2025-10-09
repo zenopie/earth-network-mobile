@@ -55,12 +55,19 @@ object SnipExecuteService {
         // Build SNIP send message
         val snipMessage = buildSnipSendMessage(recipient!!, recipientHash, amount!!, messageJson!!)
 
+        // Get fee granter if provided
+        val feeGranter = intent.getStringExtra("fee_granter")
+        Log.d(TAG, "SnipExecuteService: feeGranter from intent = $feeGranter")
+
         // Create intent for SecretExecuteService
         val executeIntent = Intent().apply {
             putExtra("contract_address", tokenContract)
             putExtra("code_hash", tokenHash)
             putExtra("execute_json", snipMessage)
+            putExtra("fee_granter", feeGranter)
         }
+
+        Log.d(TAG, "SnipExecuteService: passing feeGranter to SecretExecuteService = $feeGranter")
 
         // Delegate to SecretExecuteService
         return SecretExecuteService.execute(context, executeIntent)
