@@ -78,22 +78,24 @@ class ANMLClaimFragment : Fragment() {
             } catch (ignored: Exception) {}
 
             button.setOnClickListener {
+                // Default behavior: always show ads UNLESS we have confirmed high staking via query
                 if (isHighStaker) {
-                    // High stakers (>=250K ERTH staked) skip the ad
+                    // Only skip ads if query confirmed >= 250K ERTH staked
+                    Log.d(TAG, "High staker confirmed - skipping ad")
                     listener?.onClaimRequested()
                 } else {
-                    // Show interstitial ad and start transaction confirmation simultaneously
+                    // Default path: Show ad first, then proceed with claim
+                    Log.d(TAG, "Showing ad before claim (default behavior)")
                     val activity = activity
                     if (activity is HostActivity) {
-                        // Start the transaction confirmation immediately (while ad is showing)
-                        listener?.onClaimRequested()
-
-                        // Show ad with a no-op callback since transaction is already started
+                        // Show ad and proceed with claim after ad completes
                         activity.showInterstitialAdThen {
-                            // Transaction confirmation is already showing, nothing to do here
+                            // Ad completed, now start the claim transaction
+                            listener?.onClaimRequested()
                         }
                     } else {
-                        // Fallback if not in HostActivity
+                        // Fallback if not in HostActivity - proceed without ad
+                        Log.w(TAG, "Not in HostActivity, cannot show ad")
                         listener?.onClaimRequested()
                     }
                 }
