@@ -126,9 +126,9 @@ class ANMLClaimFragment : Fragment() {
 
             override fun onResponse(call: Call, response: Response) {
                 response.use { resp ->
-                    if (resp.isSuccessful && resp.body() != null) {
+                    if (resp.isSuccessful && resp.body != null) {
                         try {
-                            val responseBody = resp.body()!!.string()
+                            val responseBody = resp.body!!.string()
                             val json = JSONObject(responseBody)
                             val price = json.getDouble("price")
 

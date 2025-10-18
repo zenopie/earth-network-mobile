@@ -8,33 +8,23 @@ object Tokens {
 
     /**
      * Token information class with public fields for Java compatibility
+     * Contract and hash are mutable to allow population from registry
      */
     class TokenInfo @JvmOverloads constructor(
-        @JvmField val contract: String,
-        @JvmField val hash: String,
+        @JvmField var contract: String,
+        @JvmField var hash: String,
         @JvmField val decimals: Int,
         @JvmField val symbol: String,
         @JvmField val logo: String,
-        @JvmField val coingeckoId: String? = null,
-        @JvmField val lp: LpInfo? = null
-    )
-
-    /**
-     * Liquidity pool information
-     */
-    class LpInfo constructor(
-        @JvmField val contract: String,
-        @JvmField val hash: String,
-        @JvmField val decimals: Int,
-        @JvmField val asset0: String? = null,
-        @JvmField val asset1: String? = null
+        @JvmField val coingeckoId: String? = null
     )
 
     // Static token constants for Java compatibility
+    // Contract addresses and hashes populated from registry on startup with fallback defaults
     @JvmField
     val ERTH = TokenInfo(
         contract = "secret16snu3lt8k9u0xr54j2hqyhvwnx9my7kq7ay8lp",
-        hash = "638a3e1d50175fbcb8373cf801565283e3eb23d88a9b7b7f99fcc5eb1e6b561e",
+        hash = "72e7242ceb5e3e441243f5490fab2374df0d3e828ce33aa0f0b4aad226cfedd7",
         decimals = 6,
         symbol = "ERTH",
         logo = "coin/ERTH.png"
@@ -43,16 +33,10 @@ object Tokens {
     @JvmField
     val ANML = TokenInfo(
         contract = "secret14p6dhjznntlzw0yysl7p6z069nk0skv5e9qjut",
-        hash = "638a3e1d50175fbcb8373cf801565283e3eb23d88a9b7b7f99fcc5eb1e6b561e",
+        hash = "72e7242ceb5e3e441243f5490fab2374df0d3e828ce33aa0f0b4aad226cfedd7",
         decimals = 6,
         symbol = "ANML",
-        logo = "coin/ANML.png",
-        coingeckoId = null,
-        lp = LpInfo(
-            contract = "secret1cqxxq586zl6g5zly3536rc7crwfcmeluuwehvx",
-            hash = "638a3e1d50175fbcb8373cf801565283e3eb23d88a9b7b7f99fcc5eb1e6b561e",
-            decimals = 6
-        )
+        logo = "coin/ANML.png"
     )
 
     @JvmField
@@ -62,12 +46,7 @@ object Tokens {
         decimals = 6,
         symbol = "sSCRT",
         logo = "coin/SSCRT.png",
-        coingeckoId = "secret",
-        lp = LpInfo(
-            contract = "secret1lqmvkxrhqfjj64ge8cr9v8pwnz4enhw7f6hdys",
-            hash = "638a3e1d50175fbcb8373cf801565283e3eb23d88a9b7b7f99fcc5eb1e6b561e",
-            decimals = 6
-        )
+        coingeckoId = "secret"
     )
 
     // SNIP-20 Token Registry

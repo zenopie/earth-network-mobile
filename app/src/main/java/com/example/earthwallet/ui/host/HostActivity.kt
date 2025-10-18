@@ -18,6 +18,10 @@ import androidx.fragment.app.Fragment
 import network.erth.wallet.wallet.services.SessionManager
 import network.erth.wallet.wallet.services.SecureWalletManager
 import network.erth.wallet.wallet.services.UpdateManager
+import network.erth.wallet.bridge.services.RegistryService
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import network.erth.wallet.ui.utils.WindowInsetsUtil
 import network.erth.wallet.ui.pages.wallet.CreateWalletFragment
 import network.erth.wallet.ui.pages.auth.PinEntryFragment
@@ -57,6 +61,9 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
     private lateinit var updateManager: UpdateManager
     private var forceUpdateDialog: android.app.Dialog? = null
 
+    // Registry service
+    private lateinit var registryService: RegistryService
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_host)
@@ -89,6 +96,9 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
             showFragment("actions")
             setSelectedNav(navActions, navWallet)
         }
+
+        // Initialize contract registry (loads contract addresses on startup)
+        initializeRegistry()
 
         // Initialize AdMob
         initializeAds()
@@ -563,6 +573,28 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
         // PIN was successfully entered and verified in PinEntryFragment
         // Session has already been started, just navigate to appropriate screen
         initializeSessionAndNavigate(pin)
+    }
+
+    /**
+     * Initialize contract registry
+     * Queries the registry contract to get the latest contract and token addresses
+     */
+    private fun initializeRegistry() {
+        registryService = RegistryService.getInstance(this)
+
+        // Load registry data in background
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                val success = registryService.initializeRegistry()
+                if (success) {
+                    Log.d(TAG, "Contract registry initialized successfully")
+                } else {
+                    Log.w(TAG, "Failed to initialize contract registry, using cached data if available")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error initializing contract registry", e)
+            }
+        }
     }
 
     /**

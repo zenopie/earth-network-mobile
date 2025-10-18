@@ -18,10 +18,10 @@ android {
 
     defaultConfig {
         applicationId = "network.erth.wallet"
-        minSdk = 23
+        minSdk = 24
         targetSdk = 35
-        versionCode = 11
-        versionName = "1.0.6"
+        versionCode = 12
+        versionName = "1.0.7"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -184,14 +184,13 @@ dependencies {
     // JSON serialization for permits
     implementation 'com.google.code.gson:gson:2.10.1'
 
-    // CRITICAL CRYPTO DEPENDENCIES FOR SECRETJS COMPATIBILITY
-    // x25519 ECDH support (required for SecretJS encryption compatibility)
+    // SecretK - Kotlin client for Secret Network
+    implementation 'io.eqoty.secretk:client:6.4.1-rc'
+
+    // Keep old crypto dependencies for existing code (TODO: migrate everything to SecretK)
     implementation 'org.whispersystems:curve25519-java:0.5.0'
-
-
-    // RFC 5297 AES-SIV implementation (matches SecretJS miscreant library)
     implementation 'org.cryptomator:siv-mode:1.4.0'
-    
+
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'

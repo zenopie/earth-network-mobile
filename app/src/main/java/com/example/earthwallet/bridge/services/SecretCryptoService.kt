@@ -49,12 +49,12 @@ object SecretCryptoService {
     ): ByteArray = withContext(Dispatchers.Default) {
 
         try {
+            // Get the curve25519 provider
+            val curve25519 = Curve25519.getInstance(Curve25519.BEST)
+
             // Generate 32-byte nonce (matches SecretJS encryption.ts line 106)
             val nonce = ByteArray(32)
             SecureRandom().nextBytes(nonce)
-
-            // Get the curve25519 provider (use BEST for native fallback to pure Java)
-            val curve25519 = Curve25519.getInstance(Curve25519.BEST)
 
             // Generate a separate encryption seed like SecretJS does
             // SecretJS uses EncryptionUtilsImpl.GenerateNewSeed() - a random 32-byte seed
