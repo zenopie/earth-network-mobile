@@ -13,13 +13,15 @@ import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import network.erth.wallet.Constants
 import network.erth.wallet.ui.host.HostActivity
-import network.erth.wallet.bridge.services.SecretQueryService
+import network.erth.wallet.wallet.services.SecretKClient
 import network.erth.wallet.wallet.services.SecureWalletManager
 import okhttp3.*
 import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
 import java.text.DecimalFormat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 
 class ANMLClaimFragment : Fragment() {
 
@@ -38,7 +40,6 @@ class ANMLClaimFragment : Fragment() {
     private var listener: ANMLClaimListener? = null
     private var anmlPriceText: TextView? = null
     private var httpClient: OkHttpClient? = null
-    private var queryService: SecretQueryService? = null
     private var isHighStaker = false
     private var adFreeIndicatorContainer: LinearLayout? = null
     private var adFreeStatusText: TextView? = null
@@ -61,9 +62,6 @@ class ANMLClaimFragment : Fragment() {
 
         // Set up click listener for ad-free indicator
         adFreeIndicatorContainer?.setOnClickListener { showAdFreeExplanation() }
-
-        // Initialize query service
-        queryService = SecretQueryService(requireContext())
 
         // Check staking status and fetch ANML price when fragment is created
         checkStakingStatus()
@@ -181,11 +179,11 @@ class ANMLClaimFragment : Fragment() {
      * Check if user has >= 250K ERTH staked to determine if they should see ads
      */
     private fun checkStakingStatus() {
-        Thread {
+        lifecycleScope.launch {
             try {
                 val userAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (userAddress.isNullOrEmpty()) {
-                    return@Thread
+                    return@launch
                 }
 
                 // Create query message: { get_user_info: { address: "secret1..." } }
@@ -194,11 +192,10 @@ class ANMLClaimFragment : Fragment() {
                 getUserInfo.put("address", userAddress)
                 queryMsg.put("get_user_info", getUserInfo)
 
-
-                val result = queryService?.queryContract(
+                val result = SecretKClient.queryContractJson(
                     Constants.STAKING_CONTRACT,
-                    Constants.STAKING_HASH,
-                    queryMsg
+                    queryMsg,
+                    Constants.STAKING_HASH
                 )
 
 
@@ -236,7 +233,7 @@ class ANMLClaimFragment : Fragment() {
                 // Update UI on main thread
                 activity?.runOnUiThread { updateAdFreeIndicator() }
             }
-        }.start()
+        }
     }
 
     /**

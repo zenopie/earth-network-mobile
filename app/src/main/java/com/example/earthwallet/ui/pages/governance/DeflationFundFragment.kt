@@ -12,14 +12,14 @@ import android.widget.Toast
 import androidx.fragment.app.Fragment
 import network.erth.wallet.Constants
 import network.erth.wallet.R
-import network.erth.wallet.bridge.services.SecretQueryService
+import network.erth.wallet.wallet.services.SecretKClient
 import network.erth.wallet.ui.components.PieChartView
 import network.erth.wallet.wallet.services.SecureWalletManager
 import com.google.android.material.tabs.TabLayout
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 
 /**
  * Fragment for managing Deflation Fund allocation voting
@@ -48,10 +48,6 @@ class DeflationFundFragment : Fragment() {
     private lateinit var tabLayout: TabLayout
     private lateinit var titleTextView: TextView
 
-    // Services
-    private var queryService: SecretQueryService? = null
-    private var executorService: ExecutorService? = null
-
     // Data
     private var currentAllocations: JSONArray? = null
     private var userAllocations: JSONArray? = null
@@ -63,10 +59,6 @@ class DeflationFundFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-
-        // Initialize services
-        queryService = SecretQueryService(requireContext())
-        executorService = Executors.newCachedThreadPool()
 
         initializeViews(view)
 
@@ -128,7 +120,7 @@ class DeflationFundFragment : Fragment() {
     }
 
     private fun loadActualAllocations() {
-        executorService?.execute {
+        lifecycleScope.launch {
             try {
                 // First check if we have a wallet
                 val walletAddress = SecureWalletManager.getWalletAddress(requireContext())
@@ -139,13 +131,11 @@ class DeflationFundFragment : Fragment() {
                 val queryMsg = JSONObject()
                 queryMsg.put("query_allocation_options", JSONObject())
 
-
-                val result = queryService!!.queryContract(
+                val result = SecretKClient.queryContractJson(
                     Constants.STAKING_CONTRACT,
-                    Constants.STAKING_HASH,
-                    queryMsg
+                    queryMsg,
+                    Constants.STAKING_HASH
                 )
-
 
                 activity?.runOnUiThread {
                     try {
@@ -262,14 +252,12 @@ class DeflationFundFragment : Fragment() {
     }
 
     private fun loadUserAllocations() {
-        executorService?.execute {
+        lifecycleScope.launch {
             try {
                 val userAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (userAddress.isNullOrEmpty()) {
-                    activity?.runOnUiThread {
-                        Toast.makeText(context, "Wallet address not available", Toast.LENGTH_SHORT).show()
-                    }
-                    return@execute
+                    Toast.makeText(context, "Wallet address not available", Toast.LENGTH_SHORT).show()
+                    return@launch
                 }
 
                 // Query user's preferred allocations
@@ -278,11 +266,10 @@ class DeflationFundFragment : Fragment() {
                 userQuery.put("address", userAddress)
                 queryMsg.put("query_user_allocations", userQuery)
 
-
-                val result = queryService!!.queryContract(
+                val result = SecretKClient.queryContractJson(
                     Constants.STAKING_CONTRACT,
-                    Constants.STAKING_HASH,
-                    queryMsg
+                    queryMsg,
+                    Constants.STAKING_HASH
                 )
 
 
@@ -331,9 +318,7 @@ class DeflationFundFragment : Fragment() {
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading user allocations", e)
-                activity?.runOnUiThread {
-                    Toast.makeText(context, "Error loading user preferences: ${e.message}", Toast.LENGTH_SHORT).show()
-                }
+                Toast.makeText(context, "Error loading user preferences: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -577,8 +562,5 @@ class DeflationFundFragment : Fragment() {
 
     override fun onDestroy() {
         super.onDestroy()
-        if (executorService != null && !executorService!!.isShutdown) {
-            executorService!!.shutdown()
-        }
     }
 }

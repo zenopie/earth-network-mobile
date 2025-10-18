@@ -17,11 +17,13 @@ import android.widget.*
 import androidx.fragment.app.Fragment
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import network.erth.wallet.R
 import network.erth.wallet.Constants
 import network.erth.wallet.bridge.activities.TransactionActivity
-import network.erth.wallet.bridge.services.SecretQueryService
 import network.erth.wallet.wallet.constants.Tokens
+import network.erth.wallet.wallet.services.SecretKClient
 import org.json.JSONObject
 import java.text.DecimalFormat
 import kotlin.math.pow
@@ -251,24 +253,20 @@ class SwapForGasFragment : Fragment() {
             sscrtTokenInfo.contract
         )
 
-        // Use SecretQueryService in background thread
-        Thread {
+        // Use SecretKClient in lifecycleScope
+        lifecycleScope.launch {
             try {
                 if (!network.erth.wallet.wallet.services.SecureWalletManager.isWalletAvailable(requireContext())) {
-                    activity?.runOnUiThread {
-                        Toast.makeText(requireContext(), "No wallet found", Toast.LENGTH_SHORT).show()
-                        isSimulating = false
-                        updateSwapButton()
-                    }
-                    return@Thread
+                    Toast.makeText(requireContext(), "No wallet found", Toast.LENGTH_SHORT).show()
+                    isSimulating = false
+                    updateSwapButton()
+                    return@launch
                 }
 
-                val queryObj = JSONObject(queryJson)
-                val queryService = SecretQueryService(requireContext())
-                val result = queryService.queryContract(
+                val result = SecretKClient.queryContractJson(
                     Constants.EXCHANGE_CONTRACT,
-                    Constants.EXCHANGE_HASH,
-                    queryObj
+                    JSONObject(queryJson),
+                    Constants.EXCHANGE_HASH
                 )
 
                 // Format result to match expected format
@@ -276,20 +274,16 @@ class SwapForGasFragment : Fragment() {
                 response.put("success", true)
                 response.put("result", result)
 
-                // Handle result on UI thread
-                activity?.runOnUiThread {
-                    handleSimulationResult(response.toString())
-                }
+                // Handle result
+                handleSimulationResult(response.toString())
 
             } catch (e: Exception) {
                 Log.e(TAG, "Gas swap simulation failed", e)
-                activity?.runOnUiThread {
-                    Toast.makeText(requireContext(), "Simulation failed: ${e.message}", Toast.LENGTH_SHORT).show()
-                    isSimulating = false
-                    updateSwapButton()
-                }
+                Toast.makeText(requireContext(), "Simulation failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                isSimulating = false
+                updateSwapButton()
             }
-        }.start()
+        }
     }
 
     private fun handleSimulationResult(json: String) {
@@ -397,27 +391,23 @@ class SwapForGasFragment : Fragment() {
             return
         }
 
-        // Execute query in background thread using PermitManager
-        Thread {
+        // Execute query using lifecycleScope
+        lifecycleScope.launch {
             try {
-                val result = network.erth.wallet.bridge.services.SnipQueryService.queryBalanceWithPermit(
+                val result = SecretKClient.querySnipBalanceWithPermit(
                     requireContext(),
                     tokenSymbol,
                     currentWalletAddress
                 )
 
-                activity?.runOnUiThread {
-                    handleTokenBalanceResult(tokenSymbol, isFromToken, result.toString())
-                }
+                handleTokenBalanceResult(tokenSymbol, isFromToken, result.toString())
 
             } catch (e: Exception) {
                 Log.e(TAG, "Token balance query failed for $tokenSymbol", e)
-                activity?.runOnUiThread {
-                    fromBalance = -1.0
-                    updateFromBalanceDisplay()
-                }
+                fromBalance = -1.0
+                updateFromBalanceDisplay()
             }
-        }.start()
+        }
     }
 
     private fun fetchNativeScrtBalance() {
@@ -460,34 +450,22 @@ class SwapForGasFragment : Fragment() {
             }
 
             val root = JSONObject(json)
-            val success = root.optBoolean("success", false)
-
-            if (success) {
-                val result = root.optJSONObject("result")
-                result?.let {
-                    val balance = it.optJSONObject("balance")
-                    balance?.let { bal ->
-                        val amount = bal.optString("amount", "0")
-                        val tokenInfo = Tokens.getTokenInfo(tokenSymbol)
-                        tokenInfo?.let { info ->
-                            var formattedBalance = 0.0
-                            if (!TextUtils.isEmpty(amount)) {
-                                try {
-                                    formattedBalance = amount.toDouble() / 10.0.pow(info.decimals)
-                                } catch (e: NumberFormatException) {
-                                }
-                            }
-                            fromBalance = formattedBalance
-                            updateFromBalanceDisplay()
+            val balance = root.optJSONObject("balance")
+            balance?.let { bal ->
+                val amount = bal.optString("amount", "0")
+                val tokenInfo = Tokens.getTokenInfo(tokenSymbol)
+                tokenInfo?.let { info ->
+                    var formattedBalance = 0.0
+                    if (!TextUtils.isEmpty(amount)) {
+                        try {
+                            formattedBalance = amount.toDouble() / 10.0.pow(info.decimals)
+                        } catch (e: NumberFormatException) {
                         }
-                    } ?: run {
-                        fromBalance = -1.0
-                        updateFromBalanceDisplay()
                     }
+                    fromBalance = formattedBalance
+                    updateFromBalanceDisplay()
                 }
-            } else {
-                val error = root.optString("error", "Unknown error")
-                Log.e(TAG, "Balance query failed: $error")
+            } ?: run {
                 fromBalance = -1.0
                 updateFromBalanceDisplay()
             }

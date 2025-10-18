@@ -7,11 +7,13 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import network.erth.wallet.R
 import network.erth.wallet.Constants
-import network.erth.wallet.bridge.services.SecretQueryService
 import network.erth.wallet.wallet.constants.Tokens
 import network.erth.wallet.wallet.services.SecureWalletManager
+import network.erth.wallet.wallet.services.SecretKClient
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ExecutorService
@@ -43,7 +45,6 @@ class InfoFragment : Fragment() {
     private lateinit var tokenValueLabel: TextView
 
     // Services
-    private var queryService: SecretQueryService? = null
     private var executorService: ExecutorService? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -52,7 +53,6 @@ class InfoFragment : Fragment() {
             tokenKey = it.getString("token_key")
         }
 
-        queryService = SecretQueryService(requireContext())
         executorService = Executors.newCachedThreadPool()
     }
 
@@ -101,36 +101,28 @@ class InfoFragment : Fragment() {
     private fun loadPoolData() {
         if (tokenKey == null) return
 
-        executorService?.execute {
+        lifecycleScope.launch {
             try {
                 val userAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (userAddress == null) {
-                    return@execute
+                    return@launch
                 }
 
                 val tokenContract = getTokenContract(tokenKey!!)
                 if (tokenContract == null) {
-                    return@execute
+                    return@launch
                 }
 
                 // Query pool data like other fragments do
-                val queryMsg = JSONObject()
-                val queryUserInfo = JSONObject()
-                val poolsArray = JSONArray()
-                poolsArray.put(tokenContract)
-                queryUserInfo.put("pools", poolsArray)
-                queryUserInfo.put("user", userAddress)
-                queryMsg.put("query_user_info", queryUserInfo)
+                val queryJson = "{\"query_user_info\": {\"pools\": [\"$tokenContract\"], \"user\": \"$userAddress\"}}"
 
-                val result = queryService!!.queryContract(
+                val result = SecretKClient.queryContractJson(
                     Constants.EXCHANGE_CONTRACT,
-                    Constants.EXCHANGE_HASH,
-                    queryMsg
+                    JSONObject(queryJson),
+                    Constants.EXCHANGE_HASH
                 )
 
-                activity?.runOnUiThread {
-                    processPoolData(result)
-                }
+                processPoolData(result)
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading pool data", e)

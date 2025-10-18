@@ -15,9 +15,12 @@ import android.widget.*
 import androidx.fragment.app.Fragment
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import network.erth.wallet.R
 import network.erth.wallet.bridge.activities.TransactionActivity
 import network.erth.wallet.wallet.constants.Tokens
+import network.erth.wallet.wallet.services.SecretKClient
 import org.json.JSONObject
 import java.text.DecimalFormat
 import kotlin.math.pow
@@ -251,27 +254,23 @@ class WrapUnwrapFragment : Fragment() {
             return
         }
 
-        // Execute query in background thread using PermitManager
-        Thread {
+        // Execute query using lifecycleScope
+        lifecycleScope.launch {
             try {
-                val result = network.erth.wallet.bridge.services.SnipQueryService.queryBalanceWithPermit(
+                val result = SecretKClient.querySnipBalanceWithPermit(
                     requireContext(),
                     tokenSymbol,
                     currentWalletAddress
                 )
 
-                activity?.runOnUiThread {
-                    handleTokenBalanceResult(tokenSymbol, result.toString())
-                }
+                handleTokenBalanceResult(tokenSymbol, result.toString())
 
             } catch (e: Exception) {
                 Log.e(TAG, "Token balance query failed for $tokenSymbol", e)
-                activity?.runOnUiThread {
-                    sscrtBalance = -1.0
-                    updateBalanceDisplays()
-                }
+                sscrtBalance = -1.0
+                updateBalanceDisplays()
             }
-        }.start()
+        }
     }
 
     private fun fetchNativeScrtBalance() {
@@ -290,34 +289,22 @@ class WrapUnwrapFragment : Fragment() {
             }
 
             val root = JSONObject(json)
-            val success = root.optBoolean("success", false)
-
-            if (success) {
-                val result = root.optJSONObject("result")
-                result?.let {
-                    val balance = it.optJSONObject("balance")
-                    balance?.let { bal ->
-                        val amount = bal.optString("amount", "0")
-                        val tokenInfo = Tokens.getTokenInfo(tokenSymbol)
-                        tokenInfo?.let { info ->
-                            var formattedBalance = 0.0
-                            if (!TextUtils.isEmpty(amount)) {
-                                try {
-                                    formattedBalance = amount.toDouble() / 10.0.pow(info.decimals)
-                                } catch (e: NumberFormatException) {
-                                }
-                            }
-                            sscrtBalance = formattedBalance
-                            updateBalanceDisplays()
+            val balance = root.optJSONObject("balance")
+            balance?.let { bal ->
+                val amount = bal.optString("amount", "0")
+                val tokenInfo = Tokens.getTokenInfo(tokenSymbol)
+                tokenInfo?.let { info ->
+                    var formattedBalance = 0.0
+                    if (!TextUtils.isEmpty(amount)) {
+                        try {
+                            formattedBalance = amount.toDouble() / 10.0.pow(info.decimals)
+                        } catch (e: NumberFormatException) {
                         }
-                    } ?: run {
-                        sscrtBalance = -1.0
-                        updateBalanceDisplays()
                     }
+                    sscrtBalance = formattedBalance
+                    updateBalanceDisplays()
                 }
-            } else {
-                val error = root.optString("error", "Unknown error")
-                Log.e(TAG, "Balance query failed: $error")
+            } ?: run {
                 sscrtBalance = -1.0
                 updateBalanceDisplays()
             }

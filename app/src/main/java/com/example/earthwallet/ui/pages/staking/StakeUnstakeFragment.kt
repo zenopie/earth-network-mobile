@@ -20,13 +20,15 @@ import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
 import network.erth.wallet.R
 import network.erth.wallet.Constants
 import network.erth.wallet.bridge.activities.TransactionActivity
-import network.erth.wallet.bridge.services.SnipQueryService
 import network.erth.wallet.bridge.utils.PermitManager
 import network.erth.wallet.wallet.constants.Tokens
+import network.erth.wallet.wallet.services.SecretKClient
 import network.erth.wallet.wallet.services.SecureWalletManager
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 /**
@@ -225,27 +227,27 @@ class StakeUnstakeFragment : Fragment() {
     }
 
     private fun queryErthBalance() {
-        Thread {
+        lifecycleScope.launch {
             try {
                 val walletAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (walletAddress == null) {
                     erthBalance = -1.0
-                    activity?.runOnUiThread { updateStakeSection() }
-                    return@Thread
+                    updateStakeSection()
+                    return@launch
                 }
 
                 // Check if permit exists for ERTH
                 if (!permitManager!!.hasPermit(walletAddress, Tokens.ERTH.contract)) {
                     erthBalance = -1.0 // Indicates "need permit"
-                    activity?.runOnUiThread { updateStakeSection() }
-                    return@Thread
+                    updateStakeSection()
+                    return@launch
                 }
 
                 // Query ERTH balance using permit-based queries
-                val result = SnipQueryService.queryBalanceWithPermit(requireContext(), "ERTH", walletAddress)
+                val result = SecretKClient.querySnipBalanceWithPermit(requireContext(), "ERTH", walletAddress)
 
-                if (result != null && result.has("result") && result.getJSONObject("result").has("balance")) {
-                    val balanceObj = result.getJSONObject("result").getJSONObject("balance")
+                if (result.has("balance")) {
+                    val balanceObj = result.getJSONObject("balance")
                     if (balanceObj.has("amount")) {
                         val amountStr = balanceObj.getString("amount")
                         val amount = amountStr.toDouble() / 1_000_000.0 // Convert from micro to macro units
@@ -255,15 +257,15 @@ class StakeUnstakeFragment : Fragment() {
                     erthBalance = 0.0
                 }
 
-                // Update UI on main thread
-                activity?.runOnUiThread { updateStakeSection() }
+                // Update UI
+                updateStakeSection()
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error querying ERTH balance", e)
                 erthBalance = -1.0 // Indicates error/need permit
-                activity?.runOnUiThread { updateStakeSection() }
+                updateStakeSection()
             }
-        }.start()
+        }
     }
 
     private fun updateStakeSection() {

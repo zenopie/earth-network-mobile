@@ -10,11 +10,13 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import network.erth.wallet.Constants
 import network.erth.wallet.R
-import network.erth.wallet.bridge.services.SecretQueryService
 import network.erth.wallet.ui.components.PieChartView
 import network.erth.wallet.wallet.services.SecureWalletManager
+import network.erth.wallet.wallet.services.SecretKClient
 import com.google.android.material.tabs.TabLayout
 import org.json.JSONArray
 import org.json.JSONObject
@@ -47,7 +49,6 @@ class CaretakerFundFragment : Fragment() {
     private lateinit var titleTextView: TextView
 
     // Services
-    private var queryService: SecretQueryService? = null
     private var executorService: ExecutorService? = null
 
     // Data
@@ -63,7 +64,6 @@ class CaretakerFundFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
 
         // Initialize services
-        queryService = SecretQueryService(requireContext())
         executorService = Executors.newCachedThreadPool()
 
         initializeViews(view)
@@ -126,7 +126,7 @@ class CaretakerFundFragment : Fragment() {
     }
 
     private fun loadActualAllocations() {
-        executorService?.execute {
+        lifecycleScope.launch {
             try {
                 // First check if we have a wallet
                 val walletAddress = SecureWalletManager.getWalletAddress(requireContext())
@@ -135,21 +135,16 @@ class CaretakerFundFragment : Fragment() {
                 }
 
                 // Query current allocations from registration contract
-                val queryMsg = JSONObject()
-                queryMsg.put("query_allocation_options", JSONObject())
+                val queryJson = "{\"query_allocation_options\": {}}"
 
-
-                val result = queryService!!.queryContract(
+                val result = SecretKClient.queryContractJson(
                     Constants.REGISTRATION_CONTRACT,
-                    Constants.REGISTRATION_HASH,
-                    queryMsg
+                    JSONObject(queryJson),
+                    Constants.REGISTRATION_HASH
                 )
-
-
-                activity?.runOnUiThread {
-                    try {
-                        // Handle different response formats
-                        currentAllocations = JSONArray()
+                try {
+                    // Handle different response formats
+                    currentAllocations = JSONArray()
 
                         if (result.has("data") && result.getJSONArray("data").length() > 0) {
                             val dataArray = result.getJSONArray("data")
@@ -247,58 +242,46 @@ class CaretakerFundFragment : Fragment() {
                             currentAllocations!!.put(defaultAllocation)
                         }
 
-                        updateActualAllocationsUI()
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error processing allocation data", e)
-                        Toast.makeText(context, "Error loading allocation data", Toast.LENGTH_SHORT).show()
-                    }
+                    updateActualAllocationsUI()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error processing allocation data", e)
+                    Toast.makeText(context, "Error loading allocation data", Toast.LENGTH_SHORT).show()
                 }
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading actual allocations", e)
-                activity?.runOnUiThread {
-                    Toast.makeText(context, "Error loading allocations: ${e.message}", Toast.LENGTH_LONG).show()
-                    // Show error in UI
-                    actualAllocationSection.removeAllViews()
-                    val errorText = TextView(context)
-                    errorText.text = "Query Error: ${e.message}\n\nContract: ${Constants.REGISTRATION_CONTRACT}\nHash: ${Constants.REGISTRATION_HASH}"
-                    errorText.textSize = 14f
-                    errorText.setTextColor(0xFFFF0000.toInt())
-                    errorText.setPadding(20, 20, 20, 20)
-                    actualAllocationSection.addView(errorText)
-                }
+                Toast.makeText(context, "Error loading allocations: ${e.message}", Toast.LENGTH_LONG).show()
+                // Show error in UI
+                actualAllocationSection.removeAllViews()
+                val errorText = TextView(context)
+                errorText.text = "Query Error: ${e.message}\n\nContract: ${Constants.REGISTRATION_CONTRACT}\nHash: ${Constants.REGISTRATION_HASH}"
+                errorText.textSize = 14f
+                errorText.setTextColor(0xFFFF0000.toInt())
+                errorText.setPadding(20, 20, 20, 20)
+                actualAllocationSection.addView(errorText)
             }
         }
     }
 
     private fun loadUserAllocations() {
-        executorService?.execute {
+        lifecycleScope.launch {
             try {
                 val userAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (userAddress.isNullOrEmpty()) {
-                    activity?.runOnUiThread {
-                        Toast.makeText(context, "Wallet address not available", Toast.LENGTH_SHORT).show()
-                    }
-                    return@execute
+                    Toast.makeText(context, "Wallet address not available", Toast.LENGTH_SHORT).show()
+                    return@launch
                 }
 
                 // Query user's preferred allocations
-                val queryMsg = JSONObject()
-                val userQuery = JSONObject()
-                userQuery.put("address", userAddress)
-                queryMsg.put("query_user_allocations", userQuery)
+                val queryJson = "{\"query_user_allocations\": {\"address\": \"$userAddress\"}}"
 
-
-                val result = queryService!!.queryContract(
+                val result = SecretKClient.queryContractJson(
                     Constants.REGISTRATION_CONTRACT,
-                    Constants.REGISTRATION_HASH,
-                    queryMsg
+                    JSONObject(queryJson),
+                    Constants.REGISTRATION_HASH
                 )
-
-
-                activity?.runOnUiThread {
-                    try {
-                        userAllocations = JSONArray()
+                try {
+                    userAllocations = JSONArray()
 
                         if (result.has("data") && result.getJSONArray("data").length() > 0) {
                             val dataArray = result.getJSONArray("data")
@@ -327,18 +310,15 @@ class CaretakerFundFragment : Fragment() {
                             userAllocations = result.getJSONArray("percentages")
                         }
 
-                        updatePreferredAllocationsUI()
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error processing user allocation data", e)
-                        Toast.makeText(context, "Error loading user preferences", Toast.LENGTH_SHORT).show()
-                    }
+                    updatePreferredAllocationsUI()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error processing user allocation data", e)
+                    Toast.makeText(context, "Error loading user preferences", Toast.LENGTH_SHORT).show()
                 }
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading user allocations", e)
-                activity?.runOnUiThread {
-                    Toast.makeText(context, "Error loading user preferences: ${e.message}", Toast.LENGTH_SHORT).show()
-                }
+                Toast.makeText(context, "Error loading user preferences: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }

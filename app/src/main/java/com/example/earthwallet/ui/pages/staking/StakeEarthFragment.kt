@@ -10,13 +10,13 @@ import androidx.fragment.app.Fragment
 import androidx.viewpager2.widget.ViewPager2
 import network.erth.wallet.R
 import network.erth.wallet.Constants
-import network.erth.wallet.bridge.services.SecretQueryService
+import network.erth.wallet.wallet.services.SecretKClient
 import network.erth.wallet.wallet.services.SecureWalletManager
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
 import org.json.JSONObject
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 
 /**
  * Main staking fragment that manages ERTH token staking
@@ -32,10 +32,6 @@ class StakeEarthFragment : Fragment() {
     private var tabLayout: TabLayout? = null
     private var viewPager: ViewPager2? = null
     private var rootView: View? = null
-
-    // Data and Services
-    private var queryService: SecretQueryService? = null
-    private var executorService: ExecutorService? = null
 
     // Adapter
     private var stakingAdapter: StakingTabsAdapter? = null
@@ -73,10 +69,6 @@ class StakeEarthFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-
-        // Initialize services
-        queryService = SecretQueryService(requireContext())
-        executorService = Executors.newCachedThreadPool()
 
         initializeViews(view)
         setupTabs()
@@ -119,11 +111,11 @@ class StakeEarthFragment : Fragment() {
      * Query user staking info from contract
      */
     fun queryUserStakingInfo(callback: UserStakingCallback?) {
-        executorService?.execute {
+        lifecycleScope.launch {
             try {
                 val userAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (userAddress.isNullOrEmpty()) {
-                    return@execute
+                    return@launch
                 }
 
                 // Create query message: { get_user_info: { address: "secret1..." } }
@@ -132,15 +124,13 @@ class StakeEarthFragment : Fragment() {
                 getUserInfo.put("address", userAddress)
                 queryMsg.put("get_user_info", getUserInfo)
 
-
-                val result = queryService?.queryContract(
+                val result = SecretKClient.queryContractJson(
                     Constants.STAKING_CONTRACT,
-                    Constants.STAKING_HASH,
-                    queryMsg
+                    queryMsg,
+                    Constants.STAKING_HASH
                 )
 
-
-                if (callback != null && activity != null && result != null) {
+                if (callback != null && activity != null) {
                     activity?.runOnUiThread { callback.onStakingDataReceived(result) }
                 }
 
@@ -160,7 +150,6 @@ class StakeEarthFragment : Fragment() {
 
     override fun onDestroy() {
         super.onDestroy()
-        executorService?.takeIf { !it.isShutdown }?.shutdown()
     }
 
     /**

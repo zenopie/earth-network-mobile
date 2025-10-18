@@ -14,13 +14,15 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import network.erth.wallet.R
 import network.erth.wallet.Constants
 import network.erth.wallet.bridge.activities.TransactionActivity
-import network.erth.wallet.bridge.services.SecretQueryService
 import network.erth.wallet.ui.components.LoadingOverlay
 import network.erth.wallet.wallet.constants.Tokens
 import network.erth.wallet.wallet.services.SecureWalletManager
+import network.erth.wallet.wallet.services.SecretKClient
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ExecutorService
@@ -50,7 +52,6 @@ class ManageLPFragment : Fragment() {
     private var rootView: View? = null
     private var loadingOverlay: LoadingOverlay? = null
 
-    private var queryService: SecretQueryService? = null
     private var executorService: ExecutorService? = null
 
     private var isManagingLiquidity = false
@@ -68,7 +69,6 @@ class ManageLPFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
 
         // Initialize services
-        queryService = SecretQueryService(requireContext())
         executorService = Executors.newCachedThreadPool()
 
         initializeViews(view)
@@ -119,18 +119,16 @@ class ManageLPFragment : Fragment() {
         showLoading(true)
 
         // Query exchange contract like React app does
-        executorService?.execute {
+        lifecycleScope.launch {
             try {
                 queryExchangeContract()
             } catch (e: Exception) {
                 Log.e(TAG, "Error querying pool data", e)
                 // Fall back to empty data on error
-                activity?.runOnUiThread {
-                    showLoading(false)
-                    allPoolsData.clear()
-                    updateTotalRewards()
-                    poolAdapter.notifyDataSetChanged()
-                }
+                showLoading(false)
+                allPoolsData.clear()
+                updateTotalRewards()
+                poolAdapter.notifyDataSetChanged()
             }
         }
     }
@@ -163,11 +161,9 @@ class ManageLPFragment : Fragment() {
 
         if (poolContracts.isEmpty()) {
             // Update UI with empty data
-            activity?.runOnUiThread {
-                allPoolsData.clear()
-                updateTotalRewards()
-                poolAdapter.notifyDataSetChanged()
-            }
+            allPoolsData.clear()
+            updateTotalRewards()
+            poolAdapter.notifyDataSetChanged()
             return
         }
 
@@ -184,20 +180,25 @@ class ManageLPFragment : Fragment() {
             throw e
         }
 
-        // Create query message like React app: { query_user_info: { pools, user: address } }
-        val queryMsg = JSONObject()
-        val queryUserInfo = JSONObject()
-        queryUserInfo.put("pools", JSONArray(poolContracts))
-        queryUserInfo.put("user", userAddress)
-        queryMsg.put("query_user_info", queryUserInfo)
-
+        // Create query JSON
+        val poolsArrayJson = poolContracts.joinToString("\",\"", "[\"", "\"]")
+        val queryJson = "{\"query_user_info\": {\"pools\": $poolsArrayJson, \"user\": \"$userAddress\"}}"
 
         // Query the exchange contract
-        val result = queryService!!.queryContract(
-            Constants.EXCHANGE_CONTRACT,
-            Constants.EXCHANGE_HASH,
-            queryMsg
-        )
+        lifecycleScope.launch {
+            val result = SecretKClient.queryContractJson(
+                Constants.EXCHANGE_CONTRACT,
+                JSONObject(queryJson),
+                Constants.EXCHANGE_HASH
+            )
+
+
+        // Process the results
+        processPoolQueryResults(result, tokenKeys)
+        }
+    }
+
+    private fun processPoolQueryResultsWrapper(result: JSONObject, tokenKeys: List<String>) {
 
 
         // Process the results

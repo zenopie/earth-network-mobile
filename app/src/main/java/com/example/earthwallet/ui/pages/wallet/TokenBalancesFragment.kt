@@ -25,11 +25,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import network.erth.wallet.R
-import network.erth.wallet.bridge.services.SecretQueryService
-import network.erth.wallet.bridge.services.SnipQueryService
 import network.erth.wallet.bridge.utils.PermitManager
 import network.erth.wallet.wallet.constants.Tokens
 import network.erth.wallet.wallet.services.SecureWalletManager
+import network.erth.wallet.wallet.services.SecretKClient
 import org.json.JSONObject
 import java.util.*
 
@@ -151,24 +150,22 @@ class TokenBalancesFragment : Fragment() {
 
                 // Query balance in background
                 try {
-                    val result = withContext(Dispatchers.IO) {
-                        // Verify wallet hasn't changed before querying
-                        if (currentWalletAddress != walletAddress) {
-                            throw CancellationException("Wallet changed during query")
-                        }
-
-                        // Check if wallet is still available
-                        if (!SecureWalletManager.isWalletAvailable(requireContext())) {
-                            throw Exception("No wallet found")
-                        }
-
-                        // Query balance with permit
-                        SnipQueryService.queryBalanceWithPermit(
-                            requireContext(),
-                            token.symbol,
-                            currentWalletAddress
-                        )
+                    // Verify wallet hasn't changed before querying
+                    if (currentWalletAddress != walletAddress) {
+                        throw CancellationException("Wallet changed during query")
                     }
+
+                    // Check if wallet is still available
+                    if (!SecureWalletManager.isWalletAvailable(requireContext())) {
+                        throw Exception("No wallet found")
+                    }
+
+                    // Query balance with permit
+                    val result = SecretKClient.querySnipBalanceWithPermit(
+                        requireContext(),
+                        token.symbol,
+                        currentWalletAddress
+                    )
 
                     // Validate wallet still matches before displaying result
                     if (currentWalletAddress == walletAddress) {
@@ -208,22 +205,11 @@ class TokenBalancesFragment : Fragment() {
         try {
             if (!TextUtils.isEmpty(json)) {
                 val root = JSONObject(json)
-                val success = root.optBoolean("success", false)
-
-                if (success) {
-                    val result = root.optJSONObject("result")
-                    if (result != null) {
-                        val balance = result.optJSONObject("balance")
-                        if (balance != null) {
-                            val amount = balance.optString("amount", "0")
-                            val formattedBalance = Tokens.formatTokenAmount(amount, token)
-                            updateTokenBalanceView(token, formattedBalance)
-                        } else {
-                            updateTokenBalanceView(token, "!")
-                        }
-                    } else {
-                        updateTokenBalanceView(token, "!")
-                    }
+                val balance = root.optJSONObject("balance")
+                if (balance != null) {
+                    val amount = balance.optString("amount", "0")
+                    val formattedBalance = Tokens.formatTokenAmount(amount, token)
+                    updateTokenBalanceView(token, formattedBalance)
                 } else {
                     updateTokenBalanceView(token, "!")
                 }
@@ -396,18 +382,16 @@ class TokenBalancesFragment : Fragment() {
                 // Show loading state - update existing view if it exists
                 updateTokenBalanceView(token, "...")
 
-                val result = withContext(Dispatchers.IO) {
-                    // Verify wallet hasn't changed
-                    if (currentWalletAddress != walletAddress) {
-                        throw CancellationException("Wallet changed during query")
-                    }
-
-                    SnipQueryService.queryBalanceWithPermit(
-                        requireContext(),
-                        token.symbol,
-                        currentWalletAddress
-                    )
+                // Verify wallet hasn't changed
+                if (currentWalletAddress != walletAddress) {
+                    throw CancellationException("Wallet changed during query")
                 }
+
+                val result = SecretKClient.querySnipBalanceWithPermit(
+                    requireContext(),
+                    token.symbol,
+                    currentWalletAddress
+                )
 
                 // Validate wallet still matches before displaying
                 if (currentWalletAddress == walletAddress) {

@@ -17,9 +17,9 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import network.erth.wallet.R
 import network.erth.wallet.bridge.activities.TransactionActivity
-import network.erth.wallet.bridge.services.SnipQueryService
 import network.erth.wallet.bridge.utils.PermitManager
 import network.erth.wallet.wallet.constants.Tokens
+import network.erth.wallet.wallet.services.SecretKClient
 import network.erth.wallet.wallet.services.SecureWalletManager
 import network.erth.wallet.wallet.utils.WalletNetwork
 import com.journeyapps.barcodescanner.ScanContract
@@ -481,14 +481,12 @@ class SendTokensFragment : Fragment(), WalletDisplayFragment.WalletDisplayListen
     private fun fetchSnipTokenBalanceWithPermit(tokenSymbol: String) {
         lifecycleScope.launch {
             try {
-                val result = withContext(Dispatchers.IO) {
-                    SnipQueryService.queryBalanceWithPermit(
-                        requireContext(),
-                        tokenSymbol,
-                        currentWalletAddress!!
-                    )
-                }
-                handleSnipBalanceResult(tokenSymbol, result.toString())
+                val result = SecretKClient.querySnipBalanceWithPermit(
+                    requireContext(),
+                    tokenSymbol,
+                    currentWalletAddress!!
+                )
+                handleSnipBalanceResult(tokenSymbol, result)
             } catch (e: Exception) {
                 Log.e(TAG, "Token balance query failed for $tokenSymbol: ${e.message}", e)
                 balanceText.text = "Balance: Error loading"
@@ -496,40 +494,23 @@ class SendTokensFragment : Fragment(), WalletDisplayFragment.WalletDisplayListen
         }
     }
 
-    private fun handleSnipBalanceResult(tokenSymbol: String, json: String) {
+    private fun handleSnipBalanceResult(tokenSymbol: String, result: JSONObject) {
         try {
-            if (TextUtils.isEmpty(json)) {
-                balanceText.text = "Balance: Error loading"
-                return
-            }
-
-            val root = JSONObject(json)
-            val success = root.optBoolean("success", false)
-
-            if (success) {
-                val result = root.optJSONObject("result")
-                if (result != null) {
-                    val balance = result.optJSONObject("balance")
-                    if (balance != null) {
-                        val amount = balance.optString("amount", "0")
-                        val tokenInfo = Tokens.getTokenInfo(tokenSymbol)
-                        if (tokenInfo != null) {
-                            var formattedBalance = 0.0
-                            if (!TextUtils.isEmpty(amount)) {
-                                try {
-                                    val rawAmount = amount.toLong()
-                                    formattedBalance = rawAmount / 10.0.pow(tokenInfo.decimals.toDouble())
-                                } catch (e: NumberFormatException) {
-                                    Log.e(TAG, "Failed to parse balance amount: $amount", e)
-                                }
-                            }
-                            balanceText.text = String.format("Balance: %.6f %s", formattedBalance, tokenSymbol)
-                        } else {
-                            balanceText.text = "Balance: Error loading"
+            val balance = result.optJSONObject("balance")
+            if (balance != null) {
+                val amount = balance.optString("amount", "0")
+                val tokenInfo = Tokens.getTokenInfo(tokenSymbol)
+                if (tokenInfo != null) {
+                    var formattedBalance = 0.0
+                    if (!TextUtils.isEmpty(amount)) {
+                        try {
+                            val rawAmount = amount.toLong()
+                            formattedBalance = rawAmount / 10.0.pow(tokenInfo.decimals.toDouble())
+                        } catch (e: NumberFormatException) {
+                            Log.e(TAG, "Failed to parse balance amount: $amount", e)
                         }
-                    } else {
-                        balanceText.text = "Balance: Error loading"
                     }
+                    balanceText.text = String.format("Balance: %.6f %s", formattedBalance, tokenSymbol)
                 } else {
                     balanceText.text = "Balance: Error loading"
                 }

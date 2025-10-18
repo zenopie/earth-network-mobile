@@ -19,12 +19,14 @@ import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import network.erth.wallet.R
 import network.erth.wallet.Constants
 import network.erth.wallet.bridge.activities.TransactionActivity
-import network.erth.wallet.bridge.services.SecretQueryService
 import network.erth.wallet.wallet.constants.Tokens
 import network.erth.wallet.wallet.services.SecureWalletManager
+import network.erth.wallet.wallet.services.SecretKClient
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ExecutorService
@@ -238,23 +240,18 @@ class UnbondFragment : Fragment() {
             return
         }
 
-        executorService?.execute {
+        lifecycleScope.launch {
             try {
                 val tokenContract = getTokenContractAddress(tokenKey!!)
-                if (tokenContract == null) return@execute
+                if (tokenContract == null) return@launch
 
                 // Query pool information to get reserves and total shares
-                val queryMsg = JSONObject()
-                val queryPool = JSONObject()
-                queryPool.put("pool", tokenContract)
-                queryMsg.put("query_pool", queryPool)
+                val queryJson = "{\"query_pool\": {\"pool\": \"$tokenContract\"}}"
 
-
-                val queryService = SecretQueryService(requireContext())
-                val result = queryService.queryContract(
+                val result = SecretKClient.queryContractJson(
                     Constants.EXCHANGE_CONTRACT,
-                    Constants.EXCHANGE_HASH,
-                    queryMsg
+                    JSONObject(queryJson),
+                    Constants.EXCHANGE_HASH
                 )
 
                 parsePoolInformation(result)
@@ -316,32 +313,25 @@ class UnbondFragment : Fragment() {
             return
         }
 
-        try {
-            val tokenContract = getTokenContractAddress(tokenKey!!)
-            if (tokenContract == null) return
+        lifecycleScope.launch {
+            try {
+                val tokenContract = getTokenContractAddress(tokenKey!!)
+                if (tokenContract == null) return@launch
 
-            // Query unbonding requests for this user and token
-            val queryMsg = JSONObject()
-            val queryUnbondingRequests = JSONObject()
-            queryUnbondingRequests.put("pool", tokenContract)
-            queryUnbondingRequests.put("user", currentWalletAddress)
-            queryMsg.put("query_unbonding_requests", queryUnbondingRequests)
+                // Query unbonding requests for this user and token
+                val queryJson = "{\"query_unbonding_requests\": {\"pool\": \"$tokenContract\", \"user\": \"$currentWalletAddress\"}}"
 
+                val result = SecretKClient.queryContractJson(
+                    Constants.EXCHANGE_CONTRACT,
+                    JSONObject(queryJson),
+                    Constants.EXCHANGE_HASH
+                )
 
-            val queryService = SecretQueryService(requireContext())
-            val result = queryService.queryContract(
-                Constants.EXCHANGE_CONTRACT,
-                Constants.EXCHANGE_HASH,
-                queryMsg
-            )
-
-
-            activity?.runOnUiThread {
                 parseUnbondingRequests(result)
-            }
 
-        } catch (e: Exception) {
-            Log.e(TAG, "Error loading unbonding requests", e)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error loading unbonding requests", e)
+            }
         }
     }
 

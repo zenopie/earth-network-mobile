@@ -19,11 +19,13 @@ import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
 import androidx.appcompat.app.AlertDialog
+import androidx.lifecycle.lifecycleScope
 import network.erth.wallet.bridge.activities.TransactionActivity
 import network.erth.wallet.Constants
 import network.erth.wallet.ui.components.LoadingOverlay
-import network.erth.wallet.bridge.services.SecretQueryService
+import network.erth.wallet.wallet.services.SecretKClient
 import network.erth.wallet.wallet.services.SecureWalletManager
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListener, ANMLClaimFragment.ANMLClaimListener {
@@ -247,26 +249,23 @@ class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListe
             inner.put("address", address)
             q.put("query_registration_status", inner)
 
-            // Use SecretQueryService directly in background thread
-            Thread {
+            // Use SecretKClient directly
+            lifecycleScope.launch {
                 try {
                     // Check wallet availability without retrieving mnemonic
                     if (!SecureWalletManager.isWalletAvailable(requireContext())) {
-                        activity?.runOnUiThread {
-                            showLoading(false)
-                            errorText?.let { errorText ->
-                                errorText.text = "No wallet found"
-                                errorText.visibility = View.VISIBLE
-                            }
+                        showLoading(false)
+                        errorText?.let { errorText ->
+                            errorText.text = "No wallet found"
+                            errorText.visibility = View.VISIBLE
                         }
-                        return@Thread
+                        return@launch
                     }
 
-                    val queryService = SecretQueryService(requireContext())
-                    val result = queryService.queryContract(
+                    val result = SecretKClient.queryContractJson(
                         Constants.REGISTRATION_CONTRACT,
-                        Constants.REGISTRATION_HASH,
-                        q
+                        q,
+                        Constants.REGISTRATION_HASH
                     )
 
                     // Format result to match expected format
@@ -274,29 +273,24 @@ class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListe
                     response.put("success", true)
                     response.put("result", result)
 
-                    // Handle result on UI thread
-                    activity?.runOnUiThread {
-                        handleRegistrationQueryResult(response.toString())
-                    }
+                    // Handle result
+                    handleRegistrationQueryResult(response.toString())
 
                 } catch (e: Exception) {
                     Log.e(TAG, "Registration status query failed", e)
                     val fullError = "Failed to check status:\n${e.javaClass.simpleName}: ${e.message}\n${e.stackTrace.take(3).joinToString("\n")}"
-                    activity?.runOnUiThread {
-                        showLoading(false)
-                        errorText?.let { errorText ->
-                            errorText.text = fullError
-                            errorText.visibility = View.VISIBLE
-                        }
+                    showLoading(false)
+                    errorText?.let { errorText ->
+                        errorText.text = fullError
+                        errorText.visibility = View.VISIBLE
                     }
                 }
-            }.start()
+            }
         } catch (e: Exception) {
             Log.e(TAG, "checkStatus failed", e)
             showLoading(false)
-            val fullError = "Failed to check status:\n${e.javaClass.simpleName}: ${e.message}\n${e.stackTrace.take(3).joinToString("\n")}"
             errorText?.let { errorText ->
-                errorText.text = fullError
+                errorText.text = "Error: ${e.message}"
                 errorText.visibility = View.VISIBLE
             }
         }

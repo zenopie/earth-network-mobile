@@ -25,12 +25,12 @@ import network.erth.wallet.bridge.activities.TransactionActivity
 import network.erth.wallet.wallet.constants.Tokens
 import network.erth.wallet.wallet.services.SecureWalletManager
 import network.erth.wallet.Constants
-import network.erth.wallet.bridge.services.SecretQueryService
+import network.erth.wallet.wallet.services.SecretKClient
 import org.json.JSONObject
 import org.json.JSONArray
 import java.text.DecimalFormat
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 
 class RemoveLiquidityFragment : Fragment() {
 
@@ -55,7 +55,6 @@ class RemoveLiquidityFragment : Fragment() {
     private var tokenKey: String? = null
     private var userStakedShares = 0.0
     private var currentWalletAddress = ""
-    private var executorService: ExecutorService? = null
     private var transactionSuccessReceiver: BroadcastReceiver? = null
 
     // Activity Result Launcher for transaction activity
@@ -82,8 +81,6 @@ class RemoveLiquidityFragment : Fragment() {
                 Log.e(TAG, "Remove liquidity transaction failed: $error")
             }
         }
-
-        executorService = Executors.newCachedThreadPool()
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
@@ -198,10 +195,10 @@ class RemoveLiquidityFragment : Fragment() {
             return
         }
 
-        executorService?.execute {
+        lifecycleScope.launch {
             try {
                 val tokenContract = getTokenContractAddress(tokenKey!!)
-                if (tokenContract == null) return@execute
+                if (tokenContract == null) return@launch
 
                 // Query pool info
                 val queryMsg = JSONObject()
@@ -212,22 +209,17 @@ class RemoveLiquidityFragment : Fragment() {
                 queryUserInfo.put("user", currentWalletAddress)
                 queryMsg.put("query_user_info", queryUserInfo)
 
-                val queryService = SecretQueryService(requireContext())
-                val result = queryService.queryContract(
+                val result = SecretKClient.queryContractJson(
                     Constants.EXCHANGE_CONTRACT,
-                    Constants.EXCHANGE_HASH,
-                    queryMsg
+                    queryMsg,
+                    Constants.EXCHANGE_HASH
                 )
 
-                activity?.runOnUiThread {
-                    parseUserShares(result)
-                }
+                parseUserShares(result)
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading user shares", e)
-                activity?.runOnUiThread {
-                    stakedSharesText.text = "Balance: Error loading"
-                }
+                stakedSharesText.text = "Balance: Error loading"
             }
         }
     }
@@ -316,10 +308,10 @@ class RemoveLiquidityFragment : Fragment() {
             return
         }
 
-        executorService?.execute {
+        lifecycleScope.launch {
             try {
                 val tokenContract = getTokenContractAddress(tokenKey!!)
-                if (tokenContract == null) return@execute
+                if (tokenContract == null) return@launch
 
                 // Query unbonding requests for this user and token
                 val queryMsg = JSONObject()
@@ -328,18 +320,13 @@ class RemoveLiquidityFragment : Fragment() {
                 queryUnbonding.put("token", tokenContract)
                 queryMsg.put("query_unbonding", queryUnbonding)
 
-
-                val queryService = SecretQueryService(requireContext())
-                val result = queryService.queryContract(
+                val result = SecretKClient.queryContractJson(
                     Constants.EXCHANGE_CONTRACT,
-                    Constants.EXCHANGE_HASH,
-                    queryMsg
+                    queryMsg,
+                    Constants.EXCHANGE_HASH
                 )
 
-
-                activity?.runOnUiThread {
-                    parseUnbondingRequests(result)
-                }
+                parseUnbondingRequests(result)
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading unbonding requests", e)
@@ -458,10 +445,6 @@ class RemoveLiquidityFragment : Fragment() {
             } catch (e: Exception) {
                 Log.e(TAG, "Error unregistering receiver", e)
             }
-        }
-
-        if (executorService != null && !executorService!!.isShutdown) {
-            executorService!!.shutdown()
         }
     }
 }

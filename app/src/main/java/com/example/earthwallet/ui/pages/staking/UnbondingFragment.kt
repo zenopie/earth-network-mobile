@@ -17,11 +17,13 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import network.erth.wallet.R
 import network.erth.wallet.Constants
 import network.erth.wallet.bridge.activities.TransactionActivity
-import network.erth.wallet.bridge.services.SecretQueryService
 import network.erth.wallet.wallet.services.SecureWalletManager
+import network.erth.wallet.wallet.services.SecretKClient
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -48,9 +50,6 @@ class UnbondingFragment : Fragment() {
 
     // Data
     private val unbondingEntries = mutableListOf<UnbondingEntry>()
-
-    // Services
-    private var queryService: SecretQueryService? = null
 
     // Broadcast receiver for transaction success
     private var transactionSuccessReceiver: BroadcastReceiver? = null
@@ -85,9 +84,6 @@ class UnbondingFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-
-        // Initialize services
-        queryService = SecretQueryService(requireContext())
 
         initializeViews(view)
         setupBroadcastReceiver()
@@ -138,26 +134,21 @@ class UnbondingFragment : Fragment() {
      */
     fun refreshData() {
 
-        Thread {
+        lifecycleScope.launch {
             try {
                 val userAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (userAddress == null) {
-                    return@Thread
+                    return@launch
                 }
 
                 // Create query message: { get_user_info: { address: "secret1..." } }
-                val queryMsg = JSONObject()
-                val getUserInfo = JSONObject()
-                getUserInfo.put("address", userAddress)
-                queryMsg.put("get_user_info", getUserInfo)
+                val queryJson = "{\"get_user_info\": {\"address\": \"$userAddress\"}}"
 
-
-                val result = queryService!!.queryContract(
+                val result = SecretKClient.queryContractJson(
                     Constants.STAKING_CONTRACT,
-                    Constants.STAKING_HASH,
-                    queryMsg
+                    JSONObject(queryJson),
+                    Constants.STAKING_HASH
                 )
-
 
                 // Parse results
                 parseUnbondingEntries(result)
@@ -166,7 +157,7 @@ class UnbondingFragment : Fragment() {
             } catch (e: Exception) {
                 Log.e(TAG, "Error querying unbonding data", e)
             }
-        }.start()
+        }
     }
 
     private fun parseUnbondingEntries(data: JSONObject) {

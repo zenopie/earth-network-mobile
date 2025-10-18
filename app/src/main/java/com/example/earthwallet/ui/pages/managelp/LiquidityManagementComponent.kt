@@ -17,10 +17,12 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.viewpager2.widget.ViewPager2
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import network.erth.wallet.R
 import network.erth.wallet.Constants
-import network.erth.wallet.bridge.services.SecretQueryService
 import network.erth.wallet.wallet.services.SecureWalletManager
+import network.erth.wallet.wallet.services.SecretKClient
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
 import org.json.JSONArray
@@ -128,7 +130,6 @@ class LiquidityManagementComponent : Fragment() {
     // Detailed pool state (from contract queries)
     private var poolState: JSONObject? = null
     private var userInfo: JSONObject? = null
-    private var queryService: SecretQueryService? = null
     private var executorService: ExecutorService? = null
 
     // Centralized data for all tabs
@@ -159,7 +160,6 @@ class LiquidityManagementComponent : Fragment() {
         registerBroadcastReceiver()
 
         // Initialize services and data
-        queryService = SecretQueryService(requireContext())
         executorService = Executors.newCachedThreadPool()
         liquidityData = LiquidityData()
 
@@ -295,37 +295,29 @@ class LiquidityManagementComponent : Fragment() {
     private fun queryPoolState() {
         if (tokenKey == null) return
 
-        executorService?.execute {
+        lifecycleScope.launch {
             try {
                 val userAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (userAddress == null) {
-                    return@execute
+                    return@launch
                 }
 
                 // Get token contract address based on tokenKey
                 val tokenContract = getTokenContract(tokenKey!!)
                 if (tokenContract == null) {
-                    return@execute
+                    return@launch
                 }
 
                 // Query like React app: query_user_info with pools array
-                val queryMsg = JSONObject()
-                val queryUserInfo = JSONObject()
-                val poolsArray = JSONArray()
-                poolsArray.put(tokenContract)
-                queryUserInfo.put("pools", poolsArray)
-                queryUserInfo.put("user", userAddress)
-                queryMsg.put("query_user_info", queryUserInfo)
+                val queryJson = "{\"query_user_info\": {\"pools\": [\"$tokenContract\"], \"user\": \"$userAddress\"}}"
 
-                val result = queryService!!.queryContract(
+                val result = SecretKClient.queryContractJson(
                     Constants.EXCHANGE_CONTRACT,
-                    Constants.EXCHANGE_HASH,
-                    queryMsg
+                    JSONObject(queryJson),
+                    Constants.EXCHANGE_HASH
                 )
 
-                activity?.runOnUiThread {
-                    processPoolStateResult(result)
-                }
+                processPoolStateResult(result)
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error querying pool state", e)
@@ -472,36 +464,28 @@ class LiquidityManagementComponent : Fragment() {
     private fun loadAllLiquidityData() {
         if (tokenKey == null) return
 
-        executorService?.execute {
+        lifecycleScope.launch {
             try {
                 val userAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (userAddress == null) {
-                    return@execute
+                    return@launch
                 }
 
                 val tokenContract = getTokenContract(tokenKey!!)
                 if (tokenContract == null) {
-                    return@execute
+                    return@launch
                 }
 
                 // Query all pool data in one call
-                val queryMsg = JSONObject()
-                val queryUserInfo = JSONObject()
-                val poolsArray = JSONArray()
-                poolsArray.put(tokenContract)
-                queryUserInfo.put("pools", poolsArray)
-                queryUserInfo.put("user", userAddress)
-                queryMsg.put("query_user_info", queryUserInfo)
+                val queryJson = "{\"query_user_info\": {\"pools\": [\"$tokenContract\"], \"user\": \"$userAddress\"}}"
 
-                val result = queryService!!.queryContract(
+                val result = SecretKClient.queryContractJson(
                     Constants.EXCHANGE_CONTRACT,
-                    Constants.EXCHANGE_HASH,
-                    queryMsg
+                    JSONObject(queryJson),
+                    Constants.EXCHANGE_HASH
                 )
 
-                activity?.runOnUiThread {
-                    processAllLiquidityData(result)
-                }
+                processAllLiquidityData(result)
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading all liquidity data", e)

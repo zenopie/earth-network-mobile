@@ -17,14 +17,16 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.*
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import network.erth.wallet.R
 import network.erth.wallet.Constants
 import network.erth.wallet.bridge.activities.TransactionActivity
 import network.erth.wallet.bridge.utils.PermitManager
 import network.erth.wallet.bridge.models.Permit
-import network.erth.wallet.bridge.services.SecretQueryService
 import network.erth.wallet.wallet.services.SessionManager
 import network.erth.wallet.wallet.constants.Tokens
+import network.erth.wallet.wallet.services.SecretKClient
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.InputStream
@@ -702,25 +704,21 @@ class SwapTokensMainFragment : Fragment() {
         )
 
 
-        // Use SecretQueryService directly in background thread to avoid Activity transition
-        Thread {
+        // Use SecretKClient in lifecycleScope
+        lifecycleScope.launch {
             try {
                 // Check wallet availability using the correct wallet preferences
                 if (!network.erth.wallet.wallet.services.SecureWalletManager.isWalletAvailable(requireContext())) {
-                    activity?.runOnUiThread {
-                        Toast.makeText(context, "No wallet found", Toast.LENGTH_SHORT).show()
-                        isSimulatingSwap = false
-                        updateSwapButton()
-                    }
-                    return@Thread
+                    Toast.makeText(context, "No wallet found", Toast.LENGTH_SHORT).show()
+                    isSimulatingSwap = false
+                    updateSwapButton()
+                    return@launch
                 }
 
-                val queryObj = JSONObject(queryJson)
-                val queryService = SecretQueryService(requireContext())
-                val result = queryService.queryContract(
+                val result = SecretKClient.queryContractJson(
                     Constants.EXCHANGE_CONTRACT,
-                    Constants.EXCHANGE_HASH,
-                    queryObj
+                    JSONObject(queryJson),
+                    Constants.EXCHANGE_HASH
                 )
 
                 // Format result to match expected format
@@ -728,20 +726,16 @@ class SwapTokensMainFragment : Fragment() {
                 response.put("success", true)
                 response.put("result", result)
 
-                // Handle result on UI thread
-                activity?.runOnUiThread {
-                    handleSwapSimulationResult(response.toString())
-                }
+                // Handle result
+                handleSwapSimulationResult(response.toString())
 
             } catch (e: Exception) {
                 Log.e(TAG, "Swap simulation failed", e)
-                activity?.runOnUiThread {
-                    Toast.makeText(context, "Swap simulation failed: ${e.message}", Toast.LENGTH_SHORT).show()
-                    isSimulatingSwap = false
-                    updateSwapButton()
-                }
+                Toast.makeText(context, "Swap simulation failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                isSimulatingSwap = false
+                updateSwapButton()
             }
-        }.start()
+        }
     }
 
     private fun fetchTokenBalanceWithContract(tokenSymbol: String, isFromToken: Boolean) {
@@ -778,33 +772,29 @@ class SwapTokensMainFragment : Fragment() {
                 return
             }
 
-            // Execute query in background thread
-            Thread {
+            // Execute query using lifecycleScope
+            lifecycleScope.launch {
                 try {
-                    val result = network.erth.wallet.bridge.services.SnipQueryService.queryBalanceWithPermit(
+                    val result = SecretKClient.querySnipBalanceWithPermit(
                         requireContext(), // Use context instead of Fragment context
                         tokenSymbol,
                         currentWalletAddress
                     )
 
                     // Handle result on UI thread
-                    activity?.runOnUiThread {
-                        handleSnipBalanceResult(tokenSymbol, isFromToken, result.toString())
-                    }
+                    handleSnipBalanceResult(tokenSymbol, isFromToken, result.toString())
 
                 } catch (e: Exception) {
                     Log.e(TAG, "Token balance query failed for $tokenSymbol: ${e.message}", e)
-                    activity?.runOnUiThread {
-                        if (isFromToken) {
-                            fromBalance = -1.0
-                            updateFromBalanceDisplay()
-                        } else {
-                            toBalance = -1.0
-                            updateToBalanceDisplay()
-                        }
+                    if (isFromToken) {
+                        fromBalance = -1.0
+                        updateFromBalanceDisplay()
+                    } else {
+                        toBalance = -1.0
+                        updateToBalanceDisplay()
                     }
                 }
-            }.start()
+            }
         }
     }
 
@@ -822,48 +812,25 @@ class SwapTokensMainFragment : Fragment() {
             }
 
             val root = JSONObject(json)
-            val success = root.optBoolean("success", false)
-
-            if (success) {
-                val result = root.optJSONObject("result")
-                result?.let {
-                    val balance = it.optJSONObject("balance")
-                    balance?.let { bal ->
-                        val amount = bal.optString("amount", "0")
-                        val tokenInfo = Tokens.getTokenInfo(tokenSymbol)
-                        tokenInfo?.let { info ->
-                            // Always process amount, even if it's "0" or empty (like wallet display does)
-                            var formattedBalance = 0.0
-                            if (!TextUtils.isEmpty(amount)) {
-                                try {
-                                    formattedBalance = amount.toDouble() / 10.0.pow(info.decimals)
-                                } catch (e: NumberFormatException) {
-                                }
-                            }
-                            if (isFromToken) {
-                                fromBalance = formattedBalance
-                                updateFromBalanceDisplay()
-                            } else {
-                                toBalance = formattedBalance
-                                updateToBalanceDisplay()
-                            }
-                        } ?: run {
-                            if (isFromToken) {
-                                fromBalance = -1.0
-                                updateFromBalanceDisplay()
-                            } else {
-                                toBalance = -1.0
-                                updateToBalanceDisplay()
-                            }
+            val balance = root.optJSONObject("balance")
+            balance?.let { bal ->
+                val amount = bal.optString("amount", "0")
+                val tokenInfo = Tokens.getTokenInfo(tokenSymbol)
+                tokenInfo?.let { info ->
+                    // Always process amount, even if it's "0" or empty (like wallet display does)
+                    var formattedBalance = 0.0
+                    if (!TextUtils.isEmpty(amount)) {
+                        try {
+                            formattedBalance = amount.toDouble() / 10.0.pow(info.decimals)
+                        } catch (e: NumberFormatException) {
                         }
-                    } ?: run {
-                        if (isFromToken) {
-                            fromBalance = -1.0
-                            updateFromBalanceDisplay()
-                        } else {
-                            toBalance = -1.0
-                            updateToBalanceDisplay()
-                        }
+                    }
+                    if (isFromToken) {
+                        fromBalance = formattedBalance
+                        updateFromBalanceDisplay()
+                    } else {
+                        toBalance = formattedBalance
+                        updateToBalanceDisplay()
                     }
                 } ?: run {
                     if (isFromToken) {
@@ -874,7 +841,7 @@ class SwapTokensMainFragment : Fragment() {
                         updateToBalanceDisplay()
                     }
                 }
-            } else {
+            } ?: run {
                 if (isFromToken) {
                     fromBalance = -1.0
                     updateFromBalanceDisplay()

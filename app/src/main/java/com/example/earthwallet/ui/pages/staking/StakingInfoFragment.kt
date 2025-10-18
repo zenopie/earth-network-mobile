@@ -17,17 +17,16 @@ import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import network.erth.wallet.R
 import network.erth.wallet.Constants
 import network.erth.wallet.bridge.activities.TransactionActivity
-import network.erth.wallet.bridge.services.SecretQueryService
-import network.erth.wallet.bridge.services.SnipQueryService
 import network.erth.wallet.bridge.utils.PermitManager
 import network.erth.wallet.wallet.constants.Tokens
 import network.erth.wallet.wallet.services.SecureWalletManager
+import network.erth.wallet.wallet.services.SecretKClient
 import org.json.JSONObject
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 
 /**
  * Fragment for displaying staking info and rewards
@@ -52,8 +51,6 @@ class StakingInfoFragment : Fragment() {
     private lateinit var claimRewardsButton: Button
 
     // Services
-    private var queryService: SecretQueryService? = null
-    private var executorService: ExecutorService? = null
     private var permitManager: PermitManager? = null
 
     // Broadcast receiver for transaction success
@@ -74,8 +71,6 @@ class StakingInfoFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
 
         // Initialize services
-        queryService = SecretQueryService(requireContext())
-        executorService = Executors.newCachedThreadPool()
         permitManager = PermitManager.getInstance(requireContext())
 
         // Register broadcast receiver for immediate transaction success notifications
@@ -128,21 +123,18 @@ class StakingInfoFragment : Fragment() {
      * Refresh staking data from contract
      */
     fun refreshData() {
-
-        executorService?.execute {
+        lifecycleScope.launch {
             try {
                 queryStakingInfo()
                 queryErthBalance()
             } catch (e: Exception) {
                 Log.e(TAG, "Error refreshing staking data", e)
-                activity?.runOnUiThread {
-                    Toast.makeText(context, "Failed to load staking data", Toast.LENGTH_SHORT).show()
-                }
+                Toast.makeText(context, "Failed to load staking data", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
-    private fun queryStakingInfo() {
+    private suspend fun queryStakingInfo() {
         val userAddress = SecureWalletManager.getWalletAddress(requireContext())
         if (TextUtils.isEmpty(userAddress)) {
             return
@@ -154,13 +146,11 @@ class StakingInfoFragment : Fragment() {
         getUserInfo.put("address", userAddress)
         queryMsg.put("get_user_info", getUserInfo)
 
-
-        val result = queryService!!.queryContract(
+        val result = SecretKClient.queryContractJson(
             Constants.STAKING_CONTRACT,
-            Constants.STAKING_HASH,
-            queryMsg
+            queryMsg,
+            Constants.STAKING_HASH
         )
-
 
         // Parse results
         parseStakingResult(result)
@@ -244,27 +234,27 @@ class StakingInfoFragment : Fragment() {
     }
 
     private fun queryErthBalance() {
-        Thread {
+        lifecycleScope.launch {
             try {
                 val walletAddress = SecureWalletManager.getWalletAddress(requireContext())
                 if (walletAddress == null) {
                     unstakedBalance = -1.0
-                    activity?.runOnUiThread { updateUI() }
-                    return@Thread
+                    updateUI()
+                    return@launch
                 }
 
                 // Check if permit exists for ERTH
                 if (!permitManager!!.hasPermit(walletAddress, Tokens.ERTH.contract)) {
                     unstakedBalance = -1.0 // Indicates "need permit"
-                    activity?.runOnUiThread { updateUI() }
-                    return@Thread
+                    updateUI()
+                    return@launch
                 }
 
                 // Query ERTH balance using permit-based queries
-                val result = SnipQueryService.queryBalanceWithPermit(requireContext(), "ERTH", walletAddress)
+                val result = SecretKClient.querySnipBalanceWithPermit(requireContext(), "ERTH", walletAddress)
 
-                if (result != null && result.has("result") && result.getJSONObject("result").has("balance")) {
-                    val balanceObj = result.getJSONObject("result").getJSONObject("balance")
+                if (result != null && result.has("balance")) {
+                    val balanceObj = result.getJSONObject("balance")
                     if (balanceObj.has("amount")) {
                         val amountStr = balanceObj.getString("amount")
                         val amount = amountStr.toDouble() / 1_000_000.0 // Convert from micro to macro units
@@ -275,14 +265,14 @@ class StakingInfoFragment : Fragment() {
                 }
 
                 // Update UI on main thread
-                activity?.runOnUiThread { updateUI() }
+                updateUI()
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error querying ERTH balance for Info tab", e)
                 unstakedBalance = -1.0 // Indicates error/need permit
-                activity?.runOnUiThread { updateUI() }
+                updateUI()
             }
-        }.start()
+        }
     }
 
     private fun updateUI() {
@@ -362,10 +352,6 @@ class StakingInfoFragment : Fragment() {
                 requireActivity().applicationContext.unregisterReceiver(transactionSuccessReceiver)
             } catch (e: Exception) {
             }
-        }
-
-        if (executorService != null && !executorService!!.isShutdown) {
-            executorService!!.shutdown()
         }
     }
 }

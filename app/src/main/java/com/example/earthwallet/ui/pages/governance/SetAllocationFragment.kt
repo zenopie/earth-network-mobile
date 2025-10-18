@@ -20,11 +20,11 @@ import androidx.fragment.app.Fragment
 import network.erth.wallet.Constants
 import network.erth.wallet.R
 import network.erth.wallet.bridge.activities.TransactionActivity
-import network.erth.wallet.bridge.services.SecretQueryService
+import network.erth.wallet.wallet.services.SecretKClient
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 
 /**
  * Fragment for setting allocation preferences
@@ -69,10 +69,6 @@ class SetAllocationFragment : Fragment() {
     private var fundType: String? = null
     private var fundTitle: String? = null
 
-    // Services
-    private var queryService: SecretQueryService? = null
-    private var executorService: ExecutorService? = null
-
     // Data classes
     private data class AllocationInput(
         val allocationId: Int,
@@ -107,10 +103,6 @@ class SetAllocationFragment : Fragment() {
         ) { result ->
             handleTransactionResult(result.resultCode, result.data)
         }
-
-        // Initialize services
-        queryService = SecretQueryService(requireContext())
-        executorService = Executors.newCachedThreadPool()
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
@@ -362,7 +354,7 @@ class SetAllocationFragment : Fragment() {
     }
 
     private fun loadUserPreferences() {
-        executorService?.execute {
+        lifecycleScope.launch {
             try {
                 val contractAddress = if (FUND_TYPE_CARETAKER == fundType)
                     Constants.REGISTRATION_CONTRACT
@@ -378,7 +370,7 @@ class SetAllocationFragment : Fragment() {
                 userQuery.put("address", "secret1wvha45m7qgr6lc96sqatdq87hu3t25l9fcfex9") // TODO: Get actual wallet address
                 queryMsg.put("query_user_allocations", userQuery)
 
-                val result = queryService!!.queryContract(contractAddress, contractHash, queryMsg)
+                val result = SecretKClient.queryContractJson( contractAddress, queryMsg, contractHash)
 
                 activity?.runOnUiThread {
                     try {
@@ -497,8 +489,5 @@ class SetAllocationFragment : Fragment() {
 
     override fun onDestroy() {
         super.onDestroy()
-        if (executorService != null && !executorService!!.isShutdown) {
-            executorService!!.shutdown()
-        }
     }
 }

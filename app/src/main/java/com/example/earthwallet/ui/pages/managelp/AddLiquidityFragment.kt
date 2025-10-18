@@ -24,13 +24,15 @@ import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import network.erth.wallet.R
 import network.erth.wallet.Constants
 import network.erth.wallet.bridge.activities.TransactionActivity
-import network.erth.wallet.bridge.services.SecretQueryService
 import network.erth.wallet.bridge.utils.PermitManager
 import network.erth.wallet.wallet.constants.Tokens
 import network.erth.wallet.wallet.services.SecureWalletManager
+import network.erth.wallet.wallet.services.SecretKClient
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.DecimalFormat
@@ -302,30 +304,26 @@ class AddLiquidityFragment : Fragment() {
                 return
             }
 
-            // Execute query in background thread
-            executorService?.execute {
+            // Execute query using lifecycleScope
+            lifecycleScope.launch {
                 try {
-                    val result = network.erth.wallet.bridge.services.SnipQueryService.queryBalanceWithPermit(
+                    val result = SecretKClient.querySnipBalanceWithPermit(
                         requireContext(),
                         tokenSymbol,
                         currentWalletAddress
                     )
 
                     // Handle result on UI thread
-                    activity?.runOnUiThread {
-                        handleBalanceResult(tokenSymbol, isToken, result.toString())
-                    }
+                    handleBalanceResult(tokenSymbol, isToken, result.toString())
 
                 } catch (e: Exception) {
                     Log.e(TAG, "Token balance query failed for $tokenSymbol: ${e.message}", e)
-                    activity?.runOnUiThread {
-                        if (isToken) {
-                            tokenBalance = -1.0
-                            updateTokenBalanceDisplay()
-                        } else {
-                            erthBalance = -1.0
-                            updateErthBalanceDisplay()
-                        }
+                    if (isToken) {
+                        tokenBalance = -1.0
+                        updateTokenBalanceDisplay()
+                    } else {
+                        erthBalance = -1.0
+                        updateErthBalanceDisplay()
                     }
                 }
             }
@@ -346,46 +344,23 @@ class AddLiquidityFragment : Fragment() {
             }
 
             val root = JSONObject(json)
-            val success = root.optBoolean("success", false)
-
-            if (success) {
-                val result = root.optJSONObject("result")
-                if (result != null) {
-                    val balance = result.optJSONObject("balance")
-                    if (balance != null) {
-                        val amount = balance.optString("amount", "0")
-                        val tokenInfo = Tokens.getTokenInfo(tokenSymbol)
-                        if (tokenInfo != null) {
-                            var formattedBalance = 0.0
-                            if (!TextUtils.isEmpty(amount)) {
-                                try {
-                                    formattedBalance = amount.toDouble() / Math.pow(10.0, tokenInfo.decimals.toDouble())
-                                } catch (e: NumberFormatException) {
-                                }
-                            }
-                            if (isToken) {
-                                tokenBalance = formattedBalance
-                                updateTokenBalanceDisplay()
-                            } else {
-                                erthBalance = formattedBalance
-                                updateErthBalanceDisplay()
-                            }
-                        }
-                    } else {
-                        if (isToken) {
-                            tokenBalance = -1.0
-                            updateTokenBalanceDisplay()
-                        } else {
-                            erthBalance = -1.0
-                            updateErthBalanceDisplay()
+            val balance = root.optJSONObject("balance")
+            if (balance != null) {
+                val amount = balance.optString("amount", "0")
+                val tokenInfo = Tokens.getTokenInfo(tokenSymbol)
+                if (tokenInfo != null) {
+                    var formattedBalance = 0.0
+                    if (!TextUtils.isEmpty(amount)) {
+                        try {
+                            formattedBalance = amount.toDouble() / Math.pow(10.0, tokenInfo.decimals.toDouble())
+                        } catch (e: NumberFormatException) {
                         }
                     }
-                } else {
                     if (isToken) {
-                        tokenBalance = -1.0
+                        tokenBalance = formattedBalance
                         updateTokenBalanceDisplay()
                     } else {
-                        erthBalance = -1.0
+                        erthBalance = formattedBalance
                         updateErthBalanceDisplay()
                     }
                 }
@@ -447,30 +422,21 @@ class AddLiquidityFragment : Fragment() {
             return
         }
 
-        executorService?.execute {
+        lifecycleScope.launch {
             try {
                 val tokenContract = getTokenContractAddress(tokenKey!!)
-                if (tokenContract == null) return@execute
+                if (tokenContract == null) return@launch
 
                 // Query pool info
-                val queryMsg = JSONObject()
-                val queryUserInfo = JSONObject()
-                val poolsArray = JSONArray()
-                poolsArray.put(tokenContract)
-                queryUserInfo.put("pools", poolsArray)
-                queryUserInfo.put("user", currentWalletAddress)
-                queryMsg.put("query_user_info", queryUserInfo)
+                val queryJson = "{\"query_user_info\": {\"pools\": [\"$tokenContract\"], \"user\": \"$currentWalletAddress\"}}"
 
-                val queryService = SecretQueryService(requireContext())
-                val result = queryService.queryContract(
+                val result = SecretKClient.queryContractJson(
                     Constants.EXCHANGE_CONTRACT,
-                    Constants.EXCHANGE_HASH,
-                    queryMsg
+                    JSONObject(queryJson),
+                    Constants.EXCHANGE_HASH
                 )
 
-                activity?.runOnUiThread {
-                    parsePoolReserves(result)
-                }
+                parsePoolReserves(result)
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading pool reserves", e)
