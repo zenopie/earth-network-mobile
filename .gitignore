@@ -79,4 +79,5 @@ lint-results.*
 erth-network-app/
 scripts/
 secretjs-source/
+secretk-source/
 # End
