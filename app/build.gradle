@@ -3,6 +3,7 @@ plugins {
     id 'org.jetbrains.kotlin.android'
     id 'kotlin-parcelize'
     id 'com.google.protobuf' // Protobuf generation plugin
+    id 'org.jetbrains.kotlin.plugin.serialization' version '1.9.22'
 }
 
 // Load keystore properties
@@ -186,6 +187,9 @@ dependencies {
 
     // SecretK - Kotlin client for Secret Network
     implementation 'io.eqoty.secretk:client-jvm:7.0.0'
+
+    // Kotlinx serialization for permit serialization (used by SecretK)
+    implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0'
 
     // Keep old crypto dependencies for existing code (TODO: migrate everything to SecretK)
     implementation 'org.whispersystems:curve25519-java:0.5.0'

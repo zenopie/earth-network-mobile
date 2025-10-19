@@ -332,7 +332,9 @@ class StakeUnstakeFragment : Fragment() {
     private fun handleStake() {
         val amountText = stakeAmountInput.text.toString().trim()
         if (TextUtils.isEmpty(amountText)) {
-            Toast.makeText(context, "Please enter an amount to stake", Toast.LENGTH_SHORT).show()
+            context?.let {
+                Toast.makeText(it, "Please enter an amount to stake", Toast.LENGTH_SHORT).show()
+            }
             return
         }
 
@@ -340,12 +342,16 @@ class StakeUnstakeFragment : Fragment() {
             try {
                 val amount = amountText.toDouble()
                 if (amount <= 0) {
-                    Toast.makeText(context, "Amount must be greater than 0", Toast.LENGTH_SHORT).show()
+                    context?.let {
+                        Toast.makeText(it, "Amount must be greater than 0", Toast.LENGTH_SHORT).show()
+                    }
                     return@launch
                 }
 
                 if (amount > erthBalance) {
-                    Toast.makeText(context, "Insufficient balance", Toast.LENGTH_SHORT).show()
+                    context?.let {
+                        Toast.makeText(it, "Insufficient balance", Toast.LENGTH_SHORT).show()
+                    }
                     return@launch
                 }
 
@@ -374,13 +380,20 @@ class StakeUnstakeFragment : Fragment() {
                 }.onFailure { error ->
                     if (error.message != "Transaction cancelled by user" &&
                         error.message != "Authentication failed") {
-                        Toast.makeText(context, "Failed: ${error.message}", Toast.LENGTH_SHORT).show()
+                        context?.let {
+                            Toast.makeText(it, "Failed: ${error.message}", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 }
 
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Job was cancelled - this is normal, don't show error
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Error staking ERTH", e)
-                Toast.makeText(context, "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                context?.let {
+                    Toast.makeText(it, "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -388,7 +401,9 @@ class StakeUnstakeFragment : Fragment() {
     private fun handleUnstake() {
         val amountText = unstakeAmountInput.text.toString().trim()
         if (TextUtils.isEmpty(amountText)) {
-            Toast.makeText(context, "Please enter an amount to unstake", Toast.LENGTH_SHORT).show()
+            context?.let {
+                Toast.makeText(it, "Please enter an amount to unstake", Toast.LENGTH_SHORT).show()
+            }
             return
         }
 
@@ -396,12 +411,16 @@ class StakeUnstakeFragment : Fragment() {
             try {
                 val amount = amountText.toDouble()
                 if (amount <= 0) {
-                    Toast.makeText(context, "Amount must be greater than 0", Toast.LENGTH_SHORT).show()
+                    context?.let {
+                        Toast.makeText(it, "Amount must be greater than 0", Toast.LENGTH_SHORT).show()
+                    }
                     return@launch
                 }
 
                 if (amount > stakedBalance) {
-                    Toast.makeText(context, "Insufficient staked balance", Toast.LENGTH_SHORT).show()
+                    context?.let {
+                        Toast.makeText(it, "Insufficient staked balance", Toast.LENGTH_SHORT).show()
+                    }
                     return@launch
                 }
 
@@ -428,13 +447,20 @@ class StakeUnstakeFragment : Fragment() {
                 }.onFailure { error ->
                     if (error.message != "Transaction cancelled by user" &&
                         error.message != "Authentication failed") {
-                        Toast.makeText(context, "Failed: ${error.message}", Toast.LENGTH_SHORT).show()
+                        context?.let {
+                            Toast.makeText(it, "Failed: ${error.message}", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 }
 
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Job was cancelled - this is normal, don't show error
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Error unstaking ERTH", e)
-                Toast.makeText(context, "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                context?.let {
+                    Toast.makeText(it, "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }

@@ -254,10 +254,17 @@ class SwapForGasFragment : Fragment() {
                     Constants.EXCHANGE_HASH
                 )
 
+                // Extract data from wrapper
+                val actualResult = if (result.has("data")) {
+                    result.getJSONObject("data")
+                } else {
+                    result
+                }
+
                 // Format result to match expected format
                 val response = JSONObject()
                 response.put("success", true)
-                response.put("result", result)
+                response.put("result", actualResult)
 
                 // Handle result
                 handleSimulationResult(response.toString())

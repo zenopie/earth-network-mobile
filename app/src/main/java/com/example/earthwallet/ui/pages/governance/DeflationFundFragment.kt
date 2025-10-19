@@ -215,13 +215,6 @@ class DeflationFundFragment : Fragment() {
 
                                 currentAllocations!!.put(transformed)
                             }
-                        } else if (result.toString().startsWith("[")) {
-                            // Direct array response (fallback)
-                            val directArray = JSONArray(result.toString())
-                            currentAllocations = directArray
-                        } else if (result.has("allocations")) {
-                            // DeflationFund style response (old format)
-                            currentAllocations = result.getJSONArray("allocations")
                         }
 
                         updateActualAllocationsUI()
@@ -301,12 +294,6 @@ class DeflationFundFragment : Fragment() {
 
                                 userAllocations!!.put(transformed)
                             }
-                        } else if (result.toString().startsWith("[")) {
-                            // Fallback: direct array response format
-                            userAllocations = JSONArray(result.toString())
-                        } else if (result.has("percentages")) {
-                            // Fallback for older format
-                            userAllocations = result.getJSONArray("percentages")
                         }
 
                         updatePreferredAllocationsUI()

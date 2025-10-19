@@ -227,13 +227,6 @@ class CaretakerFundFragment : Fragment() {
 
                                 currentAllocations!!.put(transformed)
                             }
-                        } else if (result.toString().startsWith("[")) {
-                            // Direct array response (fallback)
-                            val directArray = JSONArray(result.toString())
-                            currentAllocations = directArray
-                        } else if (result.has("allocations")) {
-                            // Old format
-                            currentAllocations = result.getJSONArray("allocations")
                         } else {
                             // Default for caretaker fund - 100% to registration rewards
                             val defaultAllocation = JSONObject()
@@ -304,10 +297,6 @@ class CaretakerFundFragment : Fragment() {
 
                                 userAllocations!!.put(transformed)
                             }
-                        } else if (result.toString().startsWith("[")) {
-                            userAllocations = JSONArray(result.toString())
-                        } else if (result.has("percentages")) {
-                            userAllocations = result.getJSONArray("percentages")
                         }
 
                     updatePreferredAllocationsUI()

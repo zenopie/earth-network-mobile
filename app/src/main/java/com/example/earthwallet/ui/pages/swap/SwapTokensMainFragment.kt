@@ -432,7 +432,7 @@ class SwapTokensMainFragment : Fragment() {
         }
 
         // Create permit in background thread
-        Thread {
+        lifecycleScope.launch {
             try {
                 // Create permit with correct parameters
                 val contractAddresses = listOf(tokenInfo.contract)
@@ -441,22 +441,18 @@ class SwapTokensMainFragment : Fragment() {
 
                 val permit = permitManager?.createPermit(requireContext(), currentWalletAddress, contractAddresses, permitName, permissions)
 
-                // Update UI on main thread
-                activity?.runOnUiThread {
-                    if (permit != null) {
-                        // Refresh balances to update the UI
-                        fetchBalances()
-                    } else {
-                        Toast.makeText(context, "Failed to create permit", Toast.LENGTH_SHORT).show()
-                    }
+                // Update UI
+                if (permit != null) {
+                    // Refresh balances to update the UI
+                    fetchBalances()
+                } else {
+                    Toast.makeText(context, "Failed to create permit", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error creating permit for $tokenSymbol", e)
-                activity?.runOnUiThread {
-                    Toast.makeText(context, "Error creating permit: ${e.message}", Toast.LENGTH_SHORT).show()
-                }
+                Toast.makeText(context, "Error creating permit: ${e.message}", Toast.LENGTH_SHORT).show()
             }
-        }.start()
+        }
     }
 
     private fun executeSwap() {
@@ -605,10 +601,17 @@ class SwapTokensMainFragment : Fragment() {
                     Constants.EXCHANGE_HASH
                 )
 
+                // Extract data from wrapper
+                val actualResult = if (result.has("data")) {
+                    result.getJSONObject("data")
+                } else {
+                    result
+                }
+
                 // Format result to match expected format
                 val response = JSONObject()
                 response.put("success", true)
-                response.put("result", result)
+                response.put("result", actualResult)
 
                 // Handle result
                 handleSwapSimulationResult(response.toString())

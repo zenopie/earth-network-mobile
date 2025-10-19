@@ -271,7 +271,18 @@ object SecretKClient {
     ): JSONObject = withContext(Dispatchers.IO) {
         try {
             val response = queryContract(contractAddress, queryJson.toString(), codeHash)
-            JSONObject(response)
+
+            // Always wrap response in "data" field for consistent processing
+            val wrapper = JSONObject()
+            val trimmedResponse = response.trim()
+            if (trimmedResponse.startsWith("[")) {
+                // Response is a JSONArray
+                wrapper.put("data", JSONArray(response))
+            } else {
+                // Response is a JSONObject
+                wrapper.put("data", JSONObject(response))
+            }
+            wrapper
         } catch (e: Exception) {
             Log.e(TAG, "Contract query failed", e)
             // Just rethrow to avoid double wrapping
@@ -297,24 +308,23 @@ object SecretKClient {
             val tokenInfo = Tokens.getTokenInfo(tokenSymbol)
                 ?: throw Exception("Unknown token: $tokenSymbol")
 
-            // Get permit manager and retrieve valid permit
+            // Get permit from manager
             val permitManager = PermitManager.getInstance(context)
-            val permit = permitManager.getValidPermitForQuery(
-                walletAddress,
-                tokenInfo.contract,
-                "balance"
-            ) ?: throw Exception("No valid permit found for $tokenSymbol")
+            val permitJson = permitManager.getPermit(walletAddress, tokenInfo.contract)
+                ?: throw Exception("No permit found for $tokenSymbol")
 
-            // Create balance query (no address needed - derived from permit)
-            val innerQuery = JSONObject().apply {
-                put("balance", JSONObject())
+            // Create query using template string exactly like SecretK example
+            val queryWithPermit = """
+            {
+              "with_permit": {
+                "permit": $permitJson,
+                "query": { "balance": {} }
+              }
             }
-
-            // Wrap in with_permit structure
-            val withPermitQuery = permitManager.createWithPermitQuery(innerQuery, permit, CHAIN_ID)
+            """.trimIndent()
 
             // Execute query
-            val response = queryContract(tokenInfo.contract, withPermitQuery.toString(), tokenInfo.hash)
+            val response = queryContract(tokenInfo.contract, queryWithPermit, tokenInfo.hash)
             Log.d(TAG, "SNIP-20 balance query successful for $tokenSymbol")
             JSONObject(response)
         } catch (e: Exception) {

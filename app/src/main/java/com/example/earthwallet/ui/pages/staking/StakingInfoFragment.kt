@@ -124,13 +124,23 @@ class StakingInfoFragment : Fragment() {
      * Refresh staking data from contract
      */
     fun refreshData() {
+        // Check if fragment is still attached before launching coroutine
+        if (!isAdded || context == null) {
+            return
+        }
+
         lifecycleScope.launch {
             try {
                 queryStakingInfo()
                 queryErthBalance()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Job was cancelled (user navigated away) - this is normal, don't show error
+                throw e // Re-throw to properly cancel the coroutine
             } catch (e: Exception) {
                 Log.e(TAG, "Error refreshing staking data", e)
-                Toast.makeText(context, "Failed to load staking data", Toast.LENGTH_SHORT).show()
+                context?.let {
+                    Toast.makeText(it, "Failed to load staking data", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -326,13 +336,20 @@ class StakingInfoFragment : Fragment() {
                     // Only show error toast if it's not a cancellation
                     if (error.message != "Transaction cancelled by user" &&
                         error.message != "Authentication failed") {
-                        Toast.makeText(context, "Failed to claim rewards: ${error.message}", Toast.LENGTH_SHORT).show()
+                        context?.let {
+                            Toast.makeText(it, "Failed to claim rewards: ${error.message}", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 }
 
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Job was cancelled - this is normal, don't show error
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Error claiming rewards", e)
-                Toast.makeText(context, "Failed to claim rewards: ${e.message}", Toast.LENGTH_SHORT).show()
+                context?.let {
+                    Toast.makeText(it, "Failed to claim rewards: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }

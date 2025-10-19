@@ -198,10 +198,16 @@ class ANMLClaimFragment : Fragment() {
                     Constants.STAKING_HASH
                 )
 
+                // Extract data from wrapper
+                val dataObj = if (result.has("data")) {
+                    result.getJSONObject("data")
+                } else {
+                    result
+                }
 
                 // Parse staked amount
-                if (result?.has("user_info") == true && !result.isNull("user_info")) {
-                    val userInfo = result.getJSONObject("user_info")
+                if (dataObj.has("user_info") && !dataObj.isNull("user_info")) {
+                    val userInfo = dataObj.getJSONObject("user_info")
                     if (userInfo.has("staked_amount")) {
                         val stakedAmountMicro = userInfo.getLong("staked_amount")
                         val stakedAmountMacro = stakedAmountMicro / 1_000_000.0 // Convert to macro units

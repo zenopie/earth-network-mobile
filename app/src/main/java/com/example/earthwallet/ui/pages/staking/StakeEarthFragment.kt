@@ -130,8 +130,15 @@ class StakeEarthFragment : Fragment() {
                     Constants.STAKING_HASH
                 )
 
+                // Extract data from wrapper
+                val dataObj = if (result.has("data")) {
+                    result.getJSONObject("data")
+                } else {
+                    result
+                }
+
                 if (callback != null && activity != null) {
-                    activity?.runOnUiThread { callback.onStakingDataReceived(result) }
+                    activity?.runOnUiThread { callback.onStakingDataReceived(dataObj) }
                 }
 
             } catch (e: Exception) {

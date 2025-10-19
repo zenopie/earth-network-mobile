@@ -18,6 +18,8 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import network.erth.wallet.R
 import network.erth.wallet.bridge.utils.PermitManager
 import network.erth.wallet.wallet.constants.Tokens
@@ -247,18 +249,29 @@ class ManagePermitsFragment : Fragment() {
 
             // Status text (permit status and permissions)
             val statusText = TextView(context).apply {
-                val permit = tokenInfo.permit
-                if (permit == null) {
+                val permitJson = tokenInfo.permit
+                if (permitJson == null) {
                     text = "No permit set"
                     setTextColor(resources.getColor(R.color.wallet_row_address))
                 } else {
-                    val permissions = permit.permissions
-                    var permissionsText = permissions?.joinToString(", ") ?: "No permissions"
-                    if (permissionsText.length > 25) {
-                        permissionsText = permissionsText.substring(0, 25) + "..."
+                    try {
+                        val permit = org.json.JSONObject(permitJson)
+                        val params = permit.getJSONObject("params")
+                        val permissions = params.getJSONArray("permissions")
+                        val permissionsList = mutableListOf<String>()
+                        for (i in 0 until permissions.length()) {
+                            permissionsList.add(permissions.getString(i))
+                        }
+                        var permissionsText = permissionsList.joinToString(", ")
+                        if (permissionsText.length > 25) {
+                            permissionsText = permissionsText.substring(0, 25) + "..."
+                        }
+                        text = "Permissions: $permissionsText"
+                        setTextColor(resources.getColor(R.color.wallet_row_address))
+                    } catch (e: Exception) {
+                        text = "Error reading permit"
+                        setTextColor(resources.getColor(R.color.wallet_row_address))
                     }
-                    text = "Permissions: $permissionsText"
-                    setTextColor(resources.getColor(R.color.wallet_row_address))
                 }
                 textSize = 12f
             }
@@ -364,16 +377,6 @@ class ManagePermitsFragment : Fragment() {
     }
 
     /**
-     * Check if permit exists for a contract
-     */
-    private fun hasPermit(contractAddress: String): Boolean {
-        if (TextUtils.isEmpty(walletAddress)) {
-            return false
-        }
-        return permitManager.hasPermit(walletAddress, contractAddress)
-    }
-
-    /**
      * Public method to update wallet address
      */
     fun updateWalletAddress(newAddress: String) {
@@ -403,27 +406,27 @@ class ManagePermitsFragment : Fragment() {
      * Create permit with specific permissions - directly using PermitManager (no transaction flow)
      */
     private fun createPermitWithPermissions(token: Tokens.TokenInfo, permissions: List<String>) {
-        try {
+        lifecycleScope.launch {
+            try {
+                // Create permit directly using PermitManager in the background
+                permitManager.createPermit(
+                    requireContext(),
+                    walletAddress,
+                    listOf(token.contract),
+                    "EarthWallet", // permit name
+                    permissions
+                )
 
-            // Create permit directly using PermitManager in the background
-            permitManager.createPermit(
-                requireContext(),
-                walletAddress,
-                listOf(token.contract),
-                "EarthWallet", // permit name
-                permissions
-            )
+                // Notify parent if available
+                listener?.onPermitRequested(token)
 
-            // Notify parent if available
-            listener?.onPermitRequested(token)
+                // Refresh the display
+                loadPermits()
 
-            // Refresh the display
-            loadPermits()
-
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to create permit for ${token.symbol}", e)
-            Toast.makeText(context, "Failed to create permit: ${e.message}", Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to create permit for ${token.symbol}", e)
+                Toast.makeText(context, "Failed to create permit: ${e.message}", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
@@ -437,6 +440,6 @@ class ManagePermitsFragment : Fragment() {
      */
     private class TokenPermitInfo {
         lateinit var token: Tokens.TokenInfo
-        var permit: network.erth.wallet.bridge.models.Permit? = null
+        var permit: String? = null
     }
 }

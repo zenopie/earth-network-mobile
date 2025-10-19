@@ -20,7 +20,6 @@ import network.erth.wallet.bridge.services.SecretExecuteService
 import network.erth.wallet.bridge.services.NativeSendService
 import network.erth.wallet.bridge.services.MultiMessageExecuteService
 import network.erth.wallet.bridge.services.SnipExecuteService
-import network.erth.wallet.bridge.services.PermitSigningService
 import network.erth.wallet.wallet.services.SecureWalletManager
 import network.erth.wallet.wallet.utils.BiometricAuthManager
 import org.json.JSONObject
@@ -179,20 +178,6 @@ class TransactionActivity : AppCompatActivity() {
                 }
             }
 
-            TYPE_PERMIT_SIGNING -> {
-                val permitName = intent.getStringExtra("permit_name")
-                val allowedTokens = intent.getStringExtra("allowed_tokens")
-                val permissions = intent.getStringExtra("permissions")
-                if (permitName == null || allowedTokens == null || permissions == null) return null
-
-                TransactionConfirmationDialog.TransactionDetails(
-                    permitName,
-                    "Create SNIP-24 Query Permit\n" +
-                    "Tokens: ${allowedTokens.replace(",", ", ")}\n" +
-                    "Permissions: ${permissions.replace(",", ", ")}"
-                ).setContractLabel("Permit Name:")
-            }
-
             else -> null
         }
     }
@@ -329,12 +314,6 @@ class TransactionActivity : AppCompatActivity() {
                         val snipResult = SnipExecuteService.execute(this, snipIntent)
                         result = snipResult[0]
                         senderAddress = snipResult[1]
-                    }
-
-                    TYPE_PERMIT_SIGNING -> {
-                        val permitResult = PermitSigningService.execute(this, intent)
-                        result = permitResult[0]
-                        senderAddress = permitResult[1]
                     }
 
                     else -> {
