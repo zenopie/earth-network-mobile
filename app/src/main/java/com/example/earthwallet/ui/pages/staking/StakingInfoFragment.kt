@@ -21,7 +21,6 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import network.erth.wallet.R
 import network.erth.wallet.Constants
-import network.erth.wallet.bridge.activities.TransactionActivity
 import network.erth.wallet.bridge.utils.PermitManager
 import network.erth.wallet.wallet.constants.Tokens
 import network.erth.wallet.wallet.services.SecureWalletManager

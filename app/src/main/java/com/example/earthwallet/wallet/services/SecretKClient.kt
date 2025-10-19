@@ -8,7 +8,6 @@ import io.eqoty.secretk.client.SigningCosmWasmClient
 import io.eqoty.secretk.wallet.DirectSigningWallet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import network.erth.wallet.bridge.services.SecretCryptoService
 import network.erth.wallet.bridge.utils.PermitManager
 import network.erth.wallet.wallet.constants.Tokens
 import network.erth.wallet.wallet.services.SecureWalletManager
@@ -168,6 +167,77 @@ object SecretKClient {
                 throw e
             } else {
                 throw Exception("Contract execution failed: ${e.message}", e)
+            }
+        }
+    }
+
+    /**
+     * Execute multiple contract messages in a single transaction
+     *
+     * @param mnemonic Wallet mnemonic
+     * @param messages List of contract execution messages
+     * @param memo Optional transaction memo
+     * @param gasLimit Gas limit for transaction (default: 300_000 for multiple messages)
+     * @return Transaction response JSON
+     */
+    data class ContractMessage(
+        val contractAddress: String,
+        val handleMsg: String,
+        val sentFunds: List<Coin> = emptyList(),
+        val codeHash: String? = null
+    )
+
+    suspend fun executeMultipleContracts(
+        mnemonic: String,
+        messages: List<ContractMessage>,
+        memo: String = "",
+        gasLimit: Int = 300_000
+    ): String = withContext(Dispatchers.IO) {
+        try {
+            if (messages.isEmpty()) {
+                throw Exception("No messages provided for multi-contract execution")
+            }
+
+            val wallet = DirectSigningWallet(mnemonic)
+            val client = SigningCosmWasmClient(
+                apiUrl = LCD_ENDPOINT,
+                wallet = wallet,
+                chainId = CHAIN_ID
+            )
+
+            val senderAddress = wallet.accounts.first().address
+
+            // Build multiple MsgExecuteContract messages
+            val msgs = messages.map { message ->
+                io.eqoty.secretk.types.MsgExecuteContract(
+                    sender = senderAddress,
+                    contractAddress = message.contractAddress,
+                    msg = message.handleMsg,
+                    sentFunds = message.sentFunds,
+                    codeHash = message.codeHash
+                )
+            }
+
+            val response = client.execute(
+                msgs = msgs,
+                txOptions = io.eqoty.secretk.types.TxOptions(
+                    gasLimit = gasLimit,
+                    memo = memo
+                )
+            )
+
+            Log.d(TAG, "Multi-contract execute successful: ${messages.size} messages")
+
+            // Return all response data as JSON array
+            val dataArray = org.json.JSONArray()
+            response.data.forEach { dataArray.put(it) }
+            dataArray.toString()
+        } catch (e: Throwable) {
+            Log.e(TAG, "Multi-contract execute failed", e)
+            if (e is Exception) {
+                throw e
+            } else {
+                throw Exception("Multi-contract execution failed: ${e.message}", e)
             }
         }
     }

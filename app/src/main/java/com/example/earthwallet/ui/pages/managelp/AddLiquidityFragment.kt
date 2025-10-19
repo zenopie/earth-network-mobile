@@ -28,10 +28,10 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import network.erth.wallet.R
 import network.erth.wallet.Constants
-import network.erth.wallet.bridge.activities.TransactionActivity
 import network.erth.wallet.bridge.utils.PermitManager
 import network.erth.wallet.wallet.constants.Tokens
 import network.erth.wallet.wallet.services.SecureWalletManager
+import network.erth.wallet.wallet.services.TransactionExecutor
 import network.erth.wallet.wallet.services.SecretKClient
 import org.json.JSONArray
 import org.json.JSONObject
@@ -76,7 +76,6 @@ class AddLiquidityFragment : Fragment() {
     private var transactionSuccessReceiver: BroadcastReceiver? = null
 
     // Activity Result Launcher for transaction activity
-    private lateinit var addLiquidityLauncher: ActivityResultLauncher<Intent>
 
     // Pool reserves for ratio calculation
     private var erthReserve = 0.0
@@ -93,21 +92,6 @@ class AddLiquidityFragment : Fragment() {
 
         // Initialize permit manager
         permitManager = PermitManager.getInstance(requireContext())
-
-        // Initialize Activity Result Launcher
-        addLiquidityLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            if (result.resultCode == Activity.RESULT_OK) {
-                // Clear input fields
-                tokenAmountInput.setText("")
-                erthAmountInput.setText("")
-                // Refresh data (broadcast receiver will also handle this)
-                loadTokenBalances()
-                loadPoolReserves()
-            } else {
-                val error = result.data?.getStringExtra(TransactionActivity.EXTRA_ERROR) ?: "Transaction failed"
-                Log.e(TAG, "Add liquidity transaction failed: $error")
-            }
-        }
 
         executorService = Executors.newCachedThreadPool()
     }
@@ -642,92 +626,71 @@ class AddLiquidityFragment : Fragment() {
                 return
             }
 
-            // Create the multi-message transaction array (like React app)
-            val messages = JSONArray()
-
-            // 1. ERTH allowance message
-            val erthAllowanceMsg = createAllowanceMessage(
-                walletAddress, erthInfo.contract, erthInfo.hash,
-                Constants.EXCHANGE_CONTRACT, erthMicroAmount.toString()
+            // Build contract messages directly
+            val contractMessages = listOf(
+                // 1. ERTH allowance message
+                SecretKClient.ContractMessage(
+                    contractAddress = erthInfo.contract,
+                    handleMsg = JSONObject().apply {
+                        put("increase_allowance", JSONObject().apply {
+                            put("spender", Constants.EXCHANGE_CONTRACT)
+                            put("amount", erthMicroAmount.toString())
+                        })
+                    }.toString(),
+                    codeHash = erthInfo.hash
+                ),
+                // 2. Token allowance message
+                SecretKClient.ContractMessage(
+                    contractAddress = tokenInfo.contract,
+                    handleMsg = JSONObject().apply {
+                        put("increase_allowance", JSONObject().apply {
+                            put("spender", Constants.EXCHANGE_CONTRACT)
+                            put("amount", tokenMicroAmount.toString())
+                        })
+                    }.toString(),
+                    codeHash = tokenInfo.hash
+                ),
+                // 3. Add liquidity message
+                SecretKClient.ContractMessage(
+                    contractAddress = Constants.EXCHANGE_CONTRACT,
+                    handleMsg = JSONObject().apply {
+                        put("add_liquidity", JSONObject().apply {
+                            put("amount_erth", erthMicroAmount.toString())
+                            put("amount_b", tokenMicroAmount.toString())
+                            put("pool", tokenInfo.contract)
+                        })
+                    }.toString(),
+                    codeHash = Constants.EXCHANGE_HASH
+                )
             )
-            messages.put(erthAllowanceMsg)
 
-            // 2. Token allowance message
-            val tokenAllowanceMsg = createAllowanceMessage(
-                walletAddress, tokenInfo.contract, tokenInfo.hash,
-                Constants.EXCHANGE_CONTRACT, tokenMicroAmount.toString()
-            )
-            messages.put(tokenAllowanceMsg)
+            // Execute using TransactionExecutor
+            lifecycleScope.launch {
+                val result = TransactionExecutor.executeMultipleContracts(
+                    fragment = this@AddLiquidityFragment,
+                    messages = contractMessages,
+                    memo = "Add liquidity: $tokenAmount $tokenKey + $erthAmount ERTH"
+                )
 
-            // 3. Add liquidity message
-            val addLiquidityMsg = createAddLiquidityMessage(
-                walletAddress, Constants.EXCHANGE_CONTRACT, Constants.EXCHANGE_HASH,
-                tokenInfo.contract, erthMicroAmount.toString(), tokenMicroAmount.toString()
-            )
-            messages.put(addLiquidityMsg)
-
-
-            // Launch MultiMessageExecuteActivity
-            val intent = Intent(context, TransactionActivity::class.java)
-            intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_MULTI_MESSAGE)
-            intent.putExtra(TransactionActivity.EXTRA_MESSAGES, messages.toString())
-            intent.putExtra(TransactionActivity.EXTRA_MEMO, "Add liquidity: $tokenAmount $tokenKey + $erthAmount ERTH")
-
-            addLiquidityLauncher.launch(intent)
+                result.onSuccess {
+                    // Clear input fields
+                    tokenAmountInput.setText("")
+                    erthAmountInput.setText("")
+                    // Refresh data
+                    loadTokenBalances()
+                    loadPoolReserves()
+                }.onFailure { error ->
+                    if (error.message != "Transaction cancelled by user" &&
+                        error.message != "Authentication failed") {
+                        Log.e(TAG, "Add liquidity transaction failed: ${error.message}")
+                    }
+                }
+            }
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to execute add liquidity transaction", e)
             Toast.makeText(context, "Failed to create transaction: ${e.message}", Toast.LENGTH_LONG).show()
         }
-    }
-
-    /**
-     * Create SNIP-20 increase_allowance message
-     */
-    private fun createAllowanceMessage(
-        sender: String, tokenContract: String, tokenHash: String,
-        spender: String, amount: String
-    ): JSONObject {
-        val message = JSONObject()
-        message.put("sender", sender)
-        message.put("contract", tokenContract)
-        message.put("code_hash", tokenHash)
-
-        val msg = JSONObject()
-        val increaseAllowance = JSONObject()
-        increaseAllowance.put("spender", spender)
-        increaseAllowance.put("amount", amount)
-        msg.put("increase_allowance", increaseAllowance)
-
-        message.put("msg", msg)
-        message.put("sent_funds", JSONArray()) // Empty array for no funds
-
-        return message
-    }
-
-    /**
-     * Create add_liquidity message for exchange contract
-     */
-    private fun createAddLiquidityMessage(
-        sender: String, exchangeContract: String, exchangeHash: String,
-        pool: String, amountErth: String, amountB: String
-    ): JSONObject {
-        val message = JSONObject()
-        message.put("sender", sender)
-        message.put("contract", exchangeContract)
-        message.put("code_hash", exchangeHash)
-
-        val msg = JSONObject()
-        val addLiquidity = JSONObject()
-        addLiquidity.put("amount_erth", amountErth)
-        addLiquidity.put("amount_b", amountB)
-        addLiquidity.put("pool", pool)
-        msg.put("add_liquidity", addLiquidity)
-
-        message.put("msg", msg)
-        message.put("sent_funds", JSONArray()) // Empty array for no funds
-
-        return message
     }
 
     /**

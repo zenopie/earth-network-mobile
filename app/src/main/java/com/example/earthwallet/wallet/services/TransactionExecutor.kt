@@ -131,6 +131,90 @@ object TransactionExecutor {
     }
 
     /**
+     * Execute multiple contract messages in a single transaction
+     *
+     * @param fragment The calling fragment (for context and lifecycle)
+     * @param messages List of contract messages to execute
+     * @param memo Optional transaction memo
+     * @param gasLimit Gas limit for the transaction (default 300,000)
+     * @param contractLabel Label to show in confirmation dialog (default "Multi-Message:")
+     * @return Result with transaction response or error
+     */
+    suspend fun executeMultipleContracts(
+        fragment: Fragment,
+        messages: List<SecretKClient.ContractMessage>,
+        memo: String = "",
+        gasLimit: Int = 300_000,
+        contractLabel: String = "Multi-Message:"
+    ): Result<String> = withContext(Dispatchers.Main) {
+        val activity = fragment.requireActivity()
+        val statusModal = StatusModal(activity)
+
+        try {
+            // Build confirmation message showing all contracts
+            val messagePreview = buildString {
+                appendLine("${messages.size} messages:")
+                messages.forEachIndexed { index, msg ->
+                    appendLine("${index + 1}. ${msg.contractAddress}")
+                }
+                if (memo.isNotEmpty()) {
+                    appendLine("\nMemo: $memo")
+                }
+            }
+
+            // Show confirmation dialog
+            val details = TransactionConfirmationDialog.TransactionDetails(
+                contractAddress = "${messages.size} contracts",
+                message = messagePreview
+            ).setContractLabel(contractLabel)
+
+            val confirmed = showConfirmationDialog(activity, details)
+            if (!confirmed) {
+                return@withContext Result.failure(Exception("Transaction cancelled by user"))
+            }
+
+            // Authenticate
+            val authResult = authenticateTransaction(activity)
+            if (!authResult) {
+                return@withContext Result.failure(Exception("Authentication failed"))
+            }
+
+            // Show loading modal
+            statusModal.show(StatusModal.State.LOADING)
+
+            // Execute multi-message transaction
+            val result = withContext(Dispatchers.IO) {
+                try {
+                    SecureWalletManager.executeWithSuspendMnemonic(activity) { mnemonic ->
+                        SecretKClient.executeMultipleContracts(
+                            mnemonic = mnemonic,
+                            messages = messages,
+                            memo = memo,
+                            gasLimit = gasLimit
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Multi-contract execution failed", e)
+                    throw e
+                }
+            }
+
+            // Show success modal (auto-closes after 1.5s)
+            statusModal.updateState(StatusModal.State.SUCCESS)
+
+            Result.success(result)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Multi-contract transaction failed", e)
+
+            // Show error modal (auto-closes after 1.5s)
+            statusModal.updateState(StatusModal.State.ERROR)
+
+            Result.failure(Exception(e.message ?: "Multi-contract transaction failed", e))
+        }
+    }
+
+    /**
      * Send SNIP-20 tokens to a recipient address or contract with an optional message
      *
      * @param fragment The calling fragment
