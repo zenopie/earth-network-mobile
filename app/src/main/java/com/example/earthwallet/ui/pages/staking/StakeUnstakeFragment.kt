@@ -1,6 +1,5 @@
 package network.erth.wallet.ui.pages.staking
 
-import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -23,11 +22,11 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import network.erth.wallet.R
 import network.erth.wallet.Constants
-import network.erth.wallet.bridge.activities.TransactionActivity
 import network.erth.wallet.bridge.utils.PermitManager
 import network.erth.wallet.wallet.constants.Tokens
 import network.erth.wallet.wallet.services.SecretKClient
 import network.erth.wallet.wallet.services.SecureWalletManager
+import network.erth.wallet.wallet.services.TransactionExecutor
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
@@ -39,8 +38,6 @@ class StakeUnstakeFragment : Fragment() {
 
     companion object {
         private const val TAG = "StakeUnstakeFragment"
-        private const val REQ_STAKE_ERTH = 4002
-        private const val REQ_UNSTAKE_ERTH = 4003
 
         @JvmStatic
         fun newInstance(): StakeUnstakeFragment = StakeUnstakeFragment()
@@ -339,41 +336,52 @@ class StakeUnstakeFragment : Fragment() {
             return
         }
 
-        try {
-            val amount = amountText.toDouble()
-            if (amount <= 0) {
-                Toast.makeText(context, "Amount must be greater than 0", Toast.LENGTH_SHORT).show()
-                return
+        lifecycleScope.launch {
+            try {
+                val amount = amountText.toDouble()
+                if (amount <= 0) {
+                    Toast.makeText(context, "Amount must be greater than 0", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+
+                if (amount > erthBalance) {
+                    Toast.makeText(context, "Insufficient balance", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+
+                // Convert amount to micro units
+                val amountMicro = Math.round(amount * 1_000_000)
+
+                // Create SNIP-20 transfer message: { stake_erth: {} }
+                val stakeMsg = JSONObject()
+                stakeMsg.put("stake_erth", JSONObject())
+
+                // Use TransactionExecutor to send ERTH to staking contract
+                val erthToken = Tokens.getTokenInfo("ERTH")
+                val result = TransactionExecutor.sendSnip20Token(
+                    fragment = this@StakeUnstakeFragment,
+                    tokenContract = erthToken?.contract ?: "",
+                    tokenHash = erthToken?.hash ?: "",
+                    recipient = Constants.STAKING_CONTRACT,
+                    recipientHash = Constants.STAKING_HASH,
+                    amount = amountMicro.toString(),
+                    message = stakeMsg
+                )
+
+                result.onSuccess {
+                    stakeAmountInput.setText("") // Clear input
+                    refreshData() // Refresh balances
+                }.onFailure { error ->
+                    if (error.message != "Transaction cancelled by user" &&
+                        error.message != "Authentication failed") {
+                        Toast.makeText(context, "Failed: ${error.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Error staking ERTH", e)
+                Toast.makeText(context, "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
             }
-
-            if (amount > erthBalance) {
-                Toast.makeText(context, "Insufficient balance", Toast.LENGTH_SHORT).show()
-                return
-            }
-
-            // Convert amount to micro units
-            val amountMicro = Math.round(amount * 1_000_000)
-
-            // Create SNIP-20 transfer message: { stake_erth: {} }
-            val stakeMsg = JSONObject()
-            stakeMsg.put("stake_erth", JSONObject())
-
-            // Use SnipExecuteActivity to send ERTH to staking contract
-            val erthToken = Tokens.getTokenInfo("ERTH")
-            val intent = Intent(activity, TransactionActivity::class.java)
-            intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SNIP_EXECUTE)
-            intent.putExtra(TransactionActivity.EXTRA_TOKEN_CONTRACT, erthToken?.contract)
-            intent.putExtra(TransactionActivity.EXTRA_TOKEN_HASH, erthToken?.hash)
-            intent.putExtra(TransactionActivity.EXTRA_RECIPIENT_ADDRESS, Constants.STAKING_CONTRACT)
-            intent.putExtra(TransactionActivity.EXTRA_RECIPIENT_HASH, Constants.STAKING_HASH)
-            intent.putExtra(TransactionActivity.EXTRA_AMOUNT, amountMicro.toString())
-            intent.putExtra(TransactionActivity.EXTRA_MESSAGE_JSON, stakeMsg.toString())
-
-            startActivityForResult(intent, REQ_STAKE_ERTH)
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error staking ERTH", e)
-            Toast.makeText(context, "Failed to stake: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -384,60 +392,49 @@ class StakeUnstakeFragment : Fragment() {
             return
         }
 
-        try {
-            val amount = amountText.toDouble()
-            if (amount <= 0) {
-                Toast.makeText(context, "Amount must be greater than 0", Toast.LENGTH_SHORT).show()
-                return
-            }
+        lifecycleScope.launch {
+            try {
+                val amount = amountText.toDouble()
+                if (amount <= 0) {
+                    Toast.makeText(context, "Amount must be greater than 0", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
 
-            if (amount > stakedBalance) {
-                Toast.makeText(context, "Insufficient staked balance", Toast.LENGTH_SHORT).show()
-                return
-            }
+                if (amount > stakedBalance) {
+                    Toast.makeText(context, "Insufficient staked balance", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
 
-            // Convert amount to micro units
-            val amountMicro = Math.round(amount * 1_000_000)
+                // Convert amount to micro units
+                val amountMicro = Math.round(amount * 1_000_000)
 
-            // Create withdraw message: { withdraw: { amount: "123456" } }
-            val withdrawMsg = JSONObject()
-            val withdraw = JSONObject()
-            withdraw.put("amount", amountMicro.toString())
-            withdrawMsg.put("withdraw", withdraw)
+                // Create withdraw message: { withdraw: { amount: "123456" } }
+                val withdrawMsg = JSONObject()
+                val withdraw = JSONObject()
+                withdraw.put("amount", amountMicro.toString())
+                withdrawMsg.put("withdraw", withdraw)
 
-            // Use SecretExecuteActivity for unstaking
-            val intent = Intent(activity, TransactionActivity::class.java)
-            intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE)
-            intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.STAKING_CONTRACT)
-            intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.STAKING_HASH)
-            intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, withdrawMsg.toString())
+                val result = TransactionExecutor.executeContract(
+                    fragment = this@StakeUnstakeFragment,
+                    contractAddress = Constants.STAKING_CONTRACT,
+                    message = withdrawMsg,
+                    codeHash = Constants.STAKING_HASH,
+                    contractLabel = "Staking Contract:"
+                )
 
-            startActivityForResult(intent, REQ_UNSTAKE_ERTH)
+                result.onSuccess {
+                    unstakeAmountInput.setText("") // Clear input
+                    refreshData() // Refresh balances
+                }.onFailure { error ->
+                    if (error.message != "Transaction cancelled by user" &&
+                        error.message != "Authentication failed") {
+                        Toast.makeText(context, "Failed: ${error.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
 
-        } catch (e: Exception) {
-            Log.e(TAG, "Error unstaking ERTH", e)
-            Toast.makeText(context, "Failed to unstake: ${e.message}", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-
-        if (requestCode == REQ_STAKE_ERTH) {
-            if (resultCode == Activity.RESULT_OK) {
-                stakeAmountInput.setText("") // Clear input
-                refreshData() // Refresh balances
-            } else {
-                val error = data?.getStringExtra("error") ?: "Unknown error"
-                Toast.makeText(context, "Staking failed: $error", Toast.LENGTH_LONG).show()
-            }
-        } else if (requestCode == REQ_UNSTAKE_ERTH) {
-            if (resultCode == Activity.RESULT_OK) {
-                unstakeAmountInput.setText("") // Clear input
-                refreshData() // Refresh balances
-            } else {
-                val error = data?.getStringExtra("error") ?: "Unknown error"
-                Toast.makeText(context, "Unstaking failed: $error", Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error unstaking ERTH", e)
+                Toast.makeText(context, "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }

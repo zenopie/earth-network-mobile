@@ -1,6 +1,5 @@
 package network.erth.wallet.ui.pages.managelp
 
-import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -18,14 +17,12 @@ import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
-import androidx.activity.result.ActivityResultLauncher
-import androidx.activity.result.contract.ActivityResultContracts
 import network.erth.wallet.R
-import network.erth.wallet.bridge.activities.TransactionActivity
 import network.erth.wallet.wallet.constants.Tokens
 import network.erth.wallet.wallet.services.SecureWalletManager
 import network.erth.wallet.Constants
 import network.erth.wallet.wallet.services.SecretKClient
+import network.erth.wallet.wallet.services.TransactionExecutor
 import org.json.JSONObject
 import org.json.JSONArray
 import java.text.DecimalFormat
@@ -57,29 +54,10 @@ class RemoveLiquidityFragment : Fragment() {
     private var currentWalletAddress = ""
     private var transactionSuccessReceiver: BroadcastReceiver? = null
 
-    // Activity Result Launcher for transaction activity
-    private lateinit var removeLiquidityLauncher: ActivityResultLauncher<Intent>
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         arguments?.let {
             tokenKey = it.getString("token_key")
-        }
-
-        // Use SecureWalletManager for secure operations
-
-        // Initialize Activity Result Launcher
-        removeLiquidityLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            if (result.resultCode == Activity.RESULT_OK) {
-                // Clear input field
-                removeAmountInput.setText("")
-                // Refresh data (broadcast receiver will also handle this)
-                loadUserShares()
-                loadUnbondingRequests()
-            } else {
-                val error = result.data?.getStringExtra(TransactionActivity.EXTRA_ERROR) ?: "Transaction failed"
-                Log.e(TAG, "Remove liquidity transaction failed: $error")
-            }
         }
     }
 
@@ -201,19 +179,25 @@ class RemoveLiquidityFragment : Fragment() {
                 if (tokenContract == null) return@launch
 
                 // Query pool info
-                val queryMsg = JSONObject()
-                val queryUserInfo = JSONObject()
-                val poolsArray = JSONArray()
-                poolsArray.put(tokenContract)
-                queryUserInfo.put("pools", poolsArray)
-                queryUserInfo.put("user", currentWalletAddress)
-                queryMsg.put("query_user_info", queryUserInfo)
+                val queryJson = "{\"query_user_info\": {\"pools\": [\"$tokenContract\"], \"user\": \"$currentWalletAddress\"}}"
 
-                val result = SecretKClient.queryContractJson(
+                val responseString = SecretKClient.queryContract(
                     Constants.EXCHANGE_CONTRACT,
-                    queryMsg,
+                    queryJson,
                     Constants.EXCHANGE_HASH
                 )
+
+                // Try to parse as JSONArray first, then JSONObject
+                val result = try {
+                    JSONArray(responseString)
+                } catch (e: Exception) {
+                    try {
+                        JSONObject(responseString)
+                    } catch (e2: Exception) {
+                        Log.e(TAG, "Failed to parse response as JSON", e2)
+                        return@launch
+                    }
+                }
 
                 parseUserShares(result)
 
@@ -224,49 +208,49 @@ class RemoveLiquidityFragment : Fragment() {
         }
     }
 
-    private fun parseUserShares(result: JSONObject) {
+    private fun parseUserShares(result: Any) {
         try {
-            // Handle the SecretQueryService error case where data is in the error message
-            if (result.has("error") && result.has("decryption_error")) {
-                val decryptionError = result.getString("decryption_error")
+            // Handle both JSONArray and JSONObject responses
+            val poolsData = when (result) {
+                is JSONArray -> result
+                is JSONObject -> {
+                    // Handle the SecretQueryService error case where data is in the error message
+                    if (result.has("error") && result.has("decryption_error")) {
+                        val decryptionError = result.getString("decryption_error")
 
-                // Look for "base64=" in the error message and extract the array
-                val base64Marker = "base64=Value "
-                val base64Index = decryptionError.indexOf(base64Marker)
-                if (base64Index != -1) {
-                    val startIndex = base64Index + base64Marker.length
-                    val endIndex = decryptionError.indexOf(" of type org.json.JSONArray", startIndex)
-                    if (endIndex != -1) {
-                        val jsonArrayString = decryptionError.substring(startIndex, endIndex)
+                        // Look for "base64=" in the error message and extract the array
+                        val base64Marker = "base64=Value "
+                        val base64Index = decryptionError.indexOf(base64Marker)
+                        if (base64Index != -1) {
+                            val startIndex = base64Index + base64Marker.length
+                            val endIndex = decryptionError.indexOf(" of type org.json.JSONArray", startIndex)
+                            if (endIndex != -1) {
+                                val jsonArrayString = decryptionError.substring(startIndex, endIndex)
 
-                        try {
-                            val poolsData = JSONArray(jsonArrayString)
-                            if (poolsData.length() > 0) {
-                                // Find the pool that matches our token
-                                for (i in 0 until poolsData.length()) {
-                                    val poolInfo = poolsData.getJSONObject(i)
-                                    val config = poolInfo.getJSONObject("pool_info").getJSONObject("config")
-                                    val tokenSymbol = config.getString("token_b_symbol")
-                                    if (tokenKey == tokenSymbol) {
-                                        extractUserShares(poolInfo)
-                                        return
-                                    }
+                                try {
+                                    JSONArray(jsonArrayString)
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Error parsing extracted JSON array", e)
+                                    return
                                 }
+                            } else {
+                                return
                             }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error parsing extracted JSON array", e)
+                        } else {
+                            return
                         }
+                    } else if (result.has("data")) {
+                        result.getJSONArray("data")
+                    } else {
+                        return
                     }
                 }
+                else -> return
             }
 
-            // Also try the normal data path
-            if (result.has("data")) {
-                val poolsData = result.getJSONArray("data")
-                if (poolsData.length() > 0) {
-                    val poolInfo = poolsData.getJSONObject(0)
-                    extractUserShares(poolInfo)
-                }
+            if (poolsData.length() > 0) {
+                val poolInfo = poolsData.getJSONObject(0)
+                extractUserShares(poolInfo)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error processing user shares", e)
@@ -314,17 +298,25 @@ class RemoveLiquidityFragment : Fragment() {
                 if (tokenContract == null) return@launch
 
                 // Query unbonding requests for this user and token
-                val queryMsg = JSONObject()
-                val queryUnbonding = JSONObject()
-                queryUnbonding.put("user", currentWalletAddress)
-                queryUnbonding.put("token", tokenContract)
-                queryMsg.put("query_unbonding", queryUnbonding)
+                val queryJson = "{\"query_unbonding_requests\": {\"pool\": \"$tokenContract\", \"user\": \"$currentWalletAddress\"}}"
 
-                val result = SecretKClient.queryContractJson(
+                val responseString = SecretKClient.queryContract(
                     Constants.EXCHANGE_CONTRACT,
-                    queryMsg,
+                    queryJson,
                     Constants.EXCHANGE_HASH
                 )
+
+                // Try to parse as JSONArray first, then JSONObject
+                val result = try {
+                    JSONArray(responseString)
+                } catch (e: Exception) {
+                    try {
+                        JSONObject(responseString)
+                    } catch (e2: Exception) {
+                        Log.e(TAG, "Failed to parse response as JSON", e2)
+                        return@launch
+                    }
+                }
 
                 parseUnbondingRequests(result)
 
@@ -334,42 +326,52 @@ class RemoveLiquidityFragment : Fragment() {
         }
     }
 
-    private fun parseUnbondingRequests(result: JSONObject) {
+    private fun parseUnbondingRequests(result: Any) {
         try {
-            // Handle the SecretQueryService error case where data is in the error message
-            if (result.has("error") && result.has("decryption_error")) {
-                val decryptionError = result.getString("decryption_error")
+            // Handle both JSONArray and JSONObject responses
+            val unbondingArray = when (result) {
+                is JSONArray -> result
+                is JSONObject -> {
+                    // Handle the SecretQueryService error case where data is in the error message
+                    if (result.has("error") && result.has("decryption_error")) {
+                        val decryptionError = result.getString("decryption_error")
 
-                // Look for "base64=Value " in the error message and extract the JSON
-                val base64Marker = "base64=Value "
-                val base64Index = decryptionError.indexOf(base64Marker)
-                if (base64Index != -1) {
-                    val startIndex = base64Index + base64Marker.length
-                    val endIndex = decryptionError.indexOf(" of type", startIndex)
-                    if (endIndex != -1) {
-                        val jsonString = decryptionError.substring(startIndex, endIndex)
+                        // Look for "base64=Value " in the error message and extract the JSON
+                        val base64Marker = "base64=Value "
+                        val base64Index = decryptionError.indexOf(base64Marker)
+                        if (base64Index != -1) {
+                            val startIndex = base64Index + base64Marker.length
+                            val endIndex = decryptionError.indexOf(" of type", startIndex)
+                            if (endIndex != -1) {
+                                val jsonString = decryptionError.substring(startIndex, endIndex)
 
-                        try {
-                            val unbondingArray = JSONArray(jsonString)
-
-                            // TODO: Display unbonding requests in UI
-                            displayUnbondingRequests(unbondingArray)
+                                try {
+                                    JSONArray(jsonString)
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Error parsing unbonding JSON array", e)
+                                    return
+                                }
+                            } else {
+                                return
+                            }
+                        } else {
                             return
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error parsing unbonding JSON array", e)
                         }
+                    } else if (result.has("data")) {
+                        val data = result.get("data")
+                        if (data is JSONArray) {
+                            data
+                        } else {
+                            return
+                        }
+                    } else {
+                        return
                     }
                 }
+                else -> return
             }
 
-            // Also try the normal data path
-            if (result.has("data")) {
-                val data = result.get("data")
-                if (data is JSONArray) {
-                    displayUnbondingRequests(data)
-                } else {
-                }
-            }
+            displayUnbondingRequests(unbondingArray)
         } catch (e: Exception) {
             Log.e(TAG, "Error processing unbonding requests", e)
         }
@@ -392,37 +394,49 @@ class RemoveLiquidityFragment : Fragment() {
     }
 
     private fun executeRemoveLiquidity(removeAmount: Double) {
-        try {
-            val tokenContract = getTokenContractAddress(tokenKey!!)
-            if (tokenContract == null) {
-                Toast.makeText(context, "Token contract not found", Toast.LENGTH_SHORT).show()
-                return
+        lifecycleScope.launch {
+            try {
+                val tokenContract = getTokenContractAddress(tokenKey!!)
+                if (tokenContract == null) {
+                    Toast.makeText(context, "Token contract not found", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+
+                // Convert shares to microunits (multiply by 1,000,000)
+                val removeAmountMicro = Math.round(removeAmount * 1000000)
+
+                // Create remove liquidity message
+                val msg = JSONObject()
+                val removeLiquidity = JSONObject()
+                removeLiquidity.put("amount", removeAmountMicro.toString())
+                removeLiquidity.put("pool", tokenContract)
+                msg.put("remove_liquidity", removeLiquidity)
+
+                val result = TransactionExecutor.executeContract(
+                    fragment = this@RemoveLiquidityFragment,
+                    contractAddress = Constants.EXCHANGE_CONTRACT,
+                    message = msg,
+                    codeHash = Constants.EXCHANGE_HASH,
+                    contractLabel = "Exchange Contract:"
+                )
+
+                result.onSuccess {
+                    // Clear input field
+                    removeAmountInput.setText("")
+                    // Refresh data
+                    loadUserShares()
+                    loadUnbondingRequests()
+                }.onFailure { error ->
+                    if (error.message != "Transaction cancelled by user" &&
+                        error.message != "Authentication failed") {
+                        Toast.makeText(context, "Failed: ${error.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Error creating remove liquidity message", e)
+                Toast.makeText(context, "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
             }
-
-            // Convert shares to microunits (multiply by 1,000,000)
-            val removeAmountMicro = Math.round(removeAmount * 1000000)
-
-            // Create remove liquidity message
-            val msg = JSONObject()
-            val removeLiquidity = JSONObject()
-            removeLiquidity.put("amount", removeAmountMicro.toString())
-            removeLiquidity.put("pool", tokenContract)
-            msg.put("remove_liquidity", removeLiquidity)
-
-
-            // Use TransactionActivity with SECRET_EXECUTE transaction type
-            val intent = Intent(context, TransactionActivity::class.java)
-            intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE)
-            intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.EXCHANGE_CONTRACT)
-            intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.EXCHANGE_HASH)
-            intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, msg.toString())
-            intent.putExtra(TransactionActivity.EXTRA_MEMO, "Remove liquidity for $tokenKey")
-
-            removeLiquidityLauncher.launch(intent)
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error creating remove liquidity message", e)
-            Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 

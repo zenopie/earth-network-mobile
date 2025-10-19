@@ -1,8 +1,6 @@
 package network.erth.wallet.ui.pages.gasstation
 
-import android.app.Activity
 import android.content.Context
-import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -15,15 +13,13 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.*
 import androidx.fragment.app.Fragment
-import androidx.activity.result.ActivityResultLauncher
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import network.erth.wallet.R
 import network.erth.wallet.Constants
-import network.erth.wallet.bridge.activities.TransactionActivity
 import network.erth.wallet.wallet.constants.Tokens
 import network.erth.wallet.wallet.services.SecretKClient
+import network.erth.wallet.wallet.services.TransactionExecutor
 import org.json.JSONObject
 import java.text.DecimalFormat
 import kotlin.math.pow
@@ -70,9 +66,6 @@ class SwapForGasFragment : Fragment() {
     // Fee granter address from backend
     private val FEE_GRANTER_ADDRESS = "secret1ktpxcznqcls64t8tjyv3atwhndscgw08yp2jas"
 
-    // Activity Result Launcher for transaction activity
-    private lateinit var swapForGasLauncher: ActivityResultLauncher<Intent>
-
     // Interface for communication with parent
     interface SwapForGasListener {
         fun getCurrentWalletAddress(): String
@@ -95,14 +88,6 @@ class SwapForGasFragment : Fragment() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // Initialize activity result launcher
-        swapForGasLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            if (result.resultCode == Activity.RESULT_OK && result.data != null) {
-                val json = result.data?.getStringExtra(TransactionActivity.EXTRA_RESULT_JSON)
-                handleSwapForGasResult(json)
-            }
-        }
 
         // Initialize token list (exclude SCRT since we're converting TO SCRT)
         tokenSymbols = ArrayList(Tokens.getAllTokens().keys).apply {
@@ -504,86 +489,101 @@ class SwapForGasFragment : Fragment() {
         val fromAmountStr = fromAmountInput?.text.toString()
         if (TextUtils.isEmpty(fromAmountStr)) return
 
-        try {
-            val inputAmount = fromAmountStr.toDouble()
-            if (inputAmount <= 0 || inputAmount > fromBalance) {
+        lifecycleScope.launch {
+            try {
+                val inputAmount = fromAmountStr.toDouble()
+                if (inputAmount <= 0 || inputAmount > fromBalance) {
+                    Toast.makeText(requireContext(), "Invalid amount", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+
+                swapForGasButton?.isEnabled = false
+                val fromTokenSymbol = tokenSymbols[fromTokenSpinner?.selectedItemPosition ?: 0]
+
+                if (fromTokenSymbol == "sSCRT") {
+                    swapForGasButton?.text = "Unwrapping..."
+                } else {
+                    swapForGasButton?.text = "Swapping..."
+                }
+
+                val fromTokenInfo = Tokens.getTokenInfo(fromTokenSymbol)
+                if (fromTokenInfo == null) {
+                    Toast.makeText(requireContext(), "Token not supported", Toast.LENGTH_SHORT).show()
+                    resetSwapButton()
+                    return@launch
+                }
+
+                val inputAmountMicro = (inputAmount * 10.0.pow(fromTokenInfo.decimals)).toLong()
+
+                if (fromTokenSymbol == "sSCRT") {
+                    // Use unwrap for sSCRT -> SCRT (direct contract execution, not SNIP)
+                    val redeemMsg = JSONObject()
+                    val redeem = JSONObject().apply {
+                        put("amount", inputAmountMicro.toString())
+                    }
+                    redeemMsg.put("redeem", redeem)
+
+                    val result = TransactionExecutor.executeContract(
+                        fragment = this@SwapForGasFragment,
+                        contractAddress = fromTokenInfo.contract,
+                        message = redeemMsg,
+                        codeHash = fromTokenInfo.hash,
+                        gasLimit = 300_000,  // Unwrap/swap needs more gas
+                        contractLabel = "sSCRT:"
+                        // TODO: Add feeGranter support
+                    )
+
+                    result.onSuccess {
+                        clearAmounts()
+                        fetchBalances() // Refresh balances
+                        listener?.onSwapComplete()
+                        resetSwapButton()
+                    }.onFailure { error ->
+                        resetSwapButton()
+                        if (error.message != "Transaction cancelled by user" &&
+                            error.message != "Authentication failed") {
+                            Toast.makeText(context, "Gas swap failed: ${error.message}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } else {
+                    // Use the swap_for_gas message for other tokens
+                    val swapForGasMsg = JSONObject()
+                    val swapForGas = JSONObject().apply {
+                        put("from", currentWalletAddress)
+                        put("amount", inputAmountMicro.toString())
+                    }
+                    swapForGasMsg.put("swap_for_gas", swapForGas)
+
+                    val result = TransactionExecutor.sendSnip20Token(
+                        fragment = this@SwapForGasFragment,
+                        tokenContract = fromTokenInfo.contract,
+                        tokenHash = fromTokenInfo.hash,
+                        recipient = Constants.EXCHANGE_CONTRACT,
+                        recipientHash = Constants.EXCHANGE_HASH,
+                        amount = inputAmountMicro.toString(),
+                        message = swapForGasMsg,
+                        gasLimit = 300_000  // Swap needs more gas
+                        // TODO: Add feeGranter support
+                    )
+
+                    result.onSuccess {
+                        clearAmounts()
+                        fetchBalances() // Refresh balances
+                        listener?.onSwapComplete()
+                        resetSwapButton()
+                    }.onFailure { error ->
+                        resetSwapButton()
+                        if (error.message != "Transaction cancelled by user" &&
+                            error.message != "Authentication failed") {
+                            Toast.makeText(context, "Gas swap failed: ${error.message}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+
+            } catch (e: NumberFormatException) {
                 Toast.makeText(requireContext(), "Invalid amount", Toast.LENGTH_SHORT).show()
-                return
-            }
-
-            swapForGasButton?.isEnabled = false
-            val fromTokenSymbol = tokenSymbols[fromTokenSpinner?.selectedItemPosition ?: 0]
-
-            if (fromTokenSymbol == "sSCRT") {
-                swapForGasButton?.text = "Unwrapping..."
-            } else {
-                swapForGasButton?.text = "Swapping..."
-            }
-
-            val fromTokenInfo = Tokens.getTokenInfo(fromTokenSymbol)
-            if (fromTokenInfo == null) {
-                Toast.makeText(requireContext(), "Token not supported", Toast.LENGTH_SHORT).show()
                 resetSwapButton()
-                return
             }
-
-            val inputAmountMicro = (inputAmount * 10.0.pow(fromTokenInfo.decimals)).toLong()
-
-            val message: String
-            val recipientContract: String
-            val recipientHash: String
-
-            if (fromTokenSymbol == "sSCRT") {
-                // Use unwrap for sSCRT -> SCRT (direct contract execution, not SNIP)
-                message = String.format(
-                    "{\"redeem\": {\"amount\": \"%s\"}}",
-                    inputAmountMicro.toString()
-                )
-                recipientContract = fromTokenInfo.contract
-                recipientHash = fromTokenInfo.hash
-
-                val intent = Intent(requireContext(), TransactionActivity::class.java)
-                intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE)
-                intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, fromTokenInfo.contract)
-                intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, fromTokenInfo.hash)
-                intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, message)
-
-                // Add fee granter for gasless transactions when available
-                if (hasGasGrant) {
-                    intent.putExtra(TransactionActivity.EXTRA_FEE_GRANTER, FEE_GRANTER_ADDRESS)
-                }
-
-                swapForGasLauncher.launch(intent)
-            } else {
-                // Use the swap_for_gas message for other tokens
-                message = String.format(
-                    "{\"swap_for_gas\": {\"from\": \"%s\", \"amount\": \"%s\"}}",
-                    currentWalletAddress,
-                    inputAmountMicro.toString()
-                )
-                recipientContract = Constants.EXCHANGE_CONTRACT
-                recipientHash = Constants.EXCHANGE_HASH
-
-                val intent = Intent(requireContext(), TransactionActivity::class.java)
-                intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SNIP_EXECUTE)
-                intent.putExtra(TransactionActivity.EXTRA_TOKEN_CONTRACT, fromTokenInfo.contract)
-                intent.putExtra(TransactionActivity.EXTRA_TOKEN_HASH, fromTokenInfo.hash)
-                intent.putExtra(TransactionActivity.EXTRA_RECIPIENT_ADDRESS, recipientContract)
-                intent.putExtra(TransactionActivity.EXTRA_RECIPIENT_HASH, recipientHash)
-                intent.putExtra(TransactionActivity.EXTRA_AMOUNT, inputAmountMicro.toString())
-                intent.putExtra(TransactionActivity.EXTRA_MESSAGE_JSON, message)
-
-                // Add fee granter for gasless transactions when available
-                if (hasGasGrant) {
-                    intent.putExtra(TransactionActivity.EXTRA_FEE_GRANTER, FEE_GRANTER_ADDRESS)
-                }
-
-                swapForGasLauncher.launch(intent)
-            }
-
-        } catch (e: NumberFormatException) {
-            Toast.makeText(requireContext(), "Invalid amount", Toast.LENGTH_SHORT).show()
-            resetSwapButton()
         }
     }
 
@@ -591,38 +591,6 @@ class SwapForGasFragment : Fragment() {
         swapForGasButton?.isEnabled = true
         val fromTokenSymbol = tokenSymbols[fromTokenSpinner?.selectedItemPosition ?: 0]
         swapForGasButton?.text = if (fromTokenSymbol == "sSCRT") "Unwrap" else "Swap for Gas"
-    }
-
-    private fun handleSwapForGasResult(json: String?) {
-        resetSwapButton()
-
-        try {
-            val root = JSONObject(json ?: "")
-
-            val success = if (root.has("tx_response")) {
-                val txResponse = root.getJSONObject("tx_response")
-                val code = txResponse.optInt("code", -1)
-                val isSuccess = (code == 0)
-
-                if (isSuccess) {
-                    val txHash = txResponse.optString("txhash", "")
-                }
-                isSuccess
-            } else {
-                root.optBoolean("success", false)
-            }
-
-            if (success) {
-                clearAmounts()
-                fetchBalances() // Refresh balances
-                listener?.onSwapComplete()
-            } else {
-                Toast.makeText(context, "Gas swap failed", Toast.LENGTH_SHORT).show()
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse gas swap result", e)
-            Toast.makeText(context, "Gas swap failed", Toast.LENGTH_SHORT).show()
-        }
     }
 
     private fun toggleFaucetTooltip() {

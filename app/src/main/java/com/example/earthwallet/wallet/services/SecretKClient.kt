@@ -60,7 +60,7 @@ object SecretKClient {
 
             Log.d(TAG, "Query successful: $contractAddress")
             response
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "Query failed for $contractAddress", e)
 
             // Check if it's a JSON deserialization error with contract error in message
@@ -98,14 +98,19 @@ object SecretKClient {
                             val message = contractError.optString("message", "Unknown error")
                             throw Exception("Contract error (code $code): $message")
                         } catch (jsonEx: Exception) {
-                            // Couldn't parse, just rethrow original
-                            throw e
+                            // Couldn't parse, wrap and throw
+                            throw Exception("Contract query failed: ${e.message}", e)
                         }
                     }
                 }
             }
 
-            throw e
+            // Wrap Error or other Throwable in Exception for consistent error handling
+            if (e is Exception) {
+                throw e
+            } else {
+                throw Exception("Contract query failed: ${e.message}", e)
+            }
         }
     }
 
@@ -157,9 +162,13 @@ object SecretKClient {
 
             Log.d(TAG, "Execute successful: $contractAddress")
             response.data.firstOrNull() ?: "{}"
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "Execute failed for $contractAddress", e)
-            throw Exception("Contract execution failed: ${e.message}", e)
+            if (e is Exception) {
+                throw e
+            } else {
+                throw Exception("Contract execution failed: ${e.message}", e)
+            }
         }
     }
 
@@ -208,9 +217,13 @@ object SecretKClient {
             Log.d(TAG, "Send successful: $amount$denom to $toAddress")
             // TODO: Return actual transaction hash when we figure out the correct field
             "success"
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "Send failed", e)
-            throw Exception("Token send failed: ${e.message}", e)
+            if (e is Exception) {
+                throw e
+            } else {
+                throw Exception("Token send failed: ${e.message}", e)
+            }
         }
     }
 
@@ -233,9 +246,13 @@ object SecretKClient {
             val response = client.getBalance(address)
             Log.d(TAG, "Balance query successful for $address")
             response.toString()
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "Balance query failed", e)
-            throw Exception("Balance query failed: ${e.message}", e)
+            if (e is Exception) {
+                throw e
+            } else {
+                throw Exception("Balance query failed: ${e.message}", e)
+            }
         }
     }
 

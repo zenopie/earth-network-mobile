@@ -168,7 +168,6 @@ class AddLiquidityFragment : Fragment() {
                 } else {
                     requireActivity().applicationContext.registerReceiver(transactionSuccessReceiver, filter)
                 }
-                Toast.makeText(context, "AddLiquidity: Broadcast receiver registered", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to register broadcast receiver", e)
             }
@@ -430,11 +429,23 @@ class AddLiquidityFragment : Fragment() {
                 // Query pool info
                 val queryJson = "{\"query_user_info\": {\"pools\": [\"$tokenContract\"], \"user\": \"$currentWalletAddress\"}}"
 
-                val result = SecretKClient.queryContractJson(
+                val responseString = SecretKClient.queryContract(
                     Constants.EXCHANGE_CONTRACT,
-                    JSONObject(queryJson),
+                    queryJson,
                     Constants.EXCHANGE_HASH
                 )
+
+                // Try to parse as JSONArray first, then JSONObject
+                val result = try {
+                    JSONArray(responseString)
+                } catch (e: Exception) {
+                    try {
+                        JSONObject(responseString)
+                    } catch (e2: Exception) {
+                        Log.e(TAG, "Failed to parse response as JSON", e2)
+                        return@launch
+                    }
+                }
 
                 parsePoolReserves(result)
 
@@ -444,49 +455,49 @@ class AddLiquidityFragment : Fragment() {
         }
     }
 
-    private fun parsePoolReserves(result: JSONObject) {
+    private fun parsePoolReserves(result: Any) {
         try {
-            // Handle the SecretQueryService error case where data is in the error message
-            if (result.has("error") && result.has("decryption_error")) {
-                val decryptionError = result.getString("decryption_error")
+            // Handle both JSONArray and JSONObject responses
+            val poolsData = when (result) {
+                is JSONArray -> result
+                is JSONObject -> {
+                    // Handle the SecretQueryService error case where data is in the error message
+                    if (result.has("error") && result.has("decryption_error")) {
+                        val decryptionError = result.getString("decryption_error")
 
-                // Look for "base64=" in the error message and extract the array
-                val base64Marker = "base64=Value "
-                val base64Index = decryptionError.indexOf(base64Marker)
-                if (base64Index != -1) {
-                    val startIndex = base64Index + base64Marker.length
-                    val endIndex = decryptionError.indexOf(" of type org.json.JSONArray", startIndex)
-                    if (endIndex != -1) {
-                        val jsonArrayString = decryptionError.substring(startIndex, endIndex)
+                        // Look for "base64=" in the error message and extract the array
+                        val base64Marker = "base64=Value "
+                        val base64Index = decryptionError.indexOf(base64Marker)
+                        if (base64Index != -1) {
+                            val startIndex = base64Index + base64Marker.length
+                            val endIndex = decryptionError.indexOf(" of type org.json.JSONArray", startIndex)
+                            if (endIndex != -1) {
+                                val jsonArrayString = decryptionError.substring(startIndex, endIndex)
 
-                        try {
-                            val poolsData = JSONArray(jsonArrayString)
-                            if (poolsData.length() > 0) {
-                                // Find the pool that matches our token
-                                for (i in 0 until poolsData.length()) {
-                                    val poolInfo = poolsData.getJSONObject(i)
-                                    val config = poolInfo.getJSONObject("pool_info").getJSONObject("config")
-                                    val tokenSymbol = config.getString("token_b_symbol")
-                                    if (tokenKey == tokenSymbol) {
-                                        extractReserves(poolInfo)
-                                        return
-                                    }
+                                try {
+                                    JSONArray(jsonArrayString)
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Error parsing extracted JSON array", e)
+                                    return
                                 }
+                            } else {
+                                return
                             }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error parsing extracted JSON array", e)
+                        } else {
+                            return
                         }
+                    } else if (result.has("data")) {
+                        result.getJSONArray("data")
+                    } else {
+                        return
                     }
                 }
+                else -> return
             }
 
-            // Also try the normal data path
-            if (result.has("data")) {
-                val poolsData = result.getJSONArray("data")
-                if (poolsData.length() > 0) {
-                    val poolInfo = poolsData.getJSONObject(0)
-                    extractReserves(poolInfo)
-                }
+            if (poolsData.length() > 0) {
+                val poolInfo = poolsData.getJSONObject(0)
+                extractReserves(poolInfo)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error processing pool reserves", e)

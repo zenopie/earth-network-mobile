@@ -1,6 +1,5 @@
 package network.erth.wallet.ui.pages.managelp
 
-import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -17,16 +16,14 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.fragment.app.Fragment
-import androidx.activity.result.ActivityResultLauncher
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import network.erth.wallet.R
 import network.erth.wallet.Constants
-import network.erth.wallet.bridge.activities.TransactionActivity
 import network.erth.wallet.wallet.constants.Tokens
 import network.erth.wallet.wallet.services.SecureWalletManager
 import network.erth.wallet.wallet.services.SecretKClient
+import network.erth.wallet.wallet.services.TransactionExecutor
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ExecutorService
@@ -76,9 +73,6 @@ class UnbondFragment : Fragment() {
     // Broadcast receiver for transaction success
     private var transactionSuccessReceiver: BroadcastReceiver? = null
 
-    // Activity Result Launcher for transaction activity
-    private lateinit var claimUnbondLauncher: ActivityResultLauncher<Intent>
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         arguments?.let { args ->
@@ -87,24 +81,6 @@ class UnbondFragment : Fragment() {
             erthReserveMicro = args.getLong("erth_reserve", 0)
             tokenBReserveMicro = args.getLong("token_b_reserve", 0)
             totalSharesMicro = args.getLong("total_shares", 0)
-
-        }
-
-        // Use SecureWalletManager for secure operations
-
-        // Initialize Activity Result Launcher
-        claimUnbondLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            if (result.resultCode == Activity.RESULT_OK) {
-                // Refresh unbonding requests to update UI
-                if (erthReserveMicro > 0 && tokenBReserveMicro > 0 && totalSharesMicro > 0) {
-                    executorService?.execute { loadUnbondingRequests() }
-                } else {
-                    loadPoolInformationThenUnbondingRequests()
-                }
-            } else {
-                val error = result.data?.getStringExtra(TransactionActivity.EXTRA_ERROR) ?: "Unknown error"
-                Log.e(TAG, "Failed to claim unbonded liquidity: $error")
-            }
         }
 
         executorService = Executors.newCachedThreadPool()
@@ -189,37 +165,50 @@ class UnbondFragment : Fragment() {
     }
 
     private fun handleCompleteUnbond() {
-
         if (tokenKey == null) {
             Log.e(TAG, "Cannot complete unbond: missing token key")
             return
         }
 
-        try {
-            val tokenContract = getTokenContractAddress(tokenKey!!)
-            if (tokenContract == null) {
-                Log.e(TAG, "Cannot complete unbond: token contract not found for $tokenKey")
-                return
+        lifecycleScope.launch {
+            try {
+                val tokenContract = getTokenContractAddress(tokenKey!!)
+                if (tokenContract == null) {
+                    Log.e(TAG, "Cannot complete unbond: token contract not found for $tokenKey")
+                    return@launch
+                }
+
+                // Create claim unbond liquidity message: { claim_unbond_liquidity: { pool: "contract_address" } }
+                val claimMsg = JSONObject()
+                val claimUnbondLiquidity = JSONObject()
+                claimUnbondLiquidity.put("pool", tokenContract)
+                claimMsg.put("claim_unbond_liquidity", claimUnbondLiquidity)
+
+                val result = TransactionExecutor.executeContract(
+                    fragment = this@UnbondFragment,
+                    contractAddress = Constants.EXCHANGE_CONTRACT,
+                    message = claimMsg,
+                    codeHash = Constants.EXCHANGE_HASH,
+                    contractLabel = "Exchange Contract:"
+                )
+
+                result.onSuccess {
+                    // Refresh unbonding requests to update UI
+                    if (erthReserveMicro > 0 && tokenBReserveMicro > 0 && totalSharesMicro > 0) {
+                        loadUnbondingRequests()
+                    } else {
+                        loadPoolInformationThenUnbondingRequests()
+                    }
+                }.onFailure { error ->
+                    if (error.message != "Transaction cancelled by user" &&
+                        error.message != "Authentication failed") {
+                        Log.e(TAG, "Failed: ${error.message}")
+                    }
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Error claiming unbonded liquidity", e)
             }
-
-            // Create claim unbond liquidity message: { claim_unbond_liquidity: { pool: "contract_address" } }
-            val claimMsg = JSONObject()
-            val claimUnbondLiquidity = JSONObject()
-            claimUnbondLiquidity.put("pool", tokenContract)
-            claimMsg.put("claim_unbond_liquidity", claimUnbondLiquidity)
-
-
-            // Use TransactionActivity with SECRET_EXECUTE for claiming unbonded liquidity
-            val intent = Intent(activity, TransactionActivity::class.java)
-            intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE)
-            intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.EXCHANGE_CONTRACT)
-            intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.EXCHANGE_HASH)
-            intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, claimMsg.toString())
-
-            claimUnbondLauncher.launch(intent)
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error claiming unbonded liquidity", e)
         }
     }
 
@@ -246,13 +235,25 @@ class UnbondFragment : Fragment() {
                 if (tokenContract == null) return@launch
 
                 // Query pool information to get reserves and total shares
-                val queryJson = "{\"query_pool\": {\"pool\": \"$tokenContract\"}}"
+                val queryJson = "{\"query_pool_info\": {\"pool\": \"$tokenContract\"}}"
 
-                val result = SecretKClient.queryContractJson(
+                val responseString = SecretKClient.queryContract(
                     Constants.EXCHANGE_CONTRACT,
-                    JSONObject(queryJson),
+                    queryJson,
                     Constants.EXCHANGE_HASH
                 )
+
+                // Try to parse as JSONArray first, then JSONObject
+                val result = try {
+                    JSONArray(responseString)
+                } catch (e: Exception) {
+                    try {
+                        JSONObject(responseString)
+                    } catch (e2: Exception) {
+                        Log.e(TAG, "Failed to parse response as JSON", e2)
+                        return@launch
+                    }
+                }
 
                 parsePoolInformation(result)
 
@@ -267,42 +268,59 @@ class UnbondFragment : Fragment() {
         }
     }
 
-    private fun parsePoolInformation(result: JSONObject) {
+    private fun parsePoolInformation(result: Any) {
         try {
-            // Handle the SecretQueryService error case where data is in the error message
-            if (result.has("error") && result.has("decryption_error")) {
-                val decryptionError = result.getString("decryption_error")
+            // Handle both JSONArray and JSONObject responses
+            val poolData = when (result) {
+                is JSONObject -> {
+                    // Handle the SecretQueryService error case where data is in the error message
+                    if (result.has("error") && result.has("decryption_error")) {
+                        val decryptionError = result.getString("decryption_error")
 
-                // Look for "base64=Value " in the error message
-                val base64Marker = "base64=Value "
-                val base64Index = decryptionError.indexOf(base64Marker)
-                if (base64Index != -1) {
-                    val startIndex = base64Index + base64Marker.length
-                    val endIndex = decryptionError.indexOf(" of type", startIndex)
-                    if (endIndex != -1) {
-                        val jsonString = decryptionError.substring(startIndex, endIndex)
+                        // Look for "base64=Value " in the error message
+                        val base64Marker = "base64=Value "
+                        val base64Index = decryptionError.indexOf(base64Marker)
+                        if (base64Index != -1) {
+                            val startIndex = base64Index + base64Marker.length
+                            val endIndex = decryptionError.indexOf(" of type", startIndex)
+                            if (endIndex != -1) {
+                                val jsonString = decryptionError.substring(startIndex, endIndex)
 
-                        try {
-                            val poolData = JSONObject(jsonString)
-                            erthReserveMicro = poolData.optLong("erth_reserve", 0)
-                            tokenBReserveMicro = poolData.optLong("token_b_reserve", 0)
-                            totalSharesMicro = poolData.optLong("total_shares", 0)
-
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error parsing pool JSON", e)
+                                try {
+                                    JSONObject(jsonString)
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Error parsing pool JSON", e)
+                                    return
+                                }
+                            } else {
+                                return
+                            }
+                        } else {
+                            return
                         }
+                    } else if (result.has("data")) {
+                        result.getJSONObject("data")
+                    } else {
+                        // Direct JSONObject response
+                        result
                     }
                 }
+                else -> return
             }
 
-            // Also try the normal data path
-            if (result.has("data")) {
-                val poolData = result.getJSONObject("data")
-                erthReserveMicro = poolData.optLong("erth_reserve", 0)
-                tokenBReserveMicro = poolData.optLong("token_b_reserve", 0)
-                totalSharesMicro = poolData.optLong("total_shares", 0)
-
+            // query_pool_info returns {state: {...}, config: {...}}
+            // Extract the state object
+            val state = if (poolData.has("state")) {
+                poolData.getJSONObject("state")
+            } else {
+                // Fallback if already at state level
+                poolData
             }
+
+            erthReserveMicro = state.optLong("erth_reserve", 0)
+            tokenBReserveMicro = state.optLong("token_b_reserve", 0)
+            totalSharesMicro = state.optLong("total_shares", 0)
+
         } catch (e: Exception) {
             Log.e(TAG, "Error parsing pool information", e)
         }
@@ -321,11 +339,23 @@ class UnbondFragment : Fragment() {
                 // Query unbonding requests for this user and token
                 val queryJson = "{\"query_unbonding_requests\": {\"pool\": \"$tokenContract\", \"user\": \"$currentWalletAddress\"}}"
 
-                val result = SecretKClient.queryContractJson(
+                val responseString = SecretKClient.queryContract(
                     Constants.EXCHANGE_CONTRACT,
-                    JSONObject(queryJson),
+                    queryJson,
                     Constants.EXCHANGE_HASH
                 )
+
+                // Try to parse as JSONArray first, then JSONObject
+                val result = try {
+                    JSONArray(responseString)
+                } catch (e: Exception) {
+                    try {
+                        JSONObject(responseString)
+                    } catch (e2: Exception) {
+                        Log.e(TAG, "Failed to parse response as JSON", e2)
+                        return@launch
+                    }
+                }
 
                 parseUnbondingRequests(result)
 
@@ -335,41 +365,52 @@ class UnbondFragment : Fragment() {
         }
     }
 
-    private fun parseUnbondingRequests(result: JSONObject) {
+    private fun parseUnbondingRequests(result: Any) {
         try {
-            var unbondingArray: JSONArray? = null
+            // Handle both JSONArray and JSONObject responses
+            val unbondingArray = when (result) {
+                is JSONArray -> result
+                is JSONObject -> {
+                    // Handle the SecretQueryService error case where data is in the error message
+                    if (result.has("error") && result.has("decryption_error")) {
+                        val decryptionError = result.getString("decryption_error")
 
-            // Handle the SecretQueryService error case where data is in the error message
-            if (result.has("error") && result.has("decryption_error")) {
-                val decryptionError = result.getString("decryption_error")
+                        // Look for "base64=Value " in the error message and extract the JSON
+                        val base64Marker = "base64=Value "
+                        val base64Index = decryptionError.indexOf(base64Marker)
+                        if (base64Index != -1) {
+                            val startIndex = base64Index + base64Marker.length
+                            val endIndex = decryptionError.indexOf(" of type", startIndex)
+                            if (endIndex != -1) {
+                                val jsonString = decryptionError.substring(startIndex, endIndex)
 
-                // Look for "base64=Value " in the error message and extract the JSON
-                val base64Marker = "base64=Value "
-                val base64Index = decryptionError.indexOf(base64Marker)
-                if (base64Index != -1) {
-                    val startIndex = base64Index + base64Marker.length
-                    val endIndex = decryptionError.indexOf(" of type", startIndex)
-                    if (endIndex != -1) {
-                        val jsonString = decryptionError.substring(startIndex, endIndex)
-
-                        try {
-                            unbondingArray = JSONArray(jsonString)
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error parsing unbonding JSON array", e)
+                                try {
+                                    JSONArray(jsonString)
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Error parsing unbonding JSON array", e)
+                                    return
+                                }
+                            } else {
+                                return
+                            }
+                        } else {
+                            return
                         }
+                    } else if (result.has("data")) {
+                        val data = result.get("data")
+                        if (data is JSONArray) {
+                            data
+                        } else {
+                            return
+                        }
+                    } else {
+                        return
                     }
                 }
+                else -> return
             }
 
-            // Also try the normal data path
-            if (unbondingArray == null && result.has("data")) {
-                val data = result.get("data")
-                if (data is JSONArray) {
-                    unbondingArray = data
-                }
-            }
-
-            if (unbondingArray != null && unbondingArray.length() > 0) {
+            if (unbondingArray.length() > 0) {
                 displayUnbondingRequests(unbondingArray)
             } else {
                 showNoUnbondingMessage()

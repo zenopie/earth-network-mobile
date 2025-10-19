@@ -479,11 +479,23 @@ class LiquidityManagementComponent : Fragment() {
                 // Query all pool data in one call
                 val queryJson = "{\"query_user_info\": {\"pools\": [\"$tokenContract\"], \"user\": \"$userAddress\"}}"
 
-                val result = SecretKClient.queryContractJson(
+                val responseString = SecretKClient.queryContract(
                     Constants.EXCHANGE_CONTRACT,
-                    JSONObject(queryJson),
+                    queryJson,
                     Constants.EXCHANGE_HASH
                 )
+
+                // Try to parse as JSONArray first, then JSONObject
+                val result = try {
+                    JSONArray(responseString)
+                } catch (e: Exception) {
+                    try {
+                        JSONObject(responseString)
+                    } catch (e2: Exception) {
+                        Log.e(TAG, "Failed to parse response as JSON", e2)
+                        return@launch
+                    }
+                }
 
                 processAllLiquidityData(result)
 
@@ -493,25 +505,35 @@ class LiquidityManagementComponent : Fragment() {
         }
     }
 
-    private fun processAllLiquidityData(result: JSONObject) {
+    private fun processAllLiquidityData(result: Any) {
         try {
-            if (result.has("data")) {
-                val dataArray = result.getJSONArray("data")
-                if (dataArray.length() > 0) {
-                    val poolData = dataArray.getJSONObject(0)
-
-                    // Update pool state and user info
-                    if (poolData.has("pool_info")) {
-                        poolState = poolData.getJSONObject("pool_info")
+            // Handle both JSONArray and JSONObject responses
+            val dataArray = when (result) {
+                is JSONArray -> result
+                is JSONObject -> {
+                    if (result.has("data")) {
+                        result.getJSONArray("data")
+                    } else {
+                        return
                     }
-                    if (poolData.has("user_info")) {
-                        userInfo = poolData.getJSONObject("user_info")
-                    }
-
-                    // Process all the data into our centralized structure
-                    updateLiquidityData()
-
                 }
+                else -> return
+            }
+
+            if (dataArray.length() > 0) {
+                val poolData = dataArray.getJSONObject(0)
+
+                // Update pool state and user info
+                if (poolData.has("pool_info")) {
+                    poolState = poolData.getJSONObject("pool_info")
+                }
+                if (poolData.has("user_info")) {
+                    userInfo = poolData.getJSONObject("user_info")
+                }
+
+                // Process all the data into our centralized structure
+                updateLiquidityData()
+
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error processing all liquidity data", e)

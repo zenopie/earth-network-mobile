@@ -116,11 +116,23 @@ class InfoFragment : Fragment() {
                 // Query pool data like other fragments do
                 val queryJson = "{\"query_user_info\": {\"pools\": [\"$tokenContract\"], \"user\": \"$userAddress\"}}"
 
-                val result = SecretKClient.queryContractJson(
+                val responseString = SecretKClient.queryContract(
                     Constants.EXCHANGE_CONTRACT,
-                    JSONObject(queryJson),
+                    queryJson,
                     Constants.EXCHANGE_HASH
                 )
+
+                // Try to parse as JSONArray first, then JSONObject
+                val result = try {
+                    JSONArray(responseString)
+                } catch (e: Exception) {
+                    try {
+                        JSONObject(responseString)
+                    } catch (e2: Exception) {
+                        Log.e(TAG, "Failed to parse response as JSON", e2)
+                        return@launch
+                    }
+                }
 
                 processPoolData(result)
 
@@ -130,25 +142,35 @@ class InfoFragment : Fragment() {
         }
     }
 
-    private fun processPoolData(result: JSONObject) {
+    private fun processPoolData(result: Any) {
         try {
-            if (result.has("data")) {
-                val dataArray = result.getJSONArray("data")
-                if (dataArray.length() > 0) {
-                    val poolData = dataArray.getJSONObject(0)
-
-                    var poolState: JSONObject? = null
-                    var userInfo: JSONObject? = null
-
-                    if (poolData.has("pool_info")) {
-                        poolState = poolData.getJSONObject("pool_info")
+            // Handle both JSONArray and JSONObject responses
+            val dataArray = when (result) {
+                is JSONArray -> result
+                is JSONObject -> {
+                    if (result.has("data")) {
+                        result.getJSONArray("data")
+                    } else {
+                        return
                     }
-                    if (poolData.has("user_info")) {
-                        userInfo = poolData.getJSONObject("user_info")
-                    }
-
-                    updateUI(poolState, userInfo)
                 }
+                else -> return
+            }
+
+            if (dataArray.length() > 0) {
+                val poolData = dataArray.getJSONObject(0)
+
+                var poolState: JSONObject? = null
+                var userInfo: JSONObject? = null
+
+                if (poolData.has("pool_info")) {
+                    poolState = poolData.getJSONObject("pool_info")
+                }
+                if (poolData.has("user_info")) {
+                    userInfo = poolData.getJSONObject("user_info")
+                }
+
+                updateUI(poolState, userInfo)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error processing pool data", e)
@@ -175,10 +197,10 @@ class InfoFragment : Fragment() {
                 val ownershipPercent = if (totalShares > 0) (userStaked / totalShares) * 100 else 0.0
                 val unbondingPercent = if (totalShares > 0) (unbondingShares / totalShares) * 100 else 0.0
 
-                // Update UI
-                totalSharesText.text = String.format("Total Pool Shares: %,.0f", totalShares)
-                userSharesText.text = String.format("Your Shares: %,.0f", userStaked)
-                poolOwnershipText.text = String.format("Pool Ownership: %.4f%%", ownershipPercent)
+                // Update UI (labels are in the XML, just set values)
+                totalSharesText.text = String.format("%,.0f", totalShares)
+                userSharesText.text = String.format("%,.0f", userStaked)
+                poolOwnershipText.text = String.format("%.4f%%", ownershipPercent)
                 unbondingPercentText.text = String.format("%.4f%%", unbondingPercent)
 
                 // Calculate underlying values

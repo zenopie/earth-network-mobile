@@ -1,6 +1,5 @@
 package network.erth.wallet.ui.pages.swap
 
-import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -21,15 +20,12 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import network.erth.wallet.R
 import network.erth.wallet.Constants
-import network.erth.wallet.bridge.activities.TransactionActivity
 import network.erth.wallet.bridge.utils.PermitManager
-import network.erth.wallet.bridge.models.Permit
 import network.erth.wallet.wallet.services.SessionManager
 import network.erth.wallet.wallet.constants.Tokens
 import network.erth.wallet.wallet.services.SecretKClient
-import org.json.JSONArray
+import network.erth.wallet.wallet.services.TransactionExecutor
 import org.json.JSONObject
-import java.io.InputStream
 import java.text.DecimalFormat
 import kotlin.math.pow
 
@@ -46,13 +42,6 @@ class SwapTokensMainFragment : Fragment() {
 
     companion object {
         private const val TAG = "SwapTokensFragment"
-        private const val REQ_SIMULATE_SWAP = 3001
-        private const val REQ_EXECUTE_SWAP = 3002
-        private const val REQ_BALANCE_QUERY = 3003
-        private const val REQUEST_SWAP_SIMULATION = 3004
-        private const val REQUEST_TOKEN_BALANCE = 3005
-        private const val REQUEST_SWAP_EXECUTION = 3006
-        private const val REQ_SNIP_EXECUTE = 3008
     }
 
     // UI Components
@@ -488,79 +477,6 @@ class SwapTokensMainFragment : Fragment() {
         }
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-
-        if (requestCode == REQ_SNIP_EXECUTE) {
-            if (resultCode == Activity.RESULT_OK) {
-                clearAmounts()
-                fetchBalances() // Refresh balances
-            } else {
-                val error = data?.getStringExtra(TransactionActivity.EXTRA_ERROR) ?: "Unknown error"
-                Toast.makeText(context, "Swap failed: $error", Toast.LENGTH_LONG).show()
-            }
-        } else if (resultCode == Activity.RESULT_OK && data != null) {
-            val json: String?
-
-            if (requestCode == REQ_EXECUTE_SWAP || requestCode == REQUEST_SWAP_EXECUTION) {
-                // Legacy handling for old flow - can be removed later
-                json = data.getStringExtra(TransactionActivity.EXTRA_RESULT_JSON)
-                handleSwapExecutionResult(json)
-            } else {
-                // Use generic result key for other requests
-                json = data.getStringExtra("EXTRA_RESULT_JSON")
-
-                when (requestCode) {
-                    REQ_BALANCE_QUERY -> handleBalanceQueryResult(data, json)
-                    REQ_SIMULATE_SWAP, REQUEST_SWAP_SIMULATION -> handleSwapSimulationResult(json)
-                    REQUEST_TOKEN_BALANCE -> handleTokenBalanceResult(data, json)
-                }
-            }
-        }
-    }
-
-    private fun handleBalanceQueryResult(data: Intent, json: String?) {
-        try {
-            val isFromToken = data.getBooleanExtra("is_from_token", false)
-            val tokenSymbol = data.getStringExtra("token_symbol")
-
-            val root = JSONObject(json ?: "")
-            val success = root.optBoolean("success", false)
-
-            if (success) {
-                val result = root.optJSONObject("result")
-                result?.let {
-                    val balance = it.optJSONObject("balance")
-                    balance?.let { bal ->
-                        val amount = bal.optString("amount", "0")
-                        val token = Tokens.getTokenInfo(tokenSymbol!!)
-                        token?.let { tokenInfo ->
-                            val balanceValue = amount.toDouble() / 10.0.pow(tokenInfo.decimals)
-
-                            if (isFromToken) {
-                                fromBalance = balanceValue
-                                updateFromBalanceDisplay()
-                            } else {
-                                toBalance = balanceValue
-                                updateToBalanceDisplay()
-                            }
-                        }
-                    }
-                }
-            } else {
-                // Balance query failed
-                if (isFromToken) {
-                    fromBalance = -1.0
-                    updateFromBalanceDisplay()
-                } else {
-                    toBalance = -1.0
-                    updateToBalanceDisplay()
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse balance query result", e)
-        }
-    }
 
     private fun handleSwapSimulationResult(json: String?) {
         try {
@@ -593,38 +509,6 @@ class SwapTokensMainFragment : Fragment() {
 
         isSimulatingSwap = false
         updateSwapButton()
-    }
-
-    private fun handleSwapExecutionResult(json: String?) {
-
-        try {
-            val root = JSONObject(json ?: "")
-
-            // Check for success based on transaction code (0 = success)
-            var success = false
-            if (root.has("tx_response")) {
-                val txResponse = root.getJSONObject("tx_response")
-                val code = txResponse.optInt("code", -1)
-                success = (code == 0)
-
-                if (success) {
-                    val txHash = txResponse.optString("txhash", "")
-                }
-            } else {
-                // Fallback to old success field
-                success = root.optBoolean("success", false)
-            }
-
-            if (success) {
-                clearAmounts()
-                fetchBalances() // Refresh balances
-            } else {
-                Toast.makeText(context, "Swap failed", Toast.LENGTH_SHORT).show()
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse swap execution result", e)
-            Toast.makeText(context, "Swap failed", Toast.LENGTH_SHORT).show()
-        }
     }
 
     private fun updateFromBalanceDisplay() {
@@ -915,42 +799,61 @@ class SwapTokensMainFragment : Fragment() {
     private fun executeSwapWithContract() {
         val fromTokenSymbol = tokenSymbols[fromTokenSpinner?.selectedItemPosition ?: 0]
         val toTokenSymbol = tokenSymbols[toTokenSpinner?.selectedItemPosition ?: 0]
-        val inputAmount = fromAmountInput?.text.toString().toDouble()
+        val inputAmountStr = fromAmountInput?.text.toString()
 
-        val fromTokenInfo = Tokens.getTokenInfo(fromTokenSymbol)
-        if (fromTokenInfo == null) {
-            Toast.makeText(context, "Token not supported", Toast.LENGTH_SHORT).show()
-            return
+        lifecycleScope.launch {
+            try {
+                val inputAmount = inputAmountStr.toDouble()
+
+                val fromTokenInfo = Tokens.getTokenInfo(fromTokenSymbol)
+                if (fromTokenInfo == null) {
+                    Toast.makeText(context, "Token not supported", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+
+                // Build swap execution message to match React web app format
+                // Use SNIP execution with "send" message like the React app's snip() function
+                val toTokenInfo = Tokens.getTokenInfo(toTokenSymbol)
+                if (toTokenInfo == null) {
+                    Toast.makeText(context, "To token not supported", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+
+                // Build the message that will be base64 encoded (like snipmsg in React app)
+                val swapMessage = JSONObject()
+                val swap = JSONObject().apply {
+                    put("output_token", toTokenInfo.contract)
+                    put("min_received", calculateMinAmountOut(inputAmount))
+                }
+                swapMessage.put("swap", swap)
+
+                val inputAmountMicro = (inputAmount * 10.0.pow(fromTokenInfo.decimals)).toLong()
+
+                // Use TransactionExecutor to send token to exchange contract
+                val result = TransactionExecutor.sendSnip20Token(
+                    fragment = this@SwapTokensMainFragment,
+                    tokenContract = fromTokenInfo.contract,
+                    tokenHash = fromTokenInfo.hash,
+                    recipient = Constants.EXCHANGE_CONTRACT,
+                    recipientHash = Constants.EXCHANGE_HASH,
+                    amount = inputAmountMicro.toString(),
+                    message = swapMessage,
+                    gasLimit = 300_000  // Swaps need more gas than default
+                )
+
+                result.onSuccess {
+                    clearAmounts()
+                    fetchBalances() // Refresh balances
+                }.onFailure { error ->
+                    if (error.message != "Transaction cancelled by user" &&
+                        error.message != "Authentication failed") {
+                        Toast.makeText(context, "Swap failed: ${error.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Swap failed: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
         }
-
-        // Build swap execution message to match React web app format
-        // Use SNIP execution with "send" message like the React app's snip() function
-        val toTokenInfo = Tokens.getTokenInfo(toTokenSymbol)
-        if (toTokenInfo == null) {
-            Toast.makeText(context, "To token not supported", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        // Build the message that will be base64 encoded (like snipmsg in React app)
-        val swapMessage = String.format(
-            "{\"swap\": {\"output_token\": \"%s\", \"min_received\": \"%s\"}}",
-            toTokenInfo.contract,
-            calculateMinAmountOut(inputAmount)
-        )
-
-        val inputAmountMicro = (inputAmount * 10.0.pow(fromTokenInfo.decimals)).toLong()
-
-
-        val intent = Intent(context, TransactionActivity::class.java)
-        intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SNIP_EXECUTE)
-        intent.putExtra(TransactionActivity.EXTRA_TOKEN_CONTRACT, fromTokenInfo.contract)
-        intent.putExtra(TransactionActivity.EXTRA_TOKEN_HASH, fromTokenInfo.hash)
-        intent.putExtra(TransactionActivity.EXTRA_RECIPIENT_ADDRESS, Constants.EXCHANGE_CONTRACT)
-        intent.putExtra(TransactionActivity.EXTRA_RECIPIENT_HASH, Constants.EXCHANGE_HASH)
-        intent.putExtra(TransactionActivity.EXTRA_AMOUNT, inputAmountMicro.toString())
-        intent.putExtra(TransactionActivity.EXTRA_MESSAGE_JSON, swapMessage)
-
-        startActivityForResult(intent, REQ_SNIP_EXECUTE)
     }
 
     private fun calculateMinAmountOut(inputAmount: Double): String {
@@ -973,64 +876,5 @@ class SwapTokensMainFragment : Fragment() {
     private fun hasPermitForToken(tokenSymbol: String): Boolean {
         val tokenInfo = Tokens.getTokenInfo(tokenSymbol) ?: return false
         return permitManager?.hasPermit(currentWalletAddress, tokenInfo.contract) == true
-    }
-
-    private fun handleTokenBalanceResult(data: Intent, json: String?) {
-        try {
-            val isFromToken = data.getBooleanExtra("isFromToken", false)
-            val tokenSymbol = data.getStringExtra("tokenSymbol")
-
-            val root = JSONObject(json ?: "")
-            val success = root.optBoolean("success", false)
-
-            if (success) {
-                val result = root.optJSONObject("result")
-                result?.let {
-                    var balanceStr = "0"
-                    if ("SCRT" == tokenSymbol) {
-                        // Native SCRT balance
-                        val balances = it.optJSONArray("balances")
-                        if (balances != null && balances.length() > 0) {
-                            val balance = balances.getJSONObject(0)
-                            balanceStr = balance.optString("amount", "0")
-                        }
-                    } else {
-                        // SNIP-20 token balance
-                        val balance = it.optJSONObject("balance")
-                        balance?.let { bal ->
-                            balanceStr = bal.optString("amount", "0")
-                        }
-                    }
-
-                    val tokenInfo = Tokens.getTokenInfo(tokenSymbol!!)
-                    tokenInfo?.let { info ->
-                        val balanceValue = balanceStr.toDouble() / 10.0.pow(info.decimals)
-
-                        if (isFromToken) {
-                            fromBalance = balanceValue
-                        } else {
-                            toBalance = balanceValue
-                        }
-                        updateBalanceDisplay()
-                    }
-                }
-            } else {
-                // Balance query failed - set to -1 to show "Get Viewing Key" button
-                if (isFromToken) {
-                    fromBalance = -1.0
-                } else {
-                    toBalance = -1.0
-                }
-                updateBalanceDisplay()
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse token balance result", e)
-            if (data.getBooleanExtra("isFromToken", false)) {
-                fromBalance = -1.0
-            } else {
-                toBalance = -1.0
-            }
-            updateBalanceDisplay()
-        }
     }
 }

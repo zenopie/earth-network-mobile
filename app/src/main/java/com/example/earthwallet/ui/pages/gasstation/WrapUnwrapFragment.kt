@@ -1,8 +1,6 @@
 package network.erth.wallet.ui.pages.gasstation
 
-import android.app.Activity
 import android.content.Context
-import android.content.Intent
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextUtils
@@ -13,14 +11,13 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.*
 import androidx.fragment.app.Fragment
-import androidx.activity.result.ActivityResultLauncher
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
+import io.eqoty.cosmwasm.std.types.Coin
 import network.erth.wallet.R
-import network.erth.wallet.bridge.activities.TransactionActivity
 import network.erth.wallet.wallet.constants.Tokens
 import network.erth.wallet.wallet.services.SecretKClient
+import network.erth.wallet.wallet.services.TransactionExecutor
 import org.json.JSONObject
 import java.text.DecimalFormat
 import kotlin.math.pow
@@ -63,12 +60,6 @@ class WrapUnwrapFragment : Fragment() {
     private var sscrtBalance = 0.0
     private var hasGasGrant = false
 
-    // Fee granter address from backend
-    private val FEE_GRANTER_ADDRESS = "secret1ktpxcznqcls64t8tjyv3atwhndscgw08yp2jas"
-
-    // Activity Result Launcher for transaction activity
-    private lateinit var wrapUnwrapLauncher: ActivityResultLauncher<Intent>
-
     // Interface for communication with parent
     interface WrapUnwrapListener {
         fun getCurrentWalletAddress(): String
@@ -91,14 +82,6 @@ class WrapUnwrapFragment : Fragment() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // Initialize activity result launcher
-        wrapUnwrapLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            if (result.resultCode == Activity.RESULT_OK && result.data != null) {
-                val json = result.data?.getStringExtra(TransactionActivity.EXTRA_RESULT_JSON)
-                handleWrapUnwrapResult(json)
-            }
-        }
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
@@ -331,58 +314,67 @@ class WrapUnwrapFragment : Fragment() {
             wrapUnwrapButton?.isEnabled = false
             wrapUnwrapButton?.text = if (isWrapMode) "Wrapping..." else "Unwrapping..."
 
-            if (isWrapMode) {
-                // Wrap SCRT to sSCRT
-                val sscrtTokenInfo = Tokens.getTokenInfo("sSCRT")
-                if (sscrtTokenInfo == null) {
-                    Toast.makeText(requireContext(), "sSCRT token info not found", Toast.LENGTH_SHORT).show()
+            lifecycleScope.launch {
+                try {
+                    val sscrtTokenInfo = Tokens.getTokenInfo("sSCRT")
+                    if (sscrtTokenInfo == null) {
+                        Toast.makeText(requireContext(), "sSCRT token info not found", Toast.LENGTH_SHORT).show()
+                        resetWrapUnwrapButton()
+                        return@launch
+                    }
+
+                    val result = if (isWrapMode) {
+                        // Wrap SCRT to sSCRT
+                        val inputAmountMicro = (inputAmount * 10.0.pow(6)).toLong()
+                        val depositMsg = JSONObject()
+                        depositMsg.put("deposit", JSONObject())
+
+                        val sentFunds = listOf(Coin("uscrt", inputAmountMicro.toString()))
+
+                        TransactionExecutor.executeContract(
+                            fragment = this@WrapUnwrapFragment,
+                            contractAddress = sscrtTokenInfo.contract,
+                            message = depositMsg,
+                            codeHash = sscrtTokenInfo.hash,
+                            sentFunds = sentFunds,
+                            contractLabel = "sSCRT Contract:"
+                        )
+                    } else {
+                        // Unwrap sSCRT to SCRT
+                        val inputAmountMicro = (inputAmount * 10.0.pow(sscrtTokenInfo.decimals)).toLong()
+                        val redeemMsg = JSONObject()
+                        val redeem = JSONObject()
+                        redeem.put("amount", inputAmountMicro.toString())
+                        redeemMsg.put("redeem", redeem)
+
+                        TransactionExecutor.executeContract(
+                            fragment = this@WrapUnwrapFragment,
+                            contractAddress = sscrtTokenInfo.contract,
+                            message = redeemMsg,
+                            codeHash = sscrtTokenInfo.hash,
+                            contractLabel = "sSCRT Contract:"
+                        )
+                    }
+
+                    result.onSuccess {
+                        resetWrapUnwrapButton()
+                        fromAmountInput?.setText("")
+                        toAmountInput?.setText("")
+                        fetchBalances() // Refresh balances
+                        listener?.onWrapUnwrapComplete()
+                    }.onFailure { error ->
+                        resetWrapUnwrapButton()
+                        if (error.message != "Transaction cancelled by user" &&
+                            error.message != "Authentication failed") {
+                            Toast.makeText(context, "Failed: ${error.message}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+
+                } catch (e: Exception) {
                     resetWrapUnwrapButton()
-                    return
+                    Log.e(TAG, "Error executing wrap/unwrap", e)
+                    Toast.makeText(context, "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
-
-                val inputAmountMicro = (inputAmount * 10.0.pow(6)).toLong() // SCRT has 6 decimals
-
-                val intent = Intent(requireContext(), TransactionActivity::class.java)
-                intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE)
-                intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, sscrtTokenInfo.contract)
-                intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, sscrtTokenInfo.hash)
-                intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, "{\"deposit\": {}}")
-                intent.putExtra(TransactionActivity.EXTRA_FUNDS, "uscrt:${inputAmountMicro}")
-
-                // Add fee granter for gasless transactions when available
-                if (hasGasGrant) {
-                    intent.putExtra(TransactionActivity.EXTRA_FEE_GRANTER, FEE_GRANTER_ADDRESS)
-                }
-
-                wrapUnwrapLauncher.launch(intent)
-            } else {
-                // Unwrap sSCRT to SCRT
-                val sscrtTokenInfo = Tokens.getTokenInfo("sSCRT")
-                if (sscrtTokenInfo == null) {
-                    Toast.makeText(requireContext(), "sSCRT token info not found", Toast.LENGTH_SHORT).show()
-                    resetWrapUnwrapButton()
-                    return
-                }
-
-                val inputAmountMicro = (inputAmount * 10.0.pow(sscrtTokenInfo.decimals)).toLong()
-
-                val message = String.format(
-                    "{\"redeem\": {\"amount\": \"%s\"}}",
-                    inputAmountMicro.toString()
-                )
-
-                val intent = Intent(requireContext(), TransactionActivity::class.java)
-                intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE)
-                intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, sscrtTokenInfo.contract)
-                intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, sscrtTokenInfo.hash)
-                intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, message)
-
-                // Add fee granter for gasless transactions when available
-                if (hasGasGrant) {
-                    intent.putExtra(TransactionActivity.EXTRA_FEE_GRANTER, FEE_GRANTER_ADDRESS)
-                }
-
-                wrapUnwrapLauncher.launch(intent)
             }
 
         } catch (e: NumberFormatException) {
@@ -394,39 +386,6 @@ class WrapUnwrapFragment : Fragment() {
     private fun resetWrapUnwrapButton() {
         wrapUnwrapButton?.isEnabled = true
         wrapUnwrapButton?.text = if (isWrapMode) "Wrap" else "Unwrap"
-    }
-
-    private fun handleWrapUnwrapResult(json: String?) {
-        resetWrapUnwrapButton()
-
-        try {
-            val root = JSONObject(json ?: "")
-
-            val success = if (root.has("tx_response")) {
-                val txResponse = root.getJSONObject("tx_response")
-                val code = txResponse.optInt("code", -1)
-                val isSuccess = (code == 0)
-
-                if (isSuccess) {
-                    val txHash = txResponse.optString("txhash", "")
-                }
-                isSuccess
-            } else {
-                root.optBoolean("success", false)
-            }
-
-            if (success) {
-                fromAmountInput?.setText("")
-                toAmountInput?.setText("")
-                fetchBalances() // Refresh balances
-                listener?.onWrapUnwrapComplete()
-            } else {
-                Toast.makeText(context, "${if (isWrapMode) "Wrap" else "Unwrap"} failed", Toast.LENGTH_SHORT).show()
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse wrap/unwrap result", e)
-            Toast.makeText(context, "${if (isWrapMode) "Wrap" else "Unwrap"} failed", Toast.LENGTH_SHORT).show()
-        }
     }
 
     private fun toggleFaucetTooltip() {

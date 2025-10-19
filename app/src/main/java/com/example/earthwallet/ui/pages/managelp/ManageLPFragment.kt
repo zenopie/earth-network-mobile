@@ -1,7 +1,5 @@
 package network.erth.wallet.ui.pages.managelp
 
-import android.app.Activity
-import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
@@ -10,6 +8,7 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -18,12 +17,13 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import network.erth.wallet.R
 import network.erth.wallet.Constants
-import network.erth.wallet.bridge.activities.TransactionActivity
 import network.erth.wallet.ui.components.LoadingOverlay
 import network.erth.wallet.wallet.constants.Tokens
 import network.erth.wallet.wallet.services.SecureWalletManager
 import network.erth.wallet.wallet.services.SecretKClient
+import network.erth.wallet.wallet.services.TransactionExecutor
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -36,8 +36,6 @@ class ManageLPFragment : Fragment() {
 
     companion object {
         private const val TAG = "ManageLPFragment"
-        private const val REQ_CLAIM_INDIVIDUAL = 5001
-        private const val REQ_CLAIM_ALL = 5002
 
         @JvmStatic
         fun newInstance(): ManageLPFragment = ManageLPFragment()
@@ -186,15 +184,28 @@ class ManageLPFragment : Fragment() {
 
         // Query the exchange contract
         lifecycleScope.launch {
-            val result = SecretKClient.queryContractJson(
-                Constants.EXCHANGE_CONTRACT,
-                JSONObject(queryJson),
-                Constants.EXCHANGE_HASH
-            )
+            try {
+                val responseString = SecretKClient.queryContract(
+                    Constants.EXCHANGE_CONTRACT,
+                    queryJson,
+                    Constants.EXCHANGE_HASH
+                )
 
-
-        // Process the results
-        processPoolQueryResults(result, tokenKeys)
+                // Try to parse as JSONArray first (this query returns an array)
+                try {
+                    val poolResults = JSONArray(responseString)
+                    val newPoolData = mutableListOf<PoolData>()
+                    processPoolArray(poolResults, tokenKeys, newPoolData)
+                    updatePoolDataOnUI(newPoolData)
+                } catch (e: JSONException) {
+                    // If not an array, try as JSONObject (for error handling)
+                    val result = JSONObject(responseString)
+                    processPoolQueryResults(result, tokenKeys)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to query pool data", e)
+                Toast.makeText(context, "Failed to load pool data: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -409,75 +420,101 @@ class ManageLPFragment : Fragment() {
     }
 
     private fun handleClaimRewards(poolData: PoolData) {
+        lifecycleScope.launch {
+            try {
+                // Get token contract for this pool
+                val tokenInfo = poolData.tokenInfo
+                if (tokenInfo == null) {
+                    Log.e(TAG, "No token info available for: ${poolData.tokenKey}")
+                    return@launch
+                }
 
-        try {
-            // Get token contract for this pool
-            val tokenInfo = poolData.tokenInfo
-            if (tokenInfo == null) {
-                Log.e(TAG, "No token info available for: ${poolData.tokenKey}")
-                return
+                // Create claim message: { claim_rewards: { pools: [contract] } }
+                val claimMsg = JSONObject()
+                val claimRewards = JSONObject()
+                val pools = JSONArray()
+                pools.put(tokenInfo.contract)
+                claimRewards.put("pools", pools)
+                claimMsg.put("claim_rewards", claimRewards)
+
+                val result = TransactionExecutor.executeContract(
+                    fragment = this@ManageLPFragment,
+                    contractAddress = Constants.EXCHANGE_CONTRACT,
+                    message = claimMsg,
+                    codeHash = Constants.EXCHANGE_HASH,
+                    contractLabel = "Exchange Contract:"
+                )
+
+                result.onSuccess {
+                    // Refresh pool data
+                    refreshPoolData()
+                    activity?.runOnUiThread {
+                        updateTotalRewards()
+                        poolAdapter.notifyDataSetChanged()
+                    }
+                }.onFailure { error ->
+                    if (error.message != "Transaction cancelled by user" &&
+                        error.message != "Authentication failed") {
+                        Log.e(TAG, "Claim failed: ${error.message}")
+                    }
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Error claiming rewards for pool: ${poolData.tokenKey}", e)
             }
-
-            // Create claim message: { claim_rewards: { pools: [contract] } }
-            val claimMsg = JSONObject()
-            val claimRewards = JSONObject()
-            val pools = JSONArray()
-            pools.put(tokenInfo.contract)
-            claimRewards.put("pools", pools)
-            claimMsg.put("claim_rewards", claimRewards)
-
-
-            // Use SecretExecuteActivity for claiming rewards
-            val intent = Intent(activity, TransactionActivity::class.java)
-            intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE)
-            intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.EXCHANGE_CONTRACT)
-            intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.EXCHANGE_HASH)
-            intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, claimMsg.toString())
-
-            startActivityForResult(intent, REQ_CLAIM_INDIVIDUAL)
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error claiming rewards for pool: ${poolData.tokenKey}", e)
         }
     }
 
     private fun handleClaimAll() {
-
-        try {
-            // Collect all pools with rewards > 0
-            val poolsWithRewards = JSONArray()
-            for (pool in allPoolsData) {
-                try {
-                    val rewards = pool.pendingRewards.replace(",", "").toDouble()
-                    if (rewards > 0 && pool.tokenInfo != null) {
-                        poolsWithRewards.put(pool.tokenInfo!!.contract)
+        lifecycleScope.launch {
+            try {
+                // Collect all pools with rewards > 0
+                val poolsWithRewards = JSONArray()
+                for (pool in allPoolsData) {
+                    try {
+                        val rewards = pool.pendingRewards.replace(",", "").toDouble()
+                        if (rewards > 0 && pool.tokenInfo != null) {
+                            poolsWithRewards.put(pool.tokenInfo!!.contract)
+                        }
+                    } catch (e: NumberFormatException) {
                     }
-                } catch (e: NumberFormatException) {
                 }
+
+                if (poolsWithRewards.length() == 0) {
+                    return@launch
+                }
+
+                // Create claim message: { claim_rewards: { pools: [contracts...] } }
+                val claimMsg = JSONObject()
+                val claimRewards = JSONObject()
+                claimRewards.put("pools", poolsWithRewards)
+                claimMsg.put("claim_rewards", claimRewards)
+
+                val result = TransactionExecutor.executeContract(
+                    fragment = this@ManageLPFragment,
+                    contractAddress = Constants.EXCHANGE_CONTRACT,
+                    message = claimMsg,
+                    codeHash = Constants.EXCHANGE_HASH,
+                    contractLabel = "Exchange Contract:"
+                )
+
+                result.onSuccess {
+                    // Refresh pool data
+                    refreshPoolData()
+                    activity?.runOnUiThread {
+                        updateTotalRewards()
+                        poolAdapter.notifyDataSetChanged()
+                    }
+                }.onFailure { error ->
+                    if (error.message != "Transaction cancelled by user" &&
+                        error.message != "Authentication failed") {
+                        Log.e(TAG, "Claim failed: ${error.message}")
+                    }
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Error claiming all rewards", e)
             }
-
-            if (poolsWithRewards.length() == 0) {
-                return
-            }
-
-            // Create claim message: { claim_rewards: { pools: [contracts...] } }
-            val claimMsg = JSONObject()
-            val claimRewards = JSONObject()
-            claimRewards.put("pools", poolsWithRewards)
-            claimMsg.put("claim_rewards", claimRewards)
-
-
-            // Use SecretExecuteActivity for claiming all rewards
-            val intent = Intent(activity, TransactionActivity::class.java)
-            intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE)
-            intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.EXCHANGE_CONTRACT)
-            intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.EXCHANGE_HASH)
-            intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, claimMsg.toString())
-
-            startActivityForResult(intent, REQ_CLAIM_ALL)
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error claiming all rewards", e)
         }
     }
 
@@ -492,23 +529,9 @@ class ManageLPFragment : Fragment() {
         val tokenInfo: Tokens.TokenInfo?
     )
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-
-        if (requestCode == REQ_CLAIM_INDIVIDUAL || requestCode == REQ_CLAIM_ALL) {
-            if (resultCode == Activity.RESULT_OK) {
-                // Refresh pool data and UI to reflect new balances
-                refreshPoolData()
-                // Also refresh the pool overview display immediately
-                activity?.runOnUiThread {
-                    updateTotalRewards()
-                    poolAdapter.notifyDataSetChanged()
-                }
-            } else {
-                val error = data?.getStringExtra("error") ?: "Unknown error"
-                Log.e(TAG, "Claim transaction failed: $error")
-            }
-        }
+        // No longer needed - transactions handled by TransactionExecutor
     }
 
     override fun onDestroy() {

@@ -115,7 +115,7 @@ class StatusModal(private var context: Context?) {
         // Auto-close success and error states after delay
         if (state == State.SUCCESS || state == State.ERROR) {
             handler.postDelayed({
-                if (isShowing && closeListener != null) {
+                if (isShowing) {
                     close()
                 }
             }, 1500)
@@ -136,7 +136,7 @@ class StatusModal(private var context: Context?) {
         // Auto-close success and error states after delay
         if (state == State.SUCCESS || state == State.ERROR) {
             handler.postDelayed({
-                if (isShowing && closeListener != null) {
+                if (isShowing) {
                     close()
                 }
             }, 1500)

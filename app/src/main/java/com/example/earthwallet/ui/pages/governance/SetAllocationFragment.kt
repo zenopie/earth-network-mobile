@@ -1,7 +1,5 @@
 package network.erth.wallet.ui.pages.governance
 
-import android.app.Activity
-import android.content.Intent
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
@@ -14,13 +12,11 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import androidx.activity.result.ActivityResultLauncher
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
 import network.erth.wallet.Constants
 import network.erth.wallet.R
-import network.erth.wallet.bridge.activities.TransactionActivity
 import network.erth.wallet.wallet.services.SecretKClient
+import network.erth.wallet.wallet.services.TransactionExecutor
 import org.json.JSONArray
 import org.json.JSONObject
 import androidx.lifecycle.lifecycleScope
@@ -50,10 +46,6 @@ class SetAllocationFragment : Fragment() {
             return fragment
         }
     }
-
-    // Activity Result Launchers
-    private lateinit var caretakerFundLauncher: ActivityResultLauncher<Intent>
-    private lateinit var deflationFundLauncher: ActivityResultLauncher<Intent>
 
     // UI Components
     private lateinit var titleText: TextView
@@ -89,19 +81,6 @@ class SetAllocationFragment : Fragment() {
         arguments?.let {
             fundType = it.getString(ARG_FUND_TYPE)
             fundTitle = it.getString(ARG_FUND_TITLE)
-        }
-
-        // Initialize activity result launchers
-        caretakerFundLauncher = registerForActivityResult(
-            ActivityResultContracts.StartActivityForResult()
-        ) { result ->
-            handleTransactionResult(result.resultCode, result.data)
-        }
-
-        deflationFundLauncher = registerForActivityResult(
-            ActivityResultContracts.StartActivityForResult()
-        ) { result ->
-            handleTransactionResult(result.resultCode, result.data)
         }
     }
 
@@ -418,72 +397,67 @@ class SetAllocationFragment : Fragment() {
             return
         }
 
-        try {
-            // Build the contract execution message matching web app format
-            val executeMsg = JSONObject()
-            val setAllocation = JSONObject()
-            val percentages = JSONArray()
+        lifecycleScope.launch {
+            try {
+                // Build the contract execution message matching web app format
+                val executeMsg = JSONObject()
+                val setAllocation = JSONObject()
+                val percentages = JSONArray()
 
-            // Format allocations as expected by the contracts (matching web app)
-            for (allocation in selectedAllocations) {
-                val allocItem = JSONObject()
-                allocItem.put("allocation_id", allocation.allocationId)
-                allocItem.put("percentage", allocation.percentage.toString())
-                percentages.put(allocItem)
-            }
-
-            setAllocation.put("percentages", percentages)
-            executeMsg.put("set_allocation", setAllocation)
-
-
-            when (fundType) {
-                FUND_TYPE_CARETAKER -> {
-                    // Execute on registration contract
-                    val intent = Intent(activity, TransactionActivity::class.java)
-                    intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE)
-                    intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.REGISTRATION_CONTRACT)
-                    intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.REGISTRATION_HASH)
-                    intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, executeMsg.toString())
-
-                    caretakerFundLauncher.launch(intent)
+                // Format allocations as expected by the contracts (matching web app)
+                for (allocation in selectedAllocations) {
+                    val allocItem = JSONObject()
+                    allocItem.put("allocation_id", allocation.allocationId)
+                    allocItem.put("percentage", allocation.percentage.toString())
+                    percentages.put(allocItem)
                 }
-                FUND_TYPE_DEFLATION -> {
-                    // Execute on staking contract
-                    val intent = Intent(activity, TransactionActivity::class.java)
-                    intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE)
-                    intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.STAKING_CONTRACT)
-                    intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.STAKING_HASH)
-                    intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, executeMsg.toString())
 
-                    deflationFundLauncher.launch(intent)
+                setAllocation.put("percentages", percentages)
+                executeMsg.put("set_allocation", setAllocation)
+
+                val contractAddress: String
+                val codeHash: String
+                val contractLabel: String
+
+                when (fundType) {
+                    FUND_TYPE_CARETAKER -> {
+                        contractAddress = Constants.REGISTRATION_CONTRACT
+                        codeHash = Constants.REGISTRATION_HASH
+                        contractLabel = "Caretaker Fund:"
+                    }
+                    FUND_TYPE_DEFLATION -> {
+                        contractAddress = Constants.STAKING_CONTRACT
+                        codeHash = Constants.STAKING_HASH
+                        contractLabel = "Deflation Fund:"
+                    }
+                    else -> {
+                        Toast.makeText(context, "Invalid fund type", Toast.LENGTH_SHORT).show()
+                        return@launch
+                    }
                 }
-            }
 
-        } catch (e: Exception) {
-            Log.e(TAG, "Error building allocation message", e)
-            Toast.makeText(context, "Error setting allocation: ${e.message}", Toast.LENGTH_SHORT).show()
-        }
-    }
+                val result = TransactionExecutor.executeContract(
+                    fragment = this@SetAllocationFragment,
+                    contractAddress = contractAddress,
+                    message = executeMsg,
+                    codeHash = codeHash,
+                    contractLabel = contractLabel
+                )
 
-    private fun handleTransactionResult(resultCode: Int, data: Intent?) {
-        if (resultCode == Activity.RESULT_OK) {
-            // Success - allocation was set
-            // Go back to previous fragment
-            activity?.supportFragmentManager?.popBackStack()
-        } else {
-            // Handle errors
-            var error = "Unknown error"
-            data?.let {
-                val errorStr = it.getStringExtra(TransactionActivity.EXTRA_ERROR)
-                if (!errorStr.isNullOrEmpty()) {
-                    error = errorStr
-                } else {
-                    error = "Transaction cancelled or failed"
+                result.onSuccess {
+                    // Success - go back to previous fragment
+                    activity?.supportFragmentManager?.popBackStack()
+                }.onFailure { error ->
+                    if (error.message != "Transaction cancelled by user" &&
+                        error.message != "Authentication failed") {
+                        Toast.makeText(context, "Failed: ${error.message}", Toast.LENGTH_SHORT).show()
+                    }
                 }
-            }
 
-            Log.e(TAG, "Error setting allocation: $error")
-            Toast.makeText(context, "Error setting allocation: $error", Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error setting allocation", e)
+                Toast.makeText(context, "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 

@@ -1,7 +1,6 @@
 package network.erth.wallet.ui.pages.anml
 
 import network.erth.wallet.R
-import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -20,11 +19,11 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
 import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
-import network.erth.wallet.bridge.activities.TransactionActivity
 import network.erth.wallet.Constants
 import network.erth.wallet.ui.components.LoadingOverlay
 import network.erth.wallet.wallet.services.SecretKClient
 import network.erth.wallet.wallet.services.SecureWalletManager
+import network.erth.wallet.wallet.services.TransactionExecutor
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
@@ -33,8 +32,6 @@ class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListe
     companion object {
         private const val TAG = "ANMLClaimFragment"
         private const val ONE_DAY_MILLIS = 24L * 60L * 60L * 1000L
-        private const val REQ_QUERY = 1001
-        private const val REQ_EXECUTE = 1002
 
         @JvmStatic
         fun newInstance(): ANMLClaimMainFragment = ANMLClaimMainFragment()
@@ -200,19 +197,35 @@ class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListe
     }
 
     override fun onClaimRequested() {
-        try {
-            val exec = JSONObject()
-            exec.put("claim_anml", JSONObject())
+        lifecycleScope.launch {
+            try {
+                val exec = JSONObject()
+                exec.put("claim_anml", JSONObject())
 
-            val ei = Intent(context, TransactionActivity::class.java)
-            ei.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE)
-            ei.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.REGISTRATION_CONTRACT)
-            ei.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.REGISTRATION_HASH)
-            ei.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, exec.toString())
-            // Funds/memo/lcd are optional; default LCD is used in the bridge
-            startActivityForResult(ei, REQ_EXECUTE)
-        } catch (e: Exception) {
-            Toast.makeText(context, "Failed to start claim: ${e.message}", Toast.LENGTH_SHORT).show()
+                val result = TransactionExecutor.executeContract(
+                    fragment = this@ANMLClaimMainFragment,
+                    contractAddress = Constants.REGISTRATION_CONTRACT,
+                    message = exec,
+                    codeHash = Constants.REGISTRATION_HASH,
+                    contractLabel = "Registration Contract:"
+                )
+
+                result.onSuccess {
+                    // Transaction successful - navigate to complete screen
+                    showCompleteFragment()
+                    // Broadcast receiver will handle status refreshes
+                }.onFailure { error ->
+                    if (error.message != "Transaction cancelled by user" &&
+                        error.message != "Authentication failed") {
+                        Log.e(TAG, "ANML claim failed: ${error.message}")
+                    }
+                    // Transaction failed or was cancelled - refresh to ensure UI is correct
+                    checkStatus()
+                }
+
+            } catch (e: Exception) {
+                Toast.makeText(context, "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -352,25 +365,6 @@ class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListe
         }
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-
-        if (requestCode == REQ_EXECUTE) {
-            // Hide loading screen that might be showing
-            showLoading(false)
-
-            if (resultCode == Activity.RESULT_OK) {
-                // Transaction successful - navigate optimistically to complete screen
-                showCompleteFragment()
-                // Broadcast receiver will handle status refreshes
-            } else {
-                val error = data?.getStringExtra(TransactionActivity.EXTRA_ERROR) ?: "Unknown error"
-                Log.e(TAG, "ANML claim transaction failed: $error")
-                // Transaction failed or was cancelled - refresh to ensure UI is correct
-                checkStatus()
-            }
-        }
-    }
 
     override fun onDestroy() {
         super.onDestroy()

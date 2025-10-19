@@ -1,9 +1,7 @@
 package network.erth.wallet.ui.pages.wallet
 
-import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
-import android.content.Intent
 import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.text.TextUtils
@@ -16,18 +14,17 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import network.erth.wallet.R
-import network.erth.wallet.bridge.activities.TransactionActivity
 import network.erth.wallet.bridge.utils.PermitManager
 import network.erth.wallet.wallet.constants.Tokens
 import network.erth.wallet.wallet.services.SecretKClient
 import network.erth.wallet.wallet.services.SecureWalletManager
+import network.erth.wallet.wallet.services.TransactionExecutor
 import network.erth.wallet.wallet.utils.WalletNetwork
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.pow
 import kotlin.math.round
@@ -45,8 +42,6 @@ class SendTokensFragment : Fragment(), WalletDisplayFragment.WalletDisplayListen
 
     companion object {
         private const val TAG = "SendTokensFragment"
-        private const val REQ_SEND_NATIVE = 3001
-        private const val REQ_SEND_SNIP = 3002
     }
 
     // UI Components
@@ -328,75 +323,93 @@ class SendTokensFragment : Fragment(), WalletDisplayFragment.WalletDisplayListen
     }
 
     private fun sendNativeToken(recipient: String, amount: String, memo: String) {
-        // Convert amount to microSCRT (6 decimals)
-        val amountDouble = amount.toDouble()
-        val microScrt = round(amountDouble * 1_000_000).toLong()
-        val microScrtString = microScrt.toString()
+        lifecycleScope.launch {
+            try {
+                // Convert amount to microSCRT (6 decimals)
+                val amountDouble = amount.toDouble()
+                val microScrt = round(amountDouble * 1_000_000).toLong()
 
-        // Use the native token sending activity
-        val intent = Intent(activity, TransactionActivity::class.java).apply {
-            putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_NATIVE_SEND)
-            putExtra(TransactionActivity.EXTRA_RECIPIENT_ADDRESS, recipient)
-            putExtra(TransactionActivity.EXTRA_AMOUNT, microScrtString)
-            putExtra(TransactionActivity.EXTRA_MEMO, memo)
+                // Use TransactionExecutor for native token send
+                val result = TransactionExecutor.sendNativeToken(
+                    fragment = this@SendTokensFragment,
+                    toAddress = recipient,
+                    amount = microScrt
+                )
+
+                result.onSuccess {
+                    // Clear form
+                    clearForm()
+                    // Refresh balance after successful transaction
+                    val selectedPosition = tokenSpinner.selectedItemPosition
+                    if (selectedPosition >= 0 && selectedPosition < tokenOptions.size) {
+                        fetchTokenBalance(tokenOptions[selectedPosition])
+                    }
+                    // Notify parent
+                    listener?.onSendComplete()
+                }.onFailure { error ->
+                    if (error.message != "Transaction cancelled by user" &&
+                        error.message != "Authentication failed") {
+                        Toast.makeText(context, "Transaction failed: ${error.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Failed to send: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
         }
-
-        startActivityForResult(intent, REQ_SEND_NATIVE)
     }
 
     private fun sendSnipToken(tokenOption: TokenOption, recipient: String, amount: String, memo: String) {
         val token = tokenOption.tokenInfo ?: return
 
-        // Convert amount to token's smallest unit
-        val amountDouble = amount.toDouble()
-        val tokenAmount = round(amountDouble * 10.0.pow(token.decimals.toDouble())).toLong()
-        val tokenAmountString = tokenAmount.toString()
+        lifecycleScope.launch {
+            try {
+                // Convert amount to token's smallest unit
+                val amountDouble = amount.toDouble()
+                val tokenAmount = round(amountDouble * 10.0.pow(token.decimals.toDouble())).toLong()
+                val tokenAmountString = tokenAmount.toString()
 
-        // Create message for SNIP-20 transfer
-        val transferMsg = JSONObject()
-        val transfer = JSONObject().apply {
-            put("recipient", recipient)
-            put("amount", tokenAmountString)
-            if (!TextUtils.isEmpty(memo)) {
-                put("memo", memo)
-            }
-        }
-        transferMsg.put("transfer", transfer)
-
-        // Use TransactionActivity for SNIP-20 token transfer
-        val intent = Intent(activity, TransactionActivity::class.java).apply {
-            putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SNIP_EXECUTE)
-            putExtra(TransactionActivity.EXTRA_TOKEN_CONTRACT, token.contract)
-            putExtra(TransactionActivity.EXTRA_TOKEN_HASH, token.hash)
-            putExtra(TransactionActivity.EXTRA_RECIPIENT_ADDRESS, recipient)
-            putExtra(TransactionActivity.EXTRA_RECIPIENT_HASH, "")
-            putExtra(TransactionActivity.EXTRA_AMOUNT, tokenAmountString)
-            putExtra(TransactionActivity.EXTRA_MESSAGE_JSON, transferMsg.toString())
-        }
-
-        startActivityForResult(intent, REQ_SEND_SNIP)
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-
-        if (requestCode == REQ_SEND_NATIVE || requestCode == REQ_SEND_SNIP) {
-            if (resultCode == Activity.RESULT_OK) {
-                // Clear form
-                clearForm()
-                // Refresh balance after successful transaction
-                val selectedPosition = tokenSpinner.selectedItemPosition
-                if (selectedPosition >= 0 && selectedPosition < tokenOptions.size) {
-                    fetchTokenBalance(tokenOptions[selectedPosition])
+                // Create message for SNIP-20 transfer
+                val transferMsg = JSONObject()
+                val transfer = JSONObject().apply {
+                    put("recipient", recipient)
+                    put("amount", tokenAmountString)
+                    if (!TextUtils.isEmpty(memo)) {
+                        put("memo", memo)
+                    }
                 }
-                // Notify parent
-                listener?.onSendComplete()
-            } else {
-                val error = data?.getStringExtra("error") ?: "Unknown error"
-                Toast.makeText(context, "Transaction failed: $error", Toast.LENGTH_LONG).show()
+                transferMsg.put("transfer", transfer)
+
+                // Use TransactionExecutor for SNIP-20 token transfer
+                val result = TransactionExecutor.executeContract(
+                    fragment = this@SendTokensFragment,
+                    contractAddress = token.contract,
+                    message = transferMsg,
+                    codeHash = token.hash,
+                    contractLabel = "${tokenOption.symbol}:"
+                )
+
+                result.onSuccess {
+                    // Clear form
+                    clearForm()
+                    // Refresh balance after successful transaction
+                    val selectedPosition = tokenSpinner.selectedItemPosition
+                    if (selectedPosition >= 0 && selectedPosition < tokenOptions.size) {
+                        fetchTokenBalance(tokenOptions[selectedPosition])
+                    }
+                    // Notify parent
+                    listener?.onSendComplete()
+                }.onFailure { error ->
+                    if (error.message != "Transaction cancelled by user" &&
+                        error.message != "Authentication failed") {
+                        Toast.makeText(context, "Transaction failed: ${error.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Failed to send: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
+
 
     override fun onResume() {
         super.onResume()

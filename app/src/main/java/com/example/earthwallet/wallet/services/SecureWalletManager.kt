@@ -43,6 +43,15 @@ object SecureWalletManager {
     }
 
     /**
+     * Suspend-compatible interface for operations that need access to the mnemonic.
+     * Allows calling suspend functions within the operation.
+     */
+    fun interface SuspendMnemonicOperation<T> {
+        @Throws(Exception::class)
+        suspend fun execute(mnemonic: String): T
+    }
+
+    /**
      * Start a new session with PIN-based decryption
      */
     @Throws(Exception::class)
@@ -114,6 +123,37 @@ object SecureWalletManager {
                 chars.fill('\u0000')
                 mnemonicChars = null
             }
+        }
+    }
+
+    /**
+     * Execute a suspend operation with mnemonic from active session.
+     * Allows calling suspend functions (like SecretKClient methods) within the operation.
+     *
+     * @param context Android context
+     * @param operation The suspend operation to execute with the mnemonic
+     * @return The result of the operation
+     * @throws Exception If no active session or mnemonic retrieval fails
+     */
+    @Throws(Exception::class)
+    suspend fun <T> executeWithSuspendMnemonic(context: Context, operation: SuspendMnemonicOperation<T>): T {
+        // Ensure WalletCrypto is initialized before any mnemonic operations
+        WalletCrypto.initialize(context)
+        var mnemonic: String? = null
+        return try {
+            // Fetch mnemonic from active session
+            mnemonic = fetchMnemonicFromSession(context)
+
+            if (TextUtils.isEmpty(mnemonic)) {
+                throw IllegalStateException("No wallet mnemonic found - wallet may not be initialized")
+            }
+
+            // Execute the suspend operation
+            operation.execute(mnemonic!!)
+
+        } finally {
+            // Securely clear the mnemonic String
+            mnemonic?.let { securelyClearString(it) }
         }
     }
 

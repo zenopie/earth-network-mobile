@@ -1,6 +1,5 @@
 package network.erth.wallet.ui.pages.staking
 
-import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -21,9 +20,9 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import network.erth.wallet.R
 import network.erth.wallet.Constants
-import network.erth.wallet.bridge.activities.TransactionActivity
 import network.erth.wallet.wallet.services.SecureWalletManager
 import network.erth.wallet.wallet.services.SecretKClient
+import network.erth.wallet.wallet.services.TransactionExecutor
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -37,8 +36,6 @@ class UnbondingFragment : Fragment() {
 
     companion object {
         private const val TAG = "UnbondingFragment"
-        private const val REQ_CLAIM_UNBONDED = 4004
-        private const val REQ_CANCEL_UNBOND = 4005
 
         @JvmStatic
         fun newInstance(): UnbondingFragment = UnbondingFragment()
@@ -277,71 +274,67 @@ class UnbondingFragment : Fragment() {
     }
 
     private fun handleClaimUnbonded() {
+        lifecycleScope.launch {
+            try {
+                // Create claim unbonded message: { claim_unbonded: {} }
+                val claimMsg = JSONObject()
+                claimMsg.put("claim_unbonded", JSONObject())
 
-        try {
-            // Create claim unbonded message: { claim_unbonded: {} }
-            val claimMsg = JSONObject()
-            claimMsg.put("claim_unbonded", JSONObject())
+                val result = TransactionExecutor.executeContract(
+                    fragment = this@UnbondingFragment,
+                    contractAddress = Constants.STAKING_CONTRACT,
+                    message = claimMsg,
+                    codeHash = Constants.STAKING_HASH,
+                    contractLabel = "Staking Contract:"
+                )
 
-            // Use SecretExecuteActivity for claiming unbonded tokens
-            val intent = Intent(activity, TransactionActivity::class.java)
-            intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE)
-            intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.STAKING_CONTRACT)
-            intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.STAKING_HASH)
-            intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, claimMsg.toString())
+                result.onSuccess {
+                    refreshData() // Refresh to update unbonding list
+                }.onFailure { error ->
+                    if (error.message != "Transaction cancelled by user" &&
+                        error.message != "Authentication failed") {
+                        Toast.makeText(context, "Failed: ${error.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
 
-            startActivityForResult(intent, REQ_CLAIM_UNBONDED)
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error claiming unbonded tokens", e)
-            Toast.makeText(context, "Failed to claim unbonded tokens: ${e.message}", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error claiming unbonded tokens", e)
+                Toast.makeText(context, "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
     private fun handleCancelUnbond(entry: UnbondingEntry) {
+        lifecycleScope.launch {
+            try {
+                // Create cancel unbond message: { cancel_unbond: { amount: "123456", unbonding_time: "1234567890" } }
+                // Both amount and unbonding_time should be strings to match the web app implementation
+                val cancelMsg = JSONObject()
+                val cancelUnbond = JSONObject()
+                cancelUnbond.put("amount", entry.amountMicro.toString()) // Use original micro units as string
+                cancelUnbond.put("unbonding_time", entry.unbondingTimeNanos.toString()) // Use original nanoseconds as string
+                cancelMsg.put("cancel_unbond", cancelUnbond)
 
-        try {
-            // Create cancel unbond message: { cancel_unbond: { amount: "123456", unbonding_time: "1234567890" } }
-            // Both amount and unbonding_time should be strings to match the web app implementation
-            val cancelMsg = JSONObject()
-            val cancelUnbond = JSONObject()
-            cancelUnbond.put("amount", entry.amountMicro.toString()) // Use original micro units as string
-            cancelUnbond.put("unbonding_time", entry.unbondingTimeNanos.toString()) // Use original nanoseconds as string
-            cancelMsg.put("cancel_unbond", cancelUnbond)
+                val result = TransactionExecutor.executeContract(
+                    fragment = this@UnbondingFragment,
+                    contractAddress = Constants.STAKING_CONTRACT,
+                    message = cancelMsg,
+                    codeHash = Constants.STAKING_HASH,
+                    contractLabel = "Staking Contract:"
+                )
 
+                result.onSuccess {
+                    refreshData() // Refresh to update unbonding list
+                }.onFailure { error ->
+                    if (error.message != "Transaction cancelled by user" &&
+                        error.message != "Authentication failed") {
+                        Toast.makeText(context, "Failed: ${error.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
 
-            // Use TransactionActivity for canceling unbond
-            val intent = Intent(activity, TransactionActivity::class.java)
-            intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE)
-            intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.STAKING_CONTRACT)
-            intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.STAKING_HASH)
-            intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, cancelMsg.toString())
-
-            startActivityForResult(intent, REQ_CANCEL_UNBOND)
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error canceling unbond", e)
-            Toast.makeText(context, "Failed to cancel unbond: ${e.message}", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-
-        if (requestCode == REQ_CLAIM_UNBONDED) {
-            if (resultCode == Activity.RESULT_OK) {
-                refreshData() // Refresh to update unbonding list
-            } else {
-                val error = data?.getStringExtra("error") ?: "Unknown error"
-                Toast.makeText(context, "Failed to claim unbonded tokens: $error", Toast.LENGTH_LONG).show()
-            }
-        } else if (requestCode == REQ_CANCEL_UNBOND) {
-            if (resultCode == Activity.RESULT_OK) {
-                // Success handled by broadcast receiver - no toast needed
-                refreshData() // Refresh to update unbonding list
-            } else {
-                val error = data?.getStringExtra("error") ?: "Unknown error"
-                Toast.makeText(context, "Failed to cancel unbonding: $error", Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error canceling unbond", e)
+                Toast.makeText(context, "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }

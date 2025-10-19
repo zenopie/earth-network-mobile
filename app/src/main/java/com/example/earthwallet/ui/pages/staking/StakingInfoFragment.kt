@@ -26,6 +26,7 @@ import network.erth.wallet.bridge.utils.PermitManager
 import network.erth.wallet.wallet.constants.Tokens
 import network.erth.wallet.wallet.services.SecureWalletManager
 import network.erth.wallet.wallet.services.SecretKClient
+import network.erth.wallet.wallet.services.TransactionExecutor
 import org.json.JSONObject
 
 /**
@@ -302,24 +303,37 @@ class StakingInfoFragment : Fragment() {
     }
 
     private fun handleClaimRewards() {
+        lifecycleScope.launch {
+            try {
+                // Create claim message: { claim: {} }
+                val claimMsg = JSONObject()
+                claimMsg.put("claim", JSONObject())
 
-        try {
-            // Create claim message: { claim: {} }
-            val claimMsg = JSONObject()
-            claimMsg.put("claim", JSONObject())
+                // Execute transaction using TransactionExecutor
+                val result = TransactionExecutor.executeContract(
+                    fragment = this@StakingInfoFragment,
+                    contractAddress = Constants.STAKING_CONTRACT,
+                    message = claimMsg,
+                    codeHash = Constants.STAKING_HASH,
+                    contractLabel = "Staking Contract:"
+                )
 
-            // Use TransactionActivity for claiming rewards
-            val intent = Intent(activity, TransactionActivity::class.java)
-            intent.putExtra(TransactionActivity.EXTRA_TRANSACTION_TYPE, TransactionActivity.TYPE_SECRET_EXECUTE)
-            intent.putExtra(TransactionActivity.EXTRA_CONTRACT_ADDRESS, Constants.STAKING_CONTRACT)
-            intent.putExtra(TransactionActivity.EXTRA_CODE_HASH, Constants.STAKING_HASH)
-            intent.putExtra(TransactionActivity.EXTRA_EXECUTE_JSON, claimMsg.toString())
+                // Handle result
+                result.onSuccess {
+                    // Refresh data to reflect new balances
+                    refreshData()
+                }.onFailure { error ->
+                    // Only show error toast if it's not a cancellation
+                    if (error.message != "Transaction cancelled by user" &&
+                        error.message != "Authentication failed") {
+                        Toast.makeText(context, "Failed to claim rewards: ${error.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
 
-            startActivityForResult(intent, REQ_CLAIM_REWARDS)
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error claiming rewards", e)
-            Toast.makeText(context, "Failed to claim rewards: ${e.message}", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error claiming rewards", e)
+                Toast.makeText(context, "Failed to claim rewards: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
