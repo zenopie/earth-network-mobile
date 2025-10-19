@@ -184,8 +184,8 @@ dependencies {
     // JSON serialization for permits
     implementation 'com.google.code.gson:gson:2.10.1'
 
-    // SecretK - Kotlin client for Secret Network (from local source via composite build)
-    implementation 'io.eqoty.secretk:client'
+    // SecretK - Kotlin client for Secret Network
+    implementation 'io.eqoty.secretk:client-jvm:7.0.0'
 
     // Keep old crypto dependencies for existing code (TODO: migrate everything to SecretK)
     implementation 'org.whispersystems:curve25519-java:0.5.0'

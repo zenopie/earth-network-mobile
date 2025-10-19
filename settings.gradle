@@ -15,8 +15,3 @@ dependencyResolutionManagement {
 }
 rootProject.name = "PassportScanner"
 include ':app'
-includeBuild('secretk-source') {
-    dependencySubstitution {
-        substitute module('io.eqoty.secretk:client') using project(':client')
-    }
-}
