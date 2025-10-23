@@ -51,9 +51,13 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
     // Backend URL loaded at runtime from SharedPreferences or resources
     private var backendUrl: String = ""
 
+    // Test scan mode
+    private var isTestScanMode: Boolean = false
+
     // UI elements
     private var progressBar: ProgressBar? = null
     private var statusText: TextView? = null
+    private var testScanToggle: androidx.appcompat.widget.SwitchCompat? = null
     private var resultContainer: ScrollView? = null
     private var passportNumberText: TextView? = null
     private var nameText: TextView? = null
@@ -150,9 +154,15 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
         genderText = view.findViewById(R.id.gender_text)
         expiryText = view.findViewById(R.id.expiry_text)
         countryText = view.findViewById(R.id.country_text)
+        testScanToggle = view.findViewById(R.id.test_scan_toggle)
 
         // Simple progress bar - just set visibility
         progressBar?.visibility = View.GONE
+
+        // Set up test scan toggle listener
+        testScanToggle?.setOnCheckedChangeListener { _, isChecked ->
+            isTestScanMode = isChecked
+        }
 
         // Verification results UI
         verifyStatusText = view.findViewById(R.id.verify_status_text)
@@ -206,6 +216,13 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
 
                 // Hide progress bar
                 progressBar?.visibility = View.GONE
+
+                // If in test scan mode, navigate to test result page
+                if (isTestScanMode) {
+                    val jsonResponse = passportData.backendRawResponse ?: "{}"
+                    navigateToTestResultScreen(jsonResponse)
+                    return
+                }
 
                 // Check if verification was successful
                 val verificationSuccessful = isVerificationSuccessful(passportData)
@@ -286,6 +303,22 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
 
             // Navigate with arguments
             hostActivity.showFragment("scan_failure", bundle)
+        }
+    }
+
+    /**
+     * Navigate to test result screen with JSON response
+     */
+    private fun navigateToTestResultScreen(jsonResponse: String) {
+        if (activity is network.erth.wallet.ui.host.HostActivity) {
+            val hostActivity = activity as network.erth.wallet.ui.host.HostActivity
+
+            // Create test result fragment with JSON data
+            val bundle = Bundle()
+            bundle.putString("json_response", jsonResponse)
+
+            // Navigate with arguments
+            hostActivity.showFragment("test_verify_result", bundle)
         }
     }
 
@@ -478,7 +511,7 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
 
             try {
                 val walletAddress = getCurrentWalletAddress()
-                val verification = sendToBackend(dg1Bytes, sodBytes, walletAddress)
+                val verification = sendToBackend(dg1Bytes, sodBytes, walletAddress, isTestScanMode)
                 if (verification != null) {
                     passportData.backendHttpCode = verification.code
                     passportData.backendRawResponse = verification.body
@@ -527,7 +560,7 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
     }
 
     @Throws(Exception::class)
-    private fun sendToBackend(dg1Bytes: ByteArray?, sodBytes: ByteArray?, address: String?): BackendResult? {
+    private fun sendToBackend(dg1Bytes: ByteArray?, sodBytes: ByteArray?, address: String?, isTestMode: Boolean = false): BackendResult? {
         if (dg1Bytes == null) {
             throw IllegalArgumentException("dg1Bytes is required")
         }
@@ -547,8 +580,14 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
         payload.put("sod", sodB64)
         payload.put("address", address ?: "")
 
+        // Use test-verify endpoint if in test mode
+        val endpoint = if (isTestMode) {
+            "${Constants.BACKEND_BASE_URL}/test-verify"
+        } else {
+            backendUrl
+        }
 
-        val url = URL(backendUrl)
+        val url = URL(endpoint)
         val conn = url.openConnection() as HttpURLConnection
         return try {
             conn.connectTimeout = 20000

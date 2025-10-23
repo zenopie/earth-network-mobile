@@ -207,6 +207,7 @@ class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListe
                     contractAddress = Constants.REGISTRATION_CONTRACT,
                     message = exec,
                     codeHash = Constants.REGISTRATION_HASH,
+                    gasLimit = 350_000,  // Needs ~302k gas, set to 350k for safety
                     contractLabel = "Registration Contract:"
                 )
 
@@ -218,6 +219,7 @@ class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListe
                     if (error.message != "Transaction cancelled by user" &&
                         error.message != "Authentication failed") {
                         Log.e(TAG, "ANML claim failed: ${error.message}")
+                        Toast.makeText(context, "Claim failed: ${error.message}", Toast.LENGTH_LONG).show()
                     }
                     // Transaction failed or was cancelled - refresh to ensure UI is correct
                     checkStatus()

@@ -175,6 +175,14 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
                     arguments?.let { setArguments(it) }
                 }
             }
+            "test_verify_result" -> {
+                network.erth.wallet.ui.pages.anml.TestVerifyResultFragment().apply {
+                    arguments?.let { setArguments(it) }
+                    // Hide navigation and status bar for test result screen
+                    hideBottomNavigation()
+                    WindowInsetsUtil.hideSystemBars(window)
+                }
+            }
             "pin_entry" -> {
                 PinEntryFragment.newInstance().also {
                     // Hide navigation and status bar for focused PIN entry
@@ -438,6 +446,18 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
                 val currentFragment = supportFragmentManager.findFragmentById(R.id.host_content)
                 currentFragment?.let { fragment ->
                     val currentTag = fragment.tag
+
+                    // Scanner flow pages should navigate back to scanner or actions
+                    if (currentTag == "test_verify_result" || currentTag == "scan_failure") {
+                        showFragment("scanner")
+                        return
+                    }
+
+                    if (currentTag == "scanner") {
+                        showFragment("actions")
+                        setSelectedNav(navActions, navWallet)
+                        return
+                    }
 
                     // Actions pages should navigate back to actions nav
                     if (isActionsPage(currentTag)) {

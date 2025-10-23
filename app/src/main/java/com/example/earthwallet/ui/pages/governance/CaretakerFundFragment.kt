@@ -235,14 +235,23 @@ class CaretakerFundFragment : Fragment() {
                             currentAllocations!!.put(defaultAllocation)
                         }
 
+                    // Check if fragment is still attached before updating UI
+                    if (!isAdded || context == null) return@launch
+
                     updateActualAllocationsUI()
                 } catch (e: Exception) {
                     Log.e(TAG, "Error processing allocation data", e)
-                    Toast.makeText(context, "Error loading allocation data", Toast.LENGTH_SHORT).show()
+                    if (isAdded && context != null) {
+                        Toast.makeText(context, "Error loading allocation data", Toast.LENGTH_SHORT).show()
+                    }
                 }
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading actual allocations", e)
+
+                // Check if fragment is still attached before updating UI
+                if (!isAdded || context == null) return@launch
+
                 Toast.makeText(context, "Error loading allocations: ${e.message}", Toast.LENGTH_LONG).show()
                 // Show error in UI
                 actualAllocationSection.removeAllViews()
@@ -299,15 +308,22 @@ class CaretakerFundFragment : Fragment() {
                             }
                         }
 
+                    // Check if fragment is still attached before updating UI
+                    if (!isAdded || context == null) return@launch
+
                     updatePreferredAllocationsUI()
                 } catch (e: Exception) {
                     Log.e(TAG, "Error processing user allocation data", e)
-                    Toast.makeText(context, "Error loading user preferences", Toast.LENGTH_SHORT).show()
+                    if (isAdded && context != null) {
+                        Toast.makeText(context, "Error loading user preferences", Toast.LENGTH_SHORT).show()
+                    }
                 }
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading user allocations", e)
-                Toast.makeText(context, "Error loading user preferences: ${e.message}", Toast.LENGTH_SHORT).show()
+                if (isAdded && context != null) {
+                    Toast.makeText(context, "Error loading user preferences: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }

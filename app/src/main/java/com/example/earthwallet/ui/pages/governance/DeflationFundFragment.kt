@@ -137,6 +137,9 @@ class DeflationFundFragment : Fragment() {
                     Constants.STAKING_HASH
                 )
 
+                // Check if fragment is still attached before updating UI
+                if (!isAdded || context == null) return@launch
+
                 activity?.runOnUiThread {
                     try {
                         // Handle different response formats matching what we see in logs
@@ -229,6 +232,10 @@ class DeflationFundFragment : Fragment() {
                 Log.e(TAG, "Exception type: ${e.javaClass.simpleName}")
                 Log.e(TAG, "Exception message: ${e.message}")
                 e.printStackTrace()
+
+                // Check if fragment is still attached before updating UI
+                if (!isAdded || context == null) return@launch
+
                 activity?.runOnUiThread {
                     Toast.makeText(context, "Error loading allocations: ${e.message}", Toast.LENGTH_LONG).show()
                     // Also update the UI to show the error
@@ -265,6 +272,8 @@ class DeflationFundFragment : Fragment() {
                     Constants.STAKING_HASH
                 )
 
+                // Check if fragment is still attached before updating UI
+                if (!isAdded || context == null) return@launch
 
                 activity?.runOnUiThread {
                     try {

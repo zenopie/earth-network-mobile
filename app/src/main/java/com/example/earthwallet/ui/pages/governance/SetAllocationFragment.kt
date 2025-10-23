@@ -351,6 +351,9 @@ class SetAllocationFragment : Fragment() {
 
                 val result = SecretKClient.queryContractJson( contractAddress, queryMsg, contractHash)
 
+                // Check if fragment is still attached before updating UI
+                if (!isAdded || context == null) return@launch
+
                 activity?.runOnUiThread {
                     try {
                         // Process user preferences (same logic as fragments)
