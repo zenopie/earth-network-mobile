@@ -90,6 +90,14 @@
                 android:text="Scan Passport"
                 android:textSize="18sp" />
 
+            <Button
+                android:id="@+id/camera_button"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                android:text="Use Camera to Scan MRZ"
+                android:textSize="18sp"
+                style="@style/Widget.AppCompat.Button.Borderless" />
 
             <TextView
                 android:layout_width="wrap_content"

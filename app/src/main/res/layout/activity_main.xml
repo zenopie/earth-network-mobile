@@ -13,6 +13,21 @@
         android:layout_height="match_parent"
         android:padding="16dp">
 
+    <!-- Test Scan Toggle Button - Top Right Corner -->
+    <Button
+        android:id="@+id/test_scan_toggle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentTop="true"
+        android:layout_alignParentEnd="true"
+        android:text="Test Scan"
+        android:textColor="@android:color/white"
+        android:background="@drawable/btn_anml_desktop"
+        android:backgroundTint="@color/anml_button_background"
+        android:textSize="14sp"
+        android:paddingLeft="12dp"
+        android:paddingRight="12dp" />
+
     <LinearLayout
         android:id="@+id/scanning_content"
         android:layout_width="wrap_content"
@@ -20,27 +35,6 @@
         android:layout_centerInParent="true"
         android:orientation="vertical"
         android:gravity="center_horizontal">
-
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginBottom="16dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Test Scan"
-                android:textSize="16sp"
-                android:textColor="@android:color/white"
-                android:layout_marginEnd="8dp" />
-
-            <androidx.appcompat.widget.SwitchCompat
-                android:id="@+id/test_scan_toggle"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content" />
-        </LinearLayout>
 
         <TextView
             android:id="@+id/title_text"

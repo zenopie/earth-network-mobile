@@ -281,18 +281,7 @@ class CameraMRZScannerFragment : Fragment() {
         // Stop camera analysis
         imageAnalysis?.clearAnalyzer()
 
-        // Save MRZ data and navigate to manual entry screen
-        val prefs = context?.getSharedPreferences("mrz_data", Context.MODE_PRIVATE)
-        val editor = prefs?.edit()
-        editor?.apply {
-            putString("passportNumber", mrzInfo.passportNumber)
-            putString("dateOfBirth", mrzInfo.dateOfBirth)
-            putString("dateOfExpiry", mrzInfo.dateOfExpiry)
-            apply()
-        }
-
-
-        // Navigate to manual entry screen with captured data
+        // Navigate to manual entry screen with captured data (don't persist to disk for security)
         activity?.runOnUiThread {
             val activity = activity
             if (activity is network.erth.wallet.ui.host.HostActivity) {
@@ -300,7 +289,13 @@ class CameraMRZScannerFragment : Fragment() {
                 activity.window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
                 activity.window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
 
-                activity.showFragment("mrz_input")
+                // Pass MRZ data via fragment arguments
+                val bundle = Bundle()
+                bundle.putString("passportNumber", mrzInfo.passportNumber)
+                bundle.putString("dateOfBirth", mrzInfo.dateOfBirth)
+                bundle.putString("dateOfExpiry", mrzInfo.dateOfExpiry)
+
+                activity.showFragment("mrz_input", bundle)
             }
         }
     }

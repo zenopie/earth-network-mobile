@@ -64,12 +64,12 @@ class TestVerifyResultFragment : Fragment() {
     }
 
     /**
-     * Navigate back to the scanner fragment
+     * Navigate back to actions page
      */
     private fun navigateBackToScanner() {
         if (activity is network.erth.wallet.ui.host.HostActivity) {
             val hostActivity = activity as network.erth.wallet.ui.host.HostActivity
-            hostActivity.showFragment("scanner")
+            hostActivity.showFragment("actions")
         }
     }
 }

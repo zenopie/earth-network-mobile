@@ -70,42 +70,49 @@ class MRZInputFragment : Fragment() {
         dateOfExpiryEditText = view.findViewById(R.id.date_of_expiry)
         scanButton = view.findViewById(R.id.scan_button)
 
-        // Load captured MRZ data if available, otherwise clear fields
-        val prefs = context?.getSharedPreferences("mrz_data", android.content.Context.MODE_PRIVATE)
-        val savedPassportNumber = prefs?.getString("passportNumber", "") ?: ""
-        val savedDateOfBirth = prefs?.getString("dateOfBirth", "") ?: ""
-        val savedDateOfExpiry = prefs?.getString("dateOfExpiry", "") ?: ""
+        // Load from fragment arguments if provided (from camera scan)
+        arguments?.let { args ->
+            val passportNumber = args.getString("passportNumber", "")
+            val dateOfBirth = args.getString("dateOfBirth", "")
+            val dateOfExpiry = args.getString("dateOfExpiry", "")
 
-        passportNumberEditText?.setText(savedPassportNumber)
-        dateOfBirthEditText?.setText(savedDateOfBirth)
-        dateOfExpiryEditText?.setText(savedDateOfExpiry)
+            passportNumberEditText?.setText(passportNumber)
+            dateOfBirthEditText?.setText(dateOfBirth)
+            dateOfExpiryEditText?.setText(dateOfExpiry)
+        }
 
         // Set click listener for scan button
         scanButton?.setOnClickListener {
             if (validateInput()) {
-                // Get MRZ data and save it to SharedPreferences for the scanner
+                // Get MRZ data (don't persist to disk for security)
                 val passportNumber = getTextFromEditText(passportNumberEditText)
                 val dateOfBirth = getTextFromEditText(dateOfBirthEditText)
                 val dateOfExpiry = getTextFromEditText(dateOfExpiryEditText)
 
                 // Do not log sensitive MRZ values in cleartext during demos
 
-                // Save MRZ data to SharedPreferences for the scanner to use
-                val scannerPrefs = context?.getSharedPreferences("mrz_data", android.content.Context.MODE_PRIVATE)
-                scannerPrefs?.edit()?.apply {
-                    putString("passportNumber", passportNumber)
-                    putString("dateOfBirth", dateOfBirth)
-                    putString("dateOfExpiry", dateOfExpiry)
-                    apply()
-                }
-
-                // Navigate to scanner fragment - let HostActivity handle UI state
+                // Navigate to scanner and pass MRZ data via intent
                 (activity as? network.erth.wallet.ui.host.HostActivity)?.let { hostActivity ->
+                    // Pass MRZ data via intent extras
+                    val intent = activity?.intent
+                    intent?.putExtra("passportNumber", passportNumber)
+                    intent?.putExtra("dateOfBirth", dateOfBirth)
+                    intent?.putExtra("dateOfExpiry", dateOfExpiry)
+
                     hostActivity.showFragment("scanner")
                 }
 
                 // Also notify listener if present (for embedded usage)
                 listener?.onMRZDataEntered(passportNumber, dateOfBirth, dateOfExpiry)
+            }
+        }
+
+        // Set click listener for camera button
+        val cameraButton = view.findViewById<Button>(R.id.camera_button)
+        cameraButton?.setOnClickListener {
+            // Navigate to camera MRZ scanner
+            (activity as? network.erth.wallet.ui.host.HostActivity)?.let { hostActivity ->
+                hostActivity.showFragment("camera_mrz_scanner")
             }
         }
     }

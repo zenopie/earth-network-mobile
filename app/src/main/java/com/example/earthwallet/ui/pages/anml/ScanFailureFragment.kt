@@ -82,23 +82,11 @@ class ScanFailureFragment : Fragment() {
         val errorIcon = view.findViewById<ImageView>(R.id.error_icon)
         (errorIcon?.drawable as? AnimatedVectorDrawable)?.start()
 
-        // Set up buttons
-        val tryAgainButton = view.findViewById<Button>(R.id.btn_try_again)
+        // Set up back button
         val backToAnmlButton = view.findViewById<Button>(R.id.btn_back_to_anml)
-
-        tryAgainButton?.setOnClickListener {
-            navigateToScanner()
-        }
 
         backToAnmlButton?.setOnClickListener {
             navigateBackToANML()
-        }
-    }
-
-    private fun navigateToScanner() {
-        (activity as? network.erth.wallet.ui.host.HostActivity)?.let { hostActivity ->
-            // Navigate to scanner (which will handle the UI state)
-            hostActivity.showFragment("scanner")
         }
     }
 
@@ -112,8 +100,8 @@ class ScanFailureFragment : Fragment() {
                 controller.show(WindowInsetsCompat.Type.statusBars())
             }
 
-            // Navigate to ANML page
-            hostActivity.showFragment("anml")
+            // Navigate to actions page
+            hostActivity.showFragment("actions")
         }
     }
 

@@ -57,7 +57,7 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
     // UI elements
     private var progressBar: ProgressBar? = null
     private var statusText: TextView? = null
-    private var testScanToggle: androidx.appcompat.widget.SwitchCompat? = null
+    private var testScanToggle: Button? = null
     private var resultContainer: ScrollView? = null
     private var passportNumberText: TextView? = null
     private var nameText: TextView? = null
@@ -103,20 +103,7 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        // First, try to retrieve MRZ data from SharedPreferences
-        val prefs = requireActivity().getSharedPreferences("mrz_data", Activity.MODE_PRIVATE)
-        val savedPassportNumber = prefs.getString("passportNumber", null)
-        val savedDateOfBirth = prefs.getString("dateOfBirth", null)
-        val savedDateOfExpiry = prefs.getString("dateOfExpiry", null)
-
-        // Use saved data if available
-        if (!isEmpty(savedPassportNumber) && !isEmpty(savedDateOfBirth) && !isEmpty(savedDateOfExpiry)) {
-            passportNumber = savedPassportNumber
-            dateOfBirth = savedDateOfBirth
-            dateOfExpiry = savedDateOfExpiry
-        }
-
-        // Check if from MRZ input activity intent
+        // Check if from MRZ input activity intent (security: don't persist MRZ to SharedPreferences)
         activity?.intent?.let { intent ->
             if (intent.hasExtra("passportNumber") && intent.hasExtra("dateOfBirth") && intent.hasExtra("dateOfExpiry")) {
                 val intentPassportNumber = intent.getStringExtra("passportNumber")
@@ -127,13 +114,6 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
                     passportNumber = intentPassportNumber
                     dateOfBirth = intentDateOfBirth
                     dateOfExpiry = intentDateOfExpiry
-
-                    // Save to SharedPreferences for future use
-                    val editor = prefs.edit()
-                    editor.putString("passportNumber", passportNumber)
-                    editor.putString("dateOfBirth", dateOfBirth)
-                    editor.putString("dateOfExpiry", dateOfExpiry)
-                    editor.apply()
                 }
             }
         }
@@ -159,9 +139,11 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
         // Simple progress bar - just set visibility
         progressBar?.visibility = View.GONE
 
-        // Set up test scan toggle listener
-        testScanToggle?.setOnCheckedChangeListener { _, isChecked ->
-            isTestScanMode = isChecked
+        // Set up test scan toggle button
+        updateTestScanButtonState()
+        testScanToggle?.setOnClickListener {
+            isTestScanMode = !isTestScanMode
+            updateTestScanButtonState()
         }
 
         // Verification results UI
@@ -285,6 +267,12 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
             val hostActivity = activity as network.erth.wallet.ui.host.HostActivity
             // Navigate to ANML page
             hostActivity.showFragment("anml")
+        } else {
+            // We're in NFCScannerActivity, finish with success result
+            val resultIntent = Intent()
+            resultIntent.putExtra("scan_success", true)
+            activity?.setResult(android.app.Activity.RESULT_OK, resultIntent)
+            activity?.finish()
         }
     }
 
@@ -303,6 +291,14 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
 
             // Navigate with arguments
             hostActivity.showFragment("scan_failure", bundle)
+        } else {
+            // We're in NFCScannerActivity, finish with failure message
+            val resultIntent = Intent()
+            resultIntent.putExtra("scan_failed", true)
+            resultIntent.putExtra("failure_reason", reason)
+            resultIntent.putExtra("failure_details", details)
+            activity?.setResult(android.app.Activity.RESULT_CANCELED, resultIntent)
+            activity?.finish()
         }
     }
 
@@ -319,6 +315,13 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
 
             // Navigate with arguments
             hostActivity.showFragment("test_verify_result", bundle)
+        } else {
+            // We're in NFCScannerActivity, finish with test result
+            val resultIntent = Intent()
+            resultIntent.putExtra("test_scan", true)
+            resultIntent.putExtra("json_response", jsonResponse)
+            activity?.setResult(android.app.Activity.RESULT_OK, resultIntent)
+            activity?.finish()
         }
     }
 
@@ -418,18 +421,10 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
     }
 
     override fun onMRZDataEntered(passportNumber: String, dateOfBirth: String, dateOfExpiry: String) {
-        // Update MRZ data and remove fragment
+        // Update MRZ data in memory only (security: don't persist to disk)
         this.passportNumber = passportNumber
         this.dateOfBirth = dateOfBirth
         this.dateOfExpiry = dateOfExpiry
-
-        // Save to SharedPreferences
-        val prefs = requireActivity().getSharedPreferences("mrz_data", Activity.MODE_PRIVATE)
-        val editor = prefs.edit()
-        editor.putString("passportNumber", passportNumber)
-        editor.putString("dateOfBirth", dateOfBirth)
-        editor.putString("dateOfExpiry", dateOfExpiry)
-        editor.apply()
 
         // Remove fragment and show main scanning UI
         val fm = childFragmentManager
@@ -707,24 +702,20 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
         }
     }
 
+    override fun onDestroyView() {
+        super.onDestroyView()
+        // Clear MRZ data when leaving scanner for security
+        clearMRZData()
+    }
+
     /**
-     * Clear MRZ data from SharedPreferences and memory for privacy/security
+     * Clear MRZ data from memory for privacy/security
      */
     private fun clearMRZData() {
-
         // Clear from memory
         passportNumber = null
         dateOfBirth = null
         dateOfExpiry = null
-
-        // Clear from SharedPreferences
-        val prefs = requireActivity().getSharedPreferences("mrz_data", Activity.MODE_PRIVATE)
-        val editor = prefs.edit()
-        editor.remove("passportNumber")
-        editor.remove("dateOfBirth")
-        editor.remove("dateOfExpiry")
-        editor.apply()
-
     }
 
     // Backend HTTP result holder
@@ -754,6 +745,14 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
         var trustChainFailureReason: String? = null
         var sodSignatureStatus: String? = null
         var dg1IntegrityStatus: String? = null
+    }
+
+    /**
+     * Update test scan button appearance based on state
+     */
+    private fun updateTestScanButtonState() {
+        testScanToggle?.text = if (isTestScanMode) "Test Scan: ON" else "Test Scan"
+        testScanToggle?.alpha = if (isTestScanMode) 1.0f else 0.7f
     }
 
     override fun onDestroy() {

@@ -4,7 +4,6 @@ import network.erth.wallet.R
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.ActivityInfo
-import android.nfc.NfcAdapter
 import android.os.Bundle
 import android.text.TextUtils
 import android.util.Log
@@ -13,6 +12,7 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.Button
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
 import network.erth.wallet.wallet.services.SessionManager
@@ -63,6 +63,39 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
 
     // Registry service
     private lateinit var registryService: RegistryService
+
+    // Activity result launcher for NFC scanner
+    private val nfcScannerLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val data = result.data
+            if (data?.getBooleanExtra("test_scan", false) == true) {
+                // Test scan completed successfully - show test result
+                val jsonResponse = data.getStringExtra("json_response") ?: "{}"
+                val bundle = Bundle()
+                bundle.putString("json_response", jsonResponse)
+                showFragment("test_verify_result", bundle)
+            } else {
+                // Normal scan completed - navigate to ANML page
+                showFragment("anml")
+                setSelectedNav(navActions, navWallet)
+            }
+        } else if (result.resultCode == RESULT_CANCELED) {
+            val data = result.data
+            if (data?.getBooleanExtra("scan_failed", false) == true) {
+                // Scan failed - show failure screen
+                val reason = data.getStringExtra("failure_reason") ?: "Scan failed"
+                val details = data.getStringExtra("failure_details") ?: "Unknown error"
+                val bundle = Bundle()
+                bundle.putString("failure_reason", reason)
+                bundle.putString("failure_details", details)
+                showFragment("scan_failure", bundle)
+            } else {
+                // User cancelled - navigate back to actions
+                showFragment("actions")
+                setSelectedNav(navActions, navWallet)
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -158,11 +191,25 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
                 }
             }
             "scanner" -> {
-                network.erth.wallet.ui.pages.anml.ScannerFragment().also {
-                    // Hide navigation and status bar for scanner
-                    hideBottomNavigation()
-                    WindowInsetsUtil.hideSystemBars(window)
+                // Launch NFC scanner activity instead of showing fragment
+                val scannerIntent = Intent(this, network.erth.wallet.ui.pages.anml.NFCScannerActivity::class.java)
+
+                // Pass MRZ data if available from intent (security: only in memory, not persisted)
+                intent?.let {
+                    if (it.hasExtra("passportNumber")) {
+                        scannerIntent.putExtra("passportNumber", it.getStringExtra("passportNumber"))
+                        scannerIntent.putExtra("dateOfBirth", it.getStringExtra("dateOfBirth"))
+                        scannerIntent.putExtra("dateOfExpiry", it.getStringExtra("dateOfExpiry"))
+
+                        // Clear from HostActivity intent for security
+                        it.removeExtra("passportNumber")
+                        it.removeExtra("dateOfBirth")
+                        it.removeExtra("dateOfExpiry")
+                    }
                 }
+
+                nfcScannerLauncher.launch(scannerIntent)
+                return // Don't replace fragment, we're launching an activity
             }
             "mrz_input" -> {
                 network.erth.wallet.ui.pages.anml.MRZInputFragment()
@@ -290,14 +337,6 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
-
-        // Handle NFC intents and pass them to ScannerFragment if it's currently shown
-        if (intent?.action == NfcAdapter.ACTION_TECH_DISCOVERED) {
-            val currentFragment = supportFragmentManager.findFragmentById(R.id.host_content)
-            if (currentFragment is network.erth.wallet.ui.pages.anml.ScannerFragment) {
-                currentFragment.handleNfcIntent(intent)
-            }
-        }
 
         // Handle fragment navigation from other activities
         intent?.let {
@@ -447,13 +486,8 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
                 currentFragment?.let { fragment ->
                     val currentTag = fragment.tag
 
-                    // Scanner flow pages should navigate back to scanner or actions
+                    // Scanner flow pages should navigate back to actions
                     if (currentTag == "test_verify_result" || currentTag == "scan_failure") {
-                        showFragment("scanner")
-                        return
-                    }
-
-                    if (currentTag == "scanner") {
                         showFragment("actions")
                         setSelectedNav(navActions, navWallet)
                         return
