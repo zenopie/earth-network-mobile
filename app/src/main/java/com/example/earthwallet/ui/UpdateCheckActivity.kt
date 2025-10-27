@@ -31,6 +31,7 @@ class UpdateCheckActivity : AppCompatActivity() {
     private lateinit var appUpdateManager: AppUpdateManager
     private var updateAvailable = false
 
+    private lateinit var appLogo: android.widget.ImageView
     private lateinit var statusText: TextView
     private lateinit var descriptionText: TextView
     private lateinit var updateButton: Button
@@ -42,11 +43,15 @@ class UpdateCheckActivity : AppCompatActivity() {
         setContentView(R.layout.activity_update_check)
 
         // Initialize views
+        appLogo = findViewById(R.id.app_logo)
         statusText = findViewById(R.id.status_text)
         descriptionText = findViewById(R.id.description_text)
         updateButton = findViewById(R.id.update_button)
         skipButton = findViewById(R.id.skip_button)
         progressBar = findViewById(R.id.progress_bar)
+
+        // Hide logo initially while checking
+        appLogo.visibility = View.GONE
 
         // Initialize update manager
         appUpdateManager = AppUpdateManagerFactory.create(this)
@@ -121,6 +126,7 @@ class UpdateCheckActivity : AppCompatActivity() {
         Log.d(TAG, "Update available: version $availableVersionCode")
 
         progressBar.visibility = View.GONE
+        appLogo.visibility = View.VISIBLE
         statusText.text = "Update Available"
         descriptionText.text = "A new version of the app is available"
         descriptionText.visibility = View.VISIBLE
