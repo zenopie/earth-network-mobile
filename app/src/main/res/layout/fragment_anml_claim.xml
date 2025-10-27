@@ -92,7 +92,7 @@
         android:background="@drawable/btn_anml_desktop"
         android:backgroundTint="@null"
         android:text="Claim"
-        android:textColor="@color/anml_button_text"
+        android:textColor="@android:color/white"
         android:textAllCaps="false"
         android:textSize="20sp"
         android:gravity="center"
