@@ -33,9 +33,10 @@
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
             android:value="ca-app-pub-8662126294069074~6689630767" />
-        
+
+        <!-- Update Check Activity - checks Play Store for updates before app start -->
         <activity
-            android:name=".ui.host.HostActivity"
+            android:name=".ui.UpdateCheckActivity"
             android:exported="true"
             android:theme="@style/Theme.EarthWallet"
             android:screenOrientation="portrait"
@@ -45,6 +46,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".ui.host.HostActivity"
+            android:exported="false"
+            android:theme="@style/Theme.EarthWallet"
+            android:screenOrientation="portrait"
+            android:launchMode="singleTop" />
+
 
         <!-- NFC Scanner Activity - handles all NFC scanning -->
         <activity
