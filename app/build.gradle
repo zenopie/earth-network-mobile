@@ -15,14 +15,14 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = 'network.erth.wallet'
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "network.erth.wallet"
         minSdk = 24
-        targetSdk = 35
-        versionCode = 14
-        versionName = "1.0.9"
+        targetSdk = 36
+        versionCode = 18
+        versionName = "1.0.13"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -175,13 +175,13 @@ dependencies {
     implementation 'com.google.android.play:app-update:2.1.0'
     implementation 'com.google.android.play:app-update-ktx:2.1.0'
     
-    // ML Kit Text Recognition for camera-based MRZ scanning
-    implementation 'com.google.android.gms:play-services-mlkit-text-recognition:19.0.0'
-    // CameraX for camera functionality
-    implementation 'androidx.camera:camera-core:1.3.0'
-    implementation 'androidx.camera:camera-camera2:1.3.0'
-    implementation 'androidx.camera:camera-lifecycle:1.3.0'
-    implementation 'androidx.camera:camera-view:1.3.0'
+    // ML Kit Text Recognition for camera-based MRZ scanning (Play Services unbundled version for 16KB support)
+    implementation 'com.google.android.gms:play-services-mlkit-text-recognition:19.0.1'
+    // CameraX for camera functionality (updated for 16KB page size support)
+    implementation 'androidx.camera:camera-core:1.4.1'
+    implementation 'androidx.camera:camera-camera2:1.4.1'
+    implementation 'androidx.camera:camera-lifecycle:1.4.1'
+    implementation 'androidx.camera:camera-view:1.4.1'
     
     // Protobuf dependencies for Cosmos SDK transaction encoding (lite version for Android)
     implementation 'com.google.protobuf:protobuf-javalite:3.21.12'

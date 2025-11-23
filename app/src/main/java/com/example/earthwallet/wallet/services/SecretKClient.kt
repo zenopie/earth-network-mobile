@@ -32,6 +32,18 @@ object SecretKClient {
     private const val CHAIN_ID = "secret-4"
 
     /**
+     * Singleton query client (no wallet) - reused across all queries
+     * This caches the network consensus IO pubkey to avoid redundant API calls
+     */
+    private val queryClient by lazy {
+        SigningCosmWasmClient(
+            apiUrl = LCD_ENDPOINT,
+            wallet = null,
+            chainId = CHAIN_ID
+        )
+    }
+
+    /**
      * Query a contract (public query, no wallet needed)
      *
      * @param contractAddress Contract address to query
@@ -45,13 +57,8 @@ object SecretKClient {
         codeHash: String? = null
     ): String = withContext(Dispatchers.IO) {
         try {
-            val client = SigningCosmWasmClient(
-                apiUrl = LCD_ENDPOINT,
-                wallet = null,
-                chainId = CHAIN_ID
-            )
-
-            val response = client.queryContractSmart(
+            // Use singleton client to avoid fetching consensus IO pubkey on every query
+            val response = queryClient.queryContractSmart(
                 contractAddress = contractAddress,
                 queryMsg = queryMsg,
                 contractCodeHash = codeHash
@@ -307,13 +314,8 @@ object SecretKClient {
         address: String
     ): String = withContext(Dispatchers.IO) {
         try {
-            val client = SigningCosmWasmClient(
-                apiUrl = LCD_ENDPOINT,
-                wallet = null,
-                chainId = CHAIN_ID
-            )
-
-            val response = client.getBalance(address)
+            // Use singleton client to avoid fetching consensus IO pubkey on every query
+            val response = queryClient.getBalance(address)
             Log.d(TAG, "Balance query successful for $address")
             response.toString()
         } catch (e: Throwable) {
