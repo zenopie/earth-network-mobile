@@ -35,6 +35,9 @@ import com.google.android.gms.ads.initialization.InitializationStatus
 import com.google.android.gms.ads.initialization.OnInitializationCompleteListener
 import com.google.android.gms.ads.interstitial.InterstitialAd
 import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback
+import com.google.android.gms.ads.rewarded.RewardedAd
+import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback
+import com.google.android.gms.ads.rewarded.ServerSideVerificationOptions
 
 class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListener, PinEntryFragment.PinEntryListener {
 
@@ -44,6 +47,8 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
 
         // Production interstitial ad unit ID
         private const val INTERSTITIAL_AD_UNIT_ID = "ca-app-pub-8662126294069074/2582864792"
+        // Production rewarded ad unit ID for "Ads for Gas"
+        private const val REWARDED_AD_UNIT_ID = "ca-app-pub-8662126294069074/9040854138"
     }
 
     private var navWallet: Button? = null
@@ -56,6 +61,11 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
     private var mInterstitialAd: InterstitialAd? = null
     private var isAdLoaded = false
     private var adCompletionCallback: Runnable? = null
+
+    // AdMob rewarded ad for "Ads for Gas"
+    private var mRewardedAd: RewardedAd? = null
+    private var isRewardedAdLoaded = false
+    private var rewardedAdCallback: ((Boolean) -> Unit)? = null
 
     // Update management
     private lateinit var updateManager: UpdateManager
@@ -542,6 +552,7 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
 
         MobileAds.initialize(this) { _ ->
             loadInterstitialAd()
+            loadRewardedAd()
         }
     }
 
@@ -616,6 +627,79 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
         } else {
             // No ad loaded, execute callback immediately
             callback?.run()
+        }
+    }
+
+    /**
+     * Load a rewarded ad for "Ads for Gas"
+     */
+    private fun loadRewardedAd() {
+        val adRequest = AdRequest.Builder().build()
+
+        RewardedAd.load(this, REWARDED_AD_UNIT_ID, adRequest,
+            object : RewardedAdLoadCallback() {
+                override fun onAdLoaded(rewardedAd: RewardedAd) {
+                    mRewardedAd = rewardedAd
+                    isRewardedAdLoaded = true
+
+                    mRewardedAd?.fullScreenContentCallback = object : FullScreenContentCallback() {
+                        override fun onAdDismissedFullScreenContent() {
+                            mRewardedAd = null
+                            isRewardedAdLoaded = false
+                            loadRewardedAd()
+                        }
+
+                        override fun onAdFailedToShowFullScreenContent(adError: com.google.android.gms.ads.AdError) {
+                            Log.e(TAG, "Rewarded ad failed to show: ${adError.message}")
+                            mRewardedAd = null
+                            isRewardedAdLoaded = false
+                            rewardedAdCallback?.invoke(false)
+                            rewardedAdCallback = null
+                            loadRewardedAd()
+                        }
+                    }
+                }
+
+                override fun onAdFailedToLoad(loadAdError: LoadAdError) {
+                    Log.e(TAG, "Failed to load rewarded ad: ${loadAdError.message}")
+                    mRewardedAd = null
+                    isRewardedAdLoaded = false
+                }
+            })
+    }
+
+    /**
+     * Check if rewarded ad is ready to show
+     */
+    fun isRewardedAdReady(): Boolean {
+        return mRewardedAd != null && isRewardedAdLoaded
+    }
+
+    /**
+     * Show rewarded ad for "Ads for Gas" with Server-Side Verification
+     * @param walletAddress The wallet address to include in SSV custom data
+     * @param callback Called with true if user earned reward, false otherwise
+     */
+    fun showRewardedAd(walletAddress: String, callback: (Boolean) -> Unit) {
+        if (mRewardedAd != null && isRewardedAdLoaded) {
+            rewardedAdCallback = callback
+
+            // Set up Server-Side Verification with wallet address as custom data
+            // AdMob will send this to your verification URL callback
+            val ssvOptions = ServerSideVerificationOptions.Builder()
+                .setCustomData(walletAddress)
+                .build()
+            mRewardedAd?.setServerSideVerificationOptions(ssvOptions)
+
+            mRewardedAd?.show(this) { rewardItem ->
+                // User earned the reward - SSV callback will handle granting gas
+                Log.d(TAG, "User earned reward: ${rewardItem.amount} ${rewardItem.type}, SSV will grant gas to $walletAddress")
+                rewardedAdCallback?.invoke(true)
+                rewardedAdCallback = null
+            }
+        } else {
+            // No ad loaded
+            callback(false)
         }
     }
 

@@ -162,13 +162,56 @@
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="24dp"
+        android:layout_marginBottom="16dp"
         android:background="#FFF3E0"
         android:gravity="center"
         android:padding="12dp"
         android:text="⚠️ Please review all transaction details carefully before confirming"
         android:textColor="#FF8F00"
         android:textSize="14sp" />
+
+    <!-- Ads for Gas Section (initially hidden) -->
+    <LinearLayout
+        android:id="@+id/ads_for_gas_section"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="16dp"
+        android:background="@drawable/card_rounded_bg"
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:gravity="center"
+            android:text="Need gas for this transaction?"
+            android:textColor="#333333"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/ads_for_gas_button"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:backgroundTint="#2196F3"
+            android:text="📺 Ads for Gas"
+            android:textColor="@android:color/white"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/gas_grant_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:padding="8dp"
+            android:textColor="#4CAF50"
+            android:textSize="14sp"
+            android:visibility="gone" />
+
+    </LinearLayout>
 
     <!-- Action Buttons -->
     <LinearLayout

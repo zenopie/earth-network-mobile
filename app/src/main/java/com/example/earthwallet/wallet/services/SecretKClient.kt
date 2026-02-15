@@ -121,6 +121,11 @@ object SecretKClient {
     }
 
     /**
+     * Fee granter address for Ads for Gas
+     */
+    const val FEE_GRANTER_ADDRESS = "secret1ktpxcznqcls64t8tjyv3atwhndscgw08yp2jas"
+
+    /**
      * Execute a contract transaction (requires wallet)
      *
      * @param mnemonic Wallet mnemonic
@@ -129,6 +134,7 @@ object SecretKClient {
      * @param sentFunds Optional funds to send with transaction
      * @param codeHash Optional code hash
      * @param gasLimit Gas limit for transaction
+     * @param feeGranter Optional fee granter address for sponsored transactions
      * @return Transaction response data
      */
     suspend fun executeContract(
@@ -137,7 +143,8 @@ object SecretKClient {
         handleMsg: String,
         sentFunds: List<Coin> = emptyList(),
         codeHash: String? = null,
-        gasLimit: Int = 200_000
+        gasLimit: Int = 200_000,
+        feeGranter: String? = null
     ): String = withContext(Dispatchers.IO) {
         try {
             val wallet = DirectSigningWallet(mnemonic)
@@ -159,11 +166,20 @@ object SecretKClient {
                 )
             )
 
-            val response = client.execute(
-                msgs = msgs,
-                txOptions = io.eqoty.secretk.types.TxOptions(
+            val txOptions = if (feeGranter != null) {
+                io.eqoty.secretk.types.TxOptions(
+                    gasLimit = gasLimit,
+                    feeGranter = feeGranter
+                )
+            } else {
+                io.eqoty.secretk.types.TxOptions(
                     gasLimit = gasLimit
                 )
+            }
+
+            val response = client.execute(
+                msgs = msgs,
+                txOptions = txOptions
             )
 
             Log.d(TAG, "Execute successful: $contractAddress")
@@ -198,7 +214,8 @@ object SecretKClient {
         mnemonic: String,
         messages: List<ContractMessage>,
         memo: String = "",
-        gasLimit: Int = 300_000
+        gasLimit: Int = 300_000,
+        feeGranter: String? = null
     ): String = withContext(Dispatchers.IO) {
         try {
             if (messages.isEmpty()) {
@@ -225,12 +242,22 @@ object SecretKClient {
                 )
             }
 
-            val response = client.execute(
-                msgs = msgs,
-                txOptions = io.eqoty.secretk.types.TxOptions(
+            val txOptions = if (feeGranter != null) {
+                io.eqoty.secretk.types.TxOptions(
+                    gasLimit = gasLimit,
+                    memo = memo,
+                    feeGranter = feeGranter
+                )
+            } else {
+                io.eqoty.secretk.types.TxOptions(
                     gasLimit = gasLimit,
                     memo = memo
                 )
+            }
+
+            val response = client.execute(
+                msgs = msgs,
+                txOptions = txOptions
             )
 
             Log.d(TAG, "Multi-contract execute successful: ${messages.size} messages")
@@ -257,6 +284,7 @@ object SecretKClient {
      * @param amount Amount to send
      * @param denom Token denomination (default: uscrt)
      * @param gasLimit Gas limit for transaction
+     * @param feeGranter Optional fee granter address for sponsored transactions
      * @return Transaction hash
      */
     suspend fun sendTokens(
@@ -264,7 +292,8 @@ object SecretKClient {
         toAddress: String,
         amount: Long,
         denom: String = "uscrt",
-        gasLimit: Int = 50_000
+        gasLimit: Int = 50_000,
+        feeGranter: String? = null
     ): String = withContext(Dispatchers.IO) {
         try {
             val wallet = DirectSigningWallet(mnemonic)
@@ -284,11 +313,20 @@ object SecretKClient {
                 )
             )
 
-            val response = client.execute(
-                msgs = msgs,
-                txOptions = io.eqoty.secretk.types.TxOptions(
+            val txOptions = if (feeGranter != null) {
+                io.eqoty.secretk.types.TxOptions(
+                    gasLimit = gasLimit,
+                    feeGranter = feeGranter
+                )
+            } else {
+                io.eqoty.secretk.types.TxOptions(
                     gasLimit = gasLimit
                 )
+            }
+
+            val response = client.execute(
+                msgs = msgs,
+                txOptions = txOptions
             )
 
             Log.d(TAG, "Send successful: $amount$denom to $toAddress")
@@ -458,6 +496,74 @@ object SecretKClient {
         } catch (e: Exception) {
             Log.e(TAG, "Contract query failed for $tokenSymbol", e)
             throw Exception("Contract query failed: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Check if an address has a fee grant from the gas granter
+     *
+     * @param granterAddress The fee granter address
+     * @param granteeAddress The address to check for grant
+     * @return true if a valid grant exists, false otherwise
+     */
+    suspend fun hasFeeGrant(
+        granterAddress: String,
+        granteeAddress: String
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val url = URL("https://lcd.erth.network/cosmos/feegrant/v1beta1/allowance/$granterAddress/$granteeAddress")
+            val connection = url.openConnection() as HttpURLConnection
+            connection.requestMethod = "GET"
+            connection.connectTimeout = 10000
+            connection.readTimeout = 10000
+
+            val responseCode = connection.responseCode
+            if (responseCode == 200) {
+                val response = connection.inputStream.bufferedReader().use { it.readText() }
+                val json = JSONObject(response)
+
+                // Response structure: { "allowance": { "granter": ..., "grantee": ..., "allowance": { "@type": ..., "spend_limit": [...], "expiration": ... } } }
+                val outerAllowance = json.optJSONObject("allowance")
+                val innerAllowance = outerAllowance?.optJSONObject("allowance")
+
+                if (innerAllowance != null) {
+                    // Check if the grant has expired
+                    val expiration = innerAllowance.optString("expiration", "")
+                    if (expiration.isNotEmpty() && expiration != "null") {
+                        try {
+                            val expirationTime = java.time.Instant.parse(expiration)
+                            val now = java.time.Instant.now()
+                            if (expirationTime.isBefore(now)) {
+                                Log.d(TAG, "Fee grant expired for $granteeAddress")
+                                return@withContext false
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Could not parse expiration: $expiration", e)
+                        }
+                    }
+
+                    // Check if spend_limit has enough for a transaction (minimum ~50000 uscrt)
+                    val spendLimit = innerAllowance.optJSONArray("spend_limit")
+                    if (spendLimit != null && spendLimit.length() > 0) {
+                        val firstLimit = spendLimit.optJSONObject(0)
+                        val amount = firstLimit?.optString("amount", "0") ?: "0"
+                        val minRequired = 50000L  // Minimum gas needed for most transactions
+                        if ((amount.toLongOrNull() ?: 0L) < minRequired) {
+                            Log.d(TAG, "Fee grant insufficient for $granteeAddress: $amount < $minRequired")
+                            return@withContext false
+                        }
+                    }
+
+                    Log.d(TAG, "Fee grant exists for $granteeAddress")
+                    return@withContext true
+                }
+            }
+
+            Log.d(TAG, "No fee grant found for $granteeAddress")
+            false
+        } catch (e: Exception) {
+            Log.e(TAG, "Fee grant check failed for $granteeAddress", e)
+            false
         }
     }
 }

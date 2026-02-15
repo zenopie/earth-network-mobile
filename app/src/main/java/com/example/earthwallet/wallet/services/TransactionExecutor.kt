@@ -13,6 +13,7 @@ import kotlinx.coroutines.withContext
 import network.erth.wallet.ui.components.PinEntryDialog
 import network.erth.wallet.ui.components.StatusModal
 import network.erth.wallet.ui.components.TransactionConfirmationDialog
+import network.erth.wallet.ui.host.HostActivity
 import network.erth.wallet.wallet.utils.BiometricAuthManager
 import org.json.JSONObject
 import java.nio.charset.StandardCharsets
@@ -58,6 +59,7 @@ object TransactionExecutor {
      * @param sentFunds Funds to send with the transaction (default empty)
      * @param gasLimit Gas limit for the transaction (default 200,000)
      * @param contractLabel Label to show in confirmation dialog (default "Contract:")
+     * @param enableAdsForGas Enable the "Ads for Gas" option in the confirmation dialog
      * @return Result with transaction response or error
      */
     suspend fun executeContract(
@@ -67,22 +69,51 @@ object TransactionExecutor {
         codeHash: String? = null,
         sentFunds: List<Coin> = emptyList(),
         gasLimit: Int = 200_000,
-        contractLabel: String = "Contract:"
+        contractLabel: String = "Contract:",
+        enableAdsForGas: Boolean = true
     ): Result<String> = withContext(Dispatchers.Main) {
         val activity = fragment.requireActivity()
         val statusModal = StatusModal(activity)
 
         try {
+            // Get wallet address for gas grant check
+            val walletAddress = SecureWalletManager.getWalletAddress(activity) ?: ""
+
+            // Check for existing gas grant
+            var hasExistingGrant = false
+            if (enableAdsForGas && walletAddress.isNotEmpty()) {
+                hasExistingGrant = withContext(Dispatchers.IO) {
+                    SecretKClient.hasFeeGrant(SecretKClient.FEE_GRANTER_ADDRESS, walletAddress)
+                }
+            }
+
             // Step 1: Show confirmation dialog with actual contract message
             val details = TransactionConfirmationDialog.TransactionDetails(
                 contractAddress = contractAddress,
                 message = message.toString()
             ).setContractLabel(contractLabel)
+             .setShowAdsForGas(enableAdsForGas)
+             .setHasExistingGrant(hasExistingGrant)
 
-            val confirmed = showConfirmationDialog(activity, details)
-            if (!confirmed) {
+            // Show dialog with gas option
+            val confirmResult = if (enableAdsForGas) {
+                showConfirmationDialogWithGas(activity, details)
+            } else {
+                val confirmed = showConfirmationDialog(activity, details)
+                if (confirmed) TransactionConfirmationDialog.ConfirmationResult.CONFIRMED
+                else TransactionConfirmationDialog.ConfirmationResult.CANCELLED
+            }
+
+            Log.d(TAG, "Confirmation result: $confirmResult, hasExistingGrant: ${details.hasExistingGrant}")
+
+            if (confirmResult == TransactionConfirmationDialog.ConfirmationResult.CANCELLED) {
                 return@withContext Result.failure(Exception("Transaction cancelled by user"))
             }
+
+            // Determine if we should use fee granter
+            val useFeeGranter = confirmResult == TransactionConfirmationDialog.ConfirmationResult.CONFIRMED_WITH_GAS
+            val feeGranter = if (useFeeGranter) SecretKClient.FEE_GRANTER_ADDRESS else null
+            Log.d(TAG, "useFeeGranter: $useFeeGranter, feeGranter: $feeGranter")
 
             // Step 2: Handle authentication
             val authResult = authenticateTransaction(activity)
@@ -106,7 +137,8 @@ object TransactionExecutor {
                             handleMsg = message.toString(),
                             sentFunds = sentFunds,
                             codeHash = codeHash,
-                            gasLimit = gasLimit
+                            gasLimit = gasLimit,
+                            feeGranter = feeGranter
                         )
                     }
                 } catch (e: Exception) {
@@ -138,6 +170,7 @@ object TransactionExecutor {
      * @param memo Optional transaction memo
      * @param gasLimit Gas limit for the transaction (default 300,000)
      * @param contractLabel Label to show in confirmation dialog (default "Multi-Message:")
+     * @param enableAdsForGas Enable the "Ads for Gas" option in the confirmation dialog
      * @return Result with transaction response or error
      */
     suspend fun executeMultipleContracts(
@@ -145,12 +178,24 @@ object TransactionExecutor {
         messages: List<SecretKClient.ContractMessage>,
         memo: String = "",
         gasLimit: Int = 300_000,
-        contractLabel: String = "Multi-Message:"
+        contractLabel: String = "Multi-Message:",
+        enableAdsForGas: Boolean = true
     ): Result<String> = withContext(Dispatchers.Main) {
         val activity = fragment.requireActivity()
         val statusModal = StatusModal(activity)
 
         try {
+            // Get wallet address for gas grant check
+            val walletAddress = SecureWalletManager.getWalletAddress(activity) ?: ""
+
+            // Check for existing gas grant
+            var hasExistingGrant = false
+            if (enableAdsForGas && walletAddress.isNotEmpty()) {
+                hasExistingGrant = withContext(Dispatchers.IO) {
+                    SecretKClient.hasFeeGrant(SecretKClient.FEE_GRANTER_ADDRESS, walletAddress)
+                }
+            }
+
             // Build confirmation message showing all contracts
             val messagePreview = buildString {
                 appendLine("${messages.size} messages:")
@@ -167,11 +212,25 @@ object TransactionExecutor {
                 contractAddress = "${messages.size} contracts",
                 message = messagePreview
             ).setContractLabel(contractLabel)
+             .setShowAdsForGas(enableAdsForGas)
+             .setHasExistingGrant(hasExistingGrant)
 
-            val confirmed = showConfirmationDialog(activity, details)
-            if (!confirmed) {
+            // Show dialog with gas option
+            val confirmResult = if (enableAdsForGas) {
+                showConfirmationDialogWithGas(activity, details)
+            } else {
+                val confirmed = showConfirmationDialog(activity, details)
+                if (confirmed) TransactionConfirmationDialog.ConfirmationResult.CONFIRMED
+                else TransactionConfirmationDialog.ConfirmationResult.CANCELLED
+            }
+
+            if (confirmResult == TransactionConfirmationDialog.ConfirmationResult.CANCELLED) {
                 return@withContext Result.failure(Exception("Transaction cancelled by user"))
             }
+
+            // Determine if we should use fee granter
+            val useFeeGranter = confirmResult == TransactionConfirmationDialog.ConfirmationResult.CONFIRMED_WITH_GAS
+            val feeGranter = if (useFeeGranter) SecretKClient.FEE_GRANTER_ADDRESS else null
 
             // Authenticate
             val authResult = authenticateTransaction(activity)
@@ -190,7 +249,8 @@ object TransactionExecutor {
                             mnemonic = mnemonic,
                             messages = messages,
                             memo = memo,
-                            gasLimit = gasLimit
+                            gasLimit = gasLimit,
+                            feeGranter = feeGranter
                         )
                     }
                 } catch (e: Exception) {
@@ -271,28 +331,55 @@ object TransactionExecutor {
      * @param toAddress The recipient address
      * @param amount The amount to send in micro units (uscrt)
      * @param gasLimit Gas limit for the transaction (default 50,000)
+     * @param enableAdsForGas Enable the "Ads for Gas" option in the confirmation dialog
      * @return Result with transaction response or error
      */
     suspend fun sendNativeToken(
         fragment: Fragment,
         toAddress: String,
         amount: Long,
-        gasLimit: Int = 50_000
+        gasLimit: Int = 50_000,
+        enableAdsForGas: Boolean = true
     ): Result<String> = withContext(Dispatchers.Main) {
         val activity = fragment.requireActivity()
         val statusModal = StatusModal(activity)
 
         try {
+            // Get wallet address for gas grant check
+            val walletAddress = SecureWalletManager.getWalletAddress(activity) ?: ""
+
+            // Check for existing gas grant
+            var hasExistingGrant = false
+            if (enableAdsForGas && walletAddress.isNotEmpty()) {
+                hasExistingGrant = withContext(Dispatchers.IO) {
+                    SecretKClient.hasFeeGrant(SecretKClient.FEE_GRANTER_ADDRESS, walletAddress)
+                }
+            }
+
             // Show confirmation dialog
             val details = TransactionConfirmationDialog.TransactionDetails(
                 contractAddress = toAddress,
                 message = "Amount: ${amount / 1_000_000.0} SCRT"
             ).setContractLabel("Send to:")
+             .setShowAdsForGas(enableAdsForGas)
+             .setHasExistingGrant(hasExistingGrant)
 
-            val confirmed = showConfirmationDialog(activity, details)
-            if (!confirmed) {
+            // Show dialog with gas option
+            val confirmResult = if (enableAdsForGas) {
+                showConfirmationDialogWithGas(activity, details)
+            } else {
+                val confirmed = showConfirmationDialog(activity, details)
+                if (confirmed) TransactionConfirmationDialog.ConfirmationResult.CONFIRMED
+                else TransactionConfirmationDialog.ConfirmationResult.CANCELLED
+            }
+
+            if (confirmResult == TransactionConfirmationDialog.ConfirmationResult.CANCELLED) {
                 return@withContext Result.failure(Exception("Transaction cancelled by user"))
             }
+
+            // Determine if we should use fee granter
+            val useFeeGranter = confirmResult == TransactionConfirmationDialog.ConfirmationResult.CONFIRMED_WITH_GAS
+            val feeGranter = if (useFeeGranter) SecretKClient.FEE_GRANTER_ADDRESS else null
 
             // Authenticate
             val authResult = authenticateTransaction(activity)
@@ -312,7 +399,8 @@ object TransactionExecutor {
                             toAddress = toAddress,
                             amount = amount,
                             denom = "uscrt",
-                            gasLimit = gasLimit
+                            gasLimit = gasLimit,
+                            feeGranter = feeGranter
                         )
                     }
                 } catch (e: Exception) {
@@ -362,6 +450,95 @@ object TransactionExecutor {
         continuation.invokeOnCancellation {
             // Dialog will be dismissed automatically
         }
+    }
+
+    /**
+     * Show confirmation dialog with Ads for Gas option
+     */
+    private suspend fun showConfirmationDialogWithGas(
+        activity: FragmentActivity,
+        details: TransactionConfirmationDialog.TransactionDetails
+    ): TransactionConfirmationDialog.ConfirmationResult = suspendCancellableCoroutine { continuation ->
+        val dialog = TransactionConfirmationDialog(activity)
+
+        dialog.showWithGasOption(details, object : TransactionConfirmationDialog.OnConfirmationWithGasListener {
+            override fun onResult(result: TransactionConfirmationDialog.ConfirmationResult) {
+                if (continuation.isActive) {
+                    continuation.resume(result)
+                }
+            }
+
+            override fun onAdsForGasClicked(callback: (Boolean) -> Unit) {
+                // Show rewarded ad via HostActivity with Server-Side Verification
+                val hostActivity = activity as? HostActivity
+                val walletAddress = SecureWalletManager.getWalletAddress(activity) ?: ""
+
+                if (hostActivity != null && hostActivity.isRewardedAdReady() && walletAddress.isNotEmpty()) {
+                    // Pass wallet address for SSV - AdMob will call our backend with this data
+                    hostActivity.showRewardedAd(walletAddress) { adSuccess ->
+                        if (adSuccess) {
+                            // Ad watched - now poll for the fee grant to be created on-chain
+                            // SSV callback runs async, so we need to wait for it
+                            pollForFeeGrant(walletAddress) { grantExists ->
+                                activity.runOnUiThread {
+                                    callback(grantExists)
+                                }
+                            }
+                        } else {
+                            callback(false)
+                        }
+                    }
+                } else {
+                    // No ad ready or no wallet
+                    if (walletAddress.isEmpty()) {
+                        Toast.makeText(activity, "Wallet not available", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(activity, "Ad not ready. Please try again.", Toast.LENGTH_SHORT).show()
+                    }
+                    callback(false)
+                }
+            }
+        })
+
+        continuation.invokeOnCancellation {
+            dialog.dismiss()
+        }
+    }
+
+    /**
+     * Poll for fee grant to exist on-chain after SSV callback
+     * Retries every 2 seconds for up to 30 seconds
+     */
+    private fun pollForFeeGrant(walletAddress: String, callback: (Boolean) -> Unit) {
+        Thread {
+            val maxAttempts = 15  // 15 attempts * 2 seconds = 30 seconds max
+            val delayMs = 2000L
+
+            for (attempt in 1..maxAttempts) {
+                try {
+                    // Use runBlocking to call the suspend function from a Thread
+                    val hasGrant = kotlinx.coroutines.runBlocking {
+                        SecretKClient.hasFeeGrant(SecretKClient.FEE_GRANTER_ADDRESS, walletAddress)
+                    }
+
+                    if (hasGrant) {
+                        Log.d(TAG, "Fee grant found after $attempt attempts")
+                        callback(true)
+                        return@Thread
+                    }
+
+                    Log.d(TAG, "Fee grant not found yet, attempt $attempt/$maxAttempts")
+                    Thread.sleep(delayMs)
+
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error polling for fee grant", e)
+                    Thread.sleep(delayMs)
+                }
+            }
+
+            Log.e(TAG, "Fee grant not found after $maxAttempts attempts")
+            callback(false)
+        }.start()
     }
 
     /**
