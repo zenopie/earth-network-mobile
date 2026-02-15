@@ -76,24 +76,13 @@ object TransactionExecutor {
         val statusModal = StatusModal(activity)
 
         try {
-            // Get wallet address for gas grant check
-            val walletAddress = SecureWalletManager.getWalletAddress(activity) ?: ""
-
-            // Check for existing gas grant
-            var hasExistingGrant = false
-            if (enableAdsForGas && walletAddress.isNotEmpty()) {
-                hasExistingGrant = withContext(Dispatchers.IO) {
-                    SecretKClient.hasFeeGrant(SecretKClient.FEE_GRANTER_ADDRESS, walletAddress)
-                }
-            }
-
             // Step 1: Show confirmation dialog with actual contract message
+            // Gas grant check is done inside showConfirmationDialogWithGas with loading state
             val details = TransactionConfirmationDialog.TransactionDetails(
                 contractAddress = contractAddress,
                 message = message.toString()
             ).setContractLabel(contractLabel)
              .setShowAdsForGas(enableAdsForGas)
-             .setHasExistingGrant(hasExistingGrant)
 
             // Show dialog with gas option
             val confirmResult = if (enableAdsForGas) {
@@ -185,17 +174,6 @@ object TransactionExecutor {
         val statusModal = StatusModal(activity)
 
         try {
-            // Get wallet address for gas grant check
-            val walletAddress = SecureWalletManager.getWalletAddress(activity) ?: ""
-
-            // Check for existing gas grant
-            var hasExistingGrant = false
-            if (enableAdsForGas && walletAddress.isNotEmpty()) {
-                hasExistingGrant = withContext(Dispatchers.IO) {
-                    SecretKClient.hasFeeGrant(SecretKClient.FEE_GRANTER_ADDRESS, walletAddress)
-                }
-            }
-
             // Build confirmation message showing all contracts
             val messagePreview = buildString {
                 appendLine("${messages.size} messages:")
@@ -208,12 +186,12 @@ object TransactionExecutor {
             }
 
             // Show confirmation dialog
+            // Gas grant check is done inside showConfirmationDialogWithGas with loading state
             val details = TransactionConfirmationDialog.TransactionDetails(
                 contractAddress = "${messages.size} contracts",
                 message = messagePreview
             ).setContractLabel(contractLabel)
              .setShowAdsForGas(enableAdsForGas)
-             .setHasExistingGrant(hasExistingGrant)
 
             // Show dialog with gas option
             val confirmResult = if (enableAdsForGas) {
@@ -345,24 +323,13 @@ object TransactionExecutor {
         val statusModal = StatusModal(activity)
 
         try {
-            // Get wallet address for gas grant check
-            val walletAddress = SecureWalletManager.getWalletAddress(activity) ?: ""
-
-            // Check for existing gas grant
-            var hasExistingGrant = false
-            if (enableAdsForGas && walletAddress.isNotEmpty()) {
-                hasExistingGrant = withContext(Dispatchers.IO) {
-                    SecretKClient.hasFeeGrant(SecretKClient.FEE_GRANTER_ADDRESS, walletAddress)
-                }
-            }
-
             // Show confirmation dialog
+            // Gas grant check is done inside showConfirmationDialogWithGas with loading state
             val details = TransactionConfirmationDialog.TransactionDetails(
                 contractAddress = toAddress,
                 message = "Amount: ${amount / 1_000_000.0} SCRT"
             ).setContractLabel("Send to:")
              .setShowAdsForGas(enableAdsForGas)
-             .setHasExistingGrant(hasExistingGrant)
 
             // Show dialog with gas option
             val confirmResult = if (enableAdsForGas) {
@@ -454,8 +421,91 @@ object TransactionExecutor {
 
     /**
      * Show confirmation dialog with Ads for Gas option
+     * Shows loading state first while checking for gas grant
      */
     private suspend fun showConfirmationDialogWithGas(
+        activity: FragmentActivity,
+        details: TransactionConfirmationDialog.TransactionDetails
+    ): TransactionConfirmationDialog.ConfirmationResult {
+        val dialog = TransactionConfirmationDialog(activity)
+
+        // Show loading state immediately on main thread
+        withContext(Dispatchers.Main) {
+            dialog.showLoading()
+        }
+
+        // Check for gas grant in background
+        val walletAddress = SecureWalletManager.getWalletAddress(activity) ?: ""
+        var hasExistingGrant = false
+
+        if (details.showAdsForGas && walletAddress.isNotEmpty()) {
+            try {
+                hasExistingGrant = withContext(Dispatchers.IO) {
+                    SecretKClient.hasFeeGrant(SecretKClient.FEE_GRANTER_ADDRESS, walletAddress)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error checking fee grant", e)
+            }
+        }
+
+        details.setHasExistingGrant(hasExistingGrant)
+
+        // Now show the actual dialog content and wait for result
+        return suspendCancellableCoroutine { continuation ->
+            // Update dialog on main thread
+            activity.runOnUiThread {
+                dialog.updateWithDetails(details, object : TransactionConfirmationDialog.OnConfirmationWithGasListener {
+                    override fun onResult(result: TransactionConfirmationDialog.ConfirmationResult) {
+                        if (continuation.isActive) {
+                            continuation.resume(result)
+                        }
+                    }
+
+                    override fun onAdsForGasClicked(callback: (Boolean) -> Unit) {
+                        handleAdsForGasClick(activity, walletAddress, callback)
+                    }
+                })
+            }
+
+            continuation.invokeOnCancellation {
+                dialog.dismiss()
+            }
+        }
+    }
+
+    /**
+     * Handle ads for gas button click
+     */
+    private fun handleAdsForGasClick(activity: FragmentActivity, walletAddress: String, callback: (Boolean) -> Unit) {
+        val hostActivity = activity as? HostActivity
+
+        if (hostActivity != null && hostActivity.isRewardedAdReady() && walletAddress.isNotEmpty()) {
+            hostActivity.showRewardedAd(walletAddress) { adSuccess ->
+                if (adSuccess) {
+                    pollForFeeGrant(walletAddress) { grantExists ->
+                        activity.runOnUiThread {
+                            callback(grantExists)
+                        }
+                    }
+                } else {
+                    callback(false)
+                }
+            }
+        } else {
+            if (walletAddress.isEmpty()) {
+                Toast.makeText(activity, "Wallet not available", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(activity, "Ad not ready. Please try again.", Toast.LENGTH_SHORT).show()
+            }
+            callback(false)
+        }
+    }
+
+    /**
+     * Show confirmation dialog with Ads for Gas option (old method for backwards compatibility)
+     */
+    @Suppress("unused")
+    private suspend fun showConfirmationDialogWithGasOld(
         activity: FragmentActivity,
         details: TransactionConfirmationDialog.TransactionDetails
     ): TransactionConfirmationDialog.ConfirmationResult = suspendCancellableCoroutine { continuation ->

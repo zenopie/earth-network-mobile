@@ -57,6 +57,8 @@ class TransactionConfirmationDialog(context: Context) {
     private val bottomSheetDialog = BottomSheetDialog(context)
     private var listener: OnConfirmationListener? = null
     private var gasListener: OnConfirmationWithGasListener? = null
+    private var loadingOverlay: LinearLayout? = null
+    private var mainContent: LinearLayout? = null
 
     fun show(details: TransactionDetails, listener: OnConfirmationListener) {
         this.listener = listener
@@ -68,11 +70,100 @@ class TransactionConfirmationDialog(context: Context) {
         showInternal(details, true)
     }
 
+    /**
+     * Show the dialog with a loading state. Call hideLoading() when ready to show content.
+     */
+    fun showLoading() {
+        val bottomSheetView = LayoutInflater.from(bottomSheetDialog.context)
+            .inflate(R.layout.transaction_confirmation_popup, null)
+        bottomSheetDialog.setContentView(bottomSheetView)
+
+        loadingOverlay = bottomSheetView.findViewById(R.id.loading_overlay)
+        mainContent = bottomSheetView.findViewById(R.id.main_content)
+
+        loadingOverlay?.visibility = View.VISIBLE
+        mainContent?.visibility = View.GONE
+
+        bottomSheetDialog.show()
+
+        // Configure bottom sheet
+        val bottomSheet = bottomSheetDialog.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
+        bottomSheet?.let { sheet ->
+            sheet.setPadding(0, 0, 0, 0)
+            sheet.setBackgroundColor(androidx.core.content.ContextCompat.getColor(bottomSheetDialog.context, R.color.surface))
+
+            (sheet.parent as? View)?.setPadding(0, 0, 0, 0)
+
+            val behavior = BottomSheetBehavior.from(sheet)
+            behavior.state = BottomSheetBehavior.STATE_EXPANDED
+            behavior.skipCollapsed = true
+        }
+
+        bottomSheetDialog.window?.let { window ->
+            window.decorView.setPadding(0, 0, 0, 0)
+            window.setBackgroundDrawableResource(android.R.color.transparent)
+        }
+    }
+
+    /**
+     * Hide loading and show the transaction details
+     */
+    fun hideLoading() {
+        loadingOverlay?.visibility = View.GONE
+        mainContent?.visibility = View.VISIBLE
+    }
+
+    /**
+     * Update the dialog with transaction details after showing loading state
+     */
+    fun updateWithDetails(details: TransactionDetails, listener: OnConfirmationWithGasListener) {
+        this.gasListener = listener
+
+        val bottomSheetView = bottomSheetDialog.findViewById<View>(android.R.id.content) ?: return
+
+        // Hide loading, show content
+        loadingOverlay?.visibility = View.GONE
+        mainContent?.visibility = View.VISIBLE
+
+        setupContent(bottomSheetView, details, true)
+    }
+
     private fun showInternal(details: TransactionDetails, withGasOption: Boolean) {
         val bottomSheetView = LayoutInflater.from(bottomSheetDialog.context)
             .inflate(R.layout.transaction_confirmation_popup, null)
         bottomSheetDialog.setContentView(bottomSheetView)
 
+        loadingOverlay = bottomSheetView.findViewById(R.id.loading_overlay)
+        mainContent = bottomSheetView.findViewById(R.id.main_content)
+
+        // Ensure loading is hidden and content is visible
+        loadingOverlay?.visibility = View.GONE
+        mainContent?.visibility = View.VISIBLE
+
+        setupContent(bottomSheetView, details, withGasOption)
+
+        bottomSheetDialog.show()
+
+        // Configure bottom sheet
+        val bottomSheet = bottomSheetDialog.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
+        bottomSheet?.let { sheet ->
+            sheet.setPadding(0, 0, 0, 0)
+            sheet.setBackgroundColor(androidx.core.content.ContextCompat.getColor(bottomSheetDialog.context, R.color.surface))
+
+            (sheet.parent as? View)?.setPadding(0, 0, 0, 0)
+
+            val behavior = BottomSheetBehavior.from(sheet)
+            behavior.state = BottomSheetBehavior.STATE_EXPANDED
+            behavior.skipCollapsed = true
+        }
+
+        bottomSheetDialog.window?.let { window ->
+            window.decorView.setPadding(0, 0, 0, 0)
+            window.setBackgroundDrawableResource(android.R.color.transparent)
+        }
+    }
+
+    private fun setupContent(bottomSheetView: View, details: TransactionDetails, withGasOption: Boolean) {
         var result = ConfirmationResult.CANCELLED
 
         // Find views
@@ -180,28 +271,6 @@ class TransactionConfirmationDialog(context: Context) {
                     ConfirmationResult.CANCELLED -> listener?.onCancelled()
                 }
             }
-        }
-
-        bottomSheetDialog.show()
-
-        // Configure bottom sheet
-        val bottomSheet = bottomSheetDialog.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
-        bottomSheet?.let { sheet ->
-            sheet.setPadding(0, 0, 0, 0)
-            sheet.setBackgroundColor(androidx.core.content.ContextCompat.getColor(bottomSheetDialog.context, R.color.surface))
-
-            // Remove padding from parent container too
-            (sheet.parent as? View)?.setPadding(0, 0, 0, 0)
-
-            val behavior = BottomSheetBehavior.from(sheet)
-            behavior.state = BottomSheetBehavior.STATE_EXPANDED
-            behavior.skipCollapsed = true
-        }
-
-        // Remove window padding
-        bottomSheetDialog.window?.let { window ->
-            window.decorView.setPadding(0, 0, 0, 0)
-            window.setBackgroundDrawableResource(android.R.color.transparent)
         }
     }
 

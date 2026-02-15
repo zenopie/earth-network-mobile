@@ -17,249 +17,287 @@
         android:layout_marginTop="12dp"
         android:background="@drawable/bg_drag_handle" />
 
-    <!-- Inner Content Container (double nested with matching background) -->
+    <!-- Loading Overlay -->
     <LinearLayout
+        android:id="@+id/loading_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/surface"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="40dp"
+        android:visibility="gone">
+
+        <ProgressBar
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:indeterminate="true"
+            android:indeterminateTint="@color/primary" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="Preparing transaction..."
+            android:textColor="@color/text_secondary"
+            android:textSize="14sp"
+            android:fontFamily="sans-serif-medium" />
+
+    </LinearLayout>
+
+    <!-- Main Content -->
+    <LinearLayout
+        android:id="@+id/main_content"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="@color/surface"
         android:orientation="vertical">
 
-        <!-- Shield Icon -->
-        <ImageView
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:layout_gravity="center_horizontal"
-            android:layout_marginBottom="4dp"
-            android:src="@drawable/ic_shield_check"
-            android:contentDescription="Security" />
-
-        <!-- Title -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="20dp"
-            android:layout_marginHorizontal="20dp"
-            android:gravity="center"
-            android:text="Confirm Transaction"
-            android:textColor="@color/text_primary"
-            android:textSize="20sp"
-            android:fontFamily="sans-serif-medium" />
-
-        <!-- Contract Label -->
-        <TextView
-            android:id="@+id/contract_label"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginHorizontal="20dp"
-            android:layout_marginBottom="4dp"
-            android:text="CONTRACT"
-            android:textColor="@color/text_tertiary"
-            android:textSize="11sp"
-            android:fontFamily="sans-serif-medium"
-            android:letterSpacing="0.06" />
-
-        <!-- Contract Address -->
-        <TextView
-            android:id="@+id/contract_address_text"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginHorizontal="20dp"
-            android:layout_marginBottom="16dp"
-            android:textColor="@color/text_primary"
-            android:textSize="14sp"
-            android:fontFamily="monospace"
-            android:textIsSelectable="true"
-            tools:text="secret1abc...xyz" />
-
-        <!-- Transaction Type Label -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginHorizontal="20dp"
-            android:layout_marginBottom="4dp"
-            android:text="TRANSACTION TYPE"
-            android:textColor="@color/text_tertiary"
-            android:textSize="11sp"
-            android:fontFamily="sans-serif-medium"
-            android:letterSpacing="0.06" />
-
-        <!-- Transaction Type Value -->
-        <TextView
-            android:id="@+id/transaction_type_text"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginHorizontal="20dp"
-            android:textColor="@color/primary"
-            android:textSize="16sp"
-            android:fontFamily="sans-serif-medium"
-            tools:text="Transfer" />
-
-        <!-- Show Full Message Button -->
-        <TextView
-            android:id="@+id/show_message_button"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginHorizontal="20dp"
-            android:layout_marginTop="2dp"
-            android:layout_marginBottom="16dp"
-            android:text="View raw message"
-            android:textColor="@color/text_tertiary"
-            android:textSize="12sp" />
-
-        <!-- Funds Label (hidden) -->
-        <TextView
-            android:id="@+id/funds_label"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginHorizontal="20dp"
-            android:layout_marginBottom="4dp"
-            android:text="FUNDS ATTACHED"
-            android:textColor="@color/text_tertiary"
-            android:textSize="11sp"
-            android:fontFamily="sans-serif-medium"
-            android:letterSpacing="0.06"
-            android:visibility="gone" />
-
-        <!-- Funds Text (hidden) -->
-        <TextView
-            android:id="@+id/funds_text"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginHorizontal="20dp"
-            android:layout_marginBottom="16dp"
-            android:textColor="@color/primary"
-            android:textSize="16sp"
-            android:fontFamily="sans-serif-medium"
-            android:visibility="gone"
-            tools:text="1.0 SCRT" />
-
-        <!-- Memo Label (hidden) -->
-        <TextView
-            android:id="@+id/memo_label"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginHorizontal="20dp"
-            android:layout_marginBottom="4dp"
-            android:text="MEMO"
-            android:textColor="@color/text_tertiary"
-            android:textSize="11sp"
-            android:fontFamily="sans-serif-medium"
-            android:letterSpacing="0.06"
-            android:visibility="gone" />
-
-        <!-- Memo Text (hidden) -->
-        <TextView
-            android:id="@+id/memo_text"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginHorizontal="20dp"
-            android:layout_marginBottom="16dp"
-            android:textColor="@color/text_secondary"
-            android:textSize="14sp"
-            android:visibility="gone"
-            tools:text="Transaction memo" />
-
-        <!-- Ads for Gas Section (hidden) -->
+        <!-- Inner Content Container -->
         <LinearLayout
-            android:id="@+id/ads_for_gas_section"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginHorizontal="20dp"
-            android:layout_marginBottom="16dp"
-            android:orientation="vertical"
-            android:visibility="gone">
+            android:background="@color/surface"
+            android:orientation="vertical">
 
-            <LinearLayout
+            <!-- Shield Icon -->
+            <ImageView
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginBottom="4dp"
+                android:src="@drawable/ic_shield_check"
+                android:contentDescription="Security" />
+
+            <!-- Title -->
+            <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginBottom="10dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
+                android:layout_marginBottom="20dp"
+                android:layout_marginHorizontal="20dp"
+                android:gravity="center"
+                android:text="Confirm Transaction"
+                android:textColor="@color/text_primary"
+                android:textSize="20sp"
+                android:fontFamily="sans-serif-medium" />
 
-                <ImageView
-                    android:layout_width="22dp"
-                    android:layout_height="22dp"
-                    android:layout_marginEnd="10dp"
-                    android:src="@drawable/ic_gas_pump"
-                    app:tint="@color/text_primary"
-                    android:contentDescription="Gas" />
+            <!-- Contract Label -->
+            <TextView
+                android:id="@+id/contract_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="20dp"
+                android:layout_marginBottom="4dp"
+                android:text="CONTRACT"
+                android:textColor="@color/text_tertiary"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="0.06" />
 
-                <TextView
-                    android:layout_width="wrap_content"
+            <!-- Contract Address -->
+            <TextView
+                android:id="@+id/contract_address_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="20dp"
+                android:layout_marginBottom="16dp"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp"
+                android:fontFamily="monospace"
+                android:textIsSelectable="true"
+                tools:text="secret1abc...xyz" />
+
+            <!-- Transaction Type Label -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="20dp"
+                android:layout_marginBottom="4dp"
+                android:text="TRANSACTION TYPE"
+                android:textColor="@color/text_tertiary"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="0.06" />
+
+            <!-- Transaction Type Value -->
+            <TextView
+                android:id="@+id/transaction_type_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="20dp"
+                android:textColor="@color/primary"
+                android:textSize="16sp"
+                android:fontFamily="sans-serif-medium"
+                tools:text="Transfer" />
+
+            <!-- Show Full Message Button -->
+            <TextView
+                android:id="@+id/show_message_button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="20dp"
+                android:layout_marginTop="2dp"
+                android:layout_marginBottom="16dp"
+                android:text="View raw message"
+                android:textColor="@color/text_tertiary"
+                android:textSize="12sp" />
+
+            <!-- Funds Label (hidden) -->
+            <TextView
+                android:id="@+id/funds_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="20dp"
+                android:layout_marginBottom="4dp"
+                android:text="FUNDS ATTACHED"
+                android:textColor="@color/text_tertiary"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="0.06"
+                android:visibility="gone" />
+
+            <!-- Funds Text (hidden) -->
+            <TextView
+                android:id="@+id/funds_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="20dp"
+                android:layout_marginBottom="16dp"
+                android:textColor="@color/primary"
+                android:textSize="16sp"
+                android:fontFamily="sans-serif-medium"
+                android:visibility="gone"
+                tools:text="1.0 SCRT" />
+
+            <!-- Memo Label (hidden) -->
+            <TextView
+                android:id="@+id/memo_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="20dp"
+                android:layout_marginBottom="4dp"
+                android:text="MEMO"
+                android:textColor="@color/text_tertiary"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="0.06"
+                android:visibility="gone" />
+
+            <!-- Memo Text (hidden) -->
+            <TextView
+                android:id="@+id/memo_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="20dp"
+                android:layout_marginBottom="16dp"
+                android:textColor="@color/text_secondary"
+                android:textSize="14sp"
+                android:visibility="gone"
+                tools:text="Transaction memo" />
+
+            <!-- Ads for Gas Section (hidden) -->
+            <LinearLayout
+                android:id="@+id/ads_for_gas_section"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="20dp"
+                android:layout_marginBottom="16dp"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Need gas for this transaction?"
-                    android:textColor="@color/text_primary"
+                    android:layout_marginBottom="10dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <ImageView
+                        android:layout_width="22dp"
+                        android:layout_height="22dp"
+                        android:layout_marginEnd="10dp"
+                        android:src="@drawable/ic_gas_pump"
+                        app:tint="@color/text_primary"
+                        android:contentDescription="Gas" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Need gas for this transaction?"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp"
+                        android:fontFamily="sans-serif-medium" />
+
+                </LinearLayout>
+
+                <Button
+                    android:id="@+id/ads_for_gas_button"
+                    android:layout_width="match_parent"
+                    android:layout_height="46dp"
+                    android:background="@drawable/btn_gas_modern"
+                    app:backgroundTint="@null"
+                    android:text="Watch Ad for Free Gas"
+                    android:textColor="@color/text_inverse"
                     android:textSize="14sp"
-                    android:fontFamily="sans-serif-medium" />
+                    android:fontFamily="sans-serif-medium"
+                    android:textAllCaps="false"
+                    android:stateListAnimator="@null" />
+
+                <Button
+                    android:id="@+id/gas_grant_status"
+                    android:layout_width="match_parent"
+                    android:layout_height="46dp"
+                    android:background="@drawable/btn_gas_modern"
+                    app:backgroundTint="@null"
+                    android:text="Gas Grant Active"
+                    android:textColor="@color/text_inverse"
+                    android:textSize="14sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:textAllCaps="false"
+                    android:stateListAnimator="@null"
+                    android:visibility="gone" />
 
             </LinearLayout>
 
-            <Button
-                android:id="@+id/ads_for_gas_button"
+            <!-- Action Buttons -->
+            <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="46dp"
-                android:background="@drawable/btn_gas_modern"
-                app:backgroundTint="@null"
-                android:text="Watch Ad for Free Gas"
-                android:textColor="@color/text_inverse"
-                android:textSize="14sp"
-                android:fontFamily="sans-serif-medium"
-                android:textAllCaps="false"
-                android:stateListAnimator="@null" />
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="20dp"
+                android:layout_marginBottom="20dp"
+                android:orientation="horizontal">
 
-            <Button
-                android:id="@+id/gas_grant_status"
-                android:layout_width="match_parent"
-                android:layout_height="46dp"
-                android:background="@drawable/btn_gas_modern"
-                app:backgroundTint="@null"
-                android:text="Gas Grant Active"
-                android:textColor="@color/text_inverse"
-                android:textSize="14sp"
-                android:fontFamily="sans-serif-medium"
-                android:textAllCaps="false"
-                android:stateListAnimator="@null"
-                android:visibility="gone" />
+                <Button
+                    android:id="@+id/cancel_button"
+                    android:layout_width="0dp"
+                    android:layout_height="52dp"
+                    android:layout_marginEnd="8dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/btn_secondary_modern"
+                    app:backgroundTint="@null"
+                    android:text="Cancel"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="16sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:textAllCaps="false"
+                    android:stateListAnimator="@null" />
 
-        </LinearLayout>
+                <Button
+                    android:id="@+id/confirm_button"
+                    android:layout_width="0dp"
+                    android:layout_height="52dp"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/btn_primary_modern"
+                    app:backgroundTint="@null"
+                    android:text="Confirm"
+                    android:textColor="@color/text_inverse"
+                    android:textSize="16sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:textAllCaps="false"
+                    android:stateListAnimator="@null" />
 
-        <!-- Action Buttons -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginHorizontal="20dp"
-            android:layout_marginBottom="20dp"
-            android:orientation="horizontal">
-
-            <Button
-                android:id="@+id/cancel_button"
-                android:layout_width="0dp"
-                android:layout_height="52dp"
-                android:layout_marginEnd="8dp"
-                android:layout_weight="1"
-                android:background="@drawable/btn_secondary_modern"
-                app:backgroundTint="@null"
-                android:text="Cancel"
-                android:textColor="@color/text_secondary"
-                android:textSize="16sp"
-                android:fontFamily="sans-serif-medium"
-                android:textAllCaps="false"
-                android:stateListAnimator="@null" />
-
-            <Button
-                android:id="@+id/confirm_button"
-                android:layout_width="0dp"
-                android:layout_height="52dp"
-                android:layout_marginStart="8dp"
-                android:layout_weight="1"
-                android:background="@drawable/btn_primary_modern"
-                app:backgroundTint="@null"
-                android:text="Confirm"
-                android:textColor="@color/text_inverse"
-                android:textSize="16sp"
-                android:fontFamily="sans-serif-medium"
-                android:textAllCaps="false"
-                android:stateListAnimator="@null" />
+            </LinearLayout>
 
         </LinearLayout>
 
