@@ -76,38 +76,40 @@ class TransactionConfirmationDialog(context: Context) {
         var result = ConfirmationResult.CANCELLED
 
         // Find views
-        val contractLabel = bottomSheetView.findViewById<TextView>(R.id.contract_label)
         val contractAddressText = bottomSheetView.findViewById<TextView>(R.id.contract_address_text)
-        val executeMessageText = bottomSheetView.findViewById<TextView>(R.id.execute_message_text)
+        val transactionTypeText = bottomSheetView.findViewById<TextView>(R.id.transaction_type_text)
+        val showMessageButton = bottomSheetView.findViewById<TextView>(R.id.show_message_button)
+        val fundsLabel = bottomSheetView.findViewById<TextView>(R.id.funds_label)
         val fundsText = bottomSheetView.findViewById<TextView>(R.id.funds_text)
+        val memoLabel = bottomSheetView.findViewById<TextView>(R.id.memo_label)
         val memoText = bottomSheetView.findViewById<TextView>(R.id.memo_text)
-        val fundsSection = bottomSheetView.findViewById<View>(R.id.funds_section)
-        val memoSection = bottomSheetView.findViewById<View>(R.id.memo_section)
         val cancelButton = bottomSheetView.findViewById<Button>(R.id.cancel_button)
         val confirmButton = bottomSheetView.findViewById<Button>(R.id.confirm_button)
         val adsForGasSection = bottomSheetView.findViewById<LinearLayout>(R.id.ads_for_gas_section)
         val adsForGasButton = bottomSheetView.findViewById<Button>(R.id.ads_for_gas_button)
-        val gasGrantStatus = bottomSheetView.findViewById<TextView>(R.id.gas_grant_status)
+        val gasGrantStatus = bottomSheetView.findViewById<Button>(R.id.gas_grant_status)
 
         // Set transaction details
-        contractLabel.text = details.contractLabel
         contractAddressText.text = truncateAddress(details.contractAddress)
-        executeMessageText.text = details.message
+        transactionTypeText.text = parseTransactionType(details.message)
+
+        // Show raw message button click
+        showMessageButton.setOnClickListener {
+            showRawMessageDialog(bottomSheetDialog.context, details.message)
+        }
 
         // Show funds section if funds are provided
         if (!TextUtils.isEmpty(details.funds)) {
-            fundsSection.visibility = View.VISIBLE
-            fundsText.text = details.funds
-        } else {
-            fundsSection.visibility = View.GONE
+            fundsLabel?.visibility = View.VISIBLE
+            fundsText?.visibility = View.VISIBLE
+            fundsText?.text = details.funds
         }
 
         // Show memo section if memo is provided
         if (!TextUtils.isEmpty(details.memo)) {
-            memoSection.visibility = View.VISIBLE
-            memoText.text = details.memo
-        } else {
-            memoSection.visibility = View.GONE
+            memoLabel?.visibility = View.VISIBLE
+            memoText?.visibility = View.VISIBLE
+            memoText?.text = details.memo
         }
 
         // Handle Ads for Gas section
@@ -117,7 +119,6 @@ class TransactionConfirmationDialog(context: Context) {
             if (details.hasExistingGrant) {
                 // Already has a grant - show status
                 gasGrantStatus?.visibility = View.VISIBLE
-                gasGrantStatus?.text = "✓ Gas grant active"
                 adsForGasButton?.visibility = View.GONE
             } else {
                 // No grant - show button
@@ -132,13 +133,12 @@ class TransactionConfirmationDialog(context: Context) {
                         if (success) {
                             // Ad watched successfully, grant will be created
                             gasGrantStatus?.visibility = View.VISIBLE
-                            gasGrantStatus?.text = "✓ Gas grant active"
                             adsForGasButton.visibility = View.GONE
                             details.hasExistingGrant = true
                         } else {
                             // Ad failed or not available
                             adsForGasButton.isEnabled = true
-                            adsForGasButton.text = "📺 Ads for Gas"
+                            adsForGasButton.text = "Watch Ad"
                         }
                     }
 
@@ -184,19 +184,140 @@ class TransactionConfirmationDialog(context: Context) {
 
         bottomSheetDialog.show()
 
-        // Configure bottom sheet to expand to full content height
+        // Configure bottom sheet
         val bottomSheet = bottomSheetDialog.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
-        bottomSheet?.let {
-            val behavior = BottomSheetBehavior.from(it)
+        bottomSheet?.let { sheet ->
+            sheet.setPadding(0, 0, 0, 0)
+            sheet.setBackgroundColor(androidx.core.content.ContextCompat.getColor(bottomSheetDialog.context, R.color.surface))
+
+            // Remove padding from parent container too
+            (sheet.parent as? View)?.setPadding(0, 0, 0, 0)
+
+            val behavior = BottomSheetBehavior.from(sheet)
             behavior.state = BottomSheetBehavior.STATE_EXPANDED
             behavior.skipCollapsed = true
+        }
+
+        // Remove window padding
+        bottomSheetDialog.window?.let { window ->
+            window.decorView.setPadding(0, 0, 0, 0)
+            window.setBackgroundDrawableResource(android.R.color.transparent)
+        }
+    }
+
+    private fun parseTransactionType(message: String): String {
+        try {
+            // Parse the JSON message to extract the transaction type
+            val json = org.json.JSONObject(message)
+            val keys = json.keys()
+            if (keys.hasNext()) {
+                val key = keys.next()
+                return formatTransactionType(key)
+            }
+        } catch (e: Exception) {
+            // If parsing fails, return generic type
+        }
+        return "Contract Execution"
+    }
+
+    private fun formatTransactionType(key: String): String {
+        // Convert snake_case or camelCase to Title Case with description
+        return when (key.lowercase()) {
+            "transfer" -> "Token Transfer"
+            "send" -> "Send Tokens"
+            "mint" -> "Mint Tokens"
+            "burn" -> "Burn Tokens"
+            "approve" -> "Approve Spending"
+            "increase_allowance" -> "Increase Allowance"
+            "decrease_allowance" -> "Decrease Allowance"
+            "transfer_from" -> "Transfer From"
+            "send_from" -> "Send From"
+            "stake" -> "Stake Tokens"
+            "unstake" -> "Unstake Tokens"
+            "claim" -> "Claim Rewards"
+            "claim_rewards" -> "Claim Rewards"
+            "withdraw" -> "Withdraw"
+            "deposit" -> "Deposit"
+            "swap" -> "Token Swap"
+            "provide_liquidity" -> "Provide Liquidity"
+            "withdraw_liquidity" -> "Withdraw Liquidity"
+            "vote" -> "Cast Vote"
+            "delegate" -> "Delegate"
+            "undelegate" -> "Undelegate"
+            "redelegate" -> "Redelegate"
+            "register" -> "Register"
+            "update" -> "Update"
+            "execute" -> "Execute"
+            "instantiate" -> "Instantiate Contract"
+            "migrate" -> "Migrate Contract"
+            else -> key.replace("_", " ")
+                .split(" ")
+                .joinToString(" ") { word ->
+                    word.replaceFirstChar { it.uppercase() }
+                }
         }
     }
 
     private fun truncateAddress(address: String): String {
         if (TextUtils.isEmpty(address)) return ""
         if (address.length <= 20) return address
-        return "${address.substring(0, 10)}...${address.substring(address.length - 6)}"
+        return "${address.substring(0, 12)}...${address.substring(address.length - 8)}"
+    }
+
+    private fun showRawMessageDialog(context: Context, message: String) {
+        val dialog = android.app.Dialog(context, android.R.style.Theme_Material_Light_NoActionBar)
+        dialog.setContentView(R.layout.dialog_raw_message)
+
+        val backButton = dialog.findViewById<android.widget.ImageButton>(R.id.back_button)
+        val messageText = dialog.findViewById<TextView>(R.id.message_text)
+
+        // Format JSON with indentation and decode nested base64 messages
+        val formattedMessage = try {
+            val json = org.json.JSONObject(message)
+            decodeNestedMessages(json)
+            json.toString(2)
+        } catch (e: Exception) {
+            message
+        }
+
+        messageText.text = formattedMessage
+
+        backButton.setOnClickListener {
+            dialog.dismiss()
+        }
+
+        dialog.show()
+    }
+
+    private fun decodeNestedMessages(json: org.json.JSONObject) {
+        val keys = json.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val value = json.get(key)
+
+            when {
+                // Decode base64 "msg" fields
+                key == "msg" && value is String -> {
+                    try {
+                        val decoded = String(android.util.Base64.decode(value, android.util.Base64.DEFAULT))
+                        val nestedJson = org.json.JSONObject(decoded)
+                        decodeNestedMessages(nestedJson)
+                        json.put(key, nestedJson)
+                    } catch (e: Exception) {
+                        // Not valid base64 JSON, keep original
+                    }
+                }
+                value is org.json.JSONObject -> decodeNestedMessages(value)
+                value is org.json.JSONArray -> {
+                    for (i in 0 until value.length()) {
+                        val item = value.get(i)
+                        if (item is org.json.JSONObject) {
+                            decodeNestedMessages(item)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fun dismiss() {

@@ -22,14 +22,58 @@
     <color name="green_primary">#4CAF50</color>
     <color name="green_hover">#45a049</color>
     <color name="sky_blue">#87CEEB</color>
-    
+
     <!-- Camera overlay colors -->
     <color name="black_overlay">#80000000</color>
     <color name="anml_button_background">#4056a1</color>
-    
+
     <!-- Status Modal colors -->
     <color name="modal_overlay_background">#CCFFFFFF</color>
     <color name="primary_blue">#27366b</color>
     <color name="success_green">#4bb543</color>
     <color name="error_red">#ff5353</color>
+
+    <!-- Modern Design System Colors -->
+    <!-- Primary -->
+    <color name="primary">#22C55E</color>
+    <color name="primary_dark">#16A34A</color>
+    <color name="primary_light">#DCFCE7</color>
+    <color name="primary_surface">#F0FDF4</color>
+
+    <!-- Accent / Secondary -->
+    <color name="accent_blue">#3B82F6</color>
+    <color name="accent_blue_dark">#2563EB</color>
+    <color name="accent_blue_light">#DBEAFE</color>
+
+    <!-- Neutrals -->
+    <color name="surface">#FFFFFF</color>
+    <color name="surface_elevated">#FAFAFA</color>
+    <color name="surface_secondary">#F4F4F5</color>
+    <color name="surface_tertiary">#E4E4E7</color>
+
+    <!-- Text -->
+    <color name="text_primary">#18181B</color>
+    <color name="text_secondary">#52525B</color>
+    <color name="text_tertiary">#A1A1AA</color>
+    <color name="text_inverse">#FFFFFF</color>
+
+    <!-- Borders -->
+    <color name="border_light">#E4E4E7</color>
+    <color name="border_medium">#D4D4D8</color>
+
+    <!-- Semantic Colors -->
+    <color name="warning">#F59E0B</color>
+    <color name="warning_light">#FEF3C7</color>
+    <color name="warning_dark">#D97706</color>
+
+    <color name="danger">#EF4444</color>
+    <color name="danger_light">#FEE2E2</color>
+    <color name="danger_dark">#DC2626</color>
+
+    <color name="info">#3B82F6</color>
+    <color name="info_light">#DBEAFE</color>
+
+    <!-- Shadows (for programmatic use) -->
+    <color name="shadow_light">#0A000000</color>
+    <color name="shadow_medium">#1A000000</color>
 </resources>
