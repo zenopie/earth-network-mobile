@@ -59,6 +59,7 @@ class TransactionConfirmationDialog(context: Context) {
     private var gasListener: OnConfirmationWithGasListener? = null
     private var loadingOverlay: LinearLayout? = null
     private var mainContent: LinearLayout? = null
+    private var bottomSheetView: View? = null
 
     fun show(details: TransactionDetails, listener: OnConfirmationListener) {
         this.listener = listener
@@ -74,12 +75,13 @@ class TransactionConfirmationDialog(context: Context) {
      * Show the dialog with a loading state. Call hideLoading() when ready to show content.
      */
     fun showLoading() {
-        val bottomSheetView = LayoutInflater.from(bottomSheetDialog.context)
+        val view = LayoutInflater.from(bottomSheetDialog.context)
             .inflate(R.layout.transaction_confirmation_popup, null)
-        bottomSheetDialog.setContentView(bottomSheetView)
+        bottomSheetView = view
+        bottomSheetDialog.setContentView(view)
 
-        loadingOverlay = bottomSheetView.findViewById(R.id.loading_overlay)
-        mainContent = bottomSheetView.findViewById(R.id.main_content)
+        loadingOverlay = view.findViewById(R.id.loading_overlay)
+        mainContent = view.findViewById(R.id.main_content)
 
         loadingOverlay?.visibility = View.VISIBLE
         mainContent?.visibility = View.GONE
@@ -119,28 +121,29 @@ class TransactionConfirmationDialog(context: Context) {
     fun updateWithDetails(details: TransactionDetails, listener: OnConfirmationWithGasListener) {
         this.gasListener = listener
 
-        val bottomSheetView = bottomSheetDialog.findViewById<View>(android.R.id.content) ?: return
+        val view = bottomSheetView ?: return
 
         // Hide loading, show content
         loadingOverlay?.visibility = View.GONE
         mainContent?.visibility = View.VISIBLE
 
-        setupContent(bottomSheetView, details, true)
+        setupContent(view, details, true)
     }
 
     private fun showInternal(details: TransactionDetails, withGasOption: Boolean) {
-        val bottomSheetView = LayoutInflater.from(bottomSheetDialog.context)
+        val view = LayoutInflater.from(bottomSheetDialog.context)
             .inflate(R.layout.transaction_confirmation_popup, null)
-        bottomSheetDialog.setContentView(bottomSheetView)
+        bottomSheetView = view
+        bottomSheetDialog.setContentView(view)
 
-        loadingOverlay = bottomSheetView.findViewById(R.id.loading_overlay)
-        mainContent = bottomSheetView.findViewById(R.id.main_content)
+        loadingOverlay = view.findViewById(R.id.loading_overlay)
+        mainContent = view.findViewById(R.id.main_content)
 
         // Ensure loading is hidden and content is visible
         loadingOverlay?.visibility = View.GONE
         mainContent?.visibility = View.VISIBLE
 
-        setupContent(bottomSheetView, details, withGasOption)
+        setupContent(view, details, withGasOption)
 
         bottomSheetDialog.show()
 
