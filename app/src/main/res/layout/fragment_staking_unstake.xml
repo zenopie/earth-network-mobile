@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/white"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <!-- Balance Row -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="12dp">
+
+            <TextView
+                android:id="@+id/unstake_balance_label"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Staked: 0"
+                android:textSize="14sp"
+                android:textColor="@color/text_secondary" />
+
+            <Button
+                android:id="@+id/unstake_max_button"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:background="@drawable/btn_accent_modern"
+                app:backgroundTint="@null"
+                android:elevation="0dp"
+                android:stateListAnimator="@null"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:paddingLeft="10dp"
+                android:paddingRight="10dp"
+                android:paddingTop="0dp"
+                android:paddingBottom="0dp"
+                android:text="Max"
+                android:textColor="@color/text_inverse"
+                android:textSize="12sp"
+                android:textAllCaps="false"
+                android:fontFamily="sans-serif-medium" />
+
+        </LinearLayout>
+
+        <!-- Input with ERTH logo -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="20dp">
+
+            <EditText
+                android:id="@+id/unstake_amount_input"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:background="@drawable/input_background"
+                android:hint="0"
+                android:inputType="numberDecimal"
+                android:paddingStart="60dp"
+                android:paddingEnd="16dp"
+                android:textSize="18sp"
+                android:textColor="#333333" />
+
+            <ImageView
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:layout_gravity="center_vertical"
+                android:layout_marginStart="16dp"
+                android:src="@drawable/ic_erth_logo" />
+
+        </FrameLayout>
+
+        <!-- Withdraw Button -->
+        <Button
+            android:id="@+id/unstake_button"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:background="@drawable/btn_primary_modern"
+            app:backgroundTint="@null"
+            android:text="Withdraw"
+            android:textColor="@color/text_inverse"
+            android:textSize="16sp"
+            android:fontFamily="sans-serif-medium"
+            android:textAllCaps="false"
+            android:stateListAnimator="@null"
+            android:enabled="false" />
+
+        <!-- Unbonding Note -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Unstaking has a 21-day unbonding period"
+            android:textSize="13sp"
+            android:textColor="@color/text_secondary"
+            android:gravity="center"
+            android:layout_marginTop="16dp" />
+
+    </LinearLayout>
+
+</ScrollView>

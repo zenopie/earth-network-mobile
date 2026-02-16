@@ -1,202 +1,374 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:orientation="vertical"
-    android:padding="16dp">
+    android:layout_height="match_parent"
+    android:background="@android:color/white"
+    android:fillViewport="true">
 
-    <!-- Info Display Section -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="match_parent"
         android:orientation="vertical"
-        android:background="@drawable/address_box_bg"
-        android:padding="16dp"
-        android:layout_marginBottom="16dp">
+        android:padding="24dp"
+        android:gravity="center">
 
-        <!-- Your Staked Amount -->
+        <!-- Hero: APR with ERTH logo -->
         <LinearLayout
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:layout_marginBottom="12dp">
-            
+            android:orientation="vertical"
+            android:gravity="center"
+            android:layout_marginBottom="8dp">
+
+            <!-- ERTH Logo -->
+            <ImageView
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:src="@drawable/ic_erth_logo"
+                android:layout_marginBottom="12dp" />
+
             <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Your Staked Amount:"
-                android:textSize="14sp"
-                android:textColor="#666666" />
-            
-            <TextView
-                android:id="@+id/staked_amount_text"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Loading..."
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:textColor="#333333" />
-        </LinearLayout>
+                android:text="Current APR"
+                android:textSize="13sp"
+                android:textColor="@color/text_secondary"
+                android:textAllCaps="true"
+                android:letterSpacing="0.1"
+                android:layout_marginBottom="4dp" />
 
-        <!-- Your ERTH Balance -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:layout_marginBottom="12dp">
-            
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Your ERTH Balance:"
-                android:textSize="14sp"
-                android:textColor="#666666" />
-            
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical">
-                
-                <TextView
-                    android:id="@+id/erth_balance_text"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Loading..."
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    android:textColor="#333333" />
-                
-                <Button
-                    android:id="@+id/get_viewing_key_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="32dp"
-                    android:text="Get Viewing Key"
-                    android:textSize="10sp"
-                    android:textColor="@android:color/white"
-                    android:background="@drawable/green_button_bg"
-                    android:paddingHorizontal="12dp"
-                    android:layout_marginStart="8dp"
-                    android:visibility="gone" />
-            </LinearLayout>
-        </LinearLayout>
-
-        <!-- Current APR -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:layout_marginBottom="12dp">
-            
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Current APR:"
-                android:textSize="14sp"
-                android:textColor="#666666" />
-            
             <TextView
                 android:id="@+id/current_apr_text"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="0.00%"
-                android:textSize="14sp"
+                android:textSize="44sp"
+                android:fontFamily="sans-serif-medium"
                 android:textStyle="bold"
-                android:textColor="#333333" />
+                android:textColor="@color/primary" />
+
         </LinearLayout>
 
-        <!-- Total Staked -->
+        <!-- Sub-Hero: Your Staked -->
         <LinearLayout
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:orientation="horizontal">
-            
+            android:orientation="vertical"
+            android:gravity="center"
+            android:layout_marginTop="16dp"
+            android:layout_marginBottom="36dp">
+
             <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Total Staked:"
-                android:textSize="14sp"
-                android:textColor="#666666" />
-            
-            <TextView
-                android:id="@+id/total_staked_text"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Loading..."
-                android:textSize="14sp"
-                android:textStyle="bold"
+                android:text="Your Staked"
+                android:textSize="13sp"
+                android:textColor="@color/text_secondary"
+                android:layout_marginBottom="4dp" />
+
+            <TextView
+                android:id="@+id/staked_amount_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0 ERTH"
+                android:textSize="26sp"
+                android:fontFamily="sans-serif-medium"
                 android:textColor="#333333" />
         </LinearLayout>
-    </LinearLayout>
 
-    <!-- Staking Rewards Section -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:background="@drawable/address_box_bg"
-        android:padding="16dp">
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Staking Rewards"
-            android:textSize="18sp"
-            android:textStyle="bold"
-            android:textColor="@color/primary_blue"
-            android:layout_marginBottom="12dp" />
-
-        <!-- Staking Rewards Due -->
+        <!-- Stats Row -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:layout_marginBottom="16dp">
-            
-            <TextView
+            android:layout_marginBottom="40dp">
+
+            <!-- Your Balance -->
+            <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Staking Rewards Due:"
-                android:textSize="14sp"
-                android:textColor="#666666" />
-            
-            <TextView
-                android:id="@+id/staking_rewards_text"
-                android:layout_width="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="6dp">
+
+                    <ImageView
+                        android:layout_width="14dp"
+                        android:layout_height="14dp"
+                        android:src="@drawable/ic_wallet_small"
+                        android:layout_marginEnd="4dp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Balance"
+                        android:textSize="12sp"
+                        android:textColor="@color/text_secondary" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:id="@+id/erth_balance_text"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="¤0"
+                        android:textSize="18sp"
+                        android:fontFamily="sans-serif-medium"
+                        android:textColor="#333333" />
+
+                    <Button
+                        android:id="@+id/get_viewing_key_button"
+                        android:layout_width="wrap_content"
+                        android:layout_height="24dp"
+                        android:layout_marginStart="6dp"
+                        android:background="@drawable/btn_accent_modern"
+                        app:backgroundTint="@null"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingLeft="8dp"
+                        android:paddingRight="8dp"
+                        android:paddingTop="0dp"
+                        android:paddingBottom="0dp"
+                        android:text="Add"
+                        android:textColor="@color/text_inverse"
+                        android:textSize="10sp"
+                        android:textAllCaps="false"
+                        android:fontFamily="sans-serif-medium"
+                        android:stateListAnimator="@null"
+                        android:visibility="gone" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Vertical Divider -->
+            <View
+                android:layout_width="1dp"
+                android:layout_height="40dp"
+                android:background="@color/desktop_bg"
+                android:layout_gravity="center" />
+
+            <!-- Total Staked -->
+            <LinearLayout
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:text="0 ERTH"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:textColor="#4CAF50" />
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="6dp">
+
+                    <ImageView
+                        android:layout_width="14dp"
+                        android:layout_height="14dp"
+                        android:src="@drawable/ic_staking_small"
+                        android:layout_marginEnd="4dp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Total Staked"
+                        android:textSize="12sp"
+                        android:textColor="@color/text_secondary" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/total_staked_text"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="¤0"
+                    android:textSize="18sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:textColor="#333333" />
+            </LinearLayout>
+
         </LinearLayout>
 
-        <!-- Claim Rewards Button -->
-        <Button
-            android:id="@+id/claim_rewards_button"
-            android:layout_width="match_parent"
-            android:layout_height="56dp"
-            android:text="Claim Rewards"
-            android:textColor="@android:color/white"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:background="@drawable/green_button_bg"
-            android:visibility="gone" />
-
-        <!-- No Rewards Message -->
-        <TextView
-            android:id="@+id/no_rewards_text"
+        <!-- Second Stats Row: Pool Share & Daily Earnings -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Stake ERTH tokens to earn rewards"
-            android:textSize="14sp"
-            android:textColor="#666666"
-            android:gravity="center"
-            android:visibility="visible" />
+            android:orientation="horizontal"
+            android:layout_marginBottom="40dp">
+
+            <!-- Pool Share -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="6dp">
+
+                    <ImageView
+                        android:layout_width="14dp"
+                        android:layout_height="14dp"
+                        android:src="@drawable/ic_staking_small"
+                        android:layout_marginEnd="4dp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Pool Share"
+                        android:textSize="12sp"
+                        android:textColor="@color/text_secondary" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/pool_share_text"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0.0000%"
+                    android:textSize="18sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:textColor="#333333" />
+            </LinearLayout>
+
+            <!-- Vertical Divider -->
+            <View
+                android:layout_width="1dp"
+                android:layout_height="40dp"
+                android:background="@color/desktop_bg"
+                android:layout_gravity="center" />
+
+            <!-- Daily Earnings -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="6dp">
+
+                    <ImageView
+                        android:layout_width="14dp"
+                        android:layout_height="14dp"
+                        android:src="@drawable/ic_earnings"
+                        android:layout_marginEnd="4dp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Daily Earnings"
+                        android:textSize="12sp"
+                        android:textColor="@color/text_secondary" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/daily_earnings_text"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="¤0.00"
+                    android:textSize="18sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:textColor="#333333" />
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- Horizontal Separator -->
+        <View
+            android:layout_width="60dp"
+            android:layout_height="3dp"
+            android:background="@color/primary"
+            android:layout_marginBottom="24dp" />
+
+        <!-- Rewards Section -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Rewards Due"
+                android:textSize="14sp"
+                android:textColor="@color/text_secondary"
+                android:layout_marginBottom="8dp" />
+
+            <!-- Rewards with ERTH logo -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="8dp">
+
+                <ImageView
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:src="@drawable/ic_erth_logo"
+                    android:layout_marginEnd="8dp" />
+
+                <TextView
+                    android:id="@+id/staking_rewards_text"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0 ERTH"
+                    android:textSize="28sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:textColor="@color/primary" />
+
+            </LinearLayout>
+
+            <!-- No Rewards Message -->
+            <TextView
+                android:id="@+id/no_rewards_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Stake ERTH tokens to earn rewards"
+                android:textSize="13sp"
+                android:textColor="@color/text_secondary"
+                android:gravity="center"
+                android:visibility="gone" />
+
+            <!-- Claim Rewards Button -->
+            <Button
+                android:id="@+id/claim_rewards_button"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="16dp"
+                android:background="@drawable/btn_primary_modern"
+                app:backgroundTint="@null"
+                android:text="Claim Rewards"
+                android:textColor="@color/text_inverse"
+                android:textSize="16sp"
+                android:fontFamily="sans-serif-medium"
+                android:textAllCaps="false"
+                android:stateListAnimator="@null"
+                android:visibility="gone" />
+
+        </LinearLayout>
+
     </LinearLayout>
 
-</LinearLayout>
+</ScrollView>

@@ -49,6 +49,9 @@ class StakingInfoFragment : Fragment() {
     private lateinit var totalStakedText: TextView
     private lateinit var stakingRewardsText: TextView
     private lateinit var claimRewardsButton: Button
+    private lateinit var noRewardsText: TextView
+    private lateinit var poolShareText: TextView
+    private lateinit var dailyEarningsText: TextView
 
     // Services
     private var permitManager: PermitManager? = null
@@ -113,6 +116,9 @@ class StakingInfoFragment : Fragment() {
         totalStakedText = view.findViewById(R.id.total_staked_text)
         stakingRewardsText = view.findViewById(R.id.staking_rewards_text)
         claimRewardsButton = view.findViewById(R.id.claim_rewards_button)
+        noRewardsText = view.findViewById(R.id.no_rewards_text)
+        poolShareText = view.findViewById(R.id.pool_share_text)
+        dailyEarningsText = view.findViewById(R.id.daily_earnings_text)
     }
 
     private fun setupClickListeners() {
@@ -293,21 +299,31 @@ class StakingInfoFragment : Fragment() {
         }
 
         if (unstakedBalance >= 0) {
-            erthBalanceText.text = String.format("%,.0f ERTH", unstakedBalance)
+            erthBalanceText.text = String.format("¤%,.0f", unstakedBalance)
         } else {
             erthBalanceText.text = "Create permit"
         }
 
         currentAprText.text = String.format("%.2f%%", apr)
-        totalStakedText.text = String.format("%,.0f ERTH", totalStakedBalance)
+        totalStakedText.text = String.format("¤%,.0f", totalStakedBalance)
+
+        // Calculate pool share percentage
+        val poolShare = if (totalStakedBalance > 0) (stakedBalance / totalStakedBalance) * 100 else 0.0
+        poolShareText.text = String.format("%.4f%%", poolShare)
+
+        // Calculate estimated daily earnings based on APR
+        val dailyEarnings = (stakedBalance * apr / 100) / 365
+        dailyEarningsText.text = String.format("¤%.2f", dailyEarnings)
 
         if (stakingRewards > 0) {
             stakingRewardsText.text = String.format("%,.2f ERTH", stakingRewards)
             claimRewardsButton.visibility = View.VISIBLE
             claimRewardsButton.isEnabled = true
+            noRewardsText.visibility = View.GONE
         } else {
             stakingRewardsText.text = "0 ERTH"
             claimRewardsButton.visibility = View.GONE
+            noRewardsText.visibility = View.VISIBLE
         }
     }
 

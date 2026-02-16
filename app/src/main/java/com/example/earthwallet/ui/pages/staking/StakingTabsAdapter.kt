@@ -5,33 +5,26 @@ import androidx.viewpager2.adapter.FragmentStateAdapter
 
 /**
  * ViewPager2 adapter for staking management tabs
- * Based on LiquidityTabsAdapter for consistent styling
+ * 4 tabs: Rewards, Stake, Unstake, Unbonding
  */
 class StakingTabsAdapter(fragment: Fragment) : FragmentStateAdapter(fragment) {
 
     companion object {
-        private const val TAG = "StakingTabsAdapter"
-    }
-
-    init {
+        const val TAB_REWARDS = 0
+        const val TAB_STAKE = 1
+        const val TAB_UNSTAKE = 2
+        const val TAB_UNBONDING = 3
     }
 
     override fun createFragment(position: Int): Fragment {
         return when (position) {
-            0 -> {
-                StakingInfoFragment.newInstance()
-            }
-            1 -> {
-                StakeUnstakeFragment.newInstance()
-            }
-            2 -> {
-                UnbondingFragment.newInstance()
-            }
-            else -> {
-                StakingInfoFragment.newInstance()
-            }
+            TAB_REWARDS -> RewardsFragment.newInstance()
+            TAB_STAKE -> StakeFragment.newInstance()
+            TAB_UNSTAKE -> UnstakeFragment.newInstance()
+            TAB_UNBONDING -> UnbondingFragment.newInstance()
+            else -> RewardsFragment.newInstance()
         }
     }
 
-    override fun getItemCount(): Int = 3 // Info & Rewards, Stake/Unstake, Unbonding
+    override fun getItemCount(): Int = 4
 }

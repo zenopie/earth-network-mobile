@@ -271,6 +271,7 @@ class StakeUnstakeFragment : Fragment() {
         activity?.runOnUiThread {
             if (erthBalance >= 0) {
                 stakeBalanceLabel.text = String.format("Balance: %,.0f", erthBalance)
+                stakeMaxButton.text = "Max"
                 stakeMaxButton.visibility = View.VISIBLE
             } else {
                 stakeBalanceLabel.text = "Balance: Create permit"
@@ -287,6 +288,7 @@ class StakeUnstakeFragment : Fragment() {
         activity?.runOnUiThread {
             if (stakedBalance > 0) {
                 unstakeBalanceLabel.text = String.format("Balance: %,.0f", stakedBalance)
+                unstakeMaxButton.text = "Max"
                 unstakeMaxButton.visibility = View.VISIBLE
             } else {
                 unstakeBalanceLabel.text = "No staked ERTH"
