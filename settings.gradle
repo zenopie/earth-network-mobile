@@ -17,10 +17,3 @@ dependencyResolutionManagement {
 }
 rootProject.name = "PassportScanner"
 include ':app'
-
-// Include secretk as composite build (local module with feeGranter fix)
-includeBuild('secretk') {
-    dependencySubstitution {
-        substitute module('io.eqoty.secretk:client-jvm') using project(':client')
-    }
-}

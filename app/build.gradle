@@ -86,6 +86,17 @@ android {
         }
     }
 }
+
+// Force secretk types to use 7.0.0 (client 7.0.1 types not published yet)
+configurations.all {
+    resolutionStrategy.eachDependency { details ->
+        if (details.requested.group == 'io.eqoty.secretk') {
+            if (details.requested.name == 'cosmwasm-std-types' || details.requested.name == 'secret-std-types') {
+                details.useVersion '7.0.0'
+            }
+        }
+    }
+}
  
 protobuf {
     // Use protoc 3.21.x compatible with protobuf-javalite
@@ -189,8 +200,8 @@ dependencies {
     // JSON serialization for permits
     implementation 'com.google.code.gson:gson:2.10.1'
 
-    // SecretK - Kotlin client for Secret Network (local module with feeGranter fix)
-    implementation 'io.eqoty.secretk:client-jvm:7.0.0'
+    // SecretK - Kotlin client for Secret Network
+    implementation 'io.eqoty.secretk:client-jvm:7.0.1'
 
     // Kotlinx serialization for permit serialization (used by SecretK)
     implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0'
