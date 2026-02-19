@@ -1,56 +1,43 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:fillViewport="true"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
     android:background="@android:color/white">
 
+    <!-- Token Balances Section Header -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Token Balances"
+        android:textColor="@color/text_secondary"
+        android:textSize="14sp"
+        android:layout_gravity="center"
+        android:layout_marginBottom="16dp" />
+
+    <!-- Container for token balance rows -->
     <LinearLayout
+        android:id="@+id/tokenBalancesContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:paddingLeft="30dp"
-        android:paddingRight="30dp"
-        android:paddingTop="8dp"
-        android:paddingBottom="30dp">
+        android:orientation="vertical" />
 
-        <!-- Token Balances Section Header -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Token Balances"
-            android:textColor="#1e3a8a"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:layout_gravity="center"
-            android:layout_marginBottom="24dp" />
+    <!-- Manage Tokens Button -->
+    <Button
+        android:id="@+id/manage_viewing_keys_button"
+        android:layout_width="wrap_content"
+        android:layout_height="36dp"
+        android:text="Manage Tokens"
+        android:textSize="12sp"
+        android:textColor="#22C55E"
+        android:textAllCaps="false"
+        android:background="@drawable/btn_outline_green"
+        app:backgroundTint="@null"
+        android:elevation="0dp"
+        android:stateListAnimator="@null"
+        android:paddingHorizontal="16dp"
+        android:layout_gravity="end"
+        android:layout_marginTop="12dp" />
 
-        <!-- Container for token balance rows -->
-        <LinearLayout
-            android:id="@+id/tokenBalancesContainer"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical" />
-
-        <!-- Manage Viewing Keys Button -->
-        <Button
-            android:id="@+id/manage_viewing_keys_button"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Manage Tokens"
-            android:textSize="10sp"
-            android:textColor="@android:color/white"
-            android:background="@drawable/card_rounded_bg"
-            android:backgroundTint="#1e3a8a"
-            android:paddingHorizontal="8dp"
-            android:paddingVertical="4dp"
-            android:minWidth="0dp"
-            android:minHeight="0dp"
-            android:elevation="0dp"
-            android:stateListAnimator="@null"
-            android:layout_gravity="center"
-            android:layout_marginTop="16dp" />
-
-    </LinearLayout>
-
-</ScrollView>
+</LinearLayout>

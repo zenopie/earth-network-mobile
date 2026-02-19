@@ -10,7 +10,8 @@ import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.widget.Button
+import android.widget.ImageView
+import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -51,9 +52,18 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
         private const val REWARDED_AD_UNIT_ID = "ca-app-pub-8662126294069074/9040854138"
     }
 
-    private var navWallet: Button? = null
-    private var navActions: Button? = null
+    private var navWallet: View? = null
+    private var navActions: View? = null
+    private var navSettings: View? = null
     private var bottomNavView: View? = null
+
+    // Nav icons and texts for selected state styling
+    private var navWalletIcon: ImageView? = null
+    private var navWalletText: TextView? = null
+    private var navActionsIcon: ImageView? = null
+    private var navActionsText: TextView? = null
+    private var navSettingsIcon: ImageView? = null
+    private var navSettingsText: TextView? = null
     private var hostContent: View? = null
     private var securePrefs: SharedPreferences? = null
 
@@ -87,7 +97,7 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
             } else {
                 // Normal scan completed - navigate to ANML page
                 showFragment("anml")
-                setSelectedNav(navActions, navWallet)
+                setSelectedNav("actions")
             }
         } else if (result.resultCode == RESULT_CANCELED) {
             val data = result.data
@@ -102,7 +112,7 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
             } else {
                 // User cancelled - navigate back to actions
                 showFragment("actions")
-                setSelectedNav(navActions, navWallet)
+                setSelectedNav("actions")
             }
         }
     }
@@ -125,19 +135,32 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
 
         navWallet = findViewById(R.id.btn_nav_wallet)
         navActions = findViewById(R.id.btn_nav_actions)
+        navSettings = findViewById(R.id.btn_nav_settings)
         hostContent = findViewById(R.id.host_content)
 
         // Find bottom navigation view - it's included via <include> tag
         bottomNavView = findViewById(R.id.bottom_nav)
 
+        // Find icon and text views for styling
+        navWalletIcon = findViewById(R.id.nav_wallet_icon)
+        navWalletText = findViewById(R.id.nav_wallet_text)
+        navActionsIcon = findViewById(R.id.nav_actions_icon)
+        navActionsText = findViewById(R.id.nav_actions_text)
+        navSettingsIcon = findViewById(R.id.nav_settings_icon)
+        navSettingsText = findViewById(R.id.nav_settings_text)
+
         // Wire nav buttons to swap fragments
         navWallet?.setOnClickListener {
             showFragment("wallet")
-            setSelectedNav(navWallet, navActions)
+            setSelectedNav("wallet")
         }
         navActions?.setOnClickListener {
             showFragment("actions")
-            setSelectedNav(navActions, navWallet)
+            setSelectedNav("actions")
+        }
+        navSettings?.setOnClickListener {
+            showFragment("settings")
+            setSelectedNav("settings")
         }
 
         // Initialize contract registry (loads contract addresses on startup)
@@ -162,18 +185,49 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
                 fragmentToShow?.let { fragment ->
                     showFragment(fragment)
                     when (fragment) {
-                        "wallet" -> setSelectedNav(navWallet, navActions)
-                        "actions" -> setSelectedNav(navActions, navWallet)
-                        else -> setSelectedNav(navWallet, navActions) // Default to scanner if unknown
+                        "wallet" -> setSelectedNav("wallet")
+                        "actions" -> setSelectedNav("actions")
+                        "settings" -> setSelectedNav("settings")
+                        else -> setSelectedNav("wallet") // Default to wallet if unknown
                     }
                 }
             }
         }
     }
 
-    private fun setSelectedNav(selected: View?, other: View?) {
-        selected?.isSelected = true
-        other?.isSelected = false
+    private fun setSelectedNav(tab: String) {
+        val selectedColor = 0xFF22C55E.toInt() // Green
+        val unselectedColor = 0xFF9E9E9E.toInt() // Grey
+
+        // Reset all tabs
+        navWallet?.isSelected = false
+        navActions?.isSelected = false
+        navSettings?.isSelected = false
+        navWalletIcon?.setColorFilter(unselectedColor)
+        navWalletText?.setTextColor(unselectedColor)
+        navActionsIcon?.setColorFilter(unselectedColor)
+        navActionsText?.setTextColor(unselectedColor)
+        navSettingsIcon?.setColorFilter(unselectedColor)
+        navSettingsText?.setTextColor(unselectedColor)
+
+        // Set selected tab
+        when (tab) {
+            "wallet" -> {
+                navWallet?.isSelected = true
+                navWalletIcon?.setColorFilter(selectedColor)
+                navWalletText?.setTextColor(selectedColor)
+            }
+            "actions" -> {
+                navActions?.isSelected = true
+                navActionsIcon?.setColorFilter(selectedColor)
+                navActionsText?.setTextColor(selectedColor)
+            }
+            "settings" -> {
+                navSettings?.isSelected = true
+                navSettingsIcon?.setColorFilter(selectedColor)
+                navSettingsText?.setTextColor(selectedColor)
+            }
+        }
     }
 
     // Make this public so fragments can request navigation without creating a second bottom nav.
@@ -304,6 +358,13 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
                     WindowInsetsUtil.showSystemBars(window)
                 }
             }
+            "settings" -> {
+                network.erth.wallet.ui.pages.wallet.WalletSettingsFragment.newInstance().also {
+                    // Show navigation and status bar for normal fragments
+                    showBottomNavigation()
+                    WindowInsetsUtil.showSystemBars(window)
+                }
+            }
             "caretaker_fund" -> {
                 network.erth.wallet.ui.pages.governance.CaretakerFundFragment().also {
                     // Show navigation and status bar for normal fragments
@@ -348,9 +409,10 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
                 fragmentToShow?.let { fragment ->
                     showFragment(fragment)
                     when (fragment) {
-                        "wallet" -> setSelectedNav(navWallet, navActions)
-                        "actions" -> setSelectedNav(navActions, navWallet)
-                        else -> setSelectedNav(navWallet, navActions) // Default to wallet nav for other fragments
+                        "wallet" -> setSelectedNav("wallet")
+                        "actions" -> setSelectedNav("actions")
+                        "settings" -> setSelectedNav("settings")
+                        else -> setSelectedNav("wallet") // Default to wallet nav for other fragments
                     }
                 }
             }
@@ -360,13 +422,13 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
     override fun onWalletCreated() {
         // Navigate to actions after wallet creation
         showFragment("actions")
-        setSelectedNav(navActions, navWallet)
+        setSelectedNav("actions")
     }
 
     override fun onCreateWalletCancelled() {
         // Stay on create wallet or go to scanner
         showFragment("scanner")
-        setSelectedNav(navWallet, navActions)
+        setSelectedNav("wallet")
     }
 
     /**
@@ -380,17 +442,17 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
             if (hasPinSet) {
                 // PIN exists - show PIN entry screen
                 showFragment("pin_entry")
-                setSelectedNav(navWallet, navActions)
+                setSelectedNav("wallet")
             } else {
                 // No PIN set - show wallet creation to set up first wallet and PIN
                 showFragment("create_wallet")
-                setSelectedNav(navWallet, navActions)
+                setSelectedNav("wallet")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to determine startup flow", e)
             // Default to wallet creation on error
             showFragment("create_wallet")
-            setSelectedNav(navWallet, navActions)
+            setSelectedNav("wallet")
         }
     }
 
@@ -408,10 +470,10 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
 
             if (walletCount > 0) {
                 showFragment("actions")
-                setSelectedNav(navActions, navWallet)
+                setSelectedNav("actions")
             } else {
                 showFragment("create_wallet")
-                setSelectedNav(navWallet, navActions)
+                setSelectedNav("wallet")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize session", e)
@@ -459,7 +521,7 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
                 val layoutParams = content.layoutParams
                 if (layoutParams is ViewGroup.MarginLayoutParams) {
                     // Restore bottom margin for navigation
-                    layoutParams.bottomMargin = (56 * resources.displayMetrics.density).toInt() // 56dp in pixels
+                    layoutParams.bottomMargin = (64 * resources.displayMetrics.density).toInt() // 64dp in pixels
                     content.layoutParams = layoutParams
                 }
             }
@@ -492,21 +554,28 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
                     // Scanner flow pages should navigate back to actions
                     if (currentTag == "test_verify_result" || currentTag == "scan_failure") {
                         showFragment("actions")
-                        setSelectedNav(navActions, navWallet)
+                        setSelectedNav("actions")
                         return
                     }
 
                     // Actions pages should navigate back to actions nav
                     if (isActionsPage(currentTag)) {
                         showFragment("actions")
-                        setSelectedNav(navActions, navWallet)
+                        setSelectedNav("actions")
                         return
                     }
 
                     // Wallet pages should navigate back to wallet page
                     if (isWalletPage(currentTag)) {
                         showFragment("wallet")
-                        setSelectedNav(navWallet, navActions)
+                        setSelectedNav("wallet")
+                        return
+                    }
+
+                    // Settings pages should navigate back to settings
+                    if (isSettingsPage(currentTag)) {
+                        showFragment("settings")
+                        setSelectedNav("settings")
                         return
                     }
                 }
@@ -536,6 +605,14 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
     private fun isWalletPage(fragmentTag: String?): Boolean {
         if (fragmentTag == null) return false
         return fragmentTag in listOf("send", "receive")
+    }
+
+    /**
+     * Check if the current page is a settings page
+     */
+    private fun isSettingsPage(fragmentTag: String?): Boolean {
+        if (fragmentTag == null) return false
+        return fragmentTag in listOf("wallet_settings")
     }
 
     /**

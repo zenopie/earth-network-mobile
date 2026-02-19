@@ -62,7 +62,13 @@ class WalletSettingsFragment : Fragment() {
         // Setup back button
         val btnBack = view.findViewById<ImageButton>(R.id.btn_back)
         btnBack.setOnClickListener {
-            listener?.onBackPressed()
+            if (listener != null) {
+                listener?.onBackPressed()
+            } else {
+                // When accessed from bottom nav, navigate to wallet
+                val hostActivity = activity as? network.erth.wallet.ui.host.HostActivity
+                hostActivity?.showFragment("wallet")
+            }
         }
 
         // Initialize security level display

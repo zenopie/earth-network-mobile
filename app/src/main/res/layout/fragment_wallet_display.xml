@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:padding="30dp"
     android:background="@android:color/white">
 
     <!-- Wallet Address Section -->
@@ -11,23 +11,24 @@
         android:id="@+id/addressContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="@drawable/address_box_bg"
+        android:background="@drawable/address_box_modern"
         android:orientation="vertical"
         android:padding="16dp"
         android:clickable="true"
         android:focusable="true"
         android:foreground="?android:attr/selectableItemBackground"
-        android:layout_marginBottom="16dp">
+        android:layout_marginBottom="24dp">
 
         <TextView
             android:id="@+id/addressText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text=" "
-            android:textSize="14sp"
+            android:textSize="16sp"
             android:textColor="#333333"
             android:gravity="center"
-            android:maxLines="2"
+            android:fontFamily="monospace"
+            android:maxLines="1"
             android:ellipsize="middle" />
 
     </LinearLayout>
@@ -38,7 +39,7 @@
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center"
-        android:layout_marginBottom="20dp">
+        android:layout_marginBottom="32dp">
 
         <!-- Send Button Column -->
         <LinearLayout
@@ -47,14 +48,14 @@
             android:layout_weight="1"
             android:orientation="vertical"
             android:gravity="center"
-            android:layout_marginEnd="16dp">
+            android:layout_marginEnd="24dp">
 
             <ImageButton
                 android:id="@+id/sendButton"
-                android:layout_width="80dp"
-                android:layout_height="80dp"
-                android:src="@drawable/ic_minus"
-                android:background="@drawable/green_button_bg"
+                android:layout_width="72dp"
+                android:layout_height="72dp"
+                android:src="@drawable/ic_send"
+                android:background="@drawable/wallet_action_button"
                 android:scaleType="center"
                 android:layout_marginBottom="8dp" />
 
@@ -62,9 +63,9 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Send"
-                android:textColor="#4caf50"
+                android:textColor="#22C55E"
                 android:textSize="14sp"
-                android:textStyle="bold" />
+                android:fontFamily="sans-serif-medium" />
 
         </LinearLayout>
 
@@ -75,14 +76,14 @@
             android:layout_weight="1"
             android:orientation="vertical"
             android:gravity="center"
-            android:layout_marginStart="16dp">
+            android:layout_marginStart="24dp">
 
             <ImageButton
                 android:id="@+id/receiveButton"
-                android:layout_width="80dp"
-                android:layout_height="80dp"
-                android:src="@drawable/ic_plus"
-                android:background="@drawable/green_button_bg"
+                android:layout_width="72dp"
+                android:layout_height="72dp"
+                android:src="@drawable/ic_qr_code_white"
+                android:background="@drawable/wallet_action_button"
                 android:scaleType="center"
                 android:layout_marginBottom="8dp" />
 
@@ -90,56 +91,26 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Receive"
-                android:textColor="#4caf50"
+                android:textColor="#22C55E"
                 android:textSize="14sp"
-                android:textStyle="bold" />
+                android:fontFamily="sans-serif-medium" />
 
         </LinearLayout>
 
     </LinearLayout>
 
-    <!-- Balance Section -->
-    <LinearLayout
-        android:layout_width="match_parent"
+    <!-- Hidden balance views for internal state tracking (displayed in parent fragment now) -->
+    <TextView
+        android:id="@+id/balanceText"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:orientation="vertical">
+        android:visibility="gone" />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="SCRT Balance"
-            android:textColor="#1e3a8a"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:layout_marginBottom="6dp"
-            android:layout_gravity="center" />
-
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_gravity="center">
-
-            <TextView
-                android:id="@+id/balanceText"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text=" "
-                android:textSize="28sp"
-                android:textColor="#4caf50"
-                android:textStyle="bold" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="⛽"
-                android:textSize="24sp"
-                android:layout_marginStart="8dp" />
-
-        </LinearLayout>
-
-    </LinearLayout>
+    <TextView
+        android:id="@+id/gasUsdValue"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
 
     <!-- QR Code Section (hidden for now) -->
     <ImageView

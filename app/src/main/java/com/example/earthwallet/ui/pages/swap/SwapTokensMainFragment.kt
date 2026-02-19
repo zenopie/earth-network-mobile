@@ -27,7 +27,12 @@ import network.erth.wallet.wallet.services.ErthPriceService
 import network.erth.wallet.wallet.services.SecretKClient
 import network.erth.wallet.wallet.services.TransactionExecutor
 import network.erth.wallet.wallet.utils.WalletNetwork
+import org.json.JSONArray
 import org.json.JSONObject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.net.HttpURLConnection
+import java.net.URL
 import java.text.DecimalFormat
 import kotlin.math.pow
 
@@ -460,50 +465,171 @@ class SwapTokensMainFragment : Fragment() {
         val fromAmountStr = fromAmountInput?.text.toString()
         val toAmountStr = toAmountInput?.text.toString()
 
-        // Calculate FROM USD value
-        if (!TextUtils.isEmpty(fromAmountStr)) {
-            try {
-                val fromAmount = fromAmountStr.toDouble()
-                if (fromAmount > 0) {
-                    val usdValue = getUsdValueForToken(fromToken, fromAmount)
-                    fromUsdValue?.text = ErthPriceService.formatUSD(usdValue ?: 0.0)
-                } else {
+        // Calculate USD values asynchronously
+        lifecycleScope.launch {
+            // Calculate FROM USD value
+            if (!TextUtils.isEmpty(fromAmountStr)) {
+                try {
+                    val fromAmount = fromAmountStr.toDouble()
+                    if (fromAmount > 0) {
+                        val usdValue = getUsdValueForToken(fromToken, fromAmount)
+                        fromUsdValue?.text = ErthPriceService.formatUSD(usdValue ?: 0.0)
+                    } else {
+                        fromUsdValue?.text = "$0.00"
+                    }
+                } catch (e: NumberFormatException) {
                     fromUsdValue?.text = "$0.00"
                 }
-            } catch (e: NumberFormatException) {
+            } else {
                 fromUsdValue?.text = "$0.00"
             }
-        } else {
-            fromUsdValue?.text = "$0.00"
-        }
 
-        // Calculate TO USD value
-        if (!TextUtils.isEmpty(toAmountStr)) {
-            try {
-                val toAmount = toAmountStr.toDouble()
-                if (toAmount > 0) {
-                    val usdValue = getUsdValueForToken(toToken, toAmount)
-                    toUsdValue?.text = ErthPriceService.formatUSD(usdValue ?: 0.0)
-                } else {
+            // Calculate TO USD value
+            if (!TextUtils.isEmpty(toAmountStr)) {
+                try {
+                    val toAmount = toAmountStr.toDouble()
+                    if (toAmount > 0) {
+                        val usdValue = getUsdValueForToken(toToken, toAmount)
+                        toUsdValue?.text = ErthPriceService.formatUSD(usdValue ?: 0.0)
+                    } else {
+                        toUsdValue?.text = "$0.00"
+                    }
+                } catch (e: NumberFormatException) {
                     toUsdValue?.text = "$0.00"
                 }
-            } catch (e: NumberFormatException) {
+            } else {
                 toUsdValue?.text = "$0.00"
             }
-        } else {
-            toUsdValue?.text = "$0.00"
         }
     }
 
-    private fun getUsdValueForToken(token: String, amount: Double): Double? {
-        return when (token) {
-            GAS_TOKEN -> scrtPrice?.let { it * amount }
-            "sSCRT" -> scrtPrice?.let { it * amount }
-            "ERTH" -> erthPrice?.let { it * amount }
-            else -> {
-                // For other tokens, use ERTH price with spot rate approximation
-                // For simplicity, we just use ERTH price as base (tokens paired with ERTH)
-                erthPrice?.let { it * amount }
+    /**
+     * Get USD value for a token - uses CoinGecko if available, otherwise spot rate from pool
+     */
+    private suspend fun getUsdValueForToken(token: String, amount: Double): Double? {
+        // Handle GAS (native SCRT) - use CoinGecko
+        if (token == GAS_TOKEN) {
+            return scrtPrice?.let { it * amount }
+        }
+
+        // Get token info
+        val tokenInfo = Tokens.getTokenInfo(token)
+
+        // If token has coingeckoId, use CoinGecko price
+        if (tokenInfo?.coingeckoId != null) {
+            val cgPrice = fetchCoingeckoPrice(tokenInfo.coingeckoId)
+            if (cgPrice != null) {
+                return amount * cgPrice
+            }
+        }
+
+        // For ERTH, use ERTH price directly (spot rate = 1)
+        if (token == "ERTH") {
+            return erthPrice?.let { it * amount }
+        }
+
+        // Otherwise, use spot rate from pool * ERTH price
+        val price = erthPrice ?: return null
+        val spotRate = getSpotRate(token)
+        return if (spotRate != null) amount * spotRate * price else null
+    }
+
+    /**
+     * Fetch price from CoinGecko API
+     */
+    private suspend fun fetchCoingeckoPrice(coingeckoId: String): Double? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val url = URL("https://api.coingecko.com/api/v3/simple/price?ids=$coingeckoId&vs_currencies=usd")
+                val connection = url.openConnection() as HttpURLConnection
+                connection.requestMethod = "GET"
+                connection.connectTimeout = 10_000
+                connection.readTimeout = 10_000
+
+                if (connection.responseCode == HttpURLConnection.HTTP_OK) {
+                    val response = connection.inputStream.bufferedReader().use { it.readText() }
+                    val json = JSONObject(response)
+                    val tokenObj = json.optJSONObject(coingeckoId)
+                    tokenObj?.optDouble("usd", -1.0)?.takeIf { it > 0 }
+                } else {
+                    null
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to fetch CoinGecko price for $coingeckoId", e)
+                null
+            }
+        }
+    }
+
+    /**
+     * Get spot rate for a token (price per 1 token in ERTH, from pool reserves)
+     */
+    private suspend fun getSpotRate(token: String): Double? {
+        if (token == "ERTH") return 1.0
+
+        val tokenInfo = Tokens.getTokenInfo(token) ?: return null
+
+        return withContext(Dispatchers.IO) {
+            try {
+                val reserves = getPoolReserves(tokenInfo.contract)
+                if (reserves != null && reserves.second > 0) {
+                    // Spot rate = ERTH reserve / Token reserve
+                    reserves.first / reserves.second
+                } else {
+                    null
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to get spot rate for $token", e)
+                null
+            }
+        }
+    }
+
+    /**
+     * Query pool reserves for a token
+     * Returns Pair(erthReserve, tokenReserve) or null if query fails
+     */
+    private suspend fun getPoolReserves(tokenContract: String): Pair<Double, Double>? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val queryJson = "{\"query_user_info\": {\"pools\": [\"$tokenContract\"], \"user\": \"$currentWalletAddress\"}}"
+
+                val responseString = SecretKClient.queryContract(
+                    Constants.EXCHANGE_CONTRACT,
+                    queryJson,
+                    Constants.EXCHANGE_HASH
+                )
+
+                // Parse response
+                val result = try {
+                    JSONArray(responseString)
+                } catch (e: Exception) {
+                    try {
+                        val obj = JSONObject(responseString)
+                        if (obj.has("data")) obj.getJSONArray("data") else return@withContext null
+                    } catch (e2: Exception) {
+                        return@withContext null
+                    }
+                }
+
+                if (result.length() > 0) {
+                    val poolData = result.getJSONObject(0)
+                    val poolInfo = poolData.optJSONObject("pool_info")
+                    val state = poolInfo?.optJSONObject("state")
+
+                    if (state != null) {
+                        val erthReserve = state.optLong("erth_reserve", 0) / 1_000_000.0
+                        val tokenReserve = state.optLong("token_b_reserve", 0) / 1_000_000.0
+                        Pair(erthReserve, tokenReserve)
+                    } else {
+                        null
+                    }
+                } else {
+                    null
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to query pool reserves for $tokenContract", e)
+                null
             }
         }
     }

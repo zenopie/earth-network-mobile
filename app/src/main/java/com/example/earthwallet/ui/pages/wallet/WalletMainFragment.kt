@@ -6,8 +6,7 @@ import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.ImageButton
-import android.widget.ProgressBar
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentTransaction
@@ -17,6 +16,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import network.erth.wallet.R
 import network.erth.wallet.wallet.constants.Tokens
+import network.erth.wallet.wallet.services.ErthPriceService
 import network.erth.wallet.wallet.services.SecureWalletManager
 
 /**
@@ -51,10 +51,17 @@ class WalletMainFragment : Fragment(),
 
     // UI components
     private lateinit var walletNameText: TextView
+    private lateinit var portfolioTotalValue: TextView
+    private lateinit var portfolioLabel: TextView
+    private lateinit var gasBalanceRow: LinearLayout
+    private lateinit var gasBalanceAmount: TextView
+    private lateinit var gasBalanceUsd: TextView
 
     // State management
     private var currentWalletAddress = ""
     private var currentWalletName = ""
+    private var gasUsdValue: Double = 0.0
+    private var tokenUsdValue: Double = 0.0
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -72,13 +79,14 @@ class WalletMainFragment : Fragment(),
 
         // Initialize UI components
         walletNameText = view.findViewById(R.id.wallet_name_text)
+        portfolioTotalValue = view.findViewById(R.id.portfolio_total_value)
+        portfolioLabel = view.findViewById(R.id.portfolio_label)
+        gasBalanceRow = view.findViewById(R.id.gas_balance_row)
+        gasBalanceAmount = view.findViewById(R.id.gas_balance_amount)
+        gasBalanceUsd = view.findViewById(R.id.gas_balance_usd)
 
         // Set up wallet name click listener
         walletNameText.setOnClickListener { showWalletListFragment() }
-
-        // Set up settings button click listener
-        val settingsBtn = view.findViewById<ImageButton>(R.id.btn_wallet_settings)
-        settingsBtn.setOnClickListener { showWalletSettingsFragment() }
 
         // Initialize child fragments
         initializeChildFragments()
@@ -88,14 +96,23 @@ class WalletMainFragment : Fragment(),
     }
 
     private fun initializeChildFragments() {
-        // Create child fragments
-        walletDisplayFragment = WalletDisplayFragment()
-        tokenBalancesFragment = TokenBalancesFragment()
+        // Check if fragments already exist (e.g., after navigation back)
+        walletDisplayFragment = childFragmentManager.findFragmentById(R.id.wallet_display_container) as? WalletDisplayFragment
+        tokenBalancesFragment = childFragmentManager.findFragmentById(R.id.token_balances_container) as? TokenBalancesFragment
 
-        // Add fragments to their containers
+        // Only create and add new fragments if they don't already exist
         val transaction: FragmentTransaction = childFragmentManager.beginTransaction()
-        walletDisplayFragment?.let { transaction.add(R.id.wallet_display_container, it) }
-        tokenBalancesFragment?.let { transaction.add(R.id.token_balances_container, it) }
+
+        if (walletDisplayFragment == null) {
+            walletDisplayFragment = WalletDisplayFragment()
+            transaction.add(R.id.wallet_display_container, walletDisplayFragment!!)
+        }
+
+        if (tokenBalancesFragment == null) {
+            tokenBalancesFragment = TokenBalancesFragment()
+            transaction.add(R.id.token_balances_container, tokenBalancesFragment!!)
+        }
+
         transaction.commit()
     }
 
@@ -168,6 +185,31 @@ class WalletMainFragment : Fragment(),
         return currentWalletAddress
     }
 
+    override fun onGasUsdValueUpdated(usdValue: Double) {
+        gasUsdValue = usdValue
+        updatePortfolioTotal()
+    }
+
+    /**
+     * Called by WalletDisplayFragment with gas balance info
+     */
+    override fun updateGasBalanceDisplay(balance: Double, usdValue: Double) {
+        gasBalanceAmount.text = formatGasBalance(balance)
+        if (usdValue > 0) {
+            gasBalanceUsd.text = ErthPriceService.formatUSD(usdValue)
+        } else {
+            gasBalanceUsd.text = ""
+        }
+    }
+
+    private fun formatGasBalance(balance: Double): String {
+        return if (balance < 0.01 && balance > 0) {
+            String.format("%.4f", balance)
+        } else {
+            String.format("%.2f", balance)
+        }
+    }
+
     // =============================================================================
     // TokenBalancesFragment.TokenBalancesListener Implementation
     // =============================================================================
@@ -179,6 +221,23 @@ class WalletMainFragment : Fragment(),
 
     override fun onManageViewingKeysRequested() {
         showManagePermitsFragment()
+    }
+
+    override fun onTokenUsdValueUpdated(totalUsdValue: Double) {
+        tokenUsdValue = totalUsdValue
+        updatePortfolioTotal()
+    }
+
+    private fun updatePortfolioTotal() {
+        val total = gasUsdValue + tokenUsdValue
+        if (total > 0) {
+            portfolioTotalValue.text = ErthPriceService.formatUSD(total)
+            portfolioTotalValue.visibility = View.VISIBLE
+            portfolioLabel.visibility = View.VISIBLE
+        } else {
+            portfolioTotalValue.visibility = View.GONE
+            portfolioLabel.visibility = View.GONE
+        }
     }
 
 
