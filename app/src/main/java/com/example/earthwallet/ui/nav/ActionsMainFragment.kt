@@ -50,16 +50,6 @@ class ActionsMainFragment : Fragment() {
             }
         }
 
-        // Gas Station button - request parent HostActivity to show Gas Station fragment
-        val gasStation = view.findViewById<Button>(R.id.btn_gas_station)
-        gasStation?.setOnClickListener {
-            (activity as? network.erth.wallet.ui.host.HostActivity)?.let {
-                it.showFragment("gas_station")
-            } ?: run {
-                Toast.makeText(context, "Navigation not available", Toast.LENGTH_SHORT).show()
-            }
-        }
-
         // Manage LP button - request parent HostActivity to show ManageLP fragment
         val manageLP = view.findViewById<Button>(R.id.btn_manage_lp)
         manageLP?.setOnClickListener {

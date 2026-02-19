@@ -23,8 +23,10 @@ import network.erth.wallet.Constants
 import network.erth.wallet.bridge.utils.PermitManager
 import network.erth.wallet.wallet.services.SessionManager
 import network.erth.wallet.wallet.constants.Tokens
+import network.erth.wallet.wallet.services.ErthPriceService
 import network.erth.wallet.wallet.services.SecretKClient
 import network.erth.wallet.wallet.services.TransactionExecutor
+import network.erth.wallet.wallet.utils.WalletNetwork
 import org.json.JSONObject
 import java.text.DecimalFormat
 import kotlin.math.pow
@@ -52,6 +54,8 @@ class SwapTokensMainFragment : Fragment() {
     private var slippageInput: EditText? = null
     private var fromBalanceText: TextView? = null
     private var toBalanceText: TextView? = null
+    private var fromUsdValue: TextView? = null
+    private var toUsdValue: TextView? = null
     private var rateText: TextView? = null
     private var minReceivedText: TextView? = null
     private var fromMaxButton: Button? = null
@@ -62,6 +66,9 @@ class SwapTokensMainFragment : Fragment() {
     private var detailsContainer: LinearLayout? = null
     private var fromTokenLogo: ImageView? = null
     private var toTokenLogo: ImageView? = null
+
+    // GAS pseudo-token constant
+    private val GAS_TOKEN = "GAS"
 
     // State
     private var currentWalletAddress = ""
@@ -76,6 +83,10 @@ class SwapTokensMainFragment : Fragment() {
     private val inputHandler = Handler(Looper.getMainLooper())
     private var simulationRunnable: Runnable? = null
 
+    // Price state for USD display
+    private var erthPrice: Double? = null
+    private var scrtPrice: Double? = null
+
     // Broadcast receiver for transaction success
     private var transactionSuccessReceiver: BroadcastReceiver? = null
     private var permitManager: PermitManager? = null
@@ -83,8 +94,8 @@ class SwapTokensMainFragment : Fragment() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Initialize token list - use getAllTokens() instead of ALL_TOKENS for full registry
-        tokenSymbols = ArrayList(Tokens.getAllTokens().keys)
+        // Initialize token list - use getAllTokens() with GAS pseudo-token at the start
+        tokenSymbols = listOf(GAS_TOKEN) + ArrayList(Tokens.getAllTokens().keys)
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
@@ -116,6 +127,44 @@ class SwapTokensMainFragment : Fragment() {
 
         updateTokenLogos()
         fetchBalances()
+        fetchPrices()
+    }
+
+    private fun fetchPrices() {
+        lifecycleScope.launch {
+            try {
+                erthPrice = ErthPriceService.fetchErthPrice()
+                // Also fetch SCRT price for GAS token via CoinGecko
+                scrtPrice = fetchScrtPrice()
+                updateUsdValues()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to fetch prices", e)
+            }
+        }
+    }
+
+    private suspend fun fetchScrtPrice(): Double? {
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val url = java.net.URL("https://api.coingecko.com/api/v3/simple/price?ids=secret&vs_currencies=usd")
+                val connection = url.openConnection() as java.net.HttpURLConnection
+                connection.requestMethod = "GET"
+                connection.connectTimeout = 10_000
+                connection.readTimeout = 10_000
+
+                if (connection.responseCode == java.net.HttpURLConnection.HTTP_OK) {
+                    val response = connection.inputStream.bufferedReader().use { it.readText() }
+                    val json = JSONObject(response)
+                    val secretObj = json.optJSONObject("secret")
+                    secretObj?.optDouble("usd", -1.0)?.takeIf { it > 0 }
+                } else {
+                    null
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to fetch SCRT price", e)
+                null
+            }
+        }
     }
 
     private fun initializeViews(view: View) {
@@ -127,6 +176,8 @@ class SwapTokensMainFragment : Fragment() {
 
         fromBalanceText = view.findViewById(R.id.from_balance_text)
         toBalanceText = view.findViewById(R.id.to_balance_text)
+        fromUsdValue = view.findViewById(R.id.from_usd_value)
+        toUsdValue = view.findViewById(R.id.to_usd_value)
         rateText = view.findViewById(R.id.rate_text)
         minReceivedText = view.findViewById(R.id.min_received_text)
 
@@ -294,6 +345,8 @@ class SwapTokensMainFragment : Fragment() {
     private fun clearAmounts() {
         fromAmountInput?.setText("")
         toAmountInput?.setText("")
+        fromUsdValue?.text = "$0.00"
+        toUsdValue?.text = "$0.00"
         updateSwapButton()
     }
 
@@ -307,6 +360,12 @@ class SwapTokensMainFragment : Fragment() {
 
     private fun loadTokenLogo(imageView: ImageView?, tokenSymbol: String) {
         try {
+            // Handle GAS pseudo-token with gas pump icon
+            if (tokenSymbol == GAS_TOKEN) {
+                imageView?.setImageResource(R.drawable.ic_gas_pump)
+                return
+            }
+
             // Get token info and logo path
             val tokenInfo = Tokens.getTokenInfo(tokenSymbol)
             if (tokenInfo?.logo != null) {
@@ -384,13 +443,67 @@ class SwapTokensMainFragment : Fragment() {
 
                 // Update minimum received
                 val minReceived = toAmount * (1 - slippage / 100)
-                val toTokenInfo = Tokens.getTokenInfo(toToken)
-                val decimals = toTokenInfo?.decimals ?: 6
+                val decimals = if (toToken == GAS_TOKEN) 6 else Tokens.getTokenInfo(toToken)?.decimals ?: 6
                 val minDf = DecimalFormat("#.${"0".repeat(decimals)}")
                 minReceivedText?.text = "${minDf.format(minReceived)} $toToken"
 
             } catch (e: NumberFormatException) {
                 Log.e(TAG, "Error updating details display", e)
+            }
+        }
+
+        // Also update USD values
+        updateUsdValues()
+    }
+
+    private fun updateUsdValues() {
+        val fromAmountStr = fromAmountInput?.text.toString()
+        val toAmountStr = toAmountInput?.text.toString()
+
+        // Calculate FROM USD value
+        if (!TextUtils.isEmpty(fromAmountStr)) {
+            try {
+                val fromAmount = fromAmountStr.toDouble()
+                if (fromAmount > 0) {
+                    val usdValue = getUsdValueForToken(fromToken, fromAmount)
+                    fromUsdValue?.text = ErthPriceService.formatUSD(usdValue ?: 0.0)
+                } else {
+                    fromUsdValue?.text = "$0.00"
+                }
+            } catch (e: NumberFormatException) {
+                fromUsdValue?.text = "$0.00"
+            }
+        } else {
+            fromUsdValue?.text = "$0.00"
+        }
+
+        // Calculate TO USD value
+        if (!TextUtils.isEmpty(toAmountStr)) {
+            try {
+                val toAmount = toAmountStr.toDouble()
+                if (toAmount > 0) {
+                    val usdValue = getUsdValueForToken(toToken, toAmount)
+                    toUsdValue?.text = ErthPriceService.formatUSD(usdValue ?: 0.0)
+                } else {
+                    toUsdValue?.text = "$0.00"
+                }
+            } catch (e: NumberFormatException) {
+                toUsdValue?.text = "$0.00"
+            }
+        } else {
+            toUsdValue?.text = "$0.00"
+        }
+    }
+
+    private fun getUsdValueForToken(token: String, amount: Double): Double? {
+        return when (token) {
+            GAS_TOKEN -> scrtPrice?.let { it * amount }
+            "sSCRT" -> scrtPrice?.let { it * amount }
+            "ERTH" -> erthPrice?.let { it * amount }
+            else -> {
+                // For other tokens, use ERTH price with spot rate approximation
+                // For simplicity, we just use ERTH price as base (tokens paired with ERTH)
+                erthPrice?.let { it * amount }
             }
         }
     }
@@ -415,8 +528,63 @@ class SwapTokensMainFragment : Fragment() {
         val fromTokenSymbol = tokenSymbols[fromTokenSpinner?.selectedItemPosition ?: 0]
         val toTokenSymbol = tokenSymbols[toTokenSpinner?.selectedItemPosition ?: 0]
 
-        fetchTokenBalanceWithContract(fromTokenSymbol, true)
-        fetchTokenBalanceWithContract(toTokenSymbol, false)
+        // Handle GAS (native SCRT) balance separately
+        if (fromTokenSymbol == GAS_TOKEN) {
+            fetchNativeScrtBalance(true)
+        } else {
+            fetchTokenBalanceWithContract(fromTokenSymbol, true)
+        }
+
+        if (toTokenSymbol == GAS_TOKEN) {
+            fetchNativeScrtBalance(false)
+        } else {
+            fetchTokenBalanceWithContract(toTokenSymbol, false)
+        }
+    }
+
+    private fun fetchNativeScrtBalance(isFromToken: Boolean) {
+        if (TextUtils.isEmpty(currentWalletAddress)) {
+            if (isFromToken) {
+                fromBalance = 0.0
+                updateFromBalanceDisplay()
+            } else {
+                toBalance = 0.0
+                updateToBalanceDisplay()
+            }
+            return
+        }
+
+        // Query native SCRT balance in background thread
+        Thread {
+            try {
+                val microScrt = WalletNetwork.fetchUscrtBalanceMicro(
+                    WalletNetwork.DEFAULT_LCD_URL,
+                    currentWalletAddress
+                )
+                val scrtAmount = microScrt.toDouble() / 1_000_000.0
+
+                activity?.runOnUiThread {
+                    if (isFromToken) {
+                        fromBalance = scrtAmount
+                        updateFromBalanceDisplay()
+                    } else {
+                        toBalance = scrtAmount
+                        updateToBalanceDisplay()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "SCRT balance query failed", e)
+                activity?.runOnUiThread {
+                    if (isFromToken) {
+                        fromBalance = -1.0
+                        updateFromBalanceDisplay()
+                    } else {
+                        toBalance = -1.0
+                        updateToBalanceDisplay()
+                    }
+                }
+            }
+        }.start()
     }
 
     private fun requestPermit(tokenSymbol: String) {
@@ -474,7 +642,7 @@ class SwapTokensMainFragment : Fragment() {
     }
 
 
-    private fun handleSwapSimulationResult(json: String?) {
+    private fun handleSwapSimulationResult(json: String?, effectiveToToken: String? = null) {
         try {
             val root = JSONObject(json ?: "")
             val success = root.optBoolean("success", false)
@@ -484,16 +652,16 @@ class SwapTokensMainFragment : Fragment() {
                 result?.let {
                     // Parse output_amount to match React web app response format
                     val outputAmount = it.optString("output_amount", "0")
-                    val toTokenSymbol = tokenSymbols[toTokenSpinner?.selectedItemPosition ?: 0]
-                    val toTokenInfo = Tokens.getTokenInfo(toTokenSymbol)
-                    toTokenInfo?.let { tokenInfo ->
-                        val formattedOutput = outputAmount.toDouble() / 10.0.pow(tokenInfo.decimals)
-                        val df = DecimalFormat("#.######")
+                    // Use effectiveToToken if provided (for GAS swaps), otherwise use selected token
+                    val tokenForDecimals = effectiveToToken ?: tokenSymbols[toTokenSpinner?.selectedItemPosition ?: 0]
+                    val toTokenInfo = Tokens.getTokenInfo(tokenForDecimals)
+                    val decimals = toTokenInfo?.decimals ?: 6
+                    val formattedOutput = outputAmount.toDouble() / 10.0.pow(decimals)
+                    val df = DecimalFormat("#.######")
 
-                        // Update output amount without requesting focus to avoid dismissing keyboard
-                        toAmountInput?.setText(df.format(formattedOutput))
-                        updateDetailsDisplay()
-                    }
+                    // Update output amount without requesting focus to avoid dismissing keyboard
+                    toAmountInput?.setText(df.format(formattedOutput))
+                    updateDetailsDisplay()
                 }
             } else {
                 Toast.makeText(context, "Swap simulation failed", Toast.LENGTH_SHORT).show()
@@ -556,11 +724,25 @@ class SwapTokensMainFragment : Fragment() {
         val fromTokenSymbol = tokenSymbols[fromTokenSpinner?.selectedItemPosition ?: 0]
         val toTokenSymbol = tokenSymbols[toTokenSpinner?.selectedItemPosition ?: 0]
 
+        // Handle GAS <-> sSCRT direct wrap/unwrap (1:1)
+        if ((fromTokenSymbol == GAS_TOKEN && toTokenSymbol == "sSCRT") ||
+            (fromTokenSymbol == "sSCRT" && toTokenSymbol == GAS_TOKEN)) {
+            val df = DecimalFormat("#.######")
+            toAmountInput?.setText(df.format(inputAmount))
+            isSimulatingSwap = false
+            updateSwapButton()
+            updateDetailsDisplay()
+            return
+        }
+
+        // For GAS swaps, use sSCRT as the actual token for simulation
+        val effectiveFromToken = if (fromTokenSymbol == GAS_TOKEN) "sSCRT" else fromTokenSymbol
+        val effectiveToToken = if (toTokenSymbol == GAS_TOKEN) "sSCRT" else toTokenSymbol
 
         // Get token info for from token
-        val fromTokenInfo = Tokens.getTokenInfo(fromTokenSymbol)
+        val fromTokenInfo = Tokens.getTokenInfo(effectiveFromToken)
         if (fromTokenInfo == null) {
-            Log.e(TAG, "From token not supported: $fromTokenSymbol")
+            Log.e(TAG, "From token not supported: $effectiveFromToken")
             Toast.makeText(context, "Token not supported", Toast.LENGTH_SHORT).show()
             isSimulatingSwap = false
             updateSwapButton()
@@ -568,7 +750,7 @@ class SwapTokensMainFragment : Fragment() {
         }
 
         // Build swap simulation query to match React web app format
-        val toTokenInfo = Tokens.getTokenInfo(toTokenSymbol)
+        val toTokenInfo = Tokens.getTokenInfo(effectiveToToken)
         if (toTokenInfo == null) {
             Toast.makeText(context, "To token not supported", Toast.LENGTH_SHORT).show()
             isSimulatingSwap = false
@@ -613,8 +795,8 @@ class SwapTokensMainFragment : Fragment() {
                 response.put("success", true)
                 response.put("result", actualResult)
 
-                // Handle result
-                handleSwapSimulationResult(response.toString())
+                // Handle result - pass the effective toToken for proper decimal parsing
+                handleSwapSimulationResult(response.toString(), effectiveToToken)
 
             } catch (e: Exception) {
                 Log.e(TAG, "Swap simulation failed", e)
@@ -807,54 +989,257 @@ class SwapTokensMainFragment : Fragment() {
         lifecycleScope.launch {
             try {
                 val inputAmount = inputAmountStr.toDouble()
+                val inputAmountMicro = (inputAmount * 1_000_000).toLong()
 
-                val fromTokenInfo = Tokens.getTokenInfo(fromTokenSymbol)
-                if (fromTokenInfo == null) {
-                    Toast.makeText(context, "Token not supported", Toast.LENGTH_SHORT).show()
-                    return@launch
-                }
+                // Handle different swap scenarios
+                when {
+                    // GAS -> sSCRT: Wrap SCRT to sSCRT
+                    fromTokenSymbol == GAS_TOKEN && toTokenSymbol == "sSCRT" -> {
+                        executeWrapScrt(inputAmountMicro)
+                    }
 
-                // Build swap execution message to match React web app format
-                // Use SNIP execution with "send" message like the React app's snip() function
-                val toTokenInfo = Tokens.getTokenInfo(toTokenSymbol)
-                if (toTokenInfo == null) {
-                    Toast.makeText(context, "To token not supported", Toast.LENGTH_SHORT).show()
-                    return@launch
-                }
+                    // sSCRT -> GAS: Unwrap sSCRT to SCRT
+                    fromTokenSymbol == "sSCRT" && toTokenSymbol == GAS_TOKEN -> {
+                        executeUnwrapSscrt(inputAmountMicro)
+                    }
 
-                // Build the message that will be base64 encoded (like snipmsg in React app)
-                val swapMessage = JSONObject()
-                val swap = JSONObject().apply {
-                    put("output_token", toTokenInfo.contract)
-                    put("min_received", calculateMinAmountOut(inputAmount))
-                }
-                swapMessage.put("swap", swap)
+                    // GAS -> Token: Wrap SCRT to sSCRT, then swap sSCRT to token
+                    fromTokenSymbol == GAS_TOKEN -> {
+                        executeGasToTokenSwap(inputAmountMicro, toTokenSymbol)
+                    }
 
-                val inputAmountMicro = (inputAmount * 10.0.pow(fromTokenInfo.decimals)).toLong()
+                    // Token -> GAS: Swap token to sSCRT, then unwrap sSCRT
+                    toTokenSymbol == GAS_TOKEN -> {
+                        executeTokenToGasSwap(inputAmount, fromTokenSymbol)
+                    }
 
-                // Use TransactionExecutor to send token to exchange contract
-                val result = TransactionExecutor.sendSnip20Token(
-                    fragment = this@SwapTokensMainFragment,
-                    tokenContract = fromTokenInfo.contract,
-                    tokenHash = fromTokenInfo.hash,
-                    recipient = Constants.EXCHANGE_CONTRACT,
-                    recipientHash = Constants.EXCHANGE_HASH,
-                    amount = inputAmountMicro.toString(),
-                    message = swapMessage,
-                    gasLimit = 300_000  // Swaps need more gas than default
-                )
-
-                result.onSuccess {
-                    clearAmounts()
-                    fetchBalances() // Refresh balances
-                }.onFailure { error ->
-                    if (error.message != "Transaction cancelled by user" &&
-                        error.message != "Authentication failed") {
-                        Toast.makeText(context, "Swap failed: ${error.message}", Toast.LENGTH_LONG).show()
+                    // Regular token swap
+                    else -> {
+                        executeRegularSwap(inputAmount, fromTokenSymbol, toTokenSymbol)
                     }
                 }
             } catch (e: Exception) {
                 Toast.makeText(context, "Swap failed: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private suspend fun executeWrapScrt(amountMicro: Long) {
+        val sscrtInfo = Tokens.getTokenInfo("sSCRT") ?: return
+
+        // Wrap SCRT -> sSCRT using deposit message with sent_funds
+        val depositMsg = JSONObject().apply {
+            put("deposit", JSONObject())
+        }
+
+        val result = TransactionExecutor.executeContract(
+            fragment = this@SwapTokensMainFragment,
+            contractAddress = sscrtInfo.contract,
+            message = depositMsg,
+            codeHash = sscrtInfo.hash,
+            sentFunds = listOf(io.eqoty.cosmwasm.std.types.Coin(amountMicro.toString(), "uscrt")),
+            gasLimit = 150_000,
+            contractLabel = "Wrap SCRT:"
+        )
+
+        result.onSuccess {
+            clearAmounts()
+            fetchBalances()
+        }.onFailure { error ->
+            if (error.message != "Transaction cancelled by user" &&
+                error.message != "Authentication failed") {
+                Toast.makeText(context, "Wrap failed: ${error.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private suspend fun executeUnwrapSscrt(amountMicro: Long) {
+        val sscrtInfo = Tokens.getTokenInfo("sSCRT") ?: return
+
+        // Unwrap sSCRT -> SCRT using redeem message
+        val redeemMsg = JSONObject().apply {
+            put("redeem", JSONObject().apply {
+                put("amount", amountMicro.toString())
+            })
+        }
+
+        val result = TransactionExecutor.executeContract(
+            fragment = this@SwapTokensMainFragment,
+            contractAddress = sscrtInfo.contract,
+            message = redeemMsg,
+            codeHash = sscrtInfo.hash,
+            gasLimit = 150_000,
+            contractLabel = "Unwrap sSCRT:"
+        )
+
+        result.onSuccess {
+            clearAmounts()
+            fetchBalances()
+        }.onFailure { error ->
+            if (error.message != "Transaction cancelled by user" &&
+                error.message != "Authentication failed") {
+                Toast.makeText(context, "Unwrap failed: ${error.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private suspend fun executeGasToTokenSwap(inputAmountMicro: Long, toTokenSymbol: String) {
+        val sscrtInfo = Tokens.getTokenInfo("sSCRT") ?: return
+        val toTokenInfo = Tokens.getTokenInfo(toTokenSymbol) ?: return
+
+        // Build swap message for the second step
+        val swapMessage = JSONObject().apply {
+            put("swap", JSONObject().apply {
+                put("output_token", toTokenInfo.contract)
+                put("min_received", calculateMinAmountOut(inputAmountMicro / 1_000_000.0))
+            })
+        }
+        val encodedSwapMsg = android.util.Base64.encodeToString(
+            swapMessage.toString().toByteArray(),
+            android.util.Base64.NO_WRAP
+        )
+
+        // Message 1: Wrap SCRT to sSCRT (deposit with sent_funds)
+        val wrapMsg = SecretKClient.ContractMessage(
+            contractAddress = sscrtInfo.contract,
+            handleMsg = "{\"deposit\":{}}",
+            sentFunds = listOf(io.eqoty.cosmwasm.std.types.Coin(inputAmountMicro.toString(), "uscrt")),
+            codeHash = sscrtInfo.hash
+        )
+
+        // Message 2: Swap sSCRT to target token
+        val sendMsg = JSONObject().apply {
+            put("send", JSONObject().apply {
+                put("recipient", Constants.EXCHANGE_CONTRACT)
+                put("recipient_code_hash", Constants.EXCHANGE_HASH)
+                put("amount", inputAmountMicro.toString())
+                put("msg", encodedSwapMsg)
+            })
+        }
+
+        val swapMsgObj = SecretKClient.ContractMessage(
+            contractAddress = sscrtInfo.contract,
+            handleMsg = sendMsg.toString(),
+            codeHash = sscrtInfo.hash
+        )
+
+        val result = TransactionExecutor.executeMultipleContracts(
+            fragment = this@SwapTokensMainFragment,
+            messages = listOf(wrapMsg, swapMsgObj),
+            gasLimit = 500_000,
+            contractLabel = "Swap GAS:"
+        )
+
+        result.onSuccess {
+            clearAmounts()
+            fetchBalances()
+        }.onFailure { error ->
+            if (error.message != "Transaction cancelled by user" &&
+                error.message != "Authentication failed") {
+                Toast.makeText(context, "Swap failed: ${error.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private suspend fun executeTokenToGasSwap(inputAmount: Double, fromTokenSymbol: String) {
+        val fromTokenInfo = Tokens.getTokenInfo(fromTokenSymbol) ?: return
+        val sscrtInfo = Tokens.getTokenInfo("sSCRT") ?: return
+
+        val inputAmountMicro = (inputAmount * 10.0.pow(fromTokenInfo.decimals)).toLong()
+        val minSscrtMicro = calculateMinAmountOut(inputAmount).toLong()
+
+        // Build swap message to get sSCRT
+        val swapMessage = JSONObject().apply {
+            put("swap", JSONObject().apply {
+                put("output_token", sscrtInfo.contract)
+                put("min_received", minSscrtMicro.toString())
+            })
+        }
+        val encodedSwapMsg = android.util.Base64.encodeToString(
+            swapMessage.toString().toByteArray(),
+            android.util.Base64.NO_WRAP
+        )
+
+        // Message 1: Swap token to sSCRT
+        val sendMsg = JSONObject().apply {
+            put("send", JSONObject().apply {
+                put("recipient", Constants.EXCHANGE_CONTRACT)
+                put("recipient_code_hash", Constants.EXCHANGE_HASH)
+                put("amount", inputAmountMicro.toString())
+                put("msg", encodedSwapMsg)
+            })
+        }
+
+        val swapMsgObj = SecretKClient.ContractMessage(
+            contractAddress = fromTokenInfo.contract,
+            handleMsg = sendMsg.toString(),
+            codeHash = fromTokenInfo.hash
+        )
+
+        // Message 2: Unwrap sSCRT to SCRT (using min_received as the amount)
+        val redeemMsg = JSONObject().apply {
+            put("redeem", JSONObject().apply {
+                put("amount", minSscrtMicro.toString())
+            })
+        }
+
+        val redeemMsgObj = SecretKClient.ContractMessage(
+            contractAddress = sscrtInfo.contract,
+            handleMsg = redeemMsg.toString(),
+            codeHash = sscrtInfo.hash
+        )
+
+        val result = TransactionExecutor.executeMultipleContracts(
+            fragment = this@SwapTokensMainFragment,
+            messages = listOf(swapMsgObj, redeemMsgObj),
+            gasLimit = 500_000,
+            contractLabel = "Swap to GAS:"
+        )
+
+        result.onSuccess {
+            clearAmounts()
+            fetchBalances()
+        }.onFailure { error ->
+            if (error.message != "Transaction cancelled by user" &&
+                error.message != "Authentication failed") {
+                Toast.makeText(context, "Swap failed: ${error.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private suspend fun executeRegularSwap(inputAmount: Double, fromTokenSymbol: String, toTokenSymbol: String) {
+        val fromTokenInfo = Tokens.getTokenInfo(fromTokenSymbol) ?: return
+        val toTokenInfo = Tokens.getTokenInfo(toTokenSymbol) ?: return
+
+        // Build the message that will be base64 encoded (like snipmsg in React app)
+        val swapMessage = JSONObject().apply {
+            put("swap", JSONObject().apply {
+                put("output_token", toTokenInfo.contract)
+                put("min_received", calculateMinAmountOut(inputAmount))
+            })
+        }
+
+        val inputAmountMicro = (inputAmount * 10.0.pow(fromTokenInfo.decimals)).toLong()
+
+        // Use TransactionExecutor to send token to exchange contract
+        val result = TransactionExecutor.sendSnip20Token(
+            fragment = this@SwapTokensMainFragment,
+            tokenContract = fromTokenInfo.contract,
+            tokenHash = fromTokenInfo.hash,
+            recipient = Constants.EXCHANGE_CONTRACT,
+            recipientHash = Constants.EXCHANGE_HASH,
+            amount = inputAmountMicro.toString(),
+            message = swapMessage,
+            gasLimit = 300_000
+        )
+
+        result.onSuccess {
+            clearAmounts()
+            fetchBalances()
+        }.onFailure { error ->
+            if (error.message != "Transaction cancelled by user" &&
+                error.message != "Authentication failed") {
+                Toast.makeText(context, "Swap failed: ${error.message}", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -867,8 +1252,8 @@ class SwapTokensMainFragment : Fragment() {
             val minOutput = expectedOutput * (1.0 - slippage)
 
             val toTokenSymbol = tokenSymbols[toTokenSpinner?.selectedItemPosition ?: 0]
-            val toTokenInfo = Tokens.getTokenInfo(toTokenSymbol)
-            val decimals = toTokenInfo?.decimals ?: 6
+            // For GAS, use 6 decimals (same as SCRT)
+            val decimals = if (toTokenSymbol == GAS_TOKEN) 6 else Tokens.getTokenInfo(toTokenSymbol)?.decimals ?: 6
 
             (minOutput * 10.0.pow(decimals)).toLong().toString()
         } catch (e: Exception) {
@@ -877,6 +1262,8 @@ class SwapTokensMainFragment : Fragment() {
     }
 
     private fun hasPermitForToken(tokenSymbol: String): Boolean {
+        // GAS (native SCRT) doesn't need permits
+        if (tokenSymbol == GAS_TOKEN) return true
         val tokenInfo = Tokens.getTokenInfo(tokenSymbol) ?: return false
         return permitManager?.hasPermit(currentWalletAddress, tokenInfo.contract) == true
     }

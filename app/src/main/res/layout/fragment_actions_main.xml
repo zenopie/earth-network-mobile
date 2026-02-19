@@ -224,34 +224,6 @@
 
             </LinearLayout>
 
-            <!-- Divider -->
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:layout_marginTop="12dp"
-                android:layout_marginBottom="12dp"
-                android:background="@color/sidebar_divider" />
-
-            <!-- Gas Station action -->
-            <Button
-                android:id="@+id/btn_gas_station"
-                android:layout_width="match_parent"
-                android:layout_height="56dp"
-                android:layout_marginTop="8dp"
-                android:layout_marginBottom="8dp"
-                android:paddingLeft="24dp"
-                android:paddingRight="24dp"
-                android:backgroundTint="@color/sidebar_bg"
-                android:text="   Gas Station"
-                android:textColor="@color/sidebar_text"
-                android:textAllCaps="false"
-                android:textSize="18sp"
-                android:gravity="center_vertical|start"
-                android:drawableLeft="@drawable/ic_local_gas_station"
-                android:drawablePadding="32dp"
-                android:drawableTint="@color/sidebar_text"
-                android:stateListAnimator="@null" />
-
             <!-- Additional descriptive area (optional) -->
 
         </LinearLayout>

@@ -304,13 +304,6 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
                     WindowInsetsUtil.showSystemBars(window)
                 }
             }
-            "gas_station" -> {
-                network.erth.wallet.ui.pages.gasstation.GasStationFragment().also {
-                    // Show navigation and status bar for normal fragments
-                    showBottomNavigation()
-                    WindowInsetsUtil.showSystemBars(window)
-                }
-            }
             "caretaker_fund" -> {
                 network.erth.wallet.ui.pages.governance.CaretakerFundFragment().also {
                     // Show navigation and status bar for normal fragments
@@ -533,7 +526,7 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
         if (fragmentTag == null) return false
         return fragmentTag in listOf(
             "swap", "anml", "managelp", "staking", "governance",
-            "gas_station", "caretaker_fund", "deflation_fund"
+            "caretaker_fund", "deflation_fund"
         )
     }
 

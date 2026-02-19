@@ -113,23 +113,43 @@
                             android:layout_marginEnd="15dp"
                             android:background="@android:color/transparent" />
 
-                        <EditText
-                            android:id="@+id/from_amount_input"
+                        <!-- Amount container with input and USD value -->
+                        <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="match_parent"
                             android:layout_marginStart="75dp"
                             android:layout_marginEnd="120dp"
-                            android:background="@android:color/transparent"
-                            android:hint="0.0"
-                            android:textColorHint="#999999"
-                            android:inputType="numberDecimal"
-                            android:paddingStart="18dp"
-                            android:paddingEnd="18dp"
-                            android:paddingTop="18dp"
-                            android:paddingBottom="18dp"
-                            android:textColor="#333333"
-                            android:textSize="20sp"
-                            android:textStyle="bold" />
+                            android:orientation="vertical"
+                            android:gravity="center_vertical"
+                            android:paddingStart="0dp"
+                            android:paddingEnd="0dp">
+
+                            <EditText
+                                android:id="@+id/from_amount_input"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:background="@android:color/transparent"
+                                android:hint="0.0"
+                                android:textColorHint="#999999"
+                                android:inputType="numberDecimal"
+                                android:paddingStart="0dp"
+                                android:paddingEnd="0dp"
+                                android:paddingTop="8dp"
+                                android:paddingBottom="0dp"
+                                android:textColor="#333333"
+                                android:textSize="20sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:id="@+id/from_usd_value"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="$0.00"
+                                android:textColor="#888888"
+                                android:textSize="12sp"
+                                android:paddingBottom="8dp" />
+
+                        </LinearLayout>
 
                     </RelativeLayout>
 
@@ -233,24 +253,44 @@
                             android:layout_marginEnd="15dp"
                             android:background="@android:color/transparent" />
 
-                        <EditText
-                            android:id="@+id/to_amount_input"
+                        <!-- Amount container with input and USD value -->
+                        <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="match_parent"
                             android:layout_marginStart="75dp"
                             android:layout_marginEnd="120dp"
-                            android:background="@android:color/transparent"
-                            android:enabled="false"
-                            android:hint="0.0"
-                            android:textColorHint="#999999"
-                            android:inputType="numberDecimal"
-                            android:paddingStart="18dp"
-                            android:paddingEnd="18dp"
-                            android:paddingTop="18dp"
-                            android:paddingBottom="18dp"
-                            android:textColor="#333333"
-                            android:textSize="20sp"
-                            android:textStyle="bold" />
+                            android:orientation="vertical"
+                            android:gravity="center_vertical"
+                            android:paddingStart="0dp"
+                            android:paddingEnd="0dp">
+
+                            <EditText
+                                android:id="@+id/to_amount_input"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:background="@android:color/transparent"
+                                android:enabled="false"
+                                android:hint="0.0"
+                                android:textColorHint="#999999"
+                                android:inputType="numberDecimal"
+                                android:paddingStart="0dp"
+                                android:paddingEnd="0dp"
+                                android:paddingTop="8dp"
+                                android:paddingBottom="0dp"
+                                android:textColor="#333333"
+                                android:textSize="20sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:id="@+id/to_usd_value"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="$0.00"
+                                android:textColor="#888888"
+                                android:textSize="12sp"
+                                android:paddingBottom="8dp" />
+
+                        </LinearLayout>
 
                     </RelativeLayout>
 
