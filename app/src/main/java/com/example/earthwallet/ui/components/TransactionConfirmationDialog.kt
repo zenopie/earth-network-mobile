@@ -5,6 +5,7 @@ import android.text.TextUtils
 import android.view.LayoutInflater
 import android.view.View
 import android.widget.Button
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
 import network.erth.wallet.R
@@ -173,12 +174,14 @@ class TransactionConfirmationDialog(context: Context) {
         val contractAddressText = bottomSheetView.findViewById<TextView>(R.id.contract_address_text)
         val transactionTypeText = bottomSheetView.findViewById<TextView>(R.id.transaction_type_text)
         val showMessageButton = bottomSheetView.findViewById<TextView>(R.id.show_message_button)
-        val fundsLabel = bottomSheetView.findViewById<TextView>(R.id.funds_label)
+        val fundsRow = bottomSheetView.findViewById<LinearLayout>(R.id.funds_row)
+        val fundsDivider = bottomSheetView.findViewById<View>(R.id.funds_divider)
         val fundsText = bottomSheetView.findViewById<TextView>(R.id.funds_text)
-        val memoLabel = bottomSheetView.findViewById<TextView>(R.id.memo_label)
+        val memoRow = bottomSheetView.findViewById<LinearLayout>(R.id.memo_row)
+        val memoDivider = bottomSheetView.findViewById<View>(R.id.memo_divider)
         val memoText = bottomSheetView.findViewById<TextView>(R.id.memo_text)
-        val cancelButton = bottomSheetView.findViewById<Button>(R.id.cancel_button)
-        val confirmButton = bottomSheetView.findViewById<Button>(R.id.confirm_button)
+        val cancelButton = bottomSheetView.findViewById<ImageButton>(R.id.cancel_button)
+        val confirmButton = bottomSheetView.findViewById<View>(R.id.confirm_button)
         val adsForGasSection = bottomSheetView.findViewById<LinearLayout>(R.id.ads_for_gas_section)
         val adsForGasButton = bottomSheetView.findViewById<Button>(R.id.ads_for_gas_button)
         val gasGrantStatus = bottomSheetView.findViewById<Button>(R.id.gas_grant_status)
@@ -194,15 +197,15 @@ class TransactionConfirmationDialog(context: Context) {
 
         // Show funds section if funds are provided
         if (!TextUtils.isEmpty(details.funds)) {
-            fundsLabel?.visibility = View.VISIBLE
-            fundsText?.visibility = View.VISIBLE
+            fundsDivider?.visibility = View.VISIBLE
+            fundsRow?.visibility = View.VISIBLE
             fundsText?.text = details.funds
         }
 
         // Show memo section if memo is provided
         if (!TextUtils.isEmpty(details.memo)) {
-            memoLabel?.visibility = View.VISIBLE
-            memoText?.visibility = View.VISIBLE
+            memoDivider?.visibility = View.VISIBLE
+            memoRow?.visibility = View.VISIBLE
             memoText?.text = details.memo
         }
 
@@ -279,8 +282,34 @@ class TransactionConfirmationDialog(context: Context) {
 
     private fun parseTransactionType(message: String): String {
         try {
-            // Parse the JSON message to extract the transaction type
-            val json = org.json.JSONObject(message)
+            val trimmed = message.trim()
+
+            // Handle multi-message transactions (JSONArray)
+            if (trimmed.startsWith("[")) {
+                val jsonArray = org.json.JSONArray(trimmed)
+                if (jsonArray.length() == 0) return "Contract Execution"
+
+                // Collect unique transaction types
+                val types = mutableSetOf<String>()
+                for (i in 0 until jsonArray.length()) {
+                    val obj = jsonArray.optJSONObject(i)
+                    if (obj != null) {
+                        val keys = obj.keys()
+                        if (keys.hasNext()) {
+                            types.add(formatTransactionType(keys.next()))
+                        }
+                    }
+                }
+
+                return if (types.size == 1) {
+                    "${types.first()} (${jsonArray.length()} messages)"
+                } else {
+                    "Multi-Action (${jsonArray.length()} messages)"
+                }
+            }
+
+            // Handle single message (JSONObject)
+            val json = org.json.JSONObject(trimmed)
             val keys = json.keys()
             if (keys.hasNext()) {
                 val key = keys.next()
@@ -344,10 +373,25 @@ class TransactionConfirmationDialog(context: Context) {
         val messageText = dialog.findViewById<TextView>(R.id.message_text)
 
         // Format JSON with indentation and decode nested base64 messages
+        // Handle both single message (JSONObject) and multi-message (JSONArray)
         val formattedMessage = try {
-            val json = org.json.JSONObject(message)
-            decodeNestedMessages(json)
-            json.toString(2)
+            val trimmed = message.trim()
+            if (trimmed.startsWith("[")) {
+                // Multi-message transaction - JSONArray
+                val jsonArray = org.json.JSONArray(trimmed)
+                for (i in 0 until jsonArray.length()) {
+                    val obj = jsonArray.optJSONObject(i)
+                    if (obj != null) {
+                        decodeNestedMessages(obj)
+                    }
+                }
+                jsonArray.toString(2)
+            } else {
+                // Single message - JSONObject
+                val json = org.json.JSONObject(trimmed)
+                decodeNestedMessages(json)
+                json.toString(2)
+            }
         } catch (e: Exception) {
             message
         }

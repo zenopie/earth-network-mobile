@@ -174,14 +174,14 @@ object TransactionExecutor {
         val statusModal = StatusModal(activity)
 
         try {
-            // Build confirmation message showing all contracts
-            val messagePreview = buildString {
-                appendLine("${messages.size} messages:")
-                messages.forEachIndexed { index, msg ->
-                    appendLine("${index + 1}. ${msg.contractAddress}")
-                }
-                if (memo.isNotEmpty()) {
-                    appendLine("\nMemo: $memo")
+            // Build JSON array of all messages for raw display
+            val messagesJson = org.json.JSONArray()
+            messages.forEach { msg ->
+                try {
+                    messagesJson.put(org.json.JSONObject(msg.handleMsg))
+                } catch (e: Exception) {
+                    // If parsing fails, put as string
+                    messagesJson.put(msg.handleMsg)
                 }
             }
 
@@ -189,9 +189,10 @@ object TransactionExecutor {
             // Gas grant check is done inside showConfirmationDialogWithGas with loading state
             val details = TransactionConfirmationDialog.TransactionDetails(
                 contractAddress = "${messages.size} contracts",
-                message = messagePreview
+                message = messagesJson.toString()
             ).setContractLabel(contractLabel)
              .setShowAdsForGas(enableAdsForGas)
+             .setMemo(if (memo.isNotEmpty()) memo else null)
 
             // Show dialog with gas option
             val confirmResult = if (enableAdsForGas) {

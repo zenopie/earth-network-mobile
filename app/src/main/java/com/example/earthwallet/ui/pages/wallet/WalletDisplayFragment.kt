@@ -17,16 +17,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
-import androidx.lifecycle.lifecycleScope
 import network.erth.wallet.R
-import network.erth.wallet.wallet.services.ErthPriceService
-import network.erth.wallet.wallet.utils.WalletNetwork
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 
 /**
  * WalletDisplayFragment
@@ -45,8 +36,6 @@ class WalletDisplayFragment : Fragment() {
 
     // UI Components
     private lateinit var addressText: TextView
-    private lateinit var balanceText: TextView
-    private lateinit var gasUsdValue: TextView
     private lateinit var qrCodeView: ImageView
     private lateinit var sendButton: ImageButton
     private lateinit var receiveButton: ImageButton
@@ -54,15 +43,10 @@ class WalletDisplayFragment : Fragment() {
 
     // State
     private var currentAddress = ""
-    private var balanceLoaded = false
-    private var scrtPrice: Double? = null
-    private var currentGasBalance: Double = 0.0
 
     // Interface for communication with parent
     interface WalletDisplayListener {
         fun getCurrentWalletAddress(): String
-        fun onGasUsdValueUpdated(usdValue: Double)
-        fun updateGasBalanceDisplay(balance: Double, usdValue: Double)
     }
 
     private var listener: WalletDisplayListener? = null
@@ -81,8 +65,6 @@ class WalletDisplayFragment : Fragment() {
 
         // Initialize UI components
         addressText = view.findViewById(R.id.addressText)
-        balanceText = view.findViewById(R.id.balanceText)
-        gasUsdValue = view.findViewById(R.id.gasUsdValue)
         qrCodeView = view.findViewById(R.id.qrCodeView)
         sendButton = view.findViewById(R.id.sendButton)
         receiveButton = view.findViewById(R.id.receiveButton)
@@ -126,7 +108,6 @@ class WalletDisplayFragment : Fragment() {
             // Always refresh - no caching
             currentAddress = newAddress
             updateUI()
-            refreshBalance()
             generateQRCode()
         }
     }
@@ -153,7 +134,12 @@ class WalletDisplayFragment : Fragment() {
     }
 
     private fun formatAddress(address: String): String {
-        // Display full address without truncation
+        // Truncate address to show "secret1...lastchars"
+        if (address.length > 20) {
+            val prefix = address.take(7)  // "secret1"
+            val suffix = address.takeLast(10)
+            return "$prefix...$suffix"
+        }
         return address
     }
 
@@ -163,103 +149,6 @@ class WalletDisplayFragment : Fragment() {
             val clip = ClipData.newPlainText("Wallet Address", currentAddress)
             clipboard.setPrimaryClip(clip)
             Toast.makeText(context, "Address copied to clipboard", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun refreshBalance() {
-        if (TextUtils.isEmpty(currentAddress)) {
-            balanceText.text = "0"
-            gasUsdValue.text = ""
-            return
-        }
-
-        // Show loading state
-        balanceText.text = " "
-        gasUsdValue.text = ""
-
-        // Fetch balance and price using coroutines
-        lifecycleScope.launch {
-            try {
-                // Fetch balance and price in parallel
-                val balanceResult = withContext(Dispatchers.IO) {
-                    fetchScrtBalanceValue(currentAddress)
-                }
-                val price = withContext(Dispatchers.IO) {
-                    fetchScrtPrice()
-                }
-
-                currentGasBalance = balanceResult
-                scrtPrice = price
-                balanceText.text = formatBalance(balanceResult)
-                balanceLoaded = true
-
-                // Update USD value
-                updateGasUsdValue()
-            } catch (e: Exception) {
-                Log.e(TAG, "Error fetching balance", e)
-                balanceText.text = "Error"
-            }
-        }
-    }
-
-    private fun updateGasUsdValue() {
-        val price = scrtPrice
-        val usdValue = if (price != null && currentGasBalance > 0) {
-            currentGasBalance * price
-        } else {
-            0.0
-        }
-
-        // Update local display (if still using it)
-        if (usdValue > 0) {
-            gasUsdValue.text = ErthPriceService.formatUSD(usdValue)
-        } else {
-            gasUsdValue.text = ""
-        }
-
-        // Notify parent
-        listener?.onGasUsdValueUpdated(usdValue)
-        listener?.updateGasBalanceDisplay(currentGasBalance, usdValue)
-    }
-
-    private fun formatBalance(balance: Double): String {
-        return if (balance < 0.01 && balance > 0) {
-            String.format("%.4f", balance)
-        } else {
-            String.format("%.2f", balance)
-        }
-    }
-
-    private suspend fun fetchScrtPrice(): Double? {
-        return try {
-            val url = URL("https://api.coingecko.com/api/v3/simple/price?ids=secret&vs_currencies=usd")
-            val connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "GET"
-            connection.connectTimeout = 10_000
-            connection.readTimeout = 10_000
-
-            if (connection.responseCode == HttpURLConnection.HTTP_OK) {
-                val response = connection.inputStream.bufferedReader().use { it.readText() }
-                val json = JSONObject(response)
-                val secretObj = json.optJSONObject("secret")
-                secretObj?.optDouble("usd", -1.0)?.takeIf { it > 0 }
-            } else {
-                null
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to fetch SCRT price", e)
-            null
-        }
-    }
-
-    private suspend fun fetchScrtBalanceValue(address: String): Double {
-        return try {
-            // Use WalletNetwork's bank query method
-            val microScrt = WalletNetwork.fetchUscrtBalanceMicro(WalletNetwork.DEFAULT_LCD_URL, address)
-            microScrt / 1_000_000.0 // Convert micro to SCRT
-        } catch (e: Exception) {
-            Log.e(TAG, "SCRT balance query failed", e)
-            0.0
         }
     }
 

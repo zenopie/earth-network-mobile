@@ -6,9 +6,7 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
-import android.widget.EditText
-import android.widget.ImageButton
+import android.widget.LinearLayout
 import android.widget.RadioGroup
 import android.widget.Switch
 import android.widget.TextView
@@ -33,18 +31,7 @@ class WalletSettingsFragment : Fragment() {
     private lateinit var switchBiometricAuth: Switch
     private lateinit var switchTransactionAuth: Switch
     private lateinit var tvBiometricStatus: TextView
-    private lateinit var btnRemoveAppData: Button
-
-    // Interface for communication with parent activity
-    interface WalletSettingsListener {
-        fun onBackPressed()
-    }
-
-    private var listener: WalletSettingsListener? = null
-
-    fun setWalletSettingsListener(listener: WalletSettingsListener) {
-        this.listener = listener
-    }
+    private lateinit var btnRemoveAppData: LinearLayout
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
         return inflater.inflate(R.layout.fragment_wallet_settings, container, false)
@@ -58,20 +45,6 @@ class WalletSettingsFragment : Fragment() {
         switchTransactionAuth = view.findViewById(R.id.switch_transaction_auth)
         tvBiometricStatus = view.findViewById(R.id.tv_biometric_status)
         btnRemoveAppData = view.findViewById(R.id.btn_remove_app_data)
-
-        // Setup back button
-        val btnBack = view.findViewById<ImageButton>(R.id.btn_back)
-        btnBack.setOnClickListener {
-            if (listener != null) {
-                listener?.onBackPressed()
-            } else {
-                // When accessed from bottom nav, navigate to wallet
-                val hostActivity = activity as? network.erth.wallet.ui.host.HostActivity
-                hostActivity?.showFragment("wallet")
-            }
-        }
-
-        // Initialize security level display
 
         // Initialize biometric settings
         initializeBiometricSettings()

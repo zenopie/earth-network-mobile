@@ -2,63 +2,65 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:padding="20dp"
-    android:background="@android:color/white">
+    android:background="@android:color/white"
+    android:fillViewport="true">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical">
+        android:orientation="vertical"
+        android:paddingHorizontal="16dp"
+        android:paddingTop="24dp"
+        android:paddingBottom="24dp">
 
         <!-- Header -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginBottom="20dp">
-
-            <ImageButton
-                android:id="@+id/btn_back"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:src="@drawable/ic_back_arrow"
-                android:background="@drawable/green_button_bg"
-                android:scaleType="center"
-                android:layout_marginEnd="12dp"
-                android:contentDescription="Back" />
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Wallet Settings"
-                android:textSize="24sp"
-                android:textStyle="bold"
-                android:textColor="#1e3a8a"
-                android:gravity="start" />
-
-        </LinearLayout>
-
-        <!-- Security Section -->
         <TextView
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Settings"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:textColor="#333333"
+            android:fontFamily="sans-serif-medium"
+            android:layout_marginBottom="20dp"
+            android:layout_marginStart="8dp" />
+
+        <!-- Security Section Header -->
+        <TextView
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Security"
-            android:textSize="18sp"
-            android:textStyle="bold"
-            android:textColor="#1e3a8a"
-            android:layout_marginBottom="16dp" />
+            android:textSize="14sp"
+            android:textColor="#888888"
+            android:fontFamily="sans-serif-medium"
+            android:layout_marginBottom="12dp"
+            android:layout_marginStart="8dp" />
 
-
-        <!-- Biometric Authentication Toggle -->
+        <!-- Biometric Authentication -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:padding="16dp"
-            android:layout_marginBottom="12dp">
+            android:paddingVertical="12dp"
+            android:paddingHorizontal="8dp"
+            android:background="?android:attr/selectableItemBackground">
+
+            <FrameLayout
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginEnd="16dp">
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="@drawable/icon_circle_bg" />
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_fingerprint"
+                    android:tint="#22C55E" />
+            </FrameLayout>
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -67,37 +69,55 @@
                 android:orientation="vertical">
 
                 <TextView
-                    android:layout_width="match_parent"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Use Biometric Authentication"
+                    android:text="Biometric Authentication"
                     android:textSize="16sp"
-                    android:textStyle="bold"
-                    android:textColor="#333333" />
+                    android:textColor="#333333"
+                    android:fontFamily="sans-serif-medium" />
 
                 <TextView
-                    android:layout_width="match_parent"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Use fingerprint or face recognition instead of PIN"
-                    android:textSize="14sp"
-                    android:textColor="#666666"
-                    android:layout_marginTop="4dp" />
+                    android:text="Use fingerprint or face recognition"
+                    android:textSize="13sp"
+                    android:textColor="#888888"
+                    android:layout_marginTop="2dp" />
+
             </LinearLayout>
 
             <Switch
                 android:id="@+id/switch_biometric_auth"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="16dp" />
+                android:layout_height="wrap_content" />
+
         </LinearLayout>
 
-        <!-- Transaction Authentication Toggle -->
+        <!-- Transaction Authentication -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:padding="16dp"
-            android:layout_marginBottom="12dp">
+            android:paddingVertical="12dp"
+            android:paddingHorizontal="8dp"
+            android:background="?android:attr/selectableItemBackground">
+
+            <FrameLayout
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginEnd="16dp">
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="@drawable/icon_circle_bg" />
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_lock"
+                    android:tint="#22C55E" />
+            </FrameLayout>
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -106,27 +126,28 @@
                 android:orientation="vertical">
 
                 <TextView
-                    android:layout_width="match_parent"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Require Transaction Authentication"
+                    android:text="Transaction Authentication"
                     android:textSize="16sp"
-                    android:textStyle="bold"
-                    android:textColor="#333333" />
+                    android:textColor="#333333"
+                    android:fontFamily="sans-serif-medium" />
 
                 <TextView
-                    android:layout_width="match_parent"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Require PIN or biometric verification before sending transactions"
-                    android:textSize="14sp"
-                    android:textColor="#666666"
-                    android:layout_marginTop="4dp" />
+                    android:text="Require verification before sending"
+                    android:textSize="13sp"
+                    android:textColor="#888888"
+                    android:layout_marginTop="2dp" />
+
             </LinearLayout>
 
             <Switch
                 android:id="@+id/switch_transaction_auth"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="16dp" />
+                android:layout_height="wrap_content" />
+
         </LinearLayout>
 
         <!-- Biometric Status Text -->
@@ -137,59 +158,82 @@
             android:text="Biometric authentication is not available on this device"
             android:textSize="12sp"
             android:textColor="#999999"
-            android:layout_marginBottom="16dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginStart="72dp"
             android:visibility="gone" />
 
-        <!-- Developer/Testing Section -->
+        <!-- Developer Section Header -->
         <TextView
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Developer Tools"
-            android:textSize="18sp"
-            android:textStyle="bold"
-            android:textColor="#1e3a8a"
+            android:text="Developer"
+            android:textSize="14sp"
+            android:textColor="#888888"
+            android:fontFamily="sans-serif-medium"
             android:layout_marginTop="24dp"
-            android:layout_marginBottom="16dp" />
+            android:layout_marginBottom="12dp"
+            android:layout_marginStart="8dp" />
 
-
-        <!-- Remove App Data Button -->
+        <!-- Clear App Data -->
         <LinearLayout
+            android:id="@+id/btn_remove_app_data"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="16dp"
-            android:background="@drawable/card_rounded_bg"
-            android:layout_marginBottom="16dp">
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingVertical="12dp"
+            android:paddingHorizontal="8dp"
+            android:background="?android:attr/selectableItemBackground"
+            android:clickable="true"
+            android:focusable="true">
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Clear All App Data"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                android:textColor="#d32f2f"
-                android:layout_marginBottom="8dp" />
+            <FrameLayout
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginEnd="16dp">
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="@drawable/icon_circle_bg" />
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_delete"
+                    android:tint="#EF4444" />
+            </FrameLayout>
 
-            <TextView
-                android:layout_width="match_parent"
+            <LinearLayout
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:text="⚠️ This will delete all wallets, settings, and app data. Use for testing only."
-                android:textSize="14sp"
-                android:textColor="#666666"
-                android:layout_marginBottom="12dp" />
+                android:layout_weight="1"
+                android:orientation="vertical">
 
-            <Button
-                android:id="@+id/btn_remove_app_data"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Clear App Data"
-                android:textColor="@android:color/white"
-                android:background="@drawable/button_rounded_green"
-                android:backgroundTint="#d32f2f"
-                android:padding="12dp" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Clear All App Data"
+                    android:textSize="16sp"
+                    android:textColor="#EF4444"
+                    android:fontFamily="sans-serif-medium" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Delete wallets, settings, and preferences"
+                    android:textSize="13sp"
+                    android:textColor="#888888"
+                    android:layout_marginTop="2dp" />
+
+            </LinearLayout>
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:src="@drawable/ic_keyboard_arrow_right"
+                android:tint="#CCCCCC" />
 
         </LinearLayout>
 
     </LinearLayout>
-
 </ScrollView>

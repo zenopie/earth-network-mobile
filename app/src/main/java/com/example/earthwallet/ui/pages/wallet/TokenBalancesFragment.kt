@@ -33,6 +33,7 @@ import network.erth.wallet.wallet.services.SecretKClient
 import org.json.JSONArray
 import org.json.JSONObject
 import network.erth.wallet.Constants
+import network.erth.wallet.wallet.utils.WalletNetwork
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.*
@@ -63,8 +64,11 @@ class TokenBalancesFragment : Fragment() {
 
     // Price state for USD display
     private var erthPrice: Double? = null
+    private var scrtPrice: Double? = null
     private var tokenBalances: MutableMap<String, Double> = mutableMapOf()
     private var tokenUsdValues: MutableMap<String, Double> = mutableMapOf()
+    private var gasBalance: Double = 0.0
+    private var gasUsdValue: Double = 0.0
 
     // Interface for communication with parent
     interface TokenBalancesListener {
@@ -145,20 +149,16 @@ class TokenBalancesFragment : Fragment() {
         tokenBalancesContainer.removeAllViews()
         tokenBalances.clear()
         tokenUsdValues.clear()
-
-        // Fetch ERTH price for USD calculations
-        lifecycleScope.launch {
-            try {
-                erthPrice = ErthPriceService.fetchErthPrice()
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to fetch ERTH price", e)
-            }
-        }
+        gasBalance = 0.0
+        gasUsdValue = 0.0
 
         // Capture the current wallet address for this query session
         val currentWalletAddress = walletAddress
 
-        // First, add all tokens with permits to the UI with loading state
+        // Add GAS balance row first with loading state
+        addGasBalanceView("...")
+
+        // Then add all tokens with permits to the UI with loading state
         val tokensToQuery = mutableListOf<Tokens.TokenInfo>()
         for (symbol in Tokens.ALL_TOKENS.keys) {
             val token = Tokens.getTokenInfo(symbol) ?: continue
@@ -167,6 +167,38 @@ class TokenBalancesFragment : Fragment() {
             // Show token immediately with "..." loading state
             addTokenBalanceView(token, "...")
             tokensToQuery.add(token)
+        }
+
+        // Fetch prices and gas balance
+        lifecycleScope.launch {
+            try {
+                // Fetch ERTH price for token USD calculations
+                erthPrice = ErthPriceService.fetchErthPrice()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to fetch ERTH price", e)
+            }
+
+            // Fetch SCRT price for gas USD calculations
+            try {
+                scrtPrice = fetchScrtPrice()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to fetch SCRT price", e)
+            }
+
+            // Fetch gas balance
+            try {
+                val balance = fetchGasBalance(currentWalletAddress)
+                if (currentWalletAddress == walletAddress) {
+                    gasBalance = balance
+                    updateGasBalanceView(balance)
+                    calculateGasUsdValue()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to fetch gas balance", e)
+                if (currentWalletAddress == walletAddress) {
+                    updateGasBalanceView(0.0)
+                }
+            }
         }
 
         // Start new query job with coroutines to fetch balances
@@ -417,8 +449,187 @@ class TokenBalancesFragment : Fragment() {
     }
 
     private fun updateTotalUsdValue() {
-        val totalUsd = tokenUsdValues.values.sum()
+        val totalUsd = tokenUsdValues.values.sum() + gasUsdValue
         listener?.onTokenUsdValueUpdated(totalUsd)
+    }
+
+    // =========================================================================
+    // Gas Balance Functions
+    // =========================================================================
+
+    private fun addGasBalanceView(balance: String) {
+        try {
+            val gasCard = LinearLayout(context)
+            gasCard.orientation = LinearLayout.HORIZONTAL
+            gasCard.setPadding(16, 12, 16, 12)
+            gasCard.tag = "GAS"
+
+            val layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            layoutParams.setMargins(8, 4, 8, 4)
+            gasCard.layoutParams = layoutParams
+
+            // Gas icon
+            val iconView = ImageView(context)
+            val iconParams = LinearLayout.LayoutParams(60, 60)
+            iconParams.setMargins(0, 0, 16, 0)
+            iconView.layoutParams = iconParams
+            iconView.setImageResource(R.drawable.ic_gas_pump)
+
+            // Gas info container
+            val infoContainer = LinearLayout(context)
+            infoContainer.orientation = LinearLayout.VERTICAL
+            val infoParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            infoContainer.layoutParams = infoParams
+
+            val symbolText = TextView(context)
+            symbolText.text = "GAS"
+            symbolText.textSize = 18f
+            symbolText.setTextColor(0xFF333333.toInt())
+            infoContainer.addView(symbolText)
+
+            // Balance container
+            val balanceContainer = LinearLayout(context)
+            balanceContainer.orientation = LinearLayout.VERTICAL
+
+            val balanceText = TextView(context)
+            balanceText.text = balance
+            balanceText.tag = "gas_balance"
+            balanceText.gravity = android.view.Gravity.END
+            balanceText.setTextColor(0xFF22C55E.toInt())
+            balanceText.textSize = 16f
+
+            val usdText = TextView(context)
+            usdText.tag = "gas_usd_value"
+            usdText.text = "$0.00"
+            usdText.textSize = 12f
+            usdText.setTextColor(0xFF888888.toInt())
+            usdText.gravity = android.view.Gravity.END
+
+            val textParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            balanceContainer.addView(balanceText, textParams)
+            balanceContainer.addView(usdText, textParams)
+
+            gasCard.addView(iconView)
+            gasCard.addView(infoContainer)
+            gasCard.addView(balanceContainer)
+
+            tokenBalancesContainer.addView(gasCard, 0) // Add at the beginning
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to add gas balance view", e)
+        }
+    }
+
+    private fun updateGasBalanceView(balance: Double) {
+        try {
+            for (i in 0 until tokenBalancesContainer.childCount) {
+                val card = tokenBalancesContainer.getChildAt(i) as? LinearLayout
+                if (card?.tag == "GAS") {
+                    for (j in 0 until card.childCount) {
+                        val child = card.getChildAt(j)
+                        if (child is LinearLayout) {
+                            for (k in 0 until child.childCount) {
+                                val textView = child.getChildAt(k)
+                                if (textView is TextView && textView.tag == "gas_balance") {
+                                    textView.text = formatGasBalance(balance)
+                                    return
+                                }
+                            }
+                        }
+                    }
+                    return
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to update gas balance view", e)
+        }
+    }
+
+    private fun updateGasUsdView(usdValue: Double) {
+        try {
+            for (i in 0 until tokenBalancesContainer.childCount) {
+                val card = tokenBalancesContainer.getChildAt(i) as? LinearLayout
+                if (card?.tag == "GAS") {
+                    for (j in 0 until card.childCount) {
+                        val child = card.getChildAt(j)
+                        if (child is LinearLayout) {
+                            for (k in 0 until child.childCount) {
+                                val textView = child.getChildAt(k)
+                                if (textView is TextView && textView.tag == "gas_usd_value") {
+                                    textView.text = ErthPriceService.formatUSD(usdValue)
+                                    return
+                                }
+                            }
+                        }
+                    }
+                    return
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to update gas USD view", e)
+        }
+    }
+
+    private fun calculateGasUsdValue() {
+        val price = scrtPrice ?: return
+        gasUsdValue = gasBalance * price
+        updateGasUsdView(gasUsdValue)
+        updateTotalUsdValue()
+    }
+
+    private fun formatGasBalance(balance: Double): String {
+        return if (balance < 0.01 && balance > 0) {
+            String.format("%.4f", balance)
+        } else {
+            String.format("%.2f", balance)
+        }
+    }
+
+    private suspend fun fetchGasBalance(address: String): Double {
+        return withContext(Dispatchers.IO) {
+            try {
+                val microScrt = WalletNetwork.fetchUscrtBalanceMicro(WalletNetwork.DEFAULT_LCD_URL, address)
+                microScrt / 1_000_000.0
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to fetch gas balance", e)
+                0.0
+            }
+        }
+    }
+
+    private suspend fun fetchScrtPrice(): Double? {
+        return withContext(Dispatchers.IO) {
+            // Retry up to 3 times
+            repeat(3) { attempt ->
+                try {
+                    val url = URL("https://api.coingecko.com/api/v3/simple/price?ids=secret&vs_currencies=usd")
+                    val connection = url.openConnection() as HttpURLConnection
+                    connection.requestMethod = "GET"
+                    connection.connectTimeout = 10_000
+                    connection.readTimeout = 10_000
+
+                    if (connection.responseCode == HttpURLConnection.HTTP_OK) {
+                        val response = connection.inputStream.bufferedReader().use { it.readText() }
+                        val json = JSONObject(response)
+                        val secretObj = json.optJSONObject("secret")
+                        val price = secretObj?.optDouble("usd", -1.0)?.takeIf { it > 0 }
+                        if (price != null) return@withContext price
+                    }
+                    if (connection.responseCode == 429) {
+                        kotlinx.coroutines.delay(2000L * (attempt + 1))
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to fetch SCRT price (attempt ${attempt + 1})", e)
+                    if (attempt < 2) kotlinx.coroutines.delay(1000L)
+                }
+            }
+            null
+        }
     }
 
     private fun addTokenBalanceView(token: Tokens.TokenInfo, balance: String?) {
@@ -485,11 +696,11 @@ class TokenBalancesFragment : Fragment() {
             // Balance container with balance and USD value
             val balanceContainer = LinearLayout(context)
             balanceContainer.orientation = LinearLayout.VERTICAL
-            balanceContainer.gravity = android.view.Gravity.END
 
             val balanceText = TextView(context)
             balanceText.text = balance ?: "..."
             balanceText.tag = "balance"
+            balanceText.gravity = android.view.Gravity.END
 
             if ("!" == balance) {
                 balanceText.setTextColor(resources.getColor(android.R.color.holo_red_dark))
@@ -502,12 +713,18 @@ class TokenBalancesFragment : Fragment() {
 
             val usdText = TextView(context)
             usdText.tag = "usd_value"
-            usdText.text = ""
+            usdText.text = "$0.00"
             usdText.textSize = 12f
             usdText.setTextColor(0xFF888888.toInt())
+            usdText.gravity = android.view.Gravity.END
 
-            balanceContainer.addView(balanceText)
-            balanceContainer.addView(usdText)
+            // Set MATCH_PARENT width so gravity takes effect
+            val textParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            balanceContainer.addView(balanceText, textParams)
+            balanceContainer.addView(usdText, textParams)
 
             tokenCard.addView(iconView)
             tokenCard.addView(infoContainer)

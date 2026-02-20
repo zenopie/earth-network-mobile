@@ -37,8 +37,7 @@ class WalletMainFragment : Fragment(),
     CreateWalletFragment.CreateWalletListener,
     WalletDisplayFragment.WalletDisplayListener,
     TokenBalancesFragment.TokenBalancesListener,
-    ManagePermitsFragment.ManagePermitsListener,
-    WalletSettingsFragment.WalletSettingsListener {
+    ManagePermitsFragment.ManagePermitsListener {
 
     companion object {
         private const val TAG = "WalletMainFragment"
@@ -53,15 +52,10 @@ class WalletMainFragment : Fragment(),
     private lateinit var walletNameText: TextView
     private lateinit var portfolioTotalValue: TextView
     private lateinit var portfolioLabel: TextView
-    private lateinit var gasBalanceRow: LinearLayout
-    private lateinit var gasBalanceAmount: TextView
-    private lateinit var gasBalanceUsd: TextView
 
     // State management
     private var currentWalletAddress = ""
     private var currentWalletName = ""
-    private var gasUsdValue: Double = 0.0
-    private var tokenUsdValue: Double = 0.0
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -81,12 +75,9 @@ class WalletMainFragment : Fragment(),
         walletNameText = view.findViewById(R.id.wallet_name_text)
         portfolioTotalValue = view.findViewById(R.id.portfolio_total_value)
         portfolioLabel = view.findViewById(R.id.portfolio_label)
-        gasBalanceRow = view.findViewById(R.id.gas_balance_row)
-        gasBalanceAmount = view.findViewById(R.id.gas_balance_amount)
-        gasBalanceUsd = view.findViewById(R.id.gas_balance_usd)
 
-        // Set up wallet name click listener
-        walletNameText.setOnClickListener { showWalletListFragment() }
+        // Set up wallet name container click listener (includes dropdown arrow)
+        view.findViewById<LinearLayout>(R.id.wallet_name_container).setOnClickListener { showWalletListFragment() }
 
         // Initialize child fragments
         initializeChildFragments()
@@ -185,31 +176,6 @@ class WalletMainFragment : Fragment(),
         return currentWalletAddress
     }
 
-    override fun onGasUsdValueUpdated(usdValue: Double) {
-        gasUsdValue = usdValue
-        updatePortfolioTotal()
-    }
-
-    /**
-     * Called by WalletDisplayFragment with gas balance info
-     */
-    override fun updateGasBalanceDisplay(balance: Double, usdValue: Double) {
-        gasBalanceAmount.text = formatGasBalance(balance)
-        if (usdValue > 0) {
-            gasBalanceUsd.text = ErthPriceService.formatUSD(usdValue)
-        } else {
-            gasBalanceUsd.text = ""
-        }
-    }
-
-    private fun formatGasBalance(balance: Double): String {
-        return if (balance < 0.01 && balance > 0) {
-            String.format("%.4f", balance)
-        } else {
-            String.format("%.2f", balance)
-        }
-    }
-
     // =============================================================================
     // TokenBalancesFragment.TokenBalancesListener Implementation
     // =============================================================================
@@ -224,20 +190,7 @@ class WalletMainFragment : Fragment(),
     }
 
     override fun onTokenUsdValueUpdated(totalUsdValue: Double) {
-        tokenUsdValue = totalUsdValue
-        updatePortfolioTotal()
-    }
-
-    private fun updatePortfolioTotal() {
-        val total = gasUsdValue + tokenUsdValue
-        if (total > 0) {
-            portfolioTotalValue.text = ErthPriceService.formatUSD(total)
-            portfolioTotalValue.visibility = View.VISIBLE
-            portfolioLabel.visibility = View.VISIBLE
-        } else {
-            portfolioTotalValue.visibility = View.GONE
-            portfolioLabel.visibility = View.GONE
-        }
+        portfolioTotalValue.text = ErthPriceService.formatUSD(totalUsdValue)
     }
 
 
@@ -320,26 +273,6 @@ class WalletMainFragment : Fragment(),
             .replace(R.id.host_content, managePermitsFragment)
             .addToBackStack("manage_permits")
             .commit()
-    }
-
-    private fun showWalletSettingsFragment() {
-        val walletSettingsFragment = WalletSettingsFragment.newInstance()
-        walletSettingsFragment.setWalletSettingsListener(this)
-
-        requireActivity().supportFragmentManager
-            .beginTransaction()
-            .replace(R.id.host_content, walletSettingsFragment)
-            .addToBackStack("wallet_settings")
-            .commit()
-    }
-
-    // =============================================================================
-    // WalletSettingsFragment.WalletSettingsListener Implementation
-    // =============================================================================
-
-    override fun onBackPressed() {
-        // Navigate back from wallet settings fragment
-        requireActivity().supportFragmentManager.popBackStack()
     }
 
     // =============================================================================

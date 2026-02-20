@@ -567,14 +567,6 @@ class SendTokensFragment : Fragment(), WalletDisplayFragment.WalletDisplayListen
         }
     }
 
-    override fun onGasUsdValueUpdated(usdValue: Double) {
-        // Not used in SendTokensFragment
-    }
-
-    override fun updateGasBalanceDisplay(balance: Double, usdValue: Double) {
-        // Not used in SendTokensFragment
-    }
-
     override fun onDetach() {
         super.onDetach()
         listener = null

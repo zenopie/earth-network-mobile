@@ -82,7 +82,7 @@
                 android:id="@+id/receiveButton"
                 android:layout_width="72dp"
                 android:layout_height="72dp"
-                android:src="@drawable/ic_qr_code_white"
+                android:src="@drawable/ic_receive"
                 android:background="@drawable/wallet_action_button"
                 android:scaleType="center"
                 android:layout_marginBottom="8dp" />

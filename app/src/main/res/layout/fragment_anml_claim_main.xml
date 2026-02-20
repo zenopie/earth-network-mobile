@@ -3,7 +3,7 @@
     android:id="@+id/anml_frame"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/desktop_bg">
+    android:background="@android:color/white">
 
     <ScrollView
         android:id="@+id/anml_scroll"
@@ -37,7 +37,7 @@
                 android:id="@+id/anml_error_text"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:textColor="#ff6666"
+                android:textColor="#EF4444"
                 android:textSize="14sp"
                 android:paddingTop="12dp"
                 android:visibility="gone" />

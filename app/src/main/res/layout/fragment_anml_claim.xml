@@ -3,34 +3,34 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="12dp"
+    android:padding="16dp"
     android:gravity="center">
 
     <ImageView
         android:id="@+id/claim_anml_image"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="40dp"
+        android:layout_width="180dp"
+        android:layout_height="180dp"
+        android:layout_marginBottom="32dp"
         android:src="@drawable/anml"
         android:contentDescription="@string/passport_scan"
         android:adjustViewBounds="true"
         android:scaleType="centerInside"
         android:importantForAccessibility="yes" />
 
+    <!-- Price Section -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:layout_marginBottom="16dp"
+        android:layout_marginBottom="24dp"
         android:gravity="center">
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Current ANML Price:"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:textColor="@color/anml_button_text"
+            android:text="Current ANML Price"
+            android:textSize="14sp"
+            android:textColor="#888888"
             android:layout_marginBottom="4dp" />
 
         <TextView
@@ -38,9 +38,9 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Loading..."
-            android:textSize="18sp"
+            android:textSize="24sp"
             android:textStyle="bold"
-            android:textColor="@color/anml_button_text" />
+            android:textColor="#333333" />
 
     </LinearLayout>
 
@@ -50,18 +50,12 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:gravity="center"
-        android:layout_marginBottom="16dp"
-        android:padding="8dp"
-        android:background="@drawable/address_box_bg"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="32dp"
+        android:paddingVertical="10dp"
+        android:paddingHorizontal="16dp"
+        android:background="@drawable/status_pill_bg"
         android:visibility="visible">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="✨"
-            android:textSize="16sp"
-            android:layout_marginRight="4dp" />
 
         <TextView
             android:id="@+id/ad_free_status_text"
@@ -70,31 +64,22 @@
             android:text="Loading..."
             android:textSize="14sp"
             android:textStyle="bold"
-            android:textColor="#4CAF50"
-            android:layout_marginRight="4dp" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="ℹ️"
-            android:textSize="12sp" />
+            android:textColor="#22C55E" />
 
     </LinearLayout>
 
     <Button
         android:id="@+id/btn_claim"
-        android:layout_width="220dp"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="32dp"
+        android:layout_width="200dp"
+        android:layout_height="56dp"
         android:layout_gravity="center"
-        android:paddingLeft="20dp"
-        android:paddingRight="20dp"
-        android:background="@drawable/btn_anml_desktop"
+        android:background="@drawable/btn_claim_green"
         android:backgroundTint="@null"
-        android:text="Claim"
+        android:text="Claim ANML"
         android:textColor="@android:color/white"
         android:textAllCaps="false"
-        android:textSize="20sp"
+        android:textSize="18sp"
+        android:textStyle="bold"
         android:gravity="center"
         android:stateListAnimator="@null" />
 </LinearLayout>

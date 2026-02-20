@@ -5,7 +5,7 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.fragment.app.Fragment
@@ -30,9 +30,8 @@ class ActionsMainFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        // Swap Tokens button
-        val swapTokens = view.findViewById<Button>(R.id.btn_swap_tokens)
-        swapTokens?.setOnClickListener {
+        // Swap Tokens
+        view.findViewById<View>(R.id.btn_swap_tokens)?.setOnClickListener {
             (activity as? network.erth.wallet.ui.host.HostActivity)?.let {
                 it.showFragment("swap")
             } ?: run {
@@ -40,9 +39,8 @@ class ActionsMainFragment : Fragment() {
             }
         }
 
-        // ANML Claim button - request parent HostActivity to show ANML fragment
-        val anml = view.findViewById<Button>(R.id.btn_anml_claim)
-        anml?.setOnClickListener {
+        // ANML Claim
+        view.findViewById<View>(R.id.btn_anml_claim)?.setOnClickListener {
             (activity as? network.erth.wallet.ui.host.HostActivity)?.let {
                 it.showFragment("anml")
             } ?: run {
@@ -50,9 +48,8 @@ class ActionsMainFragment : Fragment() {
             }
         }
 
-        // Manage LP button - request parent HostActivity to show ManageLP fragment
-        val manageLP = view.findViewById<Button>(R.id.btn_manage_lp)
-        manageLP?.setOnClickListener {
+        // Manage LP
+        view.findViewById<View>(R.id.btn_manage_lp)?.setOnClickListener {
             (activity as? network.erth.wallet.ui.host.HostActivity)?.let {
                 it.showFragment("managelp")
             } ?: run {
@@ -60,9 +57,8 @@ class ActionsMainFragment : Fragment() {
             }
         }
 
-        // Stake ERTH button - request parent HostActivity to show Staking fragment
-        val stakeERTH = view.findViewById<Button>(R.id.btn_stake_erth)
-        stakeERTH?.setOnClickListener {
+        // Stake ERTH
+        view.findViewById<View>(R.id.btn_stake_erth)?.setOnClickListener {
             (activity as? network.erth.wallet.ui.host.HostActivity)?.let {
                 it.showFragment("staking")
             } ?: run {
@@ -70,18 +66,17 @@ class ActionsMainFragment : Fragment() {
             }
         }
 
-        // Governance button - toggle expansion of submenu
-        val governance = view.findViewById<Button>(R.id.btn_governance)
+        // Governance - toggle expansion of submenu
         val governanceSubmenu = view.findViewById<LinearLayout>(R.id.governance_submenu)
-        if (governance != null && governanceSubmenu != null) {
-            governance.setOnClickListener {
-                toggleGovernanceSubmenu(governanceSubmenu)
+        val governanceArrow = view.findViewById<ImageView>(R.id.governance_arrow)
+        view.findViewById<View>(R.id.btn_governance)?.setOnClickListener {
+            if (governanceSubmenu != null) {
+                toggleGovernanceSubmenu(governanceSubmenu, governanceArrow)
             }
         }
 
-        // Caretaker Fund button
-        val caretakerFund = view.findViewById<Button>(R.id.btn_caretaker_fund)
-        caretakerFund?.setOnClickListener {
+        // Caretaker Fund
+        view.findViewById<View>(R.id.btn_caretaker_fund)?.setOnClickListener {
             (activity as? network.erth.wallet.ui.host.HostActivity)?.let {
                 it.showFragment("caretaker_fund")
             } ?: run {
@@ -89,9 +84,8 @@ class ActionsMainFragment : Fragment() {
             }
         }
 
-        // Deflation Fund button
-        val deflationFund = view.findViewById<Button>(R.id.btn_deflation_fund)
-        deflationFund?.setOnClickListener {
+        // Deflation Fund
+        view.findViewById<View>(R.id.btn_deflation_fund)?.setOnClickListener {
             (activity as? network.erth.wallet.ui.host.HostActivity)?.let {
                 it.showFragment("deflation_fund")
             } ?: run {
@@ -100,12 +94,14 @@ class ActionsMainFragment : Fragment() {
         }
     }
 
-    private fun toggleGovernanceSubmenu(submenu: LinearLayout) {
+    private fun toggleGovernanceSubmenu(submenu: LinearLayout, arrow: ImageView?) {
         if (isGovernanceExpanded) {
             submenu.visibility = View.GONE
+            arrow?.rotation = 0f
             isGovernanceExpanded = false
         } else {
             submenu.visibility = View.VISIBLE
+            arrow?.rotation = 90f
             isGovernanceExpanded = true
         }
     }
