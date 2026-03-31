@@ -1,7 +1,6 @@
 package network.erth.wallet.bridge.services
 
 import android.content.Context
-import android.content.SharedPreferences
 import android.util.Log
 import network.erth.wallet.Constants
 import network.erth.wallet.wallet.constants.Tokens
@@ -18,9 +17,6 @@ class RegistryService(private val context: Context) {
 
     companion object {
         private const val TAG = "RegistryService"
-        private const val PREFS_NAME = "contract_registry_prefs"
-        private const val KEY_LAST_UPDATED = "last_updated"
-        private const val KEY_REGISTRY_DATA = "registry_data"
 
         @Volatile
         private var instance: RegistryService? = null
@@ -32,8 +28,6 @@ class RegistryService(private val context: Context) {
         }
     }
 
-    private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-
     /**
      * Query the contract registry and populate all contract and token addresses
      * This should be called on app startup
@@ -42,7 +36,6 @@ class RegistryService(private val context: Context) {
         try {
             Log.d(TAG, "Querying contract registry...")
 
-            // Query the registry contract using SecretK
             val queryMsg = """{"get_all_contracts": {}}"""
 
             val responseString = SecretKClient.queryContract(
@@ -56,7 +49,6 @@ class RegistryService(private val context: Context) {
             if (response.has("contracts")) {
                 val contracts = response.getJSONArray("contracts")
 
-                // Parse and categorize the registry data
                 val contractsData = mutableMapOf<String, ContractInfo>()
                 val tokensData = mutableMapOf<String, ContractInfo>()
 
@@ -70,7 +62,6 @@ class RegistryService(private val context: Context) {
                         hash = info.getString("code_hash")
                     )
 
-                    // Categorize as token or contract based on name
                     if (name.contains("_token")) {
                         val tokenName = name.replace("_token", "").uppercase()
                         tokensData[tokenName] = contractInfo
@@ -79,14 +70,8 @@ class RegistryService(private val context: Context) {
                     }
                 }
 
-                // Populate the contracts
                 populateContracts(contractsData)
-
-                // Populate the tokens
                 populateTokens(tokensData)
-
-                // Save to SharedPreferences for persistence
-                saveRegistryData(contractsData, tokensData)
 
                 Log.d(TAG, "Registry data loaded successfully")
                 Log.d(TAG, "Contracts: ${contractsData.keys}")
@@ -95,15 +80,11 @@ class RegistryService(private val context: Context) {
                 return@withContext true
             } else {
                 Log.e(TAG, "No contracts field in registry response")
-
-                // Try to load from cache
-                return@withContext loadFromCache()
+                return@withContext false
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error querying registry", e)
-
-            // Try to load from cache on error
-            return@withContext loadFromCache()
+            return@withContext false
         }
     }
 
@@ -154,88 +135,6 @@ class RegistryService(private val context: Context) {
         }
 
         Log.d(TAG, "Tokens populated: ERTH=${Tokens.ERTH.contract}, ANML=${Tokens.ANML.contract}, SSCRT=${Tokens.SSCRT.contract}")
-    }
-
-    /**
-     * Save registry data to SharedPreferences for caching
-     */
-    private fun saveRegistryData(contractsData: Map<String, ContractInfo>, tokensData: Map<String, ContractInfo>) {
-        val data = JSONObject().apply {
-            put("contracts", JSONObject().apply {
-                contractsData.forEach { (name, info) ->
-                    put(name, JSONObject().apply {
-                        put("contract", info.contract)
-                        put("hash", info.hash)
-                    })
-                }
-            })
-            put("tokens", JSONObject().apply {
-                tokensData.forEach { (name, info) ->
-                    put(name, JSONObject().apply {
-                        put("contract", info.contract)
-                        put("hash", info.hash)
-                    })
-                }
-            })
-        }
-
-        prefs.edit()
-            .putString(KEY_REGISTRY_DATA, data.toString())
-            .putLong(KEY_LAST_UPDATED, System.currentTimeMillis())
-            .apply()
-    }
-
-    /**
-     * Load registry data from cache
-     */
-    private fun loadFromCache(): Boolean {
-        return try {
-            val cachedData = prefs.getString(KEY_REGISTRY_DATA, null)
-            if (cachedData != null) {
-                val data = JSONObject(cachedData)
-
-                // Parse contracts
-                val contractsData = mutableMapOf<String, ContractInfo>()
-                if (data.has("contracts")) {
-                    val contracts = data.getJSONObject("contracts")
-                    contracts.keys().forEach { name ->
-                        val info = contracts.getJSONObject(name)
-                        contractsData[name] = ContractInfo(
-                            contract = info.getString("contract"),
-                            hash = info.getString("hash")
-                        )
-                    }
-                }
-
-                // Parse tokens
-                val tokensData = mutableMapOf<String, ContractInfo>()
-                if (data.has("tokens")) {
-                    val tokens = data.getJSONObject("tokens")
-                    tokens.keys().forEach { name ->
-                        val info = tokens.getJSONObject(name)
-                        tokensData[name] = ContractInfo(
-                            contract = info.getString("contract"),
-                            hash = info.getString("hash")
-                        )
-                    }
-                }
-
-                // Populate from cache
-                populateContracts(contractsData)
-                populateTokens(tokensData)
-
-                val lastUpdated = prefs.getLong(KEY_LAST_UPDATED, 0)
-                Log.d(TAG, "Loaded registry data from cache (last updated: $lastUpdated)")
-
-                true
-            } else {
-                Log.w(TAG, "No cached registry data available")
-                false
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error loading from cache", e)
-            false
-        }
     }
 
     /**

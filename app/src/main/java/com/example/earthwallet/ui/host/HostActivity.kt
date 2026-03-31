@@ -790,18 +790,33 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
     private fun initializeRegistry() {
         registryService = RegistryService.getInstance(this)
 
-        // Load registry data in background
         CoroutineScope(Dispatchers.Main).launch {
             try {
                 val success = registryService.initializeRegistry()
                 if (success) {
                     Log.d(TAG, "Contract registry initialized successfully")
                 } else {
-                    Log.w(TAG, "Failed to initialize contract registry, using cached data if available")
+                    Log.w(TAG, "Failed to initialize contract registry")
+                    showRegistryErrorDialog()
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error initializing contract registry", e)
+                showRegistryErrorDialog()
             }
+        }
+    }
+
+    private fun showRegistryErrorDialog() {
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setView(R.layout.dialog_registry_error)
+            .setCancelable(false)
+            .create()
+
+        dialog.show()
+
+        dialog.findViewById<android.widget.Button>(R.id.retryButton)?.setOnClickListener {
+            dialog.dismiss()
+            initializeRegistry()
         }
     }
 
