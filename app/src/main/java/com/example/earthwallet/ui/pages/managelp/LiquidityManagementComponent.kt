@@ -21,6 +21,7 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import network.erth.wallet.R
 import network.erth.wallet.Constants
+import network.erth.wallet.wallet.constants.Tokens
 import network.erth.wallet.wallet.services.SecureWalletManager
 import network.erth.wallet.wallet.services.SecretKClient
 import com.google.android.material.tabs.TabLayout
@@ -352,12 +353,7 @@ class LiquidityManagementComponent : Fragment() {
     }
 
     private fun getTokenContract(tokenSymbol: String): String? {
-        // Map token symbols to contract addresses (from React tokens.js)
-        return when (tokenSymbol.uppercase()) {
-            "ANML" -> "secret14p6dhjznntlzw0yysl7p6z069nk0skv5e9qjut"
-            "SSCRT" -> "secret1k0jntykt7e4g3y88ltc60czgjuqdy4c9e8fzek"
-            else -> null
-        }
+        return Tokens.getTokenInfo(tokenSymbol)?.contract
     }
 
     private fun updateInfoTab() {

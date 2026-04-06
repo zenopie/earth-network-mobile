@@ -281,7 +281,7 @@ object TransactionExecutor {
         val sendData = JSONObject().apply {
             put("recipient", recipient)
             if (recipientHash != null) {
-                put("code_hash", recipientHash)
+                put("recipient_code_hash", recipientHash)
             }
             put("amount", amount)
             if (message != null) {
