@@ -20,6 +20,7 @@ import network.erth.wallet.wallet.services.SessionManager
 import network.erth.wallet.wallet.services.SecureWalletManager
 import network.erth.wallet.wallet.services.UpdateManager
 import network.erth.wallet.bridge.services.RegistryService
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -83,6 +84,7 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
 
     // Registry service
     private lateinit var registryService: RegistryService
+    private var registryReady = CompletableDeferred<Boolean>()
 
     // Activity result launcher for NFC scanner
     private val nfcScannerLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -465,20 +467,26 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
             // Start session with PIN
             SessionManager.startSession(this, pin)
 
-            // Check if wallets exist
-            val walletCount = SecureWalletManager.getWalletCount(this)
+            // Wait for registry before navigating to main UI
+            CoroutineScope(Dispatchers.Main).launch {
+                val registrySuccess = registryReady.await()
+                if (!registrySuccess) {
+                    showRegistryErrorDialog(pin)
+                    return@launch
+                }
 
-            if (walletCount > 0) {
-                showFragment("actions")
-                setSelectedNav("actions")
-            } else {
-                showFragment("create_wallet")
-                setSelectedNav("wallet")
+                val walletCount = SecureWalletManager.getWalletCount(this@HostActivity)
+
+                if (walletCount > 0) {
+                    showFragment("actions")
+                    setSelectedNav("actions")
+                } else {
+                    showFragment("create_wallet")
+                    setSelectedNav("wallet")
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize session", e)
-            // Stay on current screen and show error
-            // TODO: Show proper error message to user
         }
     }
 
@@ -790,23 +798,18 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
     private fun initializeRegistry() {
         registryService = RegistryService.getInstance(this)
 
-        CoroutineScope(Dispatchers.Main).launch {
+        CoroutineScope(Dispatchers.IO).launch {
             try {
                 val success = registryService.initializeRegistry()
-                if (success) {
-                    Log.d(TAG, "Contract registry initialized successfully")
-                } else {
-                    Log.w(TAG, "Failed to initialize contract registry")
-                    showRegistryErrorDialog()
-                }
+                registryReady.complete(success)
             } catch (e: Exception) {
                 Log.e(TAG, "Error initializing contract registry", e)
-                showRegistryErrorDialog()
+                registryReady.complete(false)
             }
         }
     }
 
-    private fun showRegistryErrorDialog() {
+    private fun showRegistryErrorDialog(pin: String) {
         val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
             .setView(R.layout.dialog_registry_error)
             .setCancelable(false)
@@ -816,7 +819,9 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
 
         dialog.findViewById<android.widget.Button>(R.id.retryButton)?.setOnClickListener {
             dialog.dismiss()
+            registryReady = CompletableDeferred()
             initializeRegistry()
+            initializeSessionAndNavigate(pin)
         }
     }
 

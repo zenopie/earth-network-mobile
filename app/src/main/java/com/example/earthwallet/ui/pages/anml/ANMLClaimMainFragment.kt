@@ -207,7 +207,7 @@ class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListe
                     contractAddress = Constants.REGISTRATION_CONTRACT,
                     message = exec,
                     codeHash = Constants.REGISTRATION_HASH,
-                    gasLimit = 350_000,  // Needs ~302k gas, set to 350k for safety
+                    gasLimit = 400_000,
                     contractLabel = "Registration Contract:"
                 )
 
