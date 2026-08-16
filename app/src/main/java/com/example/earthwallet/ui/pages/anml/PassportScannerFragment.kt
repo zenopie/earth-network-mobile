@@ -30,6 +30,9 @@ import org.jmrtd.PassportService
 import org.jmrtd.lds.icao.DG1File
 import org.jmrtd.lds.icao.MRZInfo
 import org.json.JSONObject
+import androidx.lifecycle.lifecycleScope
+import network.erth.wallet.ui.components.TransactionConfirmationDialog
+import network.erth.wallet.ui.host.HostActivity
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -45,6 +48,12 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
 
     companion object {
         private const val TAG = "PassportScannerFragment"
+
+        // Registration is the app's most expensive message — the chain verifies
+        // an UltraHonk proof. These mirror EarthTx.broadcast's defaults, and the
+        // fee is what the confirmation sheet checks the balance against.
+        private const val REGISTER_GAS_LIMIT = 400_000L
+        private const val REGISTER_FEE_UERTH = 2_000L
 
         @JvmStatic
         fun newInstance(): PassportScannerFragment = PassportScannerFragment()
@@ -505,22 +514,33 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
                 val proofResult = PassportProver.prove(
                     requireContext(), dg1Bytes, sod, todayYymmddUtc(),
                 )
-                val txHash = SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
-                    val earthKey = EarthWallet.deriveKey(mnemonic)
-                    // TODO(cleanup): pass the affiliate/referrer address from the register screen.
-                    Personhood.register(
-                        earthKey,
-                        proofResult.proof,
-                        proofResult.publicSignals,
-                        proofResult.signatureAlgorithm,
-                        null,
-                        dsc.certificateDer,
-                    )
+
+                // Confirm before broadcasting, and let a new human buy their gas
+                // with an ad. Proving happens first on purpose: it is the slow,
+                // failure-prone step, and there is no point asking someone to
+                // watch an ad for a transaction that was never going to exist.
+                if (confirmRegistration()) {
+                    val txHash = SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
+                        val earthKey = EarthWallet.deriveKey(mnemonic)
+                        // TODO(cleanup): pass the affiliate/referrer address from the register screen.
+                        Personhood.register(
+                            earthKey,
+                            proofResult.proof,
+                            proofResult.publicSignals,
+                            proofResult.signatureAlgorithm,
+                            null,
+                            dsc.certificateDer,
+                        )
+                    }
+                    passportData.backendHttpCode = 200
+                    passportData.backendRawResponse =
+                        "{\"registered\":true,\"txhash\":\"$txHash\",\"nullifier\":\"${proofResult.nullifierHex}\"}"
+                    Log.i(TAG, "earth registration ok: $txHash")
+                } else {
+                    Log.i(TAG, "registration cancelled at confirmation")
+                    passportData.backendHttpCode = 0
+                    passportData.backendRawResponse = "{\"cancelled\":true}"
                 }
-                passportData.backendHttpCode = 200
-                passportData.backendRawResponse =
-                    "{\"registered\":true,\"txhash\":\"$txHash\",\"nullifier\":\"${proofResult.nullifierHex}\"}"
-                Log.i(TAG, "earth registration ok: $txHash")
             } catch (e: Exception) {
                 Log.e(TAG, "earth registration failed", e)
                 passportData.backendHttpCode = 500
@@ -572,6 +592,58 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
         } catch (ignored: Exception) {
         }
         return buffer.toByteArray()
+    }
+
+    /**
+     * Shows the confirmation sheet and blocks until the user answers.
+     *
+     * Called from the passport-read background thread, so it hops to the UI
+     * thread and waits on a latch. Blocking here is deliberate: the scan already
+     * owns this thread and the rest of the flow is written straight-line, so a
+     * latch keeps the change local instead of restructuring the AsyncTask.
+     */
+    private fun confirmRegistration(): Boolean {
+        val address = SecureWalletManager.getWalletAddress(requireContext()) ?: return false
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val confirmed = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        requireActivity().runOnUiThread {
+            val details = TransactionConfirmationDialog.Details(
+                action = "Register as a human",
+                msgTypeUrl = Constants.MSG_REGISTER_TYPE_URL,
+                address = address,
+                feeUerth = REGISTER_FEE_UERTH,
+                gasLimit = REGISTER_GAS_LIMIT,
+            )
+            TransactionConfirmationDialog(requireContext()).show(
+                details,
+                viewLifecycleOwner.lifecycleScope,
+                object : TransactionConfirmationDialog.Listener {
+                    override fun onConfirmed() {
+                        confirmed.set(true)
+                        latch.countDown()
+                    }
+
+                    override fun onCancelled() {
+                        latch.countDown()
+                    }
+
+                    override fun onWatchAdForGas(callback: (Boolean) -> Unit) {
+                        val host = activity as? HostActivity
+                        if (host == null) {
+                            callback(false)
+                        } else {
+                            // The address is the SSV custom_data: it is what tells
+                            // the backend who to send the dust to.
+                            host.showRewardedAd(address, callback)
+                        }
+                    }
+                },
+            )
+        }
+
+        latch.await()
+        return confirmed.get()
     }
 
     @Throws(Exception::class)

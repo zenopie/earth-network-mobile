@@ -118,13 +118,13 @@ object PassportInputs {
         // Shared hash-binding inputs (poa_core).
         val map = LinkedHashMap<String, Any>()
         map["dg1"] = byteArrayInput(pad(dg1, DG1_MAX))
-        map["dg1_len"] = dg1.size.toString()
+        map["dg1_len"] = scalarInput(dg1.size)
         map["e_content"] = byteArrayInput(pad(eContent, ECONTENT_MAX))
-        map["e_content_len"] = eContent.size.toString()
-        map["dg1_hash_offset"] = dg1HashOffset.toString()
+        map["e_content_len"] = scalarInput(eContent.size)
+        map["dg1_hash_offset"] = scalarInput(dg1HashOffset)
         map["signed_attrs"] = byteArrayInput(pad(signedAttrs, SIGNED_ATTRS_MAX))
-        map["signed_attrs_len"] = signedAttrs.size.toString()
-        map["econtent_hash_offset"] = econtentHashOffset.toString()
+        map["signed_attrs_len"] = scalarInput(signedAttrs.size)
+        map["econtent_hash_offset"] = scalarInput(econtentHashOffset)
 
         // DSC-algorithm-specific signature/key fields + circuit selection.
         @Suppress("UNCHECKED_CAST")
@@ -170,7 +170,7 @@ object PassportInputs {
             else -> throw IllegalStateException("unsupported DSC key algorithm ${spki.algorithm.algorithm.id}")
         }
 
-        map["current_date"] = currentDateYymmdd.toString()
+        map["current_date"] = scalarInput(currentDateYymmdd)
         return Inputs(algorithm, map)
     }
 
@@ -186,6 +186,15 @@ object PassportInputs {
 
     /** noir_android takes each [u8; N] as a list of per-byte hex strings. */
     private fun byteArrayInput(b: ByteArray): List<String> = b.map { "0x%02x".format(it.toInt() and 0xff) }
+
+    /**
+     * noir_android takes a scalar (u32/Field) as a hex string too, and enforces
+     * it: Circuit.generateWitnessMap accepts a Number, or a String that starts
+     * with "0x", and rejects anything else with "Expected hexadecimal number for
+     * parameter: <name>". A decimal string is not a parse failure there — it is
+     * a hard reject, so every scalar has to go through here.
+     */
+    private fun scalarInput(v: Int): String = "0x%x".format(v)
 
     private val LIMB_MASK = BigInteger.ONE.shiftLeft(120).subtract(BigInteger.ONE)
 
