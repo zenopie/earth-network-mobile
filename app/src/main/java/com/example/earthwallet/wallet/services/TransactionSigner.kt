@@ -10,7 +10,7 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * General purpose transaction signer for Secret Network
+ * General purpose transaction signer for the earth chain
  * Handles all signature operations with proper validation and error handling
  */
 object TransactionSigner {

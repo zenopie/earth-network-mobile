@@ -1,0 +1,35 @@
+syntax = "proto3";
+package earth.dex.v1;
+
+option java_package = "network.erth.earth.proto.dex";
+option java_multiple_files = true;
+
+import "cosmos/base/v1beta1/coin.proto";
+
+// Clean proto3 mirrors of the earth chain's x/dex messages (wire-compatible).
+
+message MsgSwap {
+  string creator = 1;
+  cosmos.base.v1beta1.Coin token_in = 2;
+  string denom_out = 3;
+  string min_amount_out = 4;
+}
+
+message MsgCreatePool {
+  string creator = 1;
+  cosmos.base.v1beta1.Coin amount_a = 2;
+  cosmos.base.v1beta1.Coin amount_b = 3;
+}
+
+message MsgAddLiquidity {
+  string creator = 1;
+  uint64 pool_id = 2;
+  cosmos.base.v1beta1.Coin amount_a = 3;
+  cosmos.base.v1beta1.Coin amount_b = 4;
+}
+
+message MsgRemoveLiquidity {
+  string creator = 1;
+  uint64 pool_id = 2;
+  cosmos.base.v1beta1.Coin shares = 3;
+}

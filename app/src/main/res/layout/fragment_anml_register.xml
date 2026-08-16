@@ -73,7 +73,7 @@
                 android:layout_width="0dp"
                 android:layout_height="44dp"
                 android:layout_weight="1"
-                android:hint="secret1..."
+                android:hint="earth1..."
                 android:textSize="14sp"
                 android:textColor="#333333"
                 android:textColorHint="#666666"

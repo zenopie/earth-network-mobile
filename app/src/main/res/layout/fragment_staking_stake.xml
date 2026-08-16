@@ -51,6 +51,22 @@
 
         </LinearLayout>
 
+        <!-- Validator picker -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Validator"
+            android:textSize="14sp"
+            android:textColor="@color/text_secondary"
+            android:layout_marginBottom="6dp" />
+
+        <Spinner
+            android:id="@+id/validator_spinner"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:background="@drawable/input_background"
+            android:layout_marginBottom="16dp" />
+
         <!-- Input with ERTH logo -->
         <FrameLayout
             android:layout_width="match_parent"

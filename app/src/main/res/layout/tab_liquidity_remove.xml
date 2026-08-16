@@ -130,7 +130,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:gravity="center"
-                        android:text="Note: Removing liquidity requires a 7-day unbonding period before you can claim your tokens."
+                        android:text="Removing liquidity returns your ERTH and tokens to your wallet immediately."
                         android:textColor="#666666"
                         android:textSize="14sp" />
 

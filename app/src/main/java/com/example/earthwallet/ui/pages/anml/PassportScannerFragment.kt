@@ -21,6 +21,8 @@ import androidx.fragment.app.FragmentManager
 import androidx.fragment.app.FragmentTransaction
 import network.erth.wallet.Constants
 import network.erth.wallet.wallet.services.SecureWalletManager
+import network.erth.wallet.wallet.services.EarthWallet
+import network.erth.wallet.chain.Personhood
 import net.sf.scuba.smartcards.CardService
 import org.jmrtd.BACKey
 import org.jmrtd.BACKeySpec
@@ -239,24 +241,12 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
             return false
         }
 
-        // Check if backend was contacted successfully
-        val httpCode = passportData.backendHttpCode
-        if (httpCode == null) {
-            return false
-        }
-
-        // Check HTTP response code
-        if (httpCode < 200 || httpCode >= 300) {
-            return false
-        }
-
-        // Check if passive authentication passed
-        val passiveAuthPassed = passportData.passiveAuthenticationPassed
-        if (passiveAuthPassed == true) {
-            return true
-        }
-
-        return false
+        // The earth registration path sets backendHttpCode = 200 only after the
+        // on-chain MsgRegister succeeds. That is the authoritative success signal:
+        // the zk proof-of-personhood is verified on-chain, so there is no separate
+        // backend passive-authentication step to check.
+        val httpCode = passportData.backendHttpCode ?: return false
+        return httpCode in 200..299
     }
 
     /**
@@ -504,16 +494,37 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
             } else {
             }
 
+            // Client-side registration on the earth chain — NO backend. Prove
+            // proof-of-personhood on-device from DG1, then sign+broadcast MsgRegister.
             try {
-                val walletAddress = getCurrentWalletAddress()
-                val verification = sendToBackend(dg1Bytes, sodBytes, walletAddress, isTestScanMode)
-                if (verification != null) {
-                    passportData.backendHttpCode = verification.code
-                    passportData.backendRawResponse = verification.body
-                    parseAndAttachVerification(passportData, verification.body)
+                val sod = sodBytes ?: throw IllegalStateException("EF.SOD unavailable; cannot prove")
+                // The Document Signer travels with the registration: the chain
+                // verifies it against the CSCA trust store and binds it to the
+                // proof's dsc_key output. No pre-submission or registry wait.
+                val dsc = PassportInputs.scannedDsc(sod)
+                val proofResult = PassportProver.prove(
+                    requireContext(), dg1Bytes, sod, todayYymmddUtc(),
+                )
+                val txHash = SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
+                    val earthKey = EarthWallet.deriveKey(mnemonic)
+                    // TODO(cleanup): pass the affiliate/referrer address from the register screen.
+                    Personhood.register(
+                        earthKey,
+                        proofResult.proof,
+                        proofResult.publicSignals,
+                        proofResult.signatureAlgorithm,
+                        null,
+                        dsc.certificateDer,
+                    )
                 }
+                passportData.backendHttpCode = 200
+                passportData.backendRawResponse =
+                    "{\"registered\":true,\"txhash\":\"$txHash\",\"nullifier\":\"${proofResult.nullifierHex}\"}"
+                Log.i(TAG, "earth registration ok: $txHash")
             } catch (e: Exception) {
-                Log.e(TAG, "Error sending data to backend", e)
+                Log.e(TAG, "earth registration failed", e)
+                passportData.backendHttpCode = 500
+                passportData.backendRawResponse = "{\"error\":\"${e.message}\"}"
             }
 
             try {
@@ -537,6 +548,15 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
             Log.e(TAG, "Error reading passport", e)
             null
         }
+    }
+
+    /** Today's date as a YYMMDD integer in UTC, for the lean_poa current_date input. */
+    private fun todayYymmddUtc(): Int {
+        val cal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
+        val yy = cal.get(java.util.Calendar.YEAR) % 100
+        val mm = cal.get(java.util.Calendar.MONTH) + 1
+        val dd = cal.get(java.util.Calendar.DAY_OF_MONTH)
+        return yy * 10000 + mm * 100 + dd
     }
 
     @Throws(IOException::class)

@@ -109,7 +109,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Secret Network Address"
+                android:text="Address"
                 android:textSize="16sp"
                 android:textColor="#333333"
                 android:textStyle="bold"
@@ -128,7 +128,7 @@
                     android:layout_marginStart="15dp"
                     android:layout_marginEnd="15dp"
                     android:background="@android:color/transparent"
-                    android:hint="secret1..."
+                    android:hint="earth1..."
                     android:inputType="text"
                     android:imeOptions="actionDone"
                     android:paddingStart="18dp"

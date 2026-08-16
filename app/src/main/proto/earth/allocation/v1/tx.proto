@@ -1,0 +1,37 @@
+syntax = "proto3";
+package earth.allocation.v1;
+
+option java_package = "network.erth.earth.proto.allocation";
+option java_multiple_files = true;
+
+// Clean proto3 mirrors of the earth chain's x/allocation messages (wire-compatible;
+// gogoproto/cosmos_proto annotations omitted so protobuf-javalite generates
+// cleanly on Android).
+//
+// One engine, two streams. Every message names the stream it acts on; the two
+// share no state, so an option id only means something together with a stream.
+
+enum StreamId {
+  STREAM_ID_UNSPECIFIED = 0;
+  // One-human-one-vote. Weight comes from a live proof-of-personhood registration.
+  STREAM_ID_HUMAN = 1;
+  // Stake-weighted. Weight is the voter's bonded stake, normalized on-chain.
+  STREAM_ID_CAPITAL = 2;
+}
+
+message AllocationWeight {
+  uint64 option_id = 1;
+  uint64 percent = 2;
+}
+
+message MsgSetAllocations {
+  string creator = 1;
+  StreamId stream = 2;
+  repeated AllocationWeight percentages = 3;
+}
+
+message MsgClaimAllocation {
+  string creator = 1;
+  StreamId stream = 2;
+  uint64 option_id = 3;
+}

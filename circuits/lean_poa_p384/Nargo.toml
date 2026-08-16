@@ -1,0 +1,9 @@
+[package]
+name = "lean_poa_p384"
+type = "bin"
+authors = [""]
+compiler_version = ">=1.0.0"
+[dependencies]
+poa_core = { path = "../poa_core" }
+ecdsa = { tag = "v0.4.1", git = "https://github.com/zkpassport/noir-ecdsa" }
+bignum = { tag = "v0.10.0-1", git = "https://github.com/zkpassport/noir-bignum" }

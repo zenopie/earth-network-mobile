@@ -1,0 +1,11 @@
+[workspace]
+members = [
+  "poa_core",
+  "lean_poa",
+  "lean_poa_rsa2048",
+  "lean_poa_rsa4096",
+  "lean_poa_p384",
+  "lean_poa_brainpool256",
+  "lean_poa_brainpool384",
+  "lean_poa_brainpool512",
+]

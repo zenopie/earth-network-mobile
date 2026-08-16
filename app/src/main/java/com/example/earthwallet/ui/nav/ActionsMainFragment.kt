@@ -66,6 +66,15 @@ class ActionsMainFragment : Fragment() {
             }
         }
 
+        // Explorer (public chain data; needs no wallet)
+        view.findViewById<View>(R.id.btn_explorer)?.setOnClickListener {
+            (activity as? network.erth.wallet.ui.host.HostActivity)?.let {
+                it.showFragment("explorer")
+            } ?: run {
+                Toast.makeText(context, "Navigation not available", Toast.LENGTH_SHORT).show()
+            }
+        }
+
         // Governance - toggle expansion of submenu
         val governanceSubmenu = view.findViewById<LinearLayout>(R.id.governance_submenu)
         val governanceArrow = view.findViewById<ImageView>(R.id.governance_arrow)
@@ -75,7 +84,7 @@ class ActionsMainFragment : Fragment() {
             }
         }
 
-        // Caretaker Fund
+        // Caretaker Fund (democratic, one-human-one-vote)
         view.findViewById<View>(R.id.btn_caretaker_fund)?.setOnClickListener {
             (activity as? network.erth.wallet.ui.host.HostActivity)?.let {
                 it.showFragment("caretaker_fund")
@@ -84,7 +93,7 @@ class ActionsMainFragment : Fragment() {
             }
         }
 
-        // Deflation Fund
+        // Deflation Fund (stake-weighted)
         view.findViewById<View>(R.id.btn_deflation_fund)?.setOnClickListener {
             (activity as? network.erth.wallet.ui.host.HostActivity)?.let {
                 it.showFragment("deflation_fund")

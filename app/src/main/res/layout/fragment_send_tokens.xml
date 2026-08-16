@@ -160,7 +160,7 @@
                     android:layout_marginStart="15dp"
                     android:layout_marginEnd="75dp"
                     android:background="@android:color/transparent"
-                    android:hint="secret1... or select below"
+                    android:hint="earth1... or select below"
                     android:inputType="text"
                     android:imeOptions="actionDone"
                     android:paddingStart="18dp"

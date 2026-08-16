@@ -1,0 +1,5 @@
+# Noir/Barretenberg build artifacts + generated witnesses
+target/
+out_*/
+Prover.toml
+*.gz

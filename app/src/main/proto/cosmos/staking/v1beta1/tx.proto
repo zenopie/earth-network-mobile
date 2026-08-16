@@ -1,0 +1,36 @@
+syntax = "proto3";
+package cosmos.staking.v1beta1;
+
+option java_package = "cosmos.staking.v1beta1";
+option java_multiple_files = true;
+
+import "cosmos/base/v1beta1/coin.proto";
+
+message MsgDelegate {
+  string delegator_address = 1;
+  string validator_address = 2;
+  cosmos.base.v1beta1.Coin amount = 3;
+}
+
+message MsgUndelegate {
+  string delegator_address = 1;
+  string validator_address = 2;
+  cosmos.base.v1beta1.Coin amount = 3;
+}
+
+message MsgBeginRedelegate {
+  string delegator_address = 1;
+  string validator_src_address = 2;
+  string validator_dst_address = 3;
+  cosmos.base.v1beta1.Coin amount = 4;
+}
+
+// Cancels an in-progress unbonding entry, returning the stake to the same
+// validator. The entry has no id — it is addressed by (validator_address,
+// creation_height), so the height must come from the unbonding query.
+message MsgCancelUnbondingDelegation {
+  string delegator_address = 1;
+  string validator_address = 2;
+  cosmos.base.v1beta1.Coin amount = 3;
+  int64 creation_height = 4;
+}

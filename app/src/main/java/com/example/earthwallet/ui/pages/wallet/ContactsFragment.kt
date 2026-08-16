@@ -21,7 +21,7 @@ import network.erth.wallet.wallet.services.ContactsManager
 /**
  * ContactsFragment
  *
- * Manages a list of contacts with names and Secret Network addresses
+ * Manages a list of contacts with names and earth addresses
  * for easy recipient selection when sending tokens.
  */
 class ContactsFragment : Fragment() {
@@ -158,8 +158,8 @@ class ContactsFragment : Fragment() {
                 Toast.makeText(context, "Please enter address", Toast.LENGTH_SHORT).show()
                 return
             }
-            !address.startsWith("secret1") -> {
-                Toast.makeText(context, "Invalid Secret Network address", Toast.LENGTH_SHORT).show()
+            !address.startsWith("earth1") -> {
+                Toast.makeText(context, "Invalid earth address", Toast.LENGTH_SHORT).show()
                 return
             }
         }

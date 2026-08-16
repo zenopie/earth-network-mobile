@@ -19,8 +19,6 @@ import androidx.fragment.app.Fragment
 import network.erth.wallet.wallet.services.SessionManager
 import network.erth.wallet.wallet.services.SecureWalletManager
 import network.erth.wallet.wallet.services.UpdateManager
-import network.erth.wallet.bridge.services.RegistryService
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -82,10 +80,6 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
     private lateinit var updateManager: UpdateManager
     private var forceUpdateDialog: android.app.Dialog? = null
 
-    // Registry service
-    private lateinit var registryService: RegistryService
-    private var registryReady = CompletableDeferred<Boolean>()
-
     // Activity result launcher for NFC scanner
     private val nfcScannerLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == RESULT_OK) {
@@ -140,6 +134,15 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
         navSettings = findViewById(R.id.btn_nav_settings)
         hostContent = findViewById(R.id.host_content)
 
+        // Pad the fragment container by the soft-keyboard (IME) height so text
+        // fields aren't hidden behind the keyboard — fitsSystemWindows covers the
+        // status/nav bars but not the IME, and edge-to-edge doesn't resize for it.
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(hostContent!!) { v, insets ->
+            val ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime()).bottom
+            v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, ime)
+            insets
+        }
+
         // Find bottom navigation view - it's included via <include> tag
         bottomNavView = findViewById(R.id.bottom_nav)
 
@@ -164,9 +167,6 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
             showFragment("settings")
             setSelectedNav("settings")
         }
-
-        // Initialize contract registry (loads contract addresses on startup)
-        initializeRegistry()
 
         // Initialize AdMob
         initializeAds()
@@ -360,6 +360,20 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
                     WindowInsetsUtil.showSystemBars(window)
                 }
             }
+            "explorer" -> {
+                network.erth.wallet.ui.pages.explorer.ExplorerFragment.newInstance().also {
+                    showBottomNavigation()
+                    WindowInsetsUtil.showSystemBars(window)
+                }
+            }
+            "explorer_detail" -> {
+                // Arguments (kind + value) are applied by the generic assignment
+                // after this `when`.
+                network.erth.wallet.ui.pages.explorer.ExplorerDetailFragment.newInstance().also {
+                    showBottomNavigation()
+                    WindowInsetsUtil.showSystemBars(window)
+                }
+            }
             "settings" -> {
                 network.erth.wallet.ui.pages.wallet.WalletSettingsFragment.newInstance().also {
                     // Show navigation and status bar for normal fragments
@@ -368,15 +382,15 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
                 }
             }
             "caretaker_fund" -> {
+                // Caretaker Fund: democratic (one-human-one-vote) allocations.
                 network.erth.wallet.ui.pages.governance.CaretakerFundFragment().also {
-                    // Show navigation and status bar for normal fragments
                     showBottomNavigation()
                     WindowInsetsUtil.showSystemBars(window)
                 }
             }
             "deflation_fund" -> {
+                // Deflation Fund: stake-weighted allocations.
                 network.erth.wallet.ui.pages.governance.DeflationFundFragment().also {
-                    // Show navigation and status bar for normal fragments
                     showBottomNavigation()
                     WindowInsetsUtil.showSystemBars(window)
                 }
@@ -467,14 +481,7 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
             // Start session with PIN
             SessionManager.startSession(this, pin)
 
-            // Wait for registry before navigating to main UI
             CoroutineScope(Dispatchers.Main).launch {
-                val registrySuccess = registryReady.await()
-                if (!registrySuccess) {
-                    showRegistryErrorDialog(pin)
-                    return@launch
-                }
-
                 val walletCount = SecureWalletManager.getWalletCount(this@HostActivity)
 
                 if (walletCount > 0) {
@@ -789,40 +796,6 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
         // PIN was successfully entered and verified in PinEntryFragment
         // Session has already been started, just navigate to appropriate screen
         initializeSessionAndNavigate(pin)
-    }
-
-    /**
-     * Initialize contract registry
-     * Queries the registry contract to get the latest contract and token addresses
-     */
-    private fun initializeRegistry() {
-        registryService = RegistryService.getInstance(this)
-
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val success = registryService.initializeRegistry()
-                registryReady.complete(success)
-            } catch (e: Exception) {
-                Log.e(TAG, "Error initializing contract registry", e)
-                registryReady.complete(false)
-            }
-        }
-    }
-
-    private fun showRegistryErrorDialog(pin: String) {
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
-            .setView(R.layout.dialog_registry_error)
-            .setCancelable(false)
-            .create()
-
-        dialog.show()
-
-        dialog.findViewById<android.widget.Button>(R.id.retryButton)?.setOnClickListener {
-            dialog.dismiss()
-            registryReady = CompletableDeferred()
-            initializeRegistry()
-            initializeSessionAndNavigate(pin)
-        }
     }
 
     /**

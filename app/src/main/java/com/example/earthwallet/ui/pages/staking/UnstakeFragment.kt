@@ -8,7 +8,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.text.Editable
-import android.text.TextUtils
 import android.text.TextWatcher
 import android.util.Log
 import android.view.LayoutInflater
@@ -20,16 +19,24 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
+import com.google.protobuf.Any as ProtoAny
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import network.erth.wallet.R
-import network.erth.wallet.Constants
+import network.erth.wallet.chain.EarthTx
+import network.erth.wallet.chain.Staking
+import network.erth.wallet.wallet.constants.Tokens
+import network.erth.wallet.wallet.services.EarthWallet
 import network.erth.wallet.wallet.services.SecureWalletManager
-import network.erth.wallet.wallet.services.SecretKClient
-import network.erth.wallet.wallet.services.TransactionExecutor
-import org.json.JSONObject
+import java.math.BigInteger
 
 /**
- * Fragment for unstaking ERTH tokens
+ * Undelegate ERTH (uerth) from validators via native x/staking. Unbonded funds
+ * become available automatically after the chain's unbonding period.
+ *
+ * The requested amount is drawn from the user's delegations largest-first, emitting
+ * one MsgUndelegate per validator touched, so the existing single-input UI is kept.
  */
 class UnstakeFragment : Fragment() {
 
@@ -40,16 +47,13 @@ class UnstakeFragment : Fragment() {
         fun newInstance(): UnstakeFragment = UnstakeFragment()
     }
 
-    // UI Components
     private lateinit var unstakeBalanceLabel: TextView
     private lateinit var unstakeMaxButton: Button
     private lateinit var unstakeAmountInput: EditText
     private lateinit var unstakeButton: Button
 
-    // Data
     private var stakedBalance = 0.0
-
-    // Broadcast receiver for transaction success
+    private var delegations: List<Staking.Delegation> = emptyList()
     private var transactionSuccessReceiver: BroadcastReceiver? = null
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
@@ -58,12 +62,10 @@ class UnstakeFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-
         initializeViews(view)
         setupBroadcastReceiver()
         registerBroadcastReceiver()
         setupClickListeners()
-
         refreshData()
     }
 
@@ -78,7 +80,6 @@ class UnstakeFragment : Fragment() {
         transactionSuccessReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
                 refreshData()
-                Handler(Looper.getMainLooper()).postDelayed({ refreshData() }, 100)
                 Handler(Looper.getMainLooper()).postDelayed({ refreshData() }, 500)
             }
         }
@@ -101,187 +102,95 @@ class UnstakeFragment : Fragment() {
 
     private fun setupClickListeners() {
         unstakeMaxButton.setOnClickListener {
-            if (stakedBalance > 0) {
-                unstakeAmountInput.setText(stakedBalance.toString())
-            }
+            if (stakedBalance > 0) unstakeAmountInput.setText(stakedBalance.toString())
         }
-
         unstakeAmountInput.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) {
-                validateUnstakeButton()
-            }
+            override fun afterTextChanged(s: Editable?) { validateUnstakeButton() }
         })
-
         unstakeButton.setOnClickListener { handleUnstake() }
     }
 
     fun refreshData() {
-        queryStakedBalance()
-    }
-
-    private fun queryStakedBalance() {
         lifecycleScope.launch {
             try {
-                val userAddress = SecureWalletManager.getWalletAddress(requireContext())
-                if (TextUtils.isEmpty(userAddress)) {
-                    stakedBalance = 0.0
-                    updateUI()
-                    return@launch
-                }
-
-                val queryMsg = JSONObject()
-                val getUserInfo = JSONObject()
-                getUserInfo.put("address", userAddress)
-                queryMsg.put("get_user_info", getUserInfo)
-
-                val result = SecretKClient.queryContractJson(
-                    Constants.STAKING_CONTRACT,
-                    queryMsg,
-                    Constants.STAKING_HASH
-                )
-
-                parseStakingResult(result)
-
+                val address = SecureWalletManager.getWalletAddress(requireContext()) ?: return@launch
+                delegations = withContext(Dispatchers.IO) { Staking.delegations(address) }
+                val totalBase = delegations.fold(BigInteger.ZERO) { acc, d -> acc + (d.amount.toBigIntegerOrNull() ?: BigInteger.ZERO) }
+                stakedBalance = totalBase.toDouble() / 1_000_000.0
             } catch (e: Exception) {
-                Log.e(TAG, "Error querying staked balance", e)
-                stakedBalance = 0.0
-                updateUI()
-            }
-        }
-    }
-
-    private fun parseStakingResult(result: JSONObject) {
-        try {
-            var dataObj = result
-            if (result.has("error") && result.has("decryption_error")) {
-                val decryptionError = result.getString("decryption_error")
-                val jsonMarker = "base64=Value "
-                val jsonIndex = decryptionError.indexOf(jsonMarker)
-                if (jsonIndex != -1) {
-                    val startIndex = jsonIndex + jsonMarker.length
-                    val endIndex = decryptionError.indexOf(" of type", startIndex)
-                    if (endIndex != -1) {
-                        val jsonString = decryptionError.substring(startIndex, endIndex)
-                        try {
-                            dataObj = JSONObject(jsonString)
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error parsing JSON from decryption_error", e)
-                        }
-                    }
-                }
-            } else if (result.has("data")) {
-                dataObj = result.getJSONObject("data")
-            }
-
-            if (dataObj.has("user_info") && !dataObj.isNull("user_info")) {
-                val userInfo = dataObj.getJSONObject("user_info")
-                if (userInfo.has("staked_amount")) {
-                    val stakedAmountMicro = userInfo.getLong("staked_amount")
-                    stakedBalance = stakedAmountMicro / 1_000_000.0
-                }
-            } else {
+                Log.e(TAG, "Error querying delegations", e)
+                delegations = emptyList()
                 stakedBalance = 0.0
             }
-
-            activity?.runOnUiThread { updateUI() }
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error parsing staking result", e)
+            updateUI()
         }
     }
 
     private fun updateUI() {
-        if (activity == null) return
-
-        activity?.runOnUiThread {
-            if (stakedBalance > 0) {
-                unstakeBalanceLabel.text = String.format("Staked: %,.0f", stakedBalance)
-                unstakeMaxButton.visibility = View.VISIBLE
-            } else {
-                unstakeBalanceLabel.text = "No staked ERTH"
-                unstakeMaxButton.visibility = View.GONE
-            }
-
-            validateUnstakeButton()
+        if (stakedBalance > 0) {
+            unstakeBalanceLabel.text = String.format("Staked: %,.2f", stakedBalance)
+            unstakeMaxButton.visibility = View.VISIBLE
+        } else {
+            unstakeBalanceLabel.text = "No staked ERTH"
+            unstakeMaxButton.visibility = View.GONE
         }
+        validateUnstakeButton()
     }
 
     private fun validateUnstakeButton() {
-        val amountText = unstakeAmountInput.text.toString().trim()
-        var isValid = false
-
-        if (!TextUtils.isEmpty(amountText)) {
-            try {
-                val amount = amountText.toDouble()
-                isValid = amount > 0 && amount <= stakedBalance
-            } catch (e: NumberFormatException) { }
-        }
-
-        unstakeButton.isEnabled = isValid
+        val amount = unstakeAmountInput.text.toString().trim().toDoubleOrNull()
+        unstakeButton.isEnabled = amount != null && amount > 0 && amount <= stakedBalance
     }
 
     private fun handleUnstake() {
         val amountText = unstakeAmountInput.text.toString().trim()
-        if (TextUtils.isEmpty(amountText)) {
-            context?.let {
-                Toast.makeText(it, "Please enter an amount to unstake", Toast.LENGTH_SHORT).show()
-            }
+        val amount = amountText.toDoubleOrNull()
+        if (amount == null || amount <= 0) {
+            Toast.makeText(context, "Please enter an amount to unstake", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (amount > stakedBalance) {
+            Toast.makeText(context, "Insufficient staked balance", Toast.LENGTH_SHORT).show()
+            return
+        }
+        var remaining = Tokens.parseTokenAmount(amountText, "ERTH")?.let { BigInteger.valueOf(it) }
+        if (remaining == null || remaining <= BigInteger.ZERO) {
+            Toast.makeText(context, "Invalid amount", Toast.LENGTH_SHORT).show()
             return
         }
 
+        unstakeButton.isEnabled = false
         lifecycleScope.launch {
             try {
-                val amount = amountText.toDouble()
-                if (amount <= 0) {
-                    context?.let {
-                        Toast.makeText(it, "Amount must be greater than 0", Toast.LENGTH_SHORT).show()
-                    }
-                    return@launch
-                }
-
-                if (amount > stakedBalance) {
-                    context?.let {
-                        Toast.makeText(it, "Insufficient staked balance", Toast.LENGTH_SHORT).show()
-                    }
-                    return@launch
-                }
-
-                val amountMicro = Math.round(amount * 1_000_000)
-
-                val withdrawMsg = JSONObject()
-                val withdraw = JSONObject()
-                withdraw.put("amount", amountMicro.toString())
-                withdrawMsg.put("withdraw", withdraw)
-
-                val result = TransactionExecutor.executeContract(
-                    fragment = this@UnstakeFragment,
-                    contractAddress = Constants.STAKING_CONTRACT,
-                    message = withdrawMsg,
-                    codeHash = Constants.STAKING_HASH,
-                    contractLabel = "Staking Contract:"
-                )
-
-                result.onSuccess {
-                    unstakeAmountInput.setText("")
-                    refreshData()
-                }.onFailure { error ->
-                    if (error.message != "Transaction cancelled by user" &&
-                        error.message != "Authentication failed") {
-                        context?.let {
-                            Toast.makeText(it, "Failed: ${error.message}", Toast.LENGTH_SHORT).show()
+                val txHash = withContext(Dispatchers.IO) {
+                    SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
+                        val key = EarthWallet.deriveKey(mnemonic)
+                        val delegator = EarthWallet.address(key)
+                        val msgs = ArrayList<ProtoAny>()
+                        // Draw largest-first across delegations until the requested amount is covered.
+                        for (d in delegations.sortedByDescending { it.amount.toBigIntegerOrNull() ?: BigInteger.ZERO }) {
+                            if (remaining!! <= BigInteger.ZERO) break
+                            val available = d.amount.toBigIntegerOrNull() ?: BigInteger.ZERO
+                            if (available <= BigInteger.ZERO) continue
+                            val take = if (available < remaining) available else remaining!!
+                            msgs.add(Staking.msgUndelegate(delegator, d.validator, take.toString()))
+                            remaining = remaining!! - take
                         }
+                        if (msgs.isEmpty()) throw IllegalStateException("Nothing to unstake")
+                        EarthTx.broadcast(key, msgs)
                     }
                 }
-
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
+                Log.i(TAG, "Undelegate broadcast: $txHash")
+                Toast.makeText(context, "Unstaking started", Toast.LENGTH_SHORT).show()
+                unstakeAmountInput.setText("")
+                refreshData()
             } catch (e: Exception) {
                 Log.e(TAG, "Error unstaking ERTH", e)
-                context?.let {
-                    Toast.makeText(it, "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
-                }
+                Toast.makeText(context, "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
+            } finally {
+                validateUnstakeButton()
             }
         }
     }

@@ -34,7 +34,7 @@
                             android:textColor="#333333"
                             android:textSize="16sp"
                             android:textStyle="bold"
-                            tools:text="SCRT" />
+                            tools:text="ANML" />
 
                         <View
                             android:layout_width="0dp"
@@ -112,7 +112,7 @@
                             android:textSize="20sp"
                             android:textStyle="bold"
                             android:gravity="end"
-                            tools:hint="Amount of SCRT" />
+                            tools:hint="Amount of token" />
 
                     </RelativeLayout>
 

@@ -128,7 +128,7 @@ object SecureWalletManager {
 
     /**
      * Execute a suspend operation with mnemonic from active session.
-     * Allows calling suspend functions (like SecretKClient methods) within the operation.
+     * Allows calling suspend functions within the operation.
      *
      * @param context Android context
      * @param operation The suspend operation to execute with the mnemonic

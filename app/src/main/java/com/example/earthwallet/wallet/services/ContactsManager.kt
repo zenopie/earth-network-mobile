@@ -61,7 +61,7 @@ object ContactsManager {
             return false
         }
 
-        if (!address.startsWith("secret1")) {
+        if (!address.startsWith("earth1")) {
             return false
         }
 
@@ -118,7 +118,7 @@ object ContactsManager {
             return false
         }
 
-        if (!newAddress.startsWith("secret1")) {
+        if (!newAddress.startsWith("earth1")) {
             return false
         }
 

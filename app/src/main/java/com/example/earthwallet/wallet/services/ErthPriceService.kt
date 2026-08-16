@@ -3,58 +3,47 @@ package network.erth.wallet.wallet.services
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
+import network.erth.wallet.chain.Dex
+import network.erth.wallet.wallet.constants.Tokens
 
 /**
- * Service to fetch and cache ERTH token price from the API
+ * Derives the ERTH price in USD entirely on-chain from the ERTH/USDC dex pool
+ * (USDC is treated as $1). No external price API is needed — every other USD
+ * figure in the app is this price times an on-chain pool spot rate.
  */
 object ErthPriceService {
     private const val TAG = "ErthPriceService"
-    private const val ERTH_API_URL = "https://api.erth.network/erth-price"
     private const val CACHE_TTL_MS = 60_000L // 1 minute cache
 
     private var cachedPrice: Double? = null
     private var lastFetchTime: Long = 0
 
     /**
-     * Fetch the current ERTH price in USD
-     * @return The ERTH price in USD, or null if fetch fails
+     * ERTH price in USD, derived from the ERTH/USDC pool spot rate, or null if
+     * there is no USDC pool yet (falls back to the last cached value if any).
      */
     suspend fun fetchErthPrice(): Double? = withContext(Dispatchers.IO) {
-        // Return cached price if still valid
         val now = System.currentTimeMillis()
         if (cachedPrice != null && (now - lastFetchTime) < CACHE_TTL_MS) {
             return@withContext cachedPrice
         }
 
         try {
-            val url = URL(ERTH_API_URL)
-            val connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "GET"
-            connection.connectTimeout = 10_000
-            connection.readTimeout = 10_000
-            connection.setRequestProperty("Accept", "application/json")
-
-            val responseCode = connection.responseCode
-            if (responseCode == HttpURLConnection.HTTP_OK) {
-                val response = connection.inputStream.bufferedReader().use { it.readText() }
-                val json = JSONObject(response)
-
-                val price = json.optDouble("price", -1.0)
-                if (price > 0) {
-                    cachedPrice = price
-                    lastFetchTime = now
-                    return@withContext price
-                }
+            val pool = Dex.poolForToken(Tokens.USDC.denom) ?: return@withContext cachedPrice
+            val erthReserve = pool.erthReserve.toDoubleOrNull() ?: return@withContext cachedPrice
+            val usdcReserve = pool.tokenReserve.toDoubleOrNull() ?: return@withContext cachedPrice
+            if (erthReserve <= 0) return@withContext cachedPrice
+            // ERTH and USDC share 6 decimals, so usdc/erth is USD per ERTH directly.
+            val price = usdcReserve / erthReserve
+            if (price > 0) {
+                cachedPrice = price
+                lastFetchTime = now
+                return@withContext price
             }
-
-            Log.w(TAG, "Failed to fetch ERTH price: HTTP $responseCode")
-            return@withContext cachedPrice // Return stale cache if available
+            return@withContext cachedPrice
         } catch (e: Exception) {
-            Log.e(TAG, "Error fetching ERTH price", e)
-            return@withContext cachedPrice // Return stale cache if available
+            Log.e(TAG, "Error deriving ERTH price from USDC pool", e)
+            return@withContext cachedPrice
         }
     }
 

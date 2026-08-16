@@ -14,23 +14,26 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import network.erth.wallet.R
-import network.erth.wallet.Constants
+import network.erth.wallet.wallet.services.EarthWallet
 import network.erth.wallet.wallet.services.SecureWalletManager
-import network.erth.wallet.wallet.services.SecretKClient
-import network.erth.wallet.wallet.services.TransactionExecutor
-import org.json.JSONArray
-import org.json.JSONObject
+import network.erth.wallet.chain.EarthTx
+import network.erth.wallet.chain.Staking
 import java.text.SimpleDateFormat
 import java.util.*
 
 /**
- * Fragment for managing unbonding tokens
- * Corresponds to the "Unbonding" tab in the React component
+ * Displays in-progress native unbonding delegations.
+ *
+ * Unbonded funds return to the wallet automatically once the period elapses, so
+ * there is nothing to claim — but an entry can be CANCELLED, which returns the
+ * stake to the same validator immediately and resumes earning rewards instead of
+ * waiting out the remaining days.
  */
 class UnbondingFragment : Fragment() {
 
@@ -41,18 +44,22 @@ class UnbondingFragment : Fragment() {
         fun newInstance(): UnbondingFragment = UnbondingFragment()
     }
 
-    // UI Components
     private lateinit var unbondingEntriesContainer: LinearLayout
     private lateinit var noUnbondingText: LinearLayout
 
-    // Data
-    private val unbondingEntries = mutableListOf<UnbondingEntry>()
-
-    // Broadcast receiver for transaction success
+    private val unbondingEntries = mutableListOf<Entry>()
     private var transactionSuccessReceiver: BroadcastReceiver? = null
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
         return inflater.inflate(R.layout.fragment_unbonding, container, false)
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        initializeViews(view)
+        setupBroadcastReceiver()
+        registerBroadcastReceiver()
+        refreshData()
     }
 
     private fun initializeViews(view: View) {
@@ -63,31 +70,10 @@ class UnbondingFragment : Fragment() {
     private fun setupBroadcastReceiver() {
         transactionSuccessReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
-
-                // Start multiple refresh attempts to ensure UI updates during animation
-                refreshData() // First immediate refresh
-
-                // Stagger additional refreshes to catch the UI during animation
-                Handler(Looper.getMainLooper()).postDelayed({
-                    refreshData()
-                }, 100) // 100ms delay
-
-                Handler(Looper.getMainLooper()).postDelayed({
-                    refreshData()
-                }, 500) // 500ms delay
+                refreshData()
+                Handler(Looper.getMainLooper()).postDelayed({ refreshData() }, 500)
             }
         }
-    }
-
-    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-        super.onViewCreated(view, savedInstanceState)
-
-        initializeViews(view)
-        setupBroadcastReceiver()
-        registerBroadcastReceiver()
-
-        // Load initial data
-        refreshData()
     }
 
     private fun registerBroadcastReceiver() {
@@ -105,247 +91,129 @@ class UnbondingFragment : Fragment() {
         }
     }
 
-    override fun onResume() {
-        super.onResume()
-        // Refresh data when user navigates to this fragment
-        refreshData()
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-
-        // Unregister broadcast receiver
-        if (transactionSuccessReceiver != null && context != null) {
-            try {
-                requireActivity().applicationContext.unregisterReceiver(transactionSuccessReceiver)
-            } catch (e: IllegalArgumentException) {
-                // Receiver was not registered, ignore
-            } catch (e: Exception) {
-                Log.e(TAG, "Error unregistering receiver", e)
-            }
-        }
-    }
-
-    /**
-     * Refresh unbonding data by querying staking contract directly
-     */
     fun refreshData() {
-
         lifecycleScope.launch {
             try {
-                val userAddress = SecureWalletManager.getWalletAddress(requireContext())
-                if (userAddress == null) {
-                    return@launch
+                val address = network.erth.wallet.wallet.services.SecureWalletManager.getWalletAddress(requireContext())
+                    ?: return@launch
+                val entries = withContext(Dispatchers.IO) { Staking.unbondingDelegations(address) }
+                unbondingEntries.clear()
+                for (e in entries) {
+                    unbondingEntries.add(
+                        Entry(
+                            amount = (e.balance.toLongOrNull() ?: 0L) / 1_000_000.0,
+                            completionMillis = parseRfc3339(e.completionTime),
+                            validator = e.validator,
+                            balanceUerth = e.balance,
+                            creationHeight = e.creationHeight,
+                        )
+                    )
                 }
-
-                // Create query message: { get_user_info: { address: "secret1..." } }
-                val queryJson = "{\"get_user_info\": {\"address\": \"$userAddress\"}}"
-
-                val result = SecretKClient.queryContractJson(
-                    Constants.STAKING_CONTRACT,
-                    JSONObject(queryJson),
-                    Constants.STAKING_HASH
-                )
-
-                // Parse results
-                parseUnbondingEntries(result)
                 updateUI()
-
             } catch (e: Exception) {
                 Log.e(TAG, "Error querying unbonding data", e)
             }
         }
     }
 
-    private fun parseUnbondingEntries(data: JSONObject) {
-        unbondingEntries.clear()
-
-        try {
-            // Handle potential decryption_error format like other fragments
-            var dataObj = data
-            if (data.has("error") && data.has("decryption_error")) {
-                val decryptionError = data.getString("decryption_error")
-
-                // Extract JSON from error message if needed
-                val jsonMarker = "base64=Value "
-                val jsonIndex = decryptionError.indexOf(jsonMarker)
-                if (jsonIndex != -1) {
-                    val startIndex = jsonIndex + jsonMarker.length
-                    val endIndex = decryptionError.indexOf(" of type", startIndex)
-                    if (endIndex != -1) {
-                        val jsonString = decryptionError.substring(startIndex, endIndex)
-                        try {
-                            dataObj = JSONObject(jsonString)
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error parsing JSON from decryption_error", e)
-                        }
-                    }
-                }
-            } else if (data.has("data")) {
-                dataObj = data.getJSONObject("data")
+    private fun parseRfc3339(s: String): Long {
+        if (s.isEmpty()) return 0L
+        return try {
+            // completion_time looks like 2023-01-02T03:04:05.123456789Z
+            val trimmed = s.substringBefore('.').removeSuffix("Z")
+            val fmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
             }
-
-            // Parse unbonding entries
-            if (dataObj.has("unbonding_entries") && !dataObj.isNull("unbonding_entries")) {
-                val entries = dataObj.getJSONArray("unbonding_entries")
-
-                for (i in 0 until entries.length()) {
-                    val entry = entries.getJSONObject(i)
-
-                    val amountMicro = entry.getLong("amount")
-                    val unbondingTimeNanos = entry.getLong("unbonding_time")
-
-                    // Convert amount from micro to macro units
-                    val amount = amountMicro / 1_000_000.0
-
-                    // Convert time from nanoseconds to milliseconds
-                    val unbondingTimeMillis = unbondingTimeNanos / 1_000_000
-
-                    unbondingEntries.add(
-                        UnbondingEntry(
-                            amountMicro, // Keep original for contract calls
-                            amount,
-                            unbondingTimeNanos, // Keep original for contract calls
-                            unbondingTimeMillis
-                        )
-                    )
-
-                }
-            }
-
+            fmt.parse(trimmed)?.time ?: 0L
         } catch (e: Exception) {
-            Log.e(TAG, "Error parsing unbonding entries", e)
+            0L
         }
     }
 
     private fun updateUI() {
         if (activity == null) return
-
-        activity?.runOnUiThread {
-            // Clear existing views
-            unbondingEntriesContainer.removeAllViews()
-
-            if (unbondingEntries.isEmpty()) {
-                noUnbondingText.visibility = View.VISIBLE
-                unbondingEntriesContainer.visibility = View.GONE
-            } else {
-                noUnbondingText.visibility = View.GONE
-                unbondingEntriesContainer.visibility = View.VISIBLE
-
-                // Add entry views
-                for (entry in unbondingEntries) {
-                    addUnbondingEntryView(entry)
-                }
-            }
+        unbondingEntriesContainer.removeAllViews()
+        if (unbondingEntries.isEmpty()) {
+            noUnbondingText.visibility = View.VISIBLE
+            unbondingEntriesContainer.visibility = View.GONE
+        } else {
+            noUnbondingText.visibility = View.GONE
+            unbondingEntriesContainer.visibility = View.VISIBLE
+            for (entry in unbondingEntries) addUnbondingEntryView(entry)
         }
     }
 
-    private fun addUnbondingEntryView(entry: UnbondingEntry) {
-        val inflater = layoutInflater
-        val entryView = inflater.inflate(R.layout.item_unbonding_entry, unbondingEntriesContainer, false)
+    private fun addUnbondingEntryView(entry: Entry) {
+        val entryView = layoutInflater.inflate(R.layout.item_unbonding_entry, unbondingEntriesContainer, false)
 
-        // Set data
         val amountText = entryView.findViewById<TextView>(R.id.unbonding_amount_text)
         val dateText = entryView.findViewById<TextView>(R.id.unbonding_date_text)
         val actionButton = entryView.findViewById<Button>(R.id.unbonding_action_button)
 
         amountText.text = String.format(Locale.getDefault(), "%,.2f ERTH", entry.amount)
-
         val dateFormat = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault())
-        val dateString = dateFormat.format(Date(entry.unbondingTimeMillis))
-        dateText.text = "Available: $dateString"
+        dateText.text = "Available: ${dateFormat.format(Date(entry.completionMillis))}"
 
-        // Check if entry is matured
-        val isMatured = System.currentTimeMillis() >= entry.unbondingTimeMillis
-
-        if (isMatured) {
-            // Show claim button
-            actionButton.text = "Claim"
-            actionButton.setBackgroundResource(R.drawable.green_button_bg)
-            actionButton.setOnClickListener { handleClaimUnbonded() }
-        } else {
-            // Show cancel button
-            actionButton.text = "Cancel"
-            actionButton.setBackgroundResource(R.drawable.address_box_bg)
-            actionButton.setOnClickListener { handleCancelUnbond(entry) }
-        }
+        // Auto-release needs no action, but cancelling does: it puts the stake
+        // back with the same validator immediately.
+        actionButton.visibility = View.VISIBLE
+        actionButton.text = "Cancel"
+        actionButton.setOnClickListener { cancelUnbonding(entry, actionButton) }
 
         unbondingEntriesContainer.addView(entryView)
     }
 
-    private fun handleClaimUnbonded() {
+    /** Cancels one unbonding entry, returning its stake to the same validator. */
+    private fun cancelUnbonding(entry: Entry, button: Button) {
+        button.isEnabled = false
         lifecycleScope.launch {
             try {
-                // Create claim unbonded message: { claim_unbonded: {} }
-                val claimMsg = JSONObject()
-                claimMsg.put("claim_unbonded", JSONObject())
-
-                val result = TransactionExecutor.executeContract(
-                    fragment = this@UnbondingFragment,
-                    contractAddress = Constants.STAKING_CONTRACT,
-                    message = claimMsg,
-                    codeHash = Constants.STAKING_HASH,
-                    contractLabel = "Staking Contract:"
-                )
-
-                result.onSuccess {
-                    refreshData() // Refresh to update unbonding list
-                }.onFailure { error ->
-                    if (error.message != "Transaction cancelled by user" &&
-                        error.message != "Authentication failed") {
-                        Toast.makeText(context, "Failed: ${error.message}", Toast.LENGTH_SHORT).show()
+                withContext(Dispatchers.IO) {
+                    SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
+                        val key = EarthWallet.deriveKey(mnemonic)
+                        val delegator = EarthWallet.address(key)
+                        EarthTx.broadcast(
+                            key,
+                            listOf(
+                                Staking.msgCancelUnbonding(
+                                    delegator,
+                                    entry.validator,
+                                    entry.balanceUerth,
+                                    entry.creationHeight,
+                                )
+                            ),
+                        )
                     }
                 }
-
+                refreshData()
             } catch (e: Exception) {
-                Log.e(TAG, "Error claiming unbonded tokens", e)
-                Toast.makeText(context, "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                Log.e(TAG, "Failed to cancel unbonding", e)
+                button.isEnabled = true
             }
         }
     }
 
-    private fun handleCancelUnbond(entry: UnbondingEntry) {
-        lifecycleScope.launch {
+    override fun onResume() {
+        super.onResume()
+        refreshData()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (transactionSuccessReceiver != null && context != null) {
             try {
-                // Create cancel unbond message: { cancel_unbond: { amount: "123456", unbonding_time: "1234567890" } }
-                // Both amount and unbonding_time should be strings to match the web app implementation
-                val cancelMsg = JSONObject()
-                val cancelUnbond = JSONObject()
-                cancelUnbond.put("amount", entry.amountMicro.toString()) // Use original micro units as string
-                cancelUnbond.put("unbonding_time", entry.unbondingTimeNanos.toString()) // Use original nanoseconds as string
-                cancelMsg.put("cancel_unbond", cancelUnbond)
-
-                val result = TransactionExecutor.executeContract(
-                    fragment = this@UnbondingFragment,
-                    contractAddress = Constants.STAKING_CONTRACT,
-                    message = cancelMsg,
-                    codeHash = Constants.STAKING_HASH,
-                    contractLabel = "Staking Contract:"
-                )
-
-                result.onSuccess {
-                    refreshData() // Refresh to update unbonding list
-                }.onFailure { error ->
-                    if (error.message != "Transaction cancelled by user" &&
-                        error.message != "Authentication failed") {
-                        Toast.makeText(context, "Failed: ${error.message}", Toast.LENGTH_SHORT).show()
-                    }
-                }
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Error canceling unbond", e)
-                Toast.makeText(context, "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
+                requireActivity().applicationContext.unregisterReceiver(transactionSuccessReceiver)
+            } catch (e: Exception) { }
         }
     }
 
-    /**
-     * Data class for unbonding entries
-     */
-    private data class UnbondingEntry(
-        val amountMicro: Long, // For contract calls
-        val amount: Double, // For display
-        val unbondingTimeNanos: Long, // For contract calls
-        val unbondingTimeMillis: Long // For display
+    private data class Entry(
+        val amount: Double,
+        val completionMillis: Long,
+        val validator: String,
+        val balanceUerth: String,
+        // Unbonding entries have no id; cancelling addresses one by
+        // (validator, creationHeight).
+        val creationHeight: Long,
     )
 }

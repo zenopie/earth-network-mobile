@@ -13,20 +13,16 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.text.DecimalFormat
-import java.io.IOException
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
-import network.erth.wallet.Constants
-import okhttp3.Call
-import okhttp3.Callback
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.Response
-import org.json.JSONException
-import org.json.JSONObject
+import network.erth.wallet.wallet.services.ErthPriceService
 
 class ANMLRegisterFragment : Fragment() {
 
@@ -56,7 +52,6 @@ class ANMLRegisterFragment : Fragment() {
     private var rewardAmountText: TextView? = null
     private var affiliateAddressInput: EditText? = null
     private lateinit var qrScannerLauncher: ActivityResultLauncher<ScanOptions>
-    private var httpClient: OkHttpClient? = null
     private var currentErthPrice: Double? = null
 
     fun setANMLRegisterListener(listener: ANMLRegisterListener) {
@@ -154,44 +149,14 @@ class ANMLRegisterFragment : Fragment() {
     }
 
     private fun fetchErthPriceAndUpdateDisplay() {
-
-        if (httpClient == null) {
-            httpClient = OkHttpClient()
+        // Price is derived on-chain from the ERTH/USDC pool (see ErthPriceService).
+        lifecycleScope.launch {
+            val price = withContext(Dispatchers.IO) { ErthPriceService.fetchErthPrice() }
+            if (price != null && price > 0) {
+                currentErthPrice = price
+                updateRewardDisplay()
+            }
         }
-
-        val url = "${Constants.BACKEND_BASE_URL}/erth-price"
-
-        val request = Request.Builder()
-            .url(url)
-            .build()
-
-        httpClient?.newCall(request)?.enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                Log.e(TAG, "Failed to fetch ERTH price", e)
-                // Don't show error to user, just continue without USD display
-            }
-
-            override fun onResponse(call: Call, response: Response) {
-                response.use { resp ->
-                    if (resp.isSuccessful && resp.body != null) {
-                        try {
-                            val responseBody = resp.body!!.string()
-                            val json = JSONObject(responseBody)
-                            val price = json.getDouble("price")
-
-                            // Update UI on main thread
-                            activity?.runOnUiThread {
-                                currentErthPrice = price
-                                updateRewardDisplay()
-                            }
-                        } catch (e: JSONException) {
-                            Log.e(TAG, "Failed to parse ERTH price response", e)
-                        }
-                    } else {
-                    }
-                }
-            }
-        })
     }
 
     private fun launchQRScanner() {
@@ -210,11 +175,11 @@ class ANMLRegisterFragment : Fragment() {
     private fun handleQRScanResult(scannedContent: String) {
         val content = scannedContent.trim()
 
-        // Validate that the scanned content is a valid Secret Network address
-        if (content.startsWith("secret1") && content.length >= 45) {
+        // Validate that the scanned content is a valid earth address
+        if (content.startsWith("earth1") && content.length >= 44) {
             affiliateAddressInput?.setText(content)
         } else {
-            Toast.makeText(context, "Invalid Secret Network address in QR code", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "Invalid earth address in QR code", Toast.LENGTH_LONG).show()
         }
     }
 

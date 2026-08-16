@@ -134,9 +134,9 @@ class WalletDisplayFragment : Fragment() {
     }
 
     private fun formatAddress(address: String): String {
-        // Truncate address to show "secret1...lastchars"
+        // Truncate address to show "earth1...lastchars"
         if (address.length > 20) {
-            val prefix = address.take(7)  // "secret1"
+            val prefix = address.take(6)  // "earth1"
             val suffix = address.takeLast(10)
             return "$prefix...$suffix"
         }

@@ -15,14 +15,15 @@ import java.util.*
 /**
  * WalletCrypto
  *
- * Pure cryptographic utility functions for Secret Network wallets.
+ * Pure cryptographic utility functions for earth chain wallets.
  * Handles mnemonic generation, key derivation, and address generation.
  * All methods are stateless and have no side effects.
  */
 object WalletCrypto {
 
     private const val TAG = "WalletCrypto"
-    const val HRP = "secret"
+    // earth chain bech32 prefix (transparent Cosmos chain).
+    const val HRP = "earth"
 
     // Initialization state
     @Volatile
@@ -88,7 +89,7 @@ object WalletCrypto {
             val words = mnemonic.trim().split("\\s+".toRegex())
             val seed = DeterministicSeed(words, null, "", 0L)
             val chain = DeterministicKeyChain.builder().seed(seed).build()
-            val path = HDUtils.parsePath("M/44H/529H/0H/0/0")
+            val path = HDUtils.parsePath("M/44H/118H/0H/0/0")
             ECKey.fromPrivate(chain.getKeyByPath(path, true).privKey)
         } catch (e: Exception) {
             throw RuntimeException("Key derivation failed", e)
@@ -111,7 +112,7 @@ object WalletCrypto {
 
             val seed = DeterministicSeed(words, null, "", 0L)
             val chain = DeterministicKeyChain.builder().seed(seed).build()
-            val path = HDUtils.parsePath("M/44H/529H/0H/0/0")
+            val path = HDUtils.parsePath("M/44H/118H/0H/0/0")
             ECKey.fromPrivate(chain.getKeyByPath(path, true).privKey)
         } catch (e: Exception) {
             throw RuntimeException("Secure key derivation failed", e)
@@ -119,7 +120,7 @@ object WalletCrypto {
     }
 
     /**
-     * Get Secret Network address from ECKey
+     * Get earth address from ECKey
      */
     @JvmStatic
     fun getAddress(key: ECKey): String {
@@ -133,7 +134,7 @@ object WalletCrypto {
     }
 
     /**
-     * Get Secret Network address from mnemonic
+     * Get earth address from mnemonic
      */
     @JvmStatic
     fun getAddressFromMnemonic(mnemonic: String): String {

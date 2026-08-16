@@ -29,7 +29,7 @@
             android:id="@+id/wallet_row_address"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="secret1..."
+            android:text="earth1..."
             android:textSize="14sp"
             android:ellipsize="middle"
             android:maxLines="1"

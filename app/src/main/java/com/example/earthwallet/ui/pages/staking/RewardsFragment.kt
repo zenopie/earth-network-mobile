@@ -7,7 +7,6 @@ import android.content.IntentFilter
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.text.TextUtils
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
@@ -18,16 +17,19 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
+import com.google.protobuf.Any as ProtoAny
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import network.erth.wallet.R
-import network.erth.wallet.Constants
+import network.erth.wallet.chain.EarthTx
+import network.erth.wallet.chain.Staking
+import network.erth.wallet.wallet.services.EarthWallet
 import network.erth.wallet.wallet.services.SecureWalletManager
-import network.erth.wallet.wallet.services.SecretKClient
-import network.erth.wallet.wallet.services.TransactionExecutor
-import org.json.JSONObject
 
 /**
- * Fragment for displaying and claiming staking rewards
+ * Display and claim native x/distribution staking rewards. Claiming withdraws
+ * pending rewards from every validator the user has delegated to.
  */
 class RewardsFragment : Fragment() {
 
@@ -38,15 +40,11 @@ class RewardsFragment : Fragment() {
         fun newInstance(): RewardsFragment = RewardsFragment()
     }
 
-    // UI Components
     private lateinit var stakingRewardsText: TextView
     private lateinit var claimRewardsButton: Button
     private lateinit var noRewardsContainer: LinearLayout
 
-    // Broadcast receiver for transaction success
     private var transactionSuccessReceiver: BroadcastReceiver? = null
-
-    // Data
     private var stakingRewards = 0.0
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
@@ -55,13 +53,10 @@ class RewardsFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-
         initializeViews(view)
         setupBroadcastReceiver()
         registerBroadcastReceiver()
-        setupClickListeners()
-
-        // Load initial data
+        claimRewardsButton.setOnClickListener { handleClaimRewards() }
         refreshData()
     }
 
@@ -75,7 +70,6 @@ class RewardsFragment : Fragment() {
         transactionSuccessReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
                 refreshData()
-                Handler(Looper.getMainLooper()).postDelayed({ refreshData() }, 100)
                 Handler(Looper.getMainLooper()).postDelayed({ refreshData() }, 500)
             }
         }
@@ -96,74 +90,18 @@ class RewardsFragment : Fragment() {
         }
     }
 
-    private fun setupClickListeners() {
-        claimRewardsButton.setOnClickListener { handleClaimRewards() }
-    }
-
     fun refreshData() {
         if (!isAdded || context == null) return
-
         lifecycleScope.launch {
-            try {
-                queryStakingRewards()
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
+            stakingRewards = try {
+                val address = SecureWalletManager.getWalletAddress(requireContext()) ?: return@launch
+                val raw = withContext(Dispatchers.IO) { Staking.totalRewards(address) }
+                raw.toDouble() / 1_000_000.0
             } catch (e: Exception) {
-                Log.e(TAG, "Error refreshing rewards data", e)
+                Log.e(TAG, "Error refreshing rewards", e)
+                0.0
             }
-        }
-    }
-
-    private suspend fun queryStakingRewards() {
-        val userAddress = SecureWalletManager.getWalletAddress(requireContext())
-        if (TextUtils.isEmpty(userAddress)) return
-
-        val queryMsg = JSONObject()
-        val getUserInfo = JSONObject()
-        getUserInfo.put("address", userAddress)
-        queryMsg.put("get_user_info", getUserInfo)
-
-        val result = SecretKClient.queryContractJson(
-            Constants.STAKING_CONTRACT,
-            queryMsg,
-            Constants.STAKING_HASH
-        )
-
-        parseStakingResult(result)
-    }
-
-    private fun parseStakingResult(result: JSONObject) {
-        try {
-            var dataObj = result
-            if (result.has("error") && result.has("decryption_error")) {
-                val decryptionError = result.getString("decryption_error")
-                val jsonMarker = "base64=Value "
-                val jsonIndex = decryptionError.indexOf(jsonMarker)
-                if (jsonIndex != -1) {
-                    val startIndex = jsonIndex + jsonMarker.length
-                    val endIndex = decryptionError.indexOf(" of type", startIndex)
-                    if (endIndex != -1) {
-                        val jsonString = decryptionError.substring(startIndex, endIndex)
-                        try {
-                            dataObj = JSONObject(jsonString)
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error parsing JSON from decryption_error", e)
-                        }
-                    }
-                }
-            } else if (result.has("data")) {
-                dataObj = result.getJSONObject("data")
-            }
-
-            if (dataObj.has("staking_rewards_due")) {
-                val stakingRewardsMicro = dataObj.getLong("staking_rewards_due")
-                stakingRewards = stakingRewardsMicro / 1_000_000.0
-            }
-
-            activity?.runOnUiThread { updateUI() }
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error parsing staking result", e)
+            updateUI()
         }
     }
 
@@ -181,37 +119,28 @@ class RewardsFragment : Fragment() {
     }
 
     private fun handleClaimRewards() {
+        claimRewardsButton.isEnabled = false
         lifecycleScope.launch {
             try {
-                val claimMsg = JSONObject()
-                claimMsg.put("claim", JSONObject())
-
-                val result = TransactionExecutor.executeContract(
-                    fragment = this@RewardsFragment,
-                    contractAddress = Constants.STAKING_CONTRACT,
-                    message = claimMsg,
-                    codeHash = Constants.STAKING_HASH,
-                    contractLabel = "Staking Contract:"
-                )
-
-                result.onSuccess {
-                    refreshData()
-                }.onFailure { error ->
-                    if (error.message != "Transaction cancelled by user" &&
-                        error.message != "Authentication failed") {
-                        context?.let {
-                            Toast.makeText(it, "Failed to claim rewards: ${error.message}", Toast.LENGTH_SHORT).show()
-                        }
+                val txHash = withContext(Dispatchers.IO) {
+                    val address = SecureWalletManager.getWalletAddress(requireContext())
+                        ?: throw IllegalStateException("No wallet")
+                    val delegations = Staking.delegations(address)
+                    if (delegations.isEmpty()) throw IllegalStateException("No delegations")
+                    SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
+                        val key = EarthWallet.deriveKey(mnemonic)
+                        val delegator = EarthWallet.address(key)
+                        val msgs: List<ProtoAny> = delegations.map { Staking.msgWithdrawReward(delegator, it.validator) }
+                        EarthTx.broadcast(key, msgs)
                     }
                 }
-
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
+                Log.i(TAG, "Claim rewards broadcast: $txHash")
+                Toast.makeText(context, "Rewards claimed", Toast.LENGTH_SHORT).show()
+                refreshData()
             } catch (e: Exception) {
                 Log.e(TAG, "Error claiming rewards", e)
-                context?.let {
-                    Toast.makeText(it, "Failed to claim rewards: ${e.message}", Toast.LENGTH_SHORT).show()
-                }
+                Toast.makeText(context, "Failed to claim rewards: ${e.message}", Toast.LENGTH_SHORT).show()
+                claimRewardsButton.isEnabled = true
             }
         }
     }

@@ -13,30 +13,24 @@ import android.widget.*
 import androidx.activity.result.ActivityResultLauncher
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
-import network.erth.wallet.R
-import network.erth.wallet.bridge.utils.PermitManager
-import network.erth.wallet.wallet.constants.Tokens
-import network.erth.wallet.wallet.services.SecretKClient
-import network.erth.wallet.wallet.services.SecureWalletManager
-import network.erth.wallet.wallet.services.TransactionExecutor
-import network.erth.wallet.wallet.utils.WalletNetwork
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
-import kotlin.math.pow
-import kotlin.math.round
+import network.erth.wallet.Constants
+import network.erth.wallet.R
+import network.erth.wallet.chain.Bank
+import network.erth.wallet.chain.EarthTx
+import network.erth.wallet.wallet.constants.Tokens
+import network.erth.wallet.wallet.services.EarthWallet
+import network.erth.wallet.wallet.services.SecureWalletManager
 
 /**
  * SendTokensFragment
  *
- * Handles sending both native SCRT tokens and SNIP-20 tokens:
- * - Native SCRT transfers using cosmos.bank.v1beta1.MsgSend
- * - SNIP-20 token transfers using contract execution
- * - Token selection and amount validation
- * - Recipient address validation
+ * Sends native earth tokens (bank denoms) via cosmos.bank.v1beta1.MsgSend. No
+ * SNIP-20, permits, or viewing keys — every token is a native denom.
  */
 class SendTokensFragment : Fragment(), WalletDisplayFragment.WalletDisplayListener {
 
@@ -44,7 +38,6 @@ class SendTokensFragment : Fragment(), WalletDisplayFragment.WalletDisplayListen
         private const val TAG = "SendTokensFragment"
     }
 
-    // UI Components
     private lateinit var tokenSpinner: Spinner
     private lateinit var recipientEditText: EditText
     private lateinit var pickWalletButton: ImageButton
@@ -57,16 +50,11 @@ class SendTokensFragment : Fragment(), WalletDisplayFragment.WalletDisplayListen
     private lateinit var balanceText: TextView
     private lateinit var tokenLogo: ImageView
 
-    // Data
-    private lateinit var tokenOptions: MutableList<TokenOption>
+    private val tokens: List<Tokens.TokenInfo> = Tokens.ALL_TOKENS.values.toList()
     private lateinit var qrScannerLauncher: ActivityResultLauncher<ScanOptions>
     private var currentWalletAddress: String? = null
-    private var balanceLoaded = false
-    private lateinit var permitManager: PermitManager
 
-    // Interface for communication with parent
     interface SendTokensListener {
-        fun getCurrentWalletAddress(): String
         fun onSendComplete()
     }
 
@@ -77,33 +65,24 @@ class SendTokensFragment : Fragment(), WalletDisplayFragment.WalletDisplayListen
         listener = when {
             parentFragment is SendTokensListener -> parentFragment as SendTokensListener
             context is SendTokensListener -> context
-            else -> {
-                null
-            }
+            else -> null
         }
     }
+
+    // WalletDisplayFragment.WalletDisplayListener
+    override fun getCurrentWalletAddress(): String = currentWalletAddress ?: ""
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
         val view = inflater.inflate(R.layout.fragment_send_tokens, container, false)
 
-        // Initialize QR scanner launcher
         qrScannerLauncher = registerForActivityResult(ScanContract()) { result ->
-            if (result.contents != null) {
-                handleQRScanResult(result.contents)
-            }
+            result.contents?.let { handleQRScanResult(it) }
         }
 
-        // Listen for contact selection results
         parentFragmentManager.setFragmentResultListener("contact_selected", this) { _, result ->
-            val contactName = result.getString("contact_name")
-            val contactAddress = result.getString("contact_address")
-            if (contactAddress != null) {
-                recipientEditText.setText(contactAddress)
-                Toast.makeText(context, "Selected: $contactName", Toast.LENGTH_SHORT).show()
-            }
+            result.getString("contact_address")?.let { recipientEditText.setText(it) }
         }
 
-        // Initialize UI components
         tokenSpinner = view.findViewById(R.id.tokenSpinner)
         recipientEditText = view.findViewById(R.id.recipientEditText)
         pickWalletButton = view.findViewById(R.id.pickWalletButton)
@@ -116,168 +95,46 @@ class SendTokensFragment : Fragment(), WalletDisplayFragment.WalletDisplayListen
         balanceText = view.findViewById(R.id.balanceText)
         tokenLogo = view.findViewById(R.id.tokenLogo)
 
-        try {
-            permitManager = PermitManager.getInstance(requireContext())
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize permit manager", e)
-            Toast.makeText(context, "Failed to initialize wallet", Toast.LENGTH_SHORT).show()
-            return view
-        }
-
-        // Load current wallet address
         loadCurrentWalletAddress()
-
         setupTokenSpinner()
         setupClickListeners()
-
-        // Force spinner background to be light
-        tokenSpinner.setBackgroundColor(0xFFFFFFFF.toInt()) // White background
-
+        try { tokenSpinner.setBackgroundColor(0xFFFFFFFF.toInt()) } catch (_: Exception) {}
         return view
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-
-        // Load balance and logo for initially selected token (first item in spinner)
-        if (::tokenOptions.isInitialized && tokenOptions.isNotEmpty()) {
-            fetchTokenBalance(tokenOptions[0])
-            loadTokenLogo(tokenOptions[0])
+        if (tokens.isNotEmpty()) {
+            fetchTokenBalance(tokens[0])
+            loadTokenLogo(tokens[0])
         }
     }
+
+    override fun onResume() {
+        super.onResume()
+        loadCurrentWalletAddress()
+        selectedToken()?.let { fetchTokenBalance(it); loadTokenLogo(it) }
+    }
+
+    private fun selectedToken(): Tokens.TokenInfo? =
+        tokens.getOrNull(tokenSpinner.selectedItemPosition)
 
     private fun setupTokenSpinner() {
-        tokenOptions = mutableListOf()
-
-        // Add native SCRT option
-        tokenOptions.add(TokenOption("SCRT", "SCRT", true, null))
-
-        // Add SNIP-20 tokens
-        for (symbol in Tokens.ALL_TOKENS.keys) {
-            val token = Tokens.ALL_TOKENS[symbol]
-            tokenOptions.add(TokenOption(symbol, symbol, false, token))
-        }
-
-        // Create simple list for spinner (just token symbols like swap fragment)
-        val tokenSymbols = tokenOptions.map { it.displayName }
-
-        // Use the same adapter style as SwapTokensMainFragment
-        val adapter = ArrayAdapter(requireContext(), R.layout.spinner_item, tokenSymbols)
+        val adapter = ArrayAdapter(requireContext(), R.layout.spinner_item, tokens.map { it.symbol })
         adapter.setDropDownViewResource(R.layout.spinner_dropdown_item)
         tokenSpinner.adapter = adapter
-
-        // Force spinner background to be transparent to blend with input box
-        try {
-            tokenSpinner.background.alpha = 0
-        } catch (e: Exception) {
-        }
-
-        // Set up spinner selection listener to load balance and logo
+        try { tokenSpinner.background.alpha = 0 } catch (_: Exception) {}
         tokenSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                if (position < tokenOptions.size) {
-                    val selectedToken = tokenOptions[position]
-                    fetchTokenBalance(selectedToken)
-                    loadTokenLogo(selectedToken)
-                }
+                tokens.getOrNull(position)?.let { fetchTokenBalance(it); loadTokenLogo(it) }
             }
-
-            override fun onNothingSelected(parent: AdapterView<*>?) {
-                // Do nothing
-            }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
-    }
-
-    private fun launchQRScanner() {
-        val options = ScanOptions().apply {
-            setPrompt("Scan QR code to get recipient address")
-            setBeepEnabled(true)
-            setBarcodeImageEnabled(true)
-            setOrientationLocked(true)
-            setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-            setCameraId(0) // Use rear camera
-        }
-
-        qrScannerLauncher.launch(options)
-    }
-
-    private fun handleQRScanResult(scannedContent: String) {
-        val content = scannedContent.trim()
-
-        // Validate that the scanned content is a valid Secret Network address
-        if (content.startsWith("secret1") && content.length >= 45) {
-            recipientEditText.setText(content)
-        } else {
-            Toast.makeText(context, "Invalid Secret Network address in QR code", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    private fun showWalletSelectionDialog() {
-        try {
-            val walletOptions = mutableListOf<WalletOption>()
-
-            // Load all wallets using SecureWalletManager (safe - no mnemonics exposed)
-            val walletsArray = SecureWalletManager.getAllWallets(requireContext())
-            val currentAddress = getCurrentWalletAddress()
-
-            for (i in 0 until walletsArray.length()) {
-                val wallet = walletsArray.getJSONObject(i)
-                val address = wallet.optString("address", "")
-                val name = wallet.optString("name", "Wallet ${i + 1}")
-
-                if (!TextUtils.isEmpty(address)) {
-                    // Don't include the current wallet in the recipient list
-                    if (address != currentAddress) {
-                        val displayName = "$name (${address.substring(0, 14)}...)"
-                        walletOptions.add(WalletOption(address, displayName, name))
-                    }
-                }
-            }
-
-            if (walletOptions.isEmpty()) {
-                Toast.makeText(context, "No other wallets available", Toast.LENGTH_SHORT).show()
-                return
-            }
-
-            // Create dialog with wallet options
-            val builder = AlertDialog.Builder(context)
-            builder.setTitle("Select Wallet")
-
-            val walletNames = walletOptions.map { it.displayName }.toTypedArray()
-
-            builder.setItems(walletNames) { _, which ->
-                val selected = walletOptions[which]
-                recipientEditText.setText(selected.address)
-                Toast.makeText(context, "Selected: ${selected.name}", Toast.LENGTH_SHORT).show()
-            }
-
-            builder.setNegativeButton("Cancel", null)
-            builder.show()
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to show wallet selection dialog", e)
-            Toast.makeText(context, "Failed to load wallets", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun showContactsDialog() {
-        // Navigate to contacts fragment
-        val contactsFragment = ContactsFragment()
-
-        // Replace current fragment with contacts fragment
-        parentFragmentManager.beginTransaction()
-            .replace(id, contactsFragment)
-            .addToBackStack(null)
-            .commit()
     }
 
     private fun setupClickListeners() {
         sendButton.setOnClickListener { sendTokens() }
-
-        clearRecipientButton.setOnClickListener {
-            recipientEditText.setText("")
-        }
-
+        clearRecipientButton.setOnClickListener { recipientEditText.setText("") }
         pickWalletButton.setOnClickListener { showWalletSelectionDialog() }
         contactsButton.setOnClickListener { showContactsDialog() }
         scanQrButton.setOnClickListener { launchQRScanner() }
@@ -285,144 +142,124 @@ class SendTokensFragment : Fragment(), WalletDisplayFragment.WalletDisplayListen
 
     private fun sendTokens() {
         val recipient = recipientEditText.text.toString().trim()
-        val amount = amountEditText.text.toString().trim()
-        val memo = memoEditText.text.toString().trim()
+        val amountStr = amountEditText.text.toString().trim()
+        val token = selectedToken()
 
         if (TextUtils.isEmpty(recipient)) {
-            Toast.makeText(context, "Please enter recipient address", Toast.LENGTH_SHORT).show()
-            return
+            toast("Please enter recipient address"); return
         }
-
-        if (TextUtils.isEmpty(amount)) {
-            Toast.makeText(context, "Please enter amount", Toast.LENGTH_SHORT).show()
-            return
+        if (!recipient.startsWith(Constants.EARTH_PREFIX + "1")) {
+            toast("Invalid earth address"); return
         }
-
-        if (!recipient.startsWith("secret1")) {
-            Toast.makeText(context, "Invalid Secret Network address", Toast.LENGTH_SHORT).show()
-            return
+        if (TextUtils.isEmpty(amountStr)) {
+            toast("Please enter amount"); return
         }
+        if (token == null) { toast("Please select a token"); return }
+        val amount = Tokens.parseTokenAmount(amountStr, token.symbol)
+        if (amount == null || amount <= 0) { toast("Invalid amount"); return }
 
-        val selectedPosition = tokenSpinner.selectedItemPosition
-        if (selectedPosition < 0 || selectedPosition >= tokenOptions.size) {
-            Toast.makeText(context, "Please select a token", Toast.LENGTH_SHORT).show()
-            return
+        lifecycleScope.launch {
+            try {
+                val txHash = withContext(Dispatchers.IO) {
+                    SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
+                        val key = EarthWallet.deriveKey(mnemonic)
+                        val from = EarthWallet.address(key)
+                        EarthTx.broadcast(key, listOf(Bank.msgSend(from, recipient, token.denom, amount.toString())))
+                    }
+                }
+                Log.i(TAG, "send ok: $txHash")
+                clearForm()
+                fetchTokenBalance(token)
+                listener?.onSendComplete()
+            } catch (e: Exception) {
+                Log.e(TAG, "send failed", e)
+                toast("Send failed: ${e.message}")
+            }
         }
-        val selectedToken = tokenOptions[selectedPosition]
+    }
 
+    private fun fetchTokenBalance(token: Tokens.TokenInfo) {
+        val address = currentWalletAddress
+        if (TextUtils.isEmpty(address)) { balanceText.text = "Balance: Connect wallet"; return }
+        balanceText.text = "Balance: Loading..."
+        lifecycleScope.launch {
+            try {
+                val raw = withContext(Dispatchers.IO) { Bank.balance(address!!, token.denom) }
+                balanceText.text = "Balance: ${Tokens.formatTokenAmount(raw, token)} ${token.symbol}"
+            } catch (e: Exception) {
+                balanceText.text = "Balance: —"
+            }
+        }
+    }
+
+    private fun loadTokenLogo(token: Tokens.TokenInfo) {
         try {
-            if (selectedToken.isNative) {
-                sendNativeToken(recipient, amount, memo)
-            } else {
-                sendSnipToken(selectedToken, recipient, amount, memo)
+            requireContext().assets.open(token.logo).use { input ->
+                tokenLogo.setImageBitmap(BitmapFactory.decodeStream(input))
             }
+        } catch (_: Exception) {
+            tokenLogo.setImageResource(R.mipmap.ic_launcher)
+        }
+    }
+
+    private fun loadCurrentWalletAddress() {
+        currentWalletAddress = try {
+            SecureWalletManager.getWalletAddress(requireContext())
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to send tokens", e)
-            Toast.makeText(context, "Failed to send: ${e.message}", Toast.LENGTH_SHORT).show()
+            Log.e(TAG, "Failed to load wallet address", e); ""
         }
     }
 
-    private fun sendNativeToken(recipient: String, amount: String, memo: String) {
-        lifecycleScope.launch {
-            try {
-                // Convert amount to microSCRT (6 decimals)
-                val amountDouble = amount.toDouble()
-                val microScrt = round(amountDouble * 1_000_000).toLong()
+    private fun launchQRScanner() {
+        qrScannerLauncher.launch(ScanOptions().apply {
+            setPrompt("Scan QR code to get recipient address")
+            setBeepEnabled(true)
+            setOrientationLocked(true)
+            setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+            setCameraId(0)
+        })
+    }
 
-                // Use TransactionExecutor for native token send
-                val result = TransactionExecutor.sendNativeToken(
-                    fragment = this@SendTokensFragment,
-                    toAddress = recipient,
-                    amount = microScrt
-                )
+    private fun handleQRScanResult(scannedContent: String) {
+        val content = scannedContent.trim()
+        if (content.startsWith(Constants.EARTH_PREFIX + "1")) {
+            recipientEditText.setText(content)
+        } else {
+            toast("Invalid earth address in QR code")
+        }
+    }
 
-                result.onSuccess {
-                    // Clear form
-                    clearForm()
-                    // Refresh balance after successful transaction
-                    val selectedPosition = tokenSpinner.selectedItemPosition
-                    if (selectedPosition >= 0 && selectedPosition < tokenOptions.size) {
-                        fetchTokenBalance(tokenOptions[selectedPosition])
-                    }
-                    // Notify parent
-                    listener?.onSendComplete()
-                }.onFailure { error ->
-                    if (error.message != "Transaction cancelled by user" &&
-                        error.message != "Authentication failed") {
-                        Toast.makeText(context, "Transaction failed: ${error.message}", Toast.LENGTH_LONG).show()
-                    }
+    private fun showWalletSelectionDialog() {
+        try {
+            val walletsArray = SecureWalletManager.getAllWallets(requireContext())
+            val current = getCurrentWalletAddress()
+            val options = ArrayList<Pair<String, String>>() // address to display
+            for (i in 0 until walletsArray.length()) {
+                val w = walletsArray.getJSONObject(i)
+                val address = w.optString("address", "")
+                val name = w.optString("name", "Wallet ${i + 1}")
+                if (address.isNotEmpty() && address != current) {
+                    options.add(address to "$name (${address.take(14)}...)")
                 }
-            } catch (e: Exception) {
-                Toast.makeText(context, "Failed to send: ${e.message}", Toast.LENGTH_SHORT).show()
             }
+            if (options.isEmpty()) { toast("No other wallets available"); return }
+            AlertDialog.Builder(requireContext())
+                .setTitle("Select Wallet")
+                .setItems(options.map { it.second }.toTypedArray()) { _, which ->
+                    recipientEditText.setText(options[which].first)
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        } catch (e: Exception) {
+            Log.e(TAG, "wallet selection failed", e); toast("Failed to load wallets")
         }
     }
 
-    private fun sendSnipToken(tokenOption: TokenOption, recipient: String, amount: String, memo: String) {
-        val token = tokenOption.tokenInfo ?: return
-
-        lifecycleScope.launch {
-            try {
-                // Convert amount to token's smallest unit
-                val amountDouble = amount.toDouble()
-                val tokenAmount = round(amountDouble * 10.0.pow(token.decimals.toDouble())).toLong()
-                val tokenAmountString = tokenAmount.toString()
-
-                // Create message for SNIP-20 transfer
-                val transferMsg = JSONObject()
-                val transfer = JSONObject().apply {
-                    put("recipient", recipient)
-                    put("amount", tokenAmountString)
-                    if (!TextUtils.isEmpty(memo)) {
-                        put("memo", memo)
-                    }
-                }
-                transferMsg.put("transfer", transfer)
-
-                // Use TransactionExecutor for SNIP-20 token transfer
-                val result = TransactionExecutor.executeContract(
-                    fragment = this@SendTokensFragment,
-                    contractAddress = token.contract,
-                    message = transferMsg,
-                    codeHash = token.hash,
-                    contractLabel = "${tokenOption.symbol}:"
-                )
-
-                result.onSuccess {
-                    // Clear form
-                    clearForm()
-                    // Refresh balance after successful transaction
-                    val selectedPosition = tokenSpinner.selectedItemPosition
-                    if (selectedPosition >= 0 && selectedPosition < tokenOptions.size) {
-                        fetchTokenBalance(tokenOptions[selectedPosition])
-                    }
-                    // Notify parent
-                    listener?.onSendComplete()
-                }.onFailure { error ->
-                    if (error.message != "Transaction cancelled by user" &&
-                        error.message != "Authentication failed") {
-                        Toast.makeText(context, "Transaction failed: ${error.message}", Toast.LENGTH_LONG).show()
-                    }
-                }
-            } catch (e: Exception) {
-                Toast.makeText(context, "Failed to send: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-
-    override fun onResume() {
-        super.onResume()
-        // Refresh wallet address first (like TokenBalancesFragment)
-        loadCurrentWalletAddress()
-
-        // Refresh balance and logo when returning to the screen
-        val selectedPosition = tokenSpinner.selectedItemPosition
-        if (selectedPosition >= 0 && selectedPosition < tokenOptions.size) {
-            val selectedToken = tokenOptions[selectedPosition]
-            fetchTokenBalance(selectedToken)
-            loadTokenLogo(selectedToken)
-        }
+    private fun showContactsDialog() {
+        parentFragmentManager.beginTransaction()
+            .replace(id, ContactsFragment())
+            .addToBackStack(null)
+            .commit()
     }
 
     private fun clearForm() {
@@ -431,167 +268,5 @@ class SendTokensFragment : Fragment(), WalletDisplayFragment.WalletDisplayListen
         memoEditText.setText("")
     }
 
-    private fun loadCurrentWalletAddress() {
-        // Use SecureWalletManager to get wallet address directly
-        try {
-            currentWalletAddress = SecureWalletManager.getWalletAddress(requireContext())
-            if (!TextUtils.isEmpty(currentWalletAddress)) {
-            } else {
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to load wallet address", e)
-            currentWalletAddress = ""
-        }
-    }
-
-    private fun fetchTokenBalance(tokenOption: TokenOption) {
-        if (TextUtils.isEmpty(currentWalletAddress)) {
-            balanceText.text = "Balance: Connect wallet"
-            return
-        }
-
-        if (tokenOption.isNative) {
-            // Native SCRT balance using coroutines instead of AsyncTask
-            balanceText.text = "Balance: Loading..."
-            fetchScrtBalance()
-        } else {
-            // SNIP-20 token balance using permit-based queries
-            if (!hasPermitForToken(tokenOption.symbol)) {
-                balanceText.text = "Balance: Create permit"
-                return
-            }
-
-            balanceText.text = "Balance: Loading..."
-            fetchSnipTokenBalanceWithPermit(tokenOption.symbol)
-        }
-    }
-
-    private fun fetchScrtBalance() {
-        lifecycleScope.launch {
-            try {
-                val result = withContext(Dispatchers.IO) {
-                    // Use WalletNetwork's bank query method
-                    val microScrt = WalletNetwork.fetchUscrtBalanceMicro(WalletNetwork.DEFAULT_LCD_URL, currentWalletAddress!!)
-                    WalletNetwork.formatScrt(microScrt)
-                }
-                balanceText.text = "Balance: $result"
-                balanceLoaded = true
-            } catch (e: Exception) {
-                Log.e(TAG, "SCRT balance query failed", e)
-                balanceText.text = "Balance: Error: ${e.message}"
-            }
-        }
-    }
-
-    private fun hasPermitForToken(tokenSymbol: String): Boolean {
-        val tokenInfo = Tokens.getTokenInfo(tokenSymbol)
-        if (tokenInfo == null) {
-            return false
-        }
-        return permitManager.hasPermit(currentWalletAddress!!, tokenInfo.contract)
-    }
-
-    private fun fetchSnipTokenBalanceWithPermit(tokenSymbol: String) {
-        lifecycleScope.launch {
-            try {
-                val result = SecretKClient.querySnipBalanceWithPermit(
-                    requireContext(),
-                    tokenSymbol,
-                    currentWalletAddress!!
-                )
-                handleSnipBalanceResult(tokenSymbol, result)
-            } catch (e: Exception) {
-                Log.e(TAG, "Token balance query failed for $tokenSymbol: ${e.message}", e)
-                balanceText.text = "Balance: Error loading"
-            }
-        }
-    }
-
-    private fun handleSnipBalanceResult(tokenSymbol: String, result: JSONObject) {
-        try {
-            val balance = result.optJSONObject("balance")
-            if (balance != null) {
-                val amount = balance.optString("amount", "0")
-                val tokenInfo = Tokens.getTokenInfo(tokenSymbol)
-                if (tokenInfo != null) {
-                    var formattedBalance = 0.0
-                    if (!TextUtils.isEmpty(amount)) {
-                        try {
-                            val rawAmount = amount.toLong()
-                            formattedBalance = rawAmount / 10.0.pow(tokenInfo.decimals.toDouble())
-                        } catch (e: NumberFormatException) {
-                            Log.e(TAG, "Failed to parse balance amount: $amount", e)
-                        }
-                    }
-                    balanceText.text = String.format("Balance: %.6f %s", formattedBalance, tokenSymbol)
-                } else {
-                    balanceText.text = "Balance: Error loading"
-                }
-            } else {
-                balanceText.text = "Balance: Error loading"
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to handle SNIP balance result", e)
-            balanceText.text = "Balance: Error loading"
-        }
-    }
-
-    private fun loadTokenLogo(tokenOption: TokenOption) {
-        if (tokenOption.isNative) {
-            // Native SCRT - use gas station icon
-            tokenLogo.setImageResource(R.drawable.ic_local_gas_station)
-        } else {
-            // SNIP-20 token - load from assets
-            try {
-                val tokenInfo = tokenOption.tokenInfo
-                if (tokenInfo != null && !TextUtils.isEmpty(tokenInfo.logo)) {
-                    // Load logo from assets
-                    val bitmap = BitmapFactory.decodeStream(context?.assets?.open(tokenInfo.logo))
-                    tokenLogo.setImageBitmap(bitmap)
-                } else {
-                    // No logo available, use default wallet icon
-                    tokenLogo.setImageResource(R.drawable.ic_wallet)
-                }
-            } catch (e: Exception) {
-                tokenLogo.setImageResource(R.drawable.ic_wallet)
-            }
-        }
-    }
-
-    override fun getCurrentWalletAddress(): String {
-        return try {
-            SecureWalletManager.getWalletAddress(requireContext()) ?: ""
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to get current wallet address", e)
-            ""
-        }
-    }
-
-    override fun onDetach() {
-        super.onDetach()
-        listener = null
-    }
-
-    /**
-     * Token option for spinner
-     */
-    private data class TokenOption(
-        val symbol: String,
-        val displayName: String,
-        val isNative: Boolean,
-        val tokenInfo: Tokens.TokenInfo?
-    ) {
-        override fun toString(): String = displayName
-    }
-
-    /**
-     * Wallet option for recipient spinner
-     */
-    private data class WalletOption(
-        val address: String,
-        val displayName: String,
-        val name: String
-    ) {
-        override fun toString(): String = displayName
-    }
+    private fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
 }

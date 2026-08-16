@@ -199,7 +199,7 @@ class WalletSettingsFragment : Fragment() {
     private fun showRemoveAppDataDialog() {
         AlertDialog.Builder(requireContext())
             .setTitle("Clear All App Data")
-            .setMessage("⚠️ This will permanently delete:\n\n• All wallets and mnemonics\n• PIN and security settings\n• All app preferences\n• Viewing keys and permits\n\nThis action cannot be undone. Are you sure?")
+            .setMessage("⚠️ This will permanently delete:\n\n• All wallets and mnemonics\n• PIN and security settings\n• All app preferences\n\nThis action cannot be undone. Are you sure?")
             .setPositiveButton("Clear Data") { _, _ ->
                 clearAppData()
             }

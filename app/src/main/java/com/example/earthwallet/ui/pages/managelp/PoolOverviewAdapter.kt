@@ -93,13 +93,8 @@ class PoolOverviewAdapter(
                 else R.drawable.pool_overview_box_normal
             )
 
-            // Set button states and click listeners
-            claimButton.isEnabled = hasRewards
-            claimButton.setOnClickListener {
-                if (hasRewards) {
-                    clickListener.onClaimClicked(pool)
-                }
-            }
+            // Earth LP rewards auto-compound into the pool, so there is no per-pool claim.
+            claimButton.visibility = View.GONE
 
             manageButton.setOnClickListener {
                 clickListener.onManageClicked(pool)

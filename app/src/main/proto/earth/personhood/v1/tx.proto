@@ -1,0 +1,32 @@
+syntax = "proto3";
+package earth.personhood.v1;
+
+option java_package = "network.erth.earth.proto.personhood";
+option java_multiple_files = true;
+
+// Clean proto3 mirrors of the earth chain's x/personhood messages (wire-compatible;
+// gogoproto/cosmos_proto annotations omitted so protobuf-javalite generates
+// cleanly on Android).
+//
+// The one-human-one-vote allocation stream this module gates lives in
+// x/allocation — see earth/allocation/v1/tx.proto.
+
+message MsgRegister {
+  string creator = 1;
+  // proof is the Barretenberg UltraHonk proof bytes (bb v5.0.0, poseidon2 flavor).
+  bytes proof = 2;
+  // public_signals are the circuit public signals as decimal strings; for lean_poa
+  // the order is [current_date, nullifier, dsc_key].
+  repeated string public_signals = 3;
+  string affiliate = 4;
+  // signature_algorithm selects the on-chain verifying key (e.g. "lean_poa").
+  string signature_algorithm = 5;
+  // dsc_der is the Document Signer certificate that signed the passport SOD. The
+  // chain verifies it against its CSCA trust store and requires its Poseidon2
+  // commitment to equal the proof's dsc_key output.
+  bytes dsc_der = 6;
+}
+
+message MsgClaimAnml {
+  string creator = 1;
+}

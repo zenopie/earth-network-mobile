@@ -29,7 +29,7 @@ import com.google.zxing.qrcode.QRCodeWriter
  * - Shows the current wallet address
  * - Provides copy-to-clipboard functionality
  * - Generates QR code for easy sharing
- * - Works for both native SCRT and SNIP-20 tokens (same address)
+ * - Works for all native earth tokens (same address)
  */
 class ReceiveTokensFragment : Fragment() {
 

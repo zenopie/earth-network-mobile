@@ -26,7 +26,7 @@ import java.security.MessageDigest
 /**
  * CreateWalletFragment
  *
- * Implements a Keplr-like wallet creation flow (for Secret Network):
+ * Implements a Keplr-like wallet creation flow (for the earth chain):
  * - Intro: Create New / Import
  * - Mnemonic reveal (user must explicitly reveal)
  * - Mandatory backup acknowledgement and verification (select words in correct order)

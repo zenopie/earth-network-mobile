@@ -24,7 +24,7 @@
         android:id="@+id/contactAddress"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="secret1abc...def123"
+        android:text="earth1abc...def123"
         android:textSize="14sp"
         android:textColor="#666666"
         android:fontFamily="monospace" />

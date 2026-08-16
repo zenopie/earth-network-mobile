@@ -30,14 +30,11 @@ class LiquidityTabsAdapter(
             2 -> {
                 RemoveLiquidityFragment.newInstance(tokenKey)
             }
-            3 -> {
-                UnbondFragment.newInstance(tokenKey)
-            }
             else -> {
                 InfoFragment.newInstance(tokenKey)
             }
         }
     }
 
-    override fun getItemCount(): Int = 4 // Info, Add, Remove, Unbond
+    override fun getItemCount(): Int = 3 // Info, Add, Remove (LP bonding does not exist on earth)
 }

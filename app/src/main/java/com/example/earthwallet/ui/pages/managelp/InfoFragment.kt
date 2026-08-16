@@ -8,17 +8,20 @@ import android.view.ViewGroup
 import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import network.erth.wallet.R
-import network.erth.wallet.Constants
+import network.erth.wallet.chain.Bank
+import network.erth.wallet.chain.Dex
 import network.erth.wallet.wallet.constants.Tokens
 import network.erth.wallet.wallet.services.SecureWalletManager
-import network.erth.wallet.wallet.services.SecretKClient
-import org.json.JSONArray
-import org.json.JSONObject
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 
+/**
+ * Info tab for a pool: total LP shares (the dexlp/{id} denom supply), the user's
+ * share balance, their pool ownership, and the underlying ERTH + token value.
+ * There is no LP unbonding on earth, so that figure is always 0%.
+ */
 class InfoFragment : Fragment() {
 
     companion object {
@@ -27,9 +30,7 @@ class InfoFragment : Fragment() {
         @JvmStatic
         fun newInstance(tokenKey: String): InfoFragment {
             val fragment = InfoFragment()
-            val args = Bundle()
-            args.putString("token_key", tokenKey)
-            fragment.arguments = args
+            fragment.arguments = Bundle().apply { putString("token_key", tokenKey) }
             return fragment
         }
     }
@@ -44,16 +45,9 @@ class InfoFragment : Fragment() {
     private lateinit var tokenValueText: TextView
     private lateinit var tokenValueLabel: TextView
 
-    // Services
-    private var executorService: ExecutorService? = null
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        arguments?.let {
-            tokenKey = it.getString("token_key")
-        }
-
-        executorService = Executors.newCachedThreadPool()
+        tokenKey = arguments?.getString("token_key")
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
@@ -62,7 +56,6 @@ class InfoFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-
         initializeViews(view)
         refreshData()
     }
@@ -76,10 +69,7 @@ class InfoFragment : Fragment() {
         tokenValueText = view.findViewById(R.id.token_value_text)
         tokenValueLabel = view.findViewById(R.id.token_value_label)
 
-        // Update token label
-        tokenKey?.let { token ->
-            tokenValueLabel.text = "$token:"
-        }
+        tokenKey?.let { tokenValueLabel.text = "$it:" }
     }
 
     override fun onResume() {
@@ -89,148 +79,44 @@ class InfoFragment : Fragment() {
 
     override fun onHiddenChanged(hidden: Boolean) {
         super.onHiddenChanged(hidden)
-        if (!hidden && isResumed) {
-            refreshData()
-        }
+        if (!hidden && isResumed) refreshData()
     }
 
     fun refreshData() {
-        loadPoolData()
-    }
-
-    private fun loadPoolData() {
-        if (tokenKey == null) return
-
+        val info = tokenKey?.let { Tokens.getTokenInfo(it) } ?: return
         lifecycleScope.launch {
             try {
-                val userAddress = SecureWalletManager.getWalletAddress(requireContext())
-                if (userAddress == null) {
-                    return@launch
-                }
-
-                val tokenContract = getTokenContract(tokenKey!!)
-                if (tokenContract == null) {
-                    return@launch
-                }
-
-                // Query pool data like other fragments do
-                val queryJson = "{\"query_user_info\": {\"pools\": [\"$tokenContract\"], \"user\": \"$userAddress\"}}"
-
-                val responseString = SecretKClient.queryContract(
-                    Constants.EXCHANGE_CONTRACT,
-                    queryJson,
-                    Constants.EXCHANGE_HASH
-                )
-
-                // Try to parse as JSONArray first, then JSONObject
-                val result = try {
-                    JSONArray(responseString)
-                } catch (e: Exception) {
-                    try {
-                        JSONObject(responseString)
-                    } catch (e2: Exception) {
-                        Log.e(TAG, "Failed to parse response as JSON", e2)
-                        return@launch
-                    }
-                }
-
-                processPoolData(result)
-
+                val address = SecureWalletManager.getWalletAddress(requireContext()) ?: return@launch
+                val data = withContext(Dispatchers.IO) {
+                    val pool = Dex.poolForToken(info.denom) ?: return@withContext null
+                    val lpDenom = "dexlp/${pool.id}"
+                    val totalShares = Bank.supply(lpDenom).toDouble() / 1_000_000.0
+                    val userShares = Bank.balance(address, lpDenom).toDouble() / 1_000_000.0
+                    val erthReserve = pool.erthReserve.toDouble() / 1_000_000.0
+                    val tokenReserve = pool.tokenReserve.toDouble() / 1_000_000.0
+                    PoolInfo(totalShares, userShares, erthReserve, tokenReserve)
+                } ?: return@launch
+                updateUI(data)
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading pool data", e)
             }
         }
     }
 
-    private fun processPoolData(result: Any) {
-        try {
-            // Handle both JSONArray and JSONObject responses
-            val dataArray = when (result) {
-                is JSONArray -> result
-                is JSONObject -> {
-                    if (result.has("data")) {
-                        result.getJSONArray("data")
-                    } else {
-                        return
-                    }
-                }
-                else -> return
-            }
-
-            if (dataArray.length() > 0) {
-                val poolData = dataArray.getJSONObject(0)
-
-                var poolState: JSONObject? = null
-                var userInfo: JSONObject? = null
-
-                if (poolData.has("pool_info")) {
-                    poolState = poolData.getJSONObject("pool_info")
-                }
-                if (poolData.has("user_info")) {
-                    userInfo = poolData.getJSONObject("user_info")
-                }
-
-                updateUI(poolState, userInfo)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error processing pool data", e)
-        }
+    private fun updateUI(data: PoolInfo) {
+        val ownershipPercent = if (data.totalShares > 0) (data.userShares / data.totalShares) * 100 else 0.0
+        totalSharesText.text = String.format("%,.2f", data.totalShares)
+        userSharesText.text = String.format("%,.2f", data.userShares)
+        poolOwnershipText.text = String.format("%.4f%%", ownershipPercent)
+        unbondingPercentText.text = "0%"
+        erthValueText.text = String.format("%.6f", data.erthReserve * ownershipPercent / 100.0)
+        tokenValueText.text = String.format("%.6f", data.tokenReserve * ownershipPercent / 100.0)
     }
 
-    private fun updateUI(poolState: JSONObject?, userInfo: JSONObject?) {
-        if (poolState == null || userInfo == null) {
-            return
-        }
-
-        try {
-            val state = poolState.optJSONObject("state")
-            if (state != null) {
-                // Calculate data like LiquidityManagementComponent does
-                val totalSharesMicro = state.optLong("total_shares", 0)
-                val userStakedMicro = userInfo.optLong("amount_staked", 0)
-                val unbondingSharesMicro = state.optLong("unbonding_shares", 0)
-
-                val totalShares = totalSharesMicro / 1000000.0
-                val userStaked = userStakedMicro / 1000000.0
-                val unbondingShares = unbondingSharesMicro / 1000000.0
-
-                val ownershipPercent = if (totalShares > 0) (userStaked / totalShares) * 100 else 0.0
-                val unbondingPercent = if (totalShares > 0) (unbondingShares / totalShares) * 100 else 0.0
-
-                // Update UI (labels are in the XML, just set values)
-                totalSharesText.text = String.format("%,.0f", totalShares)
-                userSharesText.text = String.format("%,.0f", userStaked)
-                poolOwnershipText.text = String.format("%.4f%%", ownershipPercent)
-                unbondingPercentText.text = String.format("%.4f%%", unbondingPercent)
-
-                // Calculate underlying values
-                val erthReserveMicro = state.optLong("erth_reserve", 0)
-                val tokenBReserveMicro = state.optLong("token_b_reserve", 0)
-
-                val erthReserveMacro = erthReserveMicro / 1000000.0
-                val tokenBReserveMacro = tokenBReserveMicro / 1000000.0
-
-                val userErthValue = (erthReserveMacro * ownershipPercent) / 100.0
-                val userTokenBValue = (tokenBReserveMacro * ownershipPercent) / 100.0
-
-                erthValueText.text = String.format("%.6f", userErthValue)
-                tokenValueText.text = String.format("%.6f", userTokenBValue)
-
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error updating UI", e)
-        }
-    }
-
-    private fun getTokenContract(tokenSymbol: String): String? {
-        val tokenInfo = Tokens.getTokenInfo(tokenSymbol)
-        return tokenInfo?.contract
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        if (executorService != null && !executorService!!.isShutdown) {
-            executorService!!.shutdown()
-        }
-    }
+    private data class PoolInfo(
+        val totalShares: Double,
+        val userShares: Double,
+        val erthReserve: Double,
+        val tokenReserve: Double,
+    )
 }

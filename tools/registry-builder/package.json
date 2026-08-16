@@ -1,0 +1,11 @@
+{
+  "name": "dsc-registry-builder",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Builds the DSC certificate-registry Poseidon2 Merkle tree for the lean_poa circuit.",
+  "type": "commonjs",
+  "bin": { "build-registry": "build.js" },
+  "dependencies": {
+    "@zkpassport/poseidon2": "^0.1.0"
+  }
+}

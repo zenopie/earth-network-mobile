@@ -36,8 +36,7 @@ class WalletMainFragment : Fragment(),
     WalletListFragment.WalletListListener,
     CreateWalletFragment.CreateWalletListener,
     WalletDisplayFragment.WalletDisplayListener,
-    TokenBalancesFragment.TokenBalancesListener,
-    ManagePermitsFragment.ManagePermitsListener {
+    TokenBalancesFragment.TokenBalancesListener {
 
     companion object {
         private const val TAG = "WalletMainFragment"
@@ -165,7 +164,6 @@ class WalletMainFragment : Fragment(),
         // Update token balances fragment - only if address actually changed
         tokenBalancesFragment?.updateWalletAddress(currentWalletAddress)
 
-        // PermitManager is now handled automatically by individual fragments
     }
 
     // =============================================================================
@@ -180,28 +178,8 @@ class WalletMainFragment : Fragment(),
     // TokenBalancesFragment.TokenBalancesListener Implementation
     // =============================================================================
 
-    override fun onPermitRequested(token: Tokens.TokenInfo) {
-        // Show manage viewing keys fragment where users can set viewing keys
-        showManagePermitsFragment()
-    }
-
-    override fun onManageViewingKeysRequested() {
-        showManagePermitsFragment()
-    }
-
     override fun onTokenUsdValueUpdated(totalUsdValue: Double) {
         portfolioTotalValue.text = ErthPriceService.formatUSD(totalUsdValue)
-    }
-
-
-    // =============================================================================
-    // ManagePermitsFragment.ManagePermitsListener Implementation
-    // =============================================================================
-
-    override fun onPermitRemoved(token: Tokens.TokenInfo) {
-
-        // Update token balance fragment to refresh (will hide tokens without viewing keys)
-        tokenBalancesFragment?.refreshTokenBalances()
     }
 
     // =============================================================================
@@ -260,18 +238,6 @@ class WalletMainFragment : Fragment(),
             .beginTransaction()
             .replace(R.id.host_content, createWalletFragment)
             .addToBackStack("create_wallet")
-            .commit()
-    }
-
-    private fun showManagePermitsFragment() {
-        val managePermitsFragment = ManagePermitsFragment()
-        // Note: ManagePermitsFragment gets its listener through onAttach(context)
-        // since this fragment implements ManagePermitsListener, it will be set automatically
-
-        requireActivity().supportFragmentManager
-            .beginTransaction()
-            .replace(R.id.host_content, managePermitsFragment)
-            .addToBackStack("manage_permits")
             .commit()
     }
 

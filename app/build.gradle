@@ -86,17 +86,6 @@ android {
         }
     }
 }
-
-// Force secretk types to use 7.0.0 (client 7.0.1 types not published yet)
-configurations.all {
-    resolutionStrategy.eachDependency { details ->
-        if (details.requested.group == 'io.eqoty.secretk') {
-            if (details.requested.name == 'cosmwasm-std-types' || details.requested.name == 'secret-std-types') {
-                details.useVersion '7.0.0'
-            }
-        }
-    }
-}
  
 protobuf {
     // Use protoc 3.21.x compatible with protobuf-javalite
@@ -144,7 +133,20 @@ dependencies {
     implementation 'androidx.lifecycle:lifecycle-livedata-ktx:2.7.0'
     implementation 'androidx.fragment:fragment-ktx:1.6.2'
     implementation 'androidx.activity:activity-ktx:1.8.2'
-    
+    // Pull-to-refresh for the explorer lists. recyclerview and viewpager2 arrive
+    // transitively via material, but swiperefreshlayout does not.
+    implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
+
+    // On-device Noir/Barretenberg (UltraHonk) proving for passport proof-of-personhood.
+    // VERSION LOCKSTEP: on-device proofs verify on-chain only when this AAR's bb
+    // matches the chain verifier's bb (x/anml/zk/ultrahonk / third_party/barretenberg-go,
+    // v5.0.0 FINAL). This release's native lib is built against barretenberg-rs 5.0.0
+    // (verified: `strings jni/*/libnoir_java.so` -> barretenberg-rs-5.0.0), i.e. bb
+    // v5.0.0 final — aligned. A *nightly* bb produces proofs the v5.0.0 chain lib
+    // rejects for large circuits, so if you bump noir_android, confirm it still ships
+    // barretenberg-rs 5.0.0-final (do NOT move the chain to a nightly to compensate).
+    implementation 'com.github.madztheo:noir_android:1.0.0-beta.22-2'
+
     // Vector Drawable Support
     implementation 'androidx.vectordrawable:vectordrawable:1.1.0'
     
@@ -196,19 +198,12 @@ dependencies {
     
     // Protobuf dependencies for Cosmos SDK transaction encoding (lite version for Android)
     implementation 'com.google.protobuf:protobuf-javalite:3.21.12'
-    
-    // JSON serialization for permits
+
+    // JSON serialization
     implementation 'com.google.code.gson:gson:2.10.1'
 
-    // SecretK - Kotlin client for Secret Network
-    implementation 'io.eqoty.secretk:client-jvm:7.0.1'
-
-    // Kotlinx serialization for permit serialization (used by SecretK)
-    implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0'
-
-    // Keep old crypto dependencies for existing code (TODO: migrate everything to SecretK)
-    implementation 'org.whispersystems:curve25519-java:0.5.0'
-    implementation 'org.cryptomator:siv-mode:1.4.0'
+    // HTTP client for passport proof verification + update metadata
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
 
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'

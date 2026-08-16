@@ -13,18 +13,29 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
-import network.erth.wallet.Constants
-import network.erth.wallet.R
-import network.erth.wallet.wallet.services.SecretKClient
-import network.erth.wallet.wallet.services.TransactionExecutor
-import org.json.JSONArray
-import org.json.JSONObject
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import network.erth.wallet.R
+import network.erth.earth.proto.allocation.StreamId
+import network.erth.wallet.chain.Allocation
+import network.erth.wallet.chain.EarthTx
+import network.erth.wallet.wallet.services.EarthWallet
+import network.erth.wallet.wallet.services.SecureWalletManager
 
 /**
- * Fragment for setting allocation preferences
- * Based on the web app AllocationFund.js pattern
+ * Set allocation preferences for a fund (percentages summing to 100).
+ *
+ * The fund type selects the backing vote:
+ *  - Caretaker  -> x/allocation's human stream (one-human-one-vote)
+ *  - Deflation  -> x/allocation's capital stream (stake-weighted)
+ *
+ * Both are the same engine over separate state, so the only thing that differs
+ * below is the stream threaded into every call.
+ *
+ * Options are loaded live from the relevant module and the user's current split
+ * is pre-filled from their voter record.
  */
 class SetAllocationFragment : Fragment() {
 
@@ -39,49 +50,35 @@ class SetAllocationFragment : Fragment() {
         @JvmStatic
         fun newInstance(fundType: String, fundTitle: String): SetAllocationFragment {
             val fragment = SetAllocationFragment()
-            val args = Bundle()
-            args.putString(ARG_FUND_TYPE, fundType)
-            args.putString(ARG_FUND_TITLE, fundTitle)
-            fragment.arguments = args
+            fragment.arguments = Bundle().apply {
+                putString(ARG_FUND_TYPE, fundType)
+                putString(ARG_FUND_TITLE, fundTitle)
+            }
             return fragment
         }
     }
 
-    // UI Components
     private lateinit var titleText: TextView
     private lateinit var totalPercentageText: TextView
     private lateinit var allocationInputsContainer: LinearLayout
     private lateinit var availableAllocationsContainer: LinearLayout
     private lateinit var setAllocationButton: Button
 
-    // Data
     private val selectedAllocations = mutableListOf<AllocationInput>()
-    private val allocationOptions = mutableListOf<AllocationOption>()
+    // Available options as (id, description), source depends on the fund type.
+    private val allocationOptions = mutableListOf<Pair<Long, String>>()
     private var totalPercentage = 0
-    private var fundType: String? = null
+    private var fundType: String = FUND_TYPE_DEFLATION
     private var fundTitle: String? = null
 
-    // Data classes
-    private data class AllocationInput(
-        val allocationId: Int,
-        val name: String,
-        var percentage: Int
-    )
+    private data class AllocationInput(val optionId: Long, val name: String, var percentage: Int)
 
-    private data class AllocationOption(
-        val id: Int,
-        val name: String
-    ) {
-        override fun toString(): String = name
-    }
+    private fun isCaretaker() = fundType == FUND_TYPE_CARETAKER
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        arguments?.let {
-            fundType = it.getString(ARG_FUND_TYPE)
-            fundTitle = it.getString(ARG_FUND_TITLE)
-        }
+        fundType = arguments?.getString(ARG_FUND_TYPE) ?: FUND_TYPE_DEFLATION
+        fundTitle = arguments?.getString(ARG_FUND_TITLE)
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
@@ -90,15 +87,8 @@ class SetAllocationFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-
-        // Initialize views
         initializeViews(view)
-
-        // Setup allocation options
-        setupAllocationOptions()
-
-        // Load existing user preferences
-        loadUserPreferences()
+        loadOptionsAndPreferences()
     }
 
     private fun initializeViews(view: View) {
@@ -108,49 +98,55 @@ class SetAllocationFragment : Fragment() {
         availableAllocationsContainer = view.findViewById(R.id.available_allocations_container)
         setAllocationButton = view.findViewById(R.id.set_allocation_button)
 
-        // Set title
-        titleText.text = "Set $fundTitle Preferences"
-
-        // Setup set allocation button
+        titleText.text = fundTitle?.let { "Set $it Preferences" } ?: "Set Allocation Preferences"
         setAllocationButton.setOnClickListener { setAllocation() }
 
-        // Initial state
         updateUI()
         updateAllocationInputs()
         updateAvailableAllocations()
     }
 
-    private fun setupAllocationOptions() {
-        when (fundType) {
-            FUND_TYPE_CARETAKER -> {
-                // Caretaker Fund has only one option
-                allocationOptions.add(AllocationOption(1, "Caretaker Fund"))
-            }
-            FUND_TYPE_DEFLATION -> {
-                // Deflation Fund options
-                allocationOptions.add(AllocationOption(1, "LP Rewards"))
-                allocationOptions.add(AllocationOption(2, "SCRT Labs"))
-                allocationOptions.add(AllocationOption(3, "ERTH Labs"))
+    private fun loadOptionsAndPreferences() {
+        lifecycleScope.launch {
+            try {
+                val address = SecureWalletManager.getWalletAddress(requireContext())
+                val (options, current) = withContext(Dispatchers.IO) {
+                    if (isCaretaker()) {
+                        val opts = Allocation.allocationOptions(StreamId.STREAM_ID_HUMAN).map { it.id to it.description }
+                        val voter = if (address.isNullOrEmpty()) emptyList() else Allocation.voterAllocations(StreamId.STREAM_ID_HUMAN, address)
+                        opts to voter
+                    } else {
+                        val opts = Allocation.allocationOptions(StreamId.STREAM_ID_CAPITAL).map { it.id to it.description }
+                        val voter = if (address.isNullOrEmpty()) emptyList() else Allocation.voterAllocations(StreamId.STREAM_ID_CAPITAL, address)
+                        opts to voter
+                    }
+                }
+                if (!isAdded) return@launch
+
+                allocationOptions.clear()
+                allocationOptions.addAll(options)
+
+                selectedAllocations.clear()
+                for ((optionId, percent) in current) {
+                    val name = allocationOptions.find { it.first == optionId }?.second ?: "Option $optionId"
+                    selectedAllocations.add(AllocationInput(optionId, name, percent.toInt()))
+                }
+
+                updateUI()
+                updateAllocationInputs()
+                updateAvailableAllocations()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error loading allocation options", e)
             }
         }
-
-        // Create allocation option cards
-        updateAvailableAllocations()
     }
 
-    private fun addSelectedAllocation(option: AllocationOption) {
-        // Check if already added
-        for (existing in selectedAllocations) {
-            if (existing.allocationId == option.id) {
-                Toast.makeText(context, "Allocation already added", Toast.LENGTH_SHORT).show()
-                return
-            }
+    private fun addSelectedAllocation(option: Pair<Long, String>) {
+        if (selectedAllocations.any { it.optionId == option.first }) {
+            Toast.makeText(context, "Allocation already added", Toast.LENGTH_SHORT).show()
+            return
         }
-
-        // Add new allocation with 0%
-        selectedAllocations.add(AllocationInput(option.id, option.name, 0))
-
-        // Update UI components
+        selectedAllocations.add(AllocationInput(option.first, option.second, 0))
         updateUI()
         updateAllocationInputs()
         updateAvailableAllocations()
@@ -158,240 +154,123 @@ class SetAllocationFragment : Fragment() {
 
     private fun updateAvailableAllocations() {
         availableAllocationsContainer.removeAllViews()
-
-        // Create flowing layout for chips
         var currentRow: LinearLayout? = null
         var currentRowWidth = 0
-        val maxRowWidth = resources.displayMetrics.widthPixels - 64 // Account for margins
+        val maxRowWidth = resources.displayMetrics.widthPixels - 64
 
         for (option in allocationOptions) {
-            // Check if this option is already selected
-            val isAlreadySelected = selectedAllocations.any { it.allocationId == option.id }
-
-            if (!isAlreadySelected) {
-                val chip = createAllocationChip(option)
-
-                // Measure chip width (approximate)
-                val chipWidth = (option.name.length * 12 + 80) // Rough estimate
-
-                // Start new row if needed
-                if (currentRow == null || currentRowWidth + chipWidth > maxRowWidth) {
-                    currentRow = LinearLayout(context)
-                    currentRow.orientation = LinearLayout.HORIZONTAL
-                    currentRow.layoutParams = LinearLayout.LayoutParams(
+            if (selectedAllocations.any { it.optionId == option.first }) continue
+            val chip = createAllocationChip(option)
+            val chipWidth = option.second.length * 12 + 80
+            if (currentRow == null || currentRowWidth + chipWidth > maxRowWidth) {
+                currentRow = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    layoutParams = LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT
                     )
-                    availableAllocationsContainer.addView(currentRow)
-                    currentRowWidth = 0
                 }
+                availableAllocationsContainer.addView(currentRow)
+                currentRowWidth = 0
+            }
+            currentRow.addView(chip)
+            currentRowWidth += chipWidth
+        }
+    }
 
-                currentRow.addView(chip)
-                currentRowWidth += chipWidth
+    private fun createAllocationChip(option: Pair<Long, String>): Button {
+        return Button(context).apply {
+            text = option.second
+            textSize = 14f
+            setBackgroundColor(0xFFE0E0E0.toInt())
+            setTextColor(0xFF333333.toInt())
+            setPadding(16, 8, 16, 8)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(4, 4, 4, 4) }
+            stateListAnimator = null
+            elevation = 2f
+            setOnClickListener {
+                setBackgroundColor(0xFF4CAF50.toInt())
+                setTextColor(0xFFFFFFFF.toInt())
+                postDelayed({ addSelectedAllocation(option) }, 150)
             }
         }
     }
 
-    private fun createAllocationChip(option: AllocationOption): Button {
-        val chip = Button(context)
-        chip.text = option.name
-        chip.textSize = 14f
-        chip.setBackgroundColor(0xFFE0E0E0.toInt())
-        chip.setTextColor(0xFF333333.toInt())
-        chip.setPadding(16, 8, 16, 8)
-
-        // Set margins
-        val chipParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        )
-        chipParams.setMargins(4, 4, 4, 4)
-        chip.layoutParams = chipParams
-
-        // Add rounded corners and ripple effect
-        chip.stateListAnimator = null
-        chip.elevation = 2f
-
-        chip.setOnClickListener {
-            // Add visual feedback
-            chip.setBackgroundColor(0xFF4CAF50.toInt())
-            chip.setTextColor(0xFFFFFFFF.toInt())
-            chip.postDelayed({ addSelectedAllocation(option) }, 150)
-        }
-
-        return chip
-    }
-
-    private fun removeAllocation(allocationId: Int) {
-        selectedAllocations.removeAll { it.allocationId == allocationId }
-
-        // Update UI components
+    private fun removeAllocation(optionId: Long) {
+        selectedAllocations.removeAll { it.optionId == optionId }
         updateUI()
         updateAllocationInputs()
         updateAvailableAllocations()
     }
 
-    private fun updateAllocationPercentage(allocationId: Int, percentage: Int) {
-        for (allocation in selectedAllocations) {
-            if (allocation.allocationId == allocationId) {
-                allocation.percentage = percentage
-                break
-            }
-        }
-
-        // Only update the summary, don't rebuild the input views
+    private fun updateAllocationPercentage(optionId: Long, percentage: Int) {
+        selectedAllocations.find { it.optionId == optionId }?.percentage = percentage
         updateTotalAndButton()
     }
 
     private fun updateTotalAndButton() {
-        // Calculate total percentage
         totalPercentage = selectedAllocations.sumOf { it.percentage }
-
-        // Update total percentage display
         totalPercentageText.text = "Total: $totalPercentage%"
         totalPercentageText.setTextColor(if (totalPercentage == 100) 0xFF4CAF50.toInt() else 0xFFFF0000.toInt())
-
-        // Update set button
         setAllocationButton.isEnabled = totalPercentage == 100 && selectedAllocations.isNotEmpty()
         setAllocationButton.text = if (totalPercentage == 100) "Set Allocation" else
             "Total must equal 100% ($totalPercentage%)"
     }
 
-    private fun updateUI() {
-        updateTotalAndButton()
-    }
+    private fun updateUI() = updateTotalAndButton()
 
     private fun updateAllocationInputs() {
         allocationInputsContainer.removeAllViews()
-
         for (allocation in selectedAllocations) {
-            val inputView = createAllocationInputView(allocation)
-            allocationInputsContainer.addView(inputView)
+            allocationInputsContainer.addView(createAllocationInputView(allocation))
         }
     }
 
     private fun createAllocationInputView(allocation: AllocationInput): View {
-        val container = LinearLayout(context)
-        container.orientation = LinearLayout.HORIZONTAL
-        container.setPadding(20, 15, 20, 15)
-        container.setBackgroundColor(0xFFE3F2FD.toInt())
+        val container = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(20, 15, 20, 15)
+            setBackgroundColor(0xFFE3F2FD.toInt())
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(16, 8, 16, 8) }
+        }
 
-        // Set margins and rounded corners
-        val containerParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        )
-        containerParams.setMargins(16, 8, 16, 8)
-        container.layoutParams = containerParams
+        val nameText = TextView(context).apply {
+            text = allocation.name
+            textSize = 16f
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
 
-        // Allocation name
-        val nameText = TextView(context)
-        nameText.text = allocation.name
-        nameText.textSize = 16f
-        nameText.layoutParams = LinearLayout.LayoutParams(
-            0,
-            ViewGroup.LayoutParams.WRAP_CONTENT, 1f
-        )
-
-        // Percentage input
-        val percentageInput = EditText(context)
-        percentageInput.setText(allocation.percentage.toString())
-        percentageInput.inputType = android.text.InputType.TYPE_CLASS_NUMBER
-        percentageInput.hint = "%"
-        percentageInput.layoutParams = LinearLayout.LayoutParams(
-            100,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        )
-
-        percentageInput.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) {
-                try {
-                    val percentage = s.toString().toInt()
-                    updateAllocationPercentage(allocation.allocationId, maxOf(0, minOf(100, percentage)))
-                } catch (e: NumberFormatException) {
-                    updateAllocationPercentage(allocation.allocationId, 0)
+        val percentageInput = EditText(context).apply {
+            setText(allocation.percentage.toString())
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            hint = "%"
+            layoutParams = LinearLayout.LayoutParams(100, ViewGroup.LayoutParams.WRAP_CONTENT)
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: Editable?) {
+                    val pct = s.toString().toIntOrNull() ?: 0
+                    updateAllocationPercentage(allocation.optionId, pct.coerceIn(0, 100))
                 }
-            }
-        })
+            })
+        }
 
-        // Remove button
-        val removeButton = Button(context)
-        removeButton.text = "-"
-        removeButton.layoutParams = LinearLayout.LayoutParams(
-            80,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        )
-        removeButton.setOnClickListener { removeAllocation(allocation.allocationId) }
+        val removeButton = Button(context).apply {
+            text = "-"
+            layoutParams = LinearLayout.LayoutParams(80, ViewGroup.LayoutParams.WRAP_CONTENT)
+            setOnClickListener { removeAllocation(allocation.optionId) }
+        }
 
         container.addView(nameText)
         container.addView(percentageInput)
         container.addView(removeButton)
-
         return container
-    }
-
-    private fun loadUserPreferences() {
-        lifecycleScope.launch {
-            try {
-                val contractAddress = if (FUND_TYPE_CARETAKER == fundType)
-                    Constants.REGISTRATION_CONTRACT
-                else
-                    Constants.STAKING_CONTRACT
-                val contractHash = if (FUND_TYPE_CARETAKER == fundType)
-                    Constants.REGISTRATION_HASH
-                else
-                    Constants.STAKING_HASH
-
-                val queryMsg = JSONObject()
-                val userQuery = JSONObject()
-                userQuery.put("address", "secret1wvha45m7qgr6lc96sqatdq87hu3t25l9fcfex9") // TODO: Get actual wallet address
-                queryMsg.put("query_user_allocations", userQuery)
-
-                val result = SecretKClient.queryContractJson( contractAddress, queryMsg, contractHash)
-
-                // Check if fragment is still attached before updating UI
-                if (!isAdded || context == null) return@launch
-
-                activity?.runOnUiThread {
-                    try {
-                        // Process user preferences (same logic as fragments)
-                        if (result.has("data") && result.getJSONArray("data").length() > 0) {
-                            val dataArray = result.getJSONArray("data")
-
-                            selectedAllocations.clear()
-                            for (i in 0 until dataArray.length()) {
-                                val item = dataArray.getJSONObject(i)
-                                val allocationId = item.optInt("allocation_id", 0)
-                                val percentage = item.optString("percentage", "0").toInt()
-
-                                val name = getAllocationName(allocationId)
-                                selectedAllocations.add(AllocationInput(allocationId, name, percentage))
-                            }
-
-                            updateUI()
-                            updateAllocationInputs()
-                            updateAvailableAllocations()
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error processing user preferences", e)
-                    }
-                }
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Error loading user preferences", e)
-            }
-        }
-    }
-
-    private fun getAllocationName(allocationId: Int): String {
-        for (option in allocationOptions) {
-            if (option.id == allocationId) {
-                return option.name
-            }
-        }
-        return "Unknown ($allocationId)"
     }
 
     private fun setAllocation() {
@@ -399,72 +278,28 @@ class SetAllocationFragment : Fragment() {
             Toast.makeText(context, "Total must equal 100%", Toast.LENGTH_SHORT).show()
             return
         }
+        val weights = selectedAllocations.map { it.optionId to it.percentage.toLong() }
 
+        setAllocationButton.isEnabled = false
         lifecycleScope.launch {
             try {
-                // Build the contract execution message matching web app format
-                val executeMsg = JSONObject()
-                val setAllocation = JSONObject()
-                val percentages = JSONArray()
-
-                // Format allocations as expected by the contracts (matching web app)
-                for (allocation in selectedAllocations) {
-                    val allocItem = JSONObject()
-                    allocItem.put("allocation_id", allocation.allocationId)
-                    allocItem.put("percentage", allocation.percentage.toString())
-                    percentages.put(allocItem)
-                }
-
-                setAllocation.put("percentages", percentages)
-                executeMsg.put("set_allocation", setAllocation)
-
-                val contractAddress: String
-                val codeHash: String
-                val contractLabel: String
-
-                when (fundType) {
-                    FUND_TYPE_CARETAKER -> {
-                        contractAddress = Constants.REGISTRATION_CONTRACT
-                        codeHash = Constants.REGISTRATION_HASH
-                        contractLabel = "Caretaker Fund:"
-                    }
-                    FUND_TYPE_DEFLATION -> {
-                        contractAddress = Constants.STAKING_CONTRACT
-                        codeHash = Constants.STAKING_HASH
-                        contractLabel = "Deflation Fund:"
-                    }
-                    else -> {
-                        Toast.makeText(context, "Invalid fund type", Toast.LENGTH_SHORT).show()
-                        return@launch
+                val txHash = withContext(Dispatchers.IO) {
+                    SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
+                        val key = EarthWallet.deriveKey(mnemonic)
+                        val creator = EarthWallet.address(key)
+                        val stream = if (isCaretaker()) StreamId.STREAM_ID_HUMAN else StreamId.STREAM_ID_CAPITAL
+                        val msg = Allocation.msgSetAllocations(creator, stream, weights)
+                        EarthTx.broadcast(key, listOf(msg))
                     }
                 }
-
-                val result = TransactionExecutor.executeContract(
-                    fragment = this@SetAllocationFragment,
-                    contractAddress = contractAddress,
-                    message = executeMsg,
-                    codeHash = codeHash,
-                    contractLabel = contractLabel
-                )
-
-                result.onSuccess {
-                    // Success - go back to previous fragment
-                    activity?.supportFragmentManager?.popBackStack()
-                }.onFailure { error ->
-                    if (error.message != "Transaction cancelled by user" &&
-                        error.message != "Authentication failed") {
-                        Toast.makeText(context, "Failed: ${error.message}", Toast.LENGTH_SHORT).show()
-                    }
-                }
-
+                Log.i(TAG, "SetAllocations broadcast: $txHash")
+                Toast.makeText(context, "Allocation set", Toast.LENGTH_SHORT).show()
+                activity?.supportFragmentManager?.popBackStack()
             } catch (e: Exception) {
                 Log.e(TAG, "Error setting allocation", e)
                 Toast.makeText(context, "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                updateTotalAndButton()
             }
         }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
     }
 }

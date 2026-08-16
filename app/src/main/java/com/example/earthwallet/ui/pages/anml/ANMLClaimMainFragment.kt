@@ -21,10 +21,12 @@ import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
 import network.erth.wallet.Constants
 import network.erth.wallet.ui.components.LoadingOverlay
-import network.erth.wallet.wallet.services.SecretKClient
 import network.erth.wallet.wallet.services.SecureWalletManager
-import network.erth.wallet.wallet.services.TransactionExecutor
+import network.erth.wallet.wallet.services.EarthWallet
+import network.erth.wallet.chain.Personhood
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListener, ANMLClaimFragment.ANMLClaimListener {
@@ -199,121 +201,47 @@ class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListe
     override fun onClaimRequested() {
         lifecycleScope.launch {
             try {
-                val exec = JSONObject()
-                exec.put("claim_anml", JSONObject())
-
-                val result = TransactionExecutor.executeContract(
-                    fragment = this@ANMLClaimMainFragment,
-                    contractAddress = Constants.REGISTRATION_CONTRACT,
-                    message = exec,
-                    codeHash = Constants.REGISTRATION_HASH,
-                    gasLimit = 400_000,
-                    contractLabel = "Registration Contract:"
-                )
-
-                result.onSuccess {
-                    // Transaction successful - navigate to complete screen
-                    showCompleteFragment()
-                    // Broadcast receiver will handle status refreshes
-                }.onFailure { error ->
-                    if (error.message != "Transaction cancelled by user" &&
-                        error.message != "Authentication failed") {
-                        Log.e(TAG, "ANML claim failed: ${error.message}")
-                        Toast.makeText(context, "Claim failed: ${error.message}", Toast.LENGTH_LONG).show()
+                showLoading(true)
+                val txHash = withContext(Dispatchers.IO) {
+                    SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
+                        Personhood.claimAnml(EarthWallet.deriveKey(mnemonic))
                     }
-                    // Transaction failed or was cancelled - refresh to ensure UI is correct
-                    checkStatus()
                 }
-
+                showLoading(false)
+                Log.i(TAG, "ANML claim ok: $txHash")
+                showCompleteFragment()
             } catch (e: Exception) {
-                Toast.makeText(context, "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                showLoading(false)
+                Log.e(TAG, "ANML claim failed", e)
+                Toast.makeText(context, "Claim failed: ${e.message}", Toast.LENGTH_LONG).show()
+                checkStatus()
             }
         }
     }
 
-    // Launch the reusable query activity to check registration/claim status
+    // Check registration status on the earth chain; show the register or claim UI.
     private fun checkStatus() {
-        try {
-            showLoading(true)
-
-            // Get wallet address using SecureWalletManager
-            val address: String
+        showLoading(true)
+        lifecycleScope.launch {
             try {
                 if (!SecureWalletManager.isWalletAvailable(requireContext())) {
-                    showLoading(false)
-                    showRegisterFragment()
-                    return
+                    showLoading(false); showRegisterFragment(); return@launch
                 }
-
-                address = SecureWalletManager.getWalletAddress(requireContext()) ?: ""
+                val address = SecureWalletManager.getWalletAddress(requireContext()) ?: ""
                 if (TextUtils.isEmpty(address)) {
-                    showLoading(false)
-                    showRegisterFragment()
-                    return
+                    showLoading(false); showRegisterFragment(); return@launch
+                }
+                val status = withContext(Dispatchers.IO) { Personhood.registrationStatus(address) }
+                showLoading(false)
+                when {
+                    !status.registered -> showRegisterFragment()
+                    Personhood.isAnmlClaimable(status) -> showClaimFragment()
+                    else -> showCompleteFragment() // registered but already claimed today
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to get wallet address: ${e.message}")
+                Log.e(TAG, "status check failed", e)
                 showLoading(false)
                 showRegisterFragment()
-                return
-            }
-
-            // Build query object for the bridge (no proxy)
-            val q = JSONObject()
-            val inner = JSONObject()
-            inner.put("address", address)
-            q.put("query_registration_status", inner)
-
-            // Use SecretKClient directly
-            lifecycleScope.launch {
-                try {
-                    // Check wallet availability without retrieving mnemonic
-                    if (!SecureWalletManager.isWalletAvailable(requireContext())) {
-                        showLoading(false)
-                        errorText?.let { errorText ->
-                            errorText.text = "No wallet found"
-                            errorText.visibility = View.VISIBLE
-                        }
-                        return@launch
-                    }
-
-                    val result = SecretKClient.queryContractJson(
-                        Constants.REGISTRATION_CONTRACT,
-                        q,
-                        Constants.REGISTRATION_HASH
-                    )
-
-                    // Extract data from wrapper
-                    val actualResult = if (result.has("data")) {
-                        result.getJSONObject("data")
-                    } else {
-                        result
-                    }
-
-                    // Format result to match expected format
-                    val response = JSONObject()
-                    response.put("success", true)
-                    response.put("result", actualResult)
-
-                    // Handle result
-                    handleRegistrationQueryResult(response.toString())
-
-                } catch (e: Exception) {
-                    Log.e(TAG, "Registration status query failed", e)
-                    val fullError = "Failed to check status:\n${e.javaClass.simpleName}: ${e.message}\n${e.stackTrace.take(3).joinToString("\n")}"
-                    showLoading(false)
-                    errorText?.let { errorText ->
-                        errorText.text = fullError
-                        errorText.visibility = View.VISIBLE
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "checkStatus failed", e)
-            showLoading(false)
-            errorText?.let { errorText ->
-                errorText.text = "Error: ${e.message}"
-                errorText.visibility = View.VISIBLE
             }
         }
     }
