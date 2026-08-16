@@ -24,6 +24,13 @@ object EarthRest {
     fun getRpc(path: String): Pair<Int, String> = getFrom(Constants.EARTH_RPC_URL, path)
 
     private fun getFrom(base: String, path: String): Pair<Int, String> {
+        // An unset base is a supported configuration, not an error: the RPC is
+        // optional and is left empty when the deployment exposes only the LCD.
+        // Reported as a non-2xx so callers take their existing failure path
+        // instead of an exception thrown from the URL constructor, which is
+        // outside the try below.
+        if (base.isBlank()) return 0 to ""
+
         val conn = URL(base + path).openConnection() as HttpURLConnection
         return try {
             conn.connectTimeout = 20000
