@@ -4,6 +4,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.res.painterResource
+import network.erth.wallet.ui.vendor.theme.dimensions.EarthDimensions
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -82,41 +89,65 @@ fun LiquiditySheet(
         Spacer(Modifier.height(dimens.space16))
 
         if (action == LiquidityAction.Add) {
-            // The paired amount, at the pool's current ratio. This is what the
-            // chain will actually pull — it prices the deposit from the shares
-            // it grants, not from the two numbers it was sent.
-            val pairedToken = if (erthReserve.signum() > 0) {
-                entered * tokenReserve / erthReserve
-            } else {
-                BigInteger.ZERO
-            }
-            val short = pairedToken > BigInteger.valueOf(tokenAvailable)
+            // Two stacked panels, as on swap. Both sides go in together, so
+            // showing them one above the other says that better than two
+            // labelled fields in a column would.
+            //
+            // Either side can be typed and the other follows from the pool's
+            // ratio. Which one was touched last is tracked so the derivation
+            // only ever runs outward — deriving both directions at once feeds
+            // each field its own rounded output and the numbers walk.
+            var erthText by remember { mutableStateOf("") }
+            var tokenText by remember { mutableStateOf("") }
 
-            EarthLabel("ERTH to deposit")
+            fun setErth(raw: String) {
+                erthText = raw.asAmountInput(erthText)
+                val units = erthText.toBaseUnits()
+                tokenText = if (units == null || erthReserve.signum() == 0) {
+                    ""
+                } else {
+                    (units * tokenReserve / erthReserve).asDecimalOrBlank()
+                }
+            }
+
+            fun setToken(raw: String) {
+                tokenText = raw.asAmountInput(tokenText)
+                val units = tokenText.toBaseUnits()
+                erthText = if (units == null || tokenReserve.signum() == 0) {
+                    ""
+                } else {
+                    (units * erthReserve / tokenReserve).asDecimalOrBlank()
+                }
+            }
+
+            val erthUnits = erthText.toBaseUnits() ?: BigInteger.ZERO
+            val tokenUnits = tokenText.toBaseUnits() ?: BigInteger.ZERO
+            val overErth = erthUnits > BigInteger.valueOf(erthAvailable)
+            val overToken = tokenUnits > BigInteger.valueOf(tokenAvailable)
+
+            DepositPanel(
+                label = "ERTH",
+                icon = Tokens.iconOf("uerth"),
+                balance = erthAvailable,
+                value = erthText,
+                onValueChange = ::setErth,
+                onMax = { setErth(erthAvailable.asDecimalAmount()) },
+            )
             Spacer(Modifier.height(dimens.space8))
-            EarthTextField(
-                value = amount,
-                onValueChange = { amount = it.asAmountInput(amount) },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("0") },
-                suffix = { Text("ERTH") },
-                keyboardOptions = keys.first,
-                keyboardActions = keys.second,
+            DepositPanel(
+                label = token,
+                icon = Tokens.iconOf(pool.tokenDenom),
+                balance = tokenAvailable,
+                value = tokenText,
+                onValueChange = ::setToken,
+                onMax = { setToken(tokenAvailable.asDecimalAmount()) },
             )
 
-            Spacer(Modifier.height(dimens.space8))
-            AmountShortcuts(available = erthAvailable) { amount = it }
-
-            Spacer(Modifier.height(dimens.space16))
-            Detail("Paired $token", "${pairedToken.fromBaseUnits()} $token")
-            Detail("Your $token", formatUerth(tokenAvailable))
-            Detail("Your ERTH", formatUerth(erthAvailable))
-
-            if (short) {
+            if (overErth || overToken) {
                 Spacer(Modifier.height(dimens.space8))
                 Text(
-                    text = "You do not hold enough $token for that much ERTH. " +
-                        "Both sides go in together, at the pool's ratio.",
+                    text = "That is more ${if (overErth) "ERTH" else token} than you " +
+                        "hold. Both sides go in together, at the pool's ratio.",
                     style = EarthTypography.textXs,
                     color = EarthColors.Utility.ErrorRed.utilityError700,
                 )
@@ -125,8 +156,9 @@ fun LiquiditySheet(
             Spacer(Modifier.height(dimens.space16))
             EarthButton(
                 text = "Add liquidity",
-                onClick = { onConfirm(entered, pairedToken, BigInteger.ZERO) },
-                enabled = entered.signum() > 0 && pairedToken.signum() > 0 && !short,
+                onClick = { onConfirm(erthUnits, tokenUnits, BigInteger.ZERO) },
+                enabled = erthUnits.signum() > 0 && tokenUnits.signum() > 0 &&
+                    !overErth && !overToken,
                 modifier = Modifier.fillMaxWidth(),
                 colors = brandButtonColors(),
             )
@@ -249,3 +281,76 @@ private fun Long.asDays(): String {
 
 private fun String.toBigIntegerOrNull(): BigInteger? =
     runCatching { BigInteger(this) }.getOrNull()
+
+/**
+ * One side of a deposit: a mark, an amount, and what is available.
+ *
+ * Same shape as the swap panels, because it is the same act — an amount of a
+ * named token — and two different treatments for that would be two things to
+ * learn.
+ */
+@Composable
+private fun DepositPanel(
+    label: String,
+    icon: Int,
+    balance: Long,
+    value: String,
+    onValueChange: (String) -> Unit,
+    onMax: () -> Unit,
+) {
+    val dimens = EarthTheme.dimens
+    val keys = doneKeyboard(keyboardType = KeyboardType.Decimal)
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(
+                EarthColors.Surfaces.bgSecondary,
+                RoundedCornerShape(EarthDimensions.Radius.radius3xl),
+            )
+            .padding(dimens.space16),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            EarthLabel("Deposit")
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = "Balance ${formatUerth(balance)}",
+                style = EarthTypography.textXs,
+                color = EarthColors.Text.textTertiary,
+            )
+        }
+        Spacer(Modifier.height(dimens.space8))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) {
+                EarthTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    placeholder = { Text("0") },
+                    keyboardOptions = keys.first,
+                    keyboardActions = keys.second,
+                )
+            }
+            Spacer(Modifier.width(dimens.space12))
+            Image(
+                modifier = Modifier.size(dimens.space24),
+                painter = painterResource(icon),
+                contentDescription = null,
+            )
+            Spacer(Modifier.width(dimens.space8))
+            Text(
+                text = label,
+                style = EarthTypography.textMd,
+                fontWeight = FontWeight.SemiBold,
+                color = EarthColors.Text.textPrimary,
+            )
+        }
+        if (balance > 0) {
+            Spacer(Modifier.height(dimens.space8))
+            Chip("Max", onMax)
+        }
+    }
+}
+
+/** Base units to a decimal, or blank at zero — a derived "0" reads as an error. */
+private fun BigInteger.asDecimalOrBlank(): String =
+    if (signum() <= 0) "" else fromBaseUnits()

@@ -55,7 +55,9 @@ object Tokens {
     private fun symbolOf(denom: String): String =
         denom.removePrefix("u").uppercase()
 
-    private fun iconOf(denom: String): Int = when (denom) {
+    /** The mark for a denom, in its own colours. Public: sheets outside the
+     *  holdings list need the same mapping, and two of them would drift. */
+    fun iconOf(denom: String): Int = when (denom) {
         "uerth" -> R.drawable.ic_erth_logo
         "uanml" -> R.drawable.anml
         else -> R.drawable.ic_token_default
