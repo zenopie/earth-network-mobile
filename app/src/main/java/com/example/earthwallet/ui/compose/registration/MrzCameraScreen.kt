@@ -12,7 +12,13 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.ui.draw.rotate
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -67,6 +73,8 @@ import network.erth.wallet.wallet.passport.PassportSession
 fun MrzCameraScreen(
     onDetected: (PassportSession.Mrz) -> Unit,
     onManualEntry: () -> Unit,
+    /** The scaffold's bar is hidden here, so back lives on the scrim. */
+    onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -87,72 +95,90 @@ fun MrzCameraScreen(
         if (!granted) askCamera.launch(Manifest.permission.CAMERA)
     }
 
-    Column(
+    // Full-bleed camera with everything drawn over it.
+    //
+    // The screen is landscape here, so there is no room below the preview for
+    // instructions without cropping the very thing being framed. Overlaying
+    // also keeps the words next to the box they describe rather than under a
+    // viewfinder the reader has stopped looking at.
+    Box(
         modifier
             .fillMaxSize()
-            .background(EarthColors.Surfaces.bgPrimary),
+            .background(Color.Black),
     ) {
+        if (granted) {
+            CameraPreview(onMrz = { detected.value(it) })
+        }
+
+        // The guide, at the zone's real proportions. Wide and short, which in
+        // landscape is simply the shape of the bottom of a passport page — no
+        // rotation trick needed once the screen has turned.
         Box(
             Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .background(Color.Black),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (granted) {
-                CameraPreview(onMrz = { detected.value(it) })
+                .align(Alignment.Center)
+                .fillMaxWidth(0.82f)
+                .aspectRatio(MRZ_ASPECT)
+                .border(2.dp, Color.White, RoundedCornerShape(8.dp)),
+        )
 
-                // The guide is turned on its side, not the screen.
-                //
-                // The machine-readable zone is two long lines across the foot
-                // of a passport page — roughly 7:1. Framed upright it either
-                // sits tiny in the middle of the viewfinder or runs off both
-                // edges, so people tilt the phone and then cannot read the
-                // instruction underneath. Rotating the guide lets the passport
-                // be held the way it naturally lies while the phone stays
-                // upright, which is also how it has to be held for the NFC
-                // read a step later.
-                //
-                // ML Kit reads rotated text without help: the analyzer passes
-                // the frame's rotation and recognition is orientation
-                // tolerant, so nothing about the decode changes here.
-                Box(
-                    Modifier
-                        .fillMaxHeight(0.72f)
-                        .aspectRatio(MRZ_ASPECT)
-                        .rotate(90f)
-                        .border(2.dp, Color.White, RoundedCornerShape(8.dp)),
-                )
-            } else {
-                Text(
-                    text = "Camera access is needed to read the passport's " +
-                        "printed lines. Nothing is recorded.",
-                    style = EarthTypography.textSm,
-                    color = Color.White,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(32.dp),
-                )
-            }
+        // Scrims top and bottom. Text over a live camera is unreadable against
+        // a pale passport page and fine against a dark desk; a scrim makes it
+        // legible against both without dimming the part being framed.
+        Column(
+            Modifier
+                .align(Alignment.TopStart)
+                .fillMaxWidth()
+                .background(Color.Black.copy(alpha = 0.55f))
+                .statusBarsPadding()
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+        ) {
+            Text(
+                text = if (granted) {
+                    "Turn the passport on its side and fill the box with the two " +
+                        "rows of letters and chevrons."
+                } else {
+                    "Camera access is needed to read the passport's printed lines. " +
+                        "Nothing is recorded."
+                },
+                style = EarthTypography.textSm,
+                color = Color.White,
+            )
         }
 
-        Column(Modifier.padding(24.dp)) {
-            EarthLabel("Passport")
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = "Turn the passport on its side and line up the two rows " +
-                    "of letters and chevrons at the foot of the photo page.",
-                style = EarthTypography.textSm,
-                color = EarthColors.Text.textSecondary,
-            )
-            Spacer(Modifier.height(16.dp))
-            EarthButton(
-                text = "Enter details by hand",
-                onClick = onManualEntry,
-                modifier = Modifier.fillMaxWidth(),
-                colors = EarthButtonDefaults.secondaryColors(),
-            )
+        Row(
+            Modifier
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .background(Color.Black.copy(alpha = 0.55f))
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OverlayAction("Back", onBack)
+            Spacer(Modifier.weight(1f))
+            OverlayAction("Enter by hand", onManualEntry)
         }
     }
+}
+
+/**
+ * A control on the camera scrim.
+ *
+ * Text rather than a filled button: two solid buttons over a viewfinder read as
+ * the point of the screen, and the point of the screen is the passport.
+ */
+@Composable
+private fun OverlayAction(label: String, onClick: () -> Unit) {
+    Text(
+        text = label,
+        style = EarthTypography.textMd,
+        fontWeight = FontWeight.SemiBold,
+        color = Color.White,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    )
 }
 
 @Composable

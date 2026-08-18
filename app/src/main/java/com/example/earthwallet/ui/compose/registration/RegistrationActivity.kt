@@ -2,6 +2,7 @@ package network.erth.wallet.ui.compose.registration
 
 import android.app.PendingIntent
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.nfc.NfcAdapter
 import android.nfc.Tag
 import android.nfc.tech.IsoDep
@@ -214,8 +215,30 @@ class RegistrationActivity : ComponentActivity() {
 
                 outcome?.let { TxResultSheet(outcome = it, onDismiss = { outcome = null }) }
 
+                // The camera step is the only one that wants a turned phone,
+                // and it wants it badly — the MRZ is two long lines and a
+                // portrait viewfinder cannot frame them at a readable size.
+                // The rest of the flow is a form and an NFC read, both of which
+                // want the phone upright and flat.
+                //
+                // configChanges on the activity means this rotation does not
+                // recreate anything, so the composition — and a scan already in
+                // progress — survives it.
+                LaunchedEffect(step) {
+                    requestedOrientation = if (step == Step.Camera) {
+                        ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                    } else {
+                        ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                    }
+                }
+
                 BlankBgScaffold(
                     topBar = {
+                        // The camera step overlays its own controls on the
+                        // preview; a bar above it would take a fifth of a
+                        // landscape screen to say what the screen already
+                        // shows.
+                        if (step == Step.Camera) return@BlankBgScaffold
                         EarthDetailTopBar(
                             title = when (step) {
                                 Step.Camera -> "Scan passport"
@@ -240,7 +263,9 @@ class RegistrationActivity : ComponentActivity() {
                         Step.Camera -> MrzCameraScreen(
                             onDetected = { mrz = it; step = Step.Confirm },
                             onManualEntry = { mrz = null; step = Step.Confirm },
-                            modifier = inset,
+                            onBack = { finish() },
+                            // No inset: the preview runs edge to edge and its
+                            // own scrims carry the system bar padding.
                         )
                         Step.Confirm -> MrzConfirmScreen(
                             initial = mrz,
