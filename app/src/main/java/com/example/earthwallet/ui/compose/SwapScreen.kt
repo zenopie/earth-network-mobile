@@ -92,6 +92,7 @@ fun SwapScreen(
 
     var erthIn by remember { mutableStateOf(true) }
     var amount by remember { mutableStateOf("") }
+    var slippageBps by remember { mutableIntStateOf(DEFAULT_SLIPPAGE_BPS) }
 
     val fromDenom = if (erthIn) "ERTH" else "ANML"
     val toDenom = if (erthIn) "ANML" else "ERTH"
@@ -208,6 +209,48 @@ fun SwapScreen(
             Spacer(Modifier.height(dimens.space16))
             EarthDetailRow("Fee", "${quote.feeErth.fromBaseUnits()} ERTH")
             EarthDetailRow("Price impact", "%.2f%%".format(quote.priceImpact * 100))
+            // The number that actually goes on chain. The quote above is what
+            // the pool would pay right now; this is the floor the transaction
+            // refuses to go below, and it is the only one of the two that is
+            // enforced — so it is worth showing rather than leaving implied by
+            // a tolerance setting.
+            EarthDetailRow(
+                "Minimum received",
+                "${quote.amountOut.withSlippage(slippageBps).fromBaseUnits()} $toDenom",
+            )
+
+            Spacer(Modifier.height(dimens.space12))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "Max slippage",
+                    style = EarthTypography.textSm,
+                    color = EarthColors.Text.textTertiary,
+                    modifier = Modifier.weight(1f),
+                )
+                SLIPPAGE_CHOICES.forEach { bps ->
+                    Spacer(Modifier.width(dimens.space8))
+                    SlippageChip(
+                        bps = bps,
+                        selected = bps == slippageBps,
+                        onClick = { slippageBps = bps },
+                    )
+                }
+            }
+
+            // Small pools move a long way on an ordinary trade, so a tolerance
+            // under the impact the quote already shows will simply fail. Said
+            // here rather than left to the chain, which reports it as a
+            // rejected transaction after the fee is spent.
+            if (quote.priceImpact * 10_000 > slippageBps) {
+                Spacer(Modifier.height(dimens.space8))
+                Text(
+                    text = "This trade moves the price more than your tolerance " +
+                        "allows, so it will be rejected. Raise the tolerance or " +
+                        "trade a smaller amount.",
+                    style = EarthTypography.textXs,
+                    color = EarthColors.Utility.ErrorRed.utilityError700,
+                )
+            }
         }
 
         Spacer(Modifier.height(dimens.space24))
@@ -221,7 +264,7 @@ fun SwapScreen(
                         if (erthIn) "uerth" else "uanml",
                         input,
                         if (erthIn) "uanml" else "uerth",
-                        out.withSlippage(),
+                        out.withSlippage(slippageBps),
                     )
                 }
             },
@@ -355,14 +398,54 @@ private fun String.toBigIntegerOrNull(): java.math.BigInteger? =
     runCatching { java.math.BigInteger(this) }.getOrNull()
 
 /**
- * The floor the swap will accept.
+ * The floor the swap will accept, given a tolerance in basis points.
  *
- * One percent under the quote. The quote is computed against reserves that were
- * read a moment ago, and anything landing in a block before this one moves
- * them; without a floor the chain fills at whatever price results, and with a
- * floor set at the quote itself an unrelated transaction in the same block
- * fails the swap. One percent is loose enough to survive ordinary traffic on a
- * chain this quiet and tight enough that a real reordering is refused.
+ * The quote is computed against reserves read a moment ago, and anything
+ * landing in a block before this one moves them. Without a floor the chain
+ * fills at whatever price results; with the floor set at the quote itself, an
+ * unrelated transaction in the same block fails the swap.
+ *
+ * Truncating division, so rounding always moves the floor down. Rounding it up
+ * would quote a minimum the chain might refuse by a single unit.
  */
-private fun java.math.BigInteger.withSlippage(): java.math.BigInteger =
-    this * java.math.BigInteger.valueOf(99) / java.math.BigInteger.valueOf(100)
+private fun java.math.BigInteger.withSlippage(bps: Int): java.math.BigInteger {
+    val remaining = java.math.BigInteger.valueOf((10_000 - bps).toLong())
+    return this * remaining / java.math.BigInteger.valueOf(10_000)
+}
+
+/**
+ * Tolerances offered, in basis points.
+ *
+ * A short list rather than a free-text field. The useful range is narrow, the
+ * failure modes at each end are opposite — too tight and it never fills, too
+ * loose and a reordering takes the difference — and neither is obvious from a
+ * number typed into a box.
+ */
+private val SLIPPAGE_CHOICES = listOf(50, 100, 300)
+private const val DEFAULT_SLIPPAGE_BPS = 100
+
+@Composable
+private fun SlippageChip(bps: Int, selected: Boolean, onClick: () -> Unit) {
+    val dimens = EarthTheme.dimens
+    Text(
+        text = if (bps % 100 == 0) "${bps / 100}%" else "%.1f%%".format(bps / 100f),
+        style = EarthTypography.textXs,
+        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+        color = if (selected) {
+            EarthColors.Btns.Secondary.btnSecondaryFg
+        } else {
+            EarthColors.Text.textTertiary
+        },
+        modifier = Modifier
+            .clip(RoundedCornerShape(dimens.space20))
+            .background(
+                if (selected) {
+                    EarthColors.Btns.Secondary.btnSecondaryBg
+                } else {
+                    EarthColors.Surfaces.bgSecondary
+                },
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = dimens.space12, vertical = dimens.space4),
+    )
+}
