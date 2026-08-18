@@ -61,6 +61,7 @@ private fun Showcase() {
             state = WalletUiState(
                 address = "earth1c9pthe4a5ngylhm5mjem6y5tt0sz65yqdngthx",
                 balanceUerth = 46_000_000_000,
+                name = "Showcase",
                 anmlBalance = "1.00",
                 stakedUerth = 100_000_000,
                 rewardsUerth = 2_190_000,

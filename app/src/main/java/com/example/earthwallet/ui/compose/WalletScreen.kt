@@ -28,6 +28,8 @@ import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
 
 /** What the wallet screen shows. Held by the caller; this composable is pure. */
 data class WalletUiState(
+    /** The name this wallet was created under. */
+    val name: String,
     val address: String,
     val balanceUerth: Long,
     val anmlBalance: String?,
@@ -55,6 +57,7 @@ data class WalletUiState(
          * distinction it will never use.
          */
         val EMPTY = WalletUiState(
+            name = "",
             address = "",
             balanceUerth = 0,
             anmlBalance = null,

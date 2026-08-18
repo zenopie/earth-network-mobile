@@ -107,6 +107,9 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
                     }.getOrDefault(0L)
 
                     WalletUiState(
+                        name = runCatching {
+                            SecureWalletManager.getCurrentWalletName(ctx)
+                        }.getOrDefault(""),
                         address = address,
                         balanceUerth = erth,
                         anmlBalance = if (anml > 0) formatSix(anml) else null,

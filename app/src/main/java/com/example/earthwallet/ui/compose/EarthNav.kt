@@ -23,10 +23,13 @@ sealed interface EarthRoute {
      * The tabs.
      *
      * Two axes, not one: what this wallet holds, and what the protocol does.
-     * Wallet and Earn are yours — a balance, a stake, rewards accruing. Swap,
-     * Govern and Explore are the chain's, and you visit them to act on it rather
-     * than to check on yourself. Collapsing those into one list was what buried
-     * liquidity, allocations and the explorer three taps deep in a settings menu.
+     * Wallet and Earn are yours — a balance, a stake, rewards accruing. Swap and
+     * Govern are the chain's, and you visit them to act on it rather than to
+     * check on yourself.
+     *
+     * Four, not five. A tab has to be somewhere you return to; the explorer is
+     * somewhere you go once to answer a question, so it sits in settings and
+     * the remaining four each get more room in the bar.
      */
     sealed interface Tab : EarthRoute {
         val label: String
@@ -54,10 +57,6 @@ sealed interface EarthRoute {
         override val icon = R.drawable.ic_home_govern
     }
 
-    data object Explore : Tab {
-        override val label = "Explore"
-        override val icon = R.drawable.ic_home_explore
-    }
 
     // Pushed on top of a tab.
     data object Send : EarthRoute
@@ -67,6 +66,15 @@ sealed interface EarthRoute {
     data object Settings : EarthRoute
     data object AddressBook : EarthRoute
     data object About : EarthRoute
+    /**
+     * The chain's own state: blocks, validators, how many humans.
+     *
+     * Not a tab. It answers questions about the network rather than about this
+     * wallet, and a permanent slot in the bar suggested it was somewhere you
+     * come back to — which, next to a balance and a stake, it is not.
+     */
+    data object Explore : EarthRoute
+
     data object Personhood : EarthRoute
     data object Wallets : EarthRoute
     data object CreateWallet : EarthRoute
@@ -81,7 +89,6 @@ val EARTH_TABS = listOf(
     EarthRoute.Earn,
     EarthRoute.Swap,
     EarthRoute.Govern,
-    EarthRoute.Explore,
 )
 
 /**

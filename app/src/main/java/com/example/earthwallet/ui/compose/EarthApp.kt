@@ -19,7 +19,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import network.erth.earth.proto.allocation.StreamId
 import network.erth.wallet.R
 import network.erth.wallet.chain.Bank
-import network.erth.wallet.ui.host.HostActivity
+import network.erth.wallet.ui.ads.RewardedAds
+import network.erth.wallet.ui.compose.registration.RegistrationActivity
 import network.erth.wallet.chain.Dex
 import network.erth.wallet.chain.Personhood
 import network.erth.wallet.ui.vendor.component.BlankBgScaffold
@@ -82,7 +83,6 @@ fun EarthApp(
             EarthRoute.Earn -> earn.refresh()
             EarthRoute.Swap -> markets.refresh()
             EarthRoute.Govern -> allocation.refresh()
-            EarthRoute.Explore -> explore.refresh()
         }
     }
 
@@ -126,14 +126,13 @@ fun EarthApp(
         }
     }
 
-    // Registration is still the old app's flow: an MRZ camera scan handing off
-    // to an NFC passport read, both of which are Activities with their own
-    // lifecycle needs. Porting them is a separate job from wiring the entry
-    // point, and the entry point is what was missing.
+    // Its own activity, because NFC foreground dispatch is granted per-activity
+    // and whatever owns it has to be on top when the passport touches the
+    // phone. It finishes back here rather than into a shell of its own.
     val openRegistration = {
-        val intent = Intent(context, HostActivity::class.java)
-            .putExtra("fragment_to_show", "camera_mrz_scanner")
-        runCatching { context.startActivity(intent) }
+        runCatching {
+            context.startActivity(Intent(context, RegistrationActivity::class.java))
+        }
         Unit
     }
 
@@ -161,7 +160,14 @@ fun EarthApp(
         topBar = {
             when (val route = nav.current) {
                 is EarthRoute.Tab -> EarthMainTopBar(
-                    walletName = route.label,
+                    // The Wallet tab is named for whose wallet it is; the other
+                    // tabs are named for what they do. "Wallet" over a balance
+                    // says nothing the balance does not.
+                    walletName = if (route == EarthRoute.Wallet) {
+                        state?.name?.takeIf { it.isNotBlank() } ?: "Wallet"
+                    } else {
+                        route.label
+                    },
                     balancesVisible = balancesVisible,
                     onToggleBalances = { balancesVisible = !balancesVisible },
                     onSettings = { nav.push(EarthRoute.Settings) },
@@ -201,6 +207,7 @@ fun EarthApp(
             earn = earn,
             allocation = allocation,
             markets = markets,
+            explore = explore,
             wallets = wallets,
             walletsState = walletsState,
             draftMnemonic = draftMnemonic,
@@ -216,11 +223,31 @@ fun EarthApp(
         )
     }
 
+    // The ads-for-gas gate, restored to the Compose flow. It hung off TxFlow
+    // before, so it applied to every transaction from an underfunded account
+    // rather than only to registration — which matters because registration is
+    // not necessarily the first thing a new human tries.
+    val host = context as? android.app.Activity
     TxSheets(
         controller = tx,
         balanceUerth = state?.balanceUerth ?: 0L,
         context = context,
+        onWatchAd = {
+            val address = state?.address
+            if (host != null && !address.isNullOrEmpty()) {
+                RewardedAds.show(host, address) { granted ->
+                    // The grant lands as a bank send from the gas wallet, so
+                    // the balance has to be re-read before the sheet can tell
+                    // whether the fee is now covered.
+                    if (granted) wallet.refresh()
+                }
+            }
+        },
     )
+
+    // Loaded ahead of the tap. Fetching a rewarded ad takes seconds, and doing
+    // it when the button is pressed makes the button look broken.
+    LaunchedEffect(Unit) { RewardedAds.preload(context) }
 }
 
 @Composable
@@ -238,6 +265,7 @@ private fun EarthContent(
     earn: EarnViewModel,
     allocation: AllocationViewModel,
     markets: MarketsViewModel,
+    explore: ExploreViewModel,
     wallets: WalletsViewModel,
     walletsState: WalletsUiState?,
     draftMnemonic: String?,
@@ -356,11 +384,16 @@ private fun EarthContent(
             modifier = inset,
         )
 
-        EarthRoute.Explore -> ExploreScreen(
-            state = exploreState,
-            onTx = { nav.push(EarthRoute.TransactionDetail(it)) },
-            modifier = inset,
-        )
+        EarthRoute.Explore -> {
+            // Pushed rather than a tab now, so it loads on entry instead of on
+            // tab selection.
+            LaunchedEffect(Unit) { explore.refresh() }
+            ExploreScreen(
+                state = exploreState,
+                onTx = { nav.push(EarthRoute.TransactionDetail(it)) },
+                modifier = inset,
+            )
+        }
 
         EarthRoute.Receive -> ReceiveScreen(
             state = ReceiveUiState(address = loaded.address),
@@ -384,7 +417,7 @@ private fun EarthContent(
         EarthRoute.Activity -> ActivityScreen(rows = activity.orEmpty(), modifier = inset)
 
         EarthRoute.Settings -> SettingsScreen(
-            items = settingsItems(nav, loaded),
+            items = settingsItems(nav, state),
             version = version,
             modifier = inset,
         )
@@ -563,18 +596,31 @@ private fun walletAddress(ctx: Context): String =
  * What is left once the tabs took the chain: the things about *this install* —
  * who it says you are, what it remembers, and what it is.
  */
-private fun settingsItems(nav: EarthNavController, state: WalletUiState): List<SettingsItem> =
+private fun settingsItems(nav: EarthNavController, state: WalletUiState?): List<SettingsItem> =
     listOf(
         SettingsItem(
             title = "Identity",
-            subtitle = if (state.registered) "Verified human" else "Not registered",
+            // Null, not "Not registered", while the wallet is still loading.
+            // Falling back to the empty state made this assert a fact about
+            // whichever wallet had just been switched to, before anything had
+            // been read about it.
+            subtitle = state?.let {
+                if (it.registered) "Verified human" else "Not registered"
+            },
             icon = R.drawable.ic_shield_check,
             onClick = { nav.push(EarthRoute.Personhood) },
         ),
         SettingsItem(
             title = "Wallets",
+            subtitle = state?.name?.takeIf { it.isNotBlank() },
             icon = R.drawable.ic_wallet,
             onClick = { nav.push(EarthRoute.Wallets) },
+        ),
+        SettingsItem(
+            title = "Explorer",
+            subtitle = "Blocks, validators and registrations",
+            icon = R.drawable.ic_home_explore,
+            onClick = { nav.push(EarthRoute.Explore) },
         ),
         SettingsItem(
             title = "Address book",
@@ -603,6 +649,7 @@ private fun EarthRoute.title(): String = when (this) {
     EarthRoute.Settings -> "Settings"
     EarthRoute.AddressBook -> "Address book"
     EarthRoute.About -> "About"
+    EarthRoute.Explore -> "Explorer"
     EarthRoute.Personhood -> "Identity"
     EarthRoute.Wallets -> "Wallets"
     EarthRoute.CreateWallet -> "New wallet"
