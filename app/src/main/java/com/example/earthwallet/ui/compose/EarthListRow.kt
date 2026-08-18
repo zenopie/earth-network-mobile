@@ -48,7 +48,7 @@ fun EarthListRow(
             modifier = Modifier
                 .size(dimens.space32)
                 .background(
-                    iconBg ?: colors.surfaces.bgTertiary,
+                    iconBg ?: colors.Surfaces.bgTertiary,
                     RoundedCornerShape(dimens.radiusSm),
                 ),
             contentAlignment = Alignment.Center,
@@ -56,7 +56,7 @@ fun EarthListRow(
             Text(
                 text = initial,
                 style = MaterialTheme.typography.labelLarge,
-                color = iconFg ?: colors.text.textPrimary,
+                color = iconFg ?: colors.Text.textPrimary,
             )
         }
         Column(
@@ -67,7 +67,7 @@ fun EarthListRow(
             Text(
                 text = name,
                 style = MaterialTheme.typography.titleMedium,
-                color = colors.text.textPrimary,
+                color = colors.Text.textPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -75,7 +75,7 @@ fun EarthListRow(
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = colors.text.textSecondary,
+                    color = colors.Text.textSecondary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -85,7 +85,7 @@ fun EarthListRow(
             Text(
                 text = value,
                 style = MaterialTheme.typography.labelLarge,
-                color = colors.text.textPrimary,
+                color = colors.Text.textPrimary,
             )
         }
     }

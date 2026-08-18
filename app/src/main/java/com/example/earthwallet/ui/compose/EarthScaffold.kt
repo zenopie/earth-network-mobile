@@ -43,7 +43,7 @@ fun EarthScaffold(
     Column(
         modifier
             .fillMaxSize()
-            .background(colors.surfaces.bgPrimary)
+            .background(colors.Surfaces.bgPrimary)
             .windowInsetsPadding(WindowInsets.statusBars),
     ) {
         Row(
@@ -56,7 +56,7 @@ fun EarthScaffold(
                 Text(
                     text = "‹",
                     style = MaterialTheme.typography.headlineMedium,
-                    color = colors.text.textPrimary,
+                    color = colors.Text.textPrimary,
                     modifier = Modifier
                         .clickable { onBack() }
                         .padding(end = dimens.space16),
@@ -65,7 +65,7 @@ fun EarthScaffold(
             Text(
                 text = title,
                 style = MaterialTheme.typography.headlineMedium,
-                color = colors.text.textPrimary,
+                color = colors.Text.textPrimary,
             )
         }
         Column(
@@ -98,7 +98,7 @@ fun EarthCard(
         modifier
             .fillMaxWidth()
             .background(
-                background ?: colors.surfaces.bgSecondary,
+                background ?: colors.Surfaces.bgSecondary,
                 RoundedCornerShape(dimens.radiusLg),
             )
             .padding(dimens.space16),

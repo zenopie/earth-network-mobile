@@ -61,20 +61,20 @@ fun StakingScreen(
     val dimens = EarthTheme.dimens
 
     EarthScaffold(title = "Earn", modifier = modifier) {
-        EarthCard(background = colors.domain.stakingBg) {
+        EarthCard(background = EarthTheme.domain.stakingBg) {
             Column {
                 EarthLabel("Staked")
                 Text(
                     text = formatErth(state.stakedUerth),
                     style = MaterialTheme.typography.headlineMedium,
-                    color = colors.text.textPrimary,
+                    color = colors.Text.textPrimary,
                 )
                 Spacer(Modifier.height(dimens.space12))
                 EarthLabel("Claimable rewards")
                 Text(
                     text = formatErth(state.rewardsUerth),
                     style = MaterialTheme.typography.headlineMedium,
-                    color = colors.domain.stakingAccent,
+                    color = EarthTheme.domain.stakingFg,
                 )
             }
         }
@@ -110,8 +110,8 @@ fun StakingScreen(
                     name = d.moniker,
                     subtitle = "${"%.0f".format(d.commission * 100)}% commission",
                     value = formatErth(d.amountUerth),
-                    iconBg = colors.domain.stakingBg,
-                    iconFg = colors.domain.stakingAccent,
+                    iconBg = EarthTheme.domain.stakingBg,
+                    iconFg = EarthTheme.domain.stakingFg,
                 )
             }
         }
@@ -128,7 +128,7 @@ fun StakingScreen(
                         Text(
                             text = u.moniker,
                             style = MaterialTheme.typography.titleMedium,
-                            color = colors.text.textPrimary,
+                            color = colors.Text.textPrimary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -137,7 +137,7 @@ fun StakingScreen(
                     Text(
                         text = formatErth(u.amountUerth),
                         style = MaterialTheme.typography.labelLarge,
-                        color = colors.text.textSecondary,
+                        color = colors.Text.textSecondary,
                     )
                 }
             }
@@ -149,7 +149,7 @@ fun StakingScreen(
                 text = "Staking ERTH secures the chain and earns a share of the " +
                     "investor pillar — one ERTH per second, split by voting power.",
                 style = MaterialTheme.typography.bodyLarge,
-                color = colors.text.textSecondary,
+                color = colors.Text.textSecondary,
             )
         }
     }

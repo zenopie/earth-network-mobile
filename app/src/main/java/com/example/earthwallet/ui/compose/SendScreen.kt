@@ -46,7 +46,7 @@ fun SendScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(colors.surfaces.bgPrimary)
+            .background(colors.Surfaces.bgPrimary)
             .verticalScroll(rememberScrollState())
             .windowInsetsPadding(WindowInsets.systemBars)
             .padding(horizontal = dimens.gutter)
@@ -55,7 +55,7 @@ fun SendScreen(
         Text(
             text = "Send",
             style = MaterialTheme.typography.headlineMedium,
-            color = colors.text.textPrimary,
+            color = colors.Text.textPrimary,
         )
         Spacer(Modifier.height(dimens.space24))
 
@@ -79,7 +79,7 @@ fun SendScreen(
                 Text(
                     text = denom,
                     style = MaterialTheme.typography.labelLarge,
-                    color = colors.text.textSecondary,
+                    color = colors.Text.textSecondary,
                 )
             },
         )
@@ -87,7 +87,7 @@ fun SendScreen(
         Text(
             text = balanceLabel,
             style = MaterialTheme.typography.bodyMedium,
-            color = colors.text.textSecondary,
+            color = colors.Text.textSecondary,
         )
 
         Spacer(Modifier.height(dimens.space32))

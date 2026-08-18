@@ -21,7 +21,7 @@ fun EarthLabel(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text.uppercase(),
         style = MaterialTheme.typography.labelSmall,
-        color = EarthTheme.colors.text.textSecondary,
+        color = EarthTheme.colors.Text.textSecondary,
         modifier = modifier,
     )
 }
@@ -43,7 +43,7 @@ fun EarthAmount(
         Text(
             text = amount,
             style = MaterialTheme.typography.displayLarge,
-            color = colors.text.textPrimary,
+            color = colors.Text.textPrimary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -51,7 +51,7 @@ fun EarthAmount(
             Text(
                 text = denom,
                 style = MaterialTheme.typography.bodyMedium,
-                color = colors.text.textSecondary,
+                color = colors.Text.textSecondary,
             )
         }
     }
@@ -69,13 +69,13 @@ fun EarthDetailRow(label: String, value: String, modifier: Modifier = Modifier) 
         Text(
             text = label,
             style = MaterialTheme.typography.bodyLarge,
-            color = colors.text.textSecondary,
+            color = colors.Text.textSecondary,
             modifier = Modifier.weight(1f),
         )
         Text(
             text = value,
             style = MaterialTheme.typography.labelLarge,
-            color = colors.text.textPrimary,
+            color = colors.Text.textPrimary,
         )
     }
 }
@@ -94,11 +94,11 @@ fun EarthCodeBlock(text: String, modifier: Modifier = Modifier) {
         Text(
             text = text,
             style = MaterialTheme.typography.bodySmall,
-            color = colors.sheets.codeFg,
+            color = colors.Text.textSecondary,
             modifier = modifier
                 .fillMaxWidth()
-                .background(colors.sheets.codeBg, RoundedCornerShape(dimens.radiusSm))
-                .border(dimens.strokeWidth, colors.sheets.codeStroke, RoundedCornerShape(dimens.radiusSm))
+                .background(colors.Surfaces.bgSecondary, RoundedCornerShape(dimens.radiusSm))
+                .border(dimens.strokeWidth, colors.Surfaces.strokeSecondary, RoundedCornerShape(dimens.radiusSm))
                 .padding(dimens.space12),
         )
     }

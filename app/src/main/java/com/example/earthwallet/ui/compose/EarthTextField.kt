@@ -53,14 +53,14 @@ fun EarthTextField(
     val focused by interaction.collectIsFocusedAsState()
 
     val stroke = when {
-        error != null -> colors.inputs.strokeError
-        focused -> colors.inputs.strokeFocused
-        else -> colors.inputs.stroke
+        error != null -> colors.Inputs.ErrorDefault.stroke
+        focused -> colors.Inputs.Focused.stroke
+        else -> colors.Inputs.Default.stroke
     }
     val bg = when {
-        !enabled -> colors.inputs.bgDisabled
-        value.isNotEmpty() -> colors.inputs.bgFilled
-        else -> colors.inputs.bg
+        !enabled -> colors.Inputs.Disabled.bg
+        value.isNotEmpty() -> colors.Inputs.Filled.bg
+        else -> colors.Inputs.Default.bg
     }
 
     Column(modifier) {
@@ -68,7 +68,7 @@ fun EarthTextField(
             Text(
                 text = label,
                 style = MaterialTheme.typography.bodyMedium,
-                color = colors.inputs.label,
+                color = colors.Inputs.Default.label,
                 modifier = Modifier.padding(bottom = dimens.space4),
             )
         }
@@ -87,8 +87,8 @@ fun EarthTextField(
                     enabled = enabled,
                     singleLine = true,
                     interactionSource = interaction,
-                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = colors.inputs.text),
-                    cursorBrush = SolidColor(colors.inputs.strokeFocused),
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = colors.Inputs.Default.text),
+                    cursorBrush = SolidColor(colors.Inputs.Focused.stroke),
                     keyboardOptions = KeyboardOptions(
                         keyboardType = if (numeric) KeyboardType.Decimal else KeyboardType.Text,
                     ),
@@ -97,7 +97,7 @@ fun EarthTextField(
                             Text(
                                 text = hint,
                                 style = MaterialTheme.typography.bodyLarge,
-                                color = colors.inputs.hint,
+                                color = colors.Inputs.Default.hint,
                             )
                         }
                         inner()
@@ -112,7 +112,7 @@ fun EarthTextField(
             Text(
                 text = error,
                 style = MaterialTheme.typography.bodyMedium,
-                color = colors.text.textError,
+                color = colors.Text.textError,
                 modifier = Modifier.padding(top = dimens.space4),
             )
         }

@@ -40,7 +40,7 @@ fun ReceiveScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(colors.surfaces.bgPrimary)
+            .background(colors.Surfaces.bgPrimary)
             .windowInsetsPadding(WindowInsets.systemBars)
             .padding(horizontal = dimens.gutter)
             .padding(top = dimens.space24, bottom = dimens.space32),
@@ -49,14 +49,14 @@ fun ReceiveScreen(
         Text(
             text = "Receive",
             style = MaterialTheme.typography.headlineMedium,
-            color = colors.text.textPrimary,
+            color = colors.Text.textPrimary,
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(dimens.space24))
         Text(
             text = "Your Earth address",
             style = MaterialTheme.typography.bodyLarge,
-            color = colors.text.textSecondary,
+            color = colors.Text.textSecondary,
             textAlign = TextAlign.Center,
         )
         Spacer(Modifier.height(dimens.space12))

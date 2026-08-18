@@ -44,7 +44,7 @@ fun EarthNavBar(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .background(colors.surfaces.bgPrimary)
+            .background(colors.Surfaces.bgPrimary)
             .windowInsetsPadding(WindowInsets.navigationBars)
             .padding(vertical = dimens.space8),
         horizontalArrangement = Arrangement.SpaceEvenly,
@@ -60,12 +60,12 @@ fun EarthNavBar(
                 Text(
                     text = dest.glyph,
                     style = MaterialTheme.typography.titleMedium,
-                    color = if (selected) colors.text.textPrimary else colors.text.textTertiary,
+                    color = if (selected) colors.Text.textPrimary else colors.Text.textTertiary,
                 )
                 Text(
                     text = dest.label,
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (selected) colors.text.textPrimary else colors.text.textTertiary,
+                    color = if (selected) colors.Text.textPrimary else colors.Text.textTertiary,
                 )
             }
         }

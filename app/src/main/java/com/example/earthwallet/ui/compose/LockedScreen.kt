@@ -30,7 +30,7 @@ fun LockedScreen(onUnlock: () -> Unit, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(colors.surfaces.bgPrimary)
+            .background(colors.Surfaces.bgPrimary)
             .padding(dimens.gutter),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -38,13 +38,13 @@ fun LockedScreen(onUnlock: () -> Unit, modifier: Modifier = Modifier) {
         Text(
             text = "Wallet locked",
             style = MaterialTheme.typography.headlineMedium,
-            color = colors.text.textPrimary,
+            color = colors.Text.textPrimary,
         )
         Spacer(Modifier.height(dimens.space8))
         Text(
             text = "Open Earth Wallet and enter your PIN, then come back.",
             style = MaterialTheme.typography.bodyLarge,
-            color = colors.text.textSecondary,
+            color = colors.Text.textSecondary,
             textAlign = TextAlign.Center,
         )
         Spacer(Modifier.height(dimens.space24))

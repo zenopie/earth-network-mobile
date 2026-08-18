@@ -57,7 +57,7 @@ fun WalletScreen(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(colors.surfaces.bgPrimary)
+            .background(colors.Surfaces.bgPrimary)
             .then(if (scrollable) Modifier.verticalScroll(rememberScrollState()) else Modifier)
             // The screen draws to the top of the display, so the status bar has
             // to be accounted for or the balance sits underneath it.
@@ -74,7 +74,7 @@ fun WalletScreen(
         Text(
             text = state.address,
             style = MaterialTheme.typography.bodyMedium,
-            color = colors.text.textSecondary,
+            color = colors.Text.textSecondary,
             maxLines = 1,
             overflow = TextOverflow.MiddleEllipsis,
         )
@@ -94,8 +94,8 @@ fun WalletScreen(
                 name = "ANML",
                 subtitle = if (state.registered) "Proof of personhood" else "Not registered",
                 value = state.anmlBalance,
-                iconBg = colors.domain.anmlBadgeBg,
-                iconFg = colors.domain.anmlBadgeFg,
+                iconBg = EarthTheme.domain.anmlBg,
+                iconFg = EarthTheme.domain.anmlFg,
                 onClick = onAnmlClick,
             )
         }
@@ -105,8 +105,8 @@ fun WalletScreen(
                 name = "Staked",
                 subtitle = "Delegated",
                 value = formatAmount(state.stakedUerth),
-                iconBg = colors.domain.stakingBg,
-                iconFg = colors.domain.stakingAccent,
+                iconBg = EarthTheme.domain.stakingBg,
+                iconFg = EarthTheme.domain.stakingFg,
                 onClick = onStakingClick,
             )
         }
@@ -116,8 +116,8 @@ fun WalletScreen(
                 name = "Rewards",
                 subtitle = "Claimable",
                 value = formatAmount(state.rewardsUerth),
-                iconBg = colors.domain.stakingBg,
-                iconFg = colors.domain.stakingAccent,
+                iconBg = EarthTheme.domain.stakingBg,
+                iconFg = EarthTheme.domain.stakingFg,
                 onClick = onStakingClick,
             )
         }

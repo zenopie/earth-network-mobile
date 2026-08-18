@@ -23,10 +23,10 @@ fun EarthStatusPill(status: EarthStatus, text: String, modifier: Modifier = Modi
     val colors = EarthTheme.colors
     val dimens = EarthTheme.dimens
     val (bg, fg) = when (status) {
-        EarthStatus.Success -> colors.status.successBg to colors.status.successFg
-        EarthStatus.Pending -> colors.status.pendingBg to colors.status.pendingFg
-        EarthStatus.Failed -> colors.status.failedBg to colors.status.failedFg
-        EarthStatus.Neutral -> colors.status.neutralBg to colors.status.neutralFg
+        EarthStatus.Success -> colors.Utility.SuccessGreen.utilitySuccess50 to colors.Utility.SuccessGreen.utilitySuccess700
+        EarthStatus.Pending -> colors.Utility.WarningYellow.utilityOrange50 to colors.Utility.WarningYellow.utilityOrange700
+        EarthStatus.Failed -> colors.Utility.ErrorRed.utilityError50 to colors.Utility.ErrorRed.utilityError700
+        EarthStatus.Neutral -> colors.Utility.Gray.utilityGray100 to colors.Utility.Gray.utilityGray700
     }
     Text(
         text = text,

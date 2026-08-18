@@ -60,14 +60,14 @@ fun TxConfirmSheet(
         Text(
             text = details.action,
             style = MaterialTheme.typography.headlineMedium,
-            color = colors.text.textPrimary,
+            color = colors.Text.textPrimary,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
         )
         Text(
             text = details.msgTypeUrl,
             style = MaterialTheme.typography.bodySmall,
-            color = colors.text.textTertiary,
+            color = colors.Text.textTertiary,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth().padding(bottom = dimens.space8),
         )
@@ -83,7 +83,7 @@ fun TxConfirmSheet(
                 Modifier
                     .fillMaxWidth()
                     .padding(top = dimens.space8)
-                    .background(colors.domain.gasWarningBg, RoundedCornerShape(dimens.radiusSm))
+                    .background(EarthTheme.domain.gasWarningBg, RoundedCornerShape(dimens.radiusSm))
                     .padding(dimens.space12),
             ) {
                 Text(
@@ -94,7 +94,7 @@ fun TxConfirmSheet(
                             "Not enough ERTH for the fee. Watch a short ad and we'll cover it."
                         },
                     style = MaterialTheme.typography.bodyMedium,
-                    color = colors.domain.gasWarningFg,
+                    color = EarthTheme.domain.gasWarningFg,
                 )
             }
             Box(Modifier.padding(top = dimens.space12)) {

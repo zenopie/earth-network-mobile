@@ -7,17 +7,24 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
-import network.erth.wallet.ui.theme.colors.DarkEarthColorsInternal
-import network.erth.wallet.ui.theme.colors.EarthColorsInternal
-import network.erth.wallet.ui.theme.colors.LightEarthColorsInternal
+import network.erth.wallet.ui.vendor.theme.colors.DarkEarthColorsInternal
+import network.erth.wallet.ui.vendor.theme.colors.EarthColorsInternal
+import network.erth.wallet.ui.vendor.theme.colors.LightEarthColorsInternal
+import network.erth.wallet.ui.vendor.theme.colors.LocalDarkEarthColors
+import network.erth.wallet.ui.vendor.theme.colors.LocalEarthColors
+import network.erth.wallet.ui.vendor.theme.colors.LocalLightEarthColors
 
 /**
  * The app's theme.
  *
- * `EarthTheme.colors` is the surface screens use. A MaterialTheme is still
- * installed underneath because Material 3 components read their own scheme —
- * but it is fed from the same tokens, so a stray Material default cannot
- * introduce a colour that is not in the system.
+ * `EarthTheme.colors` is the vendored colour system — 420 semantic tokens in
+ * Sprout's palette. Typography and dimens are ours: theirs pulled Google Fonts
+ * through their own resources, and a type scale is small enough to be worth
+ * owning outright.
+ *
+ * A MaterialTheme is installed underneath and fed from the same tokens, so a
+ * Material component reaching for its own default cannot introduce a colour
+ * from outside the system.
  */
 object EarthTheme {
     val colors: EarthColorsInternal
@@ -25,11 +32,11 @@ object EarthTheme {
 
     val dimens: EarthDimens
         @Composable get() = LocalEarthDimens.current
-}
 
-@Suppress("CompositionLocalAllowlist")
-internal val LocalEarthColors =
-    staticCompositionLocalOf<EarthColorsInternal> { error("EarthTheme not applied") }
+    /** Earth's four pillars. Not part of the vendored system. */
+    val domain: EarthDomainColors
+        @Composable get() = LocalEarthDomainColors.current
+}
 
 @Suppress("CompositionLocalAllowlist")
 internal val LocalEarthDimens = staticCompositionLocalOf { EarthDimens() }
@@ -41,39 +48,47 @@ fun EarthTheme(
 ) {
     val colors = if (darkTheme) DarkEarthColorsInternal else LightEarthColorsInternal
 
+    // Fed from the same tokens so a Material component reaching for its own
+    // default cannot introduce a colour from outside the system.
     val material =
         if (darkTheme) {
             darkColorScheme(
-                primary = colors.btnPrimary.bg,
-                onPrimary = colors.btnPrimary.fg,
-                background = colors.surfaces.bgPrimary,
-                onBackground = colors.text.textPrimary,
-                surface = colors.surfaces.bgPrimary,
-                onSurface = colors.text.textPrimary,
-                error = colors.text.textError,
-                outline = colors.surfaces.strokePrimary,
+                primary = colors.Btns.Brand.btnBrandBg,
+                onPrimary = colors.Btns.Brand.btnBrandFg,
+                background = colors.Surfaces.bgPrimary,
+                onBackground = colors.Text.textPrimary,
+                surface = colors.Surfaces.bgPrimary,
+                onSurface = colors.Text.textPrimary,
+                surfaceVariant = colors.Surfaces.bgSecondary,
+                onSurfaceVariant = colors.Text.textSecondary,
+                error = colors.Text.textError,
+                outline = colors.Surfaces.strokePrimary,
+                outlineVariant = colors.Surfaces.strokeSecondary,
             )
         } else {
             lightColorScheme(
-                primary = colors.btnPrimary.bg,
-                onPrimary = colors.btnPrimary.fg,
-                background = colors.surfaces.bgPrimary,
-                onBackground = colors.text.textPrimary,
-                surface = colors.surfaces.bgPrimary,
-                onSurface = colors.text.textPrimary,
-                error = colors.text.textError,
-                outline = colors.surfaces.strokePrimary,
+                primary = colors.Btns.Brand.btnBrandBg,
+                onPrimary = colors.Btns.Brand.btnBrandFg,
+                background = colors.Surfaces.bgPrimary,
+                onBackground = colors.Text.textPrimary,
+                surface = colors.Surfaces.bgPrimary,
+                onSurface = colors.Text.textPrimary,
+                surfaceVariant = colors.Surfaces.bgSecondary,
+                onSurfaceVariant = colors.Text.textSecondary,
+                error = colors.Text.textError,
+                outline = colors.Surfaces.strokePrimary,
+                outlineVariant = colors.Surfaces.strokeSecondary,
             )
         }
 
     CompositionLocalProvider(
         LocalEarthColors provides colors,
+        LocalLightEarthColors provides LightEarthColorsInternal,
+        LocalDarkEarthColors provides DarkEarthColorsInternal,
         LocalEarthDimens provides EarthDimens(),
+        LocalEarthDomainColors provides
+            if (darkTheme) DarkEarthDomainColors else LightEarthDomainColors,
     ) {
-        MaterialTheme(
-            colorScheme = material,
-            typography = EarthTypography,
-            content = content,
-        )
+        MaterialTheme(colorScheme = material, typography = EarthTypography, content = content)
     }
 }

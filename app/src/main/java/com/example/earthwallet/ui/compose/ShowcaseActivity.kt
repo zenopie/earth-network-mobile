@@ -48,7 +48,7 @@ private fun Showcase() {
     Column(
         Modifier
             .fillMaxSize()
-            .background(colors.surfaces.bgSecondary)
+            .background(colors.Surfaces.bgSecondary)
             .verticalScroll(rememberScrollState()),
     ) {
         // The real screen, on its own ground.
@@ -129,7 +129,7 @@ private fun Showcase() {
             Text(
                 "Sprout · ${'$'}{132} raw values, 75 semantic tokens",
                 style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
-                color = colors.text.textTertiary,
+                color = colors.Text.textTertiary,
             )
         }
     }

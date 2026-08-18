@@ -34,7 +34,7 @@ fun EarthApp(
     Column(
         Modifier
             .fillMaxSize()
-            .background(colors.surfaces.bgPrimary),
+            .background(colors.Surfaces.bgPrimary),
     ) {
         Box(Modifier.weight(1f)) {
             when (current) {
@@ -65,18 +65,18 @@ private fun Placeholder(title: String, detail: String) {
     Column(
         Modifier
             .fillMaxSize()
-            .background(colors.surfaces.bgPrimary)
+            .background(colors.Surfaces.bgPrimary)
             .padding(dimens.gutter),
     ) {
         androidx.compose.material3.Text(
             text = title,
             style = androidx.compose.material3.MaterialTheme.typography.headlineMedium,
-            color = colors.text.textPrimary,
+            color = colors.Text.textPrimary,
         )
         androidx.compose.material3.Text(
             text = detail,
             style = androidx.compose.material3.MaterialTheme.typography.bodyLarge,
-            color = colors.text.textSecondary,
+            color = colors.Text.textSecondary,
         )
     }
 }

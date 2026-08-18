@@ -38,8 +38,8 @@ fun EarthSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = state,
-        containerColor = colors.sheets.bg,
-        scrimColor = colors.sheets.scrim,
+        containerColor = colors.Surfaces.bgPrimary,
+        scrimColor = colors.Modals.surfacePrimary,
         shape = RoundedCornerShape(topStart = dimens.radiusSheet, topEnd = dimens.radiusSheet),
         dragHandle = {
             Box(Modifier.fillMaxWidth().padding(top = dimens.space12), Alignment.Center) {
@@ -47,7 +47,7 @@ fun EarthSheet(
                     Modifier
                         .width(dimens.space32)
                         .height(dimens.space4)
-                        .background(colors.sheets.grabber, RoundedCornerShape(dimens.radiusPill)),
+                        .background(colors.Surfaces.strokePrimary, RoundedCornerShape(dimens.radiusPill)),
                 )
             }
         },

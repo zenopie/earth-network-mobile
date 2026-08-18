@@ -34,6 +34,13 @@ import network.erth.wallet.ui.theme.EarthTheme
  * A wallet screen almost always has exactly one thing to do, and a full-width
  * button says so without needing a layout decision per screen.
  */
+/**
+ * Note on naming against the vendored tokens: their `Btns.Primary` is a black
+ * button and their `Btns.Brand` carries the accent. Ours maps Primary onto
+ * Brand, because in this app the primary action is the green one — the first
+ * build after vendoring produced a black Send button, which is what that
+ * mismatch looks like.
+ */
 enum class EarthButtonStyle { Primary, Secondary, Ghost, Destructive }
 
 @Composable
@@ -58,32 +65,32 @@ fun EarthButton(
     when (style) {
         EarthButtonStyle.Primary -> {
             bg = when {
-                !enabled -> colors.btnPrimary.bgDisabled
-                pressed -> colors.btnPrimary.bgPressed
-                else -> colors.btnPrimary.bg
+                !enabled -> colors.Btns.Brand.btnBrandBgDisabled
+                pressed -> colors.Btns.Brand.btnBrandBgHover
+                else -> colors.Btns.Brand.btnBrandBg
             }
-            fg = if (enabled) colors.btnPrimary.fg else colors.btnPrimary.fgDisabled
+            fg = if (enabled) colors.Btns.Brand.btnBrandFg else colors.Btns.Brand.btnBrandFgDisabled
         }
         EarthButtonStyle.Secondary -> {
             bg = when {
-                !enabled -> colors.btnSecondary.bgDisabled
-                pressed -> colors.btnSecondary.bgPressed
-                else -> colors.btnSecondary.bg
+                !enabled -> colors.Btns.Secondary.btnSecondaryBgDisabled
+                pressed -> colors.Btns.Secondary.btnSecondaryBgHover
+                else -> colors.Btns.Secondary.btnSecondaryBg
             }
-            fg = if (enabled) colors.btnSecondary.fg else colors.btnSecondary.fgDisabled
-            border = BorderStroke(dimens.strokeWidth, colors.btnSecondary.border)
+            fg = if (enabled) colors.Btns.Secondary.btnSecondaryFg else colors.Btns.Secondary.btnSecondaryFgDisabled
+            border = BorderStroke(dimens.strokeWidth, colors.Btns.Secondary.btnSecondaryBorder)
         }
         EarthButtonStyle.Ghost -> {
-            bg = if (pressed) colors.btnGhost.bgPressed else colors.btnGhost.bg
-            fg = if (enabled) colors.btnGhost.fg else colors.btnGhost.fgDisabled
+            bg = if (pressed) colors.Btns.Ghost.btnGhostBgHover else colors.Btns.Ghost.btnGhostBg
+            fg = if (enabled) colors.Btns.Ghost.btnGhostFg else colors.Btns.Ghost.btnGhostFgDisabled
         }
         EarthButtonStyle.Destructive -> {
             bg = when {
-                !enabled -> colors.btnDestructive.bgDisabled
-                pressed -> colors.btnDestructive.bgPressed
-                else -> colors.btnDestructive.bg
+                !enabled -> colors.Btns.Destructive2.btnDestroy2BgDisabled
+                pressed -> colors.Btns.Destructive2.btnDestroy2BgHover
+                else -> colors.Btns.Destructive2.btnDestroy2Bg
             }
-            fg = if (enabled) colors.btnDestructive.fg else colors.btnDestructive.fgDisabled
+            fg = if (enabled) colors.Btns.Destructive2.btnDestroy2Fg else colors.Btns.Destructive2.btnDestroy2FgDisabled
         }
     }
 

@@ -46,17 +46,17 @@ fun TxResultSheet(outcome: TxOutcome, onDismiss: () -> Unit) {
         when (outcome) {
             is TxOutcome.Success ->
                 Quint(
-                    "✓", colors.status.successBg, colors.status.successFg,
+                    "✓", colors.Utility.SuccessGreen.utilitySuccess50, colors.Utility.SuccessGreen.utilitySuccess700,
                     "${outcome.action} confirmed", "Transaction hash\n${outcome.txHash}",
                 )
             is TxOutcome.Failure ->
                 Quint(
-                    "✕", colors.status.failedBg, colors.status.failedFg,
+                    "✕", colors.Utility.ErrorRed.utilityError50, colors.Utility.ErrorRed.utilityError700,
                     "${outcome.action} failed", describe(outcome.error),
                 )
             is TxOutcome.Message ->
                 Quint(
-                    "!", colors.status.neutralBg, colors.status.neutralFg,
+                    "!", colors.Utility.Gray.utilityGray100, colors.Utility.Gray.utilityGray700,
                     outcome.title, outcome.detail,
                 )
         }
@@ -73,7 +73,7 @@ fun TxResultSheet(outcome: TxOutcome, onDismiss: () -> Unit) {
         Text(
             text = title,
             style = MaterialTheme.typography.headlineMedium,
-            color = colors.text.textPrimary,
+            color = colors.Text.textPrimary,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
         )
