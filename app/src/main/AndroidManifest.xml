@@ -94,6 +94,13 @@
     
         <!-- Design-system gallery. Not in the launcher; started directly:
              adb shell am start -n network.erth.wallet/.ui.compose.ShowcaseActivity -->
+        <!-- The Compose app against the real chain, alongside the existing
+             HostActivity while screens are ported one at a time. -->
+        <activity
+            android:name=".ui.compose.ComposeAppActivity"
+            android:exported="true"
+            android:theme="@style/Theme.AppCompat.NoActionBar" />
+
         <activity
             android:name=".ui.compose.ShowcaseActivity"
             android:exported="true"
