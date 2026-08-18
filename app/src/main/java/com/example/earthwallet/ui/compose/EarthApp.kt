@@ -107,6 +107,15 @@ fun EarthApp(
                     onToggleBalances = { balancesVisible = !balancesVisible },
                     onSettings = { nav.push(EarthRoute.Settings) },
                     showsBalances = route == EarthRoute.Wallet || route == EarthRoute.Earn,
+                    tabAction = if (route == EarthRoute.Swap) {
+                        TabAction(
+                            icon = R.drawable.ic_bar_liquidity,
+                            label = "Liquidity",
+                            onClick = { nav.push(EarthRoute.Liquidity) },
+                        )
+                    } else {
+                        null
+                    },
                 )
                 else -> EarthDetailTopBar(title = route.title(), onBack = { nav.pop() })
             }
@@ -230,9 +239,11 @@ private fun EarthContent(
         EarthRoute.Swap -> SwapScreen(
             erthBalance = state?.let { formatUerth(it.balanceUerth) },
             anmlBalance = state?.let { it.anmlBalance ?: "0" },
-            pools = marketsState?.pools,
+            // Only ERTH/ANML for now: it is the one pool, and pairing
+            // arbitrary spokes would need a two-hop quote through the hub that
+            // the screen has no way to let you choose yet.
+            pool = marketsState?.pools?.firstOrNull { it.tokenDenom == "uanml" },
             swapFeePercent = marketsState?.swapFeePercent,
-            onLiquidity = { nav.push(EarthRoute.Liquidity) },
             onSwap = { denomIn, amountIn, denomOut, minOut ->
                 tx.request(
                     details = TxConfirmDetails(
@@ -292,6 +303,7 @@ private fun EarthContent(
 
         EarthRoute.Liquidity -> LiquidityScreen(
             pools = marketsState?.pools,
+            swapFeePercent = marketsState?.swapFeePercent,
             modifier = inset,
         )
 

@@ -52,6 +52,14 @@ fun EarthMainTopBar(
      * that hides nothing is a control that teaches you it does nothing.
      */
     showsBalances: Boolean = true,
+    /**
+     * An action belonging to this tab, left of settings.
+     *
+     * Tabs are destinations, not toolbars, so most have none. Swap has one
+     * because providing liquidity is adjacent to swapping without being part
+     * of it — same market, different thing to do with it.
+     */
+    tabAction: TabAction? = null,
 ) {
     EarthSmallTopAppBar(
         windowInsets = WindowInsets.systemBars.only(WindowInsetsSides.Top),
@@ -79,6 +87,17 @@ fun EarthMainTopBar(
             }
         },
         hamburgerMenuActions = {
+            if (tabAction != null) {
+                EarthIconButton(
+                    state = IconButtonState(
+                        icon = tabAction.icon,
+                        contentDescription = stringRes(tabAction.label),
+                        onClick = tabAction.onClick,
+                    ),
+                    modifier = Modifier.size(40.dp),
+                )
+                Spacer(Modifier.width(4.dp))
+            }
             if (showsBalances) {
                 EarthIconButton(
                     state = IconButtonState(
@@ -118,3 +137,10 @@ fun EarthDetailTopBar(title: String, onBack: () -> Unit) {
         navigationAction = { EarthTopAppBarBackNavigation(onBack = onBack) },
     )
 }
+
+/** An icon action a tab puts in the top bar. */
+data class TabAction(
+    val icon: Int,
+    val label: String,
+    val onClick: () -> Unit,
+)

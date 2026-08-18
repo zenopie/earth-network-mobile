@@ -33,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import network.erth.wallet.R
 import network.erth.wallet.ui.theme.EarthTheme
 import com.valentinilk.shimmer.shimmer
 import network.erth.wallet.ui.vendor.component.ShimmerRectangle
@@ -61,10 +62,9 @@ fun SwapScreen(
     /** Null while the wallet is still loading; a zero here would be a lie. */
     erthBalance: String?,
     anmlBalance: String?,
-    /** Market context, under the panel. Null while loading. */
-    pools: List<network.erth.wallet.chain.Dex.Pool>?,
+    /** The pool being traded against, for the quote. Null while loading. */
+    pool: network.erth.wallet.chain.Dex.Pool?,
     swapFeePercent: String?,
-    onLiquidity: () -> Unit,
     /**
      * Denoms and amounts in base units, plus the minimum to accept.
      *
@@ -87,10 +87,6 @@ fun SwapScreen(
     val fromBalance = if (erthIn) erthBalance else anmlBalance
     val toBalance = if (erthIn) anmlBalance else erthBalance
 
-    // Only ERTH/ANML for now: it is the one pool, and pairing arbitrary spokes
-    // would need a two-hop quote through the hub that the screen has no way to
-    // let you choose yet.
-    val pool = pools?.firstOrNull { it.tokenDenom == "uanml" }
     val fee = swapFeePercent?.let { runCatching { java.math.BigDecimal(it) }.getOrNull() }
 
     val quote = remember(amount, erthIn, pool, fee) {
@@ -120,6 +116,7 @@ fun SwapScreen(
                 SwapPanel(
                     label = "You pay",
                     denom = fromDenom,
+                    icon = if (erthIn) R.drawable.ic_erth_logo else R.drawable.anml,
                     balance = fromBalance,
                     shape = shape,
                     value = amount,
@@ -129,6 +126,7 @@ fun SwapScreen(
                 SwapPanel(
                     label = "You receive",
                     denom = toDenom,
+                    icon = if (erthIn) R.drawable.anml else R.drawable.ic_erth_logo,
                     balance = toBalance,
                     shape = shape,
                     value = quote?.amountOut?.fromBaseUnits().orEmpty(),
@@ -189,15 +187,10 @@ fun SwapScreen(
             colors = brandButtonColors(),
         )
 
-        // The pools sit under the panel rather than behind a second button.
-        // This tab is named for the action, so the action is the screen and
-        // the market it trades against is the context beneath it.
-        Spacer(Modifier.height(dimens.space32))
-        PoolList(
-            pools = pools,
-            swapFeePercent = swapFeePercent,
-            onLiquidity = onLiquidity,
-        )
+        // No pool list here. Reserves and LP shares are what a liquidity
+        // provider needs; someone swapping needs the rate, the fee and what
+        // they get, all of which are above. Pools moved to Liquidity, one tap
+        // away in the bar.
         Spacer(Modifier.height(dimens.space32))
     }
 }
@@ -206,6 +199,8 @@ fun SwapScreen(
 private fun SwapPanel(
     label: String,
     denom: String,
+    /** The token's own mark, in its own colours — never tinted. */
+    icon: Int,
     balance: String?,
     shape: androidx.compose.ui.graphics.Shape,
     value: String,
@@ -253,6 +248,12 @@ private fun SwapPanel(
                 }
             }
             Spacer(Modifier.width(dimens.space12))
+            Image(
+                modifier = Modifier.size(dimens.space24),
+                painter = painterResource(icon),
+                contentDescription = null,
+            )
+            Spacer(Modifier.width(dimens.space8))
             Text(
                 text = denom,
                 style = EarthTypography.textMd,

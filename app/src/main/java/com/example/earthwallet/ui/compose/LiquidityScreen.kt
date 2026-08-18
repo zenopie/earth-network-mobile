@@ -1,5 +1,10 @@
 package network.erth.wallet.ui.compose
 
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.res.painterResource
+import network.erth.wallet.R
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -42,6 +48,7 @@ import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
 @Composable
 fun LiquidityScreen(
     pools: List<Dex.Pool>?,
+    swapFeePercent: String?,
     modifier: Modifier = Modifier,
     onAdd: (Dex.Pool) -> Unit = {},
     onRemove: (Dex.Pool) -> Unit = {},
@@ -58,9 +65,16 @@ fun LiquidityScreen(
     ) {
         Spacer(Modifier.height(dimens.space16))
         Text(
-            text = "Providing liquidity earns a share of that pool's swap fees. " +
-                "It also means holding both sides: if the price moves, you end " +
-                "up with more of whichever token fell.",
+            text = if (swapFeePercent != null) {
+                "Providing liquidity earns a share of that pool's " +
+                    "${swapFeePercent.trimDecimal()}% swap fee. It also means holding " +
+                    "both sides: if the price moves, you end up with more of " +
+                    "whichever token fell."
+            } else {
+                "Providing liquidity earns a share of that pool's swap fees. " +
+                    "It also means holding both sides: if the price moves, you " +
+                    "end up with more of whichever token fell."
+            },
             style = EarthTypography.textSm,
             color = EarthColors.Text.textSecondary,
         )
@@ -98,27 +112,75 @@ fun LiquidityScreen(
                     )
                     .padding(dimens.space16),
             ) {
-                Text(
-                    text = "ERTH · $token",
-                    style = EarthTypography.textMd,
-                    fontWeight = FontWeight.SemiBold,
-                    color = EarthColors.Text.textPrimary,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Both marks, overlapped slightly, because a pool is the
+                    // pair rather than either side of it.
+                    Image(
+                        modifier = Modifier.size(dimens.space24),
+                        painter = painterResource(R.drawable.ic_erth_logo),
+                        contentDescription = null,
+                    )
+                    Image(
+                        modifier = Modifier
+                            .offset(x = (-6).dp())
+                            .size(dimens.space24),
+                        painter = painterResource(
+                            if (pool.tokenDenom == "uanml") {
+                                R.drawable.anml
+                            } else {
+                                R.drawable.ic_token_default
+                            },
+                        ),
+                        contentDescription = null,
+                    )
+                    Spacer(Modifier.width(dimens.space8))
+                    Text(
+                        text = "ERTH · $token",
+                        style = EarthTypography.textMd,
+                        fontWeight = FontWeight.SemiBold,
+                        color = EarthColors.Text.textPrimary,
+                    )
+                }
                 Spacer(Modifier.height(dimens.space8))
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "Reserves",
+                        text = "Pool price",
                         style = EarthTypography.textSm,
                         color = EarthColors.Text.textTertiary,
                         modifier = Modifier.weight(1f),
                     )
+                    val erth = pool.erthReserve.toLongOrNull() ?: 0L
+                    val tokens = pool.tokenReserve.toLongOrNull() ?: 0L
                     Text(
-                        text = "${formatUerth(pool.erthReserve.toLongOrNull() ?: 0)} ERTH · " +
-                            "${formatUerth(pool.tokenReserve.toLongOrNull() ?: 0)} $token",
+                        text = if (tokens > 0) {
+                            "${(erth.toDouble() / tokens).readable()} ERTH"
+                        } else {
+                            "—"
+                        },
                         style = EarthTypography.textSm,
                         color = EarthColors.Text.textPrimary,
                     )
                 }
+                Spacer(Modifier.height(dimens.space4))
+                // Reserves stack rather than sit opposite a label: at pool
+                // sizes this large the value is wider than the row, and
+                // weighting it against a label squeezed "Reserves" down to one
+                // character per line.
+                Text(
+                    text = "Reserves",
+                    style = EarthTypography.textSm,
+                    color = EarthColors.Text.textTertiary,
+                )
+                Text(
+                    text = "${formatUerth(pool.erthReserve.toLongOrNull() ?: 0)} ERTH",
+                    style = EarthTypography.textSm,
+                    color = EarthColors.Text.textPrimary,
+                )
+                Text(
+                    text = "${formatUerth(pool.tokenReserve.toLongOrNull() ?: 0)} $token",
+                    style = EarthTypography.textSm,
+                    color = EarthColors.Text.textPrimary,
+                )
                 Spacer(Modifier.height(dimens.space12))
                 Row(Modifier.fillMaxWidth()) {
                     EarthButton(
@@ -141,5 +203,17 @@ fun LiquidityScreen(
         Spacer(Modifier.height(dimens.space32))
     }
 }
+
+/** Prices here span several orders of magnitude, so precision follows the number. */
+private fun Double.readable(): String = when {
+    this == 0.0 -> "0"
+    this >= 1000 -> "%,.0f".format(this)
+    this >= 1 -> "%,.4f".format(this)
+    else -> "%.8f".format(this).trimEnd('0').trimEnd('.')
+}
+
+/** The chain returns decimals at 18 places; nobody needs to read all of them. */
+private fun String.trimDecimal(): String =
+    if ('.' in this) trimEnd('0').trimEnd('.') else this
 
 private fun Int.dp() = androidx.compose.ui.unit.Dp(toFloat())
