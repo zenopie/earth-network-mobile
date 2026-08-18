@@ -91,6 +91,14 @@
             android:windowSoftInputMode="stateAlwaysHidden"
             tools:replace="android:screenOrientation" />
 
+    
+        <!-- Design-system gallery. Not in the launcher; started directly:
+             adb shell am start -n network.erth.wallet/.ui.compose.ShowcaseActivity -->
+        <activity
+            android:name=".ui.compose.ShowcaseActivity"
+            android:exported="true"
+            android:theme="@style/Theme.AppCompat.NoActionBar" />
+
     </application>
 
 </manifest>
