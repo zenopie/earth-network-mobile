@@ -123,9 +123,11 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
                         anmlClaimableAt = when {
                             status == null || !status.registered -> null
                             Personhood.isAnmlClaimable(status) -> 0L
-                            // The chain's rule is a rolling 24 hours from the
-                            // last claim, not a UTC day boundary.
-                            else -> status.lastAnmlClaim + 86_400L
+                            // Next UTC midnight, not 24 hours from the claim.
+                            // Deriving it from the last claim time was only
+                            // ever right because the chain stored a truncated
+                            // midnight there.
+                            else -> Personhood.nextClaimOpensAt()
                         },
                     )
                 }

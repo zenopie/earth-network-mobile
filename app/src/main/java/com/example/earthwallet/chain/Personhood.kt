@@ -39,12 +39,27 @@ object Personhood {
         )
     }
 
-    /** ANML is claimable at most once per UTC day (chain rule: now - last_anml_claim >= 86400). */
+    /**
+     * ANML is claimable once per UTC day.
+     *
+     * Compared as day numbers, matching the chain. A rolling
+     * `now - last >= 86400` gives the same answer only while the chain stores a
+     * midnight-truncated timestamp; against a real claim time it under-reports
+     * by up to a day, hiding a claim that is actually available.
+     */
     fun isAnmlClaimable(status: RegistrationStatus): Boolean {
         if (!status.registered) return false
         val nowSec = System.currentTimeMillis() / 1000
-        return nowSec - status.lastAnmlClaim >= 86400
+        return nowSec / SECONDS_PER_DAY != status.lastAnmlClaim / SECONDS_PER_DAY
     }
+
+    /** Unix seconds at the next UTC midnight, when the claim window reopens. */
+    fun nextClaimOpensAt(): Long {
+        val nowSec = System.currentTimeMillis() / 1000
+        return (nowSec / SECONDS_PER_DAY + 1) * SECONDS_PER_DAY
+    }
+
+    private const val SECONDS_PER_DAY = 86_400L
 
     /**
      * How many humans are currently registered — the denominator of the human
