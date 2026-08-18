@@ -423,6 +423,7 @@ private fun EarthContent(
             registered = loaded.registered,
             stakedUerth = loaded.stakedUerth,
             onEdit = { editing = it },
+            onOpenStream = { nav.push(EarthRoute.Stream(it == StreamId.STREAM_ID_HUMAN)) },
             modifier = inset,
         )
 
@@ -543,6 +544,32 @@ private fun EarthContent(
             },
             modifier = inset,
         )
+
+        is EarthRoute.Stream -> {
+            val id = if (route.human) {
+                StreamId.STREAM_ID_HUMAN
+            } else {
+                StreamId.STREAM_ID_CAPITAL
+            }
+            StreamDetailScreen(
+                title = if (route.human) "Human stream" else "Capital stream",
+                detail = if (route.human) {
+                    "One verified human, one vote."
+                } else {
+                    "Weighted by the ERTH you have staked."
+                },
+                stream = if (route.human) allocationState?.human else allocationState?.capital,
+                eligibility = when {
+                    route.human && !loaded.registered ->
+                        "Register your identity to take part."
+                    !route.human && loaded.stakedUerth <= 0 ->
+                        "Stake ERTH to take part."
+                    else -> null
+                },
+                onEdit = { editing = id },
+                modifier = inset,
+            )
+        }
 
         is EarthRoute.TransactionDetail -> TransactionDetailScreen(
             txHash = route.txHash,
@@ -762,6 +789,7 @@ private fun EarthRoute.title(): String = when (this) {
     EarthRoute.Settings -> "Settings"
     EarthRoute.AddressBook -> "Address book"
     EarthRoute.About -> "About"
+    is EarthRoute.Stream -> if (human) "Human stream" else "Capital stream"
     EarthRoute.Explore -> "Explorer"
     EarthRoute.Personhood -> "Identity"
     EarthRoute.Wallets -> "Wallets"

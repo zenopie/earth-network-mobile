@@ -1,5 +1,6 @@
 package network.erth.wallet.ui.compose
 
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -57,6 +58,7 @@ fun AllocationScreen(
     registered: Boolean,
     stakedUerth: Long,
     onEdit: (StreamId) -> Unit,
+    onOpenStream: (StreamId) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val dimens = EarthTheme.dimens
@@ -86,6 +88,7 @@ fun AllocationScreen(
             shimmer = shimmer,
             accent = EarthAccent.ink,
             onEdit = { onEdit(StreamId.STREAM_ID_HUMAN) },
+            onOpen = { onOpenStream(StreamId.STREAM_ID_HUMAN) },
         )
 
         Spacer(Modifier.height(dimens.space16))
@@ -97,7 +100,19 @@ fun AllocationScreen(
             shimmer = shimmer,
             accent = EarthAccent.ink,
             onEdit = { onEdit(StreamId.STREAM_ID_CAPITAL) },
+            onOpen = { onOpenStream(StreamId.STREAM_ID_CAPITAL) },
         )
+        Spacer(Modifier.height(dimens.space32))
+        EarthLabel("Chain proposals")
+        Spacer(Modifier.height(dimens.space4))
+        Text(
+            text = "Changes to the chain itself, voted on by staked ERTH. " +
+                "Separate from the streams above, which direct emissions.",
+            style = EarthTypography.textSm,
+            color = EarthColors.Text.textSecondary,
+        )
+        Spacer(Modifier.height(dimens.space12))
+        ProposalList(proposals = state?.proposals)
         Spacer(Modifier.height(dimens.space32))
     }
 }
@@ -111,15 +126,17 @@ private fun StreamSection(
     shimmer: com.valentinilk.shimmer.Shimmer,
     accent: Color,
     onEdit: () -> Unit,
+    onOpen: () -> Unit,
 ) {
     val dimens = EarthTheme.dimens
     Column(
         Modifier
             .fillMaxWidth()
-            .background(
-                EarthColors.Surfaces.bgSecondary,
-                RoundedCornerShape(EarthDimensions.Radius.radius3xl),
-            )
+            .clip(RoundedCornerShape(EarthDimensions.Radius.radius3xl))
+            .background(EarthColors.Surfaces.bgSecondary)
+            // The card opens the stream's charts; Edit inside it changes the
+            // vote. Two different things, so the whole card is not the edit.
+            .clickable(onClick = onOpen)
             .padding(dimens.space16),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -234,8 +251,5 @@ private fun AllocationBar(slices: List<AllocationSlice>, accent: Color) {
         }
     }
 }
-
-private fun Color.stepped(index: Int): Color =
-    copy(alpha = (1f - index * 0.18f).coerceAtLeast(0.3f))
 
 private fun Int.dp() = androidx.compose.ui.unit.Dp(toFloat())

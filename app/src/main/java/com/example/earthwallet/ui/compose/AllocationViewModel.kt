@@ -12,6 +12,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import network.erth.earth.proto.allocation.StreamId
 import network.erth.wallet.chain.Allocation
+import network.erth.wallet.chain.Gov
 import network.erth.wallet.wallet.services.SecureWalletManager
 
 /** One stream's options and this wallet's split across them. */
@@ -20,6 +21,27 @@ data class StreamUiState(
     /** optionId to percent, as the chain holds it. */
     val mine: Map<Long, Long>,
 ) {
+    /**
+     * Where the stream actually goes, across every voter.
+     *
+     * Each option's amount_allocated is its share of the stream's total weight,
+     * so this is the tally rather than anyone's preference. Percentages are
+     * computed against the total rather than read off, because the chain stores
+     * weights and not shares.
+     */
+    val actualSlices: List<AllocationSlice>
+        get() {
+            val total = options.sumOf { it.amountAllocated.toDoubleOrNull() ?: 0.0 }
+            if (total <= 0) return emptyList()
+            return options
+                .mapNotNull { o ->
+                    val weight = o.amountAllocated.toDoubleOrNull() ?: 0.0
+                    val pct = (weight / total * 100).toInt()
+                    if (pct > 0) AllocationSlice(o.description, pct) else null
+                }
+                .sortedByDescending { it.percent }
+        }
+
     val slices: List<AllocationSlice>
         get() = options
             .mapNotNull { o -> mine[o.id]?.takeIf { it > 0 }?.let { AllocationSlice(o.description, it.toInt()) } }
@@ -29,6 +51,8 @@ data class StreamUiState(
 data class AllocationUiState(
     val human: StreamUiState,
     val capital: StreamUiState,
+    /** Chain proposals — the SDK's governance, not the streams. */
+    val proposals: List<Gov.Proposal>,
 )
 
 /**
@@ -55,13 +79,14 @@ class AllocationViewModel(app: Application) : AndroidViewModel(app) {
                 AllocationUiState(
                     human = load(StreamId.STREAM_ID_HUMAN, address),
                     capital = load(StreamId.STREAM_ID_CAPITAL, address),
+                    proposals = runCatching { Gov.proposals() }.getOrDefault(emptyList()),
                 )
             }
         }
     }
 
     private fun load(stream: StreamId, address: String) = StreamUiState(
-        options = runCatching { Allocation.allocationOptions(stream) }.getOrDefault(emptyList()),
+        options = runCatching { Allocation.stream(stream).options }.getOrDefault(emptyList()),
         mine = runCatching { Allocation.voterAllocations(stream, address) }
             .getOrDefault(emptyList())
             .toMap(),

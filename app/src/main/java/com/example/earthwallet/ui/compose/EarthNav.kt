@@ -75,6 +75,9 @@ sealed interface EarthRoute {
      */
     data object Explore : EarthRoute
 
+    /** One allocation stream's charts: where it goes, and where you asked. */
+    data class Stream(val human: Boolean) : EarthRoute
+
     data object Personhood : EarthRoute
     data object Wallets : EarthRoute
     data object CreateWallet : EarthRoute
