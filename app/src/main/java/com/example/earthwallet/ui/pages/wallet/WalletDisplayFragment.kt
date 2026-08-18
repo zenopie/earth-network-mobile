@@ -1,5 +1,6 @@
 package network.erth.wallet.ui.pages.wallet
 
+import network.erth.wallet.ui.components.TxResult
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -177,7 +178,7 @@ class WalletDisplayFragment : Fragment() {
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to open send tokens", e)
-            Toast.makeText(context, "Failed to open send", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Failed to open send")
         }
     }
 
@@ -199,7 +200,7 @@ class WalletDisplayFragment : Fragment() {
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to open receive tokens", e)
-            Toast.makeText(context, "Failed to open receive", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Failed to open receive")
         }
     }
 

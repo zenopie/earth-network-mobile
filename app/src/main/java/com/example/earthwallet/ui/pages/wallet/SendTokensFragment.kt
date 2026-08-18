@@ -1,5 +1,7 @@
 package network.erth.wallet.ui.pages.wallet
 
+import network.erth.wallet.ui.components.TxResult
+import network.erth.wallet.ui.components.TxFlow
 import android.app.AlertDialog
 import android.content.Context
 import android.graphics.BitmapFactory
@@ -158,22 +160,20 @@ class SendTokensFragment : Fragment(), WalletDisplayFragment.WalletDisplayListen
         val amount = Tokens.parseTokenAmount(amountStr, token.symbol)
         if (amount == null || amount <= 0) { toast("Invalid amount"); return }
 
-        lifecycleScope.launch {
-            try {
-                val txHash = withContext(Dispatchers.IO) {
-                    SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
-                        val key = EarthWallet.deriveKey(mnemonic)
-                        val from = EarthWallet.address(key)
-                        EarthTx.broadcast(key, listOf(Bank.msgSend(from, recipient, token.denom, amount.toString())))
-                    }
-                }
-                Log.i(TAG, "send ok: $txHash")
+        TxFlow.run(
+            fragment = this,
+            action = "Send",
+            msgTypeUrl = "/cosmos.bank.v1beta1.MsgSend",
+            onSuccess = {
                 clearForm()
                 fetchTokenBalance(token)
                 listener?.onSendComplete()
-            } catch (e: Exception) {
-                Log.e(TAG, "send failed", e)
-                toast("Send failed: ${e.message}")
+            },
+        ) {
+            SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
+                val key = EarthWallet.deriveKey(mnemonic)
+                val from = EarthWallet.address(key)
+                EarthTx.broadcast(key, listOf(Bank.msgSend(from, recipient, token.denom, amount.toString())))
             }
         }
     }
@@ -268,5 +268,5 @@ class SendTokensFragment : Fragment(), WalletDisplayFragment.WalletDisplayListen
         memoEditText.setText("")
     }
 
-    private fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+    private fun toast(msg: String) = TxResult.message(requireContext(), "Couldn't continue", msg)
 }

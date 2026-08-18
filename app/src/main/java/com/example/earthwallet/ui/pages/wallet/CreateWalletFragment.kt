@@ -1,5 +1,6 @@
 package network.erth.wallet.ui.pages.wallet
 
+import network.erth.wallet.ui.components.TxResult
 import android.content.Context
 import android.os.Bundle
 import android.text.Editable
@@ -94,7 +95,7 @@ class CreateWalletFragment : Fragment() {
         try {
             // Empty try block from original Java
         } catch (e: Exception) {
-            Toast.makeText(requireContext(), "Wallet initialization failed", Toast.LENGTH_LONG).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Wallet initialization failed")
             listener?.onCreateWalletCancelled()
             return
         }
@@ -150,7 +151,7 @@ class CreateWalletFragment : Fragment() {
                 mnemonic = SecureWalletManager.generateMnemonic(requireContext())
             } catch (e: Exception) {
                 Log.e("CreateWalletFragment", "Failed to generate mnemonic", e)
-                Toast.makeText(requireContext(), "Failed to generate wallet", Toast.LENGTH_LONG).show()
+                TxResult.message(requireContext(), "Couldn't continue", "Failed to generate wallet")
                 return@setOnClickListener
             }
             mnemonicWords = mnemonic?.trim()?.split("\\s+".toRegex())
@@ -160,7 +161,7 @@ class CreateWalletFragment : Fragment() {
 
         btnRevealNext.setOnClickListener {
             if (mnemonic == null) {
-                Toast.makeText(requireContext(), "Reveal your mnemonic first", Toast.LENGTH_SHORT).show()
+                TxResult.message(requireContext(), "Couldn't continue", "Reveal your mnemonic first")
                 return@setOnClickListener
             }
             startConfirmStep()
@@ -174,7 +175,7 @@ class CreateWalletFragment : Fragment() {
         }
         btnConfirmNext.setOnClickListener {
             if (!confirmBackupCheck.isChecked) {
-                Toast.makeText(requireContext(), "Please confirm you backed up your recovery phrase", Toast.LENGTH_SHORT).show()
+                TxResult.message(requireContext(), "Couldn't continue", "Please confirm you backed up your recovery phrase")
                 return@setOnClickListener
             }
             showStep(stepPin)
@@ -192,7 +193,7 @@ class CreateWalletFragment : Fragment() {
             btnPinNext.setOnClickListener {
                 val walletName = walletNameInput.text?.toString()?.trim() ?: ""
                 if (TextUtils.isEmpty(walletName)) {
-                    Toast.makeText(requireContext(), "Enter a wallet name", Toast.LENGTH_SHORT).show()
+                    TxResult.message(requireContext(), "Couldn't continue", "Enter a wallet name")
                     return@setOnClickListener
                 }
                 saveMnemonicAndPin(null, walletName)
@@ -202,21 +203,21 @@ class CreateWalletFragment : Fragment() {
             btnPinNext.setOnClickListener {
                 val walletName = walletNameInput.text?.toString()?.trim() ?: ""
                 if (TextUtils.isEmpty(walletName)) {
-                    Toast.makeText(requireContext(), "Enter a wallet name", Toast.LENGTH_SHORT).show()
+                    TxResult.message(requireContext(), "Couldn't continue", "Enter a wallet name")
                     return@setOnClickListener
                 }
                 val pin = pinInput.text?.toString()?.trim() ?: ""
                 val pin2 = pinConfirmInput.text?.toString()?.trim() ?: ""
                 if (TextUtils.isEmpty(pin) || TextUtils.isEmpty(pin2)) {
-                    Toast.makeText(requireContext(), "Enter and confirm PIN", Toast.LENGTH_SHORT).show()
+                    TxResult.message(requireContext(), "Couldn't continue", "Enter and confirm PIN")
                     return@setOnClickListener
                 }
                 if (pin != pin2) {
-                    Toast.makeText(requireContext(), "PINs do not match", Toast.LENGTH_SHORT).show()
+                    TxResult.message(requireContext(), "Couldn't continue", "PINs do not match")
                     return@setOnClickListener
                 }
                 if (pin.length < 4 || pin.length > 6) {
-                    Toast.makeText(requireContext(), "PIN should be 4-6 digits", Toast.LENGTH_SHORT).show()
+                    TxResult.message(requireContext(), "Couldn't continue", "PIN should be 4-6 digits")
                     return@setOnClickListener
                 }
                 saveMnemonicAndPin(pin, walletName)
@@ -269,12 +270,12 @@ class CreateWalletFragment : Fragment() {
         btnRevealNext.setOnClickListener {
             val pasted = revealMnemonicText.text?.toString()?.trim() ?: ""
             if (TextUtils.isEmpty(pasted)) {
-                Toast.makeText(requireContext(), "Paste mnemonic first", Toast.LENGTH_SHORT).show()
+                TxResult.message(requireContext(), "Couldn't continue", "Paste mnemonic first")
                 return@setOnClickListener
             }
             val words = pasted.split("\\s+".toRegex())
             if (words.size < 12) {
-                Toast.makeText(requireContext(), "Mnemonic looks too short", Toast.LENGTH_SHORT).show()
+                TxResult.message(requireContext(), "Couldn't continue", "Mnemonic looks too short")
                 return@setOnClickListener
             }
             mnemonic = pasted
@@ -301,7 +302,7 @@ class CreateWalletFragment : Fragment() {
 
             if (!hasExistingPin) {
                 if (pin == null) {
-                    Toast.makeText(requireContext(), "No existing PIN found; please create a PIN", Toast.LENGTH_SHORT).show()
+                    TxResult.message(requireContext(), "Couldn't continue", "No existing PIN found; please create a PIN")
                     return
                 }
 
@@ -323,7 +324,7 @@ class CreateWalletFragment : Fragment() {
             } else {
                 // PIN already exists - session should already be active
                 if (!SessionManager.isSessionActive()) {
-                    Toast.makeText(requireContext(), "No active session. Please restart the app.", Toast.LENGTH_SHORT).show()
+                    TxResult.message(requireContext(), "Couldn't continue", "No active session. Please restart the app.")
                     return
                 }
                 // Session is already active, no need to start it again
@@ -344,7 +345,7 @@ class CreateWalletFragment : Fragment() {
 
             Toast.makeText(requireContext(), "Wallet created and saved securely", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
-            Toast.makeText(requireContext(), "Failed to save wallet", Toast.LENGTH_LONG).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Failed to save wallet")
         }
     }
 

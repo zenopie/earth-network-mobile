@@ -1,5 +1,7 @@
 package network.erth.wallet.ui.pages.swap
 
+import network.erth.wallet.ui.components.TxResult
+import network.erth.wallet.ui.components.TxFlow
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -495,66 +497,62 @@ class SwapTokensMainFragment : Fragment() {
 
         val inputAmount = fromAmountStr.toDoubleOrNull()
         if (inputAmount == null || inputAmount <= 0 || inputAmount > fromBalance) {
-            Toast.makeText(context, "Invalid amount", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Invalid amount")
             return
         }
         // Swapping ERTH must leave enough ERTH to pay the uerth tx fee.
         if (fromToken == ERTH && inputAmount > fromBalance - FEE_RESERVE_ERTH) {
-            Toast.makeText(context, "Leave a little ERTH for the network fee", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Leave a little ERTH for the network fee")
             return
         }
 
         val fromInfo = Tokens.getTokenInfo(fromToken)
         val toInfo = Tokens.getTokenInfo(toToken)
         if (fromInfo == null || toInfo == null) {
-            Toast.makeText(context, "Token not supported", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Token not supported")
             return
         }
 
         val amountInBase = Tokens.parseTokenAmount(fromAmountStr, fromToken)
         if (amountInBase == null || amountInBase <= 0) {
-            Toast.makeText(context, "Invalid amount", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Invalid amount")
             return
         }
 
         val expectedOut = quote(fromToken, toToken, inputAmount)
         if (expectedOut == null) {
-            Toast.makeText(context, "No pool for this pair", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "No pool for this pair")
             return
         }
         val minOutBase = (expectedOut * (1.0 - slippage / 100.0) * 10.0.pow(toInfo.decimals)).toLong()
 
         swapButton?.isEnabled = false
-        lifecycleScope.launch {
-            try {
-                val txHash = withContext(Dispatchers.IO) {
-                    SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
-                        val key = EarthWallet.deriveKey(mnemonic)
-                        val creator = EarthWallet.address(key)
-                        EarthTx.broadcast(
-                            key,
-                            listOf(
-                                Dex.msgSwap(
-                                    creator = creator,
-                                    tokenInDenom = fromInfo.denom,
-                                    tokenInAmount = amountInBase.toString(),
-                                    denomOut = toInfo.denom,
-                                    minOut = minOutBase.coerceAtLeast(0).toString(),
-                                )
-                            )
-                        )
-                    }
-                }
-                Log.i(TAG, "Swap broadcast: $txHash")
-                Toast.makeText(context, "Swap submitted", Toast.LENGTH_SHORT).show()
+        TxFlow.run(
+            fragment = this,
+            action = "Swap",
+            msgTypeUrl = "/earth.dex.v1.MsgSwap",
+            onSuccess = {
                 clearAmounts()
                 fetchBalances()
                 loadPoolsAndPrices()
-            } catch (e: Exception) {
-                Log.e(TAG, "Swap failed", e)
-                Toast.makeText(context, "Swap failed: ${e.message}", Toast.LENGTH_LONG).show()
-            } finally {
-                updateSwapButton()
+            },
+            onFinally = { updateSwapButton() },
+        ) {
+            SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
+                val key = EarthWallet.deriveKey(mnemonic)
+                val creator = EarthWallet.address(key)
+                EarthTx.broadcast(
+                    key,
+                    listOf(
+                        Dex.msgSwap(
+                            creator = creator,
+                            tokenInDenom = fromInfo.denom,
+                            tokenInAmount = amountInBase.toString(),
+                            denomOut = toInfo.denom,
+                            minOut = minOutBase.coerceAtLeast(0).toString(),
+                        )
+                    )
+                )
             }
         }
     }

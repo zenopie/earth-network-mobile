@@ -1,5 +1,6 @@
 package network.erth.wallet.ui.nav
 
+import network.erth.wallet.ui.components.TxResult
 import network.erth.wallet.R
 import android.os.Bundle
 import android.view.LayoutInflater
@@ -35,7 +36,7 @@ class ActionsMainFragment : Fragment() {
             (activity as? network.erth.wallet.ui.host.HostActivity)?.let {
                 it.showFragment("swap")
             } ?: run {
-                Toast.makeText(context, "Navigation not available", Toast.LENGTH_SHORT).show()
+                TxResult.message(requireContext(), "Couldn't continue", "Navigation not available")
             }
         }
 
@@ -44,7 +45,7 @@ class ActionsMainFragment : Fragment() {
             (activity as? network.erth.wallet.ui.host.HostActivity)?.let {
                 it.showFragment("anml")
             } ?: run {
-                Toast.makeText(context, "Navigation not available", Toast.LENGTH_SHORT).show()
+                TxResult.message(requireContext(), "Couldn't continue", "Navigation not available")
             }
         }
 
@@ -53,7 +54,7 @@ class ActionsMainFragment : Fragment() {
             (activity as? network.erth.wallet.ui.host.HostActivity)?.let {
                 it.showFragment("managelp")
             } ?: run {
-                Toast.makeText(context, "Navigation not available", Toast.LENGTH_SHORT).show()
+                TxResult.message(requireContext(), "Couldn't continue", "Navigation not available")
             }
         }
 
@@ -62,7 +63,7 @@ class ActionsMainFragment : Fragment() {
             (activity as? network.erth.wallet.ui.host.HostActivity)?.let {
                 it.showFragment("staking")
             } ?: run {
-                Toast.makeText(context, "Navigation not available", Toast.LENGTH_SHORT).show()
+                TxResult.message(requireContext(), "Couldn't continue", "Navigation not available")
             }
         }
 
@@ -71,7 +72,7 @@ class ActionsMainFragment : Fragment() {
             (activity as? network.erth.wallet.ui.host.HostActivity)?.let {
                 it.showFragment("explorer")
             } ?: run {
-                Toast.makeText(context, "Navigation not available", Toast.LENGTH_SHORT).show()
+                TxResult.message(requireContext(), "Couldn't continue", "Navigation not available")
             }
         }
 
@@ -89,7 +90,7 @@ class ActionsMainFragment : Fragment() {
             (activity as? network.erth.wallet.ui.host.HostActivity)?.let {
                 it.showFragment("caretaker_fund")
             } ?: run {
-                Toast.makeText(context, "Navigation not available", Toast.LENGTH_SHORT).show()
+                TxResult.message(requireContext(), "Couldn't continue", "Navigation not available")
             }
         }
 
@@ -98,7 +99,7 @@ class ActionsMainFragment : Fragment() {
             (activity as? network.erth.wallet.ui.host.HostActivity)?.let {
                 it.showFragment("deflation_fund")
             } ?: run {
-                Toast.makeText(context, "Navigation not available", Toast.LENGTH_SHORT).show()
+                TxResult.message(requireContext(), "Couldn't continue", "Navigation not available")
             }
         }
     }

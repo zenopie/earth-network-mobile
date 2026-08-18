@@ -1,5 +1,6 @@
 package network.erth.wallet.ui.pages.anml
 
+import network.erth.wallet.ui.components.TxResult
 import network.erth.wallet.R
 import android.Manifest
 import android.content.Context
@@ -138,7 +139,7 @@ class CameraMRZScannerFragment : Fragment() {
                     }
                 }
             } else {
-                Toast.makeText(context, "Camera permission is required to scan passport", Toast.LENGTH_LONG).show()
+                TxResult.message(requireContext(), "Couldn't continue", "Camera permission is required to scan passport")
                 // Go back to ANML screen and restore UI
                 val activity = activity
                 if (activity is network.erth.wallet.ui.host.HostActivity) {

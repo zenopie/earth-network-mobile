@@ -1,5 +1,7 @@
 package network.erth.wallet.ui.pages.staking
 
+import network.erth.wallet.ui.components.TxResult
+import network.erth.wallet.ui.components.TxFlow
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -148,24 +150,32 @@ class UnstakeFragment : Fragment() {
         val amountText = unstakeAmountInput.text.toString().trim()
         val amount = amountText.toDoubleOrNull()
         if (amount == null || amount <= 0) {
-            Toast.makeText(context, "Please enter an amount to unstake", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Please enter an amount to unstake")
             return
         }
         if (amount > stakedBalance) {
-            Toast.makeText(context, "Insufficient staked balance", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Insufficient staked balance")
             return
         }
         var remaining = Tokens.parseTokenAmount(amountText, "ERTH")?.let { BigInteger.valueOf(it) }
         if (remaining == null || remaining <= BigInteger.ZERO) {
-            Toast.makeText(context, "Invalid amount", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Invalid amount")
             return
         }
 
         unstakeButton.isEnabled = false
-        lifecycleScope.launch {
-            try {
-                val txHash = withContext(Dispatchers.IO) {
-                    SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
+        TxFlow.run(
+            fragment = this,
+            action = "Unstake ERTH",
+            msgTypeUrl = "/cosmos.staking.v1beta1.MsgUndelegate",
+            onSuccess = {
+                unstakeAmountInput.setText("")
+                refreshData()
+            },
+            onFinally = { validateUnstakeButton() },
+        ) {
+            run {
+                SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
                         val key = EarthWallet.deriveKey(mnemonic)
                         val delegator = EarthWallet.address(key)
                         val msgs = ArrayList<ProtoAny>()
@@ -181,16 +191,6 @@ class UnstakeFragment : Fragment() {
                         if (msgs.isEmpty()) throw IllegalStateException("Nothing to unstake")
                         EarthTx.broadcast(key, msgs)
                     }
-                }
-                Log.i(TAG, "Undelegate broadcast: $txHash")
-                Toast.makeText(context, "Unstaking started", Toast.LENGTH_SHORT).show()
-                unstakeAmountInput.setText("")
-                refreshData()
-            } catch (e: Exception) {
-                Log.e(TAG, "Error unstaking ERTH", e)
-                Toast.makeText(context, "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
-            } finally {
-                validateUnstakeButton()
             }
         }
     }

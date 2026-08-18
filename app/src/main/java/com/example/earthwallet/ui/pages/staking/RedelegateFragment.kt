@@ -1,5 +1,7 @@
 package network.erth.wallet.ui.pages.staking
 
+import network.erth.wallet.ui.components.TxResult
+import network.erth.wallet.ui.components.TxFlow
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -161,59 +163,57 @@ class RedelegateFragment : Fragment() {
     private fun redelegate() {
         val src = selectedSource()
         if (src == null) {
-            Toast.makeText(context, "No delegation selected", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "No delegation selected")
             return
         }
         val dst = destinations.getOrNull(toSpinner.selectedItemPosition)
         if (dst == null) {
-            Toast.makeText(context, "No destination validator selected", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "No destination validator selected")
             return
         }
         if (dst.validator.operator == src.validator) {
-            Toast.makeText(context, "Choose a different destination validator", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Choose a different destination validator")
             return
         }
         val amountBase = Tokens.parseTokenAmount(amountInput.text.toString(), "ERTH")
         if (amountBase == null || amountBase <= 0) {
-            Toast.makeText(context, "Invalid amount", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Invalid amount")
             return
         }
         val available = src.amount.toBigIntegerOrNull() ?: BigInteger.ZERO
         if (BigInteger.valueOf(amountBase) > available) {
-            Toast.makeText(context, "Amount exceeds your stake with that validator", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Amount exceeds your stake with that validator")
             return
         }
         ValidatorPicker.concentrationWarning(dst)?.let {
-            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+            TxResult.message(requireContext(), "Couldn't continue", it)
         }
 
         redelegateButton.isEnabled = false
-        lifecycleScope.launch {
-            try {
-                withContext(Dispatchers.IO) {
-                    SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
-                        val key = EarthWallet.deriveKey(mnemonic)
-                        val delegator = EarthWallet.address(key)
-                        EarthTx.broadcast(
-                            key,
-                            listOf(
-                                Staking.msgBeginRedelegate(
-                                    delegator,
-                                    src.validator,
-                                    dst.validator.operator,
-                                    amountBase.toString(),
-                                )
-                            ),
-                        )
-                    }
-                }
+        TxFlow.run(
+            fragment = this,
+            action = "Redelegate",
+            msgTypeUrl = "/cosmos.staking.v1beta1.MsgBeginRedelegate",
+            onSuccess = {
                 amountInput.setText("")
                 refreshData()
-            } catch (e: Exception) {
-                Log.e(TAG, "Redelegation failed", e)
-                Toast.makeText(context, "Redelegation failed: ${e.message}", Toast.LENGTH_LONG).show()
-            } finally {
-                redelegateButton.isEnabled = true
+            },
+            onFinally = { redelegateButton.isEnabled = true },
+        ) {
+            SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
+                val key = EarthWallet.deriveKey(mnemonic)
+                val delegator = EarthWallet.address(key)
+                EarthTx.broadcast(
+                    key,
+                    listOf(
+                        Staking.msgBeginRedelegate(
+                            delegator,
+                            src.validator,
+                            dst.validator.operator,
+                            amountBase.toString(),
+                        )
+                    ),
+                )
             }
         }
     }

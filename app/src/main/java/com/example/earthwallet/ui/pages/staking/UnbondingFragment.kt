@@ -1,5 +1,6 @@
 package network.erth.wallet.ui.pages.staking
 
+import network.erth.wallet.ui.components.TxFlow
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -166,29 +167,27 @@ class UnbondingFragment : Fragment() {
     /** Cancels one unbonding entry, returning its stake to the same validator. */
     private fun cancelUnbonding(entry: Entry, button: Button) {
         button.isEnabled = false
-        lifecycleScope.launch {
-            try {
-                withContext(Dispatchers.IO) {
-                    SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
-                        val key = EarthWallet.deriveKey(mnemonic)
-                        val delegator = EarthWallet.address(key)
-                        EarthTx.broadcast(
-                            key,
-                            listOf(
-                                Staking.msgCancelUnbonding(
-                                    delegator,
-                                    entry.validator,
-                                    entry.balanceUerth,
-                                    entry.creationHeight,
-                                )
-                            ),
+        TxFlow.run(
+            fragment = this,
+            action = "Cancel unbonding",
+            msgTypeUrl = "/cosmos.staking.v1beta1.MsgCancelUnbondingDelegation",
+            onSuccess = { refreshData() },
+            onFinally = { button.isEnabled = true },
+        ) {
+            SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
+                val key = EarthWallet.deriveKey(mnemonic)
+                val delegator = EarthWallet.address(key)
+                EarthTx.broadcast(
+                    key,
+                    listOf(
+                        Staking.msgCancelUnbonding(
+                            delegator,
+                            entry.validator,
+                            entry.balanceUerth,
+                            entry.creationHeight,
                         )
-                    }
-                }
-                refreshData()
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to cancel unbonding", e)
-                button.isEnabled = true
+                    ),
+                )
             }
         }
     }

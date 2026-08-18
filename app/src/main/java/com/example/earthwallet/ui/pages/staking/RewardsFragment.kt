@@ -1,5 +1,6 @@
 package network.erth.wallet.ui.pages.staking
 
+import network.erth.wallet.ui.components.TxFlow
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -120,27 +121,22 @@ class RewardsFragment : Fragment() {
 
     private fun handleClaimRewards() {
         claimRewardsButton.isEnabled = false
-        lifecycleScope.launch {
-            try {
-                val txHash = withContext(Dispatchers.IO) {
-                    val address = SecureWalletManager.getWalletAddress(requireContext())
-                        ?: throw IllegalStateException("No wallet")
-                    val delegations = Staking.delegations(address)
-                    if (delegations.isEmpty()) throw IllegalStateException("No delegations")
-                    SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
-                        val key = EarthWallet.deriveKey(mnemonic)
-                        val delegator = EarthWallet.address(key)
-                        val msgs: List<ProtoAny> = delegations.map { Staking.msgWithdrawReward(delegator, it.validator) }
-                        EarthTx.broadcast(key, msgs)
-                    }
-                }
-                Log.i(TAG, "Claim rewards broadcast: $txHash")
-                Toast.makeText(context, "Rewards claimed", Toast.LENGTH_SHORT).show()
-                refreshData()
-            } catch (e: Exception) {
-                Log.e(TAG, "Error claiming rewards", e)
-                Toast.makeText(context, "Failed to claim rewards: ${e.message}", Toast.LENGTH_SHORT).show()
-                claimRewardsButton.isEnabled = true
+        TxFlow.run(
+            fragment = this,
+            action = "Claim rewards",
+            msgTypeUrl = "/cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward",
+            onSuccess = { refreshData() },
+            onFinally = { claimRewardsButton.isEnabled = true },
+        ) {
+            val address = SecureWalletManager.getWalletAddress(requireContext())
+                ?: throw IllegalStateException("No wallet")
+            val delegations = Staking.delegations(address)
+            if (delegations.isEmpty()) throw IllegalStateException("No delegations")
+            SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
+                val key = EarthWallet.deriveKey(mnemonic)
+                val delegator = EarthWallet.address(key)
+                val msgs: List<ProtoAny> = delegations.map { Staking.msgWithdrawReward(delegator, it.validator) }
+                EarthTx.broadcast(key, msgs)
             }
         }
     }

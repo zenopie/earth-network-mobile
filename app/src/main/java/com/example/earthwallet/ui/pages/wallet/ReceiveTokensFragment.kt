@@ -1,5 +1,6 @@
 package network.erth.wallet.ui.pages.wallet
 
+import network.erth.wallet.ui.components.TxResult
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -118,7 +119,7 @@ class ReceiveTokensFragment : Fragment() {
             clipboard.setPrimaryClip(clip)
             Toast.makeText(context, "Address copied to clipboard", Toast.LENGTH_SHORT).show()
         } else {
-            Toast.makeText(context, "No address to copy", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "No address to copy")
         }
     }
 

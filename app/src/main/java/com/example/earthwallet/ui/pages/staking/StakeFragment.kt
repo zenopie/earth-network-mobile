@@ -1,5 +1,7 @@
 package network.erth.wallet.ui.pages.staking
 
+import network.erth.wallet.ui.components.TxResult
+import network.erth.wallet.ui.components.TxFlow
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -172,49 +174,45 @@ class StakeFragment : Fragment() {
         val amountText = stakeAmountInput.text.toString().trim()
         val amount = amountText.toDoubleOrNull()
         if (amount == null || amount <= 0) {
-            Toast.makeText(context, "Please enter an amount to stake", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Please enter an amount to stake")
             return
         }
         if (amount > erthBalance) {
-            Toast.makeText(context, "Insufficient balance", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Insufficient balance")
             return
         }
         if (amount > erthBalance - FEE_RESERVE_ERTH) {
-            Toast.makeText(context, "Leave a little ERTH for the network fee", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Leave a little ERTH for the network fee")
             return
         }
         val amountBase = Tokens.parseTokenAmount(amountText, "ERTH")
         if (amountBase == null || amountBase <= 0) {
-            Toast.makeText(context, "Invalid amount", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Invalid amount")
             return
         }
         val validator = validators.getOrNull(validatorSpinner.selectedItemPosition)
         if (validator == null) {
-            Toast.makeText(context, "No validator selected", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "No validator selected")
             return
         }
         ValidatorPicker.concentrationWarning(options.getOrNull(validatorSpinner.selectedItemPosition))
-            ?.let { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
+            ?.let { TxResult.message(requireContext(), "Couldn't continue", it) }
 
         stakeButton.isEnabled = false
-        lifecycleScope.launch {
-            try {
-                val txHash = withContext(Dispatchers.IO) {
-                    SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
-                        val key = EarthWallet.deriveKey(mnemonic)
-                        val delegator = EarthWallet.address(key)
-                        EarthTx.broadcast(key, listOf(Staking.msgDelegate(delegator, validator.operator, amountBase.toString())))
-                    }
-                }
-                Log.i(TAG, "Delegate broadcast: $txHash")
-                Toast.makeText(context, "Staked", Toast.LENGTH_SHORT).show()
+        TxFlow.run(
+            fragment = this,
+            action = "Stake ERTH",
+            msgTypeUrl = "/cosmos.staking.v1beta1.MsgDelegate",
+            onSuccess = {
                 stakeAmountInput.setText("")
                 refreshData()
-            } catch (e: Exception) {
-                Log.e(TAG, "Error staking ERTH", e)
-                Toast.makeText(context, "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
-            } finally {
-                validateStakeButton()
+            },
+            onFinally = { validateStakeButton() },
+        ) {
+            SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
+                val key = EarthWallet.deriveKey(mnemonic)
+                val delegator = EarthWallet.address(key)
+                EarthTx.broadcast(key, listOf(Staking.msgDelegate(delegator, validator.operator, amountBase.toString())))
             }
         }
     }

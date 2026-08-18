@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Transaction result sheet: success, failure, and anything else the user needs
+  to actually read.
+
+  This replaces the Toast that used to carry "Failed: ${e.message}". A toast
+  gives a couple of seconds and one truncated line, which is the worst possible
+  treatment for a chain error — those are long, they are the only explanation of
+  what went wrong, and they scroll off before they can be read. Here the text
+  stays until dismissed, scrolls, can be selected, and can be copied.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@android:color/white"
+    android:orientation="vertical">
+
+    <View
+        android:layout_width="40dp"
+        android:layout_height="4dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="12dp"
+        android:background="@drawable/bg_drag_handle" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            android:id="@+id/result_icon"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:textSize="40sp"
+            tools:ignore="HardcodedText"
+            xmlns:tools="http://schemas.android.com/tools"
+            android:text="✓" />
+
+        <TextView
+            android:id="@+id/result_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:textColor="@color/text_primary"
+            android:textSize="18sp"
+            android:fontFamily="sans-serif-medium" />
+
+        <!-- The detail. Scrollable and selectable because a chain error is often
+             several lines and is the only thing that explains the failure. -->
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:maxHeight="260dp"
+            android:background="@drawable/bg_code_block"
+            android:padding="12dp">
+
+            <TextView
+                android:id="@+id/result_detail"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textIsSelectable="true"
+                android:fontFamily="monospace"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
+        </ScrollView>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/result_copy"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="44dp"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/bg_input_rounded"
+                android:textColor="@color/text_primary"
+                android:textAllCaps="false"
+                android:text="Copy" />
+
+            <Button
+                android:id="@+id/result_dismiss"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="44dp"
+                android:background="@drawable/btn_gas_modern"
+                android:textColor="@color/text_inverse"
+                android:textAllCaps="false"
+                android:text="Done" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

@@ -1,5 +1,6 @@
 package network.erth.wallet.ui.pages.anml
 
+import network.erth.wallet.ui.components.TxFlow
 import network.erth.wallet.R
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -199,22 +200,15 @@ class ANMLClaimMainFragment : Fragment(), ANMLRegisterFragment.ANMLRegisterListe
     }
 
     override fun onClaimRequested() {
-        lifecycleScope.launch {
-            try {
-                showLoading(true)
-                val txHash = withContext(Dispatchers.IO) {
-                    SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
-                        Personhood.claimAnml(EarthWallet.deriveKey(mnemonic))
-                    }
-                }
-                showLoading(false)
-                Log.i(TAG, "ANML claim ok: $txHash")
-                showCompleteFragment()
-            } catch (e: Exception) {
-                showLoading(false)
-                Log.e(TAG, "ANML claim failed", e)
-                Toast.makeText(context, "Claim failed: ${e.message}", Toast.LENGTH_LONG).show()
-                checkStatus()
+        TxFlow.run(
+            fragment = this,
+            action = "Claim ANML",
+            msgTypeUrl = "/earth.personhood.v1.MsgClaimAnml",
+            onSuccess = { showCompleteFragment() },
+            onFinally = { showLoading(false) },
+        ) {
+            SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
+                Personhood.claimAnml(EarthWallet.deriveKey(mnemonic))
             }
         }
     }

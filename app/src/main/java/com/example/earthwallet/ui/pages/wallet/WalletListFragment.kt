@@ -1,5 +1,6 @@
 package network.erth.wallet.ui.pages.wallet
 
+import network.erth.wallet.ui.components.TxResult
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Bundle
@@ -62,7 +63,7 @@ class WalletListFragment : Fragment() {
 
         try {
         } catch (e: Exception) {
-            Toast.makeText(requireContext(), "Wallet initialization failed", Toast.LENGTH_LONG).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Wallet initialization failed")
         }
 
         this.inflater = LayoutInflater.from(requireContext())
@@ -123,7 +124,7 @@ class WalletListFragment : Fragment() {
                         SecureWalletManager.selectWallet(requireContext(), index)
                         listener?.onWalletSelected(index)
                     } catch (e: Exception) {
-                        Toast.makeText(requireContext(), "Failed to select wallet", Toast.LENGTH_SHORT).show()
+                        TxResult.message(requireContext(), "Couldn't continue", "Failed to select wallet")
                     }
                 }
 
@@ -170,12 +171,12 @@ class WalletListFragment : Fragment() {
                         // User chose to use PIN instead
                         authenticateWithPin(walletIndex)
                     } else if (errorMessage != "Authentication cancelled") {
-                        Toast.makeText(requireContext(), errorMessage, Toast.LENGTH_SHORT).show()
+                        TxResult.message(requireContext(), "Couldn't continue", errorMessage)
                     }
                 }
 
                 override fun onAuthenticationFailed() {
-                    Toast.makeText(requireContext(), "Authentication failed. Try again.", Toast.LENGTH_SHORT).show()
+                    TxResult.message(requireContext(), "Couldn't continue", "Authentication failed. Try again.")
                 }
             }
         )
@@ -192,7 +193,7 @@ class WalletListFragment : Fragment() {
             .setPositiveButton("OK") { _, _ ->
                 val pin = pinEdit.text.toString().trim()
                 if (TextUtils.isEmpty(pin)) {
-                    Toast.makeText(requireContext(), "Enter PIN", Toast.LENGTH_SHORT).show()
+                    TxResult.message(requireContext(), "Couldn't continue", "Enter PIN")
                     return@setPositiveButton
                 }
                 try {
@@ -204,10 +205,10 @@ class WalletListFragment : Fragment() {
                     if (SecureWalletManager.verifyPinHash(requireContext(), pinHash)) {
                         showMnemonic(walletIndex)
                     } else {
-                        Toast.makeText(requireContext(), "Invalid PIN", Toast.LENGTH_SHORT).show()
+                        TxResult.message(requireContext(), "Couldn't continue", "Invalid PIN")
                     }
                 } catch (e: Exception) {
-                    Toast.makeText(requireContext(), "Error checking PIN", Toast.LENGTH_SHORT).show()
+                    TxResult.message(requireContext(), "Couldn't continue", "Error checking PIN")
                 }
             }
             .setNegativeButton("Cancel", null)
@@ -232,7 +233,7 @@ class WalletListFragment : Fragment() {
                 null // Return type for MnemonicOperation
             }
         } catch (e: Exception) {
-            Toast.makeText(requireContext(), "Failed to retrieve mnemonic", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Failed to retrieve mnemonic")
         }
     }
 
@@ -242,7 +243,7 @@ class WalletListFragment : Fragment() {
             Toast.makeText(requireContext(), "Wallet deleted", Toast.LENGTH_SHORT).show()
             loadAndRenderWallets()
         } catch (e: Exception) {
-            Toast.makeText(requireContext(), "Failed to delete wallet", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Failed to delete wallet")
         }
     }
 }

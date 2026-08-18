@@ -1,5 +1,7 @@
 package network.erth.wallet.ui.pages.managelp
 
+import network.erth.wallet.ui.components.TxResult
+import network.erth.wallet.ui.components.TxFlow
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -284,70 +286,66 @@ class AddLiquidityFragment : Fragment() {
         val tokenAmountStr = tokenAmountInput.text.toString().trim()
         val erthAmountStr = erthAmountInput.text.toString().trim()
         if (TextUtils.isEmpty(tokenAmountStr) || TextUtils.isEmpty(erthAmountStr)) {
-            Toast.makeText(context, "Please enter both token amounts", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Please enter both token amounts")
             return
         }
         val tokenAmount = tokenAmountStr.toDoubleOrNull()
         val erthAmount = erthAmountStr.toDoubleOrNull()
         if (tokenAmount == null || erthAmount == null || tokenAmount <= 0 || erthAmount <= 0) {
-            Toast.makeText(context, "Amounts must be greater than zero", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Amounts must be greater than zero")
             return
         }
         if (tokenAmount > tokenBalance) {
-            Toast.makeText(context, "Insufficient $tokenKey balance", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Insufficient $tokenKey balance")
             return
         }
         if (erthAmount > erthBalance - FEE_RESERVE_ERTH) {
-            Toast.makeText(context, "Leave a little ERTH for the network fee", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Leave a little ERTH for the network fee")
             return
         }
         if (erthAmount > erthBalance) {
-            Toast.makeText(context, "Insufficient ERTH balance", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Insufficient ERTH balance")
             return
         }
 
         val info = Tokens.getTokenInfo(tokenKey!!)
         val poolSnapshot = pool
         if (info == null || poolSnapshot == null) {
-            Toast.makeText(context, "Pool not found", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Pool not found")
             return
         }
         val tokenMicro = Tokens.parseTokenAmount(tokenAmountStr, tokenKey!!) ?: return
         val erthMicro = Tokens.parseTokenAmount(erthAmountStr, "ERTH") ?: return
 
         addLiquidityButton.isEnabled = false
-        lifecycleScope.launch {
-            try {
-                val txHash = withContext(Dispatchers.IO) {
-                    SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
-                        val key = EarthWallet.deriveKey(mnemonic)
-                        val creator = EarthWallet.address(key)
-                        EarthTx.broadcast(
-                            key,
-                            listOf(
-                                Dex.msgAddLiquidity(
-                                    creator = creator,
-                                    poolId = poolSnapshot.id,
-                                    denomA = Tokens.ERTH.denom,
-                                    amtA = erthMicro.toString(),
-                                    denomB = info.denom,
-                                    amtB = tokenMicro.toString(),
-                                )
-                            )
-                        )
-                    }
-                }
-                Log.i(TAG, "Add liquidity broadcast: $txHash")
-                Toast.makeText(context, "Liquidity added", Toast.LENGTH_SHORT).show()
+        TxFlow.run(
+            fragment = this,
+            action = "Add liquidity",
+            msgTypeUrl = "/earth.dex.v1.MsgAddLiquidity",
+            onSuccess = {
                 tokenAmountInput.setText("")
                 erthAmountInput.setText("")
                 loadTokenBalances()
                 loadPoolReserves()
-            } catch (e: Exception) {
-                Log.e(TAG, "Add liquidity failed", e)
-                Toast.makeText(context, "Failed: ${e.message}", Toast.LENGTH_LONG).show()
-            } finally {
-                addLiquidityButton.isEnabled = true
+            },
+            onFinally = { addLiquidityButton.isEnabled = true },
+        ) {
+            SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
+                val key = EarthWallet.deriveKey(mnemonic)
+                val creator = EarthWallet.address(key)
+                EarthTx.broadcast(
+                    key,
+                    listOf(
+                        Dex.msgAddLiquidity(
+                            creator = creator,
+                            poolId = poolSnapshot.id,
+                            denomA = Tokens.ERTH.denom,
+                            amtA = erthMicro.toString(),
+                            denomB = info.denom,
+                            amtB = tokenMicro.toString(),
+                        )
+                    )
+                )
             }
         }
     }

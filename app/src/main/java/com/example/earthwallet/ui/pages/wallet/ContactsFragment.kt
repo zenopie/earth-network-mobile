@@ -1,5 +1,6 @@
 package network.erth.wallet.ui.pages.wallet
 
+import network.erth.wallet.ui.components.TxResult
 import android.app.AlertDialog
 import android.content.Context
 import android.os.Bundle
@@ -151,15 +152,15 @@ class ContactsFragment : Fragment() {
 
         when {
             TextUtils.isEmpty(name) -> {
-                Toast.makeText(context, "Please enter contact name", Toast.LENGTH_SHORT).show()
+                TxResult.message(requireContext(), "Couldn't continue", "Please enter contact name")
                 return
             }
             TextUtils.isEmpty(address) -> {
-                Toast.makeText(context, "Please enter address", Toast.LENGTH_SHORT).show()
+                TxResult.message(requireContext(), "Couldn't continue", "Please enter address")
                 return
             }
             !address.startsWith("earth1") -> {
-                Toast.makeText(context, "Invalid earth address", Toast.LENGTH_SHORT).show()
+                TxResult.message(requireContext(), "Couldn't continue", "Invalid earth address")
                 return
             }
         }
@@ -169,7 +170,7 @@ class ContactsFragment : Fragment() {
             loadContacts() // Reload contacts from manager
             hideAddContactForm()
         } else {
-            Toast.makeText(context, "Failed to save contact (duplicate or invalid)", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Failed to save contact (duplicate or invalid)")
         }
     }
 
@@ -221,7 +222,7 @@ class ContactsFragment : Fragment() {
             loadContacts() // Reload contacts from manager
             Toast.makeText(context, "Contact deleted", Toast.LENGTH_SHORT).show()
         } else {
-            Toast.makeText(context, "Failed to delete contact", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Failed to delete contact")
         }
     }
 

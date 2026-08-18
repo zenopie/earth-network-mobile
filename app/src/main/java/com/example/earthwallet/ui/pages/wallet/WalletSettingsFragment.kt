@@ -1,5 +1,6 @@
 package network.erth.wallet.ui.pages.wallet
 
+import network.erth.wallet.ui.components.TxResult
 import android.app.AlertDialog
 import android.content.Context
 import android.os.Bundle
@@ -152,7 +153,7 @@ class WalletSettingsFragment : Fragment() {
             } else {
                 "Biometric authentication disabled"
             }
-            Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", message)
         } catch (e: Exception) {
             // Revert the toggle if saving failed
             switchBiometricAuth.setOnCheckedChangeListener(null)
@@ -161,7 +162,7 @@ class WalletSettingsFragment : Fragment() {
                 handleBiometricToggle(checked)
             }
 
-            Toast.makeText(requireContext(), "Failed to save biometric setting", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Failed to save biometric setting")
         }
     }
 
@@ -183,7 +184,7 @@ class WalletSettingsFragment : Fragment() {
             } else {
                 "Transaction authentication disabled"
             }
-            Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", message)
         } catch (e: Exception) {
             // Revert the toggle if saving failed
             switchTransactionAuth.setOnCheckedChangeListener(null)
@@ -192,7 +193,7 @@ class WalletSettingsFragment : Fragment() {
                 handleTransactionAuthToggle(checked)
             }
 
-            Toast.makeText(requireContext(), "Failed to save transaction auth setting", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Failed to save transaction auth setting")
         }
     }
 
@@ -241,13 +242,13 @@ class WalletSettingsFragment : Fragment() {
                 }
             }
 
-            Toast.makeText(context, "App data cleared successfully. Please restart the app.", Toast.LENGTH_LONG).show()
+            TxResult.message(requireContext(), "Couldn't continue", "App data cleared successfully. Please restart the app.")
 
             // Exit the app
             requireActivity().finishAffinity()
 
         } catch (e: Exception) {
-            Toast.makeText(requireContext(), "Failed to clear app data: ${e.message}", Toast.LENGTH_LONG).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Failed to clear app data: ${e.message}")
         }
     }
 }

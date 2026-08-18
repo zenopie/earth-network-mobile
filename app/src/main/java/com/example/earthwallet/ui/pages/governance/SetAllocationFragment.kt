@@ -1,5 +1,7 @@
 package network.erth.wallet.ui.pages.governance
 
+import network.erth.wallet.ui.components.TxResult
+import network.erth.wallet.ui.components.TxFlow
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
@@ -143,7 +145,7 @@ class SetAllocationFragment : Fragment() {
 
     private fun addSelectedAllocation(option: Pair<Long, String>) {
         if (selectedAllocations.any { it.optionId == option.first }) {
-            Toast.makeText(context, "Allocation already added", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Allocation already added")
             return
         }
         selectedAllocations.add(AllocationInput(option.first, option.second, 0))
@@ -275,30 +277,27 @@ class SetAllocationFragment : Fragment() {
 
     private fun setAllocation() {
         if (totalPercentage != 100 || selectedAllocations.isEmpty()) {
-            Toast.makeText(context, "Total must equal 100%", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Total must equal 100%")
             return
         }
         val weights = selectedAllocations.map { it.optionId to it.percentage.toLong() }
 
         setAllocationButton.isEnabled = false
-        lifecycleScope.launch {
-            try {
-                val txHash = withContext(Dispatchers.IO) {
-                    SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
-                        val key = EarthWallet.deriveKey(mnemonic)
-                        val creator = EarthWallet.address(key)
-                        val stream = if (isCaretaker()) StreamId.STREAM_ID_HUMAN else StreamId.STREAM_ID_CAPITAL
-                        val msg = Allocation.msgSetAllocations(creator, stream, weights)
-                        EarthTx.broadcast(key, listOf(msg))
-                    }
-                }
-                Log.i(TAG, "SetAllocations broadcast: $txHash")
-                Toast.makeText(context, "Allocation set", Toast.LENGTH_SHORT).show()
+        TxFlow.run(
+            fragment = this,
+            action = "Set allocation",
+            msgTypeUrl = "/earth.allocation.v1.MsgSetAllocations",
+            onSuccess = {
                 activity?.supportFragmentManager?.popBackStack()
-            } catch (e: Exception) {
-                Log.e(TAG, "Error setting allocation", e)
-                Toast.makeText(context, "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
-                updateTotalAndButton()
+            },
+            onFinally = { updateTotalAndButton() },
+        ) {
+            SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
+                val key = EarthWallet.deriveKey(mnemonic)
+                val creator = EarthWallet.address(key)
+                val stream = if (isCaretaker()) StreamId.STREAM_ID_HUMAN else StreamId.STREAM_ID_CAPITAL
+                val msg = Allocation.msgSetAllocations(creator, stream, weights)
+                EarthTx.broadcast(key, listOf(msg))
             }
         }
     }

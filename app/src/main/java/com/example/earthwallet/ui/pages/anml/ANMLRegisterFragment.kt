@@ -1,5 +1,6 @@
 package network.erth.wallet.ui.pages.anml
 
+import network.erth.wallet.ui.components.TxResult
 import network.erth.wallet.R
 import android.os.Bundle
 import android.util.Log
@@ -179,7 +180,7 @@ class ANMLRegisterFragment : Fragment() {
         if (content.startsWith("earth1") && content.length >= 44) {
             affiliateAddressInput?.setText(content)
         } else {
-            Toast.makeText(context, "Invalid earth address in QR code", Toast.LENGTH_LONG).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Invalid earth address in QR code")
         }
     }
 

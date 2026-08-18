@@ -1,5 +1,7 @@
 package network.erth.wallet.ui.pages.managelp
 
+import network.erth.wallet.ui.components.TxResult
+import network.erth.wallet.ui.components.TxFlow
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -117,11 +119,11 @@ class RemoveLiquidityFragment : Fragment() {
             val removeAmountStr = removeAmountInput.text.toString().trim()
             val removeAmount = removeAmountStr.toDoubleOrNull()
             if (removeAmount == null || removeAmount <= 0) {
-                Toast.makeText(context, "Please enter an amount to remove", Toast.LENGTH_SHORT).show()
+                TxResult.message(requireContext(), "Couldn't continue", "Please enter an amount to remove")
                 return@setOnClickListener
             }
             if (removeAmount > userShares) {
-                Toast.makeText(context, "Amount exceeds your shares", Toast.LENGTH_SHORT).show()
+                TxResult.message(requireContext(), "Couldn't continue", "Amount exceeds your shares")
                 return@setOnClickListener
             }
             executeRemoveLiquidity(removeAmountStr)
@@ -170,34 +172,30 @@ class RemoveLiquidityFragment : Fragment() {
     private fun executeRemoveLiquidity(removeAmountStr: String) {
         val id = poolId
         if (id == null) {
-            Toast.makeText(context, "Pool not found", Toast.LENGTH_SHORT).show()
+            TxResult.message(requireContext(), "Couldn't continue", "Pool not found")
             return
         }
         // LP shares carry 6 decimals like other earth denoms.
         val sharesMicro = Tokens.parseTokenAmount(removeAmountStr, "ERTH") ?: return
 
         removeLiquidityButton.isEnabled = false
-        lifecycleScope.launch {
-            try {
-                val txHash = withContext(Dispatchers.IO) {
-                    SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
-                        val key = EarthWallet.deriveKey(mnemonic)
-                        val creator = EarthWallet.address(key)
-                        EarthTx.broadcast(
-                            key,
-                            listOf(Dex.msgRemoveLiquidity(creator, id, lpDenom(id), sharesMicro.toString()))
-                        )
-                    }
-                }
-                Log.i(TAG, "Remove liquidity broadcast: $txHash")
-                Toast.makeText(context, "Liquidity removed", Toast.LENGTH_SHORT).show()
+        TxFlow.run(
+            fragment = this,
+            action = "Remove liquidity",
+            msgTypeUrl = "/earth.dex.v1.MsgRemoveLiquidity",
+            onSuccess = {
                 removeAmountInput.setText("")
                 loadUserShares()
-            } catch (e: Exception) {
-                Log.e(TAG, "Remove liquidity failed", e)
-                Toast.makeText(context, "Failed: ${e.message}", Toast.LENGTH_SHORT).show()
-            } finally {
-                removeLiquidityButton.isEnabled = true
+            },
+            onFinally = { removeLiquidityButton.isEnabled = true },
+        ) {
+            SecureWalletManager.executeWithMnemonic(requireContext()) { mnemonic ->
+                val key = EarthWallet.deriveKey(mnemonic)
+                val creator = EarthWallet.address(key)
+                EarthTx.broadcast(
+                    key,
+                    listOf(Dex.msgRemoveLiquidity(creator, id, lpDenom(id), sharesMicro.toString()))
+                )
             }
         }
     }
