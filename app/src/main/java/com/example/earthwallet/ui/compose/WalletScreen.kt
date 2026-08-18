@@ -1,24 +1,29 @@
 package network.erth.wallet.ui.compose
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.systemBars
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import network.erth.wallet.ui.theme.EarthTheme
+import network.erth.wallet.ui.vendor.component.EarthButton
+import network.erth.wallet.ui.vendor.component.EarthButtonDefaults
+import network.erth.wallet.ui.vendor.component.EarthHorizontalDivider
+import androidx.compose.material3.Text
+import network.erth.wallet.ui.vendor.theme.colors.EarthColors
+import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
 
 /** What the wallet screen shows. Held by the caller; this composable is pure. */
 data class WalletUiState(
@@ -31,11 +36,11 @@ data class WalletUiState(
 )
 
 /**
- * The balance screen.
+ * The balance screen, built on the vendored components.
  *
- * One number, two actions, then holdings. The whole argument for this layout is
- * that a wallet is opened to answer "how much do I have" far more often than
- * anything else, so that question is answered before anything competes with it.
+ * One number, two actions, then holdings. A wallet is opened to answer "how
+ * much do I have" far more often than anything else, so that is answered before
+ * anything competes with it.
  */
 @Composable
 fun WalletScreen(
@@ -45,95 +50,94 @@ fun WalletScreen(
     onStakingClick: () -> Unit = {},
     onAnmlClick: () -> Unit = {},
     modifier: Modifier = Modifier,
-    /**
-     * Off when an ancestor already scrolls. Two nested vertical scrolls measure
-     * with an infinite height constraint and Compose throws rather than guessing.
-     */
     scrollable: Boolean = true,
 ) {
-    val colors = EarthTheme.colors
     val dimens = EarthTheme.dimens
 
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(colors.Surfaces.bgPrimary)
+            .background(EarthColors.Surfaces.bgPrimary)
             .then(if (scrollable) Modifier.verticalScroll(rememberScrollState()) else Modifier)
-            // The screen draws to the top of the display, so the status bar has
-            // to be accounted for or the balance sits underneath it.
             .windowInsetsPadding(WindowInsets.systemBars)
             .padding(horizontal = dimens.gutter)
             .padding(top = dimens.space24, bottom = dimens.space32),
     ) {
-        EarthLabel("Total balance")
-        Spacer(Modifier.height(dimens.space4))
-        EarthAmount(
-            amount = formatAmount(state.balanceUerth),
-            denom = null,
+        Text(
+            text = "TOTAL BALANCE",
+            style = EarthTypography.textSm.copy(color = EarthColors.Text.textTertiary),
+        )
+        Text(
+            text = formatAmount(state.balanceUerth),
+            style = EarthTypography.header1.copy(color = EarthColors.Text.textPrimary),
         )
         Text(
             text = state.address,
-            style = MaterialTheme.typography.bodyMedium,
-            color = colors.Text.textSecondary,
+            style = EarthTypography.textSm.copy(color = EarthColors.Text.textTertiary),
             maxLines = 1,
             overflow = TextOverflow.MiddleEllipsis,
         )
 
         Spacer(Modifier.height(dimens.space24))
-        EarthButton("Send", onSend)
+        EarthButton(text = "Send", onClick = onSend, modifier = Modifier.fillMaxWidth(),
+            colors = brandButtonColors(),
+        )
         Spacer(Modifier.height(dimens.space8))
-        EarthButton("Receive", onReceive, style = EarthButtonStyle.Secondary)
+        EarthButton(
+            text = "Receive",
+            onClick = onReceive,
+            modifier = Modifier.fillMaxWidth(),
+            colors = EarthButtonDefaults.secondaryColors(),
+        )
 
         Spacer(Modifier.height(dimens.space24))
-        EarthLabel("Holdings")
-        Spacer(Modifier.height(dimens.space4))
+        Text(
+            text = "HOLDINGS",
+            style = EarthTypography.textSm.copy(color = EarthColors.Text.textTertiary),
+        )
+        Spacer(Modifier.height(dimens.space8))
 
         if (state.anmlBalance != null) {
-            EarthListRow(
-                initial = "A",
-                name = "ANML",
-                subtitle = if (state.registered) "Proof of personhood" else "Not registered",
-                value = state.anmlBalance,
-                iconBg = EarthTheme.domain.anmlBg,
-                iconFg = EarthTheme.domain.anmlFg,
-                onClick = onAnmlClick,
-            )
+            HoldingRow("ANML", if (state.registered) "Proof of personhood" else "Not registered",
+                state.anmlBalance, EarthTheme.domain.anmlBg, EarthTheme.domain.anmlFg, onAnmlClick)
+            EarthHorizontalDivider()
         }
         if (state.stakedUerth > 0) {
-            EarthListRow(
-                initial = "S",
-                name = "Staked",
-                subtitle = "Delegated",
-                value = formatAmount(state.stakedUerth),
-                iconBg = EarthTheme.domain.stakingBg,
-                iconFg = EarthTheme.domain.stakingFg,
-                onClick = onStakingClick,
-            )
+            HoldingRow("Staked", "Delegated", formatAmount(state.stakedUerth),
+                EarthTheme.domain.stakingBg, EarthTheme.domain.stakingFg, onStakingClick)
+            EarthHorizontalDivider()
         }
         if (state.rewardsUerth > 0) {
-            EarthListRow(
-                initial = "R",
-                name = "Rewards",
-                subtitle = "Claimable",
-                value = formatAmount(state.rewardsUerth),
-                iconBg = EarthTheme.domain.stakingBg,
-                iconFg = EarthTheme.domain.stakingFg,
-                onClick = onStakingClick,
-            )
-        }
-
-        if (state.registered) {
-            Spacer(Modifier.height(dimens.space16))
-            Row(Modifier.fillMaxWidth()) {
-                EarthStatusPill(EarthStatus.Success, "Registered human")
-                Spacer(Modifier.width(dimens.space8))
-            }
+            HoldingRow("Rewards", "Claimable", formatAmount(state.rewardsUerth),
+                EarthTheme.domain.stakingBg, EarthTheme.domain.stakingFg, onStakingClick)
         }
     }
 }
 
-/** Whole ERTH with thousands separators; the fraction lives in the detail rows. */
-private fun formatAmount(uerth: Long): String {
-    val whole = uerth / 1_000_000
-    return "%,d".format(whole)
+@Composable
+private fun HoldingRow(
+    name: String,
+    subtitle: String,
+    value: String,
+    bg: androidx.compose.ui.graphics.Color,
+    fg: androidx.compose.ui.graphics.Color,
+    onClick: () -> Unit,
+) {
+    val dimens = EarthTheme.dimens
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = dimens.space12),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(text = name, style = EarthTypography.textMd.copy(color = EarthColors.Text.textPrimary))
+            Text(text = subtitle, style = EarthTypography.textSm.copy(color = EarthColors.Text.textTertiary))
+        }
+        Text(text = value, style = EarthTypography.textMd.copy(color = EarthColors.Text.textPrimary))
+    }
 }
+
+/** Whole ERTH with thousands separators; fractions live in the detail rows. */
+private fun formatAmount(uerth: Long): String = "%,d".format(uerth / 1_000_000)

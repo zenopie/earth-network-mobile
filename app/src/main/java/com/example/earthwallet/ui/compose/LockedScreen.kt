@@ -1,5 +1,10 @@
 package network.erth.wallet.ui.compose
 
+import network.erth.wallet.ui.vendor.component.EarthButton
+import network.erth.wallet.ui.vendor.component.EarthButtonDefaults
+import network.erth.wallet.ui.vendor.component.EarthCard
+import network.erth.wallet.ui.vendor.theme.colors.EarthColors
+import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -30,24 +35,24 @@ fun LockedScreen(onUnlock: () -> Unit, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(colors.Surfaces.bgPrimary)
+            .background(EarthColors.Surfaces.bgPrimary)
             .padding(dimens.gutter),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
             text = "Wallet locked",
-            style = MaterialTheme.typography.headlineMedium,
-            color = colors.Text.textPrimary,
+            style = EarthTypography.header5,
+            color = EarthColors.Text.textPrimary,
         )
         Spacer(Modifier.height(dimens.space8))
         Text(
             text = "Open Earth Wallet and enter your PIN, then come back.",
-            style = MaterialTheme.typography.bodyLarge,
-            color = colors.Text.textSecondary,
+            style = EarthTypography.textMd,
+            color = EarthColors.Text.textSecondary,
             textAlign = TextAlign.Center,
         )
         Spacer(Modifier.height(dimens.space24))
-        EarthButton("Try again", onUnlock, style = EarthButtonStyle.Secondary)
+        EarthButton("Try again", onUnlock, colors = EarthButtonDefaults.secondaryColors())
     }
 }

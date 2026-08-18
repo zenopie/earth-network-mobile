@@ -1,5 +1,10 @@
 package network.erth.wallet.ui.compose
 
+import network.erth.wallet.ui.vendor.component.EarthButton
+import network.erth.wallet.ui.vendor.component.EarthButtonDefaults
+import network.erth.wallet.ui.vendor.component.EarthCard
+import network.erth.wallet.ui.vendor.theme.colors.EarthColors
+import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -48,7 +53,7 @@ private fun Showcase() {
     Column(
         Modifier
             .fillMaxSize()
-            .background(colors.Surfaces.bgSecondary)
+            .background(EarthColors.Surfaces.bgSecondary)
             .verticalScroll(rememberScrollState()),
     ) {
         // The real screen, on its own ground.
@@ -67,19 +72,35 @@ private fun Showcase() {
         )
 
         Column(Modifier.padding(dimens.gutter)) {
+            EarthLabel("Receive — adapted from their screen")
+            Spacer(Modifier.height(dimens.space8))
+            ReceiveScreen(
+                state = ReceiveUiState(
+                    address = "earth1c9pthe4a5ngylhm5mjem6y5tt0sz65yqdngthx",
+                ),
+                scrollable = false,
+            )
+
+            Spacer(Modifier.height(dimens.space24))
             EarthLabel("Buttons")
             Spacer(Modifier.height(dimens.space8))
-            EarthButton("Primary", {})
+            EarthButton("Primary", {},
+            colors = brandButtonColors(),
+        )
             Spacer(Modifier.height(dimens.space8))
-            EarthButton("Secondary", {}, style = EarthButtonStyle.Secondary)
+            EarthButton("Secondary", {}, colors = EarthButtonDefaults.secondaryColors())
             Spacer(Modifier.height(dimens.space8))
-            EarthButton("Ghost", {}, style = EarthButtonStyle.Ghost)
+            EarthButton("Ghost", {}, colors = EarthButtonDefaults.tertiaryColors())
             Spacer(Modifier.height(dimens.space8))
-            EarthButton("Destructive", {}, style = EarthButtonStyle.Destructive)
+            EarthButton("Destructive", {}, colors = EarthButtonDefaults.secondaryColors())
             Spacer(Modifier.height(dimens.space8))
-            EarthButton("Disabled", {}, enabled = false)
+            EarthButton("Disabled", {}, enabled = false,
+            colors = brandButtonColors(),
+        )
             Spacer(Modifier.height(dimens.space8))
-            EarthButton("Loading", {}, loading = true)
+            EarthButton("Loading", {}, isLoading = true,
+            colors = brandButtonColors(),
+        )
 
             Spacer(Modifier.height(dimens.space24))
             EarthLabel("Status")
@@ -116,20 +137,20 @@ private fun Showcase() {
                             "gasUsed: 400324: out of gas",
                     ),
                 )
-            }, style = EarthButtonStyle.Secondary)
+            }, colors = EarthButtonDefaults.secondaryColors())
             Spacer(Modifier.height(dimens.space8))
             EarthButton("Show success", {
                 sheet = TxOutcome.Success("Stake ERTH", "62DE2CF2D504B6E1A9F0…")
-            }, style = EarthButtonStyle.Secondary)
+            }, colors = EarthButtonDefaults.secondaryColors())
             Spacer(Modifier.height(dimens.space8))
             EarthButton("Show confirm (unfunded)", { confirming = true },
-                style = EarthButtonStyle.Secondary)
+                colors = EarthButtonDefaults.secondaryColors())
 
             Spacer(Modifier.height(dimens.space32))
             Text(
                 "Sprout · ${'$'}{132} raw values, 75 semantic tokens",
-                style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
-                color = colors.Text.textTertiary,
+                style = EarthTypography.textSm,
+                color = EarthColors.Text.textTertiary,
             )
         }
     }

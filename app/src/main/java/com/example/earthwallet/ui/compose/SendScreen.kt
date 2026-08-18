@@ -1,5 +1,13 @@
 package network.erth.wallet.ui.compose
 
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.Text
+import network.erth.wallet.ui.vendor.component.EarthTextField
+import network.erth.wallet.ui.vendor.component.EarthButton
+import network.erth.wallet.ui.vendor.component.EarthButtonDefaults
+import network.erth.wallet.ui.vendor.component.EarthCard
+import network.erth.wallet.ui.vendor.theme.colors.EarthColors
+import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -46,7 +54,7 @@ fun SendScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(colors.Surfaces.bgPrimary)
+            .background(EarthColors.Surfaces.bgPrimary)
             .verticalScroll(rememberScrollState())
             .windowInsetsPadding(WindowInsets.systemBars)
             .padding(horizontal = dimens.gutter)
@@ -54,43 +62,40 @@ fun SendScreen(
     ) {
         Text(
             text = "Send",
-            style = MaterialTheme.typography.headlineMedium,
-            color = colors.Text.textPrimary,
+            style = EarthTypography.header5,
+            color = EarthColors.Text.textPrimary,
         )
         Spacer(Modifier.height(dimens.space24))
 
+        EarthLabel("To")
         EarthTextField(
             value = recipient,
             onValueChange = onRecipientChange,
-            label = "To",
-            hint = "earth1…",
             error = recipientError,
+            placeholder = { Text("earth1…", style = EarthTypography.textMd) },
+            modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(dimens.space16))
 
+        EarthLabel("Amount")
         EarthTextField(
             value = amount,
             onValueChange = onAmountChange,
-            label = "Amount",
-            hint = "0.00",
             error = amountError,
-            numeric = true,
-            trailing = {
-                Text(
-                    text = denom,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = colors.Text.textSecondary,
-                )
-            },
+            placeholder = { Text("0.00", style = EarthTypography.textMd) },
+            suffix = { Text(denom, style = EarthTypography.textMd) },
+            modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(dimens.space8))
         Text(
             text = balanceLabel,
-            style = MaterialTheme.typography.bodyMedium,
-            color = colors.Text.textSecondary,
+            style = EarthTypography.textSm,
+            color = EarthColors.Text.textSecondary,
         )
 
         Spacer(Modifier.height(dimens.space32))
-        EarthButton("Review", onSend, enabled = ready, loading = sending)
+        EarthButton("Review", onSend, enabled = ready, isLoading = sending,
+            colors = brandButtonColors(),
+        )
     }
 }

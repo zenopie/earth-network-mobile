@@ -1,5 +1,10 @@
 package network.erth.wallet.ui.compose
 
+import network.erth.wallet.ui.vendor.component.EarthButton
+import network.erth.wallet.ui.vendor.component.EarthButtonDefaults
+import network.erth.wallet.ui.vendor.component.EarthCard
+import network.erth.wallet.ui.vendor.theme.colors.EarthColors
+import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -46,17 +51,17 @@ fun TxResultSheet(outcome: TxOutcome, onDismiss: () -> Unit) {
         when (outcome) {
             is TxOutcome.Success ->
                 Quint(
-                    "✓", colors.Utility.SuccessGreen.utilitySuccess50, colors.Utility.SuccessGreen.utilitySuccess700,
+                    "✓", EarthColors.Utility.SuccessGreen.utilitySuccess50, EarthColors.Utility.SuccessGreen.utilitySuccess700,
                     "${outcome.action} confirmed", "Transaction hash\n${outcome.txHash}",
                 )
             is TxOutcome.Failure ->
                 Quint(
-                    "✕", colors.Utility.ErrorRed.utilityError50, colors.Utility.ErrorRed.utilityError700,
+                    "✕", EarthColors.Utility.ErrorRed.utilityError50, EarthColors.Utility.ErrorRed.utilityError700,
                     "${outcome.action} failed", describe(outcome.error),
                 )
             is TxOutcome.Message ->
                 Quint(
-                    "!", colors.Utility.Gray.utilityGray100, colors.Utility.Gray.utilityGray700,
+                    "!", EarthColors.Utility.Gray.utilityGray100, EarthColors.Utility.Gray.utilityGray700,
                     outcome.title, outcome.detail,
                 )
         }
@@ -67,13 +72,13 @@ fun TxResultSheet(outcome: TxOutcome, onDismiss: () -> Unit) {
                 Modifier.size(dimens.space48).background(badgeBg, CircleShape),
                 Alignment.Center,
             ) {
-                Text(glyph, style = MaterialTheme.typography.headlineMedium, color = badgeFg)
+                Text(glyph, style = EarthTypography.header5, color = badgeFg)
             }
         }
         Text(
             text = title,
-            style = MaterialTheme.typography.headlineMedium,
-            color = colors.Text.textPrimary,
+            style = EarthTypography.header5,
+            color = EarthColors.Text.textPrimary,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -82,13 +87,15 @@ fun TxResultSheet(outcome: TxOutcome, onDismiss: () -> Unit) {
             Box(Modifier.weight(1f)) {
                 EarthButton(
                     text = "Copy",
-                    style = EarthButtonStyle.Secondary,
+                    colors = EarthButtonDefaults.secondaryColors(),
                     onClick = { clipboard.setText(AnnotatedString("$title\n\n$detail")) },
                 )
             }
             Box(Modifier.size(dimens.space12))
             Box(Modifier.weight(1f)) {
-                EarthButton(text = "Done", onClick = onDismiss)
+                EarthButton(text = "Done", onClick = onDismiss,
+            colors = brandButtonColors(),
+        )
             }
         }
     }

@@ -1,5 +1,10 @@
 package network.erth.wallet.ui.compose
 
+import network.erth.wallet.ui.vendor.component.EarthButton
+import network.erth.wallet.ui.vendor.component.EarthButtonDefaults
+import network.erth.wallet.ui.vendor.component.EarthCard
+import network.erth.wallet.ui.vendor.theme.colors.EarthColors
+import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,7 +39,7 @@ fun EarthApp(
     Column(
         Modifier
             .fillMaxSize()
-            .background(colors.Surfaces.bgPrimary),
+            .background(EarthColors.Surfaces.bgPrimary),
     ) {
         Box(Modifier.weight(1f)) {
             when (current) {
@@ -65,18 +70,18 @@ private fun Placeholder(title: String, detail: String) {
     Column(
         Modifier
             .fillMaxSize()
-            .background(colors.Surfaces.bgPrimary)
+            .background(EarthColors.Surfaces.bgPrimary)
             .padding(dimens.gutter),
     ) {
         androidx.compose.material3.Text(
             text = title,
-            style = androidx.compose.material3.MaterialTheme.typography.headlineMedium,
-            color = colors.Text.textPrimary,
+            style = EarthTypography.header5,
+            color = EarthColors.Text.textPrimary,
         )
         androidx.compose.material3.Text(
             text = detail,
-            style = androidx.compose.material3.MaterialTheme.typography.bodyLarge,
-            color = colors.Text.textSecondary,
+            style = EarthTypography.textMd,
+            color = EarthColors.Text.textSecondary,
         )
     }
 }

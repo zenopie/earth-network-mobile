@@ -1,5 +1,11 @@
 package network.erth.wallet.ui.compose
 
+import androidx.compose.material3.CardDefaults
+import network.erth.wallet.ui.vendor.component.EarthButton
+import network.erth.wallet.ui.vendor.component.EarthButtonDefaults
+import network.erth.wallet.ui.vendor.component.EarthCard
+import network.erth.wallet.ui.vendor.theme.colors.EarthColors
+import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -61,19 +67,19 @@ fun StakingScreen(
     val dimens = EarthTheme.dimens
 
     EarthScaffold(title = "Earn", modifier = modifier) {
-        EarthCard(background = EarthTheme.domain.stakingBg) {
+        EarthCard(colors = CardDefaults.cardColors(containerColor = EarthTheme.domain.stakingBg)) {
             Column {
                 EarthLabel("Staked")
                 Text(
                     text = formatErth(state.stakedUerth),
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = colors.Text.textPrimary,
+                    style = EarthTypography.header5,
+                    color = EarthColors.Text.textPrimary,
                 )
                 Spacer(Modifier.height(dimens.space12))
                 EarthLabel("Claimable rewards")
                 Text(
                     text = formatErth(state.rewardsUerth),
-                    style = MaterialTheme.typography.headlineMedium,
+                    style = EarthTypography.header5,
                     color = EarthTheme.domain.stakingFg,
                 )
             }
@@ -84,18 +90,19 @@ fun StakingScreen(
             text = "Claim rewards",
             onClick = onClaim,
             enabled = state.rewardsUerth > 0,
-            loading = claiming,
+            isLoading = claiming,
+            colors = brandButtonColors(),
         )
         Row(Modifier.fillMaxWidth().padding(top = dimens.space8)) {
             Column(Modifier.weight(1f)) {
-                EarthButton("Stake", onStake, style = EarthButtonStyle.Secondary)
+                EarthButton("Stake", onStake, colors = EarthButtonDefaults.secondaryColors())
             }
             Spacer(Modifier.width(dimens.space12))
             Column(Modifier.weight(1f)) {
                 EarthButton(
                     text = "Unstake",
                     onClick = onUnstake,
-                    style = EarthButtonStyle.Secondary,
+                    colors = EarthButtonDefaults.secondaryColors(),
                     enabled = state.stakedUerth > 0,
                 )
             }
@@ -127,8 +134,8 @@ fun StakingScreen(
                     Column(Modifier.weight(1f)) {
                         Text(
                             text = u.moniker,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = colors.Text.textPrimary,
+                            style = EarthTypography.textMd,
+                            color = EarthColors.Text.textPrimary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -136,8 +143,8 @@ fun StakingScreen(
                     }
                     Text(
                         text = formatErth(u.amountUerth),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = colors.Text.textSecondary,
+                        style = EarthTypography.textMd,
+                        color = EarthColors.Text.textSecondary,
                     )
                 }
             }
@@ -148,8 +155,8 @@ fun StakingScreen(
             Text(
                 text = "Staking ERTH secures the chain and earns a share of the " +
                     "investor pillar — one ERTH per second, split by voting power.",
-                style = MaterialTheme.typography.bodyLarge,
-                color = colors.Text.textSecondary,
+                style = EarthTypography.textMd,
+                color = EarthColors.Text.textSecondary,
             )
         }
     }

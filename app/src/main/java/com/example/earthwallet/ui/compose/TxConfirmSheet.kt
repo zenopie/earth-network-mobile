@@ -1,5 +1,10 @@
 package network.erth.wallet.ui.compose
 
+import network.erth.wallet.ui.vendor.component.EarthButton
+import network.erth.wallet.ui.vendor.component.EarthButtonDefaults
+import network.erth.wallet.ui.vendor.component.EarthCard
+import network.erth.wallet.ui.vendor.theme.colors.EarthColors
+import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -59,15 +64,15 @@ fun TxConfirmSheet(
     EarthSheet(onDismiss = onDismiss) {
         Text(
             text = details.action,
-            style = MaterialTheme.typography.headlineMedium,
-            color = colors.Text.textPrimary,
+            style = EarthTypography.header5,
+            color = EarthColors.Text.textPrimary,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
         )
         Text(
             text = details.msgTypeUrl,
-            style = MaterialTheme.typography.bodySmall,
-            color = colors.Text.textTertiary,
+            style = EarthTypography.textSm,
+            color = EarthColors.Text.textTertiary,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth().padding(bottom = dimens.space8),
         )
@@ -93,7 +98,7 @@ fun TxConfirmSheet(
                         } else {
                             "Not enough ERTH for the fee. Watch a short ad and we'll cover it."
                         },
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = EarthTypography.textSm,
                     color = EarthTheme.domain.gasWarningFg,
                 )
             }
@@ -101,19 +106,22 @@ fun TxConfirmSheet(
                 EarthButton(
                     text = if (awaitingGas) "Waiting for gas…" else "Watch an ad for gas",
                     onClick = onWatchAd,
-                    loading = adLoading || awaitingGas,
-                )
+                    isLoading = adLoading || awaitingGas,
+            colors = brandButtonColors(),
+        )
             }
         }
 
         Row(Modifier.fillMaxWidth().padding(top = dimens.space16)) {
             Box(Modifier.weight(1f)) {
-                EarthButton("Cancel", onDismiss, style = EarthButtonStyle.Secondary)
+                EarthButton("Cancel", onDismiss, colors = EarthButtonDefaults.secondaryColors())
             }
             Box(Modifier.padding(start = dimens.space12).weight(1f)) {
                 // Confirm stays shut until the balance covers the fee: letting it
                 // through would only fail in the ante handler.
-                EarthButton("Confirm", onConfirm, enabled = funded)
+                EarthButton("Confirm", onConfirm, enabled = funded,
+            colors = brandButtonColors(),
+        )
             }
         }
     }
