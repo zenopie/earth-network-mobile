@@ -29,8 +29,8 @@ data class EarthDomainColors(
 )
 
 internal val LightEarthDomainColors = EarthDomainColors(
-    anmlBg = Color(0xFFE9D2BE),
-    anmlFg = Color(0xFF70452A),
+    anmlBg = Color(0xFFFBF3D0),
+    anmlFg = Color(0xFFB08400),
     stakingBg = Color(0xFFE8F1E1),
     stakingFg = Color(0xFF4A8536),
     dexBg = Color(0xFFDEF6F1),
@@ -42,8 +42,8 @@ internal val LightEarthDomainColors = EarthDomainColors(
 )
 
 internal val DarkEarthDomainColors = EarthDomainColors(
-    anmlBg = Color(0xFF1A0F09),
-    anmlFg = Color(0xFFD8B294),
+    anmlBg = Color(0xFF241D06),
+    anmlFg = Color(0xFFE8D06B),
     stakingBg = Color(0xFF0D1A09),
     stakingFg = Color(0xFF87B76F),
     dexBg = Color(0xFF031A17),

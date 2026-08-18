@@ -1,113 +1,246 @@
 package network.erth.wallet.ui.compose
 
+import android.content.Context
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import network.erth.earth.proto.allocation.StreamId
 import network.erth.wallet.R
+import network.erth.wallet.chain.Bank
+import network.erth.wallet.chain.Personhood
 import network.erth.wallet.ui.vendor.component.BlankBgScaffold
 
 /**
  * The app shell.
  *
- * Their navigation model, not a bottom tab bar: home carries the balance and
- * four large actions, the top bar carries wallet identity and the way into
- * settings, and everything else is pushed on top with a back arrow. A tab bar
- * would put four permanent destinations on screen, and Earth only has one
- * destination someone returns to — the balance. The rest are things you do
- * once and leave.
+ * Their chrome — a top bar carrying wallet identity and the way into settings,
+ * screens pushed on top with a back arrow — over a tab bar they do not have,
+ * because Earth has a second axis they do not: what this wallet holds, and what
+ * the protocol does. Zcash is only ever the first, so one home screen is enough
+ * for them; folding markets, allocations and the explorer into a settings menu
+ * buried half the chain.
  */
 @Composable
 fun EarthApp(
-    /** Null until the first load returns. */
-    state: WalletUiState?,
-    activity: List<ActivityRow>?,
     version: String,
-    onSendTx: (recipient: String, amount: String) -> Unit,
     onOpenUrl: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     val nav = rememberEarthNavController()
     var balancesVisible by remember { mutableStateOf(true) }
 
-    // The rows arrive from the chain without knowing where a tap should go;
-    // navigation is the shell's business, so it is attached here rather than
-    // threaded through the view model.
+    val wallet: WalletViewModel = viewModel()
+    val earn: EarnViewModel = viewModel()
+    val allocation: AllocationViewModel = viewModel()
+    val markets: MarketsViewModel = viewModel()
+    val explore: ExploreViewModel = viewModel()
+    val tx: TxController = viewModel()
+
+    val state by wallet.state.collectAsStateWithLifecycle()
+    val activity by wallet.activity.collectAsStateWithLifecycle()
+    val earnState by earn.state.collectAsStateWithLifecycle()
+    val allocationState by allocation.state.collectAsStateWithLifecycle()
+    val marketsState by markets.state.collectAsStateWithLifecycle()
+    val exploreState by explore.state.collectAsStateWithLifecycle()
+
+    // Each tab loads when it is first shown rather than all at once on start.
+    // Five tabs' worth of queries against one node on launch is a slow launch,
+    // and four of them are for screens nobody may open.
+    LaunchedEffect(nav.currentTab) {
+        when (nav.currentTab) {
+            EarthRoute.Wallet -> wallet.refresh()
+            EarthRoute.Earn -> earn.refresh()
+            EarthRoute.Markets -> markets.refresh()
+            EarthRoute.Govern -> allocation.refresh()
+            EarthRoute.Explore -> explore.refresh()
+        }
+    }
+
+    val refreshAll = {
+        wallet.refresh()
+        when (nav.currentTab) {
+            EarthRoute.Earn -> earn.refresh()
+            EarthRoute.Govern -> allocation.refresh()
+            EarthRoute.Markets -> markets.refresh()
+            else -> Unit
+        }
+    }
+
     val rows = remember(activity, nav) {
         activity?.map { row ->
             row.copy(onClick = { nav.push(EarthRoute.TransactionDetail(row.txHash)) })
         }
     }
 
-    val topBar: @Composable () -> Unit = {
-        when (val route = nav.current) {
-            EarthRoute.Home -> EarthMainTopBar(
-                walletName = "Wallet",
-                balancesVisible = balancesVisible,
-                onToggleBalances = { balancesVisible = !balancesVisible },
-                onSettings = { nav.push(EarthRoute.Settings) },
-            )
-            else -> EarthDetailTopBar(title = route.title(), onBack = { nav.pop() })
-        }
-    }
-
-    BlankBgScaffold(modifier = modifier, topBar = topBar) { padding ->
+    BlankBgScaffold(
+        modifier = modifier,
+        topBar = {
+            when (val route = nav.current) {
+                is EarthRoute.Tab -> EarthMainTopBar(
+                    walletName = route.label,
+                    balancesVisible = balancesVisible,
+                    onToggleBalances = { balancesVisible = !balancesVisible },
+                    onSettings = { nav.push(EarthRoute.Settings) },
+                    showsBalances = route == EarthRoute.Wallet || route == EarthRoute.Earn,
+                )
+                else -> EarthDetailTopBar(title = route.title(), onBack = { nav.pop() })
+            }
+        },
+        bottomBar = {
+            // The bar is for switching tabs, so it goes away on a pushed screen
+            // — leaving it there invites a tap that discards whatever is
+            // half-entered on the screen above it.
+            if (nav.current is EarthRoute.Tab) {
+                EarthTabBar(current = nav.currentTab, onSelect = nav::selectTab)
+            }
+        },
+    ) { padding ->
         EarthContent(
             route = nav.current,
             nav = nav,
+            tx = tx,
             state = state,
             activity = rows,
+            earnState = earnState,
+            allocationState = allocationState,
+            marketsState = marketsState,
+            exploreState = exploreState,
+            earn = earn,
+            allocation = allocation,
             version = version,
             balancesVisible = balancesVisible,
-            onSendTx = onSendTx,
             onOpenUrl = onOpenUrl,
+            onRefresh = refreshAll,
             padding = padding,
         )
     }
+
+    TxSheets(
+        controller = tx,
+        balanceUerth = state?.balanceUerth ?: 0L,
+        context = context,
+    )
 }
 
 @Composable
+@Suppress("LongParameterList")
 private fun EarthContent(
     route: EarthRoute,
     nav: EarthNavController,
+    tx: TxController,
     state: WalletUiState?,
     activity: List<ActivityRow>?,
+    earnState: EarnUiState?,
+    allocationState: AllocationUiState?,
+    marketsState: MarketsUiState?,
+    exploreState: ExploreUiState?,
+    earn: EarnViewModel,
+    allocation: AllocationViewModel,
     version: String,
     balancesVisible: Boolean,
-    onSendTx: (String, String) -> Unit,
     onOpenUrl: (String) -> Unit,
+    onRefresh: () -> Unit,
     padding: PaddingValues,
 ) {
-    // Home draws its own activity list to the bottom edge, so it takes the
-    // padding as content padding rather than as a margin — a list that stops
-    // above the gesture bar looks clipped, one that scrolls under it does not.
-    val inset = Modifier.padding(
-        top = padding.calculateTopPadding(),
-        bottom = if (route is EarthRoute.Home) 0.dp else padding.calculateBottomPadding(),
-    )
-
-    // Everything past home is only reachable after the load, so it takes the
-    // resolved state and never has to render a "loading" it cannot reach.
     val loaded = state ?: WalletUiState.EMPTY
 
+    // The wallet tab draws its activity list to the bottom edge, so it takes
+    // the padding as content padding rather than as a margin — a list that
+    // stops above the bar looks clipped, one that scrolls under it does not.
+    val inset = Modifier.padding(
+        top = padding.calculateTopPadding(),
+        bottom = if (route is EarthRoute.Wallet) 0.dp else padding.calculateBottomPadding(),
+    )
+
+    // Which sheet, if any, is open on top of the current screen.
+    var staking by remember { mutableStateOf<StakeIntent?>(null) }
+    var editing by remember { mutableStateOf<StreamId?>(null) }
+
     when (route) {
-        EarthRoute.Home -> HomeScreen(
+        EarthRoute.Wallet -> HomeScreen(
             erthBalance = state?.let { formatUerth(it.balanceUerth) },
             anmlBalance = state?.let { it.anmlBalance ?: "0" },
             balancesVisible = balancesVisible,
             activity = activity,
             onReceive = { nav.push(EarthRoute.Receive) },
             onSend = { nav.push(EarthRoute.Send) },
-            onEarn = { nav.push(EarthRoute.Earn) },
+            onEarn = { nav.selectTab(EarthRoute.Earn) },
             onSwap = { nav.push(EarthRoute.Swap) },
             onSeeAllActivity = { nav.push(EarthRoute.Activity) },
             modifier = inset,
             contentPadding = padding,
+        )
+
+        EarthRoute.Earn -> EarnScreen(
+            state = earnState,
+            anmlClaimable = loaded.registered,
+            onStake = { staking = StakeIntent.Stake },
+            onUnstake = { staking = StakeIntent.Unstake },
+            onClaim = {
+                val validators = earnState?.delegations?.map { it.validatorOperator }.orEmpty()
+                tx.request(
+                    details = TxConfirmDetails(
+                        action = "Claim rewards",
+                        msgTypeUrl = "/cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward",
+                        feeUerth = TxController.DEFAULT_FEE_UERTH,
+                        balanceUerth = loaded.balanceUerth,
+                        amountLabel = "Rewards",
+                        amountValue = "${formatUerth(earnState?.rewardsUerth ?: 0)} ERTH",
+                    ),
+                    // One withdraw per validator, so the gas scales with how
+                    // many you delegate to.
+                    gasLimit = TxController.DEFAULT_GAS_LIMIT +
+                        150_000L * validators.size,
+                    onSuccess = onRefresh,
+                    build = earn.claimAll(validators),
+                )
+            },
+            onClaimAnml = {
+                tx.request(
+                    details = TxConfirmDetails(
+                        action = "Claim ANML",
+                        msgTypeUrl = "/earth.personhood.v1.MsgClaimAnml",
+                        feeUerth = TxController.DEFAULT_FEE_UERTH,
+                        balanceUerth = loaded.balanceUerth,
+                    ),
+                    onSuccess = onRefresh,
+                    build = { ctx -> listOf(Personhood.msgClaimAnml(walletAddress(ctx))) },
+                )
+            },
+            modifier = inset,
+        )
+
+        EarthRoute.Markets -> MarketsScreen(
+            pools = marketsState?.pools,
+            swapFeePercent = marketsState?.swapFeePercent,
+            onSwap = { nav.push(EarthRoute.Swap) },
+            onLiquidity = { nav.push(EarthRoute.Liquidity) },
+            modifier = inset,
+        )
+
+        EarthRoute.Govern -> AllocationScreen(
+            state = allocationState,
+            registered = loaded.registered,
+            stakedUerth = loaded.stakedUerth,
+            onEdit = { editing = it },
+            modifier = inset,
+        )
+
+        EarthRoute.Explore -> ExploreScreen(
+            state = exploreState,
+            onTx = { nav.push(EarthRoute.TransactionDetail(it)) },
+            modifier = inset,
         )
 
         EarthRoute.Receive -> ReceiveScreen(
@@ -117,24 +250,19 @@ private fun EarthContent(
 
         EarthRoute.Send -> SendFlow(
             state = loaded,
-            onSubmit = onSendTx,
-            modifier = inset,
-        )
-
-        EarthRoute.Earn -> EarnScreen(
-            stakedErth = formatUerth(loaded.stakedUerth),
-            rewardsErth = formatUerth(loaded.rewardsUerth),
-            hasRewards = loaded.rewardsUerth > 0,
-            validators = emptyList(),
-            onStake = {},
-            onUnstake = {},
-            onClaim = {},
+            tx = tx,
+            onSent = onRefresh,
             modifier = inset,
         )
 
         EarthRoute.Swap -> SwapScreen(
             erthBalance = formatUerth(loaded.balanceUerth),
             anmlBalance = loaded.anmlBalance ?: "0",
+            modifier = inset,
+        )
+
+        EarthRoute.Liquidity -> LiquidityScreen(
+            pools = marketsState?.pools,
             modifier = inset,
         )
 
@@ -169,14 +297,6 @@ private fun EarthContent(
             modifier = inset,
         )
 
-        EarthRoute.Allocation -> AllocationScreen(
-            humanShare = emptyList(),
-            capitalShare = emptyList(),
-            registered = loaded.registered,
-            stakedUerth = loaded.stakedUerth,
-            modifier = inset,
-        )
-
         is EarthRoute.TransactionDetail -> TransactionDetailScreen(
             txHash = route.txHash,
             row = activity?.firstOrNull { it.txHash == route.txHash },
@@ -184,14 +304,96 @@ private fun EarthContent(
             modifier = inset,
         )
     }
+
+    staking?.let { intent ->
+        val stake = intent == StakeIntent.Stake
+        StakeSheet(
+            title = if (stake) "Stake ERTH" else "Unstake ERTH",
+            choices = if (stake) {
+                earnState?.validators.orEmpty()
+            } else {
+                earnState?.delegations.orEmpty()
+            },
+            // Staking is capped by what is spendable less the fee; unstaking by
+            // what is already with that validator.
+            capFor = { v ->
+                if (stake) {
+                    (loaded.balanceUerth - TxController.DEFAULT_FEE_UERTH).coerceAtLeast(0)
+                } else {
+                    v.amountUerth
+                }
+            },
+            confirmLabel = if (stake) "Stake" else "Unstake",
+            onDismiss = { staking = null },
+            onConfirm = { validator, amount ->
+                staking = null
+                tx.request(
+                    details = TxConfirmDetails(
+                        action = if (stake) "Stake ERTH" else "Unstake ERTH",
+                        msgTypeUrl = if (stake) {
+                            "/cosmos.staking.v1beta1.MsgDelegate"
+                        } else {
+                            "/cosmos.staking.v1beta1.MsgUndelegate"
+                        },
+                        feeUerth = TxController.DEFAULT_FEE_UERTH,
+                        balanceUerth = loaded.balanceUerth,
+                        amountLabel = "Amount",
+                        amountValue = "${formatUerth(amount)} ERTH",
+                    ),
+                    onSuccess = onRefresh,
+                    build = if (stake) {
+                        earn.delegate(validator, amount)
+                    } else {
+                        earn.undelegate(validator, amount)
+                    },
+                )
+            },
+        )
+    }
+
+    editing?.let { stream ->
+        val streamState = when (stream) {
+            StreamId.STREAM_ID_HUMAN -> allocationState?.human
+            else -> allocationState?.capital
+        }
+        if (streamState != null) {
+            AllocationEditSheet(
+                title = if (stream == StreamId.STREAM_ID_HUMAN) {
+                    "Human stream"
+                } else {
+                    "Capital stream"
+                },
+                stream = streamState,
+                onDismiss = { editing = null },
+                onConfirm = { weights ->
+                    editing = null
+                    tx.request(
+                        details = TxConfirmDetails(
+                            action = "Set allocation",
+                            msgTypeUrl = "/earth.allocation.v1.MsgSetAllocations",
+                            feeUerth = TxController.DEFAULT_FEE_UERTH,
+                            balanceUerth = loaded.balanceUerth,
+                        ),
+                        onSuccess = onRefresh,
+                        build = allocation.setAllocations(stream, weights),
+                    )
+                },
+            )
+        }
+    }
 }
+
+/** Which direction the stake sheet was opened in. */
+private enum class StakeIntent { Stake, Unstake }
+
+private fun walletAddress(ctx: Context): String =
+    network.erth.wallet.wallet.services.SecureWalletManager.getWalletAddress(ctx).orEmpty()
 
 /**
  * The settings menu.
  *
- * Ordered by how often it is opened rather than by subsystem: identity first
- * because registering is the thing a new wallet is here to do, then the things
- * that hold data, then the things that are read once.
+ * What is left once the tabs took the chain: the things about *this install* —
+ * who it says you are, what it remembers, and what it is.
  */
 private fun settingsItems(nav: EarthNavController, state: WalletUiState): List<SettingsItem> =
     listOf(
@@ -200,12 +402,6 @@ private fun settingsItems(nav: EarthNavController, state: WalletUiState): List<S
             subtitle = if (state.registered) "Verified human" else "Not registered",
             icon = R.drawable.ic_shield_check,
             onClick = { nav.push(EarthRoute.Personhood) },
-        ),
-        SettingsItem(
-            title = "Allocations",
-            subtitle = "Direct your share of the emission",
-            icon = R.drawable.ic_pie_chart,
-            onClick = { nav.push(EarthRoute.Allocation) },
         ),
         SettingsItem(
             title = "Address book",
@@ -226,17 +422,16 @@ private fun settingsItems(nav: EarthNavController, state: WalletUiState): List<S
 
 /** The title the detail bar shows for a pushed route. */
 private fun EarthRoute.title(): String = when (this) {
-    EarthRoute.Home -> "Earth"
+    is EarthRoute.Tab -> label
     EarthRoute.Send -> "Send"
     EarthRoute.Receive -> "Receive"
-    EarthRoute.Earn -> "Earn"
     EarthRoute.Swap -> "Swap"
+    EarthRoute.Liquidity -> "Liquidity"
     EarthRoute.Activity -> "Activity"
     EarthRoute.Settings -> "Settings"
     EarthRoute.AddressBook -> "Address book"
     EarthRoute.About -> "About"
     EarthRoute.Personhood -> "Identity"
-    EarthRoute.Allocation -> "Allocations"
     is EarthRoute.TransactionDetail -> "Transaction"
 }
 

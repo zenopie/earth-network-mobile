@@ -1,5 +1,6 @@
 package network.erth.wallet.chain
 
+import com.google.protobuf.Any as ProtoAny
 import com.google.protobuf.ByteString
 import network.erth.earth.proto.personhood.MsgClaimAnml
 import network.erth.earth.proto.personhood.MsgRegister
@@ -151,9 +152,20 @@ object Personhood {
         )
     }
 
-    /** Daily ANML claim. Returns tx hash. */
-    fun claimAnml(key: ECKey): String {
-        val msg = MsgClaimAnml.newBuilder().setCreator(EarthWallet.address(key)).build()
-        return EarthTx.broadcast(key, listOf(EarthTx.anyOf("/earth.personhood.v1.MsgClaimAnml", msg)))
+    /**
+     * The daily ANML claim, as a message.
+     *
+     * Separate from [claimAnml] because the Compose app builds messages and
+     * broadcasts them elsewhere — one confirmation gate and one result sheet
+     * for every transaction — while the remaining fragments still broadcast
+     * inline. Both go through the same message so the two paths cannot drift.
+     */
+    fun msgClaimAnml(creator: String): ProtoAny {
+        val msg = MsgClaimAnml.newBuilder().setCreator(creator).build()
+        return EarthTx.anyOf("/earth.personhood.v1.MsgClaimAnml", msg)
     }
+
+    /** Daily ANML claim. Returns tx hash. */
+    fun claimAnml(key: ECKey): String =
+        EarthTx.broadcast(key, listOf(msgClaimAnml(EarthWallet.address(key))))
 }

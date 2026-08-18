@@ -5,7 +5,6 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -36,7 +35,6 @@ class ComposeAppActivity : ComponentActivity() {
         setContent {
             EarthTheme {
                 val unlock: UnlockViewModel = viewModel()
-                val wallet: WalletViewModel = viewModel()
 
                 val unlocked by unlock.unlocked.collectAsStateWithLifecycle()
                 val error by unlock.error.collectAsStateWithLifecycle()
@@ -54,15 +52,10 @@ class ComposeAppActivity : ComponentActivity() {
                         lockoutMessage = lockout,
                     )
                 } else {
-                    val state by wallet.state.collectAsStateWithLifecycle()
-                    val activity by wallet.activity.collectAsStateWithLifecycle()
-                    LaunchedEffect(open) { wallet.refresh() }
-
+                    // EarthApp owns the view models now — each tab loads when
+                    // it is first shown rather than all five on launch.
                     EarthApp(
-                        state = state,
-                        activity = activity,
                         version = "Version $version",
-                        onSendTx = { _, _ -> },
                         onOpenUrl = ::openUrl,
                     )
                 }

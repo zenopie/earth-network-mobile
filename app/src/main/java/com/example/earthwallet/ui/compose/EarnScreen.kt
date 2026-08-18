@@ -18,51 +18,49 @@ import androidx.compose.ui.Modifier
 import network.erth.wallet.ui.theme.EarthTheme
 import network.erth.wallet.ui.vendor.component.EarthButton
 import network.erth.wallet.ui.vendor.component.EarthButtonDefaults
+import network.erth.wallet.ui.vendor.component.ShimmerRectangle
+import network.erth.wallet.ui.vendor.component.rememberEarthShimmer
 import network.erth.wallet.ui.vendor.theme.colors.EarthColors
 import network.erth.wallet.ui.vendor.theme.dimensions.EarthDimensions
 import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
+import com.valentinilk.shimmer.shimmer
 
 /**
- * Earn: staking and the allocation streams.
+ * Earn: staking and its rewards.
  *
  * There is no Zodl equivalent — Zcash has no staking — so this borrows the
  * shape of their address panel instead: a large-radius card carrying the
  * figures, with the actions beneath.
  *
- * Staked and claimable lead because the common question is how much rather than
- * with whom. Claim is disabled at zero rather than hidden: a button that comes
- * and goes as rewards accrue is harder to find than one that is always in the
- * same place, and its disabled state answers "is there anything to claim"
+ * Staked and claimable lead because the common question is how much rather
+ * than with whom. Claim is disabled at zero rather than hidden: a button that
+ * comes and goes as rewards accrue is harder to find than one that is always in
+ * the same place, and its disabled state answers "is there anything to claim"
  * without being pressed.
  */
 @Composable
 fun EarnScreen(
-    stakedErth: String,
-    rewardsErth: String,
-    hasRewards: Boolean,
-    validators: List<DelegationRow>,
+    state: EarnUiState?,
+    /** Registered wallets accrue ANML daily; unregistered ones have nothing to claim. */
+    anmlClaimable: Boolean,
     onStake: () -> Unit,
     onUnstake: () -> Unit,
     onClaim: () -> Unit,
+    onClaimAnml: () -> Unit,
     modifier: Modifier = Modifier,
-    claiming: Boolean = false,
-    scrollable: Boolean = true,
 ) {
     val dimens = EarthTheme.dimens
     val shape = RoundedCornerShape(EarthDimensions.Radius.radius3xl)
+    val shimmer = rememberEarthShimmer()
 
     Column(
         modifier
             .fillMaxSize()
             .background(EarthColors.Surfaces.bgPrimary)
-            .then(if (scrollable) Modifier.verticalScroll(rememberScrollState()) else Modifier)
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = dimens.gutter),
     ) {
-        Text(
-            text = "Earn",
-            style = EarthTypography.header5.copy(color = EarthColors.Text.textPrimary),
-            modifier = Modifier.padding(vertical = dimens.space16),
-        )
+        Spacer(Modifier.height(dimens.space16))
 
         Column(
             Modifier
@@ -71,24 +69,17 @@ fun EarnScreen(
                 .padding(dimens.space16),
         ) {
             EarthLabel("Staked")
-            Text(
-                text = stakedErth,
-                style = EarthTypography.header5.copy(color = EarthColors.Text.textPrimary),
-            )
+            AmountOrShimmer(state?.stakedUerth, shimmer, EarthColors.Text.textPrimary)
             Spacer(Modifier.height(dimens.space12))
             EarthLabel("Claimable rewards")
-            Text(
-                text = rewardsErth,
-                style = EarthTypography.header5.copy(color = EarthTheme.domain.stakingFg),
-            )
+            AmountOrShimmer(state?.rewardsUerth, shimmer, EarthTheme.domain.stakingFg)
         }
 
         Spacer(Modifier.height(dimens.space16))
         EarthButton(
             text = "Claim rewards",
             onClick = onClaim,
-            enabled = hasRewards,
-            isLoading = claiming,
+            enabled = (state?.rewardsUerth ?: 0) > 0,
             modifier = Modifier.fillMaxWidth(),
             colors = brandButtonColors(),
         )
@@ -97,6 +88,7 @@ fun EarnScreen(
             EarthButton(
                 text = "Stake",
                 onClick = onStake,
+                enabled = state != null,
                 modifier = Modifier.weight(1f),
                 colors = EarthButtonDefaults.secondaryColors(),
             )
@@ -104,25 +96,94 @@ fun EarnScreen(
             EarthButton(
                 text = "Unstake",
                 onClick = onUnstake,
+                enabled = !state?.delegations.isNullOrEmpty(),
                 modifier = Modifier.weight(1f),
                 colors = EarthButtonDefaults.secondaryColors(),
             )
         }
 
-        if (validators.isNotEmpty()) {
+        if (anmlClaimable) {
             Spacer(Modifier.height(dimens.space24))
-            EarthLabel("Validators")
-            validators.forEach { v ->
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(EarthTheme.domain.anmlBg, shape)
+                    .padding(dimens.space16),
+            ) {
+                Text(
+                    text = "Daily ANML",
+                    style = EarthTypography.textMd,
+                    color = EarthColors.Text.textPrimary,
+                )
+                Text(
+                    text = "Verified humans accrue ANML every day. Unclaimed days " +
+                        "do not stack, so this is worth claiming when you think of it.",
+                    style = EarthTypography.textSm,
+                    color = EarthColors.Text.textSecondary,
+                )
+                Spacer(Modifier.height(dimens.space12))
+                EarthButton(
+                    text = "Claim ANML",
+                    onClick = onClaimAnml,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = EarthButtonDefaults.secondaryColors(),
+                )
+            }
+        }
+
+        if (!state?.delegations.isNullOrEmpty()) {
+            Spacer(Modifier.height(dimens.space24))
+            EarthLabel("Your validators")
+            state.delegations.forEach { v ->
                 EarthListRow(
                     initial = v.moniker.take(1).uppercase(),
                     name = v.moniker,
                     subtitle = "${"%.0f".format(v.commission * 100)}% commission",
-                    value = "%,d".format(v.amountUerth / 1_000_000),
+                    value = formatUerth(v.amountUerth),
                     iconBg = EarthTheme.domain.stakingBg,
                     iconFg = EarthTheme.domain.stakingFg,
+                )
+            }
+        }
+
+        if (!state?.unbonding.isNullOrEmpty()) {
+            Spacer(Modifier.height(dimens.space24))
+            EarthLabel("Unbonding")
+            // Unbonding stake is neither spendable nor earning, and it returns
+            // on its own — so it is listed apart from the delegations rather
+            // than mixed in, with the date rather than a commission.
+            state.unbonding.forEach { u ->
+                EarthListRow(
+                    initial = u.moniker.take(1).uppercase(),
+                    name = u.moniker,
+                    subtitle = "Returns ${u.completesIn.take(10)}",
+                    value = formatUerth(u.amountUerth),
+                    iconBg = EarthColors.Surfaces.bgSecondary,
+                    iconFg = EarthColors.Text.textTertiary,
                 )
             }
         }
         Spacer(Modifier.height(dimens.space32))
     }
 }
+
+@Composable
+private fun AmountOrShimmer(
+    uerth: Long?,
+    shimmer: com.valentinilk.shimmer.Shimmer,
+    color: androidx.compose.ui.graphics.Color,
+) {
+    if (uerth == null) {
+        Column(Modifier.shimmer(shimmer)) {
+            ShimmerRectangle(width = 120.dp(), height = 26.dp())
+        }
+    } else {
+        Text(
+            text = "${formatUerth(uerth)} ERTH",
+            style = EarthTypography.header5,
+            color = color,
+        )
+    }
+}
+
+private fun Int.dp() = androidx.compose.ui.unit.Dp(toFloat())

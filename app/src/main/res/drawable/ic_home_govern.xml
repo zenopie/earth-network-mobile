@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Tab: govern. A split disc — the allocation streams are a share of one
+     whole, which is what the screen underneath draws as a stacked bar. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#000000"
+        android:pathData="M11,3.06C6.5,3.55 3,7.37 3,12c0,4.97 4.03,9 9,9c4.63,0 8.45,-3.5 8.94,-8H13c-1.1,0 -2,-0.9 -2,-2V3.06zM13,3.06V9h5.94C18.5,5.94 16.06,3.5 13,3.06z"/>
+</vector>

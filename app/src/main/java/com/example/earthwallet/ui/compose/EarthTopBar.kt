@@ -44,6 +44,14 @@ fun EarthMainTopBar(
     balancesVisible: Boolean,
     onToggleBalances: () -> Unit,
     onSettings: () -> Unit,
+    /**
+     * Whether this tab shows any of your money.
+     *
+     * The mark and the hide-balances toggle belong to the wallet, not to the
+     * app: on Markets or Explore there is nothing of yours on screen, so an eye
+     * that hides nothing is a control that teaches you it does nothing.
+     */
+    showsBalances: Boolean = true,
 ) {
     EarthSmallTopAppBar(
         windowInsets = WindowInsets.systemBars.only(WindowInsetsSides.Top),
@@ -54,12 +62,14 @@ fun EarthMainTopBar(
                     .padding(start = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Image(
-                    modifier = Modifier.size(32.dp),
-                    painter = painterResource(R.drawable.logo),
-                    contentDescription = null,
-                )
-                Spacer(Modifier.width(8.dp))
+                if (showsBalances) {
+                    Image(
+                        modifier = Modifier.size(32.dp),
+                        painter = painterResource(R.drawable.logo),
+                        contentDescription = null,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
                 Text(
                     text = walletName,
                     style = EarthTypography.header6,
@@ -69,21 +79,23 @@ fun EarthMainTopBar(
             }
         },
         hamburgerMenuActions = {
-            EarthIconButton(
-                state = IconButtonState(
-                    icon = if (balancesVisible) {
-                        R.drawable.ic_app_bar_balances_show
-                    } else {
-                        R.drawable.ic_app_bar_balances_hide
-                    },
-                    contentDescription = stringRes(
-                        if (balancesVisible) "Hide balances" else "Show balances",
+            if (showsBalances) {
+                EarthIconButton(
+                    state = IconButtonState(
+                        icon = if (balancesVisible) {
+                            R.drawable.ic_app_bar_balances_show
+                        } else {
+                            R.drawable.ic_app_bar_balances_hide
+                        },
+                        contentDescription = stringRes(
+                            if (balancesVisible) "Hide balances" else "Show balances",
+                        ),
+                        onClick = onToggleBalances,
                     ),
-                    onClick = onToggleBalances,
-                ),
-                modifier = Modifier.size(40.dp),
-            )
-            Spacer(Modifier.width(4.dp))
+                    modifier = Modifier.size(40.dp),
+                )
+                Spacer(Modifier.width(4.dp))
+            }
             EarthIconButton(
                 state = IconButtonState(
                     icon = R.drawable.ic_app_bar_settings,
