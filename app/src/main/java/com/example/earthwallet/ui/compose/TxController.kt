@@ -42,6 +42,10 @@ class TxController : ViewModel() {
     var submitting: Boolean by mutableStateOf(false)
         private set
 
+    /** What is in flight, for the pending sheet to name. */
+    var lastAction: String? by mutableStateOf(null)
+        private set
+
     private var build: ((Context) -> List<ProtoAny>)? = null
     private var gasLimit: Long = DEFAULT_GAS_LIMIT
     private var feeUerth: Long = DEFAULT_FEE_UERTH
@@ -74,6 +78,7 @@ class TxController : ViewModel() {
         val details = pending ?: return
         val builder = build ?: return
         pending = null
+        lastAction = details.action
         submitting = true
 
         viewModelScope.launch {
@@ -131,6 +136,11 @@ fun TxSheets(
             onDismiss = controller::cancel,
             onWatchAd = onWatchAd,
         )
+    }
+    // Pending, then result — one sheet position, three states, so the result's
+    // badge animates in over the spinner rather than appearing from nowhere.
+    if (controller.submitting) {
+        TxPendingSheet(action = controller.lastAction.orEmpty())
     }
     controller.outcome?.let { outcome ->
         TxResultSheet(outcome = outcome, onDismiss = controller::dismissResult)
