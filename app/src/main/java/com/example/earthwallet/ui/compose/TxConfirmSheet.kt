@@ -6,6 +6,7 @@ import network.erth.wallet.ui.vendor.component.EarthCard
 import network.erth.wallet.ui.vendor.theme.colors.EarthColors
 import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -113,17 +114,29 @@ fun TxConfirmSheet(
             }
         }
 
-        Row(Modifier.fillMaxWidth().padding(top = dimens.space16)) {
-            Box(Modifier.weight(1f)) {
-                EarthButton("Cancel", onDismiss, colors = EarthButtonDefaults.secondaryColors())
-            }
-            Box(Modifier.padding(start = dimens.space12).weight(1f)) {
-                // Confirm stays shut until the balance covers the fee: letting it
-                // through would only fail in the ante handler.
-                EarthButton("Confirm", onConfirm, enabled = funded,
-            colors = brandButtonColors(),
-        )
-            }
+        // weight on the buttons, not on wrappers around them. A button inside a
+        // weighted Box does not inherit the width — it sizes to its label and
+        // sits at the box's start, which is why these looked scattered rather
+        // than paired.
+        Row(
+            Modifier.fillMaxWidth().padding(top = dimens.space16),
+            horizontalArrangement = Arrangement.spacedBy(dimens.space12),
+        ) {
+            EarthButton(
+                text = "Cancel",
+                onClick = onDismiss,
+                modifier = Modifier.weight(1f),
+                colors = destructiveButtonColors(),
+            )
+            // Confirm stays shut until the balance covers the fee: letting it
+            // through would only fail in the ante handler.
+            EarthButton(
+                text = "Confirm",
+                onClick = onConfirm,
+                enabled = funded,
+                modifier = Modifier.weight(1f),
+                colors = brandButtonColors(),
+            )
         }
     }
 }

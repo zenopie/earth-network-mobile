@@ -241,6 +241,23 @@ fun EarthSheet(
  * build after vendoring produced a black Send button. In this app the primary
  * action is the green one, so screens ask for this.
  */
+/**
+ * The colours for a button that undoes or refuses.
+ *
+ * Zashi's set has no destructive rank, so this is Earth's: the secondary
+ * button's shape — a tint with darker type, no outline — in the palette's
+ * error red rather than the brand green. Sitting beside a green Confirm it
+ * reads as the other choice at a glance, without the weight of a filled red
+ * button, which would give declining more emphasis than agreeing.
+ */
+@Composable
+fun destructiveButtonColors() =
+    network.erth.wallet.ui.vendor.component.EarthButtonDefaults.secondaryColors(
+        containerColor = EarthColors.Utility.ErrorRed.utilityError50,
+        contentColor = EarthColors.Utility.ErrorRed.utilityError700,
+        borderColor = androidx.compose.ui.graphics.Color.Unspecified,
+    )
+
 @Composable
 fun brandButtonColors() =
     network.erth.wallet.ui.vendor.component.EarthButtonDefaults.primaryColors(

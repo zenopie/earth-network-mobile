@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import network.erth.wallet.ui.theme.EarthAccent
 import androidx.compose.runtime.getValue
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -125,20 +126,25 @@ fun TxResultSheet(outcome: TxOutcome, onDismiss: () -> Unit) {
             modifier = Modifier.fillMaxWidth(),
         )
         Box(Modifier.padding(top = dimens.space8)) { EarthCodeBlock(detail) }
-        Row(Modifier.fillMaxWidth().padding(top = dimens.space16)) {
-            Box(Modifier.weight(1f)) {
-                EarthButton(
-                    text = "Copy",
-                    colors = EarthButtonDefaults.secondaryColors(),
-                    onClick = { clipboard.setText(AnnotatedString("$title\n\n$detail")) },
-                )
-            }
-            Box(Modifier.size(dimens.space12))
-            Box(Modifier.weight(1f)) {
-                EarthButton(text = "Done", onClick = onDismiss,
-            colors = brandButtonColors(),
-        )
-            }
+        Row(
+            Modifier.fillMaxWidth().padding(top = dimens.space16),
+            horizontalArrangement = Arrangement.spacedBy(dimens.space12),
+        ) {
+            EarthButton(
+                text = "Copy",
+                onClick = { clipboard.setText(AnnotatedString("$title\n\n$detail")) },
+                modifier = Modifier.weight(1f),
+                colors = EarthButtonDefaults.secondaryColors(),
+            )
+            EarthButton(
+                text = "Done",
+                onClick = onDismiss,
+                modifier = Modifier.weight(1f),
+                // Green even on a failure. Done dismisses a sheet; it does not
+                // undo the transaction, and colouring it red would suggest the
+                // failure is still something you can act on.
+                colors = brandButtonColors(),
+            )
         }
     }
 }
