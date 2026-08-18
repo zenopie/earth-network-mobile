@@ -28,7 +28,16 @@ fun SendFlow(
     modifier: Modifier = Modifier,
 ) {
     var recipient by remember { mutableStateOf("") }
+    val scan = rememberAddressScanner { recipient = it }
     var amount by remember { mutableStateOf("") }
+
+    // ERTH holdings sort first, so it is the default without a special case.
+    // A wallet with no balances at all still needs something to render.
+    val holdings = state.holdings.ifEmpty {
+        listOf(Holding(denom = Constants.UERTH_DENOM, symbol = "ERTH", amount = 0))
+    }
+    var selectedDenom by remember { mutableStateOf(holdings.first().denom) }
+    val selected = holdings.firstOrNull { it.denom == selectedDenom } ?: holdings.first()
 
     val recipientError = when {
         recipient.isEmpty() -> null
@@ -40,15 +49,21 @@ fun SendFlow(
 
     val amountUerth = amount.toUerthOrNull()
 
+    val sendingErth = selected.denom == Constants.UERTH_DENOM
+
     val amountError = when {
         amount.isEmpty() -> null
         amountUerth == null -> "Enter an amount, for example 1.5."
         amountUerth <= 0 -> "Enter more than zero."
-        // The fee comes out of the same balance, so sending exactly the
-        // balance always fails on chain. Say so here rather than after a fee
-        // has been spent finding out.
-        amountUerth + TxController.DEFAULT_FEE_UERTH > state.balanceUerth ->
+        amountUerth > selected.amount -> "That is more than your ${selected.symbol}."
+        // The fee is always paid in ERTH. Sending ERTH, it has to come out of
+        // what is left after the amount; sending anything else, it only has to
+        // exist. Two different checks, and running the ERTH one against an
+        // ANML balance was the bug this replaces.
+        sendingErth && amountUerth + TxController.DEFAULT_FEE_UERTH > state.balanceUerth ->
             "That leaves nothing for the fee."
+        !sendingErth && state.balanceUerth < TxController.DEFAULT_FEE_UERTH ->
+            "You need a little ERTH to pay the fee."
         else -> null
     }
 
@@ -58,10 +73,13 @@ fun SendFlow(
     SendScreen(
         recipient = recipient,
         onRecipientChange = { recipient = it.trim() },
+        onScan = scan,
         amount = amount,
         onAmountChange = { amount = it.asAmountInput(amount) },
-        balanceLabel = formatUerth(state.balanceUerth),
-        denom = "ERTH",
+        balanceLabel = selected.display,
+        selected = selected,
+        holdings = holdings,
+        onSelectToken = { selectedDenom = it.denom; amount = "" },
         recipientError = recipientError,
         amountError = amountError,
         modifier = modifier,
@@ -69,12 +87,12 @@ fun SendFlow(
             if (!valid || amountUerth == null) return@SendScreen
             tx.request(
                 details = TxConfirmDetails(
-                    action = "Send ERTH",
+                    action = "Send ${selected.symbol}",
                     msgTypeUrl = "/cosmos.bank.v1beta1.MsgSend",
                     feeUerth = TxController.DEFAULT_FEE_UERTH,
                     balanceUerth = state.balanceUerth,
                     amountLabel = "Amount",
-                    amountValue = "$amount ERTH",
+                    amountValue = "$amount ${selected.symbol}",
                 ),
                 onSuccess = {
                     recipient = ""
@@ -87,7 +105,7 @@ fun SendFlow(
                         Bank.msgSend(
                             from,
                             recipient,
-                            Constants.UERTH_DENOM,
+                            selected.denom,
                             amountUerth.toString(),
                         ),
                     )

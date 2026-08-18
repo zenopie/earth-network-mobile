@@ -574,6 +574,32 @@ object SecureWalletManager {
 
 
 
+    /** One stored wallet, without its mnemonic. */
+    data class WalletInfo(val index: Int, val name: String, val address: String)
+
+    /**
+     * Every wallet in the session, names and addresses only.
+     *
+     * The mnemonics stay where they are. A list is for choosing between
+     * wallets and nothing on a list screen needs a seed phrase, so it is not
+     * carried out of storage to sit in a UI model where it can be logged,
+     * screenshotted or recomposed into a crash report.
+     */
+    @Throws(Exception::class)
+    fun listWallets(context: Context): List<WalletInfo> {
+        if (!SessionManager.isSessionActive()) return emptyList()
+        val sessionPrefs = SessionManager.createSessionPreferences(context)
+        val walletsArray = JSONArray(sessionPrefs.getString("wallets", "[]") ?: "[]")
+        return (0 until walletsArray.length()).map { i ->
+            val w = walletsArray.getJSONObject(i)
+            WalletInfo(
+                index = i,
+                name = w.optString("name", "Wallet ${i + 1}"),
+                address = w.optString("address", ""),
+            )
+        }
+    }
+
     /**
      * Validate a BIP-39 mnemonic
      */

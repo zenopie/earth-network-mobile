@@ -80,13 +80,16 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
                 _locked.value = false
 
                 val loaded = withContext(Dispatchers.IO) {
-                    val erth = runCatching {
-                        Bank.balance(address, Constants.UERTH_DENOM).toLong()
-                    }.getOrElse { _reachable.value = false; 0L }
+                    // One balances call for every denom, rather than one call
+                    // per denom the app happens to know the name of. The extra
+                    // tokens were always in the response; nothing was reading
+                    // past the two it asked for.
+                    val balances = runCatching { Bank.balances(address) }
+                        .getOrElse { _reachable.value = false; emptyMap() }
+                    val holdings = Tokens.holdings(balances)
 
-                    val anml = runCatching {
-                        Bank.balance(address, "uanml").toLong()
-                    }.getOrDefault(0L)
+                    val erth = balances[Constants.UERTH_DENOM]?.toLongOrNull() ?: 0L
+                    val anml = balances["uanml"]?.toLongOrNull() ?: 0L
 
                     val staked = runCatching {
                         Staking.delegations(address).sumOf { it.amount.toLongOrNull() ?: 0L }
@@ -109,9 +112,13 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
                         anmlBalance = if (anml > 0) formatSix(anml) else null,
                         stakedUerth = staked,
                         rewardsUerth = rewards,
+                        holdings = holdings,
                         registered = status?.registered == true,
+                        // Null when there is nothing to claim against at all.
+                        // Folding "not registered" into "claimable now" made
+                        // the button fire a claim the chain rejects.
                         anmlClaimableAt = when {
-                            status == null || !status.registered -> 0L
+                            status == null || !status.registered -> null
                             Personhood.isAnmlClaimable(status) -> 0L
                             // The chain's rule is a rolling 24 hours from the
                             // last claim, not a UTC day boundary.
@@ -140,4 +147,18 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
             return if (frac.isEmpty()) "$whole" else "$whole.$frac"
         }
     }
+
+    /**
+     * Drop everything this holds about the current wallet.
+     *
+     * Called when the selected wallet changes. Without it the old wallet's
+     * figures stay on screen until the new query returns — and a balance that
+     * belongs to a different address is a worse answer than no balance at all,
+     * because nothing about it looks wrong.
+     */
+    fun clear() {
+        _state.value = null
+        _activity.value = null
+    }
+
 }

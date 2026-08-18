@@ -11,6 +11,19 @@ import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.res.painterResource
+import network.erth.wallet.R
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -39,10 +52,14 @@ import network.erth.wallet.ui.theme.EarthTheme
 fun SendScreen(
     recipient: String,
     onRecipientChange: (String) -> Unit,
+    onScan: () -> Unit,
     amount: String,
     onAmountChange: (String) -> Unit,
     balanceLabel: String,
-    denom: String,
+    /** What is being sent, and everything else that could be. */
+    selected: Holding,
+    holdings: List<Holding>,
+    onSelectToken: (Holding) -> Unit,
     onSend: () -> Unit,
     modifier: Modifier = Modifier,
     recipientError: String? = null,
@@ -85,8 +102,72 @@ fun SendScreen(
                 autoCorrectEnabled = false,
                 capitalization = KeyboardCapitalization.None,
             ),
+            // Inside the field rather than beside it: scanning is a way of
+            // filling this field, not a separate action, and a button in the
+            // trailing slot says that without a label.
+            trailingIcon = {
+                Image(
+                    modifier = Modifier
+                        .clickable(onClick = onScan)
+                        .padding(dimens.space12)
+                        .size(dimens.space20),
+                    painter = painterResource(R.drawable.ic_qr_code),
+                    colorFilter = ColorFilter.tint(EarthColors.Text.textPrimary),
+                    contentDescription = "Scan a QR code",
+                )
+            },
         )
         Spacer(Modifier.height(dimens.space16))
+
+        // The token picker only appears when there is a choice to make. One
+        // holding and a row of tabs is a control that can only be pressed to no
+        // effect.
+        if (holdings.size > 1) {
+            EarthLabel("Token")
+            Spacer(Modifier.height(dimens.space8))
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+            ) {
+                holdings.forEach { h ->
+                    val isSelected = h.denom == selected.denom
+                    Row(
+                        Modifier
+                            .padding(end = dimens.space8)
+                            .clip(RoundedCornerShape(dimens.space20))
+                            .background(
+                                if (isSelected) {
+                                    EarthColors.Btns.Secondary.btnSecondaryBg
+                                } else {
+                                    EarthColors.Surfaces.bgSecondary
+                                },
+                            )
+                            .clickable { onSelectToken(h) }
+                            .padding(horizontal = dimens.space12, vertical = dimens.space8),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Image(
+                            modifier = Modifier.size(dimens.space20),
+                            painter = painterResource(h.icon),
+                            contentDescription = null,
+                        )
+                        Spacer(Modifier.width(dimens.space8))
+                        Text(
+                            text = h.symbol,
+                            style = EarthTypography.textSm,
+                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                            color = if (isSelected) {
+                                EarthColors.Btns.Secondary.btnSecondaryFg
+                            } else {
+                                EarthColors.Text.textPrimary
+                            },
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(dimens.space16))
+        }
 
         EarthLabel("Amount")
         EarthTextField(
@@ -94,7 +175,7 @@ fun SendScreen(
             onValueChange = onAmountChange,
             error = amountError,
             placeholder = { Text("0.00", style = EarthTypography.textMd) },
-            suffix = { Text(denom, style = EarthTypography.textMd) },
+            suffix = { Text(selected.symbol, style = EarthTypography.textMd) },
             modifier = Modifier.fillMaxWidth(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         )

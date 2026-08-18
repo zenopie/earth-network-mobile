@@ -34,14 +34,16 @@ data class WalletUiState(
     val stakedUerth: Long,
     val rewardsUerth: Long,
     val registered: Boolean,
+    /** Every denom this wallet holds, ERTH first. */
+    val holdings: List<Holding> = emptyList(),
     /**
-     * Unix seconds at which ANML can next be claimed, or 0 when it can be
-     * claimed now.
+     * Unix seconds at which ANML can next be claimed; 0 means now, null means
+     * this wallet is not registered and has nothing to claim against.
      *
      * An absolute instant rather than a remaining duration, so the countdown
      * stays right without the state being refreshed every second.
      */
-    val anmlClaimableAt: Long = 0L,
+    val anmlClaimableAt: Long? = null,
 ) {
     companion object {
         /**
@@ -59,7 +61,7 @@ data class WalletUiState(
             stakedUerth = 0,
             rewardsUerth = 0,
             registered = false,
-            anmlClaimableAt = 0L,
+            anmlClaimableAt = null,
         )
     }
 }

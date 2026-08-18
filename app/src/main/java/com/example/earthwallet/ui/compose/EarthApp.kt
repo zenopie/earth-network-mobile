@@ -1,11 +1,13 @@
 package network.erth.wallet.ui.compose
 
 import android.content.Context
+import android.content.Intent
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -17,6 +19,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import network.erth.earth.proto.allocation.StreamId
 import network.erth.wallet.R
 import network.erth.wallet.chain.Bank
+import network.erth.wallet.ui.host.HostActivity
 import network.erth.wallet.chain.Dex
 import network.erth.wallet.chain.Personhood
 import network.erth.wallet.ui.vendor.component.BlankBgScaffold
@@ -41,10 +44,22 @@ fun EarthApp(
     val nav = rememberEarthNavController()
     var balancesVisible by remember { mutableStateOf(true) }
 
+    /**
+     * Bumped whenever the selected wallet changes.
+     *
+     * Everything per-wallet keys off this rather than off the tab, because the
+     * tab is not what changed. Without it a tab that is not currently on screen
+     * keeps the previous wallet's figures and shows them the next time it is
+     * opened — and a balance belonging to another address is worse than no
+     * balance, since nothing about it looks wrong.
+     */
+    var walletEpoch by remember { mutableIntStateOf(0) }
+
     val wallet: WalletViewModel = viewModel()
     val earn: EarnViewModel = viewModel()
     val allocation: AllocationViewModel = viewModel()
     val markets: MarketsViewModel = viewModel()
+    val wallets: WalletsViewModel = viewModel()
     val explore: ExploreViewModel = viewModel()
     val tx: TxController = viewModel()
 
@@ -54,11 +69,14 @@ fun EarthApp(
     val allocationState by allocation.state.collectAsStateWithLifecycle()
     val marketsState by markets.state.collectAsStateWithLifecycle()
     val exploreState by explore.state.collectAsStateWithLifecycle()
+    val walletsState by wallets.state.collectAsStateWithLifecycle()
+    val draftMnemonic by wallets.draftMnemonic.collectAsStateWithLifecycle()
+    val walletsError by wallets.error.collectAsStateWithLifecycle()
 
     // Each tab loads when it is first shown rather than all at once on start.
     // Five tabs' worth of queries against one node on launch is a slow launch,
     // and four of them are for screens nobody may open.
-    LaunchedEffect(nav.currentTab) {
+    LaunchedEffect(nav.currentTab, walletEpoch) {
         when (nav.currentTab) {
             EarthRoute.Wallet -> wallet.refresh()
             EarthRoute.Earn -> earn.refresh()
@@ -76,6 +94,47 @@ fun EarthApp(
             EarthRoute.Swap -> markets.refresh()
             else -> Unit
         }
+    }
+
+    /**
+     * Switch to another wallet, or re-key after creating one.
+     *
+     * Forget first, then reload. Tabs that are not on screen are cleared too
+     * and reload when next shown — refetching five tabs' worth of queries for
+     * screens that may never be opened is what the per-tab loading exists to
+     * avoid.
+     *
+     * [index] of -1 means the store has already changed selection (createWallet
+     * selects what it creates), so only the invalidation is needed.
+     *
+     * Markets and Explore are deliberately not cleared: pools, blocks and
+     * validators belong to the chain, not to whoever is looking at them.
+     */
+    val invalidateWallet = {
+        wallet.clear()
+        earn.clear()
+        allocation.clear()
+        walletEpoch++
+        wallet.refresh()
+    }
+
+    val switchWallet: (Int) -> Unit = { index ->
+        if (index < 0) {
+            invalidateWallet()
+        } else {
+            wallets.select(index) { invalidateWallet() }
+        }
+    }
+
+    // Registration is still the old app's flow: an MRZ camera scan handing off
+    // to an NFC passport read, both of which are Activities with their own
+    // lifecycle needs. Porting them is a separate job from wiring the entry
+    // point, and the entry point is what was missing.
+    val openRegistration = {
+        val intent = Intent(context, HostActivity::class.java)
+            .putExtra("fragment_to_show", "camera_mrz_scanner")
+        runCatching { context.startActivity(intent) }
+        Unit
     }
 
     val claimAnml = {
@@ -142,7 +201,13 @@ fun EarthApp(
             earn = earn,
             allocation = allocation,
             markets = markets,
+            wallets = wallets,
+            walletsState = walletsState,
+            draftMnemonic = draftMnemonic,
+            walletsError = walletsError,
+            onSwitchWallet = switchWallet,
             onClaimAnml = claimAnml,
+            onRegister = openRegistration,
             version = version,
             balancesVisible = balancesVisible,
             onOpenUrl = onOpenUrl,
@@ -173,7 +238,13 @@ private fun EarthContent(
     earn: EarnViewModel,
     allocation: AllocationViewModel,
     markets: MarketsViewModel,
+    wallets: WalletsViewModel,
+    walletsState: WalletsUiState?,
+    draftMnemonic: String?,
+    walletsError: String?,
+    onSwitchWallet: (Int) -> Unit,
     onClaimAnml: () -> Unit,
+    onRegister: () -> Unit,
     version: String,
     balancesVisible: Boolean,
     onOpenUrl: (String) -> Unit,
@@ -204,7 +275,9 @@ private fun EarthContent(
             onSend = { nav.push(EarthRoute.Send) },
             onEarn = { nav.selectTab(EarthRoute.Earn) },
             onClaimAnml = onClaimAnml,
+            onRegister = onRegister,
             anmlClaimableAt = state?.anmlClaimableAt,
+            registered = state?.registered,
             onSeeAllActivity = { nav.push(EarthRoute.Activity) },
             modifier = inset,
             contentPadding = padding,
@@ -334,8 +407,61 @@ private fun EarthContent(
         EarthRoute.Personhood -> PersonhoodScreen(
             registered = loaded.registered,
             anmlBalance = loaded.anmlBalance,
-            onRegister = {},
-            onClaim = {},
+            onRegister = onRegister,
+            onClaim = onClaimAnml,
+            modifier = inset,
+        )
+
+        EarthRoute.Wallets -> {
+            LaunchedEffect(Unit) { wallets.refresh() }
+            WalletsScreen(
+                state = walletsState,
+                // Switching wallets changes whose balance every other screen
+                // is showing, so the whole app reloads rather than the list
+                // alone. Anything less leaves a stale balance behind a stale
+                // address.
+                onSelect = { index ->
+                    onSwitchWallet(index)
+                    nav.pop()
+                },
+                onCreate = {
+                    wallets.beginCreate()
+                    nav.push(EarthRoute.CreateWallet)
+                },
+                onImport = {
+                    wallets.clearError()
+                    nav.push(EarthRoute.ImportWallet)
+                },
+                modifier = inset,
+            )
+        }
+
+        EarthRoute.CreateWallet -> CreateWalletScreen(
+            mnemonic = draftMnemonic,
+            onConfirm = { name ->
+                wallets.confirmCreate(name) {
+                    // createWallet selects the new wallet, so this is a switch
+                    // and has to invalidate like one.
+                    onSwitchWallet(-1)
+                    // Back past the phrase, not onto it: the draft is gone
+                    // once stored, and returning to a screen that would show
+                    // it empty is worse than not returning.
+                    nav.pop()
+                    nav.pop()
+                }
+            },
+            modifier = inset,
+        )
+
+        EarthRoute.ImportWallet -> ImportWalletScreen(
+            error = walletsError,
+            onImport = { name, phrase ->
+                wallets.import(name, phrase) {
+                    onSwitchWallet(-1)
+                    nav.pop()
+                    nav.pop()
+                }
+            },
             modifier = inset,
         )
 
@@ -446,6 +572,11 @@ private fun settingsItems(nav: EarthNavController, state: WalletUiState): List<S
             onClick = { nav.push(EarthRoute.Personhood) },
         ),
         SettingsItem(
+            title = "Wallets",
+            icon = R.drawable.ic_wallet,
+            onClick = { nav.push(EarthRoute.Wallets) },
+        ),
+        SettingsItem(
             title = "Address book",
             icon = R.drawable.ic_contacts_white,
             onClick = { nav.push(EarthRoute.AddressBook) },
@@ -473,6 +604,9 @@ private fun EarthRoute.title(): String = when (this) {
     EarthRoute.AddressBook -> "Address book"
     EarthRoute.About -> "About"
     EarthRoute.Personhood -> "Identity"
+    EarthRoute.Wallets -> "Wallets"
+    EarthRoute.CreateWallet -> "New wallet"
+    EarthRoute.ImportWallet -> "Import wallet"
     is EarthRoute.TransactionDetail -> "Transaction"
 }
 

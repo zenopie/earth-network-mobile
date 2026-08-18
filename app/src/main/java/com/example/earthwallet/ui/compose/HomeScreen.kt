@@ -78,8 +78,12 @@ fun HomeScreen(
     onSend: () -> Unit,
     onEarn: () -> Unit,
     onClaimAnml: () -> Unit,
-    /** Unix seconds until ANML can be claimed; 0 means now, and null means never. */
+    /** Starts the passport scan, for a wallet with no registration yet. */
+    onRegister: () -> Unit,
+    /** 0 means claimable now, null means not registered, else when it opens. */
     anmlClaimableAt: Long?,
+    /** Null while the wallet is still loading. */
+    registered: Boolean?,
     onSeeAllActivity: () -> Unit,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
@@ -101,7 +105,9 @@ fun HomeScreen(
             onSend = onSend,
             onEarn = onEarn,
             onClaimAnml = onClaimAnml,
+            onRegister = onRegister,
             anmlClaimableAt = anmlClaimableAt,
+            registered = registered,
         )
         Spacer(Modifier.height(2.dp))
         ActivityPanel(
@@ -207,13 +213,15 @@ private fun HomeActions(
     onSend: () -> Unit,
     onEarn: () -> Unit,
     onClaimAnml: () -> Unit,
+    onRegister: () -> Unit,
     anmlClaimableAt: Long?,
+    registered: Boolean?,
     modifier: Modifier = Modifier,
 ) {
     // Recomputed once a second only while a claim is actually pending, so the
     // label counts down without the whole row recomposing the rest of the time.
     var now by remember { mutableLongStateOf(System.currentTimeMillis() / 1000) }
-    val pending = anmlClaimableAt != null && anmlClaimableAt > now
+    val pending = anmlClaimableAt != null && anmlClaimableAt > 0 && anmlClaimableAt > now
     LaunchedEffect(anmlClaimableAt, pending) {
         while (pending) {
             delay(1_000)
@@ -221,10 +229,19 @@ private fun HomeActions(
         }
     }
 
+    // Three states, and the button is a different action in the first.
+    //
+    // An unregistered wallet has nothing to claim, so the slot offers the thing
+    // that would give it something instead of a disabled button explaining why
+    // it cannot be pressed. The countdown state is the only one that is
+    // genuinely "come back later", and it is the only one greyed out.
+    val notRegistered = registered == false
     val claimable = anmlClaimableAt == 0L
+
     val claimLabel = when {
-        anmlClaimableAt == null -> "Claim"
+        notRegistered -> "Verify"
         claimable -> "Claim"
+        anmlClaimableAt == null -> "Claim"
         else -> (anmlClaimableAt - now).coerceAtLeast(0).asCountdown()
     }
 
@@ -249,11 +266,11 @@ private fun HomeActions(
             state = BigIconButtonState(
                 text = stringRes(claimLabel),
                 icon = R.drawable.anml,
-                onClick = onClaimAnml,
+                onClick = if (notRegistered) onRegister else onClaimAnml,
                 // Greyed out when the day's claim is already taken, and again
                 // when there is no registration to claim against — both are
                 // "nothing to collect", and both should look it.
-                isEnabled = claimable,
+                isEnabled = notRegistered || claimable,
                 tint = false,
             ),
         )

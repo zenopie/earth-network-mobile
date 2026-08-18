@@ -68,6 +68,9 @@ sealed interface EarthRoute {
     data object AddressBook : EarthRoute
     data object About : EarthRoute
     data object Personhood : EarthRoute
+    data object Wallets : EarthRoute
+    data object CreateWallet : EarthRoute
+    data object ImportWallet : EarthRoute
 
     data class TransactionDetail(val txHash: String) : EarthRoute
 }

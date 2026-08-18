@@ -123,6 +123,19 @@ class EarnViewModel(app: Application) : AndroidViewModel(app) {
         val delegator = SecureWalletManager.getWalletAddress(ctx).orEmpty()
         validators.map { Staking.msgWithdrawReward(delegator, it) }
     }
+
+    /**
+     * Drop everything this holds about the current wallet.
+     *
+     * Called when the selected wallet changes. Without it the old wallet's
+     * figures stay on screen until the new query returns — and a balance that
+     * belongs to a different address is a worse answer than no balance at all,
+     * because nothing about it looks wrong.
+     */
+    fun clear() {
+        _state.value = null
+    }
+
 }
 
 private fun String.abbreviate(): String =

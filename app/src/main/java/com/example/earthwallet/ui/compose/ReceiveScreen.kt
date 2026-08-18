@@ -1,5 +1,9 @@
 package network.erth.wallet.ui.compose
 
+import network.erth.wallet.R
+import network.erth.wallet.ui.vendor.component.EarthQr
+import network.erth.wallet.ui.vendor.component.QrState
+import network.erth.wallet.ui.vendor.util.stringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -73,6 +77,25 @@ fun ReceiveScreen(
             style = EarthTypography.header5.copy(color = EarthColors.Text.textPrimary),
             modifier = Modifier.padding(vertical = dimens.space12),
         )
+
+        // The code carries the plain address, no URI scheme around it. Every
+        // Cosmos wallet can read a bare bech32 string; a scheme only some
+        // understand turns a scannable code into an unreadable one for the
+        // rest, and buys nothing when there is no amount to encode.
+        if (state.address.isNotEmpty()) {
+            EarthQr(
+                state = QrState(
+                    qrData = state.address,
+                    contentDescription = stringRes("Your Earth address as a QR code"),
+                    // The mark in the middle says which network this belongs
+                    // to before the code is scanned — useful precisely because
+                    // a bare address does not.
+                    centerImage = R.drawable.logo,
+                ),
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+            )
+            Spacer(Modifier.height(dimens.space16))
+        }
 
         AddressPanel(
             label = state.label,
