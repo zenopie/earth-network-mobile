@@ -16,8 +16,9 @@ import network.erth.wallet.ui.vendor.theme.colors.LocalEarthColors
  * provides all of it. Reimplementing that provider was how the first attempt at
  * using their components failed.
  *
- * What is added on top is Earth's own: the pillar colours, which their palette
- * has no concept of, and a dimension scale.
+ * What is added on top is a dimension scale. Earth's accent is a single pair of
+ * values in [EarthAccent] rather than a provided palette — one accent needs no
+ * composition local.
  */
 object EarthTheme {
     val colors: EarthColorsInternal
@@ -26,9 +27,6 @@ object EarthTheme {
     val dimens: EarthDimens
         @Composable get() = LocalEarthDimens.current
 
-    /** Earth's four pillars. Not part of the vendored system. */
-    val domain: EarthDomainColors
-        @Composable get() = LocalEarthDomainColors.current
 }
 
 @Suppress("CompositionLocalAllowlist")
@@ -47,7 +45,6 @@ fun EarthTheme(content: @Composable () -> Unit) {
     ZcashTheme {
         CompositionLocalProvider(
             LocalEarthDimens provides EarthDimens(),
-            LocalEarthDomainColors provides EarthDomainColorsOnGround,
             content = content,
         )
     }

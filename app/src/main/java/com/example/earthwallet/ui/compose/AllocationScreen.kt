@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import com.valentinilk.shimmer.shimmer
 import network.erth.earth.proto.allocation.StreamId
+import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.theme.EarthTheme
 import network.erth.wallet.ui.vendor.component.EarthButton
 import network.erth.wallet.ui.vendor.component.EarthButtonDefaults
@@ -83,7 +84,7 @@ fun AllocationScreen(
             eligibility = if (registered) null else "Register your identity to take part.",
             stream = state?.human,
             shimmer = shimmer,
-            accent = EarthTheme.domain.anmlFg,
+            accent = EarthAccent.ink,
             onEdit = { onEdit(StreamId.STREAM_ID_HUMAN) },
         )
 
@@ -94,7 +95,7 @@ fun AllocationScreen(
             eligibility = if (stakedUerth > 0) null else "Stake ERTH to take part.",
             stream = state?.capital,
             shimmer = shimmer,
-            accent = EarthTheme.domain.stakingFg,
+            accent = EarthAccent.ink,
             onEdit = { onEdit(StreamId.STREAM_ID_CAPITAL) },
         )
         Spacer(Modifier.height(dimens.space32))

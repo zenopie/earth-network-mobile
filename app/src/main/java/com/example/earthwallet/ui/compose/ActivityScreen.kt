@@ -19,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
+import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.theme.EarthTheme
 import network.erth.wallet.ui.vendor.theme.colors.EarthColors
 import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
@@ -80,14 +81,14 @@ internal fun ActivityItem(row: ActivityRow) {
     val dimens = EarthTheme.dimens
     val (glyph, tint, bg) = when (row.kind) {
         ActivityKind.Sent -> Triple("↑", EarthColors.Text.textPrimary, EarthColors.Surfaces.bgSecondary)
-        ActivityKind.Received -> Triple("↓", EarthTheme.domain.stakingFg, EarthTheme.domain.stakingBg)
-        ActivityKind.Staked -> Triple("▲", EarthTheme.domain.stakingFg, EarthTheme.domain.stakingBg)
-        ActivityKind.Unstaked -> Triple("▼", EarthTheme.domain.stakingFg, EarthTheme.domain.stakingBg)
-        ActivityKind.Claimed -> Triple("✦", EarthTheme.domain.stakingFg, EarthTheme.domain.stakingBg)
-        ActivityKind.ClaimedAnml -> Triple("✦", EarthTheme.domain.anmlFg, EarthTheme.domain.anmlBg)
-        ActivityKind.Registered -> Triple("✓", EarthTheme.domain.anmlFg, EarthTheme.domain.anmlBg)
-        ActivityKind.Swapped -> Triple("⇄", EarthTheme.domain.dexFg, EarthTheme.domain.dexBg)
-        ActivityKind.Allocated -> Triple("◴", EarthTheme.domain.governanceFg, EarthTheme.domain.governanceBg)
+        ActivityKind.Received -> Triple("↓", EarthAccent.ink, EarthAccent.tint)
+        ActivityKind.Staked -> Triple("▲", EarthAccent.ink, EarthAccent.tint)
+        ActivityKind.Unstaked -> Triple("▼", EarthAccent.ink, EarthAccent.tint)
+        ActivityKind.Claimed -> Triple("✦", EarthAccent.ink, EarthAccent.tint)
+        ActivityKind.ClaimedAnml -> Triple("✦", EarthAccent.ink, EarthAccent.tint)
+        ActivityKind.Registered -> Triple("✓", EarthAccent.ink, EarthAccent.tint)
+        ActivityKind.Swapped -> Triple("⇄", EarthAccent.ink, EarthAccent.tint)
+        ActivityKind.Allocated -> Triple("◴", EarthAccent.ink, EarthAccent.tint)
     }
     Row(
         Modifier

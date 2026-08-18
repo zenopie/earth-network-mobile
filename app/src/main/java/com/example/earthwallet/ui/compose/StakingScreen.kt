@@ -19,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
+import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.theme.EarthTheme
 
 /** One delegation, resolved for display. */
@@ -67,7 +68,7 @@ fun StakingScreen(
     val dimens = EarthTheme.dimens
 
     EarthScaffold(title = "Earn", modifier = modifier) {
-        EarthCard(colors = CardDefaults.cardColors(containerColor = EarthTheme.domain.stakingBg)) {
+        EarthCard(colors = CardDefaults.cardColors(containerColor = EarthAccent.tint)) {
             Column {
                 EarthLabel("Staked")
                 Text(
@@ -80,7 +81,7 @@ fun StakingScreen(
                 Text(
                     text = formatErth(state.rewardsUerth),
                     style = EarthTypography.header5,
-                    color = EarthTheme.domain.stakingFg,
+                    color = EarthAccent.ink,
                 )
             }
         }
@@ -117,8 +118,8 @@ fun StakingScreen(
                     name = d.moniker,
                     subtitle = "${"%.0f".format(d.commission * 100)}% commission",
                     value = formatErth(d.amountUerth),
-                    iconBg = EarthTheme.domain.stakingBg,
-                    iconFg = EarthTheme.domain.stakingFg,
+                    iconBg = EarthAccent.tint,
+                    iconFg = EarthAccent.ink,
                 )
             }
         }

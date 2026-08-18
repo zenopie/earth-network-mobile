@@ -20,6 +20,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import com.valentinilk.shimmer.shimmer
 import network.erth.wallet.chain.Explorer
+import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.theme.EarthTheme
 import network.erth.wallet.ui.vendor.component.EarthHorizontalDivider
 import network.erth.wallet.ui.vendor.component.ShimmerRectangle
@@ -147,8 +148,8 @@ fun ExploreScreen(
                     name = v.moniker,
                     subtitle = "${"%.0f".format(v.commission * 100)}% commission",
                     value = formatUerth(v.amountUerth),
-                    iconBg = EarthTheme.domain.stakingBg,
-                    iconFg = EarthTheme.domain.stakingFg,
+                    iconBg = EarthAccent.tint,
+                    iconFg = EarthAccent.ink,
                 )
             }
         }

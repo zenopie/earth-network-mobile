@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.theme.EarthTheme
 import network.erth.wallet.ui.vendor.component.EarthButton
 import network.erth.wallet.ui.vendor.component.EarthButtonDefaults
@@ -67,14 +68,14 @@ fun EarnScreen(
         Column(
             Modifier
                 .fillMaxWidth()
-                .background(EarthTheme.domain.stakingBg, shape)
+                .background(EarthAccent.tint, shape)
                 .padding(dimens.space16),
         ) {
             EarthLabel("Staked")
             AmountOrShimmer(state?.stakedUerth, shimmer, EarthColors.Text.textPrimary)
             Spacer(Modifier.height(dimens.space12))
             EarthLabel("Claimable rewards")
-            AmountOrShimmer(state?.rewardsUerth, shimmer, EarthTheme.domain.stakingFg)
+            AmountOrShimmer(state?.rewardsUerth, shimmer, EarthAccent.ink)
         }
 
         Spacer(Modifier.height(dimens.space16))
@@ -113,8 +114,8 @@ fun EarnScreen(
                     name = v.moniker,
                     subtitle = "${"%.0f".format(v.commission * 100)}% commission",
                     value = formatUerth(v.amountUerth),
-                    iconBg = EarthTheme.domain.stakingBg,
-                    iconFg = EarthTheme.domain.stakingFg,
+                    iconBg = EarthAccent.tint,
+                    iconFg = EarthAccent.ink,
                 )
             }
         }

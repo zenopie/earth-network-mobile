@@ -26,6 +26,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.theme.EarthTheme
 import network.erth.wallet.ui.vendor.theme.colors.EarthColors
 import network.erth.wallet.ui.vendor.theme.dimensions.EarthDimensions
@@ -124,12 +125,12 @@ private fun AddressPanel(
             Box(
                 Modifier
                     .size(40.dp)
-                    .background(EarthTheme.domain.stakingBg, RoundedCornerShape(dimens.radiusMd)),
+                    .background(EarthAccent.tint, RoundedCornerShape(dimens.radiusMd)),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = "E",
-                    style = EarthTypography.textMd.copy(color = EarthTheme.domain.stakingFg),
+                    style = EarthTypography.textMd.copy(color = EarthAccent.ink),
                 )
             }
             Spacer(Modifier.width(dimens.space12))

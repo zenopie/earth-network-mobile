@@ -20,6 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.theme.EarthTheme
 import network.erth.wallet.ui.vendor.component.EarthButton
 import network.erth.wallet.ui.vendor.component.EarthTextField
@@ -81,7 +82,7 @@ fun StakeSheet(
                     .fillMaxWidth()
                     .background(
                         if (isSelected) {
-                            EarthTheme.domain.stakingBg
+                            EarthAccent.tint
                         } else {
                             EarthColors.Surfaces.bgSecondary
                         },

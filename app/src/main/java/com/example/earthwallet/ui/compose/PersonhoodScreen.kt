@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
+import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.theme.EarthTheme
 import network.erth.wallet.ui.vendor.component.EarthButton
 import network.erth.wallet.ui.vendor.component.EarthButtonDefaults
@@ -63,7 +64,7 @@ fun PersonhoodScreen(
             Modifier
                 .fillMaxWidth()
                 .background(
-                    if (registered) EarthTheme.domain.anmlBg else EarthColors.Surfaces.bgSecondary,
+                    if (registered) EarthAccent.tint else EarthColors.Surfaces.bgSecondary,
                     shape,
                 )
                 .padding(dimens.space24),
@@ -79,7 +80,7 @@ fun PersonhoodScreen(
                     text = if (registered) "✓" else "?",
                     style = EarthTypography.header5,
                     color = if (registered) {
-                        EarthTheme.domain.anmlFg
+                        EarthAccent.ink
                     } else {
                         EarthColors.Text.textTertiary
                     },

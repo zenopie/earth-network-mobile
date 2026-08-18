@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
+import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.theme.EarthTheme
 import network.erth.wallet.ui.vendor.component.EarthButton
 import network.erth.wallet.ui.vendor.component.EarthButtonDefaults
@@ -127,17 +128,17 @@ fun WalletScreen(
 
         if (state.anmlBalance != null) {
             HoldingRow("ANML", if (state.registered) "Proof of personhood" else "Not registered",
-                state.anmlBalance, EarthTheme.domain.anmlBg, EarthTheme.domain.anmlFg, onAnmlClick)
+                state.anmlBalance, EarthAccent.tint, EarthAccent.ink, onAnmlClick)
             EarthHorizontalDivider()
         }
         if (state.stakedUerth > 0) {
             HoldingRow("Staked", "Delegated", formatAmount(state.stakedUerth),
-                EarthTheme.domain.stakingBg, EarthTheme.domain.stakingFg, onStakingClick)
+                EarthAccent.tint, EarthAccent.ink, onStakingClick)
             EarthHorizontalDivider()
         }
         if (state.rewardsUerth > 0) {
             HoldingRow("Rewards", "Claimable", formatAmount(state.rewardsUerth),
-                EarthTheme.domain.stakingBg, EarthTheme.domain.stakingFg, onStakingClick)
+                EarthAccent.tint, EarthAccent.ink, onStakingClick)
         }
     }
 }

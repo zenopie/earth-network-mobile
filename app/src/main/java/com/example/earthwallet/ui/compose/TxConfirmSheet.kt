@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
+import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.theme.EarthTheme
 
 /** What the sheet needs to describe a pending transaction. */
@@ -88,7 +89,7 @@ fun TxConfirmSheet(
                 Modifier
                     .fillMaxWidth()
                     .padding(top = dimens.space8)
-                    .background(EarthTheme.domain.gasWarningBg, RoundedCornerShape(dimens.radiusSm))
+                    .background(EarthAccent.warnTint, RoundedCornerShape(dimens.radiusSm))
                     .padding(dimens.space12),
             ) {
                 Text(
@@ -99,7 +100,7 @@ fun TxConfirmSheet(
                             "Not enough ERTH for the fee. Watch a short ad and we'll cover it."
                         },
                     style = EarthTypography.textSm,
-                    color = EarthTheme.domain.gasWarningFg,
+                    color = EarthAccent.warnInk,
                 )
             }
             Box(Modifier.padding(top = dimens.space12)) {
