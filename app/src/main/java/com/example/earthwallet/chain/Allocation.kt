@@ -27,6 +27,15 @@ object Allocation {
         val description: String,
         val kind: String,
         val amountAllocated: String = "0",
+        /**
+         * What the chain does with this option's emission.
+         *
+         * "lp_rewards" is the one the liquidity screen cares about — it names
+         * the option whose accrual is handed to the dex. Matching on the
+         * handler rather than the description means a rename in governance
+         * does not silently detach the APR from its source.
+         */
+        val handler: String = "",
     )
 
     /**
@@ -41,11 +50,38 @@ object Allocation {
 
     // --- queries ---
 
+    /**
+     * A stream's options, and the weight they are shares of.
+     *
+     * total_weight is the denominator: an option earns
+     * amountAllocated / totalWeight of the stream's 1 ERTH/sec. Returned
+     * alongside rather than left to the caller to sum, because the response
+     * carries it and a client-side sum would drift the moment an option is
+     * added between queries.
+     */
+    data class Stream(val options: List<OptionInfo>, val totalWeight: String)
+
+    fun stream(streamId: StreamId): Stream {
+        val (code, body) = EarthRest.get(
+            "/earth-network/earth/allocation/v1/options/${path(streamId)}"
+        )
+        if (code !in 200..299) return Stream(emptyList(), "0")
+        val json = JSONObject(body)
+        return Stream(
+            options = parseOptions(json),
+            totalWeight = json.optString("total_weight", "0"),
+        )
+    }
+
     /** All of a stream's allocation options. */
     fun allocationOptions(stream: StreamId): List<OptionInfo> {
         val (code, body) = EarthRest.get("/earth-network/earth/allocation/v1/options/${path(stream)}")
         if (code !in 200..299) return emptyList()
-        val arr = JSONObject(body).optJSONArray("options") ?: return emptyList()
+        return parseOptions(JSONObject(body))
+    }
+
+    private fun parseOptions(json: JSONObject): List<OptionInfo> {
+        val arr = json.optJSONArray("options") ?: return emptyList()
         val out = ArrayList<OptionInfo>(arr.length())
         for (i in 0 until arr.length()) {
             val o = arr.getJSONObject(i)
@@ -55,6 +91,7 @@ object Allocation {
                     description = o.optString("description", ""),
                     kind = o.optString("kind", ""),
                     amountAllocated = o.optString("amount_allocated", "0"),
+                    handler = o.optString("handler", ""),
                 )
             )
         }

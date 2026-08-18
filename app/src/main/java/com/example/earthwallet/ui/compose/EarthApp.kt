@@ -304,6 +304,7 @@ private fun EarthContent(
         EarthRoute.Liquidity -> LiquidityScreen(
             pools = marketsState?.pools,
             swapFeePercent = marketsState?.swapFeePercent,
+            lpOptionShare = marketsState?.lpOptionShare ?: 0.0,
             modifier = inset,
         )
 

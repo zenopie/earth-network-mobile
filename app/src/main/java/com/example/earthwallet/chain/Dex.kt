@@ -17,7 +17,21 @@ object Dex {
         val erthReserve: String, // uerth
         val tokenDenom: String,
         val tokenReserve: String,
+        /**
+         * ERTH-denominated swap volume, decayed daily over a rolling window.
+         *
+         * Not a plain total: each elapsed day multiplies it by 6/7, so at a
+         * steady trading rate it settles at roughly seven times the daily
+         * volume. It is what weights this pool's share of the LP reward
+         * stream, and what an APR estimate has to work back from.
+         */
+        val volume: String = "0",
+        /** Day index the volume was last decayed to (block time / 86400). */
+        val lastVolumeDay: Long = 0,
     )
+
+    /** Days in the rolling volume window. Mirrors types.VolumeWindowDays. */
+    const val VOLUME_WINDOW_DAYS = 7
 
     private fun coin(denom: String, amount: String) =
         CoinOuterClass.Coin.newBuilder().setDenom(denom).setAmount(amount).build()
@@ -37,6 +51,8 @@ object Dex {
                     erthReserve = p.getJSONObject("reserve_erth").getString("amount"),
                     tokenDenom = p.getJSONObject("reserve_token").getString("denom"),
                     tokenReserve = p.getJSONObject("reserve_token").getString("amount"),
+                    volume = p.optString("volume", "0"),
+                    lastVolumeDay = p.optString("last_volume_day", "0").toLongOrNull() ?: 0L,
                 )
             )
         }

@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.res.painterResource
 import network.erth.wallet.R
+import network.erth.wallet.ui.theme.EarthAccent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -49,6 +50,7 @@ import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
 fun LiquidityScreen(
     pools: List<Dex.Pool>?,
     swapFeePercent: String?,
+    lpOptionShare: Double,
     modifier: Modifier = Modifier,
     onAdd: (Dex.Pool) -> Unit = {},
     onRemove: (Dex.Pool) -> Unit = {},
@@ -101,8 +103,11 @@ fun LiquidityScreen(
             return@Column
         }
 
+        val fee = swapFeePercent?.let { runCatching { java.math.BigDecimal(it) }.getOrNull() }
+
         pools.forEach { pool ->
             val token = pool.tokenDenom.removePrefix("u").uppercase()
+            val apr = fee?.let { AprMath.aprFor(pool, pools, lpOptionShare, it) }
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -181,6 +186,11 @@ fun LiquidityScreen(
                     style = EarthTypography.textSm,
                     color = EarthColors.Text.textPrimary,
                 )
+                if (apr != null) {
+                    Spacer(Modifier.height(dimens.space12))
+                    AprBlock(apr)
+                }
+
                 Spacer(Modifier.height(dimens.space12))
                 Row(Modifier.fillMaxWidth()) {
                     EarthButton(
@@ -201,6 +211,86 @@ fun LiquidityScreen(
             Spacer(Modifier.height(dimens.space12))
         }
         Spacer(Modifier.height(dimens.space32))
+    }
+}
+
+/**
+ * The rate, split by where it comes from.
+ *
+ * Split rather than summed to one headline because the two halves behave in
+ * opposite directions when you deposit. Fees scale with the pool — more
+ * liquidity carries more volume at the same price impact. Emissions do not: the
+ * stream is shared out by *volume*, so a deposit does not raise this pool's cut
+ * of it, it only divides the same cut across more capital. The emission line
+ * therefore falls the moment you add to the pool, and someone reading a single
+ * blended number would expect the opposite.
+ *
+ * The volume share is shown alongside because it is the whole basis of the
+ * emission line and it moves whenever any pool trades.
+ */
+@Composable
+private fun AprBlock(apr: PoolApr) {
+    val dimens = EarthTheme.dimens
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(EarthAccent.tint, RoundedCornerShape(dimens.space12))
+            .padding(dimens.space12),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "Estimated APR",
+                style = EarthTypography.textSm,
+                color = EarthColors.Text.textSecondary,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = apr.total.asPercent(),
+                style = EarthTypography.textMd,
+                fontWeight = FontWeight.SemiBold,
+                color = EarthAccent.ink,
+            )
+        }
+        Spacer(Modifier.height(dimens.space8))
+        AprLine("Swap fees", apr.fee.asPercent())
+        AprLine("Emissions", apr.emission.asPercent())
+        AprLine("Share of LP stream", apr.volumeShare.asPercent())
+    }
+}
+
+@Composable
+private fun AprLine(label: String, value: String) {
+    Row(Modifier.fillMaxWidth()) {
+        Text(
+            text = label,
+            style = EarthTypography.textXs,
+            color = EarthColors.Text.textTertiary,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = value,
+            style = EarthTypography.textXs,
+            color = EarthColors.Text.textSecondary,
+        )
+    }
+}
+
+/**
+ * A rate at whatever magnitude it lands.
+ *
+ * These span from a rounding error to triple digits depending on how much
+ * liquidity is in a pool, so a fixed two decimals is wrong at both ends. Below
+ * a hundredth of a percent it says so rather than rounding to a flat 0.00%,
+ * which reads as "none" when it means "very small".
+ */
+private fun Double.asPercent(): String {
+    val pct = this * 100
+    return when {
+        pct == 0.0 -> "0%"
+        pct < 0.01 -> "<0.01%"
+        pct < 1 -> "%.2f%%".format(pct)
+        pct < 100 -> "%.1f%%".format(pct)
+        else -> "%,.0f%%".format(pct)
     }
 }
 
