@@ -29,7 +29,7 @@ object Constants {
     // `adb reverse tcp:26657 tcp:26657`, or "http://10.0.2.2:26657".
     const val EARTH_RPC_URL = "https://rpc.erth.network"
 
-    const val EARTH_CHAIN_ID = "earth"
+    const val EARTH_CHAIN_ID = "earth-1"
     const val EARTH_PREFIX = "earth"
     const val EARTH_COIN_TYPE = 118
     const val UERTH_DENOM = "uerth"
