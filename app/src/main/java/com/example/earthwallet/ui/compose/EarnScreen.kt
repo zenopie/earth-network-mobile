@@ -1,5 +1,8 @@
 package network.erth.wallet.ui.compose
 
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.font.FontWeight
+import network.erth.wallet.ui.vendor.component.EarthHorizontalDivider
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -76,6 +79,38 @@ fun EarnScreen(
             Spacer(Modifier.height(dimens.space12))
             EarthLabel("Claimable rewards")
             AmountOrShimmer(state?.rewardsUerth, shimmer, EarthAccent.ink)
+
+            val apr = state?.let { StakingApr.base(it.totalBondedUerth) }
+            if (apr != null) {
+                Spacer(Modifier.height(dimens.space12))
+                EarthHorizontalDivider()
+                Spacer(Modifier.height(dimens.space12))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = "Estimated APR",
+                            style = EarthTypography.textSm,
+                            color = EarthColors.Text.textSecondary,
+                        )
+                        Text(
+                            // The single most useful thing to say about this
+                            // number: it is not a policy the chain is aiming
+                            // at, it is a fixed stream divided by however much
+                            // stake is competing for it.
+                            text = "1 ERTH/sec across " +
+                                "${formatUerth(state.totalBondedUerth)} ERTH staked",
+                            style = EarthTypography.textXs,
+                            color = EarthColors.Text.textTertiary,
+                        )
+                    }
+                    Text(
+                        text = apr.asRate(),
+                        style = EarthTypography.textMd,
+                        fontWeight = FontWeight.SemiBold,
+                        color = EarthAccent.ink,
+                    )
+                }
+            }
         }
 
         Spacer(Modifier.height(dimens.space16))
@@ -109,10 +144,18 @@ fun EarnScreen(
             Spacer(Modifier.height(dimens.space24))
             EarthLabel("Your validators")
             state.delegations.forEach { v ->
+                // Commission and the rate it leaves, together: the commission
+                // alone is only half the comparison anyone is making between
+                // validators.
+                val net = StakingApr.forValidator(state.totalBondedUerth, v.commission)
                 EarthListRow(
                     initial = v.moniker.take(1).uppercase(),
                     name = v.moniker,
-                    subtitle = "${"%.0f".format(v.commission * 100)}% commission",
+                    subtitle = if (net != null) {
+                        "${"%.0f".format(v.commission * 100)}% commission · ${net.asRate()} APR"
+                    } else {
+                        "${"%.0f".format(v.commission * 100)}% commission"
+                    },
                     value = formatUerth(v.amountUerth),
                     iconBg = EarthAccent.tint,
                     iconFg = EarthAccent.ink,
@@ -161,3 +204,21 @@ private fun AmountOrShimmer(
 }
 
 private fun Int.dp() = androidx.compose.ui.unit.Dp(toFloat())
+
+/**
+ * A rate at whatever magnitude it lands.
+ *
+ * On a young chain with little bonded this runs to millions of percent, which
+ * is arithmetically right and worth showing rather than capping — a capped
+ * number invites the reader to believe the cap.
+ */
+private fun Double.asRate(): String {
+    val pct = this * 100
+    return when {
+        pct == 0.0 -> "0%"
+        pct < 0.01 -> "<0.01%"
+        pct < 1 -> "%.2f%%".format(pct)
+        pct < 1_000 -> "%.1f%%".format(pct)
+        else -> "%,.0f%%".format(pct)
+    }
+}

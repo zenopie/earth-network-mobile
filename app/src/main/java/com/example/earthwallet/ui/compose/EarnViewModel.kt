@@ -20,6 +20,13 @@ data class EarnUiState(
     val unbonding: List<UnbondingRow>,
     /** Bonded validators, for the stake picker. */
     val validators: List<DelegationRow>,
+    /**
+     * Everything bonded chain-wide, in uerth.
+     *
+     * The denominator of the staking rate. The numerator is a constant, so
+     * this single figure is what the rate moves on.
+     */
+    val totalBondedUerth: Long,
 )
 
 /**
@@ -71,6 +78,9 @@ class EarnViewModel(app: Application) : AndroidViewModel(app) {
                     }
 
                 EarnUiState(
+                    totalBondedUerth = runCatching {
+                        Staking.totalBonded().toLongOrNull() ?: 0L
+                    }.getOrDefault(0L),
                     stakedUerth = delegations.sumOf { it.amountUerth },
                     rewardsUerth = runCatching {
                         Staking.totalRewards(address).toLongOrNull() ?: 0L

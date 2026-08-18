@@ -141,5 +141,46 @@ object AprMath {
     }
 }
 
+/**
+ * What staking pays, as an annual rate.
+ *
+ * The investor pillar mints 1 ERTH/sec into the fee collector and
+ * x/distribution splits it by voting power. Three things this chain does make
+ * the sum unusually simple:
+ *
+ *  - The community tax is zero, so nothing is skimmed before the split.
+ *  - Gas fees are burned in x/earth rather than left in the fee collector, so
+ *    they neither add to rewards nor dilute them. Emission is the whole of it.
+ *  - The rate is fixed per second rather than a target inflation percentage,
+ *    so the *numerator* is a constant and every change in the rate comes from
+ *    the denominator.
+ *
+ * That last point is the one worth understanding: the rate is not a policy the
+ * chain is trying to hit, it is arithmetic on how much stake is competing for a
+ * fixed stream. It falls as the network stakes more, and on a young chain with
+ * very little bonded it is enormous and means very little.
+ */
+object StakingApr {
+
+    private const val EMISSION_UERTH_PER_SEC = 1_000_000L
+    private const val SECONDS_PER_YEAR = 86_400L * 365L
+
+    /**
+     * The rate before any validator's commission, as a fraction.
+     *
+     * Null when nothing is bonded — the rate is then unbounded rather than
+     * infinite-and-therefore-zero, and no honest number can be shown.
+     */
+    fun base(bondedUerth: Long): Double? {
+        if (bondedUerth <= 0) return null
+        val yearly = BigDecimal(EMISSION_UERTH_PER_SEC).multiply(BigDecimal(SECONDS_PER_YEAR))
+        return yearly.divide(BigDecimal(bondedUerth), 18, RoundingMode.HALF_UP).toDouble()
+    }
+
+    /** What a delegator to this validator actually earns, after their cut. */
+    fun forValidator(bondedUerth: Long, commission: Double): Double? =
+        base(bondedUerth)?.times(1.0 - commission.coerceIn(0.0, 1.0))
+}
+
 private fun String.toBigIntegerOrNull(): BigInteger? =
     runCatching { BigInteger(this) }.getOrNull()
