@@ -370,8 +370,8 @@ private fun EarthContent(
         )
 
         EarthRoute.Swap -> SwapScreen(
-            erthBalance = state?.let { formatUerth(it.balanceUerth) },
-            anmlBalance = state?.let { it.anmlBalance ?: "0" },
+            erthUerth = state?.balanceUerth,
+            anmlUnits = state?.holdings?.firstOrNull { it.denom == "uanml" }?.amount ?: state?.let { 0L },
             // Only ERTH/ANML for now: it is the one pool, and pairing
             // arbitrary spokes would need a two-hop quote through the hub that
             // the screen has no way to let you choose yet.

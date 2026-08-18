@@ -6,6 +6,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -59,9 +60,14 @@ import network.erth.wallet.ui.vendor.util.stringRes
  */
 @Composable
 fun SwapScreen(
-    /** Null while the wallet is still loading; a zero here would be a lie. */
-    erthBalance: String?,
-    anmlBalance: String?,
+    /**
+     * Base units, null while the wallet is still loading — a zero would be a
+     * lie. Base units rather than display strings because the amount shortcuts
+     * below have to do arithmetic on them, and parsing a formatted number back
+     * is how a thousands separator ends up in a transaction.
+     */
+    erthUerth: Long?,
+    anmlUnits: Long?,
     /** The pool being traded against, for the quote. Null while loading. */
     pool: network.erth.wallet.chain.Dex.Pool?,
     swapFeePercent: String?,
@@ -85,8 +91,24 @@ fun SwapScreen(
 
     val fromDenom = if (erthIn) "ERTH" else "ANML"
     val toDenom = if (erthIn) "ANML" else "ERTH"
-    val fromBalance = if (erthIn) erthBalance else anmlBalance
-    val toBalance = if (erthIn) anmlBalance else erthBalance
+    val fromUnits = if (erthIn) erthUerth else anmlUnits
+    val toUnits = if (erthIn) anmlUnits else erthUerth
+    val fromBalance = fromUnits?.let { formatUerth(it) }
+    val toBalance = toUnits?.let { formatUerth(it) }
+
+    /**
+     * What can actually be swapped, in base units.
+     *
+     * The fee is always paid in ERTH, so selling ERTH has to leave it behind —
+     * "max" that spends the fee too produces a transaction the ante handler
+     * rejects, which costs a round trip to discover. Selling ANML, the whole
+     * balance is available and the ERTH for the fee has to already be there.
+     */
+    val spendable = when {
+        fromUnits == null -> null
+        erthIn -> (fromUnits - SWAP_FEE_UERTH).coerceAtLeast(0)
+        else -> fromUnits
+    }
 
     val fee = swapFeePercent?.let { runCatching { java.math.BigDecimal(it) }.getOrNull() }
 
@@ -123,6 +145,11 @@ fun SwapScreen(
                     shape = shape,
                     value = amount,
                     onValueChange = { amount = it.asAmountInput(amount) },
+                    spendable = spendable,
+                    onFraction = { numerator, denominator ->
+                        val units = (spendable ?: 0) * numerator / denominator
+                        amount = if (units > 0) units.asDecimalAmount() else ""
+                    },
                 )
                 Spacer(Modifier.height(dimens.space8))
                 SwapPanel(
@@ -204,6 +231,9 @@ private fun SwapPanel(
     /** The token's own mark, in its own colours — never tinted. */
     icon: Int,
     balance: String?,
+    /** Non-null on the paying side, with the fee already set aside. */
+    spendable: Long? = null,
+    onFraction: (numerator: Long, denominator: Long) -> Unit = { _, _ -> },
     shape: androidx.compose.ui.graphics.Shape,
     value: String,
     onValueChange: (String) -> Unit,
@@ -265,8 +295,42 @@ private fun SwapPanel(
                 color = EarthColors.Text.textPrimary,
             )
         }
+
+        // Only on the side being spent, and only when there is something to
+        // spend. Shortcuts over a zero balance are two controls that do
+        // nothing, on the screen where a new wallet spends most of its time.
+        if (spendable != null && spendable > 0) {
+            Spacer(Modifier.height(dimens.space12))
+            Row(horizontalArrangement = Arrangement.spacedBy(dimens.space8)) {
+                AmountChip("50%") { onFraction(1, 2) }
+                AmountChip("Max") { onFraction(1, 1) }
+            }
+        }
     }
 }
+
+@Composable
+private fun AmountChip(label: String, onClick: () -> Unit) {
+    val dimens = EarthTheme.dimens
+    Text(
+        text = label,
+        style = EarthTypography.textXs,
+        fontWeight = FontWeight.SemiBold,
+        color = EarthColors.Btns.Secondary.btnSecondaryFg,
+        modifier = Modifier
+            .clip(RoundedCornerShape(dimens.space20))
+            .background(EarthColors.Btns.Secondary.btnSecondaryBg)
+            .clickable(onClick = onClick)
+            .padding(horizontal = dimens.space12, vertical = dimens.space4),
+    )
+}
+
+/** What a swap costs at the chain's minimum gas price. */
+private const val SWAP_FEE_UERTH = 2_000L
+
+/** Base units to a plain decimal, for putting a computed amount in the field. */
+private fun Long.asDecimalAmount(): String =
+    java.math.BigDecimal(this).movePointLeft(6).stripTrailingZeros().toPlainString()
 
 /** The chain sends reserves as decimal strings; anything else is a broken response. */
 private fun String.toBigIntegerOrNull(): java.math.BigInteger? =
