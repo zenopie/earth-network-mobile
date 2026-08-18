@@ -53,7 +53,24 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
         // Registration is the app's most expensive message — the chain verifies
         // an UltraHonk proof. These mirror EarthTx.broadcast's defaults, and the
         // fee is what the confirmation sheet checks the balance against.
-        private const val REGISTER_GAS_LIMIT = 400_000L
+        // MsgRegister verifies an UltraHonk proof on-chain, which is by far the
+        // most expensive thing this chain does. 400_000 was too low by a margin
+        // nobody would guess from the number: a real registration died at
+        // gas_used=400324 with "out of gas in location: ReadFlat", and because it
+        // aborted part-way the true cost is higher still — 400324 is where it
+        // stopped, not what it needed.
+        //
+        // Generous rather than tuned, deliberately. The fee below is flat, not
+        // gas x price, so a higher limit costs the user nothing, and the chain
+        // reports max_gas -1, so there is no block ceiling to bump into. An
+        // under-estimate burns the fee and the user's ad view; an over-estimate
+        // costs nothing.
+        //
+        // Worth tightening once a successful registration reports its real
+        // gas_used, and worth revisiting if the chain ever sets a non-zero
+        // minimum gas price, at which point a flat fee stops being valid for an
+        // arbitrary limit.
+        private const val REGISTER_GAS_LIMIT = 3_000_000L
         private const val REGISTER_FEE_UERTH = 2_000L
 
         @JvmStatic
