@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Home action: earn. A rising line, which is what staking rewards do. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#000000"
+        android:pathData="M20.5,4h-5c-0.83,0 -1.5,0.67 -1.5,1.5S14.67,7 15.5,7h1.38l-5.38,5.38l-2.44,-2.44c-0.59,-0.59 -1.54,-0.59 -2.12,0l-4,4c-0.59,0.59 -0.59,1.54 0,2.12c0.59,0.59 1.54,0.59 2.12,0L8,13.12l2.44,2.44c0.59,0.59 1.54,0.59 2.12,0L19,9.12V10.5c0,0.83 0.67,1.5 1.5,1.5S22,11.33 22,10.5v-5C22,4.67 21.33,4 20.5,4z"/>
+</vector>

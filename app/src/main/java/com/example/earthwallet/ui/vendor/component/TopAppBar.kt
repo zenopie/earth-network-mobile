@@ -443,7 +443,7 @@ fun SmallTopAppBar(
                     restoringSpacerHeight = ZcashTheme.dimens.spacingTiny
                 } else if (showTitleLogo) {
                     Icon(
-                        painter = painterResource(id = R.drawable.earth_text_logo),
+                        painter = painterResource(id = R.drawable.logo),
                         contentDescription = null,
                         tint = colors.titleColor,
                         modifier = Modifier.height(ZcashTheme.dimens.topAppBarZcashLogoHeight)

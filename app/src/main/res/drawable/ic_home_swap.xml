@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Home action: swap. Two arrows crossing, matching the stroke weight above. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#000000"
+        android:pathData="M8.06,3.44c0.59,0.59 0.59,1.54 0,2.12L6.62,7H16.5C17.33,7 18,7.67 18,8.5S17.33,10 16.5,10H6.62l1.44,1.44c0.59,0.59 0.59,1.54 0,2.12c-0.59,0.59 -1.54,0.59 -2.12,0l-4,-4c-0.59,-0.59 -0.59,-1.54 0,-2.12l4,-4C6.52,2.85 7.48,2.85 8.06,3.44zM15.94,10.44c0.59,-0.59 1.54,-0.59 2.12,0l4,4c0.59,0.59 0.59,1.54 0,2.12l-4,4c-0.59,0.59 -1.54,0.59 -2.12,0c-0.59,-0.59 -0.59,-1.54 0,-2.12L17.38,17H7.5C6.67,17 6,16.33 6,15.5S6.67,14 7.5,14h9.88l-1.44,-1.44C15.35,11.98 15.35,11.02 15.94,10.44z"/>
+</vector>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Home action: receive. Drawn at 24dp on a 24 viewport so all four home
+     icons share an optical weight; the colour is set by the caller. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#000000"
+        android:pathData="M12,3c0.83,0 1.5,0.67 1.5,1.5v11.38l3.44,-3.44c0.59,-0.59 1.54,-0.59 2.12,0c0.59,0.59 0.59,1.54 0,2.12l-6,6c-0.59,0.59 -1.54,0.59 -2.12,0l-6,-6c-0.59,-0.59 -0.59,-1.54 0,-2.12c0.59,-0.59 1.54,-0.59 2.12,0l3.44,3.44V4.5C10.5,3.67 11.17,3 12,3z"/>
+</vector>

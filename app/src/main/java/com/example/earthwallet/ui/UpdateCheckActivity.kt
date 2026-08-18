@@ -14,7 +14,7 @@ import com.google.android.play.core.appupdate.AppUpdateOptions
 import com.google.android.play.core.install.model.AppUpdateType
 import com.google.android.play.core.install.model.UpdateAvailability
 import network.erth.wallet.R
-import network.erth.wallet.ui.host.HostActivity
+import network.erth.wallet.ui.compose.ComposeAppActivity
 
 /**
  * Activity that checks for updates from Google Play Store before the app starts
@@ -190,11 +190,16 @@ class UpdateCheckActivity : AppCompatActivity() {
     }
 
     /**
-     * Proceed to main app (HostActivity)
+     * Proceed to main app.
+     *
+     * The Compose app, not HostActivity. HostActivity is still installed and
+     * still reachable for the screens not yet ported, but it is no longer what
+     * a cold start lands on — two shells both claiming to be the app is how the
+     * PIN ends up opening the old one.
      */
     private fun proceedToMainApp() {
         Log.d(TAG, "Proceeding to main app")
-        val intent = Intent(this, HostActivity::class.java)
+        val intent = Intent(this, ComposeAppActivity::class.java)
         // Pass any extras from the original intent
         intent.putExtras(getIntent())
         startActivity(intent)

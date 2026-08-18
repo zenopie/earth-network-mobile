@@ -71,7 +71,7 @@ fun TopScreenLogoTitle(
 ) {
     Column(modifier = modifier) {
         Image(
-            painter = painterResource(id = R.drawable.earth_logo_without_text),
+            painter = painterResource(id = R.drawable.logo),
             colorFilter = ColorFilter.tint(color = ZcashTheme.colors.secondaryColor),
             contentDescription = logoContentDescription,
             modifier = Modifier.fillMaxWidth()

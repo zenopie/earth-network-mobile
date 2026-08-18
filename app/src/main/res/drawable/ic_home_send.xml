@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Home action: send. The mirror of ic_home_receive, same weight and viewport. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#000000"
+        android:pathData="M12,21c-0.83,0 -1.5,-0.67 -1.5,-1.5V8.12l-3.44,3.44c-0.59,0.59 -1.54,0.59 -2.12,0c-0.59,-0.59 -0.59,-1.54 0,-2.12l6,-6c0.59,-0.59 1.54,-0.59 2.12,0l6,6c0.59,0.59 0.59,1.54 0,2.12c-0.59,0.59 -1.54,0.59 -2.12,0L13.5,8.12V19.5C13.5,20.33 12.83,21 12,21z"/>
+</vector>

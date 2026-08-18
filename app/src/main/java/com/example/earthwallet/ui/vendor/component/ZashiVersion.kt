@@ -15,6 +15,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -54,9 +55,9 @@ fun EarthVersion(
                 }
     ) {
         Image(
-            modifier = Modifier.align(CenterHorizontally).width(79.dp),
+            modifier = Modifier.align(CenterHorizontally).size(56.dp),
             painter =
-                painterResource(id = R.drawable.app_logo),
+                painterResource(id = R.drawable.logo),
             contentDescription = version.getValue()
         )
         Spacer(modifier = Modifier.height(16.dp))

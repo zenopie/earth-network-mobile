@@ -16,6 +16,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import network.erth.wallet.Constants
 import network.erth.wallet.chain.Bank
+import network.erth.wallet.chain.Explorer
 import network.erth.wallet.chain.Personhood
 import network.erth.wallet.chain.Staking
 import network.erth.wallet.wallet.services.SecureWalletManager
@@ -31,14 +32,25 @@ import network.erth.wallet.wallet.services.SecureWalletManager
  */
 class WalletViewModel(app: Application) : AndroidViewModel(app) {
 
-    private val _state = MutableStateFlow(EMPTY)
-    val state: StateFlow<WalletUiState> = _state.asStateFlow()
+    private val _state = MutableStateFlow<WalletUiState?>(null)
+    val state: StateFlow<WalletUiState?> = _state.asStateFlow()
 
     private val _reachable = MutableStateFlow(true)
     val reachable: StateFlow<Boolean> = _reachable.asStateFlow()
 
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
+
+    /**
+     * Transaction history, loaded separately from the balances.
+     *
+     * A separate flow because it is a separate failure: the history comes from
+     * the transaction index, which a pruned or freshly-synced node may not
+     * have, and a wallet that refuses to show a balance because it could not
+     * list transactions is answering the wrong question.
+     */
+    private val _activity = MutableStateFlow<List<ActivityRow>?>(null)
+    val activity: StateFlow<List<ActivityRow>?> = _activity.asStateFlow()
 
     /**
      * True when there is no unlocked wallet session.
@@ -62,7 +74,7 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 if (address.isNullOrBlank()) {
                     _locked.value = true
-                    _state.value = EMPTY
+                    _state.value = WalletUiState.EMPTY
                     return@launch
                 }
                 _locked.value = false
@@ -84,16 +96,26 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
                         Personhood.isRegistered(address)
                     }.getOrDefault(false)
 
+                    val rewards = runCatching {
+                        Staking.totalRewards(address).toLongOrNull() ?: 0L
+                    }.getOrDefault(0L)
+
                     WalletUiState(
                         address = address,
                         balanceUerth = erth,
                         anmlBalance = if (anml > 0) formatSix(anml) else null,
                         stakedUerth = staked,
-                        rewardsUerth = 0L,
+                        rewardsUerth = rewards,
                         registered = registered,
                     )
                 }
                 _state.value = loaded
+
+                _activity.value = withContext(Dispatchers.IO) {
+                    runCatching {
+                        Explorer.txsForAddress(address).map { it.toActivityRow(address) }
+                    }.getOrDefault(emptyList())
+                }
             } finally {
                 _loading.value = false
             }
@@ -101,14 +123,6 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private companion object {
-        val EMPTY = WalletUiState(
-            address = "",
-            balanceUerth = 0,
-            anmlBalance = null,
-            stakedUerth = 0,
-            rewardsUerth = 0,
-            registered = false,
-        )
 
         fun formatSix(micro: Long): String {
             val whole = micro / 1_000_000

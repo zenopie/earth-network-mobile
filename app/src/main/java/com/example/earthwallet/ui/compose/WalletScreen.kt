@@ -33,7 +33,26 @@ data class WalletUiState(
     val stakedUerth: Long,
     val rewardsUerth: Long,
     val registered: Boolean,
-)
+) {
+    companion object {
+        /**
+         * The zero state, for screens that cannot show "loading".
+         *
+         * Home distinguishes a real zero from a not-yet-loaded one and shows a
+         * shimmer for the second; a pushed screen is only reachable once the
+         * load has happened, so it takes this rather than carrying the
+         * distinction it will never use.
+         */
+        val EMPTY = WalletUiState(
+            address = "",
+            balanceUerth = 0,
+            anmlBalance = null,
+            stakedUerth = 0,
+            rewardsUerth = 0,
+            registered = false,
+        )
+    }
+}
 
 /**
  * The balance screen, built on the vendored components.
