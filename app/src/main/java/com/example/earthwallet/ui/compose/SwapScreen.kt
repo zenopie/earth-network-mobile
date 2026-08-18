@@ -7,6 +7,10 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.offset
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -135,9 +139,16 @@ fun SwapScreen(
     ) {
         Spacer(Modifier.height(dimens.space16))
 
+        // The reverse button sits on the seam between the panels, so its
+        // position is the paying panel's height — not the midpoint of the two.
+        // Centring it only looked right while both panels happened to be the
+        // same height, and the amount chips made the top one taller.
+        var payHeightPx by remember { mutableIntStateOf(0) }
+
         Box {
             Column {
                 SwapPanel(
+                    modifier = Modifier.onSizeChanged { payHeightPx = it.height },
                     label = "You pay",
                     denom = fromDenom,
                     icon = if (erthIn) R.drawable.ic_erth_logo else R.drawable.anml,
@@ -164,15 +175,18 @@ fun SwapScreen(
                 )
             }
 
-            // Straddles the seam between the two panels: half its height sits
-            // in each, which is what makes it read as reversing them rather
-            // than as an action on the panel above. The ring is the page
-            // colour, so it punches a hole through the seam instead of sitting
-            // on top of it.
+            // Straddles the seam: half its height in each panel, which is what
+            // makes it read as reversing them rather than as an action on the
+            // panel above. The ring is the page colour, so it punches a hole
+            // through the seam instead of sitting on top of it.
+            val seamOffset = with(LocalDensity.current) {
+                payHeightPx.toDp() + dimens.space8 / 2 - REVERSE_BUTTON_SIZE / 2
+            }
             Box(
                 Modifier
-                    .align(Alignment.Center)
-                    .size(dimens.space48)
+                    .align(Alignment.TopCenter)
+                    .offset(y = seamOffset)
+                    .size(REVERSE_BUTTON_SIZE)
                     .background(EarthColors.Surfaces.bgPrimary, CircleShape)
                     .padding(3.dp)
                     .clip(CircleShape)
@@ -226,6 +240,7 @@ fun SwapScreen(
 
 @Composable
 private fun SwapPanel(
+    modifier: Modifier = Modifier,
     label: String,
     denom: String,
     /** The token's own mark, in its own colours — never tinted. */
@@ -242,7 +257,7 @@ private fun SwapPanel(
     val dimens = EarthTheme.dimens
     val amountKeys = doneKeyboard(keyboardType = KeyboardType.Decimal)
     Column(
-        Modifier
+        modifier
             .fillMaxWidth()
             .background(EarthColors.Surfaces.bgSecondary, shape)
             .padding(dimens.space16),
@@ -324,6 +339,9 @@ private fun AmountChip(label: String, onClick: () -> Unit) {
             .padding(horizontal = dimens.space12, vertical = dimens.space4),
     )
 }
+
+/** The reverse button's diameter, needed to centre it on the seam. */
+private val REVERSE_BUTTON_SIZE = 48.dp
 
 /** What a swap costs at the chain's minimum gas price. */
 private const val SWAP_FEE_UERTH = 2_000L
