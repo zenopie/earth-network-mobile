@@ -422,8 +422,8 @@ private fun EarthContent(
             state = allocationState,
             registered = loaded.registered,
             stakedUerth = loaded.stakedUerth,
-            onEdit = { editing = it },
             onOpenStream = { nav.push(EarthRoute.Stream(it == StreamId.STREAM_ID_HUMAN)) },
+            onOpenProposals = { nav.push(EarthRoute.Proposals) },
             modifier = inset,
         )
 
@@ -570,6 +570,11 @@ private fun EarthContent(
                 modifier = inset,
             )
         }
+
+        EarthRoute.Proposals -> ProposalsScreen(
+            proposals = allocationState?.proposals,
+            modifier = inset,
+        )
 
         is EarthRoute.TransactionDetail -> TransactionDetailScreen(
             txHash = route.txHash,
@@ -790,6 +795,7 @@ private fun EarthRoute.title(): String = when (this) {
     EarthRoute.AddressBook -> "Address book"
     EarthRoute.About -> "About"
     is EarthRoute.Stream -> if (human) "Human stream" else "Capital stream"
+    EarthRoute.Proposals -> "Proposals"
     EarthRoute.Explore -> "Explorer"
     EarthRoute.Personhood -> "Identity"
     EarthRoute.Wallets -> "Wallets"

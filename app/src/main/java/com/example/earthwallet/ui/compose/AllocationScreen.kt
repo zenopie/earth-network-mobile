@@ -1,6 +1,5 @@
 package network.erth.wallet.ui.compose
 
-import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -11,23 +10,19 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import com.valentinilk.shimmer.shimmer
 import network.erth.earth.proto.allocation.StreamId
 import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.theme.EarthTheme
-import network.erth.wallet.ui.vendor.component.EarthButton
-import network.erth.wallet.ui.vendor.component.EarthButtonDefaults
 import network.erth.wallet.ui.vendor.component.ShimmerRectangle
 import network.erth.wallet.ui.vendor.component.rememberEarthShimmer
 import network.erth.wallet.ui.vendor.theme.colors.EarthColors
@@ -41,24 +36,26 @@ data class AllocationSlice(
 )
 
 /**
- * Govern: where this wallet's two votes send their share of the emission.
+ * Govern: the three places a vote can go.
  *
- * Earth's governance is these two streams; there is no separate proposal
- * system, so this is the whole of it. Two streams, shown as two stacked bars
- * rather than two pie charts — a stacked bar reads left to right at a glance
- * and stays readable at three options or ten, while a pie needs a legend to say
- * which wedge is which, and a legend is a second thing to read.
+ * A menu, not a dashboard. Each entry is a whole screen's worth of detail —
+ * two charts and a vote, or a list of proposals — and summarising all three
+ * here left every one of them too small to act on while still being too much
+ * to scan.
  *
- * The eligibility line under each bar says why a stream is inactive, because
- * "0%" and "you have no say here yet" look identical otherwise.
+ * The two streams are Earth's own governance and the third is the SDK's. They
+ * are grouped together because both are voting and separated by a heading
+ * because they are not the same vote: the streams steer an emission
+ * continuously by personhood or stake, proposals change the chain itself for a
+ * fixed period by bonded stake alone.
  */
 @Composable
 fun AllocationScreen(
     state: AllocationUiState?,
     registered: Boolean,
     stakedUerth: Long,
-    onEdit: (StreamId) -> Unit,
     onOpenStream: (StreamId) -> Unit,
+    onOpenProposals: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val dimens = EarthTheme.dimens
@@ -79,176 +76,116 @@ fun AllocationScreen(
             color = EarthColors.Text.textSecondary,
         )
 
-        Spacer(Modifier.height(dimens.space24))
-        StreamSection(
+        Spacer(Modifier.height(dimens.space16))
+        GovernRow(
             title = "Human stream",
             detail = "One verified human, one vote.",
-            eligibility = if (registered) null else "Register your identity to take part.",
-            stream = state?.human,
+            status = state?.human.statusFor(
+                eligible = registered,
+                blocked = "Register to take part",
+            ),
+            loading = state == null,
             shimmer = shimmer,
-            accent = EarthAccent.ink,
-            onEdit = { onEdit(StreamId.STREAM_ID_HUMAN) },
-            onOpen = { onOpenStream(StreamId.STREAM_ID_HUMAN) },
+            onClick = { onOpenStream(StreamId.STREAM_ID_HUMAN) },
         )
 
-        Spacer(Modifier.height(dimens.space16))
-        StreamSection(
+        Spacer(Modifier.height(dimens.space8))
+        GovernRow(
             title = "Capital stream",
             detail = "Weighted by the ERTH you have staked.",
-            eligibility = if (stakedUerth > 0) null else "Stake ERTH to take part.",
-            stream = state?.capital,
+            status = state?.capital.statusFor(
+                eligible = stakedUerth > 0,
+                blocked = "Stake ERTH to take part",
+            ),
+            loading = state == null,
             shimmer = shimmer,
-            accent = EarthAccent.ink,
-            onEdit = { onEdit(StreamId.STREAM_ID_CAPITAL) },
-            onOpen = { onOpenStream(StreamId.STREAM_ID_CAPITAL) },
+            onClick = { onOpenStream(StreamId.STREAM_ID_CAPITAL) },
+        )
+
+        Spacer(Modifier.height(dimens.space24))
+        EarthLabel("Chain governance")
+        Spacer(Modifier.height(dimens.space8))
+        GovernRow(
+            title = "Proposals",
+            detail = "Changes to the chain itself, voted on by staked ERTH.",
+            status = state?.proposals?.let { proposals ->
+                val live = proposals.count { it.status == "PROPOSAL_STATUS_VOTING_PERIOD" }
+                when {
+                    live > 0 -> "$live open for voting"
+                    proposals.isEmpty() -> "None yet"
+                    else -> "${proposals.size} closed"
+                }
+            },
+            loading = state == null,
+            shimmer = shimmer,
+            onClick = onOpenProposals,
         )
         Spacer(Modifier.height(dimens.space32))
-        EarthLabel("Chain proposals")
-        Spacer(Modifier.height(dimens.space4))
-        Text(
-            text = "Changes to the chain itself, voted on by staked ERTH. " +
-                "Separate from the streams above, which direct emissions.",
-            style = EarthTypography.textSm,
-            color = EarthColors.Text.textSecondary,
-        )
-        Spacer(Modifier.height(dimens.space12))
-        ProposalList(proposals = state?.proposals)
-        Spacer(Modifier.height(dimens.space32))
-    }
-}
-
-@Composable
-private fun StreamSection(
-    title: String,
-    detail: String,
-    eligibility: String?,
-    stream: StreamUiState?,
-    shimmer: com.valentinilk.shimmer.Shimmer,
-    accent: Color,
-    onEdit: () -> Unit,
-    onOpen: () -> Unit,
-) {
-    val dimens = EarthTheme.dimens
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(EarthDimensions.Radius.radius3xl))
-            .background(EarthColors.Surfaces.bgSecondary)
-            // The card opens the stream's charts; Edit inside it changes the
-            // vote. Two different things, so the whole card is not the edit.
-            .clickable(onClick = onOpen)
-            .padding(dimens.space16),
-    ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    style = EarthTypography.textMd,
-                    fontWeight = FontWeight.SemiBold,
-                    color = EarthColors.Text.textPrimary,
-                )
-                Text(
-                    text = detail,
-                    style = EarthTypography.textSm,
-                    color = EarthColors.Text.textTertiary,
-                )
-            }
-            if (eligibility == null && stream != null) {
-                Text(
-                    text = "Edit",
-                    style = EarthTypography.textSm,
-                    fontWeight = FontWeight.SemiBold,
-                    color = accent,
-                    modifier = Modifier.clickable(onClick = onEdit).padding(dimens.space4),
-                )
-            }
-        }
-
-        Spacer(Modifier.height(dimens.space12))
-
-        if (stream == null) {
-            Column(Modifier.shimmer(shimmer)) {
-                ShimmerRectangle(width = 240.dp(), height = 12.dp())
-            }
-            return@Column
-        }
-
-        if (eligibility != null) {
-            Text(
-                text = eligibility,
-                style = EarthTypography.textSm,
-                color = EarthColors.Text.textTertiary,
-            )
-            return@Column
-        }
-
-        val slices = stream.slices
-        if (slices.isEmpty()) {
-            Text(
-                text = "Nothing allocated yet — your share sits unassigned.",
-                style = EarthTypography.textSm,
-                color = EarthColors.Text.textTertiary,
-            )
-            Spacer(Modifier.height(dimens.space12))
-            EarthButton(
-                text = "Allocate",
-                onClick = onEdit,
-                modifier = Modifier.fillMaxWidth(),
-                colors = EarthButtonDefaults.secondaryColors(),
-            )
-            return@Column
-        }
-
-        AllocationBar(slices, accent)
-        Spacer(Modifier.height(dimens.space12))
-        slices.forEachIndexed { i, slice ->
-            Row(Modifier.fillMaxWidth().padding(vertical = 2.dp()), verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier
-                        .size(8.dp())
-                        .background(accent.stepped(i), CircleShape),
-                )
-                Spacer(Modifier.padding(horizontal = dimens.space4))
-                Text(
-                    text = slice.name,
-                    style = EarthTypography.textSm,
-                    color = EarthColors.Text.textPrimary,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = "${slice.percent}%",
-                    style = EarthTypography.textSm,
-                    color = EarthColors.Text.textSecondary,
-                )
-            }
-        }
     }
 }
 
 /**
- * The stacked bar.
+ * What this wallet's position in a stream is, in a few words.
  *
- * Alpha steps the slices apart rather than a second hue, so each section keeps
- * one colour: the two streams stay distinguishable from each other rather than
- * competing internally, and the dots in the legend below reuse the same steps.
+ * Ineligibility outranks the split: someone who cannot vote does not need to be
+ * told they have allocated nothing, they need to be told why.
  */
+private fun StreamUiState?.statusFor(eligible: Boolean, blocked: String): String? = when {
+    this == null -> null
+    !eligible -> blocked
+    slices.isEmpty() -> "Not allocated"
+    else -> slices.joinToString(" · ") { "${it.name} ${it.percent}%" }
+}
+
 @Composable
-private fun AllocationBar(slices: List<AllocationSlice>, accent: Color) {
+private fun GovernRow(
+    title: String,
+    detail: String,
+    status: String?,
+    loading: Boolean,
+    shimmer: com.valentinilk.shimmer.Shimmer,
+    onClick: () -> Unit,
+) {
     val dimens = EarthTheme.dimens
     Row(
         Modifier
             .fillMaxWidth()
-            .height(dimens.space12)
-            .background(EarthColors.Surfaces.bgPrimary, RoundedCornerShape(dimens.space8)),
+            .clip(RoundedCornerShape(EarthDimensions.Radius.radius3xl))
+            .background(EarthColors.Surfaces.bgSecondary)
+            .clickable(onClick = onClick)
+            .padding(dimens.space16),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        slices.forEachIndexed { i, slice ->
-            Box(
-                Modifier
-                    .weight(slice.percent.toFloat().coerceAtLeast(0.01f))
-                    .fillMaxSize()
-                    .background(accent.stepped(i)),
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = EarthTypography.textMd,
+                fontWeight = FontWeight.SemiBold,
+                color = EarthColors.Text.textPrimary,
             )
+            Text(
+                text = detail,
+                style = EarthTypography.textSm,
+                color = EarthColors.Text.textTertiary,
+            )
+            Spacer(Modifier.height(dimens.space4))
+            if (loading) {
+                Box(Modifier.shimmer(shimmer)) {
+                    ShimmerRectangle(width = 140.dp(), height = 12.dp())
+                }
+            } else if (status != null) {
+                Text(
+                    text = status,
+                    style = EarthTypography.textSm,
+                    color = EarthAccent.ink,
+                )
+            }
         }
+        Text(
+            text = "›",
+            style = EarthTypography.textLg,
+            color = EarthColors.Text.textTertiary,
+        )
     }
 }
 
