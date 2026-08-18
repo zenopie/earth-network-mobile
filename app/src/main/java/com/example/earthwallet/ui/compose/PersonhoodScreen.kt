@@ -1,5 +1,9 @@
 package network.erth.wallet.ui.compose
 
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.res.painterResource
+import network.erth.wallet.R
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -76,14 +80,15 @@ fun PersonhoodScreen(
                     .background(EarthColors.Surfaces.bgPrimary, CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    text = if (registered) "✓" else "?",
-                    style = EarthTypography.header5,
-                    color = if (registered) {
-                        EarthAccent.ink
-                    } else {
-                        EarthColors.Text.textTertiary
-                    },
+                Image(
+                    modifier = Modifier.size(dimens.space24),
+                    painter = painterResource(
+                        if (registered) R.drawable.ic_shield_check else R.drawable.ic_zk_proof,
+                    ),
+                    colorFilter = ColorFilter.tint(
+                        if (registered) EarthAccent.ink else EarthColors.Text.textTertiary,
+                    ),
+                    contentDescription = null,
                 )
             }
             Spacer(Modifier.height(dimens.space12))

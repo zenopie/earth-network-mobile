@@ -90,7 +90,7 @@ fun NfcScanScreen(
         ) {
             Image(
                 modifier = Modifier.size(64.dp),
-                painter = painterResource(R.drawable.ic_nfc),
+                painter = painterResource(R.drawable.ic_zk_proof),
                 colorFilter = ColorFilter.tint(EarthAccent.ink),
                 contentDescription = null,
             )

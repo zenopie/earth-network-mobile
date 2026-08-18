@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Proof-of-personhood.
+     A padlock, still shut, with a check where the keyhole would be. That is
+     what the circuit does: the passport is verified without being opened, and
+     nothing inside it is handed over. ic_nfc said "hold a card near a phone",
+     which is the mechanism rather than the point. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- Shackle: closed, and drawn as a stroke so the lock reads as locked
+         rather than as a solid blob at small sizes. -->
+    <path android:fillColor="#000000"
+        android:pathData="M12,1c-3.31,0 -6,2.69 -6,6v3h2.5V7c0,-1.93 1.57,-3.5 3.5,-3.5S15.5,5.07 15.5,7v3H18V7C18,3.69 15.31,1 12,1z"/>
+    <!-- Body -->
+    <path android:fillColor="#000000"
+        android:pathData="M18.5,10h-13C4.67,10 4,10.67 4,11.5v9C4,21.33 4.67,22 5.5,22h13c0.83,0 1.5,-0.67 1.5,-1.5v-9C20,10.67 19.33,10 18.5,10z"/>
+    <!-- The check, punched out of the body so it reads at 24dp. -->
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M15.78,14.22c0.4,0.4 0.4,1.04 0,1.44l-4.06,4.06c-0.4,0.4 -1.04,0.4 -1.44,0l-2.06,-2.06c-0.4,-0.4 -0.4,-1.04 0,-1.44c0.4,-0.4 1.04,-0.4 1.44,0L11,17.56l3.34,-3.34C14.74,13.82 15.38,13.82 15.78,14.22z"/>
+</vector>
