@@ -70,24 +70,32 @@ fun EarthBigIconButton(
             1f to EarthColors.Surfaces.strokePrimary.copy(alpha = 0f),
         )
 
-    val backgroundModifier =
-        Modifier.background(EarthColors.Surfaces.bgPrimary) orDark
-            Modifier.background(darkBgGradient)
+    // Earth change: filled as a primary, not outlined.
+    //
+    // Theirs is a white card with a hairline border and a shadow, which reads
+    // as a tile on their off-white page. On Earth's white page it is a white
+    // square on white — the shadow was doing all the work.
+    //
+    // Primary rather than secondary: these four are the app's headline actions,
+    // the first thing on the first screen, and there is nothing above them to
+    // rank against. Making them the quieter of the two ranks would say the main
+    // thing is somewhere else.
+    val fill = if (state.isEnabled) {
+        EarthColors.Btns.Brand.btnBrandBg
+    } else {
+        EarthColors.Btns.Brand.btnBrandBgDisabled
+    }
 
     Surface(
         modifier = modifier,
         onClick = state.onClick,
         enabled = state.isEnabled,
-        color = EarthColors.Surfaces.bgPrimary,
+        color = fill,
         shape = RoundedCornerShape(22.dp),
-        border =
-            BorderStroke(.5.dp, EarthColors.Utility.Gray.utilityGray100) orDark
-                BorderStroke(.5.dp, darkBorderGradient),
         shadowElevation = shadowElevation,
         interactionSource = interactionSource
     ) {
         Column(
-            modifier = backgroundModifier,
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
@@ -103,9 +111,9 @@ fun EarthBigIconButton(
                 colorFilter = when {
                     state.tint -> ColorFilter.tint(
                         if (state.isEnabled) {
-                            EarthColors.Text.textPrimary
+                            EarthColors.Btns.Brand.btnBrandFg
                         } else {
-                            EarthColors.Text.textTertiary
+                            EarthColors.Btns.Brand.btnBrandFgDisabled
                         },
                     )
                     // Untinted art still has to read as unavailable, so it is
@@ -124,9 +132,9 @@ fun EarthBigIconButton(
                 style = EarthTypography.textXs,
                 fontWeight = FontWeight.Medium,
                 color = if (state.isEnabled) {
-                    EarthColors.Text.textPrimary
+                    EarthColors.Btns.Brand.btnBrandFg
                 } else {
-                    EarthColors.Text.textTertiary
+                    EarthColors.Btns.Brand.btnBrandFgDisabled
                 },
                 maxLines = 1,
                 overflow = TextOverflow.Clip

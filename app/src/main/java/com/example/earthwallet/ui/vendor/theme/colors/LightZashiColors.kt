@@ -9,6 +9,8 @@
  */
 package network.erth.wallet.ui.vendor.theme.colors
 
+import androidx.compose.ui.graphics.Color
+
 val LightEarthColorsInternal =
     EarthColorsInternal(
         Surfaces =
@@ -41,31 +43,43 @@ val LightEarthColorsInternal =
             ),
         Btns =
             Btns(
+                // Earth change: white type on the primary, and a deeper fill
+                // to carry it.
+                //
+                // Zashi sets black on its brand green, which works for a yellow
+                // brand and reads as unfinished on a saturated green. White
+                // needs more contrast than the 400 tint gives, so the fill
+                // drops to 500 — the Sprout brand green itself.
                 Brand =
                     BtnBrand(
-                        btnBrandBg = Brand.`400`,
-                        btnBrandBgHover = Brand.`300`,
-                        btnBrandFg = Base.Obsidian,
-                        btnBrandFgHover = Base.Obsidian,
+                        btnBrandBg = Brand.`500`,
+                        btnBrandBgHover = Brand.`600`,
+                        btnBrandFg = Base.Bone,
+                        btnBrandFgHover = Base.Bone,
                         btnBrandBgDisabled = Gray.`100`,
                         btnBrandFgDisabled = Gray.`500`
                     ),
-                // Earth change: a brand tint rather than Zashi's white.
+                // Earth change: a filled pale green, no outline.
                 //
-                // Their secondary button is white with a hairline border, which
-                // works on their off-white page and disappears entirely on
-                // Earth's pure white one — the border alone is not enough to
-                // read as a control. The tint gives it a shape at a glance
-                // while staying obviously lighter than the solid-green primary,
-                // so the two still rank against each other.
+                // Their secondary is white with a hairline border, which works
+                // on Zashi's off-white page and disappears on Earth's pure
+                // white one. Filling it solid is what makes it a button.
+                //
+                // The rank between the two comes from *value*, not hue. Sprout
+                // 500 was tried and sits one step from the primary's 400 — near
+                // enough that the pair read as two primaries. 100 is the same
+                // green several steps up, so which one is the main action is
+                // obvious at a glance while both stay on the brand ramp. The
+                // type goes dark green to match, since white on a tint that
+                // pale is unreadable.
                 Secondary =
                     BtnSecondary(
-                        btnSecondaryBg = Brand.`50`,
-                        btnSecondaryBgHover = Brand.`100`,
+                        btnSecondaryBg = Brand.`100`,
+                        btnSecondaryBgHover = Brand.`200`,
                         btnSecondaryFg = Brand.`800`,
                         btnSecondaryFgHover = Brand.`900`,
-                        btnSecondaryBorder = Brand.`100`,
-                        btnSecondaryBorderHover = Brand.`200`,
+                        btnSecondaryBorder = Color.Unspecified,
+                        btnSecondaryBorderHover = Color.Unspecified,
                         btnSecondaryBgDisabled = Gray.`100`,
                         btnSecondaryFgDisabled = Gray.`500`
                     ),
