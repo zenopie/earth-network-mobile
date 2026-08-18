@@ -1,6 +1,7 @@
 package network.erth.wallet.ui.host
 
 import network.erth.wallet.R
+import android.content.pm.ApplicationInfo
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.ActivityInfo
@@ -35,6 +36,7 @@ import com.google.android.gms.ads.initialization.InitializationStatus
 import com.google.android.gms.ads.initialization.OnInitializationCompleteListener
 import com.google.android.gms.ads.interstitial.InterstitialAd
 import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback
+import com.google.android.gms.ads.RequestConfiguration
 import com.google.android.gms.ads.rewarded.RewardedAd
 import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback
 import com.google.android.gms.ads.rewarded.ServerSideVerificationOptions
@@ -49,6 +51,9 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
         private const val INTERSTITIAL_AD_UNIT_ID = "ca-app-pub-8662126294069074/2582864792"
         // Production rewarded ad unit ID for "Ads for Gas"
         private const val REWARDED_AD_UNIT_ID = "ca-app-pub-8662126294069074/9040854138"
+
+        // This device, as reported by the Ads SDK. Debug builds only.
+        private const val TEST_DEVICE_ID = "1DD50A79508E9DC1329640935C11C604"
     }
 
     private var navWallet: View? = null
@@ -634,6 +639,29 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
      * Initialize AdMob and load interstitial ad
      */
     private fun initializeAds() {
+        // On a debuggable build, register this device so AdMob serves test ads.
+        //
+        // Without it the SDK requests live inventory, and a rewarded unit with no
+        // traffic history reliably comes back with no fill — which surfaces as
+        // the "Watch Ad for Free Gas" button doing nothing at all, because
+        // showRewardedAd() calls back with false when no ad is loaded and there
+        // is no error path to see.
+        //
+        // Test ads still fire Server-Side Verification with custom_data, so the
+        // ads-for-gas grant can be exercised end to end on this device.
+        //
+        // Gated on FLAG_DEBUGGABLE rather than BuildConfig.DEBUG, which AGP 8
+        // does not generate unless buildFeatures.buildConfig is enabled. A
+        // release build must never ship a test device id: it would serve test
+        // ads to that device and earn nothing.
+        val debuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        if (debuggable) {
+            MobileAds.setRequestConfiguration(
+                RequestConfiguration.Builder()
+                    .setTestDeviceIds(listOf(TEST_DEVICE_ID))
+                    .build(),
+            )
+        }
 
         MobileAds.initialize(this) { _ ->
             loadInterstitialAd()
