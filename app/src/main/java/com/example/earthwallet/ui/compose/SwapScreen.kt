@@ -1,6 +1,13 @@
 package network.erth.wallet.ui.compose
 
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,6 +22,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -25,6 +34,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import network.erth.wallet.ui.theme.EarthTheme
+import com.valentinilk.shimmer.shimmer
+import network.erth.wallet.ui.vendor.component.ShimmerRectangle
+import network.erth.wallet.ui.vendor.component.rememberEarthShimmer
 import network.erth.wallet.ui.vendor.component.EarthButton
 import network.erth.wallet.ui.vendor.component.EarthIconButton
 import network.erth.wallet.ui.vendor.component.EarthTextField
@@ -35,7 +47,7 @@ import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
 import network.erth.wallet.ui.vendor.util.stringRes
 
 /**
- * Swap, against the ERTH/ANML pool.
+ * Swap, against the chain's pools.
  *
  * Their swap screen quotes across chains through a provider, with a route, a
  * slippage setting and a quote that expires. Earth's pool is on the same chain
@@ -46,10 +58,23 @@ import network.erth.wallet.ui.vendor.util.stringRes
  */
 @Composable
 fun SwapScreen(
-    erthBalance: String,
-    anmlBalance: String,
+    /** Null while the wallet is still loading; a zero here would be a lie. */
+    erthBalance: String?,
+    anmlBalance: String?,
+    /** Market context, under the panel. Null while loading. */
+    pools: List<network.erth.wallet.chain.Dex.Pool>?,
+    swapFeePercent: String?,
+    onLiquidity: () -> Unit,
+    /**
+     * Denoms and amounts in base units, plus the minimum to accept.
+     *
+     * The screen passes the quote's floor rather than letting the caller
+     * recompute it: the quote and the slippage guard have to come from the same
+     * numbers, or the guard protects against the wrong price.
+     */
+    onSwap: (denomIn: String, amountIn: java.math.BigInteger,
+             denomOut: String, minOut: java.math.BigInteger) -> Unit,
     modifier: Modifier = Modifier,
-    onSwap: (from: String, amount: String) -> Unit = { _, _ -> },
 ) {
     val dimens = EarthTheme.dimens
     val shape = RoundedCornerShape(EarthDimensions.Radius.radius3xl)
@@ -61,6 +86,25 @@ fun SwapScreen(
     val toDenom = if (erthIn) "ANML" else "ERTH"
     val fromBalance = if (erthIn) erthBalance else anmlBalance
     val toBalance = if (erthIn) anmlBalance else erthBalance
+
+    // Only ERTH/ANML for now: it is the one pool, and pairing arbitrary spokes
+    // would need a two-hop quote through the hub that the screen has no way to
+    // let you choose yet.
+    val pool = pools?.firstOrNull { it.tokenDenom == "uanml" }
+    val fee = swapFeePercent?.let { runCatching { java.math.BigDecimal(it) }.getOrNull() }
+
+    val quote = remember(amount, erthIn, pool, fee) {
+        val input = amount.toBaseUnits() ?: return@remember null
+        val p = pool ?: return@remember null
+        val f = fee ?: return@remember null
+        val erth = p.erthReserve.toBigIntegerOrNull() ?: return@remember null
+        val token = p.tokenReserve.toBigIntegerOrNull() ?: return@remember null
+        if (erthIn) {
+            SwapMath.hubForToken(erth, token, input, f)
+        } else {
+            SwapMath.tokenForHub(erth, token, input, f)
+        }
+    }
 
     Column(
         modifier
@@ -79,7 +123,7 @@ fun SwapScreen(
                     balance = fromBalance,
                     shape = shape,
                     value = amount,
-                    onValueChange = { amount = it },
+                    onValueChange = { amount = it.asAmountInput(amount) },
                 )
                 Spacer(Modifier.height(dimens.space8))
                 SwapPanel(
@@ -87,7 +131,7 @@ fun SwapScreen(
                     denom = toDenom,
                     balance = toBalance,
                     shape = shape,
-                    value = "",
+                    value = quote?.amountOut?.fromBaseUnits().orEmpty(),
                     onValueChange = {},
                     readOnly = true,
                 )
@@ -95,31 +139,64 @@ fun SwapScreen(
 
             // Straddles the seam between the two panels: half its height sits
             // in each, which is what makes it read as reversing them rather
-            // than as an action on the panel above.
+            // than as an action on the panel above. The ring is the page
+            // colour, so it punches a hole through the seam instead of sitting
+            // on top of it.
             Box(
                 Modifier
                     .align(Alignment.Center)
                     .size(dimens.space48)
-                    .background(EarthColors.Surfaces.bgPrimary, CircleShape),
+                    .background(EarthColors.Surfaces.bgPrimary, CircleShape)
+                    .padding(3.dp)
+                    .clip(CircleShape)
+                    .background(EarthColors.Surfaces.bgSecondary)
+                    .border(1.dp, EarthColors.Surfaces.strokeSecondary, CircleShape)
+                    .clickable { erthIn = !erthIn },
                 contentAlignment = Alignment.Center,
             ) {
-                EarthIconButton(
-                    state = IconButtonState(
-                        icon = network.erth.wallet.R.drawable.ic_swap_toggle,
-                        contentDescription = stringRes("Reverse the swap"),
-                        onClick = { erthIn = !erthIn },
-                    ),
+                Image(
+                    modifier = Modifier.size(18.dp),
+                    painter = painterResource(network.erth.wallet.R.drawable.ic_swap_vertical),
+                    colorFilter = ColorFilter.tint(EarthColors.Text.textPrimary),
+                    contentDescription = "Reverse the swap",
                 )
             }
+        }
+
+        if (quote != null) {
+            Spacer(Modifier.height(dimens.space16))
+            EarthDetailRow("Fee", "${quote.feeErth.fromBaseUnits()} ERTH")
+            EarthDetailRow("Price impact", "%.2f%%".format(quote.priceImpact * 100))
         }
 
         Spacer(Modifier.height(dimens.space24))
         EarthButton(
             text = "Review swap",
-            onClick = { onSwap(fromDenom, amount) },
-            enabled = amount.isNotBlank(),
+            onClick = {
+                val input = amount.toBaseUnits()
+                val out = quote?.amountOut
+                if (input != null && out != null) {
+                    onSwap(
+                        if (erthIn) "uerth" else "uanml",
+                        input,
+                        if (erthIn) "uanml" else "uerth",
+                        out.withSlippage(),
+                    )
+                }
+            },
+            enabled = quote != null && quote.amountOut.signum() > 0,
             modifier = Modifier.fillMaxWidth(),
             colors = brandButtonColors(),
+        )
+
+        // The pools sit under the panel rather than behind a second button.
+        // This tab is named for the action, so the action is the screen and
+        // the market it trades against is the context beneath it.
+        Spacer(Modifier.height(dimens.space32))
+        PoolList(
+            pools = pools,
+            swapFeePercent = swapFeePercent,
+            onLiquidity = onLiquidity,
         )
         Spacer(Modifier.height(dimens.space32))
     }
@@ -129,7 +206,7 @@ fun SwapScreen(
 private fun SwapPanel(
     label: String,
     denom: String,
-    balance: String,
+    balance: String?,
     shape: androidx.compose.ui.graphics.Shape,
     value: String,
     onValueChange: (String) -> Unit,
@@ -145,11 +222,17 @@ private fun SwapPanel(
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             EarthLabel(label)
             Spacer(Modifier.weight(1f))
-            Text(
-                text = "Balance $balance",
-                style = EarthTypography.textXs,
-                color = EarthColors.Text.textTertiary,
-            )
+            if (balance == null) {
+                Box(Modifier.shimmer(rememberEarthShimmer())) {
+                    ShimmerRectangle(width = 64.dp, height = 12.dp)
+                }
+            } else {
+                Text(
+                    text = "Balance $balance",
+                    style = EarthTypography.textXs,
+                    color = EarthColors.Text.textTertiary,
+                )
+            }
         }
         Spacer(Modifier.height(dimens.space8))
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -165,6 +248,7 @@ private fun SwapPanel(
                         value = value,
                         onValueChange = onValueChange,
                         placeholder = { Text("0") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     )
                 }
             }
@@ -178,3 +262,20 @@ private fun SwapPanel(
         }
     }
 }
+
+/** The chain sends reserves as decimal strings; anything else is a broken response. */
+private fun String.toBigIntegerOrNull(): java.math.BigInteger? =
+    runCatching { java.math.BigInteger(this) }.getOrNull()
+
+/**
+ * The floor the swap will accept.
+ *
+ * One percent under the quote. The quote is computed against reserves that were
+ * read a moment ago, and anything landing in a block before this one moves
+ * them; without a floor the chain fills at whatever price results, and with a
+ * floor set at the quote itself an unrelated transaction in the same block
+ * fails the swap. One percent is loose enough to survive ordinary traffic on a
+ * chain this quiet and tight enough that a real reordering is refused.
+ */
+private fun java.math.BigInteger.withSlippage(): java.math.BigInteger =
+    this * java.math.BigInteger.valueOf(99) / java.math.BigInteger.valueOf(100)

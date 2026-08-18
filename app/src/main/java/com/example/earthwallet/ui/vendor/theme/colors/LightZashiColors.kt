@@ -50,14 +50,22 @@ val LightEarthColorsInternal =
                         btnBrandBgDisabled = Gray.`100`,
                         btnBrandFgDisabled = Gray.`500`
                     ),
+                // Earth change: a brand tint rather than Zashi's white.
+                //
+                // Their secondary button is white with a hairline border, which
+                // works on their off-white page and disappears entirely on
+                // Earth's pure white one — the border alone is not enough to
+                // read as a control. The tint gives it a shape at a glance
+                // while staying obviously lighter than the solid-green primary,
+                // so the two still rank against each other.
                 Secondary =
                     BtnSecondary(
-                        btnSecondaryBg = Base.Bone,
-                        btnSecondaryBgHover = Gray.`50`,
-                        btnSecondaryFg = Base.Obsidian,
-                        btnSecondaryFgHover = Base.Obsidian,
-                        btnSecondaryBorder = Gray.`200`,
-                        btnSecondaryBorderHover = Gray.`200`,
+                        btnSecondaryBg = Brand.`50`,
+                        btnSecondaryBgHover = Brand.`100`,
+                        btnSecondaryFg = Brand.`800`,
+                        btnSecondaryFgHover = Brand.`900`,
+                        btnSecondaryBorder = Brand.`100`,
+                        btnSecondaryBorderHover = Brand.`200`,
                         btnSecondaryBgDisabled = Gray.`100`,
                         btnSecondaryFgDisabled = Gray.`500`
                     ),

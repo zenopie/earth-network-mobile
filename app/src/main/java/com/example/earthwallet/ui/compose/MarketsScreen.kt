@@ -29,7 +29,7 @@ import network.erth.wallet.ui.vendor.theme.dimensions.EarthDimensions
 import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
 
 /**
- * Markets: the pools, and the two things you can do to them.
+ * The pools, under the swap panel.
  *
  * Every pool on this chain pairs against ERTH — it is a hub-and-spoke AMM, not
  * an arbitrary-pair one — so each row names only the spoke token and the price
@@ -43,43 +43,16 @@ import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
  * so the two cannot be confused.
  */
 @Composable
-fun MarketsScreen(
+fun PoolList(
     pools: List<Dex.Pool>?,
     swapFeePercent: String?,
-    onSwap: () -> Unit,
     onLiquidity: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val dimens = EarthTheme.dimens
     val shimmer = rememberEarthShimmer()
 
-    Column(
-        modifier
-            .fillMaxSize()
-            .background(EarthColors.Surfaces.bgPrimary)
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = dimens.gutter),
-    ) {
-        Spacer(Modifier.height(dimens.space16))
-
-        Row(Modifier.fillMaxWidth()) {
-            EarthButton(
-                text = "Swap",
-                onClick = onSwap,
-                modifier = Modifier.weight(1f),
-                colors = brandButtonColors(),
-            )
-            Spacer(Modifier.height(dimens.space12))
-            Spacer(Modifier.padding(horizontal = dimens.space4))
-            EarthButton(
-                text = "Liquidity",
-                onClick = onLiquidity,
-                modifier = Modifier.weight(1f),
-                colors = EarthButtonDefaults.secondaryColors(),
-            )
-        }
-
-        Spacer(Modifier.height(dimens.space24))
+    Column(modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             EarthLabel("Pools")
             Spacer(Modifier.weight(1f))
@@ -109,14 +82,21 @@ fun MarketsScreen(
                 color = EarthColors.Text.textTertiary,
             )
 
-            else -> pools.forEach { pool -> PoolRow(pool, onSwap) }
+            else -> pools.forEach { pool -> PoolRow(pool) }
         }
-        Spacer(Modifier.height(dimens.space32))
+
+        Spacer(Modifier.height(dimens.space16))
+        EarthButton(
+            text = "Provide liquidity",
+            onClick = onLiquidity,
+            modifier = Modifier.fillMaxWidth(),
+            colors = EarthButtonDefaults.secondaryColors(),
+        )
     }
 }
 
 @Composable
-private fun PoolRow(pool: Dex.Pool, onClick: () -> Unit) {
+private fun PoolRow(pool: Dex.Pool) {
     val dimens = EarthTheme.dimens
     val token = pool.tokenDenom.removePrefix("u").uppercase()
     val erth = pool.erthReserve.toLongOrNull() ?: 0L
@@ -133,7 +113,6 @@ private fun PoolRow(pool: Dex.Pool, onClick: () -> Unit) {
                 EarthColors.Surfaces.bgSecondary,
                 RoundedCornerShape(EarthDimensions.Radius.radius3xl),
             )
-            .clickable(onClick = onClick)
             .padding(dimens.space16),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

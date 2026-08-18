@@ -28,7 +28,17 @@ data class EarthDomainColors(
     val gasWarningFg: Color,
 )
 
-internal val LightEarthDomainColors = EarthDomainColors(
+/**
+ * The pillar colours.
+ *
+ * One set, because the app has one ground. Pale tints for the pill behind a row
+ * icon and a saturated foreground for the glyph inside it, so a pillar is
+ * recognisable at 32dp without reading the label.
+ *
+ * ANML takes the coin's own yellow rather than a brown, so the pill matches the
+ * mark that sits in it.
+ */
+internal val EarthDomainColorsOnGround = EarthDomainColors(
     anmlBg = Color(0xFFFBF3D0),
     anmlFg = Color(0xFFB08400),
     stakingBg = Color(0xFFE8F1E1),
@@ -41,22 +51,9 @@ internal val LightEarthDomainColors = EarthDomainColors(
     gasWarningFg = Color(0xFF93370D),
 )
 
-internal val DarkEarthDomainColors = EarthDomainColors(
-    anmlBg = Color(0xFF241D06),
-    anmlFg = Color(0xFFE8D06B),
-    stakingBg = Color(0xFF0D1A09),
-    stakingFg = Color(0xFF87B76F),
-    dexBg = Color(0xFF031A17),
-    dexFg = Color(0xFF4CC3B2),
-    governanceBg = Color(0xFF150B29),
-    governanceFg = Color(0xFFA182F1),
-    gasWarningBg = Color(0xFF2E1105),
-    gasWarningFg = Color(0xFFFEDF89),
-)
-
 @Suppress("CompositionLocalAllowlist")
 internal val LocalEarthDomainColors =
-    staticCompositionLocalOf { LightEarthDomainColors }
+    staticCompositionLocalOf { EarthDomainColorsOnGround }
 
 /** `EarthTheme.domain.stakingFg` alongside `EarthTheme.colors.Text.textPrimary`. */
 val EarthThemeDomain: EarthDomainColors

@@ -33,7 +33,10 @@ internal fun Explorer.Tx.toActivityRow(self: String): ActivityRow {
         "MsgUndelegate" -> ActivityKind.Unstaked
         "MsgBeginRedelegate" -> ActivityKind.Staked
         "MsgWithdrawDelegatorReward" -> ActivityKind.Claimed
-        "MsgRegister", "MsgClaimAnml" -> ActivityKind.Registered
+        "MsgRegister" -> ActivityKind.Registered
+        // Distinct from registration: you register once and claim every day,
+        // so folding them together labels the whole history "Registered".
+        "MsgClaimAnml" -> ActivityKind.ClaimedAnml
         "MsgSwap" -> ActivityKind.Swapped
         "MsgSetAllocations", "MsgSetAllocation" -> ActivityKind.Allocated
         else -> ActivityKind.Sent

@@ -33,6 +33,14 @@ data class WalletUiState(
     val stakedUerth: Long,
     val rewardsUerth: Long,
     val registered: Boolean,
+    /**
+     * Unix seconds at which ANML can next be claimed, or 0 when it can be
+     * claimed now.
+     *
+     * An absolute instant rather than a remaining duration, so the countdown
+     * stays right without the state being refreshed every second.
+     */
+    val anmlClaimableAt: Long = 0L,
 ) {
     companion object {
         /**
@@ -50,6 +58,7 @@ data class WalletUiState(
             stakedUerth = 0,
             rewardsUerth = 0,
             registered = false,
+            anmlClaimableAt = 0L,
         )
     }
 }

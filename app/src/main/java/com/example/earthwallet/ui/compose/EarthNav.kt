@@ -23,7 +23,7 @@ sealed interface EarthRoute {
      * The tabs.
      *
      * Two axes, not one: what this wallet holds, and what the protocol does.
-     * Wallet and Earn are yours — a balance, a stake, rewards accruing. Markets,
+     * Wallet and Earn are yours — a balance, a stake, rewards accruing. Swap,
      * Govern and Explore are the chain's, and you visit them to act on it rather
      * than to check on yourself. Collapsing those into one list was what buried
      * liquidity, allocations and the explorer three taps deep in a settings menu.
@@ -43,8 +43,8 @@ sealed interface EarthRoute {
         override val icon = R.drawable.ic_home_earn
     }
 
-    data object Markets : Tab {
-        override val label = "Markets"
+    data object Swap : Tab {
+        override val label = "Swap"
         override val icon = R.drawable.ic_home_swap
     }
 
@@ -63,7 +63,6 @@ sealed interface EarthRoute {
     data object Send : EarthRoute
     data object Receive : EarthRoute
     data object Activity : EarthRoute
-    data object Swap : EarthRoute
     data object Liquidity : EarthRoute
     data object Settings : EarthRoute
     data object AddressBook : EarthRoute
@@ -77,7 +76,7 @@ sealed interface EarthRoute {
 val EARTH_TABS = listOf(
     EarthRoute.Wallet,
     EarthRoute.Earn,
-    EarthRoute.Markets,
+    EarthRoute.Swap,
     EarthRoute.Govern,
     EarthRoute.Explore,
 )

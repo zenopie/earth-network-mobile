@@ -56,10 +56,16 @@ fun ZcashTheme(
     balancesAvailable: Boolean = true,
     content: @Composable () -> Unit
 ) {
-    val useDarkMode = forceDarkMode || isSystemInDarkTheme()
-    val baseColors = if (useDarkMode) DarkColorPalette else LightColorPalette
-    val extendedColors = if (useDarkMode) DarkExtendedColorPalette else LightExtendedColorPalette
-    val earthColors = if (useDarkMode) DarkEarthColorsInternal else LightEarthColorsInternal
+    // Earth change: one mode, always light. Zashi ships light and dark and
+    // lets the system pick; carrying two palettes means every colour decision
+    // gets made twice and verified once, and the dark half drifts. Earth has
+    // one ground. forceDarkMode stays in the signature because their previews
+    // pass it, and is ignored.
+    @Suppress("UNUSED_EXPRESSION") forceDarkMode
+    val useDarkMode = false
+    val baseColors = LightColorPalette
+    val extendedColors = LightExtendedColorPalette
+    val earthColors = LightEarthColorsInternal
 
     ZcashSystemBarTheme(useDarkMode)
 

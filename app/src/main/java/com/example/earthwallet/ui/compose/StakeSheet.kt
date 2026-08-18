@@ -1,5 +1,7 @@
 package network.erth.wallet.ui.compose
 
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -116,11 +118,12 @@ fun StakeSheet(
         Spacer(Modifier.height(dimens.space8))
         EarthTextField(
             value = amount,
-            onValueChange = { amount = it },
+            onValueChange = { amount = it.asAmountInput(amount) },
             modifier = Modifier.fillMaxWidth(),
             error = error,
             placeholder = { Text("0") },
             suffix = { Text("ERTH") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         )
 
         Spacer(Modifier.height(dimens.space8))

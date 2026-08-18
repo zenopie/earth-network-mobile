@@ -32,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -76,6 +77,7 @@ fun EarthBigIconButton(
     Surface(
         modifier = modifier,
         onClick = state.onClick,
+        enabled = state.isEnabled,
         color = EarthColors.Surfaces.bgPrimary,
         shape = RoundedCornerShape(22.dp),
         border =
@@ -98,7 +100,21 @@ fun EarthBigIconButton(
                     .padding(start = 16.dp, top = 16.dp, end = 16.dp)
                     .size(24.dp),
                 painter = painterResource(state.icon),
-                colorFilter = ColorFilter.tint(EarthColors.Text.textPrimary),
+                colorFilter = when {
+                    state.tint -> ColorFilter.tint(
+                        if (state.isEnabled) {
+                            EarthColors.Text.textPrimary
+                        } else {
+                            EarthColors.Text.textTertiary
+                        },
+                    )
+                    // Untinted art still has to read as unavailable, so it is
+                    // desaturated rather than left in full colour.
+                    !state.isEnabled -> ColorFilter.colorMatrix(
+                        ColorMatrix().apply { setToSaturation(0f) },
+                    )
+                    else -> null
+                },
                 contentDescription = state.text.getValue()
             )
             Spacer(Modifier.height(4.dp))
@@ -107,7 +123,11 @@ fun EarthBigIconButton(
                 text = state.text.getValue(),
                 style = EarthTypography.textXs,
                 fontWeight = FontWeight.Medium,
-                color = EarthColors.Text.textPrimary,
+                color = if (state.isEnabled) {
+                    EarthColors.Text.textPrimary
+                } else {
+                    EarthColors.Text.textTertiary
+                },
                 maxLines = 1,
                 overflow = TextOverflow.Clip
             )
@@ -119,6 +139,17 @@ data class BigIconButtonState(
     val text: StringResource,
     @param:DrawableRes val icon: Int,
     val onClick: () -> Unit,
+    /** Earth addition: theirs are always live; Earth has actions that wait. */
+    val isEnabled: Boolean = true,
+    /**
+     * Earth addition: whether to ink the icon with the theme's text colour.
+     *
+     * Their icons are all monochrome glyphs, so tinting is unconditional
+     * there. Earth's token marks are not — the ANML coin is yellow, and
+     * tinting it black turns the one recognisable thing about it into another
+     * grey shape.
+     */
+    val tint: Boolean = true,
 )
 
 @PreviewScreens

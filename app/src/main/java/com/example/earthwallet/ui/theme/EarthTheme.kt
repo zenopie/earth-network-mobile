@@ -3,7 +3,6 @@ package network.erth.wallet.ui.theme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
-import androidx.compose.foundation.isSystemInDarkTheme
 import network.erth.wallet.ui.vendor.theme.ZcashTheme
 import network.erth.wallet.ui.vendor.theme.colors.EarthColorsInternal
 import network.erth.wallet.ui.vendor.theme.colors.LocalEarthColors
@@ -35,16 +34,20 @@ object EarthTheme {
 @Suppress("CompositionLocalAllowlist")
 internal val LocalEarthDimens = staticCompositionLocalOf { EarthDimens() }
 
+/**
+ * One theme, regardless of the system setting.
+ *
+ * Earth's ground is the brand green rather than a neutral with the brand
+ * applied to it, so there is no dark variant to switch to — inverting it would
+ * produce a different brand, not the same one after dark. The system setting is
+ * deliberately not read.
+ */
 @Composable
-fun EarthTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    content: @Composable () -> Unit,
-) {
-    ZcashTheme(forceDarkMode = darkTheme) {
+fun EarthTheme(content: @Composable () -> Unit) {
+    ZcashTheme {
         CompositionLocalProvider(
             LocalEarthDimens provides EarthDimens(),
-            LocalEarthDomainColors provides
-                if (darkTheme) DarkEarthDomainColors else LightEarthDomainColors,
+            LocalEarthDomainColors provides EarthDomainColorsOnGround,
             content = content,
         )
     }

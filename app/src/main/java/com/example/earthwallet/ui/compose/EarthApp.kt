@@ -17,6 +17,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import network.erth.earth.proto.allocation.StreamId
 import network.erth.wallet.R
 import network.erth.wallet.chain.Bank
+import network.erth.wallet.chain.Dex
 import network.erth.wallet.chain.Personhood
 import network.erth.wallet.ui.vendor.component.BlankBgScaffold
 
@@ -61,7 +62,7 @@ fun EarthApp(
         when (nav.currentTab) {
             EarthRoute.Wallet -> wallet.refresh()
             EarthRoute.Earn -> earn.refresh()
-            EarthRoute.Markets -> markets.refresh()
+            EarthRoute.Swap -> markets.refresh()
             EarthRoute.Govern -> allocation.refresh()
             EarthRoute.Explore -> explore.refresh()
         }
@@ -72,9 +73,22 @@ fun EarthApp(
         when (nav.currentTab) {
             EarthRoute.Earn -> earn.refresh()
             EarthRoute.Govern -> allocation.refresh()
-            EarthRoute.Markets -> markets.refresh()
+            EarthRoute.Swap -> markets.refresh()
             else -> Unit
         }
+    }
+
+    val claimAnml = {
+        tx.request(
+            details = TxConfirmDetails(
+                action = "Claim ANML",
+                msgTypeUrl = "/earth.personhood.v1.MsgClaimAnml",
+                feeUerth = TxController.DEFAULT_FEE_UERTH,
+                balanceUerth = state?.balanceUerth ?: 0L,
+            ),
+            onSuccess = refreshAll,
+            build = { ctx -> listOf(Personhood.msgClaimAnml(walletAddress(ctx))) },
+        )
     }
 
     val rows = remember(activity, nav) {
@@ -118,6 +132,8 @@ fun EarthApp(
             exploreState = exploreState,
             earn = earn,
             allocation = allocation,
+            markets = markets,
+            onClaimAnml = claimAnml,
             version = version,
             balancesVisible = balancesVisible,
             onOpenUrl = onOpenUrl,
@@ -147,6 +163,8 @@ private fun EarthContent(
     exploreState: ExploreUiState?,
     earn: EarnViewModel,
     allocation: AllocationViewModel,
+    markets: MarketsViewModel,
+    onClaimAnml: () -> Unit,
     version: String,
     balancesVisible: Boolean,
     onOpenUrl: (String) -> Unit,
@@ -176,7 +194,8 @@ private fun EarthContent(
             onReceive = { nav.push(EarthRoute.Receive) },
             onSend = { nav.push(EarthRoute.Send) },
             onEarn = { nav.selectTab(EarthRoute.Earn) },
-            onSwap = { nav.push(EarthRoute.Swap) },
+            onClaimAnml = onClaimAnml,
+            anmlClaimableAt = state?.anmlClaimableAt,
             onSeeAllActivity = { nav.push(EarthRoute.Activity) },
             modifier = inset,
             contentPadding = padding,
@@ -184,7 +203,6 @@ private fun EarthContent(
 
         EarthRoute.Earn -> EarnScreen(
             state = earnState,
-            anmlClaimable = loaded.registered,
             onStake = { staking = StakeIntent.Stake },
             onUnstake = { staking = StakeIntent.Unstake },
             onClaim = {
@@ -206,26 +224,43 @@ private fun EarthContent(
                     build = earn.claimAll(validators),
                 )
             },
-            onClaimAnml = {
-                tx.request(
-                    details = TxConfirmDetails(
-                        action = "Claim ANML",
-                        msgTypeUrl = "/earth.personhood.v1.MsgClaimAnml",
-                        feeUerth = TxController.DEFAULT_FEE_UERTH,
-                        balanceUerth = loaded.balanceUerth,
-                    ),
-                    onSuccess = onRefresh,
-                    build = { ctx -> listOf(Personhood.msgClaimAnml(walletAddress(ctx))) },
-                )
-            },
             modifier = inset,
         )
 
-        EarthRoute.Markets -> MarketsScreen(
+        EarthRoute.Swap -> SwapScreen(
+            erthBalance = state?.let { formatUerth(it.balanceUerth) },
+            anmlBalance = state?.let { it.anmlBalance ?: "0" },
             pools = marketsState?.pools,
             swapFeePercent = marketsState?.swapFeePercent,
-            onSwap = { nav.push(EarthRoute.Swap) },
             onLiquidity = { nav.push(EarthRoute.Liquidity) },
+            onSwap = { denomIn, amountIn, denomOut, minOut ->
+                tx.request(
+                    details = TxConfirmDetails(
+                        action = "Swap",
+                        msgTypeUrl = "/earth.dex.v1.MsgSwap",
+                        feeUerth = TxController.DEFAULT_FEE_UERTH,
+                        balanceUerth = loaded.balanceUerth,
+                        amountLabel = "You pay",
+                        amountValue = "${formatUerth(amountIn.toLong())} " +
+                            denomIn.removePrefix("u").uppercase(),
+                    ),
+                    onSuccess = {
+                        onRefresh()
+                        markets.refresh()
+                    },
+                    build = { ctx ->
+                        listOf(
+                            Dex.msgSwap(
+                                walletAddress(ctx),
+                                denomIn,
+                                amountIn.toString(),
+                                denomOut,
+                                minOut.toString(),
+                            ),
+                        )
+                    },
+                )
+            },
             modifier = inset,
         )
 
@@ -252,12 +287,6 @@ private fun EarthContent(
             state = loaded,
             tx = tx,
             onSent = onRefresh,
-            modifier = inset,
-        )
-
-        EarthRoute.Swap -> SwapScreen(
-            erthBalance = formatUerth(loaded.balanceUerth),
-            anmlBalance = loaded.anmlBalance ?: "0",
             modifier = inset,
         )
 
@@ -425,7 +454,6 @@ private fun EarthRoute.title(): String = when (this) {
     is EarthRoute.Tab -> label
     EarthRoute.Send -> "Send"
     EarthRoute.Receive -> "Receive"
-    EarthRoute.Swap -> "Swap"
     EarthRoute.Liquidity -> "Liquidity"
     EarthRoute.Activity -> "Activity"
     EarthRoute.Settings -> "Settings"

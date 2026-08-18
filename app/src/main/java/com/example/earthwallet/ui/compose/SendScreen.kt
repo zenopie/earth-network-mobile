@@ -8,6 +8,9 @@ import network.erth.wallet.ui.vendor.component.EarthButtonDefaults
 import network.erth.wallet.ui.vendor.component.EarthCard
 import network.erth.wallet.ui.vendor.theme.colors.EarthColors
 import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -74,6 +77,14 @@ fun SendScreen(
             error = recipientError,
             placeholder = { Text("earth1…", style = EarthTypography.textMd) },
             modifier = Modifier.fillMaxWidth(),
+            // No capitalisation, no autocorrect: bech32 is lowercase, and a
+            // keyboard that helpfully capitalises the first letter produces an
+            // address that fails checksum for a reason nobody can see.
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Ascii,
+                autoCorrectEnabled = false,
+                capitalization = KeyboardCapitalization.None,
+            ),
         )
         Spacer(Modifier.height(dimens.space16))
 
@@ -85,6 +96,7 @@ fun SendScreen(
             placeholder = { Text("0.00", style = EarthTypography.textMd) },
             suffix = { Text(denom, style = EarthTypography.textMd) },
             modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         )
         Spacer(Modifier.height(dimens.space8))
         Text(

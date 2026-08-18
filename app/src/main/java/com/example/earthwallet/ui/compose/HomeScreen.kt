@@ -23,6 +23,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -58,8 +62,10 @@ import network.erth.wallet.ui.vendor.util.stringRes
  * What changed is the state behind it. Zcash's balance is a Zatoshi with a dust
  * threshold and a shielded/transparent split; Earth's is one integer in uerth,
  * so the widget takes a formatted string and the split is only for type sizing.
- * Their fourth action is Buy, routed through an on-ramp partner Earth has not
- * chosen — Earn replaces it, which is the action Earth actually has.
+ * Their third and fourth actions are Scan and Buy — a payment URI and an
+ * on-ramp partner, neither of which Earth has. Earn and Claim take those slots,
+ * which are the two things an Earth wallet does that a Zcash one cannot:
+ * stake, and collect what personhood accrues.
  */
 @Composable
 fun HomeScreen(
@@ -71,7 +77,9 @@ fun HomeScreen(
     onReceive: () -> Unit,
     onSend: () -> Unit,
     onEarn: () -> Unit,
-    onSwap: () -> Unit,
+    onClaimAnml: () -> Unit,
+    /** Unix seconds until ANML can be claimed; 0 means now, and null means never. */
+    anmlClaimableAt: Long?,
     onSeeAllActivity: () -> Unit,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
@@ -92,7 +100,8 @@ fun HomeScreen(
             onReceive = onReceive,
             onSend = onSend,
             onEarn = onEarn,
-            onSwap = onSwap,
+            onClaimAnml = onClaimAnml,
+            anmlClaimableAt = anmlClaimableAt,
         )
         Spacer(Modifier.height(2.dp))
         ActivityPanel(
@@ -197,9 +206,28 @@ private fun HomeActions(
     onReceive: () -> Unit,
     onSend: () -> Unit,
     onEarn: () -> Unit,
-    onSwap: () -> Unit,
+    onClaimAnml: () -> Unit,
+    anmlClaimableAt: Long?,
     modifier: Modifier = Modifier,
 ) {
+    // Recomputed once a second only while a claim is actually pending, so the
+    // label counts down without the whole row recomposing the rest of the time.
+    var now by remember { mutableLongStateOf(System.currentTimeMillis() / 1000) }
+    val pending = anmlClaimableAt != null && anmlClaimableAt > now
+    LaunchedEffect(anmlClaimableAt, pending) {
+        while (pending) {
+            delay(1_000)
+            now = System.currentTimeMillis() / 1000
+        }
+    }
+
+    val claimable = anmlClaimableAt == 0L
+    val claimLabel = when {
+        anmlClaimableAt == null -> "Claim"
+        claimable -> "Claim"
+        else -> (anmlClaimableAt - now).coerceAtLeast(0).asCountdown()
+    }
+
     Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
         EarthBigIconButton(
             modifier = Modifier.weight(1f).aspectRatio(HOME_ACTION_RATIO),
@@ -215,7 +243,19 @@ private fun HomeActions(
         )
         EarthBigIconButton(
             modifier = Modifier.weight(1f).aspectRatio(HOME_ACTION_RATIO),
-            state = BigIconButtonState(stringRes("Swap"), R.drawable.ic_home_swap, onSwap),
+            // The ANML coin in its own colour: this is the one action here that
+            // is about a specific token rather than about the balance, and the
+            // mark says which token faster than the word does.
+            state = BigIconButtonState(
+                text = stringRes(claimLabel),
+                icon = R.drawable.anml,
+                onClick = onClaimAnml,
+                // Greyed out when the day's claim is already taken, and again
+                // when there is no registration to claim against — both are
+                // "nothing to collect", and both should look it.
+                isEnabled = claimable,
+                tint = false,
+            ),
         )
     }
 }
@@ -336,3 +376,20 @@ private fun OverlappingBoxes(modifier: Modifier = Modifier, content: @Composable
  * mistake, and no card here has content that wants to grow.
  */
 private const val HOME_ACTION_RATIO = 106f / 100f
+
+/**
+ * "5h 12m" until the claim opens, or "48s" in the last minute.
+ *
+ * Minutes are dropped past an hour and seconds past a minute: at that distance
+ * the extra unit is noise, and a label that reads "5h 12m 44s" changes every
+ * second while telling you nothing new.
+ */
+private fun Long.asCountdown(): String {
+    val hours = this / 3600
+    val minutes = (this % 3600) / 60
+    return when {
+        hours > 0 -> "${hours}h ${minutes}m"
+        minutes > 0 -> "${minutes}m"
+        else -> "${this}s"
+    }
+}

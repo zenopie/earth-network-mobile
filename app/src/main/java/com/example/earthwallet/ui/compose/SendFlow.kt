@@ -57,9 +57,9 @@ fun SendFlow(
 
     SendScreen(
         recipient = recipient,
-        onRecipientChange = { recipient = it },
+        onRecipientChange = { recipient = it.trim() },
         amount = amount,
-        onAmountChange = { amount = it },
+        onAmountChange = { amount = it.asAmountInput(amount) },
         balanceLabel = formatUerth(state.balanceUerth),
         denom = "ERTH",
         recipientError = recipientError,

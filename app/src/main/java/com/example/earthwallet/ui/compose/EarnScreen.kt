@@ -26,7 +26,12 @@ import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
 import com.valentinilk.shimmer.shimmer
 
 /**
- * Earn: staking and its rewards.
+ * Earn: staking and its rewards, and nothing else.
+ *
+ * The daily ANML claim used to sit here too. It moved to the wallet screen's
+ * action row, where it belongs: claiming ANML is a one-tap action on a balance,
+ * not a position to manage, and putting it beside staking made this screen
+ * answer two unrelated questions.
  *
  * There is no Zodl equivalent — Zcash has no staking — so this borrows the
  * shape of their address panel instead: a large-radius card carrying the
@@ -41,12 +46,9 @@ import com.valentinilk.shimmer.shimmer
 @Composable
 fun EarnScreen(
     state: EarnUiState?,
-    /** Registered wallets accrue ANML daily; unregistered ones have nothing to claim. */
-    anmlClaimable: Boolean,
     onStake: () -> Unit,
     onUnstake: () -> Unit,
     onClaim: () -> Unit,
-    onClaimAnml: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val dimens = EarthTheme.dimens
@@ -100,35 +102,6 @@ fun EarnScreen(
                 modifier = Modifier.weight(1f),
                 colors = EarthButtonDefaults.secondaryColors(),
             )
-        }
-
-        if (anmlClaimable) {
-            Spacer(Modifier.height(dimens.space24))
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .background(EarthTheme.domain.anmlBg, shape)
-                    .padding(dimens.space16),
-            ) {
-                Text(
-                    text = "Daily ANML",
-                    style = EarthTypography.textMd,
-                    color = EarthColors.Text.textPrimary,
-                )
-                Text(
-                    text = "Verified humans accrue ANML every day. Unclaimed days " +
-                        "do not stack, so this is worth claiming when you think of it.",
-                    style = EarthTypography.textSm,
-                    color = EarthColors.Text.textSecondary,
-                )
-                Spacer(Modifier.height(dimens.space12))
-                EarthButton(
-                    text = "Claim ANML",
-                    onClick = onClaimAnml,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = EarthButtonDefaults.secondaryColors(),
-                )
-            }
         }
 
         if (!state?.delegations.isNullOrEmpty()) {

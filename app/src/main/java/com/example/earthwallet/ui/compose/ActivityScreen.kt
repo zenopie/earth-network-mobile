@@ -34,7 +34,7 @@ data class ActivityRow(
     val onClick: () -> Unit = {},
 )
 
-enum class ActivityKind { Sent, Received, Staked, Unstaked, Claimed, Registered, Swapped, Allocated }
+enum class ActivityKind { Sent, Received, Staked, Unstaked, Claimed, ClaimedAnml, Registered, Swapped, Allocated }
 
 /**
  * Transaction history.
@@ -84,6 +84,7 @@ internal fun ActivityItem(row: ActivityRow) {
         ActivityKind.Staked -> Triple("▲", EarthTheme.domain.stakingFg, EarthTheme.domain.stakingBg)
         ActivityKind.Unstaked -> Triple("▼", EarthTheme.domain.stakingFg, EarthTheme.domain.stakingBg)
         ActivityKind.Claimed -> Triple("✦", EarthTheme.domain.stakingFg, EarthTheme.domain.stakingBg)
+        ActivityKind.ClaimedAnml -> Triple("✦", EarthTheme.domain.anmlFg, EarthTheme.domain.anmlBg)
         ActivityKind.Registered -> Triple("✓", EarthTheme.domain.anmlFg, EarthTheme.domain.anmlBg)
         ActivityKind.Swapped -> Triple("⇄", EarthTheme.domain.dexFg, EarthTheme.domain.dexBg)
         ActivityKind.Allocated -> Triple("◴", EarthTheme.domain.governanceFg, EarthTheme.domain.governanceBg)
@@ -105,7 +106,7 @@ internal fun ActivityItem(row: ActivityRow) {
         }
         Column(Modifier.weight(1f).padding(start = dimens.space12)) {
             Text(
-                text = row.kind.name + (if (row.failed) " · failed" else ""),
+                text = row.kind.label() + (if (row.failed) " · failed" else ""),
                 style = EarthTypography.textMd.copy(
                     color = if (row.failed) {
                         EarthColors.Utility.ErrorRed.utilityError700
@@ -124,4 +125,15 @@ internal fun ActivityItem(row: ActivityRow) {
             style = EarthTypography.textMd.copy(color = EarthColors.Text.textPrimary),
         )
     }
+}
+
+/**
+ * What the row calls itself.
+ *
+ * The enum names are single words so they can be compared; the labels are not
+ * always. "ClaimedAnml" as-is reads as a typo.
+ */
+private fun ActivityKind.label(): String = when (this) {
+    ActivityKind.ClaimedAnml -> "Claimed ANML"
+    else -> name
 }

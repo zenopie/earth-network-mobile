@@ -251,7 +251,11 @@ object EarthButtonDefaults {
         source: EarthColorsInternal = EarthColors,
         containerColor: Color = source.Btns.Secondary.btnSecondaryBg,
         contentColor: Color = source.Btns.Secondary.btnSecondaryFg,
-        borderColor: Color = Color.Unspecified,
+        // Earth fix: default to the border token rather than dropping it. The
+        // secondary button's fill is the same white as the page, so without
+        // the border it is invisible — the palette has btnSecondaryBorder for
+        // exactly this and nothing was reading it.
+        borderColor: Color = source.Btns.Secondary.btnSecondaryBorder,
         disabledContainerColor: Color = source.Btns.Secondary.btnSecondaryBgDisabled,
         disabledContentColor: Color = source.Btns.Secondary.btnSecondaryFgDisabled,
     ) = EarthButtonColors(

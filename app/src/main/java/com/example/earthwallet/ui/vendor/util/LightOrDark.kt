@@ -15,4 +15,9 @@ import androidx.compose.runtime.ReadOnlyComposable
 
 @Composable
 @ReadOnlyComposable
-infix fun <T> T.orDark(dark: T): T = if (isSystemInDarkTheme()) dark else this
+// Earth change: the app has one mode, so the dark branch is never taken. Kept
+// as a function rather than deleted because ~30 vendored components call it,
+// and stripping it from all of them is churn that makes the next re-vendor
+// harder for no gain.
+@Suppress("UnusedParameter")
+infix fun <T> T.orDark(dark: T): T = this

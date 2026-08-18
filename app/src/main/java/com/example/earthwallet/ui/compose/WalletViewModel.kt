@@ -92,9 +92,12 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
                         Staking.delegations(address).sumOf { it.amount.toLongOrNull() ?: 0L }
                     }.getOrDefault(0L)
 
-                    val registered = runCatching {
-                        Personhood.isRegistered(address)
-                    }.getOrDefault(false)
+                    // registrationStatus rather than isRegistered: the same
+                    // request also carries the last claim time, and the claim
+                    // button needs both.
+                    val status = runCatching {
+                        Personhood.registrationStatus(address)
+                    }.getOrNull()
 
                     val rewards = runCatching {
                         Staking.totalRewards(address).toLongOrNull() ?: 0L
@@ -106,7 +109,14 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
                         anmlBalance = if (anml > 0) formatSix(anml) else null,
                         stakedUerth = staked,
                         rewardsUerth = rewards,
-                        registered = registered,
+                        registered = status?.registered == true,
+                        anmlClaimableAt = when {
+                            status == null || !status.registered -> 0L
+                            Personhood.isAnmlClaimable(status) -> 0L
+                            // The chain's rule is a rolling 24 hours from the
+                            // last claim, not a UTC day boundary.
+                            else -> status.lastAnmlClaim + 86_400L
+                        },
                     )
                 }
                 _state.value = loaded
