@@ -71,14 +71,15 @@ fun AllocationScreen(
         Spacer(Modifier.height(dimens.space16))
         Text(
             text = "Two of Earth's four emission streams are directed by vote. " +
-                "One counts people, one counts stake — you can hold a say in both.",
+                "The Caretaker Fund counts people, Groundworks counts stake — " +
+                "you can hold a say in both.",
             style = EarthTypography.textSm,
             color = EarthColors.Text.textSecondary,
         )
 
         Spacer(Modifier.height(dimens.space16))
         GovernRow(
-            title = "Human stream",
+            title = "Caretaker Fund",
             detail = "One verified human, one vote.",
             status = state?.human.statusFor(
                 eligible = registered,
@@ -91,7 +92,7 @@ fun AllocationScreen(
 
         Spacer(Modifier.height(dimens.space8))
         GovernRow(
-            title = "Capital stream",
+            title = "Groundworks Fund",
             detail = "Weighted by the ERTH you have staked.",
             status = state?.capital.statusFor(
                 eligible = stakedUerth > 0,

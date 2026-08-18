@@ -552,7 +552,7 @@ private fun EarthContent(
                 StreamId.STREAM_ID_CAPITAL
             }
             StreamDetailScreen(
-                title = if (route.human) "Human stream" else "Capital stream",
+                title = if (route.human) "Caretaker Fund" else "Groundworks Fund",
                 detail = if (route.human) {
                     "One verified human, one vote."
                 } else {
@@ -705,9 +705,9 @@ private fun EarthContent(
         if (streamState != null) {
             AllocationEditSheet(
                 title = if (stream == StreamId.STREAM_ID_HUMAN) {
-                    "Human stream"
+                    "Caretaker Fund"
                 } else {
-                    "Capital stream"
+                    "Groundworks Fund"
                 },
                 stream = streamState,
                 onDismiss = { editing = null },
@@ -794,7 +794,7 @@ private fun EarthRoute.title(): String = when (this) {
     EarthRoute.Settings -> "Settings"
     EarthRoute.AddressBook -> "Address book"
     EarthRoute.About -> "About"
-    is EarthRoute.Stream -> if (human) "Human stream" else "Capital stream"
+    is EarthRoute.Stream -> if (human) "Caretaker Fund" else "Groundworks Fund"
     EarthRoute.Proposals -> "Proposals"
     EarthRoute.Explore -> "Explorer"
     EarthRoute.Personhood -> "Identity"
