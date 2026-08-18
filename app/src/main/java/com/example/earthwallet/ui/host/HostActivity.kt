@@ -1,5 +1,6 @@
 package network.erth.wallet.ui.host
 
+import network.erth.wallet.ui.ads.RewardedAds
 import network.erth.wallet.R
 import android.content.pm.ApplicationInfo
 import android.content.Intent
@@ -747,46 +748,15 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
      * Load a rewarded ad for "Ads for Gas"
      */
     private fun loadRewardedAd() {
-        val adRequest = AdRequest.Builder().build()
-
-        RewardedAd.load(this, REWARDED_AD_UNIT_ID, adRequest,
-            object : RewardedAdLoadCallback() {
-                override fun onAdLoaded(rewardedAd: RewardedAd) {
-                    mRewardedAd = rewardedAd
-                    isRewardedAdLoaded = true
-
-                    mRewardedAd?.fullScreenContentCallback = object : FullScreenContentCallback() {
-                        override fun onAdDismissedFullScreenContent() {
-                            mRewardedAd = null
-                            isRewardedAdLoaded = false
-                            loadRewardedAd()
-                        }
-
-                        override fun onAdFailedToShowFullScreenContent(adError: com.google.android.gms.ads.AdError) {
-                            Log.e(TAG, "Rewarded ad failed to show: ${adError.message}")
-                            mRewardedAd = null
-                            isRewardedAdLoaded = false
-                            rewardedAdCallback?.invoke(false)
-                            rewardedAdCallback = null
-                            loadRewardedAd()
-                        }
-                    }
-                }
-
-                override fun onAdFailedToLoad(loadAdError: LoadAdError) {
-                    Log.e(TAG, "Failed to load rewarded ad: ${loadAdError.message}")
-                    mRewardedAd = null
-                    isRewardedAdLoaded = false
-                }
-            })
+        // Delegates to the process-level holder so the ad preloaded here is
+        // still available once registration moves into NFCScannerActivity.
+        RewardedAds.preload(this)
     }
 
     /**
      * Check if rewarded ad is ready to show
      */
-    fun isRewardedAdReady(): Boolean {
-        return mRewardedAd != null && isRewardedAdLoaded
-    }
+    fun isRewardedAdReady(): Boolean = RewardedAds.isReady()
 
     /**
      * Show rewarded ad for "Ads for Gas" with Server-Side Verification
@@ -794,26 +764,7 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
      * @param callback Called with true if user earned reward, false otherwise
      */
     fun showRewardedAd(walletAddress: String, callback: (Boolean) -> Unit) {
-        if (mRewardedAd != null && isRewardedAdLoaded) {
-            rewardedAdCallback = callback
-
-            // Set up Server-Side Verification with wallet address as custom data
-            // AdMob will send this to your verification URL callback
-            val ssvOptions = ServerSideVerificationOptions.Builder()
-                .setCustomData(walletAddress)
-                .build()
-            mRewardedAd?.setServerSideVerificationOptions(ssvOptions)
-
-            mRewardedAd?.show(this) { rewardItem ->
-                // User earned the reward - SSV callback will handle granting gas
-                Log.d(TAG, "User earned reward: ${rewardItem.amount} ${rewardItem.type}, SSV will grant gas to $walletAddress")
-                rewardedAdCallback?.invoke(true)
-                rewardedAdCallback = null
-            }
-        } else {
-            // No ad loaded
-            callback(false)
-        }
+        RewardedAds.show(this, walletAddress, callback)
     }
 
     // =============================================================================

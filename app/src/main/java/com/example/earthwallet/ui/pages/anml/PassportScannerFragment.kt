@@ -1,5 +1,6 @@
 package network.erth.wallet.ui.pages.anml
 
+import network.erth.wallet.ui.ads.RewardedAds
 import network.erth.wallet.R
 import android.app.Activity
 import android.content.Intent
@@ -629,14 +630,14 @@ class PassportScannerFragment : Fragment(), MRZInputFragment.MRZInputListener {
                     }
 
                     override fun onWatchAdForGas(callback: (Boolean) -> Unit) {
-                        val host = activity as? HostActivity
-                        if (host == null) {
-                            callback(false)
-                        } else {
-                            // The address is the SSV custom_data: it is what tells
-                            // the backend who to send the dust to.
-                            host.showRewardedAd(address, callback)
-                        }
+                        // Not `activity as? HostActivity`: this fragment runs in
+                        // NFCScannerActivity, so that cast was always null and the
+                        // button silently did nothing. The ad is held for the
+                        // process, so any Activity on top can show it.
+                        //
+                        // The address is the SSV custom_data: it is what tells the
+                        // backend who to send the dust to.
+                        RewardedAds.show(requireActivity(), address, callback)
                     }
                 },
             )
