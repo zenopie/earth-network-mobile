@@ -104,6 +104,29 @@ object Personhood {
      * key; dscDer is the Document Signer certificate the chain verifies against
      * its CSCA trust store and binds to the proof's dsc_key output.
      */
+    /**
+     * Registration's gas limit and fee, defined here — beside the message they
+     * pay for — because the caller cannot set them by being careful.
+     *
+     * This existed as a constant in PassportScannerFragment that fed only the
+     * confirmation sheet, while register() fell through to EarthTx.broadcast's
+     * 400_000 default. Raising the fragment's copy changed the number the user
+     * was shown and not the number sent, and the transaction still ran out of
+     * gas at exactly the old limit.
+     *
+     * MsgRegister verifies an UltraHonk proof on-chain and is the most expensive
+     * message the app sends. A fresh account pays more than a used one: the ante
+     * handler stores its public key on the first transaction, which measured as
+     * 400324 gas against a 400000 limit — over, and precisely the case that
+     * matters, since a new human's first transaction is always this one.
+     *
+     * Generous rather than tuned: the fee is flat rather than gas x price, and
+     * the chain reports max_gas -1, so headroom costs nothing while an
+     * under-estimate burns the fee and the ad view that paid for it.
+     */
+    const val REGISTER_GAS_LIMIT = 3_000_000L
+    const val REGISTER_FEE_UERTH = "2000"
+
     fun register(
         key: ECKey,
         proof: ByteArray,
@@ -120,7 +143,12 @@ object Personhood {
             .setAffiliate(affiliate ?: "")
             .setDscDer(ByteString.copyFrom(dscDer))
             .build()
-        return EarthTx.broadcast(key, listOf(EarthTx.anyOf(Constants.MSG_REGISTER_TYPE_URL, msg)))
+        return EarthTx.broadcast(
+            key,
+            listOf(EarthTx.anyOf(Constants.MSG_REGISTER_TYPE_URL, msg)),
+            gasLimit = REGISTER_GAS_LIMIT,
+            feeUerth = REGISTER_FEE_UERTH,
+        )
     }
 
     /** Daily ANML claim. Returns tx hash. */
