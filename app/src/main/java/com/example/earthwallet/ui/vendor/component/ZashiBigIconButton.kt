@@ -32,7 +32,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -116,11 +115,10 @@ fun EarthBigIconButton(
                             EarthColors.Btns.Brand.btnBrandFgDisabled
                         },
                     )
-                    // Untinted art still has to read as unavailable, so it is
-                    // desaturated rather than left in full colour.
-                    !state.isEnabled -> ColorFilter.colorMatrix(
-                        ColorMatrix().apply { setToSaturation(0f) },
-                    )
+                    // Untinted art keeps its colour even when disabled. The
+                    // ANML coin is the one thing on the card that identifies
+                    // which token it claims, and greying it out costs that to
+                    // restate what the fill and the label already say.
                     else -> null
                 },
                 contentDescription = state.text.getValue()
