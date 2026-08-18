@@ -131,7 +131,10 @@ fun StreamDetailScreen(
             color = EarthColors.Text.textTertiary,
         )
 
-        if (eligibility == null) {
+        // Only under Preferred. Actual is the whole stream's tally — a vote
+        // button there would sit under a chart it cannot change, and read as
+        // editing everyone's split rather than your own.
+        if (lens == Lens.Preferred && eligibility == null) {
             Spacer(Modifier.height(dimens.space24))
             EarthButton(
                 text = if (stream.slices.isEmpty()) "Allocate" else "Change allocation",
