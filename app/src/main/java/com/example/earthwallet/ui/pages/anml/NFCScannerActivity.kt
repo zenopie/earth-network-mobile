@@ -84,7 +84,7 @@ class NFCScannerActivity : AppCompatActivity(), PassportScannerFragment.Passport
         }
     }
 
-    override fun onNewIntent(intent: Intent?) {
+    override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         Log.d(TAG, "onNewIntent: ${intent?.action}")
 

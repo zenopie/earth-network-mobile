@@ -1,0 +1,116 @@
+/*
+ * Vendored from Zodl (https://github.com/zodl-inc/zodl-android)
+ * Copyright (c) 2024 Electric Coin Company. Licensed under the MIT License.
+ *
+ * Adapted for Earth: package renamed, Zashi -> Earth, the raw palette re-skinned
+ * to the Sprout ramps, and the handful of Zcash-specific dependencies replaced
+ * with platform equivalents. Zcash money types and the components built on them
+ * are not included.
+ */
+package network.erth.wallet.ui.vendor.component
+
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
+import network.erth.wallet.ui.vendor.theme.ZcashTheme
+
+@Preview
+@Composable
+private fun CircularScreenProgressIndicatorComposablePreview() {
+    ZcashTheme(forceDarkMode = false) {
+        BlankSurface {
+            Column {
+                CircularScreenProgressIndicator()
+                CircularMidProgressIndicator()
+            }
+        }
+    }
+}
+
+@Composable
+fun CircularScreenProgressIndicator(modifier: Modifier = Modifier) {
+    Box(
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .then(modifier),
+        contentAlignment = Alignment.Center
+    ) {
+        CircularProgressIndicator(
+            color = ZcashTheme.colors.circularProgressBarScreen,
+            modifier =
+                Modifier
+                    .size(ZcashTheme.dimens.circularScreenProgressWidth)
+        )
+    }
+}
+
+@Composable
+fun CircularMidProgressIndicator(modifier: Modifier = Modifier) {
+    CircularProgressIndicator(
+        color = ZcashTheme.colors.circularProgressBarScreen,
+        strokeWidth = 3.dp,
+        modifier =
+            Modifier
+                .size(ZcashTheme.dimens.circularMidProgressWidth)
+                .then(modifier)
+    )
+}
+
+@Composable
+fun CircularSmallProgressIndicator(
+    modifier: Modifier = Modifier,
+    color: Color = ZcashTheme.colors.circularProgressBarSmall,
+) {
+    CircularProgressIndicator(
+        color = color,
+        strokeWidth = 2.dp,
+        modifier =
+            Modifier
+                .size(ZcashTheme.dimens.circularSmallProgressWidth)
+                .then(modifier)
+    )
+}
+
+@Preview
+@Composable
+private fun LinearProgressIndicatorComposablePreview() {
+    ZcashTheme(forceDarkMode = false) {
+        BlankSurface {
+            @Suppress("MagicNumber")
+            SmallLinearProgressIndicator(0.75f)
+        }
+    }
+}
+
+@Composable
+fun SmallLinearProgressIndicator(
+    progress: Float,
+    modifier: Modifier = Modifier
+) {
+    LinearProgressIndicator(
+        drawStopIndicator = {},
+        progress = { progress },
+        color = ZcashTheme.colors.linearProgressBarBackground,
+        trackColor = ZcashTheme.colors.linearProgressBarTrack,
+        strokeCap = StrokeCap.Butt,
+        gapSize = 0.dp,
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .height(ZcashTheme.dimens.linearProgressHeight)
+                .then(modifier)
+    )
+}

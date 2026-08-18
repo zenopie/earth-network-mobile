@@ -137,17 +137,27 @@ dependencies {
     // --- Compose ---
     // The BOM pins every compose artifact to one compatible set, so individual
     // compose dependencies below are deliberately version-less.
-    implementation platform('androidx.compose:compose-bom:2025.06.00')
-    implementation 'androidx.compose.ui:ui'
-    implementation 'androidx.compose.ui:ui-graphics'
-    implementation 'androidx.compose.ui:ui-tooling-preview'
-    debugImplementation 'androidx.compose.ui:ui-tooling'
-    implementation 'androidx.compose.material3:material3'
-    implementation 'androidx.compose.material:material-icons-extended'
-    implementation 'androidx.activity:activity-compose:1.8.2'
+    // Versions matched to the vendored Zodl design library, which is built
+    // against Material 3 1.4.0 — its modal sheet uses APIs that do not exist in
+    // earlier versions, so a lower BOM fails to compile rather than degrading.
+    implementation 'androidx.compose.ui:ui:1.10.4'
+    implementation 'androidx.compose.ui:ui-graphics:1.10.4'
+    implementation 'androidx.compose.ui:ui-tooling-preview:1.10.4'
+    debugImplementation 'androidx.compose.ui:ui-tooling:1.10.4'
+    implementation 'androidx.compose.material3:material3:1.4.0'
+    implementation 'androidx.compose.material:material-icons-extended:1.7.8'
+    implementation 'androidx.compose.foundation:foundation:1.10.4'
+    implementation 'androidx.activity:activity-compose:1.10.1'  // LocalActivity, used by the vendored theme
     implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0'
     implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.7.0'
     implementation 'androidx.navigation:navigation-compose:2.7.7'
+
+    // Required by the vendored Zodl design library.
+    implementation 'androidx.compose.ui:ui-text-google-fonts:1.10.4'
+    implementation 'androidx.constraintlayout:constraintlayout-compose:1.0.1'
+    implementation 'org.jetbrains.kotlinx:kotlinx-collections-immutable:0.3.7'
+    implementation 'com.valentinilk.shimmer:compose-shimmer:1.3.1'
+    implementation 'com.airbnb.android:lottie-compose:6.4.0'
 
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.10.0'

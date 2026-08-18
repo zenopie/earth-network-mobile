@@ -420,7 +420,7 @@ class HostActivity : AppCompatActivity(), CreateWalletFragment.CreateWalletListe
         ft.commitAllowingStateLoss()
     }
 
-    override fun onNewIntent(intent: Intent?) {
+    override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
 

@@ -1,0 +1,208 @@
+/*
+ * Vendored from Zodl (https://github.com/zodl-inc/zodl-android)
+ * Copyright (c) 2024 Electric Coin Company. Licensed under the MIT License.
+ *
+ * Adapted for Earth: package renamed, Zashi -> Earth, the raw palette re-skinned
+ * to the Sprout ramps, and the handful of Zcash-specific dependencies replaced
+ * with platform equivalents. Zcash money types and the components built on them
+ * are not included.
+ */
+package network.erth.wallet.ui.vendor.component
+
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.takeOrElse
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.isSpecified
+import network.erth.wallet.ui.vendor.util.StyledStringResource
+import network.erth.wallet.ui.vendor.util.getValue
+
+@Composable
+fun EarthAutoSizeText(
+    text: String,
+    modifier: Modifier = Modifier,
+    color: Color = Color.Unspecified,
+    fontSize: TextUnit = TextUnit.Unspecified,
+    fontStyle: FontStyle? = null,
+    fontWeight: FontWeight? = null,
+    fontFamily: FontFamily? = null,
+    letterSpacing: TextUnit = TextUnit.Unspecified,
+    textDecoration: TextDecoration? = null,
+    textAlign: TextAlign? = null,
+    contentAlignment: Alignment = Alignment.CenterStart,
+    lineHeight: TextUnit = TextUnit.Unspecified,
+    overflow: TextOverflow = TextOverflow.Clip,
+    softWrap: Boolean = true,
+    maxLines: Int = Int.MAX_VALUE,
+    minLines: Int = 1,
+    inlineContent: Map<String, InlineTextContent> = mapOf(),
+    onTextLayout: (TextLayoutResult) -> Unit = {},
+    style: TextStyle = LocalTextStyle.current,
+) {
+    EarthAutoSizeText(
+        text = AnnotatedString(text),
+        modifier = modifier,
+        color = color,
+        fontSize = fontSize,
+        fontStyle = fontStyle,
+        fontWeight = fontWeight,
+        fontFamily = fontFamily,
+        letterSpacing = letterSpacing,
+        textDecoration = textDecoration,
+        textAlign = textAlign,
+        contentAlignment = contentAlignment,
+        lineHeight = lineHeight,
+        overflow = overflow,
+        softWrap = softWrap,
+        maxLines = maxLines,
+        minLines = minLines,
+        inlineContent = inlineContent,
+        onTextLayout = onTextLayout,
+        style = style,
+    )
+}
+
+@Composable
+fun EarthAutoSizeText(
+    text: StyledStringResource,
+    modifier: Modifier = Modifier,
+    color: Color = Color.Unspecified,
+    fontSize: TextUnit = TextUnit.Unspecified,
+    fontStyle: FontStyle? = null,
+    fontWeight: FontWeight? = null,
+    fontFamily: FontFamily? = null,
+    letterSpacing: TextUnit = TextUnit.Unspecified,
+    textDecoration: TextDecoration? = null,
+    textAlign: TextAlign? = null,
+    contentAlignment: Alignment = Alignment.CenterStart,
+    lineHeight: TextUnit = TextUnit.Unspecified,
+    overflow: TextOverflow = TextOverflow.Clip,
+    softWrap: Boolean = true,
+    maxLines: Int = Int.MAX_VALUE,
+    minLines: Int = 1,
+    inlineContent: Map<String, InlineTextContent> = mapOf(),
+    onTextLayout: (TextLayoutResult) -> Unit = {},
+    style: TextStyle = LocalTextStyle.current,
+) {
+    EarthAutoSizeText(
+        text = text.getValue(),
+        modifier = modifier,
+        color = color,
+        fontSize = fontSize,
+        fontStyle = fontStyle,
+        fontWeight = fontWeight,
+        fontFamily = fontFamily,
+        letterSpacing = letterSpacing,
+        textDecoration = textDecoration,
+        textAlign = textAlign,
+        contentAlignment = contentAlignment,
+        lineHeight = lineHeight,
+        overflow = overflow,
+        softWrap = softWrap,
+        maxLines = maxLines,
+        minLines = minLines,
+        inlineContent = inlineContent,
+        onTextLayout = onTextLayout,
+        style = style,
+    )
+}
+
+@Composable
+fun EarthAutoSizeText(
+    text: AnnotatedString,
+    modifier: Modifier = Modifier,
+    color: Color = Color.Unspecified,
+    fontSize: TextUnit = TextUnit.Unspecified,
+    fontStyle: FontStyle? = null,
+    fontWeight: FontWeight? = null,
+    fontFamily: FontFamily? = null,
+    letterSpacing: TextUnit = TextUnit.Unspecified,
+    textDecoration: TextDecoration? = null,
+    textAlign: TextAlign? = null,
+    contentAlignment: Alignment = Alignment.CenterStart,
+    lineHeight: TextUnit = TextUnit.Unspecified,
+    overflow: TextOverflow = TextOverflow.Clip,
+    softWrap: Boolean = true,
+    maxLines: Int = Int.MAX_VALUE,
+    minLines: Int = 1,
+    inlineContent: Map<String, InlineTextContent> = mapOf(),
+    onTextLayout: (TextLayoutResult) -> Unit = {},
+    style: TextStyle = LocalTextStyle.current,
+) {
+    val textAutoSize =
+        remember(fontSize, style) {
+            TextAutoSize.StepBased(
+                minFontSize = (fontSize.takeIf { it.isSpecified } ?: style.fontSize) * .33f,
+                maxFontSize = fontSize.takeIf { it.isSpecified } ?: style.fontSize,
+            )
+        }
+    val textColor = color.takeOrElse { style.color.takeOrElse { LocalContentColor.current } }
+
+    val actualTextAlign = textAlign ?: contentAlignment.toTextAlign()
+
+    val normalizedStyle =
+        style.merge(
+            color = textColor,
+            fontSize = fontSize,
+            fontWeight = fontWeight,
+            textAlign = actualTextAlign,
+            lineHeight = lineHeight,
+            fontFamily = fontFamily,
+            textDecoration = textDecoration,
+            fontStyle = fontStyle,
+            letterSpacing = letterSpacing
+        )
+    val measurer = rememberTextMeasurer()
+    val minHeight =
+        remember(normalizedStyle, measurer) {
+            measurer.measure(text = text, style = normalizedStyle).size.height
+        }
+    val bulletRestLine = with(LocalDensity.current) { minHeight.toDp() }
+
+    Box(
+        modifier = modifier then Modifier.heightIn(min = bulletRestLine),
+        contentAlignment = contentAlignment
+    ) {
+        BasicText(
+            text = text,
+            modifier = Modifier.align(contentAlignment),
+            style = normalizedStyle,
+            onTextLayout = onTextLayout,
+            overflow = overflow,
+            softWrap = softWrap,
+            maxLines = maxLines,
+            minLines = minLines,
+            inlineContent = inlineContent,
+            autoSize = textAutoSize,
+        )
+    }
+}
+
+private fun Alignment.toTextAlign(): TextAlign =
+    when (this) {
+        Alignment.TopStart, Alignment.CenterStart, Alignment.BottomStart -> TextAlign.Start
+        Alignment.TopCenter, Alignment.Center, Alignment.BottomCenter -> TextAlign.Center
+        Alignment.TopEnd, Alignment.CenterEnd, Alignment.BottomEnd -> TextAlign.End
+        else -> TextAlign.Start
+    }
