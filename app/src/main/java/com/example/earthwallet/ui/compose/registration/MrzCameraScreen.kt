@@ -10,6 +10,8 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.ui.draw.rotate
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -99,14 +101,26 @@ fun MrzCameraScreen(
         ) {
             if (granted) {
                 CameraPreview(onMrz = { detected.value(it) })
-                // The guide is the whole instruction: two lines, bottom of the
-                // page, fill the box. A paragraph explaining the machine-
-                // readable zone is a paragraph nobody reads while holding a
-                // passport against a phone.
+
+                // The guide is turned on its side, not the screen.
+                //
+                // The machine-readable zone is two long lines across the foot
+                // of a passport page — roughly 7:1. Framed upright it either
+                // sits tiny in the middle of the viewfinder or runs off both
+                // edges, so people tilt the phone and then cannot read the
+                // instruction underneath. Rotating the guide lets the passport
+                // be held the way it naturally lies while the phone stays
+                // upright, which is also how it has to be held for the NFC
+                // read a step later.
+                //
+                // ML Kit reads rotated text without help: the analyzer passes
+                // the frame's rotation and recognition is orientation
+                // tolerant, so nothing about the decode changes here.
                 Box(
                     Modifier
-                        .fillMaxWidth(0.9f)
-                        .aspectRatio(4f)
+                        .fillMaxHeight(0.72f)
+                        .aspectRatio(MRZ_ASPECT)
+                        .rotate(90f)
                         .border(2.dp, Color.White, RoundedCornerShape(8.dp)),
                 )
             } else {
@@ -125,8 +139,8 @@ fun MrzCameraScreen(
             EarthLabel("Passport")
             Spacer(Modifier.height(4.dp))
             Text(
-                text = "Line up the two rows of letters and chevrons at the " +
-                    "bottom of the photo page.",
+                text = "Turn the passport on its side and line up the two rows " +
+                    "of letters and chevrons at the foot of the photo page.",
                 style = EarthTypography.textSm,
                 color = EarthColors.Text.textSecondary,
             )
@@ -204,6 +218,15 @@ private fun CameraPreview(onMrz: (PassportSession.Mrz) -> Unit) {
         },
     )
 }
+
+/**
+ * The machine-readable zone's proportions.
+ *
+ * Two 44-character lines in OCR-B across a 125mm page: about seven times as
+ * wide as it is tall. The guide is drawn at that ratio and rotated, so what the
+ * reader lines up against is the shape of the thing they are pointing at.
+ */
+private const val MRZ_ASPECT = 7f
 
 /**
  * Pull the three BAC fields out of recognised text.
