@@ -6,6 +6,12 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -129,9 +135,19 @@ fun EarthApp(
     // Its own activity, because NFC foreground dispatch is granted per-activity
     // and whatever owns it has to be on top when the passport touches the
     // phone. It finishes back here rather than into a shell of its own.
+    val registration = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) {
+        // Registration changes the balance, the identity and the activity list,
+        // so coming back has to re-read rather than resume whatever was on
+        // screen when the flow started. Ignoring the result code on purpose: a
+        // cancelled scan can still have spent gas on an ad grant.
+        invalidateWallet()
+    }
+
     val openRegistration = {
         runCatching {
-            context.startActivity(Intent(context, RegistrationActivity::class.java))
+            registration.launch(Intent(context, RegistrationActivity::class.java))
         }
         Unit
     }
@@ -248,6 +264,22 @@ fun EarthApp(
     // Loaded ahead of the tap. Fetching a rewarded ad takes seconds, and doing
     // it when the button is pressed makes the button look broken.
     LaunchedEffect(Unit) { RewardedAds.preload(context) }
+
+    // Re-read whenever the app comes back to the foreground.
+    //
+    // The launcher above covers returning from registration, but not the rest:
+    // funds can arrive while the app is backgrounded, from a faucet, another
+    // device, or anything else. Without this the balance is only ever as fresh
+    // as the last tab switch, which is how a wallet ends up showing zero next
+    // to an address that has just been paid.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) wallet.refresh()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 }
 
 @Composable
