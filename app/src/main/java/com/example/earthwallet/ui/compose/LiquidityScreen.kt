@@ -51,6 +51,10 @@ fun LiquidityScreen(
     pools: List<Dex.Pool>?,
     swapFeePercent: String?,
     lpOptionShare: Double,
+    /** Withdrawals waiting to mature, so the week between is not a blank. */
+    unbondings: List<Dex.Unbonding>,
+    /** This wallet's LP shares, by pool. */
+    shares: Map<Long, Long>,
     modifier: Modifier = Modifier,
     onAdd: (Dex.Pool) -> Unit = {},
     onRemove: (Dex.Pool) -> Unit = {},
@@ -104,6 +108,40 @@ fun LiquidityScreen(
         }
 
         val fee = swapFeePercent?.let { runCatching { java.math.BigDecimal(it) }.getOrNull() }
+
+        // Pending withdrawals first. They are the thing a provider comes to
+        // this screen wondering about — the shares are gone from the balance
+        // and the assets have not arrived, and nothing else on screen accounts
+        // for the gap.
+        if (unbondings.isNotEmpty()) {
+            EarthLabel("Waiting to pay out")
+            Spacer(Modifier.height(dimens.space8))
+            unbondings.forEach { u ->
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = dimens.space8),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = "${formatUerth(u.shares.toLongOrNull() ?: 0)} shares",
+                            style = EarthTypography.textMd,
+                            color = EarthColors.Text.textPrimary,
+                        )
+                        Text(
+                            text = "Pool ${u.poolId}",
+                            style = EarthTypography.textXs,
+                            color = EarthColors.Text.textTertiary,
+                        )
+                    }
+                    Text(
+                        text = u.completionTime.asRemaining(),
+                        style = EarthTypography.textSm,
+                        color = EarthAccent.ink,
+                    )
+                }
+            }
+            Spacer(Modifier.height(dimens.space24))
+        }
 
         pools.forEach { pool ->
             val token = pool.tokenDenom.removePrefix("u").uppercase()
@@ -186,6 +224,16 @@ fun LiquidityScreen(
                     style = EarthTypography.textSm,
                     color = EarthColors.Text.textPrimary,
                 )
+                val mine = shares[pool.id] ?: 0L
+                if (mine > 0) {
+                    Spacer(Modifier.height(dimens.space8))
+                    Text(
+                        text = "Your shares ${formatUerth(mine)}",
+                        style = EarthTypography.textSm,
+                        color = EarthAccent.ink,
+                    )
+                }
+
                 if (apr != null) {
                     Spacer(Modifier.height(dimens.space12))
                     AprBlock(apr)
@@ -203,6 +251,8 @@ fun LiquidityScreen(
                     EarthButton(
                         text = "Remove",
                         onClick = { onRemove(pool) },
+                        // Nothing to withdraw is not a state worth offering.
+                        enabled = (shares[pool.id] ?: 0L) > 0,
                         modifier = Modifier.weight(1f),
                         colors = EarthButtonDefaults.secondaryColors(),
                     )
@@ -307,3 +357,20 @@ private fun String.trimDecimal(): String =
     if ('.' in this) trimEnd('0').trimEnd('.') else this
 
 private fun Int.dp() = androidx.compose.ui.unit.Dp(toFloat())
+
+/**
+ * "in 6 days" / "in 4 hours" / "any moment".
+ *
+ * Coarse on purpose: the sweep runs in an end-blocker, so the exact second is
+ * not something the chain promises and a countdown to it would imply a
+ * precision that does not exist.
+ */
+private fun Long.asRemaining(): String {
+    val secs = this - System.currentTimeMillis() / 1000
+    return when {
+        secs <= 0 -> "any moment"
+        secs < 3_600 -> "in ${secs / 60}m"
+        secs < 86_400 -> "in ${secs / 3_600}h"
+        else -> "in ${secs / 86_400}d"
+    }
+}

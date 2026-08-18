@@ -12,6 +12,7 @@ import kotlinx.coroutines.withContext
 import network.erth.earth.proto.allocation.StreamId
 import network.erth.wallet.chain.Allocation
 import network.erth.wallet.chain.Dex
+import network.erth.wallet.wallet.services.SecureWalletManager
 
 data class MarketsUiState(
     val pools: List<Dex.Pool>,
@@ -23,6 +24,10 @@ data class MarketsUiState(
      * emission half of the APR is then genuinely zero rather than unknown.
      */
     val lpOptionShare: Double,
+    /** Escrow period before withdrawn shares pay out, in seconds. */
+    val lpUnbondingSeconds: Long,
+    /** This wallet's withdrawals still waiting to mature. */
+    val unbondings: List<Dex.Unbonding>,
 )
 
 /** The pools, the fee the swap quote needs anyway, and what the LP option earns. */
@@ -38,6 +43,12 @@ class MarketsViewModel(app: Application) : AndroidViewModel(app) {
                     pools = runCatching { Dex.pools() }.getOrDefault(emptyList()),
                     swapFeePercent = runCatching { Dex.swapFeePercent() }.getOrDefault("0"),
                     lpOptionShare = runCatching { lpOptionShare() }.getOrDefault(0.0),
+                    lpUnbondingSeconds = runCatching { Dex.lpUnbondingSeconds() }
+                        .getOrDefault(0L),
+                    unbondings = runCatching {
+                        val address = SecureWalletManager.getWalletAddress(getApplication())
+                        if (address.isNullOrBlank()) emptyList() else Dex.unbondings(address)
+                    }.getOrDefault(emptyList()),
                 )
             }
         }

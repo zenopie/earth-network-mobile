@@ -33,6 +33,17 @@ object Dex {
     /** Days in the rolling volume window. Mirrors types.VolumeWindowDays. */
     const val VOLUME_WINDOW_DAYS = 7
 
+    /** The LP share denom for a pool. Mirrors types.LPShareDenom. */
+    fun shareDenom(poolId: Long): String = "dexlp/$poolId"
+
+    /** How long withdrawn shares are escrowed before they pay out. */
+    fun lpUnbondingSeconds(): Long {
+        val (code, body) = EarthRest.get("/earth-network/earth/dex/v1/params")
+        if (code !in 200..299) return 0
+        return JSONObject(body).getJSONObject("params")
+            .optString("lp_unbonding_seconds", "0").toLongOrNull() ?: 0
+    }
+
     private fun coin(denom: String, amount: String) =
         CoinOuterClass.Coin.newBuilder().setDenom(denom).setAmount(amount).build()
 
@@ -57,6 +68,35 @@ object Dex {
             )
         }
         return out
+    }
+
+    /** A withdrawal waiting out its escrow. */
+    data class Unbonding(
+        val poolId: Long,
+        val shares: String,
+        /** Unix seconds at which it pays out on its own. */
+        val completionTime: Long,
+    )
+
+    /**
+     * Withdrawals this address has waiting.
+     *
+     * Between submitting one and it landing there is nothing in the balance to
+     * show for it — the shares have left and the assets have not arrived — so
+     * without this the week looks like the funds went nowhere.
+     */
+    fun unbondings(address: String): List<Unbonding> {
+        val (code, body) = EarthRest.get("/earth-network/earth/dex/v1/unbondings/$address")
+        if (code !in 200..299) return emptyList()
+        val arr = JSONObject(body).optJSONArray("unbondings") ?: return emptyList()
+        return (0 until arr.length()).map { i ->
+            val u = arr.getJSONObject(i)
+            Unbonding(
+                poolId = u.optString("pool_id", "0").toLongOrNull() ?: 0L,
+                shares = u.optJSONObject("shares")?.optString("amount", "0") ?: "0",
+                completionTime = u.optString("completion_time", "0").toLongOrNull() ?: 0L,
+            )
+        }
     }
 
     /** Pool that pairs ERTH with the given spoke token denom, if any. */

@@ -24,6 +24,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import network.erth.earth.proto.allocation.StreamId
 import network.erth.wallet.R
+import network.erth.wallet.Constants
 import network.erth.wallet.chain.Bank
 import network.erth.wallet.ui.ads.RewardedAds
 import network.erth.wallet.ui.compose.registration.RegistrationActivity
@@ -324,6 +325,15 @@ private fun EarthContent(
     // Which sheet, if any, is open on top of the current screen.
     var staking by remember { mutableStateOf<StakeIntent?>(null) }
     var editing by remember { mutableStateOf<StreamId?>(null) }
+    var liquidity by remember { mutableStateOf<Pair<LiquidityAction, Dex.Pool>?>(null) }
+
+    // LP shares arrive in the same balances call as everything else — they are
+    // ordinary coins, denominated dexlp/<pool>.
+    val shares = remember(loaded.holdings) {
+        loaded.holdings
+            .filter { it.denom.startsWith("dexlp/") }
+            .associate { (it.denom.removePrefix("dexlp/").toLongOrNull() ?: 0L) to it.amount }
+    }
 
     when (route) {
         EarthRoute.Wallet -> HomeScreen(
@@ -443,6 +453,10 @@ private fun EarthContent(
             pools = marketsState?.pools,
             swapFeePercent = marketsState?.swapFeePercent,
             lpOptionShare = marketsState?.lpOptionShare ?: 0.0,
+            unbondings = marketsState?.unbondings.orEmpty(),
+            shares = shares,
+            onAdd = { liquidity = LiquidityAction.Add to it },
+            onRemove = { liquidity = LiquidityAction.Remove to it },
             modifier = inset,
         )
 
@@ -578,6 +592,73 @@ private fun EarthContent(
                         earn.delegate(validator, amount)
                     } else {
                         earn.undelegate(validator, amount)
+                    },
+                )
+            },
+        )
+    }
+
+    liquidity?.let { (action, pool) ->
+        LiquiditySheet(
+            action = action,
+            pool = pool,
+            // The fee comes out of the same ERTH being deposited, so the
+            // spendable figure has to exclude it or "max" builds a deposit the
+            // ante handler cannot charge for.
+            erthAvailable = (loaded.balanceUerth - TxController.DEFAULT_FEE_UERTH)
+                .coerceAtLeast(0),
+            tokenAvailable = loaded.holdings
+                .firstOrNull { it.denom == pool.tokenDenom }?.amount ?: 0L,
+            shareBalance = shares[pool.id] ?: 0L,
+            unbondingSeconds = marketsState?.lpUnbondingSeconds ?: 0L,
+            onDismiss = { liquidity = null },
+            onConfirm = { erthIn, tokenIn, sharesOut ->
+                liquidity = null
+                val adding = action == LiquidityAction.Add
+                tx.request(
+                    details = TxConfirmDetails(
+                        action = if (adding) "Add liquidity" else "Withdraw liquidity",
+                        msgTypeUrl = if (adding) {
+                            "/earth.dex.v1.MsgAddLiquidity"
+                        } else {
+                            "/earth.dex.v1.MsgRemoveLiquidity"
+                        },
+                        feeUerth = TxController.DEFAULT_FEE_UERTH,
+                        balanceUerth = loaded.balanceUerth,
+                        amountLabel = if (adding) "Deposit" else "Shares",
+                        amountValue = if (adding) {
+                            "${formatUerth(erthIn.toLong())} ERTH + " +
+                                "${formatUerth(tokenIn.toLong())} " +
+                                pool.tokenDenom.removePrefix("u").uppercase()
+                        } else {
+                            formatUerth(sharesOut.toLong())
+                        },
+                    ),
+                    onSuccess = {
+                        onRefresh()
+                        markets.refresh()
+                    },
+                    build = { ctx ->
+                        val creator = walletAddress(ctx)
+                        listOf(
+                            if (adding) {
+                                Dex.msgAddLiquidity(
+                                    creator,
+                                    pool.id,
+                                    Constants.UERTH_DENOM,
+                                    erthIn.toString(),
+                                    pool.tokenDenom,
+                                    tokenIn.toString(),
+                                )
+                            } else {
+                                Dex.msgRemoveLiquidity(
+                                    creator,
+                                    pool.id,
+                                    Dex.shareDenom(pool.id),
+                                    sharesOut.toString(),
+                                )
+                            },
+                        )
                     },
                 )
             },
