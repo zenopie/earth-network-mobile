@@ -78,7 +78,13 @@ fun EarthTextField(
     visualTransformation: VisualTransformation = VisualTransformation.None,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
-    singleLine: Boolean = false,
+    // Earth change: single line by default.
+    //
+    // Zashi defaults this to false, so every field in this app accepted a
+    // newline — an address, an amount, a wallet name. None of them has a second
+    // line to offer, and the return key inserting one instead of dismissing the
+    // keyboard is what makes the input feel broken.
+    singleLine: Boolean = true,
     maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
     minLines: Int = 1,
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
@@ -128,7 +134,13 @@ fun EarthTextField(
     visualTransformation: VisualTransformation = VisualTransformation.None,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
-    singleLine: Boolean = false,
+    // Earth change: single line by default.
+    //
+    // Zashi defaults this to false, so every field in this app accepted a
+    // newline — an address, an amount, a wallet name. None of them has a second
+    // line to offer, and the return key inserting one instead of dismissing the
+    // keyboard is what makes the input feel broken.
+    singleLine: Boolean = true,
     maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
     minLines: Int = 1,
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
@@ -174,7 +186,13 @@ fun EarthTextField(
     visualTransformation: VisualTransformation = VisualTransformation.None,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
-    singleLine: Boolean = false,
+    // Earth change: single line by default.
+    //
+    // Zashi defaults this to false, so every field in this app accepted a
+    // newline — an address, an amount, a wallet name. None of them has a second
+    // line to offer, and the return key inserting one instead of dismissing the
+    // keyboard is what makes the input feel broken.
+    singleLine: Boolean = true,
     maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
     minLines: Int = 1,
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },

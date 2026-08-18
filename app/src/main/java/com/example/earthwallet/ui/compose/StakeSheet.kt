@@ -51,6 +51,7 @@ fun StakeSheet(
     onDismiss: () -> Unit,
 ) {
     val dimens = EarthTheme.dimens
+    val amountKeys = doneKeyboard(keyboardType = KeyboardType.Decimal)
     var selected by remember { mutableStateOf(choices.firstOrNull()) }
     var amount by remember { mutableStateOf("") }
 
@@ -66,6 +67,7 @@ fun StakeSheet(
 
     EarthSheet(onDismiss = onDismiss) {
         Text(
+            modifier = Modifier.dismissKeyboardOnTap(),
             text = title,
             style = EarthTypography.header5,
             color = EarthColors.Text.textPrimary,
@@ -124,7 +126,8 @@ fun StakeSheet(
             error = error,
             placeholder = { Text("0") },
             suffix = { Text("ERTH") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            keyboardOptions = amountKeys.first,
+            keyboardActions = amountKeys.second,
         )
 
         Spacer(Modifier.height(dimens.space8))

@@ -64,6 +64,7 @@ fun CreateWalletScreen(
         modifier
             .fillMaxSize()
             .background(EarthColors.Surfaces.bgPrimary)
+            .dismissKeyboardOnTap()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = dimens.gutter),
     ) {

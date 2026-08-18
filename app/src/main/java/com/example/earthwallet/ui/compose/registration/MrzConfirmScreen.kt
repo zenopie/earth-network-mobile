@@ -20,6 +20,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import network.erth.wallet.ui.compose.EarthLabel
+import network.erth.wallet.ui.compose.dismissKeyboardOnTap
+import network.erth.wallet.ui.compose.doneKeyboard
 import network.erth.wallet.ui.vendor.component.EarthButton
 import network.erth.wallet.ui.vendor.component.EarthTextField
 import network.erth.wallet.ui.vendor.theme.colors.EarthColors
@@ -52,11 +54,17 @@ fun MrzConfirmScreen(
     var expiry by remember { mutableStateOf(initial?.dateOfExpiry.orEmpty()) }
 
     val mrz = PassportSession.Mrz(number.trim().uppercase(), dob.trim(), expiry.trim())
+    val numberKeys = doneKeyboard(
+        autoCorrect = false,
+        capitalization = KeyboardCapitalization.Characters,
+    )
+    val dateKeys = doneKeyboard(keyboardType = KeyboardType.Number)
 
     Column(
         modifier
             .fillMaxSize()
             .background(EarthColors.Surfaces.bgPrimary)
+            .dismissKeyboardOnTap()
             .verticalScroll(rememberScrollState())
             .padding(24.dp()),
     ) {
@@ -78,10 +86,8 @@ fun MrzConfirmScreen(
             value = number,
             onValueChange = { number = it.uppercase() },
             modifier = Modifier.fillMaxWidth(),
-            keyboardOptions = KeyboardOptions(
-                capitalization = KeyboardCapitalization.Characters,
-                autoCorrectEnabled = false,
-            ),
+            keyboardOptions = numberKeys.first,
+            keyboardActions = numberKeys.second,
         )
 
         Spacer(Modifier.height(16.dp()))
@@ -92,7 +98,8 @@ fun MrzConfirmScreen(
             onValueChange = { dob = it.filter(Char::isDigit).take(6) },
             modifier = Modifier.fillMaxWidth(),
             placeholder = { Text("YYMMDD") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            keyboardOptions = dateKeys.first,
+            keyboardActions = dateKeys.second,
         )
 
         Spacer(Modifier.height(16.dp()))
@@ -104,7 +111,8 @@ fun MrzConfirmScreen(
             modifier = Modifier.fillMaxWidth(),
             placeholder = { Text("YYMMDD") },
             error = error,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            keyboardOptions = dateKeys.first,
+            keyboardActions = dateKeys.second,
         )
 
         Spacer(Modifier.height(24.dp()))

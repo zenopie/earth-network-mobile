@@ -77,6 +77,7 @@ fun SwapScreen(
     modifier: Modifier = Modifier,
 ) {
     val dimens = EarthTheme.dimens
+    val amountKeys = doneKeyboard(keyboardType = KeyboardType.Decimal)
     val shape = RoundedCornerShape(EarthDimensions.Radius.radius3xl)
 
     var erthIn by remember { mutableStateOf(true) }
@@ -106,6 +107,7 @@ fun SwapScreen(
         modifier
             .fillMaxSize()
             .background(EarthColors.Surfaces.bgPrimary)
+            .dismissKeyboardOnTap()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = dimens.gutter),
     ) {
@@ -208,6 +210,7 @@ private fun SwapPanel(
     readOnly: Boolean = false,
 ) {
     val dimens = EarthTheme.dimens
+    val amountKeys = doneKeyboard(keyboardType = KeyboardType.Decimal)
     Column(
         Modifier
             .fillMaxWidth()
@@ -243,7 +246,8 @@ private fun SwapPanel(
                         value = value,
                         onValueChange = onValueChange,
                         placeholder = { Text("0") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        keyboardOptions = amountKeys.first,
+                        keyboardActions = amountKeys.second,
                     )
                 }
             }

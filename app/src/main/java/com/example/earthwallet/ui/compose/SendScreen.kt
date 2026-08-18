@@ -68,6 +68,12 @@ fun SendScreen(
 ) {
     val colors = EarthTheme.colors
     val dimens = EarthTheme.dimens
+    val addressKeys = doneKeyboard(
+        keyboardType = KeyboardType.Ascii,
+        autoCorrect = false,
+        capitalization = KeyboardCapitalization.None,
+    )
+    val amountKeys = doneKeyboard(keyboardType = KeyboardType.Decimal)
     val ready = recipient.isNotBlank() && amount.isNotBlank() &&
         recipientError == null && amountError == null
 
@@ -75,6 +81,7 @@ fun SendScreen(
         modifier = modifier
             .fillMaxSize()
             .background(EarthColors.Surfaces.bgPrimary)
+            .dismissKeyboardOnTap()
             .verticalScroll(rememberScrollState())
             .windowInsetsPadding(WindowInsets.systemBars)
             .padding(horizontal = dimens.gutter)
@@ -97,11 +104,8 @@ fun SendScreen(
             // No capitalisation, no autocorrect: bech32 is lowercase, and a
             // keyboard that helpfully capitalises the first letter produces an
             // address that fails checksum for a reason nobody can see.
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Ascii,
-                autoCorrectEnabled = false,
-                capitalization = KeyboardCapitalization.None,
-            ),
+            keyboardOptions = addressKeys.first,
+            keyboardActions = addressKeys.second,
             // Inside the field rather than beside it: scanning is a way of
             // filling this field, not a separate action, and a button in the
             // trailing slot says that without a label.
@@ -177,7 +181,8 @@ fun SendScreen(
             placeholder = { Text("0.00", style = EarthTypography.textMd) },
             suffix = { Text(selected.symbol, style = EarthTypography.textMd) },
             modifier = Modifier.fillMaxWidth(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            keyboardOptions = amountKeys.first,
+            keyboardActions = amountKeys.second,
         )
         Spacer(Modifier.height(dimens.space8))
         Text(

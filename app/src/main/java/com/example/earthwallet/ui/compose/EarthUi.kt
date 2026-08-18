@@ -15,6 +15,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Text
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -266,3 +274,42 @@ fun brandButtonColors() =
         disabledContainerColor = EarthColors.Btns.Brand.btnBrandBgDisabled,
         disabledContentColor = EarthColors.Btns.Brand.btnBrandFgDisabled,
     )
+
+/**
+ * A keyboard that ends the field rather than extending it.
+ *
+ * Every input in this app is one line, so the return key should dismiss rather
+ * than insert. Pairs with [dismissKeyboardOnTap] on the screen behind it: a
+ * Done key covers the deliberate exit, tapping away covers the rest, and
+ * without both the keyboard can only be closed with the system back gesture.
+ */
+@Composable
+fun doneKeyboard(
+    keyboardType: KeyboardType = KeyboardType.Text,
+    autoCorrect: Boolean = true,
+    capitalization: KeyboardCapitalization = KeyboardCapitalization.Sentences,
+): Pair<KeyboardOptions, KeyboardActions> {
+    val focus = LocalFocusManager.current
+    return KeyboardOptions(
+        keyboardType = keyboardType,
+        imeAction = ImeAction.Done,
+        autoCorrectEnabled = autoCorrect,
+        capitalization = capitalization,
+    ) to KeyboardActions(onDone = { focus.clearFocus() })
+}
+
+/**
+ * Tapping anywhere on this surface lets go of whatever field has focus.
+ *
+ * No ripple and no accessibility node — this is not a control, it is the
+ * absence of one. A field that keeps its cursor and its keyboard after you have
+ * tapped somewhere else reads as stuck, and on a sheet the keyboard can end up
+ * covering the button you were reaching for.
+ */
+@Composable
+fun Modifier.dismissKeyboardOnTap(): Modifier {
+    val focus = LocalFocusManager.current
+    return pointerInput(Unit) {
+        detectTapGestures(onTap = { focus.clearFocus() })
+    }
+}
