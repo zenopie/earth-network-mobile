@@ -422,7 +422,7 @@ private fun EarthContent(
             state = allocationState,
             registered = loaded.registered,
             stakedUerth = loaded.stakedUerth,
-            onOpenStream = { nav.push(EarthRoute.Stream(it == StreamId.STREAM_ID_HUMAN)) },
+            onOpenStream = { nav.push(EarthRoute.Stream(it == StreamId.STREAM_ID_CARETAKER)) },
             onOpenProposals = { nav.push(EarthRoute.Proposals) },
             modifier = inset,
         )
@@ -547,9 +547,9 @@ private fun EarthContent(
 
         is EarthRoute.Stream -> {
             val id = if (route.human) {
-                StreamId.STREAM_ID_HUMAN
+                StreamId.STREAM_ID_CARETAKER
             } else {
-                StreamId.STREAM_ID_CAPITAL
+                StreamId.STREAM_ID_GROUNDWORKS
             }
             StreamDetailScreen(
                 title = if (route.human) "Caretaker Fund" else "Groundworks Fund",
@@ -699,12 +699,12 @@ private fun EarthContent(
 
     editing?.let { stream ->
         val streamState = when (stream) {
-            StreamId.STREAM_ID_HUMAN -> allocationState?.human
+            StreamId.STREAM_ID_CARETAKER -> allocationState?.human
             else -> allocationState?.capital
         }
         if (streamState != null) {
             AllocationEditSheet(
-                title = if (stream == StreamId.STREAM_ID_HUMAN) {
+                title = if (stream == StreamId.STREAM_ID_CARETAKER) {
                     "Caretaker Fund"
                 } else {
                     "Groundworks Fund"

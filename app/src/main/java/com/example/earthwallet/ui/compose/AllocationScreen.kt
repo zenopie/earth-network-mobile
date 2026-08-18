@@ -87,7 +87,7 @@ fun AllocationScreen(
             ),
             loading = state == null,
             shimmer = shimmer,
-            onClick = { onOpenStream(StreamId.STREAM_ID_HUMAN) },
+            onClick = { onOpenStream(StreamId.STREAM_ID_CARETAKER) },
         )
 
         Spacer(Modifier.height(dimens.space8))
@@ -100,7 +100,7 @@ fun AllocationScreen(
             ),
             loading = state == null,
             shimmer = shimmer,
-            onClick = { onOpenStream(StreamId.STREAM_ID_CAPITAL) },
+            onClick = { onOpenStream(StreamId.STREAM_ID_GROUNDWORKS) },
         )
 
         Spacer(Modifier.height(dimens.space24))

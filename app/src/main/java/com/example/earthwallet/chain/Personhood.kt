@@ -13,7 +13,7 @@ import org.json.JSONObject
  * x/personhood — proof-of-personhood registration and the daily ANML claim.
  *
  * The one-human-one-vote allocation stream this module gates lives in
- * x/allocation (see [Allocation], STREAM_ID_HUMAN). This module only decides who
+ * x/allocation (see [Allocation], STREAM_ID_CARETAKER). This module only decides who
  * counts as a live human; the votes and options belong to the allocation module.
  */
 object Personhood {

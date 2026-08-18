@@ -43,8 +43,8 @@ object Allocation {
      * name and rejects the short `human` / `capital` form the chain's CLI takes.
      */
     private fun path(stream: StreamId): String = when (stream) {
-        StreamId.STREAM_ID_HUMAN -> "STREAM_ID_HUMAN"
-        StreamId.STREAM_ID_CAPITAL -> "STREAM_ID_CAPITAL"
+        StreamId.STREAM_ID_CARETAKER -> "STREAM_ID_CARETAKER"
+        StreamId.STREAM_ID_GROUNDWORKS -> "STREAM_ID_GROUNDWORKS"
         else -> throw IllegalArgumentException("unknown allocation stream: $stream")
     }
 

@@ -63,7 +63,7 @@ class MarketsViewModel(app: Application) : AndroidViewModel(app) {
  * source the first time someone renames the option.
  */
 private fun lpOptionShare(): Double {
-    val stream = Allocation.stream(StreamId.STREAM_ID_CAPITAL)
+    val stream = Allocation.stream(StreamId.STREAM_ID_GROUNDWORKS)
     val total = stream.totalWeight.toDoubleOrNull() ?: return 0.0
     if (total <= 0) return 0.0
     val lp = stream.options

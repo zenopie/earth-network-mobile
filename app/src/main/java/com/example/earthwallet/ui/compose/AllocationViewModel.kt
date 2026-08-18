@@ -77,8 +77,8 @@ class AllocationViewModel(app: Application) : AndroidViewModel(app) {
 
             _state.value = withContext(Dispatchers.IO) {
                 AllocationUiState(
-                    human = load(StreamId.STREAM_ID_HUMAN, address),
-                    capital = load(StreamId.STREAM_ID_CAPITAL, address),
+                    human = load(StreamId.STREAM_ID_CARETAKER, address),
+                    capital = load(StreamId.STREAM_ID_GROUNDWORKS, address),
                     proposals = runCatching { Gov.proposals() }.getOrDefault(emptyList()),
                 )
             }

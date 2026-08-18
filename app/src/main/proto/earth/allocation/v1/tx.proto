@@ -14,9 +14,9 @@ option java_multiple_files = true;
 enum StreamId {
   STREAM_ID_UNSPECIFIED = 0;
   // One-human-one-vote. Weight comes from a live proof-of-personhood registration.
-  STREAM_ID_HUMAN = 1;
+  STREAM_ID_CARETAKER = 1;
   // Stake-weighted. Weight is the voter's bonded stake, normalized on-chain.
-  STREAM_ID_CAPITAL = 2;
+  STREAM_ID_GROUNDWORKS = 2;
 }
 
 message AllocationWeight {
