@@ -13,6 +13,17 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Modifier
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableLongStateOf
+import kotlinx.coroutines.delay
+import network.erth.wallet.Constants
+import network.erth.wallet.chain.Bank
+import network.erth.wallet.ui.ads.RewardedAds
+import network.erth.wallet.ui.compose.TxConfirmDetails
+import network.erth.wallet.ui.compose.TxConfirmSheet
+import network.erth.wallet.ui.compose.TxOutcome
+import network.erth.wallet.ui.compose.TxResultSheet
+import network.erth.wallet.wallet.services.SecureWalletManager
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -57,6 +68,35 @@ class RegistrationActivity : ComponentActivity() {
                 var stage: NfcStage by remember { mutableStateOf(NfcStage.Waiting) }
                 var mrzError: String? by remember { mutableStateOf(null) }
 
+                // Held between the read and the broadcast. The proof is built
+                // while the passport is against the phone; paying for it is a
+                // separate step that can take as long as it needs.
+                var scan: PassportSession.Scan? by remember { mutableStateOf(null) }
+                var balanceUerth: Long by remember { mutableLongStateOf(0L) }
+                var awaitingGas: Boolean by remember { mutableStateOf(false) }
+                var outcome: TxOutcome? by remember { mutableStateOf(null) }
+
+                val address = remember {
+                    runCatching {
+                        SecureWalletManager.getWalletAddress(this@RegistrationActivity)
+                    }.getOrNull().orEmpty()
+                }
+
+                // A wallet that has never received anything has no account on
+                // chain, so this reads 0 rather than failing — which is the
+                // state a new human is in, and exactly what the ad is for.
+                suspend fun refreshBalance() {
+                    balanceUerth = withContext(Dispatchers.IO) {
+                        runCatching {
+                            Bank.balance(address, Constants.UERTH_DENOM).toLong()
+                        }.getOrDefault(0L)
+                    }
+                }
+
+                // Loaded on entry: fetching a rewarded ad takes seconds, and
+                // the gate is reached within seconds of a successful read.
+                LaunchedEffect(Unit) { RewardedAds.preload(this@RegistrationActivity) }
+
                 // Back moves through the flow rather than out of it, except at
                 // the first step where there is nothing behind it.
                 BackHandler {
@@ -81,19 +121,15 @@ class RegistrationActivity : ComponentActivity() {
                             PassportSession.read(this@RegistrationActivity, tag, fields)
                         }
                         result
-                            .onSuccess { scan ->
-                                val hash = withContext(Dispatchers.IO) {
-                                    PassportSession.register(this@RegistrationActivity, scan)
-                                }
-                                hash.onSuccess {
-                                    setResult(RESULT_OK, Intent().putExtra(EXTRA_TX_HASH, it))
-                                    finish()
-                                }.onFailure { e ->
-                                    stage = NfcStage.Failed(
-                                        e.message ?: "The registration was rejected.",
-                                        canRetry = true,
-                                    )
-                                }
+                            .onSuccess { read ->
+                                // Proof done, passport no longer needed. The
+                                // fee gate comes next, and it may involve
+                                // watching an ad — which is why proving runs
+                                // first, so nobody pays attention to an advert
+                                // for a registration that was never going to
+                                // exist.
+                                scan = read
+                                refreshBalance()
                             }
                             .onFailure { e ->
                                 val failure = (e as? PassportSession.FailureException)?.failure
@@ -117,6 +153,66 @@ class RegistrationActivity : ComponentActivity() {
                             }
                     }
                 }
+
+                // The gas gate. Shown once the proof exists and dismissed only
+                // by registering or backing out.
+                scan?.let { ready ->
+                    TxConfirmSheet(
+                        details = TxConfirmDetails(
+                            action = "Register",
+                            msgTypeUrl = "/earth.personhood.v1.MsgRegister",
+                            feeUerth = REGISTER_FEE,
+                            balanceUerth = balanceUerth,
+                        ),
+                        awaitingGas = awaitingGas,
+                        onConfirm = {
+                            scan = null
+                            lifecycleScope.launch {
+                                val hash = withContext(Dispatchers.IO) {
+                                    PassportSession.register(this@RegistrationActivity, ready)
+                                }
+                                hash.onSuccess {
+                                    setResult(RESULT_OK, Intent().putExtra(EXTRA_TX_HASH, it))
+                                    finish()
+                                }.onFailure { e ->
+                                    outcome = TxOutcome.Failure("Register", e)
+                                }
+                            }
+                        },
+                        onDismiss = {
+                            // Keep the proof. Backing out of the fee is not
+                            // backing out of the scan, and rebuilding it means
+                            // holding the passport against the phone again.
+                            scan = null
+                            stage = NfcStage.Failed(
+                                "Registration was not sent. Your passport does " +
+                                    "not need to be scanned again.",
+                                canRetry = false,
+                            )
+                        },
+                        onWatchAd = {
+                            RewardedAds.show(this@RegistrationActivity, address) { earned ->
+                                if (!earned) return@show
+                                awaitingGas = true
+                                lifecycleScope.launch {
+                                    // The reward callback fires when the ad
+                                    // finished, not when the gas lands — the
+                                    // grant is a send from the gas wallet, made
+                                    // out of band when Google calls the backend.
+                                    // So the chain is polled rather than
+                                    // trusted to be ready.
+                                    repeat(GAS_POLL_ATTEMPTS) {
+                                        delay(GAS_POLL_INTERVAL_MS)
+                                        refreshBalance()
+                                        if (balanceUerth >= REGISTER_FEE) return@launch
+                                    }
+                                }.invokeOnCompletion { awaitingGas = false }
+                            }
+                        },
+                    )
+                }
+
+                outcome?.let { TxResultSheet(outcome = it, onDismiss = { outcome = null }) }
 
                 BlankBgScaffold(
                     topBar = {
@@ -210,6 +306,15 @@ class RegistrationActivity : ComponentActivity() {
     }
 
     companion object {
+        /** What MsgRegister costs at the chain's minimum gas price. */
+        private const val REGISTER_FEE = 2_000L
+
+        // The grant is a bank send, so it lands in a block. Roughly a minute of
+        // patience, which is generous for a five-second block time and cheap
+        // because the sheet stays usable throughout.
+        private const val GAS_POLL_ATTEMPTS = 20
+        private const val GAS_POLL_INTERVAL_MS = 3_000L
+
         const val EXTRA_TX_HASH = "tx_hash"
     }
 }
