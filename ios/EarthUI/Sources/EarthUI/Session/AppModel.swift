@@ -1,0 +1,202 @@
+import BigInt
+import EarthCore
+import Observation
+import SwiftUI
+
+/// What the whole app reads from.
+///
+/// One model rather than one per screen: the tabs overlap heavily — balances
+/// appear on three of them, the registration state gates two — and four view
+/// models querying the same LCD on every tab switch is both slower and capable
+/// of disagreeing with itself on screen.
+@Observable
+@MainActor
+public final class AppModel {
+
+    public enum Phase {
+        /// Deciding whether there is a wallet at all.
+        case launching
+        /// There is no wallet yet.
+        case setup
+        /// There is one, and it has not been unlocked this session.
+        case locked
+        case ready
+    }
+
+    public private(set) var phase: Phase = .launching
+    public private(set) var address: String = ""
+
+    /// Balances by denom, in base units.
+    public private(set) var balances: [String: BigInt] = [:]
+    public private(set) var registration: Personhood.RegistrationStatus = .none
+    public private(set) var pools: [Dex.Pool] = []
+    public private(set) var swapFeePercent = Decimal(string: "0.3")!
+    public private(set) var validators: [Staking.Validator] = []
+    public private(set) var delegations: [Staking.Delegation] = []
+    public private(set) var unbondings: [Staking.UnbondingEntry] = []
+    public private(set) var rewards: BigInt = 0
+    public private(set) var totalBonded: BigInt = 0
+
+    public private(set) var refreshing = false
+    /// The last query failure, if the most recent refresh did not complete.
+    ///
+    /// Shown as a banner rather than an alert: a wallet that cannot reach the
+    /// chain still has an address to show and a phrase to back up, and a modal
+    /// would block both.
+    public private(set) var lastError: String?
+
+    public let client: EarthClient
+    public let store: WalletStore
+
+    public init(client: EarthClient = EarthClient(), store: WalletStore = WalletStore()) {
+        self.client = client
+        self.store = store
+    }
+
+    // MARK: - session
+
+    public func start() {
+        phase = store.exists ? .locked : .setup
+    }
+
+    /// Unlock by proving presence once, and keep only the address.
+    ///
+    /// The key itself is not held: every signature re-reads the phrase behind
+    /// its own prompt. What unlocking buys is the address, which is needed to
+    /// query anything at all.
+    public func unlock() async -> Bool {
+        do {
+            address = try store.withKey(reason: "Unlock your Earth wallet") { $0.address }
+            phase = .ready
+            await refresh()
+            return true
+        } catch {
+            lastError = describe(error)
+            return false
+        }
+    }
+
+    public func adopt(mnemonic: String) async throws {
+        try store.save(mnemonic: mnemonic)
+        address = try EarthKey(mnemonic: mnemonic).address
+        phase = .ready
+        await refresh()
+    }
+
+    public func forget() {
+        store.delete()
+        address = ""
+        balances = [:]
+        registration = .none
+        phase = .setup
+    }
+
+    public func lock() {
+        phase = store.exists ? .locked : .setup
+    }
+
+    // MARK: - chain
+
+    /// Everything the tabs need, in one pass.
+    ///
+    /// Concurrently, because the LCD serves each of these from a different
+    /// module and serially this is the difference between a tab that appears
+    /// and a tab that populates.
+    public func refresh() async {
+        guard !address.isEmpty else { return }
+        refreshing = true
+        defer { refreshing = false }
+
+        async let balances = client.balances(address)
+        async let registration = client.registrationStatus(address)
+        async let pools = client.pools()
+        async let fee = client.swapFeePercent()
+        async let validators = client.bondedValidators()
+        async let delegations = client.delegations(address)
+        async let unbondings = client.unbondingDelegations(address)
+        async let rewards = client.totalRewards(address)
+        async let bonded = client.totalBonded()
+
+        self.balances = await balances.compactMapValues { BigInt($0) }
+        self.registration = await registration
+        self.pools = await pools
+        self.swapFeePercent = Decimal(string: await fee) ?? self.swapFeePercent
+        self.validators = await validators
+        self.delegations = await delegations
+        self.unbondings = await unbondings
+        self.rewards = BigInt(await rewards) ?? 0
+        self.totalBonded = BigInt(await bonded) ?? 0
+
+        // A chain that answers with nothing is not an error — a fresh account
+        // has no balances and a young chain has no pools.
+        lastError = nil
+    }
+
+    // MARK: - derived
+
+    public func balance(_ token: Token) -> BigInt { balances[token.denom] ?? 0 }
+
+    /// Tokens worth listing: the registry, plus anything held that it does not
+    /// know about, minus registry entries with no balance beyond the two this
+    /// chain is about.
+    public var holdings: [(token: Token, amount: BigInt)] {
+        var rows: [(Token, BigInt)] = []
+        for token in Token.all {
+            let amount = balance(token)
+            // ERTH and ANML always show: one is gas, the other is the point of
+            // registering, and a zero of either is information.
+            if amount > 0 || token == .erth || token == .anml {
+                rows.append((token, amount))
+            }
+        }
+        for (denom, amount) in balances where Token.named(denom) == nil && amount > 0 {
+            rows.append((Token.unknown(denom: denom), amount))
+        }
+        return rows.sorted { lhs, rhs in
+            if (lhs.1 > 0) != (rhs.1 > 0) { return lhs.1 > 0 }
+            return lhs.0.symbol < rhs.0.symbol
+        }
+    }
+
+    public var isRegistered: Bool { registration.registered }
+
+    public var canClaimAnml: Bool { Personhood.isAnmlClaimable(registration) }
+
+    /// Gas the account can actually pay with. A new human has none of it, which
+    /// is what the gas gate exists for.
+    public var hasGas: Bool { balance(.erth) > 0 }
+
+    public var totalStaked: BigInt {
+        delegations.reduce(BigInt(0)) { $0 + (BigInt($1.amount) ?? 0) }
+    }
+
+    public func pool(for token: Token) -> Dex.Pool? {
+        pools.first { $0.tokenDenom == token.denom }
+    }
+
+    /// The LP-rewards option's share of the capital stream, which is half of
+    /// what a pool pays. Zero until the govern tab has loaded it.
+    public var lpOptionShare: Double = 0
+
+    public func loadLPShare() async {
+        let stream = await client.stream(.groundworks)
+        guard let total = Double(stream.totalWeight), total > 0 else { return }
+        // Matched on the handler rather than the description: a rename in
+        // governance should not silently detach the APR from its source.
+        let lp = stream.options
+            .filter { $0.handler == "lp_rewards" }
+            .compactMap { Double($0.amountAllocated) }
+            .reduce(0, +)
+        lpOptionShare = lp / total
+    }
+
+    func describe(_ error: Swift.Error) -> String {
+        switch error {
+        case WalletStore.Error.authenticationFailed: "Authentication failed."
+        case WalletStore.Error.notFound: "No wallet on this device."
+        case let EarthClient.Error.rejected(code, log): "Rejected (code \(code)): \(log)"
+        case let EarthClient.Error.executionFailed(code, log): "Failed (code \(code)): \(log)"
+        default: String(describing: error)
+        }
+    }
+}

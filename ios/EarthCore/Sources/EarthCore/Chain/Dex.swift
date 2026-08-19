@@ -9,7 +9,7 @@ public enum Dex {
     /// The LP share denom for a pool. Mirrors `types.LPShareDenom`.
     public static func shareDenom(poolID: UInt64) -> String { "dexlp/\(poolID)" }
 
-    public struct Pool: Sendable, Equatable {
+    public struct Pool: Sendable, Equatable, Identifiable {
         public let id: UInt64
         /// uerth.
         public let erthReserve: String

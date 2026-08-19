@@ -10,7 +10,7 @@ import Foundation
 ///   groundworks — weighted by bonded stake, kept in step by the staking hooks.
 public enum Allocation {
 
-    public struct OptionInfo: Sendable, Equatable {
+    public struct OptionInfo: Sendable, Equatable, Identifiable {
         public let id: UInt64
         public let description: String
         public let kind: String
@@ -38,9 +38,16 @@ public enum Allocation {
     }
 
     /// One voter's weight on one option.
-    public struct Weight: Sendable, Equatable {
+    public struct Weight: Sendable, Equatable, Identifiable {
+        public var id: UInt64 { optionID }
+
         public let optionID: UInt64
         public let percent: UInt64
+
+        public init(optionID: UInt64, percent: UInt64) {
+            self.optionID = optionID
+            self.percent = percent
+        }
     }
 
     /// The LCD spells the stream out in full: grpc-gateway parses the enum by

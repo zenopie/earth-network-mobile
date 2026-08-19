@@ -3,7 +3,11 @@ import Foundation
 /// Native x/staking and x/distribution.
 public enum Staking {
 
-    public struct Validator: Sendable, Equatable {
+    public struct Validator: Sendable, Equatable, Identifiable {
+        /// The operator address. A validator can change its moniker, so the
+        /// list would reorder under a name-keyed identity.
+        public var id: String { operatorAddress }
+
         public let operatorAddress: String
         public let moniker: String
         public let tokens: String
@@ -11,7 +15,9 @@ public enum Staking {
         public let commission: Double
     }
 
-    public struct Delegation: Sendable, Equatable {
+    public struct Delegation: Sendable, Equatable, Identifiable {
+        public var id: String { validator }
+
         public let validator: String
         public let amount: String
     }

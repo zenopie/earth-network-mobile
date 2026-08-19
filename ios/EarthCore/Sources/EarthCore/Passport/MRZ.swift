@@ -16,12 +16,14 @@ public struct MRZ: Equatable {
     }
 
     /// The three fields the chip's access key is derived from.
+    /// Mutable because this is what a user types, field by field, and the
+    /// entry screen binds straight to it.
     public struct Key: Equatable {
-        public let documentNumber: String
+        public var documentNumber: String
         /// YYMMDD.
-        public let dateOfBirth: String
+        public var dateOfBirth: String
         /// YYMMDD.
-        public let dateOfExpiry: String
+        public var dateOfExpiry: String
 
         public init(documentNumber: String, dateOfBirth: String, dateOfExpiry: String) {
             self.documentNumber = documentNumber

@@ -9,6 +9,8 @@ reference for behaviour; read it rather than re-deriving the domain logic.
       ProverGateCore/   no dependencies — field elements, witness decoding, repo layout
       ProverGate/       the Phase 1 gate: Barretenberg proving via Swoir
       EarthCore/        Phases 2–3: the headless layer — keys, tx, chain, maths, passport
+      EarthUI/          Phase 4: the screens — see EarthUI/README.md
+      EarthWallet/      the app shell — see EarthWallet/README.md
 
 ## Phase 1: the gate
 
@@ -255,6 +257,20 @@ reads as `940623`, which is greater than 2026's `260819` and passes. Every such
 passport is long expired, so the check is not rejecting what it is there to
 reject. This is a circuit finding, not a port one — it affects Android
 identically — and is recorded here because this is where it surfaced.
+
+## Phase 4: the app
+
+Four tabs — Wallet, Earn, Swap, Govern — over `EarthCore`, wired to the live
+chain. `ios/EarthUI/README.md` has the detail; the short version is that no
+screen broadcasts on its own, the signing key is never held between
+transactions, and every figure comes from the maths already checked against the
+chain rather than being recomputed in a view.
+
+    cd ios/EarthUI && ./Scripts/build-ios.sh      # typechecks the whole UI
+
+Running it needs Xcode's iOS platform component, which is a separate download
+from the SDK and which a connected device needs too — see
+`ios/EarthWallet/README.md`.
 
 ## Not yet started
 
