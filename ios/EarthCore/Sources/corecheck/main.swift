@@ -19,6 +19,7 @@ let artifacts = URL(fileURLWithPath: #filePath)
 checkCrypto()
 checkTransactions(writingTo: artifacts)
 checkMath()
+checkPassport(writingTo: artifacts)
 
 // `swift run corecheck --live` also asks the real chain. Left out of the
 // default run so the offline checks stay the thing that has to pass.

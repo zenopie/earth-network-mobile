@@ -23,9 +23,17 @@ func read(path string) string {
 func main() {
 	dir := os.Args[1]
 
-	vkHex := read(dir + "/swift_vk.hex")
-	proofHex := read(dir + "/swift_proof_body.hex")
-	signals := strings.Split(read(dir+"/swift_public_signals.txt"), "\n")
+	// The Phase 1 gate writes `swift_*`; `progate --witness` writes
+	// `passport_*` for a proof built from a passport rather than from the
+	// checked-in witness. Same verifier either way.
+	prefix := "swift"
+	if len(os.Args) > 2 {
+		prefix = os.Args[2]
+	}
+
+	vkHex := read(dir + "/" + prefix + "_vk.hex")
+	proofHex := read(dir + "/" + prefix + "_proof_body.hex")
+	signals := strings.Split(read(dir+"/"+prefix+"_public_signals.txt"), "\n")
 
 	fmt.Printf("vk        %d hex chars\n", len(vkHex))
 	fmt.Printf("proof     %d hex chars\n", len(proofHex))

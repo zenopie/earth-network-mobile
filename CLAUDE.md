@@ -19,7 +19,7 @@ Android ships; iOS is a port in progress.
     ios/        the port — see ios/README.md
     circuits/   Noir circuits (nargo workspace) for the personhood proof
     tools/      registry-builder (DSC trust store), chainverify (proof checking),
-                keycheck + txcheck (Go ground truth for the iOS port)
+                keycheck + txcheck + certcheck (Go ground truth for the iOS port)
 
 Gradle lives in `android/`, so **every `./gradlew` command runs from there**.
 
@@ -46,8 +46,9 @@ circuit.
 
 For iOS commands see `ios/README.md`. The short version:
 
-    cd ios/EarthCore && swift run corecheck          # Phase 2 domain layer
-    cd tools/txcheck  && go run . ../../ios/EarthCore/.artifacts
+    cd ios/EarthCore  && swift run corecheck         # domain layer + passport
+    cd tools/txcheck   && go run . ../../ios/EarthCore/.artifacts
+    cd ios/ProverGate  && swift run progate --witness ../EarthCore/.artifacts/passport_witness.json
 
 ## Chain facts
 

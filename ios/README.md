@@ -8,7 +8,7 @@ reference for behaviour; read it rather than re-deriving the domain logic.
     ios/
       ProverGateCore/   no dependencies — field elements, witness decoding, repo layout
       ProverGate/       the Phase 1 gate: Barretenberg proving via Swoir
-      EarthCore/        Phase 2: the headless domain layer — keys, tx, chain, maths
+      EarthCore/        Phases 2–3: the headless layer — keys, tx, chain, maths, passport
 
 ## Phase 1: the gate
 
@@ -75,11 +75,15 @@ it works.
 
 ## Running it, and the Xcode question
 
-**Xcode is not required to run the gate.** SwiftPM is, in effect, unusable
-here: on a Command Line Tools toolchain it hangs indefinitely resolving the
-Swoirenberg xcframework binary target — 0% CPU, no sockets, deadlocked in an
-async await, no error — and it hangs for the whole package graph, so
-`--target` does not dodge it. Observed on Swift 5.10 (CLT).
+**With Xcode installed, `swift build` and `swift run progate` just work.** The
+scripts below are kept for the situation they were written for and are no
+longer the normal path.
+
+On a **Command Line Tools** toolchain SwiftPM is, in effect, unusable here: it
+hangs indefinitely resolving the Swoirenberg xcframework binary target — 0%
+CPU, no sockets, deadlocked in an async await, no error — and it hangs for the
+whole package graph, so `--target` does not dodge it. Observed on Swift 5.10
+(CLT); gone on Swift 6.3 with Xcode 26.
 
 Everything SwiftPM would have done is mechanical, so `Scripts/build-without-xcode.sh`
 does it with `swiftc` directly: compile five modules in dependency order, link
@@ -188,7 +192,78 @@ would verify a signature over something other than what it re-encodes.
   — it ships no XCTest platform, so `swift test` cannot run at all. The checks
   are an executable, as in `ProverGateCore`.
 
+## Phase 3: the passport
+
+Everything between a chip read and a registration on chain, minus the chip read
+itself:
+
+    Passport/MRZ.swift            TD3 parse, check digits, BAC key seed
+    Passport/DER.swift            a DER reader that keeps byte ranges
+    Passport/Certificate.swift    the Document Signer's key and its curve
+    Passport/SOD.swift            EF.SOD -> eContent, signed attributes, signature
+    Passport/PassportInputs.swift the lean_poa witness
+    Passport/PassportRegistration.swift  scan -> proof -> MsgRegister
+
+### How it is checked
+
+There is no captured DG1/SOD pair in this repo — the Android fixture is the
+*already-built* circuit inputs, which cannot be run backwards into a SOD. So
+`corecheck` builds a passport that does not exist: a real P-256 key, a real
+EF.SOD signed by it, and ICAO's own BAC worked example as the MRZ. Then the
+question is whether the witness is the one the circuit wants, and only the
+circuit can answer that:
+
+    cd ios/EarthCore  && swift run corecheck                 # writes .artifacts/passport_witness.json
+    cd ios/ProverGate && swift run progate --witness ../EarthCore/.artifacts/passport_witness.json
+    PROVED — a witness built from a passport's DG1 and EF.SOD satisfies lean_poa
+
+    cd tools/chainverify && go run . ../../ios/ProverGate/.artifacts passport
+    ACCEPTED — the chain verifier accepts the Swift-generated proof
+
+That is the whole loop: Swift parses a SOD, builds a witness, Barretenberg
+proves it, and the chain's own verifier accepts the proof. The circuit re-walks
+the hash chain and verifies the DSC signature *in circuit*, so a mistake in the
+ASN.1 walking, the hash offsets, the padding, or the low-s normalisation would
+not prove at all.
+
+One last gap closes separately. The circuit returns a DSC commitment as its
+third public signal, and the chain recomputes one from the certificate in
+`MsgRegister`; if the canonical key encoding differed, a registration would
+fail on chain with nothing in the app to explain it:
+
+    cd tools/certcheck && go run . \
+      ../../ios/EarthCore/.artifacts/passport_witness.json \
+      ../../ios/ProverGate/.artifacts/passport_public_signals.txt
+    MATCH — the chain recomputes the commitment the circuit returned
+
+`certcheck` with no arguments prints what the chain's `x/pki/certs` makes of
+every certificate in its own test corpus; `corecheck` asserts the Swift parser
+agrees, over Brainpool P-256 and P-512, RSA-2048, and a 6144-bit RSA key that
+correctly has no circuit to prove with.
+
+### Two things worth knowing
+
+**Explicit domain parameters are not an edge case.** Every Brainpool CSCA in
+the chain's test corpus states its curve as explicit parameters rather than by
+OID, because they predate wide OID support. Refusing that form — which is what
+a first pass does — fails real passports. The parser matches such parameters by
+**group order**, which identifies a curve on its own.
+
+**The circuit's expiry check is comparing two-digit years.** It asserts the MRZ
+expiry `>= current_date` as YYMMDD integers, so a passport expiring in 1994
+reads as `940623`, which is greater than 2026's `260819` and passes. Every such
+passport is long expired, so the check is not rejecting what it is there to
+reject. This is a circuit finding, not a port one — it affects Android
+identically — and is recorded here because this is where it surfaced.
+
 ## Not yet started
 
-Phases 3–5: passport NFC read (`NFCPassportReader` replacing jmrtd), the
-SwiftUI four-tab app, AdMob gas gate and referrals. See `../IOS_PORT_PROMPT.md`.
+The **NFC chip dialogue** (`NFCPassportReader` replacing jmrtd) is the rest of
+Phase 3, and it is blocked from outside the code: raw APDU exchange needs the
+`TAG` reader-session format, which needs the "Near Field Communication Tag
+Reading" entitlement, which a free Personal Team cannot enable. It also cannot
+be tested without a device. `PassportRegistration.Scan` is the seam it plugs
+into — it takes DG1 and EF.SOD and nothing else — so the work is bounded.
+
+Then phases 4–5: the SwiftUI four-tab app, AdMob gas gate and referrals. See
+`../IOS_PORT_PROMPT.md`.
