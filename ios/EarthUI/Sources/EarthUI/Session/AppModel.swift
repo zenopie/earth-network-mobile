@@ -26,11 +26,14 @@ public final class AppModel {
     public private(set) var phase: Phase = .launching
     public private(set) var address: String = ""
 
-    /// The name this wallet was created under.
+    /// Every wallet held, and which one is on screen.
     ///
-    /// Android names wallets because it can hold several; this holds one, but
-    /// the name still identifies whose balance is on screen and it is what the
-    /// top bar says.
+    /// Loaded lazily: reading them needs the phrase, and the phrase needs a
+    /// biometric prompt, so this stays empty until the wallets screen asks.
+    public private(set) var wallets: [WalletStore.Entry] = []
+    public private(set) var selected = 0
+
+    /// The name the current wallet was created under. What the top bar says.
     public private(set) var walletName: String = "Wallet 1"
 
     /// Balances by denom, in base units.
@@ -102,7 +105,13 @@ public final class AppModel {
     /// query anything at all.
     public func unlock() async -> Bool {
         do {
-            address = try store.withKey(reason: "Unlock your Earth wallet") { $0.address }
+            let wallets = try store.list(reason: "Unlock your Earth wallet")
+            guard !wallets.isEmpty else { throw WalletStore.Error.notFound }
+            self.wallets = wallets
+            selected = min(UserDefaults.standard.integer(forKey: "selectedWallet"),
+                           wallets.count - 1)
+            address = wallets[selected].address
+            walletName = wallets[selected].name
             phase = .ready
             await refresh()
             return true
@@ -113,9 +122,11 @@ public final class AppModel {
     }
 
     public func adopt(mnemonic: String, name: String = "Wallet 1") async throws {
-        try store.save(mnemonic: mnemonic)
+        try store.save(mnemonic: mnemonic, name: name)
         walletName = name
+        selected = 0
         UserDefaults.standard.set(name, forKey: "walletName")
+        UserDefaults.standard.set(0, forKey: "selectedWallet")
         address = try EarthKey(mnemonic: mnemonic).address
         phase = .ready
         await refresh()
@@ -128,6 +139,42 @@ public final class AppModel {
         activity = nil
         registration = .none
         phase = .setup
+    }
+
+    /// Read the wallet list. Costs one prompt.
+    public func loadWallets() {
+        wallets = (try? store.list(reason: "Show your wallets")) ?? []
+        selected = min(UserDefaults.standard.integer(forKey: "selectedWallet"),
+                       max(0, wallets.count - 1))
+    }
+
+    /// Switch to another wallet.
+    ///
+    /// Everything on screen belongs to the old one, so the whole app reloads
+    /// rather than the address alone. Anything less leaves a stale balance
+    /// behind a fresh address.
+    public func select(_ index: Int) async {
+        guard wallets.indices.contains(index) else { return }
+        selected = index
+        walletName = wallets[index].name
+        address = wallets[index].address
+        UserDefaults.standard.set(index, forKey: "selectedWallet")
+        UserDefaults.standard.set(walletName, forKey: "walletName")
+
+        balances = [:]
+        activity = nil
+        registration = .none
+        delegations = []
+        unbondings = []
+        rewards = 0
+        await refresh()
+    }
+
+    /// Add a wallet and switch to it.
+    public func addWallet(mnemonic: String, name: String) async throws {
+        let index = try store.add(mnemonic: mnemonic, name: name)
+        loadWallets()
+        await select(index)
     }
 
     public func toggleBalances() {

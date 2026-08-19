@@ -18,6 +18,17 @@ import Security
 /// wallet whose phrase survives on a device with no lock is not self-custody.
 public struct WalletStore {
 
+    /// One wallet in the list.
+    public struct Entry: Codable, Equatable, Identifiable {
+        public let name: String
+        public let mnemonic: String
+        /// Kept alongside so the list can be shown without deriving every key,
+        /// which would mean a biometric prompt per row.
+        public let address: String
+
+        public var id: String { address }
+    }
+
     public enum Error: Swift.Error, Equatable {
         case notFound
         case authenticationFailed
@@ -69,9 +80,55 @@ public struct WalletStore {
         return status == errSecSuccess || status == errSecInteractionNotAllowed
     }
 
-    /// Store a phrase, replacing anything already there.
-    public func save(mnemonic: String) throws {
-        guard BIP39.isValid(mnemonic: mnemonic) else { throw Error.invalidMnemonic }
+    /// Store a phrase, replacing everything already there.
+    ///
+    /// The single-wallet entry point, kept for first run. Adding to an
+    /// existing list goes through `add`.
+    public func save(mnemonic: String, name: String = "Wallet 1") throws {
+        try write([Entry(name: name, mnemonic: mnemonic, address: try EarthKey(mnemonic: mnemonic).address)])
+    }
+
+    /// Add a wallet and return its index.
+    public func add(mnemonic: String, name: String) throws -> Int {
+        var wallets = try list(reason: "Add a wallet")
+        let entry = Entry(
+            name: name,
+            mnemonic: mnemonic,
+            address: try EarthKey(mnemonic: mnemonic).address
+        )
+        // Importing a phrase already held is a no-op rather than a duplicate
+        // row that switching between would do nothing.
+        if let existing = wallets.firstIndex(where: { $0.address == entry.address }) {
+            return existing
+        }
+        wallets.append(entry)
+        try write(wallets)
+        return wallets.count - 1
+    }
+
+    /// Every wallet held. Prompts once, not once per wallet.
+    public func list(reason: String) throws -> [Entry] {
+        guard exists else { return [] }
+        let data = Data(try mnemonic(reason: reason).utf8)
+        // Written as JSON since the second wallet; a bare phrase is what the
+        // first release stored, and it still has to open.
+        if let wallets = try? JSONDecoder().decode([Entry].self, from: data) {
+            return wallets
+        }
+        let phrase = String(decoding: data, as: UTF8.self)
+        guard let address = try? EarthKey(mnemonic: phrase).address else { return [] }
+        return [Entry(name: "Wallet 1", mnemonic: phrase, address: address)]
+    }
+
+    private func write(_ wallets: [Entry]) throws {
+        for wallet in wallets where !BIP39.isValid(mnemonic: wallet.mnemonic) {
+            throw Error.invalidMnemonic
+        }
+        let encoded = try JSONEncoder().encode(wallets)
+        try store(String(decoding: encoded, as: UTF8.self))
+    }
+
+    private func store(_ mnemonic: String) throws {
 
         var error: Unmanaged<CFError>?
         let control = SecAccessControlCreateWithFlags(

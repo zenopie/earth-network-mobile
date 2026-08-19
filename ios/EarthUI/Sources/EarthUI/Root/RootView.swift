@@ -83,6 +83,22 @@ struct TabsView: View {
     @State private var selection = Tab.initialSelection
     @State private var settingsOpen = false
     @State private var liquidityOpen = false
+    /// `-demoSheet settings` opens straight into one, for the same reason
+    /// `-demoTab` exists: nothing can tap a simulator from the command line.
+    @State private var demoSheet = TabsView.demoSheet
+
+    enum DemoSheet: String, Identifiable {
+        case settings, wallets, explorer
+        var id: String { rawValue }
+    }
+
+    static var demoSheet: DemoSheet? {
+        #if targetEnvironment(simulator)
+        return UserDefaults.standard.string(forKey: "demoSheet").flatMap(DemoSheet.init)
+        #else
+        return nil
+        #endif
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -115,6 +131,13 @@ struct TabsView: View {
         .background(theme.colors.bgPrimary.ignoresSafeArea())
         .task { await model.loadLPShare() }
         .sheet(isPresented: $settingsOpen) { SettingsSheet().earthThemed() }
+        .sheet(item: $demoSheet) { sheet in
+            switch sheet {
+            case .settings: SettingsSheet().earthThemed()
+            case .wallets: WalletsScreen().earthThemed()
+            case .explorer: ExploreScreen().earthThemed()
+            }
+        }
         .sheet(isPresented: $liquidityOpen) { LiquiditySheet().earthThemed() }
     }
 }

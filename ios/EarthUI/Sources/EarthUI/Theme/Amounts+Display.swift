@@ -67,6 +67,11 @@ enum Figures {
         short.string(from: NSNumber(value: value)) ?? String(value)
     }
 
+    /// A plain count with thousands separators.
+    static func grouped(_ value: Int64) -> String {
+        grouped.string(from: NSNumber(value: value)) ?? String(value)
+    }
+
     /// A rate at whatever magnitude it lands.
     ///
     /// On a young chain with little bonded this runs to millions of percent,

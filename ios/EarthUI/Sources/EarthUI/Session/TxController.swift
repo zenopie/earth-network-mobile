@@ -111,9 +111,12 @@ public final class TxController {
         // signing — not cached when the app unlocked. The key lives for this
         // call and no longer, which is why `withKey` is not used: the broadcast
         // is async and the key has to outlive a synchronous closure.
-        let phrase = try model.store.mnemonic(
+        let wallets = try model.store.list(
             reason: "Sign this \(details.action.lowercased()) transaction")
-        let key = try EarthKey(mnemonic: phrase)
+        guard let wallet = wallets.first(where: { $0.address == model.address })
+            ?? wallets.first
+        else { throw WalletStore.Error.notFound }
+        let key = try EarthKey(mnemonic: wallet.mnemonic)
         let messages = try build(key)
         return try await model.client.broadcast(
             messages,
