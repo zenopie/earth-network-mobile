@@ -3,37 +3,111 @@ import EarthCore
 import Observation
 import SwiftUI
 
-/// Two kinds of governance, kept apart because they are not the same thing.
+/// Govern: the three places a vote can go.
 ///
-/// Allocation votes direct an emission stream continuously and are weighted by
-/// personhood or by stake; x/gov proposals change the chain itself, run for a
-/// fixed period, and are weighted by bonded stake alone. Folding them into one
-/// list would suggest a vote here and a vote there mean the same, and they do
-/// not.
+/// A menu, not a dashboard. Each entry is a whole screen's worth of detail —
+/// two charts and a vote, or a list of proposals — and summarising all three
+/// here left every one of them too small to act on while still being too much
+/// to scan.
+///
+/// The two streams are Earth's own governance and the third is the SDK's. They
+/// are grouped together because both are voting and separated by a heading
+/// because they are not the same vote: the streams steer an emission
+/// continuously by personhood or stake, proposals change the chain itself for a
+/// fixed period by bonded stake alone.
 struct GovernScreen: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
     @State private var streams = StreamsModel()
+    @State private var route: Route?
+
+    enum Route: Hashable, Identifiable {
+        case stream(caretaker: Bool)
+        case proposals
+
+        var id: String {
+            switch self {
+            case let .stream(caretaker): "stream-\(caretaker)"
+            case .proposals: "proposals"
+            }
+        }
+    }
 
     var body: some View {
-        EarthScreen {
-            StreamCard(
-                title: "Caretaker Fund",
-                subtitle: "One human, one vote. Needs a live registration.",
-                stream: .caretaker,
-                state: streams.caretaker,
-                enabled: model.isRegistered
-            )
-            StreamCard(
-                title: "Deflation Fund",
-                subtitle: "Weighted by bonded stake.",
-                stream: .groundworks,
-                state: streams.groundworks,
-                enabled: model.totalStaked > 0
-            )
-            ProposalsSection(proposals: streams.proposals)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Spacer().frame(height: theme.space.x16)
+                Text("Two of Earth's four emission streams are directed by vote. The Caretaker Fund counts people, Groundworks counts stake — you can hold a say in both.")
+                    .font(EarthType.bodySmall)
+                    .foregroundStyle(theme.colors.textSecondary)
+
+                Spacer().frame(height: theme.space.x16)
+                GovernRow(
+                    title: "Caretaker Fund",
+                    detail: "One verified human, one vote.",
+                    status: streams.caretaker.status(
+                        eligible: model.isRegistered,
+                        blocked: "Register to take part"
+                    ),
+                    loading: !streams.loaded
+                ) { route = .stream(caretaker: true) }
+
+                Spacer().frame(height: theme.space.x8)
+                GovernRow(
+                    title: "Groundworks Fund",
+                    detail: "Weighted by the ERTH you have staked.",
+                    status: streams.groundworks.status(
+                        eligible: model.totalStaked > 0,
+                        blocked: "Stake ERTH to take part"
+                    ),
+                    loading: !streams.loaded
+                ) { route = .stream(caretaker: false) }
+
+                Spacer().frame(height: theme.space.x24)
+                EarthLabel("Chain governance")
+                Spacer().frame(height: theme.space.x8)
+                GovernRow(
+                    title: "Proposals",
+                    detail: "Changes to the chain itself, voted on by staked ERTH.",
+                    status: proposalStatus,
+                    loading: !streams.loaded
+                ) { route = .proposals }
+
+                Spacer().frame(height: theme.space.x32)
+            }
+            .padding(.horizontal, theme.space.gutter)
         }
+        .refreshable { await streams.load(model: model) }
+        .background(theme.colors.bgPrimary)
+        .scrollContentBackground(.hidden)
         .task { await streams.load(model: model) }
+        .sheet(item: $route) { route in
+            switch route {
+            case let .stream(caretaker):
+                StreamDetailScreen(
+                    title: caretaker ? "Caretaker Fund" : "Groundworks Fund",
+                    detail: caretaker
+                        ? "One verified human, one vote."
+                        : "Weighted by the ERTH you have staked.",
+                    stream: caretaker ? .caretaker : .groundworks,
+                    state: caretaker ? streams.caretaker : streams.groundworks,
+                    eligibility: caretaker
+                        ? (model.isRegistered ? nil : "Register with your passport to vote here.")
+                        : (model.totalStaked > 0 ? nil : "Stake ERTH to vote here."),
+                    onChanged: { Task { await streams.load(model: model) } }
+                )
+                .earthThemed()
+            case .proposals:
+                ProposalsScreen(proposals: streams.proposals).earthThemed()
+            }
+        }
+    }
+
+    private var proposalStatus: String? {
+        guard streams.loaded else { return nil }
+        let live = streams.proposals.filter { $0.status == "PROPOSAL_STATUS_VOTING_PERIOD" }.count
+        if live > 0 { return Figures.count(live, "open for voting", "open for voting") }
+        return streams.proposals.isEmpty ? "None yet" : "\(streams.proposals.count) closed"
     }
 }
 
@@ -43,312 +117,105 @@ final class StreamsModel {
     struct State {
         var stream: Allocation.Stream = .empty
         var mine: [Allocation.Weight] = []
+
+        /// Where the stream actually goes, across every voter.
+        ///
+        /// Each option's allocated amount is its share of the total weight, so
+        /// this is the tally rather than anyone's preference. Percentages are
+        /// computed against the total rather than read off, because the chain
+        /// stores weights and not shares.
+        var actualSlices: [AllocationSlice] {
+            let total = stream.options.reduce(0.0) { $0 + (Double($1.amountAllocated) ?? 0) }
+            guard total > 0 else { return [] }
+            return stream.options.compactMap { option in
+                let weight = Double(option.amountAllocated) ?? 0
+                let percent = Int(weight / total * 100)
+                return percent > 0 ? AllocationSlice(name: option.description, percent: percent) : nil
+            }
+            .sorted { $0.percent > $1.percent }
+        }
+
+        /// Where this wallet asked its share to go.
+        var slices: [AllocationSlice] {
+            stream.options.compactMap { option in
+                guard let weight = mine.first(where: { $0.optionID == option.id })?.percent,
+                      weight > 0 else { return nil }
+                return AllocationSlice(name: option.description, percent: Int(weight))
+            }
+            .sorted { $0.percent > $1.percent }
+        }
+
+        /// What this wallet's position is, in a few words.
+        ///
+        /// Ineligibility outranks the split: someone who cannot vote does not
+        /// need to be told they have allocated nothing, they need to be told
+        /// why.
+        func status(eligible: Bool, blocked: String) -> String? {
+            guard eligible else { return blocked }
+            guard !slices.isEmpty else { return "Not allocated" }
+            return slices.map { "\($0.name) \($0.percent)%" }.joined(separator: " · ")
+        }
     }
 
     var caretaker = State()
     var groundworks = State()
     var proposals: [Gov.Proposal] = []
+    private(set) var loaded = false
 
     func load(model: AppModel) async {
         async let caretakerStream = model.client.stream(.caretaker)
         async let caretakerVote = model.client.voterAllocations(.caretaker, address: model.address)
         async let groundworksStream = model.client.stream(.groundworks)
         async let groundworksVote = model.client.voterAllocations(.groundworks, address: model.address)
-        async let proposals = model.client.proposals(limit: 10)
+        async let proposals = model.client.proposals(limit: 20)
 
         caretaker = State(stream: await caretakerStream, mine: await caretakerVote)
         groundworks = State(stream: await groundworksStream, mine: await groundworksVote)
         self.proposals = await proposals
+        loaded = true
     }
 }
 
-struct StreamCard: View {
+struct GovernRow: View {
     @Environment(\.earth) private var theme
     let title: String
-    let subtitle: String
-    let stream: Msg.StreamID
-    let state: StreamsModel.State
-    let enabled: Bool
-
-    @State private var editing = false
+    let detail: String
+    let status: String?
+    let loading: Bool
+    let action: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: theme.space.x8) {
-            EarthSectionHeader(title: title)
-            Text(subtitle)
-                .font(EarthType.bodySmall)
-                .foregroundStyle(theme.colors.textTertiary)
-
-            if state.stream.options.isEmpty {
-                EarthEmpty(systemName: "chart.pie", title: "No options yet")
-            } else {
+        Button(action: action) {
+            HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(state.stream.options.enumerated()), id: \.element.id) { index, option in
-                        if index > 0 { EarthDivider() }
-                        OptionRow(option: option, total: state.stream.totalWeight, mine: mine(option.id))
-                    }
-                }
-                EarthButton(title: state.mine.isEmpty ? "Set your allocation" : "Change your allocation",
-                            role: .secondary) { editing = true }
-                    .disabled(!enabled)
-                if !enabled {
-                    Text(stream == .caretaker
-                         ? "Register with your passport to vote here."
-                         : "Stake ERTH to vote here.")
+                    Text(title)
+                        .font(EarthType.body).fontWeight(.semibold)
+                        .foregroundStyle(theme.colors.textPrimary)
+                    Text(detail)
                         .font(EarthType.bodySmall)
                         .foregroundStyle(theme.colors.textTertiary)
-                }
-            }
-        }
-        .sheet(isPresented: $editing) {
-            AllocationEditor(title: title, stream: stream, state: state).earthThemed()
-        }
-    }
-
-    private func mine(_ optionID: UInt64) -> UInt64? {
-        state.mine.first { $0.optionID == optionID }?.percent
-    }
-}
-
-struct OptionRow: View {
-    @Environment(\.earth) private var theme
-    let option: Allocation.OptionInfo
-    let total: String
-    let mine: UInt64?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: theme.space.x4) {
-            HStack {
-                Text(option.description.isEmpty ? "Option \(option.id)" : option.description)
-                    .font(EarthType.body)
-                    .foregroundStyle(theme.colors.textPrimary)
-                Spacer()
-                if let mine, mine > 0 {
-                    EarthStatusPill(status: .success, text: "yours \(mine)%")
-                }
-                Text(share)
-                    .font(EarthType.amount)
-                    .foregroundStyle(theme.colors.textSecondary)
-            }
-            // The bar is the share of the stream this option draws, which is
-            // the number a voter is actually moving.
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(theme.colors.bgTertiary)
-                    Capsule().fill(theme.colors.accentInk)
-                        .frame(width: geometry.size.width * fraction)
-                }
-            }
-            .frame(height: 6)
-        }
-        .padding(.vertical, theme.space.x12)
-    }
-
-    /// `amountAllocated / totalWeight` — the denominator comes back with the
-    /// response rather than being summed here, which would drift the moment an
-    /// option is added between queries.
-    private var fraction: Double {
-        guard let total = Double(total), total > 0,
-              let mine = Double(option.amountAllocated) else { return 0 }
-        return min(max(mine / total, 0), 1)
-    }
-
-    private var share: String { String(format: "%.1f%%", fraction * 100) }
-}
-
-/// Set the split. Percentages, and they must total 100.
-struct AllocationEditor: View {
-    @Environment(\.earth) private var theme
-    @Environment(AppModel.self) private var model
-    @Environment(TxController.self) private var tx
-    @Environment(\.dismiss) private var dismiss
-
-    let title: String
-    let stream: Msg.StreamID
-    let state: StreamsModel.State
-
-    @State private var weights: [UInt64: Double] = [:]
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: theme.space.x16) {
-                    Text("Your vote directs this stream's emission continuously — there is no voting period to miss, and it stands until you change it.")
-                        .font(EarthType.bodySmall)
-                        .foregroundStyle(theme.colors.textTertiary)
-
-                    ForEach(state.stream.options, id: \.id) { option in
-                        EarthCard {
-                            HStack {
-                                Text(option.description.isEmpty ? "Option \(option.id)" : option.description)
-                                    .font(EarthType.body)
-                                    .foregroundStyle(theme.colors.textPrimary)
-                                Spacer()
-                                Text("\(Int(weights[option.id] ?? 0))%")
-                                    .font(EarthType.amount)
-                                    .foregroundStyle(theme.colors.textPrimary)
-                            }
-                            Slider(
-                                value: Binding(
-                                    get: { weights[option.id] ?? 0 },
-                                    set: { weights[option.id] = $0.rounded() }
-                                ),
-                                in: 0 ... 100,
-                                step: 1
-                            )
-                            .tint(Palette.Brand.b600)
-                        }
-                    }
-
-                    HStack {
-                        EarthLabel("Total")
-                        Spacer()
-                        Text("\(assigned)%")
-                            .font(EarthType.title)
-                            .foregroundStyle(assigned == 100 ? theme.colors.accentInk : theme.colors.textError)
-                    }
-
-                    EarthButton(title: "Review") { review() }
-                        .disabled(assigned != 100)
-                }
-                .padding(theme.space.gutter)
-            }
-            .navigationTitle(title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
-            .earthBackground()
-            .scrollContentBackground(.hidden)
-            .task {
-                for weight in state.mine { weights[weight.optionID] = Double(weight.percent) }
-            }
-        }
-    }
-
-    private var assigned: Int {
-        Int(weights.values.reduce(0, +))
-    }
-
-    private func review() {
-        // Zero-weight options are dropped rather than sent: the chain stores
-        // the record verbatim, and a list of zeroes is noise in it.
-        let chosen = weights
-            .filter { $0.value > 0 }
-            .map { Allocation.Weight(optionID: $0.key, percent: UInt64($0.value)) }
-            .sorted { $0.optionID < $1.optionID }
-        let target = stream
-
-        tx.request(.init(
-            action: "Set allocation",
-            rows: chosen.map { weight in
-                (label(weight.optionID), "\(weight.percent)%")
-            }
-        )) { key in
-            [model.client.msgSetAllocations(creator: key.address, stream: target, weights: chosen)]
-        }
-        dismiss()
-    }
-
-    private func label(_ optionID: UInt64) -> String {
-        let option = state.stream.options.first { $0.id == optionID }
-        let description = option?.description ?? ""
-        return description.isEmpty ? "Option \(optionID)" : description
-    }
-}
-
-struct ProposalsSection: View {
-    @Environment(\.earth) private var theme
-    let proposals: [Gov.Proposal]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: theme.space.x12) {
-            EarthSectionHeader(title: "Chain proposals")
-
-            if proposals.isEmpty {
-                EarthEmpty(
-                    systemName: "doc.text",
-                    title: "No proposals",
-                    detail: "Nothing has been put to the chain yet."
-                )
-            } else {
-                ForEach(proposals) { proposal in
-                    VStack(alignment: .leading, spacing: theme.space.x8) {
-                        HStack(alignment: .top) {
-                            Text(proposal.title)
-                                .font(EarthType.title)
-                                .foregroundStyle(theme.colors.textPrimary)
-                            Spacer()
-                            EarthStatusPill(status: status(proposal), text: shortStatus(proposal))
-                        }
-                        if !proposal.summary.isEmpty {
-                            Text(proposal.summary)
-                                .font(EarthType.bodySmall)
-                                .foregroundStyle(theme.colors.textTertiary)
-                                .lineLimit(3)
-                        }
-                        if proposal.total > 0 {
-                            TallyBar(proposal: proposal)
-                        }
-                        EarthDivider()
+                        .multilineTextAlignment(.leading)
+                    Spacer().frame(height: theme.space.x4)
+                    if loading {
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(theme.colors.bgTertiary)
+                            .frame(width: 140, height: 12)
+                    } else if let status {
+                        Text(status)
+                            .font(EarthType.bodySmall)
+                            .foregroundStyle(theme.colors.accentInk)
+                            .multilineTextAlignment(.leading)
                     }
                 }
-                // Voting needs cosmos/gov/v1beta1/tx.proto, which the message
-                // set here does not carry. Reading comes first: a chain with no
-                // proposals still needs to say so.
-                Text("Voting on chain proposals is not in this build.")
-                    .font(EarthType.bodySmall)
+                Spacer(minLength: theme.space.x8)
+                Text("›")
+                    .font(EarthType.textLg)
                     .foregroundStyle(theme.colors.textTertiary)
             }
+            .padding(theme.space.x16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(theme.colors.bgSecondary, in: .rect(cornerRadius: 20))
         }
-    }
-
-    private func status(_ proposal: Gov.Proposal) -> EarthStatus {
-        switch proposal.status {
-        case "PROPOSAL_STATUS_PASSED": .success
-        case "PROPOSAL_STATUS_VOTING_PERIOD", "PROPOSAL_STATUS_DEPOSIT_PERIOD": .pending
-        case "PROPOSAL_STATUS_REJECTED", "PROPOSAL_STATUS_FAILED": .failed
-        default: .neutral
-        }
-    }
-
-    private func shortStatus(_ proposal: Gov.Proposal) -> String {
-        proposal.status
-            .replacingOccurrences(of: "PROPOSAL_STATUS_", with: "")
-            .replacingOccurrences(of: "_", with: " ")
-            .lowercased()
-    }
-}
-
-struct TallyBar: View {
-    @Environment(\.earth) private var theme
-    let proposal: Gov.Proposal
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: theme.space.x4) {
-            GeometryReader { geometry in
-                HStack(spacing: 1) {
-                    segment(proposal.yes, theme.colors.accentInk, geometry.size.width)
-                    segment(proposal.no, theme.colors.errorInk, geometry.size.width)
-                    segment(proposal.veto, theme.colors.warnInk, geometry.size.width)
-                    segment(proposal.abstain, theme.colors.textDisabled, geometry.size.width)
-                }
-            }
-            .frame(height: 6)
-            .clipShape(.capsule)
-
-            Text("\(fraction(proposal.yes)) yes · \(fraction(proposal.no)) no")
-                .font(EarthType.bodySmall)
-                .foregroundStyle(theme.colors.textTertiary)
-        }
-    }
-
-    private func segment(_ votes: Int64, _ color: Color, _ width: CGFloat) -> some View {
-        Rectangle()
-            .fill(color)
-            .frame(width: width * (proposal.total > 0 ? Double(votes) / Double(proposal.total) : 0))
-    }
-
-    private func fraction(_ votes: Int64) -> String {
-        guard proposal.total > 0 else { return "0%" }
-        return String(format: "%.0f%%", Double(votes) / Double(proposal.total) * 100)
+        .buttonStyle(.plain)
     }
 }
