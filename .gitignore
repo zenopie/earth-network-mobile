@@ -1,4 +1,6 @@
 # Android/Gradle/IDE gitignore
+# (Android build lives in android/, iOS in ios/; most rules below are
+#  unanchored and so keep matching at any depth after the split.)
 
 # Built application files
 *.apk
@@ -79,4 +81,33 @@ lint-results.*
 erth-network-app/
 scripts/
 secretjs-source/
+
+# --- iOS / Swift ---
+
+# SwiftPM
+.build/
+.swiftpm/
+Packages/
+# Package.resolved is kept: the bb version lockstep with Android and the chain
+# depends on resolving to exactly one Swoirenberg build.
+!Package.resolved
+
+# Xcode
+DerivedData/
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.moved-aside
+
+# Proof/VK artifacts emitted by the Phase 1 gate test
+ios/ProverGate/.artifacts/
+
+# CocoaPods / Carthage, if they ever appear
+Pods/
+Carthage/Build/
+
+# Fastlane
+fastlane/report.xml
+fastlane/screenshots/
+fastlane/test_output/
 # End
