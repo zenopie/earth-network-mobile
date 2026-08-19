@@ -1,0 +1,93 @@
+name: Release to Play
+
+# Tags only, matching earth-network-chain and erth-network-app. Listing branches
+# alongside tags makes them alternatives rather than a conjunction, so adding
+# `branches` here would publish on every push to main.
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  # Manual runs pick their own track, so a hotfix can go straight to a wider
+  # audience without cutting a tag for it.
+  workflow_dispatch:
+    inputs:
+      track:
+        description: "Play track"
+        required: true
+        default: internal
+        type: choice
+        options: [internal, alpha, beta, production]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # JDK 17: app/build.gradle sets sourceCompatibility and jvmTarget to 17.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # The signing key never lives in the repo. It is held as a base64 secret
+      # and written to a path outside the working tree, so a `git add -A`
+      # anywhere in a later step cannot pick it up.
+      - name: Restore the upload keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 is not set — the build would produce an unsigned bundle Play will reject"
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload.keystore"
+          # build.gradle reads rootProject.file("keystore.properties").
+          {
+            echo "storeFile=$RUNNER_TEMP/upload.keystore"
+            echo "storePassword=$STORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > keystore.properties
+
+      - name: Build the bundle
+        run: ./gradlew bundleRelease --no-daemon
+
+      # Fail here rather than at Play's upload, which reports signing problems
+      # as an opaque rejection several minutes later.
+      - name: Verify it is signed
+        run: |
+          AAB=app/build/outputs/bundle/release/app-release.aab
+          jarsigner -verify "$AAB" | tee /dev/stderr | grep -q "jar verified" \
+            || { echo "::error::bundle is not signed"; exit 1; }
+
+      - name: Upload to Play
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: network.erth.wallet
+          releaseFiles: app/build/outputs/bundle/release/app-release.aab
+          # Tagged builds go to internal on purpose. Promoting to production is
+          # a decision with a human in it, not a side effect of pushing a tag.
+          track: ${{ github.event.inputs.track || 'internal' }}
+          status: completed
+
+      # Kept regardless of whether the upload succeeded, so a rejected build can
+      # be inspected or uploaded by hand without rebuilding it.
+      - name: Keep the bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-aab
+          path: app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+
+      - name: Clean up the keystore
+        if: always()
+        run: rm -f keystore.properties "$RUNNER_TEMP/upload.keystore"
