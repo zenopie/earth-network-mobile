@@ -36,6 +36,17 @@ struct EarthColors {
     let accentTint: Color
     let accentInk: Color
 
+    /// Buttons, as the vendored palette defines them. Secondary is a filled
+    /// light green with dark green ink — *not* an outlined white button. The
+    /// secondary fill on Android is Brand.100 and its border token is
+    /// deliberately unspecified.
+    let brandButtonBg: Color
+    let brandButtonFg: Color
+    let secondaryButtonBg: Color
+    let secondaryButtonFg: Color
+    let buttonDisabledBg: Color
+    let buttonDisabledFg: Color
+
     /// Kept apart from the accent because a warning is not brand. An amber
     /// pulled toward green stops reading as a warning, which is the one thing
     /// it has to do.
@@ -57,6 +68,12 @@ struct EarthColors {
         textError: Palette.Error.e600,
         accentTint: Palette.Brand.b50,
         accentInk: Palette.Brand.b700,
+        brandButtonBg: Palette.Brand.b500,
+        brandButtonFg: Palette.Base.bone,
+        secondaryButtonBg: Palette.Brand.b100,
+        secondaryButtonFg: Palette.Brand.b800,
+        buttonDisabledBg: Palette.Gray.g100,
+        buttonDisabledFg: Palette.Gray.g500,
         warnTint: Palette.Warning.w50,
         warnInk: Palette.Warning.w700,
         errorTint: Palette.Error.e50,
@@ -76,6 +93,12 @@ struct EarthColors {
         textError: Palette.Error.e300,
         accentTint: Palette.SharkShade.dp12,
         accentInk: Palette.Brand.b300,
+        brandButtonBg: Palette.Brand.b500,
+        brandButtonFg: Palette.Base.obsidian,
+        secondaryButtonBg: Palette.SharkShade.dp12,
+        secondaryButtonFg: Palette.Brand.b300,
+        buttonDisabledBg: Palette.Shark.s800,
+        buttonDisabledFg: Palette.Shark.s600,
         warnTint: Palette.Shark.s800,
         warnInk: Palette.Warning.w300,
         errorTint: Palette.Shark.s800,
@@ -117,6 +140,8 @@ enum EarthType {
     static let display = Font.system(size: 56, weight: .regular).monospacedDigit()
     /// Screen headings outside the app shell — setup, unlock. 28/40.
     static let headline = Font.system(size: 28, weight: .regular)
+    /// The wallet name in the top bar. 24/32.
+    static let header6 = Font.system(size: 24)
     static let textXl = Font.system(size: 20)
     static let textLg = Font.system(size: 18)
     /// The workhorse: row titles, values, body copy. 16/24.

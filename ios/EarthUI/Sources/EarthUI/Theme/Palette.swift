@@ -67,6 +67,7 @@ enum Palette {
         static let b500 = hex(0x00C244)
         static let b600 = hex(0x00A238)
         static let b700 = hex(0x00822D)
+        static let b800 = hex(0x056624)
     }
 
     enum Error {

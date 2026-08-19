@@ -15,8 +15,16 @@ let package = Package(
         .package(path: "../EarthCore"),
     ],
     targets: [
-        .target(name: "EarthUI", dependencies: [
-            .product(name: "EarthCore", package: "EarthCore"),
-        ]),
+        .target(
+            name: "EarthUI",
+            dependencies: [
+                .product(name: "EarthCore", package: "EarthCore"),
+            ],
+            // The real marks, taken from the Android app rather than
+            // approximated with SF Symbols. The tab glyphs were 24dp vector
+            // drawables; they are rasterized here and drawn as templates, so
+            // they still take their colour from the bar.
+            resources: [.process("Resources")]
+        ),
     ]
 )

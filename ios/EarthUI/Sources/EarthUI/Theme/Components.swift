@@ -183,17 +183,11 @@ struct EarthButton: View {
         Button(action: action) {
             HStack(spacing: theme.space.x8) {
                 if busy { ProgressView().controlSize(.small).tint(foreground) }
-                Text(title).font(EarthType.label)
+                Text(title).font(EarthType.body)
             }
             .frame(maxWidth: .infinity, minHeight: theme.space.buttonHeight)
             .foregroundStyle(foreground)
             .background(background, in: .rect(cornerRadius: theme.space.radiusMd))
-            .overlay {
-                if role == .secondary {
-                    RoundedRectangle(cornerRadius: theme.space.radiusMd)
-                        .strokeBorder(theme.colors.strokePrimary, lineWidth: theme.space.stroke)
-                }
-            }
         }
         .buttonStyle(.plain)
         .disabled(busy || !isEnabled)
@@ -204,19 +198,19 @@ struct EarthButton: View {
     /// which is unreadable — the label has to get darker as the ground gets
     /// lighter, and opacity moves them the same way.
     private var foreground: Color {
-        guard isEnabled, !busy else { return theme.colors.textDisabled }
+        guard isEnabled, !busy else { return theme.colors.buttonDisabledFg }
         switch role {
-        case .primary: return Palette.Base.bone
-        case .secondary: return theme.colors.textPrimary
+        case .primary: return theme.colors.brandButtonFg
+        case .secondary: return theme.colors.secondaryButtonFg
         case .destructive: return Palette.Base.bone
         }
     }
 
     private var background: Color {
-        guard isEnabled, !busy else { return theme.colors.bgTertiary }
+        guard isEnabled, !busy else { return theme.colors.buttonDisabledBg }
         switch role {
-        case .primary: return Palette.Brand.b600
-        case .secondary: return theme.colors.bgPrimary
+        case .primary: return theme.colors.brandButtonBg
+        case .secondary: return theme.colors.secondaryButtonBg
         case .destructive: return Palette.Error.e600
         }
     }

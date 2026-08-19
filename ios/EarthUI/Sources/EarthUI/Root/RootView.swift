@@ -65,12 +65,14 @@ enum Tab: String, CaseIterable, Hashable {
         return .wallet
     }
 
-    var icon: String {
+    /// The Android glyphs, not SF Symbols. All four share a 24pt viewport and
+    /// stroke weight so the bar reads as one set.
+    var glyph: String {
         switch self {
-        case .wallet: "wallet.bifold"
-        case .earn: "chart.line.uptrend.xyaxis"
-        case .swap: "arrow.left.arrow.right"
-        case .govern: "person.3"
+        case .wallet: TabGlyphPaths.wallet
+        case .earn: TabGlyphPaths.earn
+        case .swap: TabGlyphPaths.swap
+        case .govern: TabGlyphPaths.govern
         }
     }
 }
@@ -121,10 +123,20 @@ struct EarthTopBar: View {
     let onSettings: () -> Void
 
     var body: some View {
-        HStack(spacing: theme.space.x8) {
-            EarthMark(size: 32)
-            Text("Earth Wallet")
-                .font(EarthType.body)
+        HStack(spacing: 0) {
+            if showsBalances {
+                EarthAsset.logo?
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 32, height: 32)
+                Spacer().frame(width: theme.space.x8)
+            }
+            // The wallet's own name, not the app's. There is one wallet, so
+            // this identifies rather than switches — no chevron implying a
+            // menu that does not exist.
+            Text(model.walletName)
+                .font(EarthType.header6)
+                .fontWeight(.semibold)
                 .foregroundStyle(theme.colors.textPrimary)
             Spacer()
             if showsBalances {
@@ -171,9 +183,8 @@ struct EarthTabBar: View {
                         selection = tab
                     } label: {
                         VStack(spacing: 3) {
-                            Image(systemName: tab.icon)
-                                .font(.system(size: 20))
-                                .frame(height: 22)
+                            VectorGlyph(pathData: tab.glyph)
+                                .frame(width: 22, height: 22)
                             Text(tab.label)
                                 .font(EarthType.caption)
                                 .fontWeight(selected ? .semibold : .regular)
@@ -189,20 +200,6 @@ struct EarthTabBar: View {
             .padding(.vertical, theme.space.x8)
         }
         .background(theme.colors.bgPrimary)
-    }
-}
-
-/// The wallet mark.
-struct EarthMark: View {
-    @Environment(\.earth) private var theme
-    var size: CGFloat = 32
-
-    var body: some View {
-        Image(systemName: "globe.europe.africa.fill")
-            .font(.system(size: size * 0.55))
-            .foregroundStyle(theme.colors.accentInk)
-            .frame(width: size, height: size)
-            .background(theme.colors.accentTint, in: .circle)
     }
 }
 

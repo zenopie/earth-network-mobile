@@ -26,6 +26,13 @@ public final class AppModel {
     public private(set) var phase: Phase = .launching
     public private(set) var address: String = ""
 
+    /// The name this wallet was created under.
+    ///
+    /// Android names wallets because it can hold several; this holds one, but
+    /// the name still identifies whose balance is on screen and it is what the
+    /// top bar says.
+    public private(set) var walletName: String = "Wallet 1"
+
     /// Balances by denom, in base units.
     public private(set) var balances: [String: BigInt] = [:]
     public private(set) var registration: Personhood.RegistrationStatus = .none
@@ -63,6 +70,7 @@ public final class AppModel {
     // MARK: - session
 
     public func start() {
+        walletName = UserDefaults.standard.string(forKey: "walletName") ?? walletName
         #if targetEnvironment(simulator)
         // `-demoWallet <phrase>` opens the app straight onto the tabs with a
         // known wallet. A simulator has no way to be driven from the command
@@ -97,8 +105,10 @@ public final class AppModel {
         }
     }
 
-    public func adopt(mnemonic: String) async throws {
+    public func adopt(mnemonic: String, name: String = "Wallet 1") async throws {
         try store.save(mnemonic: mnemonic)
+        walletName = name
+        UserDefaults.standard.set(name, forKey: "walletName")
         address = try EarthKey(mnemonic: mnemonic).address
         phase = .ready
         await refresh()
