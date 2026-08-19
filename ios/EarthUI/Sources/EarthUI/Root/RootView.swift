@@ -26,10 +26,11 @@ public struct RootView: View {
                 TabsView()
             }
         }
-        .environment(model)
-        .environment(tx)
-        .earthThemed()
-        .earthBackground()
+        // The overlay goes on *before* the environment, because an overlay is
+        // a sibling of the view it decorates rather than a child of it — put
+        // it after and it sits outside the environment these modifiers inject,
+        // so it cannot see TxController and the app traps on first render.
+        //
         // One confirmation and one result for the whole app, so no screen can
         // broadcast without them.
         //
@@ -40,6 +41,10 @@ public struct RootView: View {
         // dismissal would have to be told apart from a confirmation, which is
         // the kind of distinction that silently stops working.
         .overlay { TxOverlay() }
+        .environment(model)
+        .environment(tx)
+        .earthThemed()
+        .earthBackground()
     }
 }
 
