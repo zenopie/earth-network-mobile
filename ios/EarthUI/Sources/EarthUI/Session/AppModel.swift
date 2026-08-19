@@ -210,6 +210,9 @@ public final class AppModel {
         switch error {
         case WalletStore.Error.authenticationFailed: "Authentication failed."
         case WalletStore.Error.notFound: "No wallet on this device."
+        case WalletStore.Error.noDeviceLock:
+            "Set a passcode on this device first. Your recovery phrase is stored behind it, and without one there is nothing to protect it with."
+        case WalletStore.Error.invalidMnemonic: "That is not a valid recovery phrase."
         case let EarthClient.Error.rejected(code, log): "Rejected (code \(code)): \(log)"
         case let EarthClient.Error.executionFailed(code, log): "Failed (code \(code)): \(log)"
         default: String(describing: error)

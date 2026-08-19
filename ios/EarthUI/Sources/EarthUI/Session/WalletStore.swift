@@ -23,6 +23,13 @@ public struct WalletStore {
         case authenticationFailed
         case keychain(OSStatus)
         case invalidMnemonic
+        /// The device has no passcode, so there is nothing to protect the
+        /// phrase with and the Keychain refuses to store it.
+        ///
+        /// Not a failure to work around: an entry that survives on a device
+        /// with no lock is not self-custody. It is also the state every fresh
+        /// simulator is in.
+        case noDeviceLock
     }
 
     private static let service = "network.erth.wallet"
@@ -51,15 +58,16 @@ public struct WalletStore {
     public func save(mnemonic: String) throws {
         guard BIP39.isValid(mnemonic: mnemonic) else { throw Error.invalidMnemonic }
 
-        var control: SecAccessControl?
         var error: Unmanaged<CFError>?
-        control = SecAccessControlCreateWithFlags(
+        let control = SecAccessControlCreateWithFlags(
             nil,
             kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly,
             .userPresence,
             &error
         )
-        guard let control else { throw Error.keychain(errSecParam) }
+        // Creating the access control is itself what fails first on a device
+        // with no passcode.
+        guard let control else { throw Error.noDeviceLock }
 
         SecItemDelete(Self.baseQuery as CFDictionary)
 
@@ -68,7 +76,16 @@ public struct WalletStore {
         attributes[kSecAttrAccessControl as String] = control
 
         let status = SecItemAdd(attributes as CFDictionary, nil)
-        guard status == errSecSuccess else { throw Error.keychain(status) }
+        switch status {
+        case errSecSuccess:
+            return
+        // -25308. What a device with no passcode returns for an item that
+        // requires one.
+        case errSecInteractionNotAllowed:
+            throw Error.noDeviceLock
+        default:
+            throw Error.keychain(status)
+        }
     }
 
     /// Read the phrase back. Prompts for Face ID, Touch ID, or the passcode.
