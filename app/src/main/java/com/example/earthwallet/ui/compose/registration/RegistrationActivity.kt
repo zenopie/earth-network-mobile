@@ -23,6 +23,7 @@ import network.erth.wallet.ui.ads.RewardedAds
 import network.erth.wallet.ui.compose.TxConfirmDetails
 import network.erth.wallet.ui.compose.TxConfirmSheet
 import network.erth.wallet.ui.compose.TxOutcome
+import network.erth.wallet.ui.compose.TxPendingSheet
 import network.erth.wallet.ui.compose.TxResultSheet
 import network.erth.wallet.wallet.services.SecureWalletManager
 import androidx.compose.runtime.getValue
@@ -76,6 +77,13 @@ class RegistrationActivity : ComponentActivity() {
                 var balanceUerth: Long by remember { mutableLongStateOf(0L) }
                 var awaitingGas: Boolean by remember { mutableStateOf(false) }
                 var outcome: TxOutcome? by remember { mutableStateOf(null) }
+
+                // MsgRegister verifies an UltraHonk proof on chain and is by
+                // far the slowest thing this app broadcasts, so the gap between
+                // confirming and finishing is seconds of nothing. Every other
+                // transaction covers that with TxSheets; this flow builds its
+                // own sheets, so it has to raise the same state itself.
+                var submitting: Boolean by remember { mutableStateOf(false) }
 
                 val address = remember {
                     runCatching {
@@ -168,10 +176,12 @@ class RegistrationActivity : ComponentActivity() {
                         awaitingGas = awaitingGas,
                         onConfirm = {
                             scan = null
+                            submitting = true
                             lifecycleScope.launch {
                                 val hash = withContext(Dispatchers.IO) {
                                     PassportSession.register(this@RegistrationActivity, ready)
                                 }
+                                submitting = false
                                 hash.onSuccess {
                                     setResult(RESULT_OK, Intent().putExtra(EXTRA_TX_HASH, it))
                                     finish()
@@ -213,6 +223,10 @@ class RegistrationActivity : ComponentActivity() {
                     )
                 }
 
+                // Pending, then result — the same one-position, three-state
+                // arrangement TxSheets uses, so the failure badge animates in
+                // over the spinner instead of appearing from nowhere.
+                if (submitting) TxPendingSheet(action = "Register")
                 outcome?.let { TxResultSheet(outcome = it, onDismiss = { outcome = null }) }
 
                 // The camera step is the only one that wants a turned phone,
