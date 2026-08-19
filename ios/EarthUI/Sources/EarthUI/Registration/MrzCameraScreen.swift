@@ -30,7 +30,7 @@ struct MrzCameraScreen: View {
             Color.black.ignoresSafeArea()
 
             if scanner.access == .granted {
-                CameraPreview(session: scanner.session)
+                CameraPreview(session: scanner.session, angle: scanner.previewAngle)
                     .ignoresSafeArea()
             }
 

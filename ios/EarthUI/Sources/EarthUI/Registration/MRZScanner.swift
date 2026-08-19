@@ -28,14 +28,25 @@ final class MRZScanner: NSObject, ObservableObject {
     private var rotation: AVCaptureDevice.RotationCoordinator?
     private var rotationObserver: NSKeyValueObservation?
 
+    /// The angle the preview layer needs.
+    ///
+    /// Published separately because the preview layer is *not* one of the
+    /// session's outputs — rotating those leaves the picture on screen sideways
+    /// while the frames Vision sees are upright, which is exactly as confusing
+    /// as it sounds.
+    @Published private(set) var previewAngle: CGFloat = 0
+
     private func applyRotation() {
-        guard let angle = rotation?.videoRotationAngleForHorizonLevelCapture else { return }
+        guard let rotation else { return }
+
+        let capture = rotation.videoRotationAngleForHorizonLevelCapture
         for output in session.outputs {
             for connection in output.connections
-            where connection.isVideoRotationAngleSupported(angle) {
-                connection.videoRotationAngle = angle
+            where connection.isVideoRotationAngleSupported(capture) {
+                connection.videoRotationAngle = capture
             }
         }
+        previewAngle = rotation.videoRotationAngleForHorizonLevelPreview
     }
 
     func start() {
@@ -100,7 +111,7 @@ final class MRZScanner: NSObject, ObservableObject {
         self.rotation = coordinator
         applyRotation()
         rotationObserver = coordinator.observe(
-            \.videoRotationAngleForHorizonLevelCapture,
+            \.videoRotationAngleForHorizonLevelPreview,
             options: [.new]
         ) { [weak self] _, _ in
             Task { @MainActor in self?.applyRotation() }
@@ -175,6 +186,9 @@ extension MRZScanner: AVCaptureVideoDataOutputSampleBufferDelegate {
 /// compromise.
 struct CameraPreview: UIViewRepresentable {
     let session: AVCaptureSession
+    /// Applied to the preview layer's own connection, which the session's
+    /// outputs do not cover.
+    let angle: CGFloat
 
     func makeUIView(context: Context) -> PreviewView {
         let view = PreviewView()
@@ -183,7 +197,12 @@ struct CameraPreview: UIViewRepresentable {
         return view
     }
 
-    func updateUIView(_ view: PreviewView, context: Context) {}
+    func updateUIView(_ view: PreviewView, context: Context) {
+        guard let connection = view.layer.connection,
+              connection.isVideoRotationAngleSupported(angle)
+        else { return }
+        connection.videoRotationAngle = angle
+    }
 
     final class PreviewView: UIView {
         override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
