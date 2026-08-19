@@ -77,10 +77,10 @@ Thumbs.db
 lint-results.*
 
 # Android build outputs often placed under module dirs; already covered by **/build/
-# Ignore example app folder
-erth-network-app/
-scripts/
-secretjs-source/
+# Loose .class files from an extracted jar used to sit in the repo root
+# (io/, org/, META-INF/) — left over from the Secret Network dependency and
+# invisible to git status because of the *.class rule above. Removed; the rule
+# stays so it cannot happen again silently.
 
 # --- iOS / Swift ---
 
