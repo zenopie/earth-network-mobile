@@ -86,8 +86,14 @@ class UnlockViewModel(app: Application) : AndroidViewModel(app) {
     }
 }
 
-/** The stored hash's format. Do not change without a migration. */
-private fun String.sha256Hex(): String =
+/**
+ * The stored hash's format. Do not change without a migration.
+ *
+ * Shared with [OnboardingViewModel], which writes the hash this verifies. Two
+ * copies of it would be two ways to spell the same PIN, and the wallet is
+ * encrypted under it.
+ */
+internal fun String.sha256Hex(): String =
     MessageDigest.getInstance("SHA-256")
         .digest(toByteArray(StandardCharsets.UTF_8))
         .joinToString("") { "%02x".format(it) }

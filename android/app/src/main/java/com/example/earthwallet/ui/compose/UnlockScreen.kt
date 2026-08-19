@@ -145,6 +145,103 @@ fun UnlockScreen(
     }
 }
 
+/**
+ * Choosing the PIN, on first run.
+ *
+ * The same keypad as [UnlockScreen] rather than a text field, for the same
+ * reason: what is being typed is a PIN, and the keypad is what says so. It
+ * lives in this file so the keypad stays private to one place — two keypads
+ * that drift apart would be two different-looking PIN screens either side of a
+ * single install.
+ *
+ * The PIN seals the mnemonic — it is not a lock in front of a secret the
+ * keystore already holds, it is the key the secret is encrypted with. So it is
+ * asked twice: a typo here does not lock someone out of an account they can
+ * reset, it encrypts their wallet under a PIN they do not know.
+ */
+@Composable
+fun SetPinScreen(
+    error: String?,
+    onChosen: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val dimens = EarthTheme.dimens
+    var first by remember { mutableStateOf<String?>(null) }
+    var pin by remember { mutableStateOf("") }
+    var mismatch by remember { mutableStateOf(false) }
+
+    fun press(digit: String) {
+        if (pin.length >= 4) return
+        mismatch = false
+        pin += digit
+        if (pin.length < 4) return
+
+        val entered = pin
+        pin = ""
+        val chosen = first
+        when {
+            chosen == null -> first = entered
+            chosen == entered -> onChosen(entered)
+            else -> {
+                // Start over rather than only clearing the second entry: the
+                // one they meant is as likely to be the first as the second.
+                mismatch = true
+                first = null
+            }
+        }
+    }
+
+    Column(
+        modifier
+            .fillMaxSize()
+            .background(EarthColors.Surfaces.bgPrimary)
+            .padding(horizontal = dimens.gutter),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Spacer(Modifier.weight(1f))
+
+        Image(
+            modifier = Modifier.size(88.dp),
+            painter = painterResource(R.drawable.logo),
+            contentDescription = null,
+        )
+
+        Spacer(Modifier.height(dimens.space24))
+        Text(
+            text = if (first == null) "Choose a PIN" else "Enter it again",
+            style = EarthTypography.header5,
+            color = EarthColors.Text.textPrimary,
+        )
+        Spacer(Modifier.height(dimens.space4))
+        Text(
+            text = when {
+                error != null -> error
+                mismatch -> "Those did not match. Start again."
+                first == null -> "It encrypts your wallet on this device. There is no way to reset it."
+                else -> "Confirm your PIN"
+            },
+            style = EarthTypography.textSm,
+            color = if (error != null || mismatch) {
+                EarthColors.Utility.ErrorRed.utilityError700
+            } else {
+                EarthColors.Text.textTertiary
+            },
+            textAlign = TextAlign.Center,
+        )
+
+        Spacer(Modifier.height(dimens.space24))
+        PinDots(filled = pin.length, locked = false)
+
+        Spacer(Modifier.weight(1f))
+        Keypad(
+            enabled = true,
+            onDigit = ::press,
+            onBackspace = { pin = pin.dropLast(1) },
+        )
+        Spacer(Modifier.height(dimens.space32))
+    }
+}
+
 private val tweenFast = androidx.compose.animation.core.tween<Float>(durationMillis = 45)
 
 /**

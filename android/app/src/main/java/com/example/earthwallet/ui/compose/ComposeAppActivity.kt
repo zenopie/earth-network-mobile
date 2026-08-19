@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -15,13 +16,17 @@ import network.erth.wallet.wallet.services.SessionManager
 /**
  * The app.
  *
- * Two states and one transition: locked until the PIN opens the session, then
- * the wallet. The old app split these across a launcher activity, an update
- * check, a host activity and a fragment; the transition between them is a
- * boolean, and a boolean does not need four activities.
+ * Three states: set up, locked, or open. The old app split these across a
+ * launcher activity, an update check, a host activity and a fragment, and the
+ * transitions between them do not need four activities.
  *
- * HostActivity still exists and still works — the screens not yet ported are
- * reachable from it — but it is no longer what starts.
+ * The first state was missing until now, and its absence was fatal on a fresh
+ * install. This screen only ever asked whether a session was open, so with no
+ * wallet it showed the PIN screen — and since nothing in the Compose app had
+ * ever called setPinHash, no PIN could be right. Three attempts, then a
+ * lockout, and the wallet screens that would have fixed it sit behind the same
+ * gate. HostActivity branched on hasPinSet and was deleted with the old app;
+ * this is that branch, back.
  */
 class ComposeAppActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -35,26 +40,55 @@ class ComposeAppActivity : ComponentActivity() {
         setContent {
             EarthTheme {
                 val unlock: UnlockViewModel = viewModel()
+                val onboarding: OnboardingViewModel = viewModel()
 
                 val unlocked by unlock.unlocked.collectAsStateWithLifecycle()
                 val error by unlock.error.collectAsStateWithLifecycle()
                 val lockout by unlock.lockout.collectAsStateWithLifecycle()
 
+                val needsPin by onboarding.needsPin.collectAsStateWithLifecycle()
+                val needsWallet by onboarding.needsWallet.collectAsStateWithLifecycle()
+                val setupError by onboarding.error.collectAsStateWithLifecycle()
+
                 // A session can already be open — the process may have been
-                // restarted while the app was backgrounded, or the old
-                // HostActivity may have opened one.
+                // restarted while the app was backgrounded.
                 val open = unlocked || SessionManager.isSessionActive()
 
-                if (!open) {
-                    UnlockScreen(
-                        onSubmit = unlock::submit,
-                        error = error,
-                        lockoutMessage = lockout,
-                    )
-                } else {
+                // Asked once a session exists, because the count can only be
+                // read through it. Catches a setup abandoned between choosing
+                // a PIN and creating a wallet.
+                LaunchedEffect(open) {
+                    if (open) onboarding.checkWallets()
+                }
+
+                when {
+                    needsPin -> PreAppScreen { inset ->
+                        SetPinScreen(
+                            error = setupError,
+                            onChosen = onboarding::choosePin,
+                            modifier = inset,
+                        )
+                    }
+
+                    !open -> PreAppScreen { inset ->
+                        UnlockScreen(
+                            onSubmit = unlock::submit,
+                            error = error,
+                            lockoutMessage = lockout,
+                            modifier = inset,
+                        )
+                    }
+
+                    needsWallet -> PreAppScreen { inset ->
+                        FirstWalletFlow(
+                            onReady = onboarding::walletReady,
+                            modifier = inset,
+                        )
+                    }
+
                     // EarthApp owns the view models now — each tab loads when
                     // it is first shown rather than all five on launch.
-                    EarthApp(
+                    else -> EarthApp(
                         version = "Version $version",
                         onOpenUrl = ::openUrl,
                     )
