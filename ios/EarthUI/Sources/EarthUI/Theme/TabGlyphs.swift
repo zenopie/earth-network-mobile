@@ -10,6 +10,11 @@ import SwiftUI
 /// All four share a 24x24 viewport and stroke weight, so the bar reads as one
 /// set.
 enum TabGlyphPaths {
+    /// Two subpaths — the up arrow and the down arrow — concatenated. The
+    /// reader closes each on its own `z`.
+    static let swapVertical = """
+M8,3c0.55,0 1,0.45 1,1v14.09l2.29,-2.3c0.39,-0.39 1.02,-0.39 1.41,0c0.39,0.39 0.39,1.02 0,1.41l-4,4c-0.39,0.39 -1.02,0.39 -1.41,0l-4,-4c-0.39,-0.39 -0.39,-1.02 0,-1.41c0.39,-0.39 1.02,-0.39 1.41,0L7,18.09V4C7,3.45 7.45,3 8,3z M16,21c-0.55,0 -1,-0.45 -1,-1V5.91l-2.29,2.3c-0.39,0.39 -1.02,0.39 -1.41,0c-0.39,-0.39 -0.39,-1.02 0,-1.41l4,-4c0.39,-0.39 1.02,-0.39 1.41,0l4,4c0.39,0.39 0.39,1.02 0,1.41c-0.39,0.39 -1.02,0.39 -1.41,0L17,5.91V20C17,20.55 16.55,21 16,21z
+"""
     static let receive = """
 M12,3c0.83,0 1.5,0.67 1.5,1.5v11.38l3.44,-3.44c0.59,-0.59 1.54,-0.59 2.12,0c0.59,0.59 0.59,1.54 0,2.12l-6,6c-0.59,0.59 -1.54,0.59 -2.12,0l-6,-6c-0.59,-0.59 -0.59,-1.54 0,-2.12c0.59,-0.59 1.54,-0.59 2.12,0l3.44,3.44V4.5C10.5,3.67 11.17,3 12,3z
 """
@@ -114,14 +119,16 @@ struct VectorGlyph: Shape {
                 lastControl = c2
                 current = end
 
+            case "z":
+                // Closed where it appears, not once at the end: a glyph with
+                // two subpaths would otherwise join the second back to the
+                // first's start and fill the space between them.
+                path.closeSubpath()
+                current = start
+
             default:
                 break
             }
-        }
-
-        if pathData.lowercased().contains("z") {
-            path.closeSubpath()
-            current = start
         }
         return path
     }
@@ -139,9 +146,11 @@ struct VectorGlyph: Shape {
             while index < characters.count, characters[index].isLetter {
                 let letter = characters[index]
                 index += 1
-                if letter == "z" || letter == "Z" { skipSeparators(); continue }
                 command = letter
                 skipSeparators()
+                // Close takes no numbers, so it is reported on its own and the
+                // caller comes back for whatever follows.
+                if letter == "z" || letter == "Z" { return 0 }
             }
             return number()
         }
