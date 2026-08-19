@@ -35,6 +35,21 @@ public struct WalletStore {
     private static let service = "network.erth.wallet"
     private static let account = "mnemonic"
 
+    // A simulator has no passcode and no enrolled biometrics, so requiring
+    // user presence there makes the app impossible to run past its first
+    // screen — every wallet write fails and no other screen is reachable.
+    //
+    // `targetEnvironment(simulator)` is compiled out of every device build, so
+    // this cannot weaken a shipped app. The device keeps both halves: the
+    // phrase is destroyed with the passcode, and each read needs the user.
+    #if targetEnvironment(simulator)
+    private static let accessibility = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+    private static let flags: SecAccessControlCreateFlags = []
+    #else
+    private static let accessibility = kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly
+    private static let flags: SecAccessControlCreateFlags = .userPresence
+    #endif
+
     public init() {}
 
     /// Whether a wallet exists, without prompting for anything.
@@ -61,8 +76,8 @@ public struct WalletStore {
         var error: Unmanaged<CFError>?
         let control = SecAccessControlCreateWithFlags(
             nil,
-            kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly,
-            .userPresence,
+            Self.accessibility,
+            Self.flags,
             &error
         )
         // Creating the access control is itself what fails first on a device

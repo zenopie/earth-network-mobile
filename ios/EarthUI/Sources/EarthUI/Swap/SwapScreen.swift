@@ -22,7 +22,7 @@ struct SwapScreen: View {
     @State private var slippagePercent = 1.0
 
     var body: some View {
-        EarthScreen(title: "Swap") {
+        EarthScreen {
             if model.pools.isEmpty {
                 EarthEmpty(
                     systemName: "arrow.left.arrow.right",
@@ -101,7 +101,7 @@ struct SwapScreen: View {
                 EarthLabel("You pay")
                 Spacer()
                 Button("Max") { amount = fromToken.format(model.balance(fromToken)) }
-                    .font(EarthType.eyebrow)
+                    .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.accentInk)
             }
             HStack {

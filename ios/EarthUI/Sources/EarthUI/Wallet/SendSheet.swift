@@ -73,7 +73,7 @@ struct SendSheet: View {
                 EarthLabel("Amount")
                 Spacer()
                 Button("Max") { amount = maxSendable }
-                    .font(EarthType.eyebrow)
+                    .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.accentInk)
             }
             HStack {

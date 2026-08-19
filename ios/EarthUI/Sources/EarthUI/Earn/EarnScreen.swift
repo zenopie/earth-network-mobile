@@ -9,7 +9,7 @@ struct EarnScreen: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        EarthScreen(title: "Earn") {
+        EarthScreen {
             summary
             StakingSection()
             LiquiditySection()
@@ -17,14 +17,20 @@ struct EarnScreen: View {
     }
 
     private var summary: some View {
-        EarthCard {
-            EarthDetailRow(label: "Staked", value: "\(Token.erth.format(model.totalStaked)) ERTH", emphasis: true)
-            EarthDetailRow(label: "Pending rewards", value: "\(Token.erth.format(model.rewards)) ERTH")
+        VStack(alignment: .leading, spacing: 0) {
+            EarthLabel("Staked")
+            Text(Figures.whole(model.totalStaked))
+                .font(EarthType.display)
+                .foregroundStyle(theme.colors.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.4)
             if let apr = StakingApr.base(bondedUerth: Int64(model.totalBonded.description) ?? 0) {
                 // A rate on a young chain with very little bonded is enormous
-                // and means very little, so it reads as an estimate rather than
-                // as a promise.
-                EarthDetailRow(label: "Network rate", value: percent(apr))
+                // and means very little, so it reads as an estimate rather
+                // than as a promise.
+                Text("Network rate \(percent(apr)) · \(Figures.precise(model.rewards)) ERTH claimable")
+                    .font(EarthType.bodySmall)
+                    .foregroundStyle(theme.colors.textTertiary)
             }
         }
     }
@@ -39,15 +45,19 @@ struct StakingSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: theme.space.x12) {
-            EarthSectionHeader(title: "Staking", trailing: "\(model.validators.count) validators")
+            EarthSectionHeader(title: "Staking",
+                               trailing: Figures.count(model.validators.count, "validator"))
 
             if !model.delegations.isEmpty {
-                EarthCard(padding: theme.space.x8) {
-                    ForEach(Array(model.delegations.enumerated()), id: \.element.validator) { index, delegation in
-                        if index > 0 { Divider().overlay(theme.colors.strokeSecondary) }
-                        DelegationRow(delegation: delegation)
-                    }
+                ForEach(Array(model.delegations.enumerated()), id: \.element.validator) { index, delegation in
+                    if index > 0 { EarthDivider() }
+                    EarthRow(
+                        title: moniker(delegation.validator),
+                        subtitle: "Delegated",
+                        value: Figures.amount(delegation.amount, .erth)
+                    )
                 }
+                EarthDivider()
             }
 
             if !model.unbondings.isEmpty {
@@ -55,32 +65,20 @@ struct StakingSection: View {
                 // in the balance to show for it — the stake has left and the
                 // funds have not arrived. Without this the three weeks look
                 // like the money went nowhere.
-                EarthCard(padding: theme.space.x8) {
-                    ForEach(Array(model.unbondings.enumerated()), id: \.offset) { index, entry in
-                        if index > 0 { Divider().overlay(theme.colors.strokeSecondary) }
-                        HStack(spacing: theme.space.x12) {
-                            EarthGlyph(systemName: "clock.arrow.circlepath")
-                            VStack(alignment: .leading, spacing: theme.space.x2) {
-                                Text("Unbonding")
-                                    .font(EarthType.title)
-                                    .foregroundStyle(theme.colors.textPrimary)
-                                Text(moniker(entry.validator))
-                                    .font(EarthType.bodySmall)
-                                    .foregroundStyle(theme.colors.textTertiary)
-                                    .lineLimit(1)
-                            }
-                            Spacer()
-                            Text("\(Token.erth.format(entry.balance)) ERTH")
-                                .font(EarthType.amount)
-                                .foregroundStyle(theme.colors.textSecondary)
-                        }
-                        .padding(theme.space.x8)
-                    }
+                ForEach(Array(model.unbondings.enumerated()), id: \.offset) { index, entry in
+                    if index > 0 { EarthDivider() }
+                    EarthRow(
+                        title: "Unbonding",
+                        subtitle: moniker(entry.validator),
+                        value: Figures.amount(entry.balance, .erth),
+                        valueMuted: true
+                    )
                 }
+                EarthDivider()
             }
 
             if model.rewards > 0 {
-                EarthButton(title: "Claim \(Token.erth.format(model.rewards)) ERTH", role: .secondary) {
+                EarthButton(title: "Claim \(Figures.precise(model.rewards)) ERTH", role: .secondary) {
                     claimAll()
                 }
             }
@@ -88,12 +86,14 @@ struct StakingSection: View {
             if model.validators.isEmpty {
                 EarthEmpty(systemName: "shield", title: "No bonded validators")
             } else {
-                EarthCard(padding: theme.space.x8) {
-                    ForEach(Array(model.validators.prefix(10).enumerated()), id: \.element.operatorAddress) { index, validator in
-                        if index > 0 { Divider().overlay(theme.colors.strokeSecondary) }
-                        Button { staking = validator } label: { ValidatorRow(validator: validator) }
-                            .buttonStyle(.plain)
-                    }
+                ForEach(Array(model.validators.prefix(10).enumerated()), id: \.element.operatorAddress) { index, validator in
+                    if index > 0 { EarthDivider() }
+                    EarthRow(
+                        title: validator.moniker.isEmpty ? "Validator" : validator.moniker,
+                        subtitle: "\(percent(validator.commission)) commission",
+                        value: Figures.amount(validator.tokens, .erth),
+                        action: { staking = validator }
+                    )
                 }
             }
         }
@@ -219,7 +219,7 @@ struct StakeSheet: View {
                             EarthLabel("Amount")
                             Spacer()
                             Button("Max") { amount = Token.erth.format(available) }
-                                .font(EarthType.eyebrow)
+                                .font(EarthType.bodySmall)
                                 .foregroundStyle(theme.colors.accentInk)
                         }
                         HStack {
@@ -301,7 +301,8 @@ struct LiquiditySection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: theme.space.x12) {
-            EarthSectionHeader(title: "Liquidity", trailing: "\(model.pools.count) pools")
+            EarthSectionHeader(title: "Liquidity",
+                               trailing: Figures.count(model.pools.count, "pool"))
 
             if model.pools.isEmpty {
                 EarthEmpty(systemName: "drop", title: "No pools yet")
@@ -320,34 +321,22 @@ struct PoolCard: View {
     let pool: Dex.Pool
 
     var body: some View {
-        EarthCard {
-            HStack(spacing: theme.space.x12) {
-                EarthGlyph(systemName: "drop.fill")
-                VStack(alignment: .leading, spacing: theme.space.x2) {
-                    Text("ERTH / \(token.symbol)")
-                        .font(EarthType.title)
-                        .foregroundStyle(theme.colors.textPrimary)
-                    Text("\(Token.erth.format(pool.erthReserve)) ERTH · \(token.format(pool.tokenReserve)) \(token.symbol)")
-                        .font(EarthType.bodySmall)
-                        .foregroundStyle(theme.colors.textTertiary)
-                }
-                Spacer()
-            }
-
-            if let apr {
-                Divider().overlay(theme.colors.strokeSecondary)
+        VStack(alignment: .leading, spacing: 0) {
+            EarthRow(
+                title: "ERTH / \(token.symbol)",
                 // Split apart because the two halves behave differently. Fees
                 // scale with the pool; emissions do not — a deposit does not
                 // change the pool's share of the stream, it splits the same
                 // emission across more capital, so that half falls the moment
                 // you add to it.
-                EarthDetailRow(label: "From fees", value: percent(apr.fee))
-                EarthDetailRow(label: "From emissions", value: percent(apr.emission))
-                EarthDetailRow(label: "Total", value: percent(apr.total), emphasis: true)
-                Text("An estimate from a snapshot. The emission half falls as the pool grows.")
-                    .font(EarthType.bodySmall)
-                    .foregroundStyle(theme.colors.textTertiary)
-            }
+                subtitle: apr.map { "\(percent($0.fee)) fees · \(percent($0.emission)) emissions" }
+                    ?? "No liquidity",
+                value: apr.map { percent($0.total) }
+            )
+            Text("\(Figures.amount(pool.erthReserve, .erth)) · \(Figures.amount(pool.tokenReserve, token))")
+                .font(EarthType.bodySmall)
+                .foregroundStyle(theme.colors.textTertiary)
+                .padding(.bottom, theme.space.x12)
         }
     }
 

@@ -37,6 +37,13 @@ public final class AppModel {
     public private(set) var rewards: BigInt = 0
     public private(set) var totalBonded: BigInt = 0
 
+    /// Whether figures are shown or masked.
+    ///
+    /// Shoulder-surfing is the reason it exists, and the state is deliberately
+    /// not persisted: unhiding is a decision about the room you are in, not a
+    /// setting.
+    public private(set) var balancesVisible = true
+
     public private(set) var refreshing = false
     /// The last query failure, if the most recent refresh did not complete.
     ///
@@ -56,6 +63,20 @@ public final class AppModel {
     // MARK: - session
 
     public func start() {
+        #if targetEnvironment(simulator)
+        // `-demoWallet <phrase>` opens the app straight onto the tabs with a
+        // known wallet. A simulator has no way to be driven from the command
+        // line — no taps, no text — so without this the only screen reachable
+        // outside Xcode is the first one, which makes the four tabs impossible
+        // to look at while working on them.
+        //
+        // Simulator-only and compiled out of every device build.
+        if let phrase = UserDefaults.standard.string(forKey: "demoWallet"),
+           BIP39.isValid(mnemonic: phrase) {
+            Task { try? await adopt(mnemonic: phrase) }
+            return
+        }
+        #endif
         phase = store.exists ? .locked : .setup
     }
 
@@ -89,6 +110,10 @@ public final class AppModel {
         balances = [:]
         registration = .none
         phase = .setup
+    }
+
+    public func toggleBalances() {
+        balancesVisible.toggle()
     }
 
     public func lock() {

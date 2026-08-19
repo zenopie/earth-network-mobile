@@ -44,88 +44,192 @@ public struct RootView: View {
         .environment(model)
         .environment(tx)
         .earthThemed()
-        .earthBackground()
     }
 }
 
-/// The confirmation, the wait, and the result — in that order, over everything.
-struct TxOverlay: View {
-    @Environment(TxController.self) private var tx
+enum Tab: String, CaseIterable, Hashable {
+    case wallet, earn, swap, govern
 
-    var body: some View {
-        ZStack {
-            if let details = tx.pending {
-                TxConfirmSheet(details: details)
-                    .transition(.opacity)
-            } else if tx.submitting {
-                TxSubmittingOverlay()
-                    .transition(.opacity)
-            } else if let outcome = tx.outcome {
-                TxResultSheet(outcome: outcome)
-                    .transition(.opacity)
-            }
+    var label: String { rawValue.capitalized }
+
+    /// `-demoTab swap` opens on that tab. Simulator-only, and for the same
+    /// reason `-demoWallet` exists: nothing can tap a simulator from the
+    /// command line, so without it only one tab can ever be looked at.
+    static var initialSelection: Tab {
+        #if targetEnvironment(simulator)
+        if let name = UserDefaults.standard.string(forKey: "demoTab"),
+           let tab = Tab(rawValue: name) {
+            return tab
         }
-        .animation(.easeInOut(duration: 0.15), value: tx.pending?.id)
-        .animation(.easeInOut(duration: 0.15), value: tx.submitting)
-        .animation(.easeInOut(duration: 0.15), value: tx.outcome?.id)
+        #endif
+        return .wallet
+    }
+
+    var icon: String {
+        switch self {
+        case .wallet: "wallet.bifold"
+        case .earn: "chart.line.uptrend.xyaxis"
+        case .swap: "arrow.left.arrow.right"
+        case .govern: "person.3"
+        }
     }
 }
 
 struct TabsView: View {
+    @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
-    @State private var selection = Tab.wallet
-
-    enum Tab: Hashable { case wallet, earn, swap, govern }
+    @State private var selection = Tab.initialSelection
+    @State private var settingsOpen = false
 
     var body: some View {
-        TabView(selection: $selection) {
-            WalletScreen()
-                .tabItem { Label("Wallet", systemImage: "wallet.bifold") }
-                .tag(Tab.wallet)
-            EarnScreen()
-                .tabItem { Label("Earn", systemImage: "chart.line.uptrend.xyaxis") }
-                .tag(Tab.earn)
-            SwapScreen()
-                .tabItem { Label("Swap", systemImage: "arrow.left.arrow.right") }
-                .tag(Tab.swap)
-            GovernScreen()
-                .tabItem { Label("Govern", systemImage: "person.3") }
-                .tag(Tab.govern)
+        VStack(spacing: 0) {
+            EarthTopBar(
+                showsBalances: selection == .wallet || selection == .earn,
+                onSettings: { settingsOpen = true }
+            )
+            Group {
+                switch selection {
+                case .wallet: WalletScreen()
+                case .earn: EarnScreen()
+                case .swap: SwapScreen()
+                case .govern: GovernScreen()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            EarthTabBar(selection: $selection)
         }
-        .tint(Palette.Brand.b600)
+        .background(theme.colors.bgPrimary.ignoresSafeArea())
         .task { await model.loadLPShare() }
+        .sheet(isPresented: $settingsOpen) { SettingsSheet().earthThemed() }
     }
 }
 
-/// A screen: a large title, a refreshable scroll, and the error banner.
+/// The main bar: which wallet you are in, and the way out to settings.
 ///
-/// Every tab is the same shape, so the shape is written once — including
-/// pull-to-refresh, which a wallet needs on every screen because the thing
-/// being displayed changes without the app doing anything.
+/// One wallet, so the left side identifies rather than switches — no chevron
+/// implying a menu that does not exist.
+struct EarthTopBar: View {
+    @Environment(\.earth) private var theme
+    @Environment(AppModel.self) private var model
+
+    /// Whether this tab shows any of your money.
+    ///
+    /// The eye belongs to the wallet, not to the app: on a tab with nothing of
+    /// yours on screen, a control that hides nothing teaches you it does
+    /// nothing.
+    let showsBalances: Bool
+    let onSettings: () -> Void
+
+    var body: some View {
+        HStack(spacing: theme.space.x8) {
+            EarthMark(size: 32)
+            Text("Earth Wallet")
+                .font(EarthType.body)
+                .foregroundStyle(theme.colors.textPrimary)
+            Spacer()
+            if showsBalances {
+                Button { model.toggleBalances() } label: {
+                    Image(systemName: model.balancesVisible ? "eye" : "eye.slash")
+                        .font(.system(size: 18))
+                        .foregroundStyle(theme.colors.textPrimary)
+                        .frame(width: 40, height: 40)
+                }
+            }
+            Button(action: onSettings) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 18))
+                    .foregroundStyle(theme.colors.textPrimary)
+                    .frame(width: 40, height: 40)
+            }
+        }
+        .padding(.horizontal, theme.space.x16)
+        .padding(.vertical, theme.space.x8)
+        .background(theme.colors.bgPrimary)
+    }
+}
+
+/// The tab bar.
+///
+/// Deliberately not SwiftUI's TabView chrome: that arrives with its own
+/// material, a tint role and a selection treatment, and bending those back
+/// onto these tokens is more work than an HStack. A hairline above it instead
+/// of a shadow, matching how the rest of the app separates surfaces.
+///
+/// Selection is carried by ink and weight together, not colour, so the current
+/// tab survives a greyscale screenshot and a colour-blind reader.
+struct EarthTabBar: View {
+    @Environment(\.earth) private var theme
+    @Binding var selection: Tab
+
+    var body: some View {
+        VStack(spacing: 0) {
+            EarthDivider()
+            HStack(spacing: 0) {
+                ForEach(Tab.allCases, id: \.self) { tab in
+                    let selected = tab == selection
+                    Button {
+                        selection = tab
+                    } label: {
+                        VStack(spacing: 3) {
+                            Image(systemName: tab.icon)
+                                .font(.system(size: 20))
+                                .frame(height: 22)
+                            Text(tab.label)
+                                .font(EarthType.caption)
+                                .fontWeight(selected ? .semibold : .regular)
+                        }
+                        .foregroundStyle(selected ? theme.colors.textPrimary : theme.colors.textTertiary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, theme.space.x4)
+                        .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.vertical, theme.space.x8)
+        }
+        .background(theme.colors.bgPrimary)
+    }
+}
+
+/// The wallet mark.
+struct EarthMark: View {
+    @Environment(\.earth) private var theme
+    var size: CGFloat = 32
+
+    var body: some View {
+        Image(systemName: "globe.europe.africa.fill")
+            .font(.system(size: size * 0.55))
+            .foregroundStyle(theme.colors.accentInk)
+            .frame(width: size, height: size)
+            .background(theme.colors.accentTint, in: .circle)
+    }
+}
+
+/// A tab's content: the screen gutter, a scroll, and pull to refresh.
+///
+/// No large title — the top bar identifies the wallet and the screens name
+/// themselves in their first line, the way the Android app does.
 struct EarthScreen<Content: View>: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
 
-    let title: String
     @ViewBuilder var content: Content
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: theme.space.x16) {
-                    if let error = model.lastError {
-                        ErrorBanner(text: error)
-                    }
-                    content
+        ScrollView {
+            VStack(alignment: .leading, spacing: theme.space.x16) {
+                if let error = model.lastError {
+                    ErrorBanner(text: error)
                 }
-                .padding(.horizontal, theme.space.gutter)
-                .padding(.bottom, theme.space.x32)
+                content
             }
-            .refreshable { await model.refresh() }
-            .navigationTitle(title)
-            .earthBackground()
-            .scrollContentBackground(.hidden)
+            .padding(.horizontal, theme.space.gutter)
+            .padding(.top, theme.space.x24)
+            .padding(.bottom, theme.space.x32)
         }
+        .refreshable { await model.refresh() }
+        .background(theme.colors.bgPrimary)
     }
 }
 

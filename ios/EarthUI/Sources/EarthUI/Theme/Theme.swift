@@ -98,6 +98,7 @@ struct EarthSpace {
     /// Screen gutter. Everything full-bleed stops here.
     let gutter: CGFloat = 20
     let radiusSm: CGFloat = 8
+    /// Buttons and fields. Android's EarthButtonDefaults.shape.
     let radiusMd: CGFloat = 12
     let radiusLg: CGFloat = 16
     let radiusSheet: CGFloat = 20
@@ -105,25 +106,33 @@ struct EarthSpace {
     let stroke: CGFloat = 1
 }
 
-/// The type scale.
+/// The type scale, matching the vendored one on Android point for point.
 ///
-/// The balance is the loudest thing in the app by a wide margin, which is most
-/// of what makes a wallet feel simple: one number you cannot miss, everything
-/// else stepping well back. Figures are monospaced-digit throughout — amounts
-/// line up in columns, and a proportional digit makes a balance shimmer as it
-/// updates.
+/// The sizes are not a re-derivation: `header1` really is 56 at regular weight,
+/// and the eyebrows really are 14 rather than a small letter-spaced caption.
+/// The balance being enormous *and* unbolded is most of what makes the Android
+/// wallet feel calm, and a semibold 44 reads as a different product.
 enum EarthType {
-    static let display = Font.system(size: 44, weight: .bold).monospacedDigit()
-    static let headline = Font.system(size: 22, weight: .semibold)
-    static let title = Font.system(size: 16, weight: .semibold)
-    static let body = Font.system(size: 15)
-    static let bodySmall = Font.system(size: 13.5)
-    static let label = Font.system(size: 15, weight: .semibold)
-    /// Uppercase eyebrows: "TOTAL BALANCE". Letter-spaced, never large.
-    static let eyebrow = Font.system(size: 11, weight: .semibold)
+    /// The balance, and nothing else. 56/68 regular.
+    static let display = Font.system(size: 56, weight: .regular).monospacedDigit()
+    /// Screen headings outside the app shell — setup, unlock. 28/40.
+    static let headline = Font.system(size: 28, weight: .regular)
+    static let textXl = Font.system(size: 20)
+    static let textLg = Font.system(size: 18)
+    /// The workhorse: row titles, values, body copy. 16/24.
+    static let body = Font.system(size: 16)
+    /// Eyebrows and secondary lines. 14/20 — the same size as Android's
+    /// textSm, uppercased at the call site rather than letter-spaced.
+    static let bodySmall = Font.system(size: 14)
+    /// Tab labels. 12/16.
+    static let caption = Font.system(size: 12)
+    static let label = Font.system(size: 16, weight: .semibold)
     /// Chain errors and hashes.
     static let mono = Font.system(size: 12, design: .monospaced)
-    static let amount = Font.system(size: 15, weight: .medium).monospacedDigit()
+    /// Figures in a column. Monospaced digits so they line up and so a
+    /// refreshing balance does not shimmer.
+    static let amount = Font.system(size: 16).monospacedDigit()
+    static let title = Font.system(size: 16, weight: .semibold)
 }
 
 private struct EarthThemeKey: EnvironmentKey {

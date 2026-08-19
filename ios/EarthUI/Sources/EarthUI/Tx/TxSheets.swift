@@ -1,6 +1,29 @@
 import EarthCore
 import SwiftUI
 
+/// The confirmation, the wait, and the result — in that order, over everything.
+struct TxOverlay: View {
+    @Environment(TxController.self) private var tx
+
+    var body: some View {
+        ZStack {
+            if let details = tx.pending {
+                TxConfirmSheet(details: details)
+                    .transition(.opacity)
+            } else if tx.submitting {
+                TxSubmittingOverlay()
+                    .transition(.opacity)
+            } else if let outcome = tx.outcome {
+                TxResultSheet(outcome: outcome)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.15), value: tx.pending?.id)
+        .animation(.easeInOut(duration: 0.15), value: tx.submitting)
+        .animation(.easeInOut(duration: 0.15), value: tx.outcome?.id)
+    }
+}
+
 /// What you are about to sign, before anything is signed.
 ///
 /// The whole reason `TxController` exists: every transaction in the app comes

@@ -190,7 +190,7 @@ struct StepRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: theme.space.x12) {
             Text("\(number)")
-                .font(EarthType.eyebrow)
+                .font(EarthType.bodySmall)
                 .foregroundStyle(theme.colors.accentInk)
                 .frame(width: 24, height: 24)
                 .background(theme.colors.accentTint, in: .circle)

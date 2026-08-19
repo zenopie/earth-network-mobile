@@ -16,7 +16,7 @@ struct GovernScreen: View {
     @State private var streams = StreamsModel()
 
     var body: some View {
-        EarthScreen(title: "Govern") {
+        EarthScreen {
             StreamCard(
                 title: "Caretaker Fund",
                 subtitle: "One human, one vote. Needs a live registration.",
@@ -73,22 +73,20 @@ struct StreamCard: View {
     @State private var editing = false
 
     var body: some View {
-        EarthCard {
-            VStack(alignment: .leading, spacing: theme.space.x2) {
-                Text(title)
-                    .font(EarthType.title)
-                    .foregroundStyle(theme.colors.textPrimary)
-                Text(subtitle)
-                    .font(EarthType.bodySmall)
-                    .foregroundStyle(theme.colors.textTertiary)
-            }
+        VStack(alignment: .leading, spacing: theme.space.x8) {
+            EarthSectionHeader(title: title)
+            Text(subtitle)
+                .font(EarthType.bodySmall)
+                .foregroundStyle(theme.colors.textTertiary)
 
             if state.stream.options.isEmpty {
                 EarthEmpty(systemName: "chart.pie", title: "No options yet")
             } else {
-                Divider().overlay(theme.colors.strokeSecondary)
-                ForEach(state.stream.options, id: \.id) { option in
-                    OptionRow(option: option, total: state.stream.totalWeight, mine: mine(option.id))
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(state.stream.options.enumerated()), id: \.element.id) { index, option in
+                        if index > 0 { EarthDivider() }
+                        OptionRow(option: option, total: state.stream.totalWeight, mine: mine(option.id))
+                    }
                 }
                 EarthButton(title: state.mine.isEmpty ? "Set your allocation" : "Change your allocation",
                             role: .secondary) { editing = true }
@@ -143,7 +141,7 @@ struct OptionRow: View {
             }
             .frame(height: 6)
         }
-        .padding(.vertical, theme.space.x8)
+        .padding(.vertical, theme.space.x12)
     }
 
     /// `amountAllocated / totalWeight` — the denominator comes back with the
@@ -273,7 +271,7 @@ struct ProposalsSection: View {
                 )
             } else {
                 ForEach(proposals) { proposal in
-                    EarthCard {
+                    VStack(alignment: .leading, spacing: theme.space.x8) {
                         HStack(alignment: .top) {
                             Text(proposal.title)
                                 .font(EarthType.title)
@@ -290,6 +288,7 @@ struct ProposalsSection: View {
                         if proposal.total > 0 {
                             TallyBar(proposal: proposal)
                         }
+                        EarthDivider()
                     }
                 }
                 // Voting needs cosmos/gov/v1beta1/tx.proto, which the message

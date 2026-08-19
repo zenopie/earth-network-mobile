@@ -4,7 +4,10 @@ import SwiftUI
 // carries the general-purpose equivalents the Android side had to vendor —
 // lists, sheets, buttons, dividers — so what is left here is Earth-shaped.
 
-/// Uppercase eyebrow: "TOTAL BALANCE", "NETWORK FEE".
+/// Uppercase eyebrow: "TOTAL BALANCE", "HOLDINGS".
+///
+/// Plain 14pt tertiary, uppercased — not a letter-spaced caption. Android sets
+/// these in textSm and lets the capitals do the work.
 struct EarthLabel: View {
     @Environment(\.earth) private var theme
     let text: String
@@ -13,9 +16,63 @@ struct EarthLabel: View {
 
     var body: some View {
         Text(text.uppercased())
-            .font(EarthType.eyebrow)
-            .tracking(1.1)
+            .font(EarthType.bodySmall)
             .foregroundStyle(theme.colors.textTertiary)
+    }
+}
+
+/// The hairline between rows. How this app separates things — there are no
+/// shadows in it, and cards are the exception rather than the rule.
+struct EarthDivider: View {
+    @Environment(\.earth) private var theme
+
+    var body: some View {
+        Rectangle()
+            .fill(theme.colors.strokeSecondary)
+            .frame(height: 1)
+    }
+}
+
+/// A list row: a name over a subtitle, and a figure on the right.
+///
+/// Flat, divider-separated, no leading glyph. The Android holdings list is
+/// built this way and it is most of why that screen reads as quiet — a column
+/// of tinted circles turns a balance sheet into a menu.
+struct EarthRow: View {
+    @Environment(\.earth) private var theme
+    let title: String
+    var subtitle: String?
+    var value: String?
+    var valueMuted = false
+    var action: (() -> Void)?
+
+    var body: some View {
+        let content = HStack(alignment: .center, spacing: theme.space.x12) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(title)
+                    .font(EarthType.body)
+                    .foregroundStyle(theme.colors.textPrimary)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(EarthType.bodySmall)
+                        .foregroundStyle(theme.colors.textTertiary)
+                }
+            }
+            Spacer(minLength: theme.space.x8)
+            if let value {
+                Text(value)
+                    .font(EarthType.amount)
+                    .foregroundStyle(valueMuted ? theme.colors.textTertiary : theme.colors.textPrimary)
+            }
+        }
+        .padding(.vertical, theme.space.x12)
+        .contentShape(.rect)
+
+        if let action {
+            Button(action: action) { content }.buttonStyle(.plain)
+        } else {
+            content
+        }
     }
 }
 
@@ -83,7 +140,7 @@ struct EarthStatusPill: View {
         case .neutral: (theme.colors.bgTertiary, theme.colors.textTertiary)
         }
         Text(text)
-            .font(EarthType.eyebrow)
+            .font(EarthType.bodySmall)
             .foregroundStyle(fg)
             .padding(.horizontal, theme.space.x12)
             .padding(.vertical, theme.space.x4)
@@ -140,22 +197,27 @@ struct EarthButton: View {
         }
         .buttonStyle(.plain)
         .disabled(busy || !isEnabled)
-        .opacity(isEnabled && !busy ? 1 : 0.5)
     }
 
+    /// Disabled is its own pair of colours rather than the enabled pair at half
+    /// opacity. Fading a white label on brand green gives white-on-pale-green,
+    /// which is unreadable — the label has to get darker as the ground gets
+    /// lighter, and opacity moves them the same way.
     private var foreground: Color {
+        guard isEnabled, !busy else { return theme.colors.textDisabled }
         switch role {
-        case .primary: Palette.Base.bone
-        case .secondary: theme.colors.textPrimary
-        case .destructive: Palette.Base.bone
+        case .primary: return Palette.Base.bone
+        case .secondary: return theme.colors.textPrimary
+        case .destructive: return Palette.Base.bone
         }
     }
 
     private var background: Color {
+        guard isEnabled, !busy else { return theme.colors.bgTertiary }
         switch role {
-        case .primary: Palette.Brand.b600
-        case .secondary: theme.colors.bgPrimary
-        case .destructive: Palette.Error.e600
+        case .primary: return Palette.Brand.b600
+        case .secondary: return theme.colors.bgPrimary
+        case .destructive: return Palette.Error.e600
         }
     }
 }
