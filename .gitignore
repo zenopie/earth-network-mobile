@@ -99,8 +99,10 @@ xcuserdata/
 *.xcscmblueprint
 *.moved-aside
 
-# Proof/VK artifacts emitted by the Phase 1 gate test
+# Proof/VK artifacts emitted by the Phase 1 gate test, and the transaction
+# fixture corecheck writes for tools/txcheck
 ios/ProverGate/.artifacts/
+ios/EarthCore/.artifacts/
 
 # CocoaPods / Carthage, if they ever appear
 Pods/

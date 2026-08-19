@@ -8,6 +8,7 @@ reference for behaviour; read it rather than re-deriving the domain logic.
     ios/
       ProverGateCore/   no dependencies — field elements, witness decoding, repo layout
       ProverGate/       the Phase 1 gate: Barretenberg proving via Swoir
+      EarthCore/        Phase 2: the headless domain layer — keys, tx, chain, maths
 
 ## Phase 1: the gate
 
@@ -126,8 +127,68 @@ shows bb agrees with itself. `tools/chainverify` runs the proof through the
 
 That is the actual Phase 1 result. Everything else is corroboration.
 
+## Phase 2: the headless domain layer
+
+`EarthCore` is everything the app does that is not UI, NFC, or proving: BIP-39
+and BIP-32 at coin type 118, bech32, the Cosmos transaction encoding and
+SIGN_MODE_DIRECT signing, the LCD query clients per chain module, and the AMM
+and APR maths. No Apple SDK, no Barretenberg — so it builds and its checks run
+under plain SwiftPM, the same reason `ProverGateCore` is separate.
+
+    cd ios/EarthCore
+    swift run corecheck            # offline known-answer checks
+    swift run corecheck --live     # and the same against the real LCD
+
+**Nothing here is checked against itself.** Every value `corecheck` asserts
+came from somewhere with the authority to decide it:
+
+| what | authority |
+|---|---|
+| BIP-39 phrases, seeds | the Trezor vectors |
+| RIPEMD-160 | the reference paper's vectors |
+| bech32 | BIP-173's own vectors |
+| the earth address for a mnemonic | `tools/keycheck`, which derives through cosmos-sdk's `crypto/hd` |
+| swap quotes and fees | `x/dex/keeper/amm.go`, called directly |
+| the encoded, signed transaction | `tools/txcheck`, below |
+
+### Protobuf without protoc
+
+`Cosmos/Protobuf.swift` is a hand-written wire-format writer rather than
+generated code. The messages a wallet sends are a dozen small ones that cannot
+change shape without the chain changing first, and generating them would put
+`protoc` and `protoc-gen-swift` in the build for that.
+
+What it costs is compile-time checking, so the encoding is verified instead:
+
+    cd ios/EarthCore && swift run corecheck        # writes .artifacts/tx.json
+    cd tools/txcheck && go run . ../../ios/EarthCore/.artifacts
+    ACCEPTED — the chain's own codec agrees with the Swift-built transaction
+
+`txcheck` decodes the Swift-built transaction with the cosmos-sdk types the
+chain runs, rebuilds the SignDoc the way the ante handler does, and verifies
+the secp256k1 signature against the public key the transaction itself carries.
+It also walks `MsgRegister` field by field with `protowire` — that message has
+the awkward shapes (raw bytes, a repeated string) and the earth protos are not
+in that module's graph.
+
+The trap the writer exists to avoid: **proto3 elides default values**. A zero,
+an empty string, or empty bytes is *absent* on the wire. Emitting one changes
+the encoded bytes, and since SIGN_MODE_DIRECT signs those bytes, the chain
+would verify a signature over something other than what it re-encodes.
+
+### Dependency notes
+
+- `swift-secp256k1` is pinned to the **0.17.x** line. 0.18 and later declare
+  swift-tools 6.1, which a Swift 5.10 toolchain will not even read. Revisit
+  once the toolchain moves.
+- `attaswift/BigInt` is not optional: a pool reserve times an input amount
+  overflows 64 bits, and the chain does that arithmetic in unbounded integers.
+  Matching it needs the same.
+- There are **no XCTest tests**, and cannot be on a Command Line Tools install
+  — it ships no XCTest platform, so `swift test` cannot run at all. The checks
+  are an executable, as in `ProverGateCore`.
+
 ## Not yet started
 
-Phases 2–5: chain layer and key derivation, passport NFC read
-(`NFCPassportReader` replacing jmrtd), SwiftUI, AdMob gas gate and referrals.
-See `../IOS_PORT_PROMPT.md`.
+Phases 3–5: passport NFC read (`NFCPassportReader` replacing jmrtd), the
+SwiftUI four-tab app, AdMob gas gate and referrals. See `../IOS_PORT_PROMPT.md`.
