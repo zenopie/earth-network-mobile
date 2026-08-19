@@ -22,16 +22,26 @@ jobs:
   release:
     runs-on: ubuntu-latest
 
+    # The Gradle build lives in android/ since the iOS port landed alongside it.
+    # `uses:` steps still resolve from the repo root, so their paths keep the prefix.
+    defaults:
+      run:
+        working-directory: android
+
     steps:
       - uses: actions/checkout@v4
 
-      # JDK 17: app/build.gradle sets sourceCompatibility and jvmTarget to 17.
+      # JDK 17: android/app/build.gradle sets sourceCompatibility and jvmTarget to 17.
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
+      # Point the cache at the moved build; setup-gradle otherwise probes the
+      # repo root, finds no build file, and caches nothing.
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          build-root-directory: android
 
       # The signing key never lives in the repo. It is held as a base64 secret
       # and written to a path outside the working tree, so a `git add -A`
@@ -72,7 +82,7 @@ jobs:
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: network.erth.wallet
-          releaseFiles: app/build/outputs/bundle/release/app-release.aab
+          releaseFiles: android/app/build/outputs/bundle/release/app-release.aab
           # Tagged builds go to internal on purpose. Promoting to production is
           # a decision with a human in it, not a side effect of pushing a tag.
           track: ${{ github.event.inputs.track || 'internal' }}
@@ -85,7 +95,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: app-release-aab
-          path: app/build/outputs/bundle/release/app-release.aab
+          path: android/app/build/outputs/bundle/release/app-release.aab
           if-no-files-found: error
 
       - name: Clean up the keystore
