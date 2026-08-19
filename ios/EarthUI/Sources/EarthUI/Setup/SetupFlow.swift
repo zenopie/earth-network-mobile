@@ -12,7 +12,9 @@ struct SetupFlow: View {
         NavigationStack {
             VStack(alignment: .leading, spacing: theme.space.x16) {
                 Spacer()
-                EarthGlyph(systemName: "globe.europe.africa.fill", size: 64)
+                EarthAsset.logo?
+                    .resizable().scaledToFit()
+                    .frame(width: 88, height: 88)
                 Text("Earth Wallet")
                     .font(EarthType.display)
                     .foregroundStyle(theme.colors.textPrimary)
@@ -190,7 +192,9 @@ struct UnlockScreen: View {
     var body: some View {
         VStack(spacing: theme.space.x16) {
             Spacer()
-            EarthGlyph(systemName: "lock.fill", size: 64)
+            EarthAsset.logo?
+                .resizable().scaledToFit()
+                .frame(width: 88, height: 88)
             Text("Earth Wallet")
                 .font(EarthType.headline)
                 .foregroundStyle(theme.colors.textPrimary)

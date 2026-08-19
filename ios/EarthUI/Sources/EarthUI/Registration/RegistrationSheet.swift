@@ -59,7 +59,9 @@ struct RegistrationSheet: View {
 
     private var intro: some View {
         VStack(alignment: .leading, spacing: theme.space.x16) {
-            EarthGlyph(systemName: "person.badge.key.fill", size: 56)
+            EarthAsset.logo?
+                .resizable().scaledToFit()
+                .frame(width: 72, height: 72)
             Text("Prove you are a unique human")
                 .font(EarthType.headline)
                 .foregroundStyle(theme.colors.textPrimary)
