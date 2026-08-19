@@ -32,6 +32,10 @@
 	     so the system needs a reason to show. -->
 	<key>NSFaceIDUsageDescription</key>
 	<string>Unlock your wallet and approve transactions.</string>
+	<!-- The machine-readable zone is read with the camera to unlock the chip.
+	     Nothing scanned is stored or sent. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Read the printed lines at the bottom of your passport, to unlock its chip.</string>
 	<!-- The passport chip read needs these, and needs the Near Field
 	     Communication Tag Reading entitlement on the App ID, which a free
 	     Personal Team cannot enable. Declared now so the shape is on record;

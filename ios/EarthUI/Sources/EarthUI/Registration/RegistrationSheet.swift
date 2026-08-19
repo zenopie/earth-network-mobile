@@ -19,23 +19,37 @@ struct RegistrationSheet: View {
 
     @State private var step = Step.intro
     @State private var key = MRZ.Key(documentNumber: "", dateOfBirth: "", dateOfExpiry: "")
+
     @State private var referrer = ""
 
-    enum Step: Hashable { case intro, mrz, chip }
+    enum Step: Hashable { case intro, scan, mrz, chip }
 
     var body: some View {
         NavigationStack {
-            ScrollView {
+            Group {
+                if step == .scan {
+                    MrzCameraScreen(
+                        onDetected: { key in
+                            self.key = key
+                            step = .mrz
+                        },
+                        onManualEntry: { step = .mrz }
+                    )
+                } else {
+                    ScrollView {
                 VStack(alignment: .leading, spacing: theme.space.x16) {
                     switch step {
                     case .intro: intro
+                    case .scan: EmptyView()
                     case .mrz: mrzEntry
                     case .chip: chip
                     }
+                    }
+                    .padding(theme.space.gutter)
+                    }
                 }
-                .padding(theme.space.gutter)
             }
-            .navigationTitle("Register")
+            .navigationTitle(step == .scan ? "Scan" : "Register")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
             .earthBackground()
@@ -59,7 +73,7 @@ struct RegistrationSheet: View {
                 StepRow(number: 3, title: "Prove and register", detail: "About a second and a half of proving, then one transaction.")
             }
 
-            EarthButton(title: "Start") { step = .mrz }
+            EarthButton(title: "Start") { step = .scan }
         }
     }
 
@@ -69,6 +83,9 @@ struct RegistrationSheet: View {
                 .font(EarthType.body)
                 .foregroundStyle(theme.colors.textSecondary)
 
+            // Prefilled from the scan when there was one, and editable either
+            // way: OCR mangles this typeface often enough that a correction
+            // has to be possible without starting over.
             field("Document number", text: $key.documentNumber, placeholder: "L898902C", uppercase: true)
             field("Date of birth", text: $key.dateOfBirth, placeholder: "YYMMDD", numeric: true)
             field("Date of expiry", text: $key.dateOfExpiry, placeholder: "YYMMDD", numeric: true)
@@ -110,6 +127,7 @@ struct RegistrationSheet: View {
 
             EarthButton(title: "Read the chip") { step = .chip }
                 .disabled(seed == nil || referrerInvalid)
+            EarthButton(title: "Scan again", role: .secondary) { step = .scan }
         }
     }
 
