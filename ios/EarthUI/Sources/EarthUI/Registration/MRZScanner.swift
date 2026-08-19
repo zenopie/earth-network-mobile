@@ -25,6 +25,18 @@ final class MRZScanner: NSObject, ObservableObject {
     let session = AVCaptureSession()
     private let queue = DispatchQueue(label: "network.erth.wallet.mrz")
     private var configured = false
+    private var rotation: AVCaptureDevice.RotationCoordinator?
+    private var rotationObserver: NSKeyValueObservation?
+
+    private func applyRotation() {
+        guard let angle = rotation?.videoRotationAngleForHorizonLevelCapture else { return }
+        for output in session.outputs {
+            for connection in output.connections
+            where connection.isVideoRotationAngleSupported(angle) {
+                connection.videoRotationAngle = angle
+            }
+        }
+    }
 
     func start() {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
@@ -77,6 +89,23 @@ final class MRZScanner: NSObject, ObservableObject {
         if session.canAddOutput(output) { session.addOutput(output) }
         session.commitConfiguration()
 
+        // Let the capture pipeline do the rotating, so frames arrive upright
+        // whichever way the phone is held and Vision can be told `.up`.
+        //
+        // Guessing the orientation from the interface instead is what breaks
+        // when the user turns from one landscape to the other: the picture
+        // stays upright on screen while the buffer flips, and the recognizer
+        // silently reads nothing.
+        let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
+        self.rotation = coordinator
+        applyRotation()
+        rotationObserver = coordinator.observe(
+            \.videoRotationAngleForHorizonLevelCapture,
+            options: [.new]
+        ) { [weak self] _, _ in
+            Task { @MainActor in self?.applyRotation() }
+        }
+
         queue.async { [session] in session.startRunning() }
     }
 }
@@ -106,9 +135,8 @@ extension MRZScanner: AVCaptureVideoDataOutputSampleBufferDelegate {
         request.usesLanguageCorrection = false
         request.recognitionLanguages = ["en-US"]
 
-        // The phone is held in portrait over a passport lying flat, so the
-        // zone arrives rotated a quarter turn from the buffer's own idea of up.
-        try? VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .right, options: [:])
+        // Upright already — the capture connection is rotated for us.
+        try? VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .up, options: [:])
             .perform([request])
     }
 

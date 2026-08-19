@@ -24,9 +24,15 @@
 	<true/>
 	<key>UILaunchScreen</key>
 	<dict/>
+	<!-- Portrait everywhere except the MRZ scanner, which needs the long way
+	     round to fill the frame with two 44-character lines. The app delegate
+	     narrows this per screen; declaring only portrait here would stop it
+	     turning at all. -->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<!-- Reading the recovery phrase out of the Keychain is behind biometrics,
 	     so the system needs a reason to show. -->

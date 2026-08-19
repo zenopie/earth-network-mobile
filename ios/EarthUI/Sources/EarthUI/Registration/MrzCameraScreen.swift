@@ -7,10 +7,10 @@ import SwiftUI
 /// stacking keeps the words next to the box they describe, rather than under a
 /// viewfinder the reader has stopped looking at.
 ///
-/// One difference from Android, which turns the screen landscape here: this app
-/// is portrait-only, so the guide lies across the width and the passport is
-/// held flat rather than the phone turned. The zone is read at the same
-/// proportions either way.
+/// The screen turns landscape, as Android's does. In portrait the frame is
+/// barely wider than the passport is tall, so two 44-character lines land too
+/// small for the recognizer to hold; the long way round they fill it. This is
+/// the only screen in the app that turns.
 struct MrzCameraScreen: View {
     @Environment(\.earth) private var theme
     @StateObject private var scanner = MRZScanner()
@@ -65,6 +65,7 @@ struct MrzCameraScreen: View {
                 .background(.black.opacity(0.55))
             }
         }
+        .orientationLock(.landscape, turningTo: .landscapeRight)
         .task { scanner.start() }
         .onDisappear { scanner.stop() }
         .onChange(of: scanner.found) { _, key in
