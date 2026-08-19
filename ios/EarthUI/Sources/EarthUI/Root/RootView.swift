@@ -30,16 +30,39 @@ public struct RootView: View {
         .environment(tx)
         .earthThemed()
         .earthBackground()
-        // One confirmation sheet and one result sheet for the whole app, hung
-        // here so no screen can broadcast without them.
-        .sheet(item: Binding(get: { tx.pending }, set: { if $0 == nil { tx.cancel() } })) { details in
-            TxConfirmSheet(details: details)
-                .earthThemed()
+        // One confirmation and one result for the whole app, so no screen can
+        // broadcast without them.
+        //
+        // Overlays rather than sheets, for two reasons. A screen that raises a
+        // transaction is usually itself a sheet — Send, Stake — and asking
+        // SwiftUI to present a sheet on an ancestor while a descendant is
+        // dismissing does not reliably present anything. And a sheet's own
+        // dismissal would have to be told apart from a confirmation, which is
+        // the kind of distinction that silently stops working.
+        .overlay { TxOverlay() }
+    }
+}
+
+/// The confirmation, the wait, and the result — in that order, over everything.
+struct TxOverlay: View {
+    @Environment(TxController.self) private var tx
+
+    var body: some View {
+        ZStack {
+            if let details = tx.pending {
+                TxConfirmSheet(details: details)
+                    .transition(.opacity)
+            } else if tx.submitting {
+                TxSubmittingOverlay()
+                    .transition(.opacity)
+            } else if let outcome = tx.outcome {
+                TxResultSheet(outcome: outcome)
+                    .transition(.opacity)
+            }
         }
-        .sheet(item: Binding(get: { tx.outcome }, set: { if $0 == nil { tx.dismissOutcome() } })) { outcome in
-            TxResultSheet(outcome: outcome)
-                .earthThemed()
-        }
+        .animation(.easeInOut(duration: 0.15), value: tx.pending?.id)
+        .animation(.easeInOut(duration: 0.15), value: tx.submitting)
+        .animation(.easeInOut(duration: 0.15), value: tx.outcome?.id)
     }
 }
 

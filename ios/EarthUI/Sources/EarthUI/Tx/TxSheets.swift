@@ -10,12 +10,11 @@ struct TxConfirmSheet: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
     @Environment(TxController.self) private var tx
-    @Environment(\.dismiss) private var dismiss
 
     let details: TxController.Details
 
     var body: some View {
-        VStack(alignment: .leading, spacing: theme.space.x16) {
+        TxOverlayCard {
             Text(details.action)
                 .font(EarthType.headline)
                 .foregroundStyle(theme.colors.textPrimary)
@@ -34,16 +33,12 @@ struct TxConfirmSheet: View {
             }
 
             HStack(spacing: theme.space.x12) {
-                EarthButton(title: "Cancel", role: .secondary) { dismiss() }
-                EarthButton(title: "Confirm") {
-                    dismiss()
-                    Task { await tx.confirm(in: model) }
-                }
+                EarthButton(title: "Cancel", role: .secondary) { tx.cancel() }
+                // `confirm` clears `pending` itself, which is what takes this
+                // card away — there is no dismissal to coordinate with.
+                EarthButton(title: "Confirm") { Task { await tx.confirm(in: model) } }
             }
         }
-        .padding(theme.space.gutter)
-        .presentationDetents([.medium])
-        .earthBackground()
     }
 }
 
@@ -70,12 +65,12 @@ struct GasWarning: View {
 /// the part that explained everything.
 struct TxResultSheet: View {
     @Environment(\.earth) private var theme
-    @Environment(\.dismiss) private var dismiss
+    @Environment(TxController.self) private var tx
 
     let outcome: TxController.Outcome
 
     var body: some View {
-        VStack(alignment: .leading, spacing: theme.space.x16) {
+        TxOverlayCard {
             switch outcome {
             case let .succeeded(action, hash):
                 header(status: .success, title: "\(action) confirmed", glyph: "checkmark.circle.fill")
@@ -86,12 +81,8 @@ struct TxResultSheet: View {
                 EarthLabel("The chain said")
                 EarthCodeBlock(text: reason)
             }
-            Spacer(minLength: 0)
-            EarthButton(title: "Done", role: .secondary) { dismiss() }
+            EarthButton(title: "Done", role: .secondary) { tx.dismissOutcome() }
         }
-        .padding(theme.space.gutter)
-        .presentationDetents([.medium])
-        .earthBackground()
     }
 
     private func header(status: EarthStatus, title: String, glyph: String) -> some View {
@@ -102,6 +93,22 @@ struct TxResultSheet: View {
             Text(title)
                 .font(EarthType.headline)
                 .foregroundStyle(theme.colors.textPrimary)
+        }
+    }
+}
+
+/// A card floating over the app, with the scrim that makes it modal.
+struct TxOverlayCard<Content: View>: View {
+    @Environment(\.earth) private var theme
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.35).ignoresSafeArea()
+            VStack(alignment: .leading, spacing: theme.space.x16) { content }
+                .padding(theme.space.gutter)
+                .background(theme.colors.bgSecondary, in: .rect(cornerRadius: theme.space.radiusSheet))
+                .padding(theme.space.gutter)
         }
     }
 }

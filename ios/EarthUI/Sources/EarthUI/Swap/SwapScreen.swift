@@ -37,6 +37,16 @@ struct SwapScreen: View {
                     .disabled(quote == nil)
             }
         }
+        // ANML is the default because it is the token this chain is about, but
+        // it need not have a pool on every deployment — land on one that does
+        // rather than on a picker with nothing behind it.
+        .onChange(of: model.pools) { _, _ in adoptAvailableSpoke() }
+        .task { adoptAvailableSpoke() }
+    }
+
+    private func adoptAvailableSpoke() {
+        guard !spokes.isEmpty, !spokes.contains(spoke), let first = spokes.first else { return }
+        spoke = first
     }
 
     private var spokes: [Token] {

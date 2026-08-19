@@ -107,6 +107,16 @@ public final class AppModel {
         refreshing = true
         defer { refreshing = false }
 
+        // One probe that is allowed to throw.
+        //
+        // Every query below swallows its failure and returns empty, which is
+        // right for them — a fresh account has no balances and a young chain
+        // has no pools, and neither is an error. But it leaves nothing able to
+        // tell "empty" from "unreachable", so the banner would never appear at
+        // the one moment it is needed. This asks the chain a question it always
+        // has an answer to.
+        async let reachable: Void = probe()
+
         async let balances = client.balances(address)
         async let registration = client.registrationStatus(address)
         async let pools = client.pools()
@@ -126,10 +136,16 @@ public final class AppModel {
         self.unbondings = await unbondings
         self.rewards = BigInt(await rewards) ?? 0
         self.totalBonded = BigInt(await bonded) ?? 0
+        await reachable
+    }
 
-        // A chain that answers with nothing is not an error — a fresh account
-        // has no balances and a young chain has no pools.
-        lastError = nil
+    private func probe() async {
+        do {
+            _ = try await client.rest.get("/cosmos/base/tendermint/v1beta1/syncing")
+            lastError = nil
+        } catch {
+            lastError = "Cannot reach \(client.rest.lcd.host ?? "the chain"). Showing the last known state."
+        }
     }
 
     // MARK: - derived

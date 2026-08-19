@@ -34,7 +34,6 @@ struct GovernScreen: View {
             ProposalsSection(proposals: streams.proposals)
         }
         .task { await streams.load(model: model) }
-        .environment(streams)
     }
 }
 

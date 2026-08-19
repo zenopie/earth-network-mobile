@@ -15,7 +15,6 @@ import SwiftUI
 /// DG1 and an EF.SOD into a witness the circuit accepts.
 struct RegistrationSheet: View {
     @Environment(\.earth) private var theme
-    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
 
     @State private var step = Step.intro

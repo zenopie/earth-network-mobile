@@ -6,7 +6,6 @@ import SwiftUI
 struct WalletScreen: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
-    @Environment(TxController.self) private var tx
 
     @State private var sending = false
     @State private var receiving = false
