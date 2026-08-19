@@ -154,7 +154,14 @@ object PassportSession {
     }
 
     /** Sign and broadcast MsgRegister from a completed scan. Returns the tx hash. */
-    fun register(context: Context, scan: Scan): Result<String> = runCatching {
+    /**
+     * Broadcasts MsgRegister. [affiliate] is the optional referrer address: the
+     * chain splits the registration reward with them, and requires them to be a
+     * distinct, currently-registered human. Blank is passed as null, which is
+     * the unreferred case — the referrer's half then stays in the reward pool
+     * rather than being paid out.
+     */
+    fun register(context: Context, scan: Scan, affiliate: String? = null): Result<String> = runCatching {
         SecureWalletManager.executeWithMnemonic(context) { mnemonic ->
             val key = EarthWallet.deriveKey(mnemonic)
             Personhood.register(
@@ -162,7 +169,7 @@ object PassportSession {
                 scan.proof.proof,
                 scan.proof.publicSignals,
                 scan.proof.signatureAlgorithm,
-                null,
+                affiliate?.trim()?.takeIf { it.isNotEmpty() },
                 scan.dscDer,
             )
         }

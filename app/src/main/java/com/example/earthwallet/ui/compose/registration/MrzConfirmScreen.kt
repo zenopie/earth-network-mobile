@@ -2,6 +2,7 @@ package network.erth.wallet.ui.compose.registration
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,6 +27,7 @@ import network.erth.wallet.ui.vendor.component.EarthButton
 import network.erth.wallet.ui.vendor.component.EarthTextField
 import network.erth.wallet.ui.vendor.theme.colors.EarthColors
 import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
+import network.erth.wallet.Constants
 import network.erth.wallet.wallet.passport.PassportSession
 
 /**
@@ -46,6 +48,8 @@ import network.erth.wallet.wallet.passport.PassportSession
 fun MrzConfirmScreen(
     initial: PassportSession.Mrz?,
     error: String?,
+    referrer: String,
+    onReferrerChange: (String) -> Unit,
     onContinue: (PassportSession.Mrz) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -59,6 +63,16 @@ fun MrzConfirmScreen(
         capitalization = KeyboardCapitalization.Characters,
     )
     val dateKeys = doneKeyboard(keyboardType = KeyboardType.Number)
+    val referrerKeys = doneKeyboard(autoCorrect = false)
+
+    // Only the shape is checked here. Whether the address is a distinct,
+    // currently-registered human is the chain's call, and it rejects the
+    // message rather than silently dropping the referral.
+    val referrerError = if (referrer.isNotEmpty() && !referrer.startsWith(Constants.EARTH_PREFIX + "1")) {
+        "Not an Earth address"
+    } else {
+        null
+    }
 
     Column(
         modifier
@@ -115,11 +129,38 @@ fun MrzConfirmScreen(
             keyboardActions = dateKeys.second,
         )
 
+        // Separated from the passport fields above by a divider: this one is
+        // not read off the document and is not required. Grouping it with them
+        // would suggest it is another thing to copy from the photo page.
+        Spacer(Modifier.height(24.dp()))
+        HorizontalDivider(color = EarthColors.Surfaces.divider)
+        Spacer(Modifier.height(24.dp()))
+
+        EarthLabel("Referrer address (optional)")
+        Spacer(Modifier.height(8.dp()))
+        EarthTextField(
+            value = referrer,
+            onValueChange = { onReferrerChange(it.trim()) },
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("earth1…") },
+            error = referrerError,
+            keyboardOptions = referrerKeys.first,
+            keyboardActions = referrerKeys.second,
+        )
+        Spacer(Modifier.height(8.dp()))
+        Text(
+            text = "Half the registration reward goes to whoever referred you. " +
+                "Leaving this blank costs you nothing — your own half is the " +
+                "same either way.",
+            style = EarthTypography.textXs,
+            color = EarthColors.Text.textSecondary,
+        )
+
         Spacer(Modifier.height(24.dp()))
         EarthButton(
             text = "Continue",
             onClick = { onContinue(mrz) },
-            enabled = mrz.isComplete,
+            enabled = mrz.isComplete && referrerError == null,
             modifier = Modifier.fillMaxWidth(),
             colors = network.erth.wallet.ui.compose.brandButtonColors(),
         )

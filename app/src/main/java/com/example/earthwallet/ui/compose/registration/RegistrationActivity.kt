@@ -70,6 +70,10 @@ class RegistrationActivity : ComponentActivity() {
                 var stage: NfcStage by remember { mutableStateOf(NfcStage.Waiting) }
                 var mrzError: String? by remember { mutableStateOf(null) }
 
+                // Held across the whole flow: it is entered on the confirm
+                // screen but not used until the broadcast, several steps later.
+                var referrer: String by remember { mutableStateOf("") }
+
                 // Held between the read and the broadcast. The proof is built
                 // while the passport is against the phone; paying for it is a
                 // separate step that can take as long as it needs.
@@ -179,7 +183,11 @@ class RegistrationActivity : ComponentActivity() {
                             submitting = true
                             lifecycleScope.launch {
                                 val hash = withContext(Dispatchers.IO) {
-                                    PassportSession.register(this@RegistrationActivity, ready)
+                                    PassportSession.register(
+                                        this@RegistrationActivity,
+                                        ready,
+                                        referrer,
+                                    )
                                 }
                                 submitting = false
                                 hash.onSuccess {
@@ -282,6 +290,8 @@ class RegistrationActivity : ComponentActivity() {
                             // own scrims carry the system bar padding.
                         )
                         Step.Confirm -> MrzConfirmScreen(
+                            referrer = referrer,
+                            onReferrerChange = { referrer = it },
                             initial = mrz,
                             error = mrzError,
                             onContinue = {
