@@ -67,6 +67,24 @@ enum Figures {
         short.string(from: NSNumber(value: value)) ?? String(value)
     }
 
+    /// A rate at whatever magnitude it lands.
+    ///
+    /// On a young chain with little bonded this runs to millions of percent,
+    /// which is arithmetically right and worth showing rather than capping — a
+    /// capped number invites the reader to believe the cap.
+    static func rate(_ fraction: Double) -> String {
+        let percent = fraction * 100
+        switch percent {
+        case 0: return "0%"
+        case ..<0.01: return "<0.01%"
+        case ..<1: return String(format: "%.2f%%", percent)
+        case ..<1000: return String(format: "%.1f%%", percent)
+        default:
+            let whole = grouped.string(from: NSNumber(value: percent)) ?? String(Int(percent))
+            return "\(whole)%"
+        }
+    }
+
     /// "1 validator", "3 validators".
     static func count(_ n: Int, _ singular: String, _ plural: String? = nil) -> String {
         "\(n) \(n == 1 ? singular : plural ?? singular + "s")"

@@ -148,6 +148,61 @@ struct EarthStatusPill: View {
     }
 }
 
+/// A row led by an initial in a rounded badge.
+///
+/// The badge carries a letter rather than a glyph because these rows name
+/// validators, and one shield repeated down a list identifies nothing.
+struct EarthListRow: View {
+    @Environment(\.earth) private var theme
+    let initial: String
+    let name: String
+    var subtitle: String?
+    var value: String?
+    var badgeBackground: Color?
+    var badgeForeground: Color?
+    var action: (() -> Void)?
+
+    var body: some View {
+        let content = HStack(spacing: 0) {
+            Text(initial)
+                .font(EarthType.bodySmall)
+                .foregroundStyle(badgeForeground ?? theme.colors.textPrimary)
+                .frame(width: 32, height: 32)
+                .background(
+                    badgeBackground ?? theme.colors.bgSecondary,
+                    in: .rect(cornerRadius: theme.space.radiusSm)
+                )
+            VStack(alignment: .leading, spacing: 0) {
+                Text(name)
+                    .font(EarthType.body)
+                    .foregroundStyle(theme.colors.textPrimary)
+                    .lineLimit(1)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(EarthType.bodySmall)
+                        .foregroundStyle(theme.colors.textTertiary)
+                        .lineLimit(1)
+                }
+            }
+            .padding(.leading, theme.space.x12)
+            Spacer(minLength: theme.space.x8)
+            if let value {
+                Text(value)
+                    .font(EarthType.amount)
+                    .foregroundStyle(theme.colors.textPrimary)
+            }
+        }
+        .padding(.vertical, theme.space.x12)
+        .contentShape(.rect)
+
+        if let action {
+            Button(action: action) { content }.buttonStyle(.plain)
+        } else {
+            content
+        }
+    }
+}
+
 /// A grouped block. One radius, one stroke, one background — the three things
 /// every list of figures in this app sits on.
 struct EarthCard<Content: View>: View {

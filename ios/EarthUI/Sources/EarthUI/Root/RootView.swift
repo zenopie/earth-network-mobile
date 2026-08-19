@@ -82,11 +82,23 @@ struct TabsView: View {
     @Environment(AppModel.self) private var model
     @State private var selection = Tab.initialSelection
     @State private var settingsOpen = false
+    @State private var liquidityOpen = false
 
     var body: some View {
         VStack(spacing: 0) {
             EarthTopBar(
+                // The Wallet tab is named for whose wallet it is; the other
+                // tabs are named for what they do. "Wallet" over a balance
+                // says nothing the balance does not.
+                title: selection == .wallet ? model.walletName : selection.label,
                 showsBalances: selection == .wallet || selection == .earn,
+                // Tabs are destinations, not toolbars, so most have no action.
+                // Swap has one because providing liquidity is adjacent to
+                // swapping without being part of it — same market, different
+                // thing to do with it.
+                tabAction: selection == .swap
+                    ? .init(icon: "drop", label: "Liquidity") { liquidityOpen = true }
+                    : nil,
                 onSettings: { settingsOpen = true }
             )
             Group {
@@ -103,6 +115,7 @@ struct TabsView: View {
         .background(theme.colors.bgPrimary.ignoresSafeArea())
         .task { await model.loadLPShare() }
         .sheet(isPresented: $settingsOpen) { SettingsSheet().earthThemed() }
+        .sheet(isPresented: $liquidityOpen) { LiquiditySheet().earthThemed() }
     }
 }
 
@@ -119,8 +132,23 @@ struct EarthTopBar: View {
     /// The eye belongs to the wallet, not to the app: on a tab with nothing of
     /// yours on screen, a control that hides nothing teaches you it does
     /// nothing.
+    let title: String
     let showsBalances: Bool
+    var tabAction: TabAction?
     let onSettings: () -> Void
+
+    /// An action belonging to this tab, left of settings.
+    struct TabAction {
+        let icon: String
+        let label: String
+        let run: () -> Void
+
+        init(icon: String, label: String, run: @escaping () -> Void) {
+            self.icon = icon
+            self.label = label
+            self.run = run
+        }
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -131,10 +159,9 @@ struct EarthTopBar: View {
                     .frame(width: 32, height: 32)
                 Spacer().frame(width: theme.space.x8)
             }
-            // The wallet's own name, not the app's. There is one wallet, so
-            // this identifies rather than switches — no chevron implying a
-            // menu that does not exist.
-            Text(model.walletName)
+            // There is one wallet, so this identifies rather than switches —
+            // no chevron implying a menu that does not exist.
+            Text(title)
                 .font(EarthType.header6)
                 .fontWeight(.semibold)
                 .foregroundStyle(theme.colors.textPrimary)
@@ -146,6 +173,15 @@ struct EarthTopBar: View {
                         .foregroundStyle(theme.colors.textPrimary)
                         .frame(width: 40, height: 40)
                 }
+            }
+            if let tabAction {
+                Button(action: tabAction.run) {
+                    Image(systemName: tabAction.icon)
+                        .font(.system(size: 18))
+                        .foregroundStyle(theme.colors.textPrimary)
+                        .frame(width: 40, height: 40)
+                }
+                .accessibilityLabel(tabAction.label)
             }
             Button(action: onSettings) {
                 Image(systemName: "gearshape")
