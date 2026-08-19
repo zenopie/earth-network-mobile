@@ -50,6 +50,7 @@ fun MrzConfirmScreen(
     error: String?,
     referrer: String,
     onReferrerChange: (String) -> Unit,
+    referrerLocked: Boolean = false,
     onContinue: (PassportSession.Mrz) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -136,25 +137,46 @@ fun MrzConfirmScreen(
         HorizontalDivider(color = EarthColors.Surfaces.divider)
         Spacer(Modifier.height(24.dp()))
 
-        EarthLabel("Referrer address (optional)")
-        Spacer(Modifier.height(8.dp()))
-        EarthTextField(
-            value = referrer,
-            onValueChange = { onReferrerChange(it.trim()) },
-            modifier = Modifier.fillMaxWidth(),
-            placeholder = { Text("earth1…") },
-            error = referrerError,
-            keyboardOptions = referrerKeys.first,
-            keyboardActions = referrerKeys.second,
-        )
-        Spacer(Modifier.height(8.dp()))
-        Text(
-            text = "Half the registration reward goes to whoever referred you. " +
-                "Leaving this blank costs you nothing — your own half is the " +
-                "same either way.",
-            style = EarthTypography.textXs,
-            color = EarthColors.Text.textSecondary,
-        )
+        if (referrerLocked) {
+            // Arrived through a referral link, so there is nothing to fill in.
+            // Shown rather than hidden: the address is about to be written into
+            // a transaction on their behalf, and silently acting on something
+            // they cannot see is worse than one line of text.
+            EarthLabel("Referred by")
+            Spacer(Modifier.height(8.dp()))
+            Text(
+                text = referrer,
+                style = EarthTypography.textSm,
+                color = EarthColors.Text.textPrimary,
+            )
+            Spacer(Modifier.height(8.dp()))
+            Text(
+                text = "Half the registration reward goes to them. Your own half " +
+                    "is unaffected.",
+                style = EarthTypography.textXs,
+                color = EarthColors.Text.textSecondary,
+            )
+        } else {
+            EarthLabel("Referrer address (optional)")
+            Spacer(Modifier.height(8.dp()))
+            EarthTextField(
+                value = referrer,
+                onValueChange = { onReferrerChange(it.trim()) },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("earth1…") },
+                error = referrerError,
+                keyboardOptions = referrerKeys.first,
+                keyboardActions = referrerKeys.second,
+            )
+            Spacer(Modifier.height(8.dp()))
+            Text(
+                text = "Half the registration reward goes to whoever referred you. " +
+                    "Leaving this blank costs you nothing — your own half is the " +
+                    "same either way.",
+                style = EarthTypography.textXs,
+                color = EarthColors.Text.textSecondary,
+            )
+        }
 
         Spacer(Modifier.height(24.dp()))
         EarthButton(

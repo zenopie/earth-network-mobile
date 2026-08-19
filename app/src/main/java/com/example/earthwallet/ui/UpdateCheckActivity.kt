@@ -14,6 +14,7 @@ import com.google.android.play.core.appupdate.AppUpdateOptions
 import com.google.android.play.core.install.model.AppUpdateType
 import com.google.android.play.core.install.model.UpdateAvailability
 import network.erth.wallet.R
+import network.erth.wallet.wallet.utils.Referral
 import network.erth.wallet.ui.compose.ComposeAppActivity
 
 /**
@@ -41,6 +42,13 @@ class UpdateCheckActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_update_check)
+
+        // Capture a referrer before anything else can navigate away. Both are
+        // cheap and both no-op once one is stored: the deep link is whatever
+        // launched this, the install referrer is a one-shot Play lookup that
+        // fails silently on any build that did not come from the store.
+        Referral.fromIntent(this, intent)
+        Referral.captureInstallReferrer(this)
 
         // Initialize views
         appLogo = findViewById(R.id.app_logo)
@@ -242,5 +250,13 @@ class UpdateCheckActivity : AppCompatActivity() {
                 startImmediateUpdate()
             }
         }
+    }
+
+    // launchMode is singleTop, so a referral link tapped while this activity is
+    // already showing arrives here rather than through onCreate.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        Referral.fromIntent(this, intent)
     }
 }

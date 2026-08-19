@@ -47,6 +47,29 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- Referral links for someone who already has the app.
+                 Installs come through the Play install referrer instead; see
+                 wallet/utils/Referral.kt.
+
+                 autoVerify needs /.well-known/assetlinks.json served from
+                 erth.network. Without it these still work, but Android offers
+                 a chooser rather than opening the app directly. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="erth.network" android:pathPrefix="/ref" />
+            </intent-filter>
+
+            <!-- Custom scheme: no domain verification, so it works as a
+                 fallback wherever the App Link is not honoured. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="earth" android:host="ref" />
+            </intent-filter>
         </activity>
 
 

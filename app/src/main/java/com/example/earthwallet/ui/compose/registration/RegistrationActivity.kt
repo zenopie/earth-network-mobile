@@ -38,6 +38,7 @@ import network.erth.wallet.ui.compose.EarthDetailTopBar
 import network.erth.wallet.ui.theme.EarthTheme
 import network.erth.wallet.ui.vendor.component.BlankBgScaffold
 import network.erth.wallet.wallet.passport.PassportSession
+import network.erth.wallet.wallet.utils.Referral
 
 /**
  * Registration, start to finish, in one activity.
@@ -70,9 +71,15 @@ class RegistrationActivity : ComponentActivity() {
                 var stage: NfcStage by remember { mutableStateOf(NfcStage.Waiting) }
                 var mrzError: String? by remember { mutableStateOf(null) }
 
-                // Held across the whole flow: it is entered on the confirm
-                // screen but not used until the broadcast, several steps later.
-                var referrer: String by remember { mutableStateOf("") }
+                // A referrer captured from a referral link or a Play install
+                // is fixed for the session: the person did not type it and
+                // should not have to, and letting them edit it turns a link
+                // into a form for no reason.
+                val linkedReferrer = remember { Referral.get(this@RegistrationActivity) }
+
+                // Held across the whole flow: entered on the confirm screen but
+                // not used until the broadcast, several steps later.
+                var referrer: String by remember { mutableStateOf(linkedReferrer.orEmpty()) }
 
                 // Held between the read and the broadcast. The proof is built
                 // while the passport is against the phone; paying for it is a
@@ -292,6 +299,7 @@ class RegistrationActivity : ComponentActivity() {
                         Step.Confirm -> MrzConfirmScreen(
                             referrer = referrer,
                             onReferrerChange = { referrer = it },
+                            referrerLocked = linkedReferrer != null,
                             initial = mrz,
                             error = mrzError,
                             onContinue = {
