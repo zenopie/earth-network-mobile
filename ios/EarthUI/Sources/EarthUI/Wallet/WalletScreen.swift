@@ -2,7 +2,13 @@ import BigInt
 import EarthCore
 import SwiftUI
 
-/// What this wallet holds, and the two things only a registered human can do.
+/// Home.
+///
+/// A close port of the Android screen, because the composition is the thing
+/// worth having: the balance centred with nothing beside it, four equal
+/// actions on a row of squarish cards, and the activity list rising to tuck
+/// under those cards so the screen reads as one surface rather than three
+/// stacked panels.
 struct WalletScreen: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
@@ -13,101 +19,163 @@ struct WalletScreen: View {
     @State private var registering = false
 
     var body: some View {
-        EarthScreen {
-            balance
-            actions
-            holdings
+        VStack(spacing: 0) {
+            Spacer().frame(height: 8)
+            BalanceWidget()
+            Spacer().frame(height: 16)
+            HomeActions(
+                onReceive: { receiving = true },
+                onSend: { sending = true },
+                onRegister: { registering = true }
+            )
+            .padding(.horizontal, 24)
+            .offset(y: 8)
+            .zIndex(1)
+            Spacer().frame(height: 2)
+            ActivityPanel()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(theme.colors.bgPrimary)
         .sheet(isPresented: $sending) { SendSheet().earthThemed() }
         .sheet(isPresented: $receiving) { ReceiveSheet().earthThemed() }
-    }
-
-    /// The balance is the loudest thing in the app by a wide margin, which is
-    /// most of what makes a wallet feel simple: one number you cannot miss,
-    /// everything else stepping well back.
-    ///
-    /// Whole ERTH, with thousands separators. The fractions live in the detail
-    /// rows — six decimal places at 56pt is a number nobody reads.
-    private var balance: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            EarthLabel("Total balance")
-            Text(model.balancesVisible ? whole : "••••")
-                .font(EarthType.display)
-                .foregroundStyle(theme.colors.textPrimary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.4)
-            Text(model.address)
-                .font(EarthType.bodySmall)
-                .foregroundStyle(theme.colors.textTertiary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-    }
-
-    private var whole: String { Figures.whole(model.balance(.erth)) }
-
-    /// Stacked, not side by side. Send is the brand action and Receive is the
-    /// quieter one; a row of two equal halves says they are equally likely,
-    /// and they are not.
-    private var actions: some View {
-        VStack(spacing: theme.space.x8) {
-            EarthButton(title: "Send") { sending = true }
-                .disabled(model.holdings.allSatisfy { $0.amount == 0 })
-            EarthButton(title: "Receive", role: .secondary) { receiving = true }
-        }
-        .padding(.top, theme.space.x8)
-    }
-
-    /// Flat rows on hairlines rather than a card of tinted circles. A balance
-    /// sheet should read as a list of figures.
-    private var holdings: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            EarthLabel("Holdings")
-            Spacer().frame(height: theme.space.x8)
-
-            EarthRow(
-                title: "ANML",
-                subtitle: model.isRegistered ? "Proof of personhood" : "Not registered",
-                value: figure(Figures.whole(model.balance(.anml), decimals: Token.anml.decimals)),
-                action: { registering = !model.isRegistered ? true : registering }
-            )
-
-            if model.totalStaked > 0 {
-                EarthDivider()
-                EarthRow(title: "Staked", subtitle: "Delegated",
-                         value: figure(Figures.whole(model.totalStaked)))
-            }
-            if model.rewards > 0 {
-                EarthDivider()
-                EarthRow(title: "Rewards", subtitle: "Claimable",
-                         value: figure(Figures.precise(model.rewards)))
-            }
-
-            // Anything else the account holds — a token added to the chain
-            // after this build, or an LP share. Shown by its denom rather than
-            // hidden: a balance the wallet will not name is worse than an ugly
-            // one.
-            ForEach(other, id: \.token.denom) { row in
-                EarthDivider()
-                EarthRow(title: row.token.symbol, subtitle: row.token.denom,
-                         value: figure(Figures.whole(row.amount, decimals: row.token.decimals)))
-            }
-
-            if model.canClaimAnml {
-                Spacer().frame(height: theme.space.x16)
-                EarthButton(title: "Claim today's ANML") { claim() }
-            }
-        }
-        .padding(.top, theme.space.x16)
         .sheet(isPresented: $registering) { RegistrationSheet().earthThemed() }
     }
+}
 
-    private var other: [(token: Token, amount: BigInt)] {
-        model.holdings.filter { $0.token != .erth && $0.token != .anml && $0.amount > 0 }
+/// The balance: ERTH large, ANML beneath it.
+///
+/// The fractional part is set smaller than the whole. It keeps a six-decimal
+/// micro-denomination from dominating a glance without truncating it away,
+/// which matters when the fee is measured in the digits being shrunk.
+///
+/// ANML sits under ERTH rather than beside it because they are not peers: ERTH
+/// is what the wallet spends and what the fee comes out of, ANML is what
+/// personhood accrues. Two equal-sized numbers side by side would invite
+/// adding them together.
+struct BalanceWidget: View {
+    @Environment(\.earth) private var theme
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 6) {
+                EarthAsset.erthLogo?
+                    .resizable().scaledToFit()
+                    .frame(width: 28, height: 28)
+                if model.balancesVisible {
+                    SplitAmount(amount: Figures.plain(model.balance(.erth)))
+                } else {
+                    Text("-----")
+                        .font(EarthType.header2).fontWeight(.semibold)
+                        .foregroundStyle(theme.colors.textPrimary)
+                }
+            }
+
+            Spacer().frame(height: 6)
+
+            HStack(alignment: .center, spacing: 4) {
+                EarthAsset.anml?
+                    .resizable().scaledToFit()
+                    .frame(width: 16, height: 16)
+                Text(model.balancesVisible
+                     ? "\(Figures.plain(model.balance(.anml))) ANML"
+                     : "---")
+                    .font(EarthType.body)
+                    .foregroundStyle(theme.colors.textTertiary)
+            }
+        }
+    }
+}
+
+/// The whole in display size, the fraction one step down.
+struct SplitAmount: View {
+    @Environment(\.earth) private var theme
+    let amount: String
+
+    var body: some View {
+        let parts = amount.split(separator: ".", maxSplits: 1)
+        HStack(alignment: .top, spacing: 0) {
+            Text(parts.first.map(String.init) ?? amount)
+                .font(EarthType.header2).fontWeight(.semibold)
+                .foregroundStyle(theme.colors.textPrimary)
+            if parts.count > 1 {
+                Text(".\(parts[1])")
+                    .font(EarthType.caption).fontWeight(.semibold)
+                    .foregroundStyle(theme.colors.textPrimary)
+                    .padding(.top, 8)
+            }
+        }
+    }
+}
+
+/// Four equal actions.
+///
+/// Filled as a primary, not outlined: these are the app's headline actions,
+/// the first thing on the first screen, and there is nothing above them to
+/// rank against. Making them the quieter of the two ranks would say the main
+/// thing is somewhere else.
+struct HomeActions: View {
+    @Environment(\.earth) private var theme
+    @Environment(AppModel.self) private var model
+    @Environment(TxController.self) private var tx
+
+    let onReceive: () -> Void
+    let onSend: () -> Void
+    let onRegister: () -> Void
+
+    /// Recomputed once a second only while a claim is actually pending, so the
+    /// label counts down without the row ticking the rest of the time.
+    @State private var now = Date()
+
+    var body: some View {
+        HStack(spacing: 9) {
+            BigIconButton(label: "Receive", glyph: TabGlyphPaths.receive, action: onReceive)
+            BigIconButton(label: "Send", glyph: TabGlyphPaths.send, action: onSend)
+            BigIconButton(label: "Earn", glyph: TabGlyphPaths.earn, action: {})
+            // The ANML coin in its own colour: this is the one action here
+            // about a specific token rather than about the balance, and the
+            // mark says which token faster than the word does.
+            BigIconButton(
+                label: claimLabel,
+                image: EarthAsset.anml,
+                // Greyed out when the day's claim is already taken, and again
+                // when there is no registration to claim against — both are
+                // "nothing to collect", and both should look it.
+                enabled: notRegistered || model.canClaimAnml,
+                action: notRegistered ? onRegister : claim
+            )
+        }
+        .task {
+            // Ticks only while something is counting down.
+            while !Task.isCancelled, !notRegistered, !model.canClaimAnml {
+                try? await Task.sleep(for: .seconds(1))
+                now = Date()
+            }
+        }
     }
 
-    private func figure(_ text: String) -> String {
-        model.balancesVisible ? text : "••••"
+    private var notRegistered: Bool { !model.isRegistered }
+
+    /// Three states, and the button is a different action in the first.
+    ///
+    /// An unregistered wallet has nothing to claim, so the slot offers the
+    /// thing that would give it something instead of a disabled button
+    /// explaining why it cannot be pressed.
+    private var claimLabel: String {
+        if notRegistered { return "Verify" }
+        if model.canClaimAnml { return "Claim" }
+        let seconds = Int64(Personhood.nextClaimOpensAt()) - Int64(now.timeIntervalSince1970)
+        return countdown(max(0, seconds))
+    }
+
+    /// "5h 12m", or "48s" in the last minute. Minutes are dropped past an hour
+    /// and seconds past a minute: at that distance the extra unit is noise.
+    private func countdown(_ seconds: Int64) -> String {
+        let hours = seconds / 3600
+        let minutes = (seconds % 3600) / 60
+        if hours > 0 { return "\(hours)h \(minutes)m" }
+        if minutes > 0 { return "\(minutes)m" }
+        return "\(seconds)s"
     }
 
     private func claim() {
@@ -117,4 +185,152 @@ struct WalletScreen: View {
     }
 }
 
+/// One action card: icon over label, on brand.
+///
+/// The proportion is fixed rather than left to the content. With four labels
+/// of different lengths, letting height follow content makes one card a few
+/// points taller than its neighbours, which reads as a mistake.
+struct BigIconButton: View {
+    @Environment(\.earth) private var theme
+    let label: String
+    var glyph: String?
+    var image: Image?
+    var enabled = true
+    let action: () -> Void
 
+    private static let ratio: CGFloat = 106.0 / 100.0
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                Spacer(minLength: 0)
+                Group {
+                    if let image {
+                        // Untinted art keeps its colour even when disabled.
+                        // The ANML coin is the one thing on the card that says
+                        // which token it claims, and greying it out costs that
+                        // to restate what the fill and the label already say.
+                        image.resizable().scaledToFit()
+                    } else if let glyph {
+                        VectorGlyph(pathData: glyph).foregroundStyle(ink)
+                    }
+                }
+                .frame(width: 24, height: 24)
+                Text(label)
+                    .font(EarthType.caption).fontWeight(.medium)
+                    .foregroundStyle(ink)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity)
+            .aspectRatio(Self.ratio, contentMode: .fit)
+            .background(fill, in: .rect(cornerRadius: 22))
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+    }
+
+    private var fill: Color {
+        enabled ? theme.colors.brandButtonBg : theme.colors.buttonDisabledBg
+    }
+
+    private var ink: Color {
+        enabled ? theme.colors.brandButtonFg : theme.colors.buttonDisabledFg
+    }
+}
+
+/// The activity list, tucked under the action cards.
+struct ActivityPanel: View {
+    @Environment(\.earth) private var theme
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                HStack {
+                    Text("Activity")
+                        .font(EarthType.body).fontWeight(.semibold)
+                        .foregroundStyle(theme.colors.textPrimary)
+                    Spacer()
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 8)
+
+                if let activity = model.activity {
+                    if activity.isEmpty {
+                        Text("Nothing yet. Transactions appear here once they are confirmed.")
+                            .font(EarthType.bodySmall)
+                            .foregroundStyle(theme.colors.textTertiary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 24)
+                            .padding(.vertical, 16)
+                    } else {
+                        ForEach(activity) { ActivityItem(row: $0) }
+                    }
+                } else {
+                    // Placeholder rows rather than a spinner: the list keeps
+                    // its shape, so nothing jumps when the real rows land.
+                    ForEach(0 ..< 3, id: \.self) { _ in ActivityPlaceholder() }
+                }
+            }
+            // The cards sit over the top of this, so the content starts below
+            // them rather than behind them.
+            .padding(.top, 24)
+            .padding(.bottom, 24)
+        }
+        .refreshable { await model.refresh() }
+        .scrollContentBackground(.hidden)
+    }
+}
+
+struct ActivityItem: View {
+    @Environment(\.earth) private var theme
+    let row: ActivityRow
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(row.kind.glyph)
+                .font(EarthType.bodySmall)
+                .foregroundStyle(row.kind == .sent ? theme.colors.textPrimary : theme.colors.accentInk)
+                .frame(width: 32, height: 32)
+                .background(
+                    row.kind == .sent ? theme.colors.bgSecondary : theme.colors.accentTint,
+                    in: .rect(cornerRadius: 12)
+                )
+            VStack(alignment: .leading, spacing: 2) {
+                Text(row.kind.label + (row.failed ? " · failed" : ""))
+                    .font(EarthType.body)
+                    .foregroundStyle(row.failed ? theme.colors.textError : theme.colors.textPrimary)
+                Text("\(row.counterparty) · \(row.timestamp)")
+                    .font(EarthType.bodySmall)
+                    .foregroundStyle(theme.colors.textTertiary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Text(row.amount)
+                .font(EarthType.amount)
+                .foregroundStyle(theme.colors.textPrimary)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 12)
+    }
+}
+
+struct ActivityPlaceholder: View {
+    @Environment(\.earth) private var theme
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Circle().fill(theme.colors.bgTertiary).frame(width: 32, height: 32)
+            VStack(alignment: .leading, spacing: 6) {
+                RoundedRectangle(cornerRadius: 4).fill(theme.colors.bgTertiary)
+                    .frame(width: 96, height: 14)
+                RoundedRectangle(cornerRadius: 4).fill(theme.colors.bgTertiary)
+                    .frame(width: 140, height: 12)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 12)
+    }
+}

@@ -8,8 +8,9 @@ import SwiftUI
 /// would put the design layer's assets somewhere the design layer cannot see.
 enum EarthAsset {
     static let logo = load("logo")
+    static let erthLogo = load("erth_logo")
+    static let anml = load("anml")
     static let erth = load("coin_erth")
-    static let anml = load("coin_anml")
 
     private static func load(_ name: String) -> Image? {
         UIImage(named: name, in: .module, with: nil).map(Image.init(uiImage:))

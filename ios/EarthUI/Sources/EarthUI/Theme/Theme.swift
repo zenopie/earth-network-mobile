@@ -140,6 +140,8 @@ enum EarthType {
     static let display = Font.system(size: 56, weight: .regular).monospacedDigit()
     /// Screen headings outside the app shell — setup, unlock. 28/40.
     static let headline = Font.system(size: 28, weight: .regular)
+    /// The balance. 48/60 — set semibold at the call site.
+    static let header2 = Font.system(size: 48).monospacedDigit()
     /// The wallet name in the top bar. 24/32.
     static let header6 = Font.system(size: 24)
     static let textXl = Font.system(size: 20)

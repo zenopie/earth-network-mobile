@@ -52,6 +52,21 @@ enum Figures {
         return short.string(from: NSNumber(value: value)) ?? String(value)
     }
 
+    /// The full amount, grouped, fractions kept. What the balance widget
+    /// splits into a large whole and a small fraction.
+    static func plain(_ baseUnits: BigInt, decimals: Int = Constants.denomExponent) -> String {
+        let text = Amounts.fromBaseUnits(baseUnits, exponent: decimals)
+        let parts = text.split(separator: ".", maxSplits: 1)
+        let whole = grouped.string(from: NSDecimalNumber(string: String(parts[0])))
+            ?? String(parts[0])
+        return parts.count > 1 ? "\(whole).\(parts[1])" : whole
+    }
+
+    /// A plain decimal, trimmed. For amounts that already carry their scale.
+    static func decimal(_ value: Double) -> String {
+        short.string(from: NSNumber(value: value)) ?? String(value)
+    }
+
     /// "1 validator", "3 validators".
     static func count(_ n: Int, _ singular: String, _ plural: String? = nil) -> String {
         "\(n) \(n == 1 ? singular : plural ?? singular + "s")"

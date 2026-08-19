@@ -36,6 +36,13 @@ public final class AppModel {
     /// Balances by denom, in base units.
     public private(set) var balances: [String: BigInt] = [:]
     public private(set) var registration: Personhood.RegistrationStatus = .none
+    /// Recent transactions, nil until the first load lands.
+    ///
+    /// The distinction matters: a zero that is really "not loaded yet" is the
+    /// one wrong answer a wallet must never give, so the list shows
+    /// placeholders while this is nil rather than "nothing yet".
+    private(set) var activity: [ActivityRow]?
+
     public private(set) var pools: [Dex.Pool] = []
     public private(set) var swapFeePercent = Decimal(string: "0.3")!
     public private(set) var validators: [Staking.Validator] = []
@@ -118,6 +125,7 @@ public final class AppModel {
         store.delete()
         address = ""
         balances = [:]
+        activity = nil
         registration = .none
         phase = .setup
     }
@@ -161,6 +169,7 @@ public final class AppModel {
         async let unbondings = client.unbondingDelegations(address)
         async let rewards = client.totalRewards(address)
         async let bonded = client.totalBonded()
+        async let transactions = client.transactions(for: address)
 
         self.balances = await balances.compactMapValues { BigInt($0) }
         self.registration = await registration
@@ -171,6 +180,8 @@ public final class AppModel {
         self.unbondings = await unbondings
         self.rewards = BigInt(await rewards) ?? 0
         self.totalBonded = BigInt(await bonded) ?? 0
+        let signer = address
+        self.activity = await transactions.compactMap { ActivityRow(tx: $0, self: signer) }
         await reachable
     }
 
