@@ -65,14 +65,22 @@ enum Tab: String, CaseIterable, Hashable {
         return .wallet
     }
 
-    /// The Android glyphs, not SF Symbols. All four share a 24pt viewport and
-    /// stroke weight so the bar reads as one set.
-    var glyph: String {
+    /// SF Symbols rather than the Android vectors.
+    ///
+    /// Those were drawn for a 24dp Compose viewport and traced into a path
+    /// reader here; at 22pt the wallet lost its notch and the govern glyph read
+    /// as a pie chart rather than people. The system set is drawn for these
+    /// sizes, weights with the label beside it, and stays legible when the bar
+    /// tints it.
+    ///
+    /// The action cards on the home screen keep the Android art — they are
+    /// large, filled, and the two sets never appear side by side.
+    var icon: String {
         switch self {
-        case .wallet: TabGlyphPaths.wallet
-        case .earn: TabGlyphPaths.earn
-        case .swap: TabGlyphPaths.swap
-        case .govern: TabGlyphPaths.govern
+        case .wallet: "wallet.bifold"
+        case .earn: "chart.line.uptrend.xyaxis"
+        case .swap: "arrow.left.arrow.right"
+        case .govern: "person.3"
         }
     }
 }
@@ -242,8 +250,9 @@ struct EarthTabBar: View {
                         selection = tab
                     } label: {
                         VStack(spacing: 3) {
-                            VectorGlyph(pathData: tab.glyph)
-                                .frame(width: 22, height: 22)
+                            Image(systemName: tab.icon)
+                                .font(.system(size: 20, weight: selected ? .semibold : .regular))
+                                .frame(height: 22)
                             Text(tab.label)
                                 .font(EarthType.caption)
                                 .fontWeight(selected ? .semibold : .regular)
