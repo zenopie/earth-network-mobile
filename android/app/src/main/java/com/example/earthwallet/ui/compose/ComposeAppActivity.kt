@@ -2,7 +2,7 @@ package network.erth.wallet.ui.compose
 
 import android.content.Intent
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.LaunchedEffect
@@ -12,6 +12,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import network.erth.wallet.ui.theme.EarthTheme
 import network.erth.wallet.wallet.services.SessionManager
+import network.erth.wallet.wallet.utils.UnlockMethod
 
 /**
  * The app.
@@ -28,7 +29,9 @@ import network.erth.wallet.wallet.services.SessionManager
  * gate. HostActivity branched on hasPinSet and was deleted with the old app;
  * this is that branch, back.
  */
-class ComposeAppActivity : ComponentActivity() {
+// FragmentActivity rather than ComponentActivity: BiometricPrompt attaches
+// to a fragment manager, and there is no way to raise it without one.
+class ComposeAppActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -63,16 +66,22 @@ class ComposeAppActivity : ComponentActivity() {
 
                 when {
                     needsPin -> PreAppScreen { inset ->
-                        SetPinScreen(
+                        UnlockSetupFlow(
                             error = setupError,
-                            onChosen = onboarding::choosePin,
+                            onDone = onboarding::finishSetup,
+                            onFailed = onboarding::reportError,
                             modifier = inset,
                         )
                     }
 
                     !open -> PreAppScreen { inset ->
-                        UnlockScreen(
-                            onSubmit = unlock::submit,
+                        UnlockGate(
+                            // Read here rather than held in the view model:
+                            // changing it in settings has to take effect on the
+                            // next lock, not the next process.
+                            method = UnlockMethod.current(this@ComposeAppActivity),
+                            onSecret = unlock::submitSecret,
+                            onFailure = unlock::reportFailure,
                             error = error,
                             lockoutMessage = lockout,
                             modifier = inset,

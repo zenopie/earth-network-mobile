@@ -472,6 +472,8 @@ private fun EarthContent(
             modifier = inset,
         )
 
+        EarthRoute.Security -> SecurityScreen(modifier = inset)
+
         EarthRoute.About -> AboutScreen(
             version = version,
             onPrivacyPolicy = { onOpenUrl("https://erth.network/privacy") },
@@ -770,6 +772,12 @@ private fun settingsItems(nav: EarthNavController, state: WalletUiState?): List<
             onClick = { nav.push(EarthRoute.Activity) },
         ),
         SettingsItem(
+            title = "Unlocking",
+            subtitle = "PIN and biometrics",
+            icon = R.drawable.ic_lock,
+            onClick = { nav.push(EarthRoute.Security) },
+        ),
+        SettingsItem(
             title = "About",
             icon = R.drawable.ic_info,
             onClick = { nav.push(EarthRoute.About) },
@@ -784,6 +792,7 @@ private fun EarthRoute.title(): String = when (this) {
     EarthRoute.Liquidity -> "Liquidity"
     EarthRoute.Activity -> "Activity"
     EarthRoute.Settings -> "Settings"
+    EarthRoute.Security -> "Unlocking"
     EarthRoute.About -> "About"
     is EarthRoute.Stream -> if (human) "Caretaker Fund" else "Groundworks Fund"
     EarthRoute.Proposals -> "Proposals"

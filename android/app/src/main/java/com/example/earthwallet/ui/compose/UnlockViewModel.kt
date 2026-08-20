@@ -43,7 +43,14 @@ class UnlockViewModel(app: Application) : AndroidViewModel(app) {
         _lockout.value = UnlockAttempts.status(getApplication()).message
     }
 
-    fun submit(pin: String) {
+    /**
+     * Try the assembled sealing secret.
+     *
+     * What the secret is made of is the caller's business — a PIN, the value
+     * the biometric prompt released, or the two folded together. Only one of
+     * them ever reaches the wallet, so only one of them is checked here.
+     */
+    fun submitSecret(secret: String) {
         viewModelScope.launch {
             val ctx = getApplication<Application>()
 
@@ -55,7 +62,7 @@ class UnlockViewModel(app: Application) : AndroidViewModel(app) {
 
             val ok = withContext(Dispatchers.IO) {
                 runCatching {
-                    SecureWalletManager.verifyPinHashWithoutSession(ctx, pin.sha256Hex())
+                    SecureWalletManager.verifyPinHashWithoutSession(ctx, secret.sha256Hex())
                 }.getOrDefault(false)
             }
 
@@ -65,13 +72,13 @@ class UnlockViewModel(app: Application) : AndroidViewModel(app) {
                 _error.value = if (after.lockedOut) {
                     null
                 } else {
-                    "Incorrect PIN. ${after.attemptsLeft} attempts left."
+                    "That did not unlock the wallet. ${after.attemptsLeft} attempts left."
                 }
                 return@launch
             }
 
             val started = withContext(Dispatchers.IO) {
-                runCatching { SessionManager.startSession(ctx, pin) }.isSuccess
+                runCatching { SessionManager.startSession(ctx, secret) }.isSuccess
             }
             if (!started) {
                 _error.value = "Could not unlock. Try again."
@@ -83,6 +90,18 @@ class UnlockViewModel(app: Application) : AndroidViewModel(app) {
             _lockout.value = null
             _unlocked.value = true
         }
+    }
+
+    /**
+     * Something went wrong before a secret existed — a cancelled prompt, or a
+     * biometric key the OS invalidated.
+     *
+     * Deliberately not an attempt. The backoff exists to make guessing a
+     * four-digit PIN expensive, and a refused prompt is not a guess; counting
+     * it would let a stray tap lock somebody out of their own wallet.
+     */
+    fun reportFailure(message: String) {
+        _error.value = message
     }
 }
 

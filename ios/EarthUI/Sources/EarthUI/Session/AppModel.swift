@@ -187,21 +187,29 @@ public final class AppModel {
 
     /// Build the secret a new wallet will be sealed under, storing whatever
     /// half belongs behind the prompt.
-    private func seal(method: WalletStore.Method, pin: String?) throws -> String {
+    /// Build the secret a method implies, staging any biometric half.
+    ///
+    /// The slot comes back with it and is *not* live yet. Whoever calls this
+    /// owns the outcome: commit the slot once the vault is actually sealed
+    /// under the secret, discard it if that fails. Until one of those happens
+    /// the wallet still opens the way it did before.
+    private func seal(
+        method: WalletStore.Method,
+        pin: String?
+    ) throws -> (secret: String, slot: String?) {
         switch method {
         case .pin:
-            return pin ?? ""
+            return (pin ?? "", nil)
         case .biometrics:
             // Nothing to remember: the whole key lives behind the prompt.
             let secret = WalletStore.generatedSecret()
-            try store.enrollBiometrics(secret: secret)
-            return secret
+            return (secret, try store.stageBiometrics(secret: secret))
         case .both:
             // Only a *half* goes behind the prompt. The other half is the PIN,
             // and the vault opens for neither on its own.
             let half = WalletStore.generatedSecret()
-            try store.enrollBiometrics(secret: half)
-            return WalletStore.combine(pin: pin ?? "", half: half)
+            let slot = try store.stageBiometrics(secret: half)
+            return (WalletStore.combine(pin: pin ?? "", half: half), slot)
         }
     }
 
@@ -252,11 +260,24 @@ public final class AppModel {
     /// being able to open anything.
     public func setMethod(_ new: WalletStore.Method, pin: String?) throws {
         guard let current = sessionPin else { throw WalletStore.Error.notFound }
-        let secret = try seal(method: new, pin: pin)
-        if !new.usesBiometrics { store.forgetBiometrics() }
+        let sealed = try seal(method: new, pin: pin)
 
-        try store.reseal(from: current, to: secret)
-        sessionPin = secret
+        // Re-seal before anything is promoted or thrown away. If this throws,
+        // the old secret is still live and still opens the wallet — the staged
+        // slot was never more than a spare.
+        do {
+            try store.reseal(from: current, to: sealed.secret)
+        } catch {
+            if let slot = sealed.slot { store.discardBiometrics(slot: slot) }
+            throw error
+        }
+
+        if let slot = sealed.slot {
+            store.commitBiometrics(slot: slot)
+        } else if !new.usesBiometrics {
+            store.forgetBiometrics()
+        }
+        sessionPin = sealed.secret
         method = new
         UserDefaults.standard.set(new.rawValue, forKey: "unlockMethod")
     }
@@ -273,8 +294,15 @@ public final class AppModel {
         method: WalletStore.Method,
         pin: String?
     ) async throws {
-        let secret = try seal(method: method, pin: pin)
-        try store.create(mnemonic: mnemonic, name: name, pin: secret)
+        let sealed = try seal(method: method, pin: pin)
+        let secret = sealed.secret
+        do {
+            try store.create(mnemonic: mnemonic, name: name, pin: secret)
+        } catch {
+            if let slot = sealed.slot { store.discardBiometrics(slot: slot) }
+            throw error
+        }
+        if let slot = sealed.slot { store.commitBiometrics(slot: slot) }
         self.method = method
         UserDefaults.standard.set(method.rawValue, forKey: "unlockMethod")
         sessionPin = secret

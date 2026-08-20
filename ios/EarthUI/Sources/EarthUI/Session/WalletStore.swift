@@ -238,8 +238,15 @@ public struct WalletStore: Sendable {
         return status == errSecSuccess || status == errSecInteractionNotAllowed
     }
 
-    /// Put the vault's secret behind biometrics.
-    public func enrollBiometrics(secret: String) throws {
+    /// Put a secret behind biometrics, in the spare slot.
+    ///
+    /// Returns the slot it landed in. The live slot is left alone, so whatever
+    /// currently opens the wallet still does until [commitBiometrics] says
+    /// otherwise — which is what makes changing the unlock method survive a
+    /// failure halfway through. Writing a Keychain item does not prompt; only
+    /// reading one back does.
+    @discardableResult
+    public func stageBiometrics(secret: String) throws -> String {
         var error: Unmanaged<CFError>?
         let control = SecAccessControlCreateWithFlags(
             nil,
@@ -249,21 +256,42 @@ public struct WalletStore: Sendable {
         )
         guard let control else { throw Error.noDeviceLock }
 
-        SecItemDelete(Self.biometricQuery as CFDictionary)
-        var attributes = Self.biometricQuery
+        let slot = Self.spareSlot
+        SecItemDelete(Self.biometricQuery(slot: slot) as CFDictionary)
+        var attributes = Self.biometricQuery(slot: slot)
         attributes[kSecValueData as String] = Data(secret.utf8)
         attributes[kSecAttrAccessControl as String] = control
 
         let status = SecItemAdd(attributes as CFDictionary, nil)
         switch status {
-        case errSecSuccess: return
+        case errSecSuccess: return slot
         case errSecInteractionNotAllowed: throw Error.noDeviceLock
         default: throw Error.keychain(status)
         }
     }
 
+    /// Make a staged slot the live one, then destroy the slot it replaced.
+    ///
+    /// Call only once the vault is sealed under the staged secret. The pointer
+    /// moves in one write; dying between that and the delete leaves a stale
+    /// item nobody reads, which the next [stageBiometrics] overwrites.
+    public func commitBiometrics(slot: String) {
+        let previous = Self.liveSlot
+        guard previous != slot else { return }
+        Self.liveSlot = slot
+        SecItemDelete(Self.biometricQuery(slot: previous) as CFDictionary)
+    }
+
+    /// Throw away a staged slot after a change that did not go through.
+    public func discardBiometrics(slot: String) {
+        guard slot != Self.liveSlot else { return }
+        SecItemDelete(Self.biometricQuery(slot: slot) as CFDictionary)
+    }
+
     public func forgetBiometrics() {
-        SecItemDelete(Self.biometricQuery as CFDictionary)
+        for slot in Self.slots {
+            SecItemDelete(Self.biometricQuery(slot: slot) as CFDictionary)
+        }
     }
 
     /// Ask for the secret. Prompts.
@@ -310,12 +338,41 @@ public struct WalletStore: Sendable {
         return bytes.base64EncodedString()
     }
 
-    private static var biometricQuery: [String: Any] {
+    /// The two slots a biometric secret can live in.
+    ///
+    /// Slot `a` deliberately keeps the original account name, so a wallet
+    /// enrolled before slots existed is already the live one and needs no
+    /// migration.
+    private static let slots = ["a", "b"]
+
+    private static func biometricAccount(slot: String) -> String {
+        slot == "a" ? biometricAccount : "\(biometricAccount).\(slot)"
+    }
+
+    /// Which slot currently holds the live secret.
+    ///
+    /// Not a secret itself — it names a slot, nothing more — so UserDefaults is
+    /// the right place for it. It is lost when the app is deleted, and so is
+    /// the vault: `AppModel.clearIfReinstalled` wipes both together.
+    private static var liveSlot: String {
+        get { UserDefaults.standard.string(forKey: "biometricSlot") ?? slots[0] }
+        set { UserDefaults.standard.set(newValue, forKey: "biometricSlot") }
+    }
+
+    private static var spareSlot: String {
+        slots.first { $0 != liveSlot } ?? slots[1]
+    }
+
+    private static func biometricQuery(slot: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: biometricAccount,
+            kSecAttrAccount as String: biometricAccount(slot: slot),
         ]
+    }
+
+    private static var biometricQuery: [String: Any] {
+        biometricQuery(slot: liveSlot)
     }
 
     /// Re-seal the vault under a new secret, keeping the wallets.
@@ -339,7 +396,7 @@ public struct WalletStore: Sendable {
 
     public func delete() {
         SecItemDelete(Self.baseQuery as CFDictionary)
-        SecItemDelete(Self.biometricQuery as CFDictionary)
+        forgetBiometrics()
     }
 
     private static var baseQuery: [String: Any] {

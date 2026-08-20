@@ -33,11 +33,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
+import androidx.fragment.app.FragmentActivity
 import network.erth.wallet.R
 import network.erth.wallet.ui.theme.EarthTheme
-import network.erth.wallet.ui.vendor.component.EarthTextButton
 import network.erth.wallet.ui.vendor.theme.colors.EarthColors
+import network.erth.wallet.ui.vendor.component.EarthButton
 import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
+import network.erth.wallet.wallet.utils.BiometricVault
+import network.erth.wallet.wallet.utils.UnlockMethod
 
 /**
  * Unlock.
@@ -63,7 +67,8 @@ fun UnlockScreen(
     /** Non-null while the backoff is running; the keypad is inert until it clears. */
     lockoutMessage: String?,
     modifier: Modifier = Modifier,
-    onBiometric: (() -> Unit)? = null,
+    /** What to say when nothing has gone wrong yet. */
+    prompt: String = "Enter your PIN to continue",
 ) {
     val dimens = EarthTheme.dimens
     var pin by remember { mutableStateOf("") }
@@ -116,7 +121,7 @@ fun UnlockScreen(
         )
         Spacer(Modifier.height(dimens.space4))
         Text(
-            text = lockoutMessage ?: error ?: "Enter your PIN to continue",
+            text = lockoutMessage ?: error ?: prompt,
             style = EarthTypography.textSm,
             color = when {
                 lockoutMessage != null || error != null ->
@@ -136,11 +141,6 @@ fun UnlockScreen(
             onBackspace = { pin = pin.dropLast(1) },
         )
 
-        if (onBiometric != null) {
-            EarthTextButton(onClick = onBiometric) {
-                Text(text = "Use biometrics", style = EarthTypography.textMd)
-            }
-        }
         Spacer(Modifier.height(dimens.space32))
     }
 }
@@ -328,5 +328,140 @@ private fun KeyCap(label: String, enabled: Boolean, onClick: () -> Unit) {
                 EarthColors.Text.textTertiary
             },
         )
+    }
+}
+
+
+/**
+ * The way in, whichever way this wallet was set up.
+ *
+ * The screens below only ever produce a PIN or a prompt result; this is where
+ * those become the one secret the wallet is sealed with. Keeping the assembly
+ * here means [UnlockViewModel] never learns there is more than one kind of
+ * wallet, and the two-factor case cannot quietly degrade into either factor
+ * alone — [UnlockMethod.BOTH] has no branch that submits without both halves.
+ */
+@Composable
+fun UnlockGate(
+    method: UnlockMethod,
+    onSecret: (String) -> Unit,
+    onFailure: (String) -> Unit,
+    error: String?,
+    lockoutMessage: String?,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val activity = context as? FragmentActivity
+
+    fun withHalf(reason: String, then: (String) -> Unit) {
+        val host = activity ?: return onFailure("Biometrics are not available here.")
+        BiometricVault.retrieve(host, reason) { half ->
+            when (half) {
+                null -> onFailure(
+                    if (BiometricVault.isEnrolled(host)) {
+                        "Biometric unlock was cancelled."
+                    } else {
+                        // The key is gone, so the wallet cannot be opened this
+                        // way again — say so plainly rather than leaving the
+                        // prompt failing forever.
+                        "Biometric unlock was cleared, probably by a new fingerprint or face. " +
+                            "Restore this wallet from its recovery phrase."
+                    },
+                )
+                else -> then(half)
+            }
+        }
+    }
+
+    when (method) {
+        UnlockMethod.PIN -> UnlockScreen(
+            onSubmit = onSecret,
+            error = error,
+            lockoutMessage = lockoutMessage,
+            modifier = modifier,
+        )
+
+        UnlockMethod.BOTH -> UnlockScreen(
+            // The PIN comes first and the prompt second, so the prompt is only
+            // raised once per attempt and never for an unfinished PIN.
+            onSubmit = { pin ->
+                withHalf("Confirm to unlock") { half -> onSecret(UnlockMethod.combine(pin, half)) }
+            },
+            error = error,
+            lockoutMessage = lockoutMessage,
+            prompt = "Enter your PIN, then confirm",
+            modifier = modifier,
+        )
+
+        UnlockMethod.BIOMETRIC -> BiometricUnlockScreen(
+            onUnlock = { withHalf("Confirm to unlock", onSecret) },
+            error = error,
+            lockoutMessage = lockoutMessage,
+            modifier = modifier,
+        )
+    }
+}
+
+/**
+ * No keypad, because there is no PIN — the secret is behind the prompt.
+ *
+ * The prompt is raised on arrival rather than behind a button, since there is
+ * nothing else on this screen to do. The button below it is for the second
+ * try, after a cancel.
+ */
+@Composable
+private fun BiometricUnlockScreen(
+    onUnlock: () -> Unit,
+    error: String?,
+    lockoutMessage: String?,
+    modifier: Modifier = Modifier,
+) {
+    val dimens = EarthTheme.dimens
+    val locked = lockoutMessage != null
+
+    // Not while the backoff is running: raising a prompt that cannot lead
+    // anywhere teaches the wrong thing about why the wallet will not open.
+    LaunchedEffect(locked) { if (!locked) onUnlock() }
+
+    Column(
+        modifier
+            .fillMaxSize()
+            .background(EarthColors.Surfaces.bgPrimary)
+            .padding(horizontal = dimens.gutter),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Spacer(Modifier.weight(1f))
+
+        Image(
+            modifier = Modifier.size(88.dp),
+            painter = painterResource(R.drawable.logo),
+            contentDescription = null,
+        )
+        Spacer(Modifier.height(dimens.space24))
+        Text(
+            text = "Welcome back",
+            style = EarthTypography.header5,
+            color = EarthColors.Text.textPrimary,
+        )
+        Spacer(Modifier.height(dimens.space4))
+        Text(
+            text = lockoutMessage ?: error ?: "Confirm it is you to continue",
+            style = EarthTypography.textSm,
+            color = if (locked || error != null) {
+                EarthColors.Utility.ErrorRed.utilityError700
+            } else {
+                EarthColors.Text.textTertiary
+            },
+            textAlign = TextAlign.Center,
+        )
+
+        Spacer(Modifier.weight(1f))
+        EarthButton(
+            onClick = onUnlock,
+            enabled = !locked,
+            text = "Unlock",
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(dimens.space32))
     }
 }

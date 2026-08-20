@@ -228,6 +228,27 @@ object SessionManager {
     }
 
     /**
+     * Re-encrypt the open wallet under a different secret.
+     *
+     * Changing how the wallet is unlocked is not a preference — the secret is
+     * the encryption key, so the stored blob has to be rewritten under the new
+     * one. Only possible with a session open, which is the point: the old
+     * secret had to work before the new one is allowed to replace it.
+     *
+     * The in-memory storage is written straight back out, so nothing is
+     * decrypted again in between and a wrong new secret cannot silently
+     * produce an unopenable wallet.
+     */
+    @Throws(Exception::class)
+    fun changeSecret(context: Context, newSecret: String) {
+        if (!isSessionActive) {
+            throw IllegalStateException("No active session - call startSession() first")
+        }
+        saveVersionedStorageToEncryption(context, newSecret)
+        sessionPin = newSecret
+    }
+
+    /**
      * Save versioned wallet storage to encrypted storage
      */
     @Throws(Exception::class)
