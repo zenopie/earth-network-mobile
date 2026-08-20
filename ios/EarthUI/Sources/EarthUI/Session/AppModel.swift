@@ -80,6 +80,7 @@ public final class AppModel {
     // MARK: - session
 
     public func start() {
+        clearIfReinstalled()
         walletName = UserDefaults.standard.string(forKey: "walletName") ?? walletName
         #if targetEnvironment(simulator)
         // `-demoWallet <phrase>` opens the app straight onto the tabs with a
@@ -139,6 +140,27 @@ public final class AppModel {
         activity = nil
         registration = .none
         phase = .setup
+    }
+
+    /// Treat deleting the app as deleting the wallet.
+    ///
+    /// iOS keeps Keychain items when an app is removed, so without this a
+    /// reinstall silently restores the previous wallet — someone who deleted
+    /// the app to be rid of it would still have their phrase on the device,
+    /// with no way to know. The container, and so `UserDefaults`, *is* removed,
+    /// which is what makes a reinstall detectable at all.
+    ///
+    /// The cost is the other half of the trade: an accidental delete now
+    /// destroys a wallet whose phrase was never written down. That is the
+    /// same bargain every self-custody wallet makes, and the phrase is the
+    /// backup it asks you to keep for exactly this.
+    private func clearIfReinstalled() {
+        let marker = "installed"
+        guard !UserDefaults.standard.bool(forKey: marker) else { return }
+        store.delete()
+        UserDefaults.standard.removeObject(forKey: "walletName")
+        UserDefaults.standard.removeObject(forKey: "selectedWallet")
+        UserDefaults.standard.set(true, forKey: marker)
     }
 
     /// Read the wallet list. Costs one prompt.
