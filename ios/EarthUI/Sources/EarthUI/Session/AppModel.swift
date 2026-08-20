@@ -77,7 +77,7 @@ public final class AppModel {
     private var sessionPin: String?
 
     /// How this wallet is opened. Not a secret, so it lives in defaults —
-    /// knowing that a wallet uses Face ID does not help anyone open it.
+    /// knowing that a wallet unlocks biometrically does not help anyone open it.
     public private(set) var method: WalletStore.Method =
         WalletStore.Method(rawValue: UserDefaults.standard.string(forKey: "unlockMethod") ?? "")
             ?? .pin
@@ -149,7 +149,7 @@ public final class AppModel {
         }
     }
 
-    /// Unlock with Face ID or Touch ID.
+    /// Unlock biometrically — Face ID, Touch ID, or whatever this device has.
     ///
     /// The prompt releases the vault's secret; the vault is then opened with
     /// it exactly as a typed PIN would be. Biometrics never bypass the
@@ -217,7 +217,8 @@ public final class AppModel {
         pin: String?
     ) async throws {
         // Biometrics-only has no PIN to seal with, so one is generated. The
-        // user never sees it and never needs to: Face ID is the only way in,
+        // user never sees it and never needs to: the biometric prompt is the
+        // only way in,
         // and the recovery phrase is the only way back if that is lost.
         let secret = method.usesPin ? (pin ?? "") : WalletStore.generatedSecret()
         try store.create(mnemonic: mnemonic, name: name, pin: secret)

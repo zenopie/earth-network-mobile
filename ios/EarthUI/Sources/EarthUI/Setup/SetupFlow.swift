@@ -104,8 +104,8 @@ struct NewWalletFlow: View {
     ///
     /// Not three ways of gating the same readable secret — the choice decides
     /// what the wallet is *encrypted* with. A PIN wallet is sealed by the PIN;
-    /// a biometrics wallet is sealed by a random key only Face ID can fetch;
-    /// both means the PIN seals it and Face ID holds a copy.
+    /// a biometrics wallet is sealed by a random key only the biometric prompt
+    /// can fetch; both means the PIN seals it and that prompt holds a copy.
     private var methodStep: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: theme.space.x12) {
@@ -120,7 +120,12 @@ struct NewWalletFlow: View {
                     methodRow(.both, "Both",
                               "\(WalletStore.biometryName) normally, your PIN as a fallback.")
                 } else {
-                    Text("\(WalletStore.biometryName) is not set up on this device, so a PIN is the only option.")
+                    // Deliberately unnamed. When the hardware exists but is not
+                    // enrolled, biometryType still reports it and naming it
+                    // would be right; when there is no such hardware it reports
+                    // nothing, and "biometrics is not set up" reads as a broken
+                    // sentence. One line covers both.
+                    Text("No biometric unlock is available on this device, so a PIN is the only option.")
                         .font(EarthType.bodySmall)
                         .foregroundStyle(theme.colors.textTertiary)
                 }

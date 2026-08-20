@@ -55,7 +55,8 @@ public struct WalletStore: Sendable {
     ///
     /// The vault is always sealed under a secret; this only says where the
     /// secret comes from. `.biometrics` has no PIN to remember, so it seals
-    /// under a random 32-byte key that only Face ID can retrieve — stronger
+    /// under a random 32-byte key that only the biometric prompt can retrieve —
+    /// stronger
     /// than four digits, and unrecoverable if the Keychain entry goes with the
     /// passcode. `.both` seals under the PIN and *also* keeps it behind
     /// biometrics, so either opens it.
@@ -99,7 +100,7 @@ public struct WalletStore: Sendable {
     /// Whether a wallet exists, without prompting for anything.
     ///
     /// Asked at launch to decide between the setup flow and the lock screen,
-    /// so it must not raise a Face ID sheet. `interactionNotAllowed` is the
+    /// so it must not raise an authentication sheet. `interactionNotAllowed` is the
     /// answer it will usually get, and it means the item is there and simply
     /// will not be handed over without the user present — which is a yes.
     public var exists: Bool {
@@ -241,6 +242,10 @@ public struct WalletStore: Sendable {
         return switch context.biometryType {
         case .faceID: "Face ID"
         case .touchID: "Touch ID"
+        case .opticID: "Optic ID"
+        // Reached when the hardware is unknown to this SDK or nothing is
+        // enrolled. Lowercase because it only ever appears mid-sentence, where
+        // a capitalised generic reads like a product that does not exist.
         default: "biometrics"
         }
     }
@@ -307,7 +312,8 @@ public struct WalletStore: Sendable {
     }
 
     /// A secret for a wallet with no PIN. 32 random bytes, so the thing
-    /// standing behind Face ID is a real key rather than four digits.
+    /// standing behind the biometric prompt is a real key rather than four
+    /// digits.
     public static func generatedSecret() -> String {
         var bytes = Data(count: 32)
         _ = bytes.withUnsafeMutableBytes {
