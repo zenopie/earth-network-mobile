@@ -80,38 +80,28 @@ public struct WalletStore: Sendable {
     /// itself only demands the device.
     private static let biometricAccount = "unlock-secret"
 
-    // A simulator has no passcode and no enrolled biometrics, so requiring
-    // user presence there makes the app impossible to run past its first
-    // screen — every wallet write fails and no other screen is reachable.
-    //
-    // `targetEnvironment(simulator)` is compiled out of every device build, so
-    // this cannot weaken a shipped app. The device keeps both halves: the
-    // phrase is destroyed with the passcode, and each read needs the user.
-    #if targetEnvironment(simulator)
-    private static let accessibility = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-    private static let flags: SecAccessControlCreateFlags = []
-    #else
+    /// The vault is bound to this device and nothing more.
+    ///
+    /// It used to demand user presence as well, from before the PIN encrypted
+    /// it — which meant *reading* it raised a biometric prompt. On a two-factor
+    /// wallet that was a second prompt on top of the one fetching the key half,
+    /// and on a PIN-only wallet it was a biometric prompt for a wallet that had
+    /// asked not to use biometrics at all.
+    ///
+    /// The contents are sealed, so the Keychain's job here is at-rest binding:
+    /// never leaves the device, never in a backup, destroyed with the passcode.
+    /// What demands the user is the half stored under `biometricAccount`.
     private static let accessibility = kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly
-    private static let flags: SecAccessControlCreateFlags = .userPresence
-    #endif
 
     public init() {}
 
-    /// Whether a wallet exists, without prompting for anything.
+    /// Whether a wallet exists.
     ///
-    /// Asked at launch to decide between the setup flow and the lock screen,
-    /// so it must not raise an authentication sheet. `interactionNotAllowed` is the
-    /// answer it will usually get, and it means the item is there and simply
-    /// will not be handed over without the user present — which is a yes.
+    /// Asked at launch to decide between the setup flow and the lock screen.
+    /// A plain lookup now that the vault does not demand the user — reading it
+    /// gives ciphertext, which is no use to anyone without the secret.
     public var exists: Bool {
-        let context = LAContext()
-        context.interactionNotAllowed = true
-
-        var query = Self.baseQuery
-        query[kSecUseAuthenticationContext as String] = context
-
-        let status = SecItemCopyMatching(query as CFDictionary, nil)
-        return status == errSecSuccess || status == errSecInteractionNotAllowed
+        SecItemCopyMatching(Self.baseQuery as CFDictionary, nil) == errSecSuccess
     }
 
     /// Create the vault with a first wallet.
@@ -195,31 +185,19 @@ public struct WalletStore: Sendable {
     }
 
     private func store(_ payload: Data) throws {
-
-        var error: Unmanaged<CFError>?
-        let control = SecAccessControlCreateWithFlags(
-            nil,
-            Self.accessibility,
-            Self.flags,
-            &error
-        )
-        // Creating the access control is itself what fails first on a device
-        // with no passcode.
-        guard let control else { throw Error.noDeviceLock }
-
         SecItemDelete(Self.baseQuery as CFDictionary)
 
         var attributes = Self.baseQuery
         attributes[kSecValueData as String] = payload
-        attributes[kSecAttrAccessControl as String] = control
+        attributes[kSecAttrAccessible as String] = Self.accessibility
 
         let status = SecItemAdd(attributes as CFDictionary, nil)
         switch status {
         case errSecSuccess:
             return
-        // -25308. What a device with no passcode returns for an item that
-        // requires one.
-        case errSecInteractionNotAllowed:
+        // What a device with no passcode returns for an item that requires
+        // one. Both codes have been seen for it across releases.
+        case errSecNotAvailable, errSecInteractionNotAllowed:
             throw Error.noDeviceLock
         default:
             throw Error.keychain(status)
