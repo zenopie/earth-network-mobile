@@ -51,6 +51,21 @@ public struct WalletStore: Sendable {
         case corrupt
     }
 
+    /// How this wallet is opened.
+    ///
+    /// The vault is always sealed under a secret; this only says where the
+    /// secret comes from. `.biometrics` has no PIN to remember, so it seals
+    /// under a random 32-byte key that only Face ID can retrieve — stronger
+    /// than four digits, and unrecoverable if the Keychain entry goes with the
+    /// passcode. `.both` seals under the PIN and *also* keeps it behind
+    /// biometrics, so either opens it.
+    public enum Method: String, CaseIterable, Sendable {
+        case pin, biometrics, both
+
+        public var usesPin: Bool { self != .biometrics }
+        public var usesBiometrics: Bool { self != .pin }
+    }
+
     /// The stored blob: a salt and the sealed wallet list.
     private struct Vault: Codable {
         let salt: Data
@@ -59,6 +74,10 @@ public struct WalletStore: Sendable {
 
     private static let service = "network.erth.wallet"
     private static let account = "mnemonic"
+    /// The vault's secret, kept behind biometrics. A separate item because it
+    /// has a different access control: this one demands the user, the vault
+    /// itself only demands the device.
+    private static let biometricAccount = "unlock-secret"
 
     // A simulator has no passcode and no enrolled biometrics, so requiring
     // user presence there makes the app impossible to run past its first
@@ -206,6 +225,111 @@ public struct WalletStore: Sendable {
         }
     }
 
+    // MARK: - biometrics
+
+    /// Whether this device can do biometrics at all.
+    public static var biometricsAvailable: Bool {
+        var error: NSError?
+        return LAContext().canEvaluatePolicy(
+            .deviceOwnerAuthenticationWithBiometrics, error: &error
+        )
+    }
+
+    public static var biometryName: String {
+        let context = LAContext()
+        _ = context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
+        return switch context.biometryType {
+        case .faceID: "Face ID"
+        case .touchID: "Touch ID"
+        default: "biometrics"
+        }
+    }
+
+    /// Whether a secret is held behind biometrics, without asking for it.
+    public var biometricsEnrolled: Bool {
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        var query = Self.biometricQuery
+        query[kSecUseAuthenticationContext as String] = context
+        let status = SecItemCopyMatching(query as CFDictionary, nil)
+        return status == errSecSuccess || status == errSecInteractionNotAllowed
+    }
+
+    /// Put the vault's secret behind biometrics.
+    public func enrollBiometrics(secret: String) throws {
+        var error: Unmanaged<CFError>?
+        let control = SecAccessControlCreateWithFlags(
+            nil,
+            kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly,
+            .userPresence,
+            &error
+        )
+        guard let control else { throw Error.noDeviceLock }
+
+        SecItemDelete(Self.biometricQuery as CFDictionary)
+        var attributes = Self.biometricQuery
+        attributes[kSecValueData as String] = Data(secret.utf8)
+        attributes[kSecAttrAccessControl as String] = control
+
+        let status = SecItemAdd(attributes as CFDictionary, nil)
+        switch status {
+        case errSecSuccess: return
+        case errSecInteractionNotAllowed: throw Error.noDeviceLock
+        default: throw Error.keychain(status)
+        }
+    }
+
+    public func forgetBiometrics() {
+        SecItemDelete(Self.biometricQuery as CFDictionary)
+    }
+
+    /// Ask for the secret. Prompts.
+    public func biometricSecret(reason: String) throws -> String {
+        let context = LAContext()
+        context.localizedReason = reason
+
+        var query = Self.biometricQuery
+        query[kSecReturnData as String] = true
+        query[kSecUseAuthenticationContext as String] = context
+
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        switch status {
+        case errSecSuccess:
+            guard let data = item as? Data, let secret = String(data: data, encoding: .utf8) else {
+                throw Error.notFound
+            }
+            return secret
+        case errSecItemNotFound: throw Error.notFound
+        case errSecUserCanceled, errSecAuthFailed: throw Error.authenticationFailed
+        default: throw Error.keychain(status)
+        }
+    }
+
+    /// A secret for a wallet with no PIN. 32 random bytes, so the thing
+    /// standing behind Face ID is a real key rather than four digits.
+    public static func generatedSecret() -> String {
+        var bytes = Data(count: 32)
+        _ = bytes.withUnsafeMutableBytes {
+            SecRandomCopyBytes(kSecRandomDefault, $0.count, $0.baseAddress!)
+        }
+        return bytes.base64EncodedString()
+    }
+
+    private static var biometricQuery: [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: biometricAccount,
+        ]
+    }
+
+    /// Re-seal the vault under a new secret, keeping the wallets.
+    public func reseal(from old: String, to new: String) throws {
+        let wallets = try unlock(pin: old)
+        try write(wallets, pin: new)
+    }
+
     private func read() throws -> Data? {
         var query = Self.baseQuery
         query[kSecReturnData as String] = true
@@ -221,6 +345,7 @@ public struct WalletStore: Sendable {
 
     public func delete() {
         SecItemDelete(Self.baseQuery as CFDictionary)
+        SecItemDelete(Self.biometricQuery as CFDictionary)
     }
 
     private static var baseQuery: [String: Any] {

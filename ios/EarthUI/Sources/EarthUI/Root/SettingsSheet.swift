@@ -14,7 +14,7 @@ struct SettingsSheet: View {
     @State private var route: Route?
 
     enum Route: String, Identifiable {
-        case identity, wallets, explorer, activity, about
+        case identity, wallets, security, explorer, activity, about
         var id: String { rawValue }
     }
 
@@ -32,6 +32,8 @@ struct SettingsSheet: View {
                             route: .identity)
                         divider
                         row("Wallets", "wallet.bifold", subtitle: model.walletName, route: .wallets)
+                        divider
+                        row("Unlocking", "lock", subtitle: methodName, route: .security)
                         divider
                         row("Explorer", "safari",
                             subtitle: "Blocks, validators and registrations", route: .explorer)
@@ -63,11 +65,20 @@ struct SettingsSheet: View {
                 switch destination {
                 case .identity: IdentityScreen().earthThemed()
                 case .wallets: WalletsScreen().earthThemed()
+                case .security: SecurityScreen().earthThemed()
                 case .explorer: ExploreScreen().earthThemed()
                 case .activity: ActivityScreen().earthThemed()
                 case .about: AboutScreen().earthThemed()
                 }
             }
+        }
+    }
+
+    private var methodName: String {
+        switch model.method {
+        case .pin: "PIN"
+        case .biometrics: WalletStore.biometryName
+        case .both: "\(WalletStore.biometryName) and PIN"
         }
     }
 

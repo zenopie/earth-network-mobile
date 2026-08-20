@@ -47,18 +47,20 @@ struct NewWalletFlow: View {
 
     @State private var step = Step.name
     @State private var name = ""
+    @State private var method = WalletStore.Method.pin
     @State private var pin = ""
     @State private var phrase = ""
     @State private var written = false
     @State private var error: String?
     @State private var saving = false
 
-    enum Step { case name, pin, phrase }
+    enum Step { case name, method, pin, phrase }
 
     var body: some View {
         Group {
             switch step {
             case .name: nameStep
+            case .method: methodStep
             case .pin:
                 SetPinScreen(error: error) { chosen in
                     pin = chosen
@@ -75,6 +77,7 @@ struct NewWalletFlow: View {
     private var title: String {
         switch step {
         case .name: restoring ? "Restore" : "New wallet"
+        case .method: "How to unlock"
         case .pin: "PIN"
         case .phrase: restoring ? "Recovery phrase" : "Write these down"
         }
@@ -91,10 +94,68 @@ struct NewWalletFlow: View {
                 Text("Only you see this. It names the wallet in the app, and you can hold more than one.")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
-                EarthButton(title: "Continue") { step = .pin }
+                EarthButton(title: "Continue") { step = .method }
             }
             .padding(theme.space.gutter)
         }
+    }
+
+    /// PIN, biometrics, or both.
+    ///
+    /// Not three ways of gating the same readable secret — the choice decides
+    /// what the wallet is *encrypted* with. A PIN wallet is sealed by the PIN;
+    /// a biometrics wallet is sealed by a random key only Face ID can fetch;
+    /// both means the PIN seals it and Face ID holds a copy.
+    private var methodStep: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: theme.space.x12) {
+                Text("However you unlock it, the recovery phrase is the only way back if this device is lost.")
+                    .font(EarthType.bodySmall)
+                    .foregroundStyle(theme.colors.textTertiary)
+
+                methodRow(.pin, "PIN", "Four digits, entered each time you open the app.")
+                if WalletStore.biometricsAvailable {
+                    methodRow(.biometrics, WalletStore.biometryName,
+                              "No PIN to remember. If \(WalletStore.biometryName) stops working, only your recovery phrase gets you back in.")
+                    methodRow(.both, "Both",
+                              "\(WalletStore.biometryName) normally, your PIN as a fallback.")
+                } else {
+                    Text("\(WalletStore.biometryName) is not set up on this device, so a PIN is the only option.")
+                        .font(EarthType.bodySmall)
+                        .foregroundStyle(theme.colors.textTertiary)
+                }
+
+                Spacer().frame(height: theme.space.x8)
+                EarthButton(title: "Continue") {
+                    step = method.usesPin ? .pin : .phrase
+                }
+            }
+            .padding(theme.space.gutter)
+        }
+    }
+
+    private func methodRow(_ option: WalletStore.Method, _ title: String, _ detail: String) -> some View {
+        Button { method = option } label: {
+            HStack(alignment: .top, spacing: theme.space.x12) {
+                Image(systemName: method == option ? "largecircle.fill.circle" : "circle")
+                    .font(.system(size: 20))
+                    .foregroundStyle(method == option ? theme.colors.accentInk : theme.colors.textDisabled)
+                VStack(alignment: .leading, spacing: theme.space.x2) {
+                    Text(title)
+                        .font(EarthType.body).fontWeight(.semibold)
+                        .foregroundStyle(theme.colors.textPrimary)
+                    Text(detail)
+                        .font(EarthType.bodySmall)
+                        .foregroundStyle(theme.colors.textTertiary)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer()
+            }
+            .padding(theme.space.x16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(theme.colors.bgSecondary, in: .rect(cornerRadius: theme.space.radiusMd))
+        }
+        .buttonStyle(.plain)
     }
 
     private var phraseStep: some View {
@@ -165,7 +226,8 @@ struct NewWalletFlow: View {
                 try await model.adopt(
                     mnemonic: phrase,
                     name: name.trimmingCharacters(in: .whitespaces).isEmpty ? defaultName : name,
-                    pin: pin
+                    method: method,
+                    pin: method.usesPin ? pin : nil
                 )
             } catch {
                 self.error = model.describe(error)
@@ -215,15 +277,47 @@ struct UnlockScreen: View {
     @State private var now = Date()
 
     var body: some View {
-        PinKeypad(
-            title: "Welcome back",
-            message: status.message ?? error ?? "Enter your PIN to continue",
-            isError: status.message != nil || error != nil,
-            enabled: !status.lockedOut,
-            onComplete: submit
-        )
+        VStack(spacing: 0) {
+            if model.method.usesPin {
+                PinKeypad(
+                    title: "Welcome back",
+                    message: status.message ?? error ?? "Enter your PIN to continue",
+                    isError: status.message != nil || error != nil,
+                    enabled: !status.lockedOut,
+                    onComplete: submit
+                )
+            } else {
+                Spacer()
+                EarthAsset.logo?
+                    .resizable().scaledToFit()
+                    .frame(width: 88, height: 88)
+                Spacer().frame(height: theme.space.x24)
+                Text("Welcome back")
+                    .font(EarthType.headline)
+                    .foregroundStyle(theme.colors.textPrimary)
+                Text(error ?? "Unlock with \(WalletStore.biometryName).")
+                    .font(EarthType.bodySmall)
+                    .foregroundStyle(error != nil ? theme.colors.textError : theme.colors.textTertiary)
+                Spacer()
+            }
+
+            if model.method.usesBiometrics {
+                Button("Use \(WalletStore.biometryName)") {
+                    Task { _ = await model.unlockWithBiometrics() }
+                }
+                .font(EarthType.body)
+                .foregroundStyle(theme.colors.accentInk)
+                .padding(.bottom, theme.space.x32)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.colors.bgPrimary)
         .task {
+            // Offered without being asked for: a wallet that unlocks by face
+            // should not need a tap to say so.
+            if model.method.usesBiometrics {
+                _ = await model.unlockWithBiometrics()
+            }
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 now = Date()

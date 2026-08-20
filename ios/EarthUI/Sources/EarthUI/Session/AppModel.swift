@@ -76,6 +76,12 @@ public final class AppModel {
     /// and with it the ability to read anything.
     private var sessionPin: String?
 
+    /// How this wallet is opened. Not a secret, so it lives in defaults —
+    /// knowing that a wallet uses Face ID does not help anyone open it.
+    public private(set) var method: WalletStore.Method =
+        WalletStore.Method(rawValue: UserDefaults.standard.string(forKey: "unlockMethod") ?? "")
+            ?? .pin
+
     public let client: EarthClient
     public let store: WalletStore
 
@@ -100,7 +106,7 @@ public final class AppModel {
         if let phrase = UserDefaults.standard.string(forKey: "demoWallet"),
            BIP39.isValid(mnemonic: phrase) {
             // A fixed PIN, since nothing can type one either.
-            Task { try? await adopt(mnemonic: phrase, name: "Wallet 1", pin: "0000") }
+            Task { try? await adopt(mnemonic: phrase, name: "Wallet 1", method: .pin, pin: "0000") }
             return
         }
         #endif
@@ -143,16 +149,86 @@ public final class AppModel {
         }
     }
 
+    /// Unlock with Face ID or Touch ID.
+    ///
+    /// The prompt releases the vault's secret; the vault is then opened with
+    /// it exactly as a typed PIN would be. Biometrics never bypass the
+    /// encryption, they only fetch the key.
+    public func unlockWithBiometrics() async -> Bool {
+        guard method.usesBiometrics else { return false }
+        do {
+            let store = self.store
+            let secret = try store.biometricSecret(
+                reason: "Unlock your Earth wallet"
+            )
+            let wallets = try await Task.detached { try store.unlock(pin: secret) }.value
+            guard !wallets.isEmpty else { throw WalletStore.Error.notFound }
+            UnlockAttempts.recordSuccess()
+            sessionPin = secret
+            self.wallets = wallets
+            selected = min(UserDefaults.standard.integer(forKey: "selectedWallet"),
+                           wallets.count - 1)
+            address = wallets[selected].address
+            walletName = wallets[selected].name
+            lastError = nil
+            phase = .ready
+            await refresh()
+            return true
+        } catch {
+            // A cancelled prompt is not a failure worth reporting — the PIN
+            // pad is still on screen behind it, and on a biometrics-only
+            // wallet the button is still there to try again.
+            if case WalletStore.Error.authenticationFailed = error { return false }
+            lastError = describe(error)
+            return false
+        }
+    }
+
+    /// Change how this wallet is opened.
+    ///
+    /// The vault is re-sealed rather than re-gated: switching to a PIN means
+    /// the PIN becomes the key, and switching away from one means it stops
+    /// being able to open anything.
+    public func setMethod(_ new: WalletStore.Method, pin: String?) throws {
+        guard let current = sessionPin else { throw WalletStore.Error.notFound }
+        let secret = new.usesPin ? (pin ?? "") : WalletStore.generatedSecret()
+
+        try store.reseal(from: current, to: secret)
+        if new.usesBiometrics {
+            try store.enrollBiometrics(secret: secret)
+        } else {
+            store.forgetBiometrics()
+        }
+        sessionPin = secret
+        method = new
+        UserDefaults.standard.set(new.rawValue, forKey: "unlockMethod")
+    }
+
     /// The PIN, for the paths that need to read the vault again.
     ///
     /// Returns nil when locked, which is the only correct answer then.
     public var pin: String? { sessionPin }
 
-    public func adopt(mnemonic: String, name: String, pin: String) async throws {
-        try store.create(mnemonic: mnemonic, name: name, pin: pin)
-        sessionPin = pin
+    /// Create the wallet under whichever secret the chosen method implies.
+    public func adopt(
+        mnemonic: String,
+        name: String,
+        method: WalletStore.Method,
+        pin: String?
+    ) async throws {
+        // Biometrics-only has no PIN to seal with, so one is generated. The
+        // user never sees it and never needs to: Face ID is the only way in,
+        // and the recovery phrase is the only way back if that is lost.
+        let secret = method.usesPin ? (pin ?? "") : WalletStore.generatedSecret()
+        try store.create(mnemonic: mnemonic, name: name, pin: secret)
+        if method.usesBiometrics {
+            try store.enrollBiometrics(secret: secret)
+        }
+        self.method = method
+        UserDefaults.standard.set(method.rawValue, forKey: "unlockMethod")
+        sessionPin = secret
         UnlockAttempts.recordSuccess()
-        wallets = try store.unlock(pin: pin)
+        wallets = try store.unlock(pin: secret)
         walletName = name
         selected = 0
         UserDefaults.standard.set(name, forKey: "walletName")
