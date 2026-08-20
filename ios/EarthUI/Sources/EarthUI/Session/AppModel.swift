@@ -76,6 +76,14 @@ public final class AppModel {
     /// and with it the ability to read anything.
     private var sessionPin: String?
 
+    /// Guards against a second unlock starting while one is in flight.
+    ///
+    /// Both entry points raise a system prompt, and both are reachable more
+    /// than once — a re-run `task`, a second tap, a re-created view. Without
+    /// this the user gets two prompts stacked, and answering the first leaves
+    /// the second on screen.
+    private var unlocking = false
+
     /// How this wallet is opened. Not a secret, so it lives in defaults —
     /// knowing that a wallet unlocks biometrically does not help anyone open it.
     public private(set) var method: WalletStore.Method =
@@ -118,23 +126,30 @@ public final class AppModel {
     /// A wrong PIN is counted, because four digits is 10,000 combinations and
     /// the only thing making that a secret is how many guesses are allowed.
     public func unlock(pin: String) async -> Bool {
-        guard !UnlockAttempts.status().lockedOut else { return false }
+        guard !UnlockAttempts.status().lockedOut, !unlocking else { return false }
+        unlocking = true
+        defer { unlocking = false }
 
         do {
             // A two-factor wallet needs the half held behind the prompt as
             // well, so this raises it — the PIN on its own decrypts nothing.
-            let secret = method == .both
-                ? WalletStore.combine(
-                    pin: pin,
-                    half: try store.biometricSecret(reason: "Unlock your Earth wallet")
-                  )
-                : pin
+            let store = self.store
+            let secret: String
+            if method == .both {
+                // Same reason as above: raised off the main actor, so the
+                // thread the prompt needs is not the one waiting on it.
+                let half = try await Task.detached {
+                    try store.biometricSecret(reason: "Unlock your Earth wallet")
+                }.value
+                secret = WalletStore.combine(pin: pin, half: half)
+            } else {
+                secret = pin
+            }
 
             // Stretching is deliberately slow — 200,000 rounds — so it runs
             // off the main actor. On the main thread it is a visible freeze on
             // every unlock and, because signing re-opens the vault, on every
             // transaction too.
-            let store = self.store
             let wallets = try await Task.detached { try store.unlock(pin: secret) }.value
             guard !wallets.isEmpty else { throw WalletStore.Error.notFound }
             UnlockAttempts.recordSuccess()
@@ -188,12 +203,18 @@ public final class AppModel {
     /// Only for a wallet sealed under the prompt alone. A two-factor wallet
     /// goes through the PIN path, which asks for both.
     public func unlockWithBiometrics() async -> Bool {
-        guard method == .biometrics else { return false }
+        guard method == .biometrics, !unlocking else { return false }
+        unlocking = true
+        defer { unlocking = false }
+
         do {
             let store = self.store
-            let secret = try store.biometricSecret(
-                reason: "Unlock your Earth wallet"
-            )
+            // Off the main actor. `SecItemCopyMatching` blocks its thread until
+            // the user answers, and blocking the main thread is what the system
+            // needs free to present the prompt at all.
+            let secret = try await Task.detached {
+                try store.biometricSecret(reason: "Unlock your Earth wallet")
+            }.value
             let wallets = try await Task.detached { try store.unlock(pin: secret) }.value
             guard !wallets.isEmpty else { throw WalletStore.Error.notFound }
             UnlockAttempts.recordSuccess()

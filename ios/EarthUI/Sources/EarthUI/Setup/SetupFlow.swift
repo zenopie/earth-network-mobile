@@ -280,6 +280,8 @@ struct UnlockScreen: View {
     @State private var error: String?
     /// Ticks only while a lockout is running, so the message counts down.
     @State private var now = Date()
+    /// The prompt is raised once per appearance, not once per `task`.
+    @State private var prompted = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -326,13 +328,25 @@ struct UnlockScreen: View {
             // Offered without being asked for: a wallet that unlocks by face
             // should not need a tap to say so. Two-factor is excluded — its
             // prompt belongs after the PIN, not instead of it.
-            if model.method == .biometrics {
+            //
+            // Latched, because `task` restarts when this view is re-created —
+            // which happens on the way out of the settings sheet that locked
+            // the app — and a second prompt would stack on the first.
+            if model.method == .biometrics, !prompted {
+                prompted = true
                 _ = await model.unlockWithBiometrics()
             }
+            // The lockout starts partway through this loop's life, so the
+            // loop cannot be conditional on it — but the state it writes can
+            // be. An idle unlock screen is then not re-rendered every second,
+            // and a counting-down one is.
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
-                now = Date()
-                status = UnlockAttempts.status()
+                let latest = UnlockAttempts.status()
+                if latest.lockedOut || status.lockedOut {
+                    now = Date()
+                    status = latest
+                }
             }
         }
     }
