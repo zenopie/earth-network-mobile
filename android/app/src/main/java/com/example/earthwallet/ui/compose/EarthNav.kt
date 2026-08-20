@@ -64,7 +64,6 @@ sealed interface EarthRoute {
     data object Activity : EarthRoute
     data object Liquidity : EarthRoute
     data object Settings : EarthRoute
-    data object AddressBook : EarthRoute
     data object About : EarthRoute
     /**
      * The chain's own state: blocks, validators, how many humans.

@@ -52,7 +52,7 @@ import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
  * of instruction, and no chrome at all. The keypad is Earth's, rebuilt on the
  * type and colour tokens so it matches everything past it.
  *
- * The lockout is not a UI decision — [network.erth.wallet.wallet.utils.PinSecurityManager]
+ * The lockout is not a UI decision — [network.erth.wallet.wallet.utils.UnlockAttempts]
  * owns the attempt count and the backoff, and this screen only renders what it
  * reports. Two places deciding when to lock out is one place too many.
  */

@@ -343,11 +343,14 @@ private fun EarthContent(
             activity = activity,
             onReceive = { nav.push(EarthRoute.Receive) },
             onSend = { nav.push(EarthRoute.Send) },
-            onEarn = { nav.selectTab(EarthRoute.Earn) },
             onClaimAnml = onClaimAnml,
             onRegister = onRegister,
             anmlClaimableAt = state?.anmlClaimableAt,
             registered = state?.registered,
+            stakedUerth = state?.stakedUerth ?: 0L,
+            rewardsUerth = state?.rewardsUerth ?: 0L,
+            unbondingUerth = earnState?.unbonding?.sumOf { it.amountUerth } ?: 0L,
+            holdings = state?.holdings.orEmpty(),
             onSeeAllActivity = { nav.push(EarthRoute.Activity) },
             modifier = inset,
             contentPadding = padding,
@@ -477,12 +480,6 @@ private fun EarthContent(
             modifier = inset,
         )
 
-        EarthRoute.AddressBook -> AddressBookScreen(
-            contacts = emptyList(),
-            onAdd = {},
-            onSelect = {},
-            modifier = inset,
-        )
 
         EarthRoute.Personhood -> PersonhoodScreen(
             registered = loaded.registered,
@@ -768,11 +765,6 @@ private fun settingsItems(nav: EarthNavController, state: WalletUiState?): List<
             onClick = { nav.push(EarthRoute.Explore) },
         ),
         SettingsItem(
-            title = "Address book",
-            icon = R.drawable.ic_contacts_white,
-            onClick = { nav.push(EarthRoute.AddressBook) },
-        ),
-        SettingsItem(
             title = "Activity",
             icon = R.drawable.ic_earnings,
             onClick = { nav.push(EarthRoute.Activity) },
@@ -792,7 +784,6 @@ private fun EarthRoute.title(): String = when (this) {
     EarthRoute.Liquidity -> "Liquidity"
     EarthRoute.Activity -> "Activity"
     EarthRoute.Settings -> "Settings"
-    EarthRoute.AddressBook -> "Address book"
     EarthRoute.About -> "About"
     is EarthRoute.Stream -> if (human) "Caretaker Fund" else "Groundworks Fund"
     EarthRoute.Proposals -> "Proposals"

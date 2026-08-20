@@ -13,6 +13,21 @@ import network.erth.wallet.chain.Staking
 import network.erth.wallet.wallet.services.SecureWalletManager
 
 /** Everything the Earn screen shows, resolved together. */
+/** One delegation, resolved for display. */
+data class DelegationRow(
+    val validatorOperator: String,
+    val moniker: String,
+    val amountUerth: Long,
+    val commission: Double,
+)
+
+/** One unbonding entry: neither spendable nor earning until it completes. */
+data class UnbondingRow(
+    val moniker: String,
+    val amountUerth: Long,
+    val completesIn: String,
+)
+
 data class EarnUiState(
     val stakedUerth: Long,
     val rewardsUerth: Long,

@@ -1,6 +1,7 @@
 package network.erth.wallet.ui.compose
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
@@ -17,12 +18,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.setValue
@@ -36,10 +39,12 @@ import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import network.erth.wallet.R
+import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.vendor.component.ShimmerCircle
 import network.erth.wallet.ui.vendor.component.ShimmerRectangle
 import network.erth.wallet.ui.vendor.component.rememberEarthShimmer
@@ -76,7 +81,6 @@ fun HomeScreen(
     activity: List<ActivityRow>?,
     onReceive: () -> Unit,
     onSend: () -> Unit,
-    onEarn: () -> Unit,
     onClaimAnml: () -> Unit,
     /** Starts the passport scan, for a wallet with no registration yet. */
     onRegister: () -> Unit,
@@ -84,10 +88,19 @@ fun HomeScreen(
     anmlClaimableAt: Long?,
     /** Null while the wallet is still loading. */
     registered: Boolean?,
+    /** Held but not spendable, so the balance above cannot show it. */
+    stakedUerth: Long,
+    rewardsUerth: Long,
+    unbondingUerth: Long,
+    /** Everything held, so the portfolio can show what is not ERTH or ANML. */
+    holdings: List<Holding>,
     onSeeAllActivity: () -> Unit,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
 ) {
+    // Which list is under the cards. The third action swaps it.
+    var panel by remember { mutableStateOf(HomePanel.Activity) }
+
     Column(
         modifier = modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -103,15 +116,23 @@ fun HomeScreen(
             modifier = Modifier.zIndex(1f).offset(y = 8.dp).padding(horizontal = 24.dp),
             onReceive = onReceive,
             onSend = onSend,
-            onEarn = onEarn,
+            panel = panel,
+            onTogglePanel = {
+                panel = if (panel == HomePanel.Activity) HomePanel.Portfolio else HomePanel.Activity
+            },
             onClaimAnml = onClaimAnml,
             onRegister = onRegister,
             anmlClaimableAt = anmlClaimableAt,
             registered = registered,
         )
         Spacer(Modifier.height(2.dp))
-        ActivityPanel(
+        HomeListPanel(
+            panel = panel,
             activity = activity,
+            stakedUerth = stakedUerth,
+            rewardsUerth = rewardsUerth,
+            unbondingUerth = unbondingUerth,
+            holdings = holdings,
             onSeeAll = onSeeAllActivity,
             contentPadding = contentPadding,
         )
@@ -207,11 +228,15 @@ private fun SplitAmount(amount: String) {
     }
 }
 
+/** Which list sits under the action cards. */
+enum class HomePanel { Activity, Portfolio }
+
 @Composable
 private fun HomeActions(
     onReceive: () -> Unit,
     onSend: () -> Unit,
-    onEarn: () -> Unit,
+    panel: HomePanel,
+    onTogglePanel: () -> Unit,
     onClaimAnml: () -> Unit,
     onRegister: () -> Unit,
     anmlClaimableAt: Long?,
@@ -254,9 +279,22 @@ private fun HomeActions(
             modifier = Modifier.weight(1f).aspectRatio(HOME_ACTION_RATIO),
             state = BigIconButtonState(stringRes("Send"), R.drawable.ic_home_send, onSend),
         )
+        // Not a second way to the Earn tab — that is one tap away in the bar
+        // already, and this row is the most valuable strip on the screen to
+        // spend on a duplicate. It swaps the list below instead, and names
+        // what it will switch to rather than what is showing, so the card
+        // stays an action rather than becoming a label.
         EarthBigIconButton(
             modifier = Modifier.weight(1f).aspectRatio(HOME_ACTION_RATIO),
-            state = BigIconButtonState(stringRes("Earn"), R.drawable.ic_home_earn, onEarn),
+            state = BigIconButtonState(
+                text = stringRes(if (panel == HomePanel.Activity) "Portfolio" else "Activity"),
+                icon = if (panel == HomePanel.Activity) {
+                    R.drawable.ic_home_explore
+                } else {
+                    R.drawable.ic_earnings
+                },
+                onClick = onTogglePanel,
+            ),
         )
         EarthBigIconButton(
             modifier = Modifier.weight(1f).aspectRatio(HOME_ACTION_RATIO),
@@ -278,8 +316,13 @@ private fun HomeActions(
 }
 
 @Composable
-private fun ActivityPanel(
+private fun HomeListPanel(
+    panel: HomePanel,
     activity: List<ActivityRow>?,
+    stakedUerth: Long,
+    rewardsUerth: Long,
+    unbondingUerth: Long,
+    holdings: List<Holding>,
     onSeeAll: () -> Unit,
     contentPadding: PaddingValues,
 ) {
@@ -305,12 +348,12 @@ private fun ActivityPanel(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "Activity",
+                        text = if (panel == HomePanel.Activity) "Activity" else "Portfolio",
                         style = EarthTypography.textMd.copy(fontWeight = FontWeight.SemiBold),
                         color = EarthColors.Text.textPrimary,
                         modifier = Modifier.weight(1f),
                     )
-                    if (!activity.isNullOrEmpty()) {
+                    if (panel == HomePanel.Activity && !activity.isNullOrEmpty()) {
                         Text(
                             text = "See all",
                             style = EarthTypography.textSm,
@@ -323,6 +366,11 @@ private fun ActivityPanel(
                     }
                 }
             }
+            if (panel == HomePanel.Portfolio) {
+                portfolio(stakedUerth, rewardsUerth, unbondingUerth, holdings)
+                return@LazyColumn
+            }
+
             when {
                 // Still loading. Three placeholder rows rather than a spinner:
                 // the list keeps its shape, so nothing jumps when the real rows
@@ -357,6 +405,98 @@ private fun ActivityPanel(
                 else -> items(activity) { row -> ActivityItem(row) }
             }
         }
+    }
+}
+
+/**
+ * What is held beyond the spendable balance.
+ *
+ * ERTH and ANML are the widget at the top of this screen, so repeating them
+ * would say the same thing twice — but *staked* ERTH is not that balance. It is
+ * held and not spendable, which is exactly the distinction the balance above
+ * cannot make, and a wallet showing only the spendable figure looks to its
+ * owner like it lost the rest.
+ */
+private fun LazyListScope.portfolio(
+    stakedUerth: Long,
+    rewardsUerth: Long,
+    unbondingUerth: Long,
+    holdings: List<Holding>,
+) {
+    val others = holdings.filter { it.denom != "uerth" && it.denom != "uanml" && it.amount > 0 }
+    val hasPosition = stakedUerth > 0 || rewardsUerth > 0 || unbondingUerth > 0
+
+    if (others.isEmpty() && !hasPosition) {
+        item {
+            Text(
+                text = "Nothing else yet. Staked ERTH, rewards, and any token other " +
+                    "than ERTH and ANML appear here — including your share of a pool " +
+                    "you provide liquidity to.",
+                style = EarthTypography.textSm,
+                color = EarthColors.Text.textTertiary,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
+            )
+        }
+        return
+    }
+
+    if (stakedUerth > 0) {
+        item { PositionRow("Staked", "Delegated · earning", "${formatUerth(stakedUerth)} ERTH") }
+    }
+    if (rewardsUerth > 0) {
+        item { PositionRow("Rewards", "Claimable", "${formatUerth(rewardsUerth)} ERTH") }
+    }
+    if (unbondingUerth > 0) {
+        // Named apart rather than folded into staked: it is neither spendable
+        // nor earning and it returns on its own, so inside the staked figure it
+        // would look like it was still working.
+        item {
+            PositionRow(
+                "Unbonding",
+                "Returns when the period ends",
+                "${formatUerth(unbondingUerth)} ERTH",
+            )
+        }
+    }
+    items(others) { holding ->
+        PositionRow(holding.symbol, holding.denom, holding.display)
+    }
+}
+
+@Composable
+private fun PositionRow(title: String, subtitle: String, value: String) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .size(32.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(EarthAccent.tint),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = title.take(1),
+                style = EarthTypography.textSm.copy(color = EarthAccent.ink),
+            )
+        }
+        Column(Modifier.weight(1f).padding(start = 12.dp)) {
+            Text(
+                text = title,
+                style = EarthTypography.textMd.copy(color = EarthColors.Text.textPrimary),
+            )
+            Text(
+                text = subtitle,
+                style = EarthTypography.textSm.copy(color = EarthColors.Text.textTertiary),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Text(
+            text = value,
+            style = EarthTypography.textMd.copy(color = EarthColors.Text.textPrimary),
+        )
     }
 }
 

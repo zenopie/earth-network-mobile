@@ -72,6 +72,11 @@ data class WalletUiState(
 /**
  * The balance screen, built on the vendored components.
  *
+ * NOT the Wallet tab. That is [HomeScreen] — this is reached only from
+ * [ShowcaseActivity], the adb-launchable harness for looking at screens in
+ * isolation. The name predates the split and is kept so the showcase keeps
+ * working; read HomeScreen if you are changing what the tab shows.
+ *
  * One number, two actions, then holdings. A wallet is opened to answer "how
  * much do I have" far more often than anything else, so that is answered before
  * anything competes with it.
