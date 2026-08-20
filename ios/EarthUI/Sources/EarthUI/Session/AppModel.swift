@@ -121,15 +121,24 @@ public final class AppModel {
         guard !UnlockAttempts.status().lockedOut else { return false }
 
         do {
-            // Stretching the PIN is deliberately slow — 200,000 rounds — so it
-            // runs off the main actor. On the main thread it is a visible
-            // freeze on every unlock and, because signing re-opens the vault,
-            // on every transaction too.
+            // A two-factor wallet needs the half held behind the prompt as
+            // well, so this raises it — the PIN on its own decrypts nothing.
+            let secret = method == .both
+                ? WalletStore.combine(
+                    pin: pin,
+                    half: try store.biometricSecret(reason: "Unlock your Earth wallet")
+                  )
+                : pin
+
+            // Stretching is deliberately slow — 200,000 rounds — so it runs
+            // off the main actor. On the main thread it is a visible freeze on
+            // every unlock and, because signing re-opens the vault, on every
+            // transaction too.
             let store = self.store
-            let wallets = try await Task.detached { try store.unlock(pin: pin) }.value
+            let wallets = try await Task.detached { try store.unlock(pin: secret) }.value
             guard !wallets.isEmpty else { throw WalletStore.Error.notFound }
             UnlockAttempts.recordSuccess()
-            sessionPin = pin
+            sessionPin = secret
             self.wallets = wallets
             selected = min(UserDefaults.standard.integer(forKey: "selectedWallet"),
                            wallets.count - 1)
@@ -140,22 +149,46 @@ public final class AppModel {
             await refresh()
             return true
         } catch {
-            if case WalletStore.Error.wrongPin = error {
+            switch error {
+            case WalletStore.Error.wrongPin:
                 UnlockAttempts.recordFailure()
-            } else {
+            case WalletStore.Error.authenticationFailed:
+                // A dismissed prompt is not a wrong PIN, and counting it as
+                // one would lock someone out for tapping cancel.
+                break
+            default:
                 lastError = describe(error)
             }
             return false
         }
     }
 
+    /// Build the secret a new wallet will be sealed under, storing whatever
+    /// half belongs behind the prompt.
+    private func seal(method: WalletStore.Method, pin: String?) throws -> String {
+        switch method {
+        case .pin:
+            return pin ?? ""
+        case .biometrics:
+            // Nothing to remember: the whole key lives behind the prompt.
+            let secret = WalletStore.generatedSecret()
+            try store.enrollBiometrics(secret: secret)
+            return secret
+        case .both:
+            // Only a *half* goes behind the prompt. The other half is the PIN,
+            // and the vault opens for neither on its own.
+            let half = WalletStore.generatedSecret()
+            try store.enrollBiometrics(secret: half)
+            return WalletStore.combine(pin: pin ?? "", half: half)
+        }
+    }
+
     /// Unlock biometrically — Face ID, Touch ID, or whatever this device has.
     ///
-    /// The prompt releases the vault's secret; the vault is then opened with
-    /// it exactly as a typed PIN would be. Biometrics never bypass the
-    /// encryption, they only fetch the key.
+    /// Only for a wallet sealed under the prompt alone. A two-factor wallet
+    /// goes through the PIN path, which asks for both.
     public func unlockWithBiometrics() async -> Bool {
-        guard method.usesBiometrics else { return false }
+        guard method == .biometrics else { return false }
         do {
             let store = self.store
             let secret = try store.biometricSecret(
@@ -191,14 +224,10 @@ public final class AppModel {
     /// being able to open anything.
     public func setMethod(_ new: WalletStore.Method, pin: String?) throws {
         guard let current = sessionPin else { throw WalletStore.Error.notFound }
-        let secret = new.usesPin ? (pin ?? "") : WalletStore.generatedSecret()
+        let secret = try seal(method: new, pin: pin)
+        if !new.usesBiometrics { store.forgetBiometrics() }
 
         try store.reseal(from: current, to: secret)
-        if new.usesBiometrics {
-            try store.enrollBiometrics(secret: secret)
-        } else {
-            store.forgetBiometrics()
-        }
         sessionPin = secret
         method = new
         UserDefaults.standard.set(new.rawValue, forKey: "unlockMethod")
@@ -216,15 +245,8 @@ public final class AppModel {
         method: WalletStore.Method,
         pin: String?
     ) async throws {
-        // Biometrics-only has no PIN to seal with, so one is generated. The
-        // user never sees it and never needs to: the biometric prompt is the
-        // only way in,
-        // and the recovery phrase is the only way back if that is lost.
-        let secret = method.usesPin ? (pin ?? "") : WalletStore.generatedSecret()
+        let secret = try seal(method: method, pin: pin)
         try store.create(mnemonic: mnemonic, name: name, pin: secret)
-        if method.usesBiometrics {
-            try store.enrollBiometrics(secret: secret)
-        }
         self.method = method
         UserDefaults.standard.set(method.rawValue, forKey: "unlockMethod")
         sessionPin = secret

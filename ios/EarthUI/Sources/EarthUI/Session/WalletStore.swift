@@ -311,9 +311,19 @@ public struct WalletStore: Sendable {
         }
     }
 
-    /// A secret for a wallet with no PIN. 32 random bytes, so the thing
-    /// standing behind the biometric prompt is a real key rather than four
-    /// digits.
+    /// Fold a PIN together with the half held behind biometrics.
+    ///
+    /// Hashed rather than concatenated so the PIN's boundary is not visible in
+    /// the result, and so the two always produce a fixed-width secret whatever
+    /// their lengths.
+    public static func combine(pin: String, half: String) -> String {
+        let digest = SHA256.hash(data: Data("\(pin)|\(half)".utf8))
+        return Data(digest).base64EncodedString()
+    }
+
+    /// A secret for a wallet with no PIN, or the half a two-factor wallet
+    /// keeps behind the prompt. 32 random bytes, so what stands behind the
+    /// biometric prompt is a real key rather than four digits.
     public static func generatedSecret() -> String {
         var bytes = Data(count: 32)
         _ = bytes.withUnsafeMutableBytes {

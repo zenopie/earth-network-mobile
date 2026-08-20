@@ -48,7 +48,7 @@ struct SecurityScreen: View {
                 if WalletStore.biometricsAvailable {
                     row(.biometrics, WalletStore.biometryName,
                         "No PIN to remember. If \(WalletStore.biometryName) stops working, only your recovery phrase gets you back in.")
-                    row(.both, "Both", "\(WalletStore.biometryName) normally, your PIN as a fallback.")
+                    row(.both, "Both", "Both are required every time. Neither one opens the wallet on its own.")
                 }
 
                 if let error {

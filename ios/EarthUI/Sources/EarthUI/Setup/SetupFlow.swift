@@ -118,7 +118,7 @@ struct NewWalletFlow: View {
                     methodRow(.biometrics, WalletStore.biometryName,
                               "No PIN to remember. If \(WalletStore.biometryName) stops working, only your recovery phrase gets you back in.")
                     methodRow(.both, "Both",
-                              "\(WalletStore.biometryName) normally, your PIN as a fallback.")
+                              "Both are required every time. Neither one opens the wallet on its own.")
                 } else {
                     // Deliberately unnamed. When the hardware exists but is not
                     // enrolled, biometryType still reports it and naming it
@@ -286,7 +286,9 @@ struct UnlockScreen: View {
             if model.method.usesPin {
                 PinKeypad(
                     title: "Welcome back",
-                    message: status.message ?? error ?? "Enter your PIN to continue",
+                    message: status.message ?? error ?? (model.method == .both
+                        ? "Enter your PIN, then \(WalletStore.biometryName)"
+                        : "Enter your PIN to continue"),
                     isError: status.message != nil || error != nil,
                     enabled: !status.lockedOut,
                     onComplete: submit
@@ -306,7 +308,10 @@ struct UnlockScreen: View {
                 Spacer()
             }
 
-            if model.method.usesBiometrics {
+            // Only where the prompt is a way in by itself. On a two-factor
+            // wallet it is raised after the PIN instead, so a button offering
+            // it here would promise a door that does not exist.
+            if model.method == .biometrics {
                 Button("Use \(WalletStore.biometryName)") {
                     Task { _ = await model.unlockWithBiometrics() }
                 }
@@ -319,8 +324,9 @@ struct UnlockScreen: View {
         .background(theme.colors.bgPrimary)
         .task {
             // Offered without being asked for: a wallet that unlocks by face
-            // should not need a tap to say so.
-            if model.method.usesBiometrics {
+            // should not need a tap to say so. Two-factor is excluded — its
+            // prompt belongs after the PIN, not instead of it.
+            if model.method == .biometrics {
                 _ = await model.unlockWithBiometrics()
             }
             while !Task.isCancelled {
