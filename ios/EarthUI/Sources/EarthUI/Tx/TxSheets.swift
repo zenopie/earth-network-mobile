@@ -5,9 +5,16 @@ import SwiftUI
 struct TxOverlay: View {
     @Environment(TxController.self) private var tx
 
+    /// Which presentation context this copy is attached to. Several are
+    /// mounted at once — the root and any sheet deep enough to need its own —
+    /// and only the one the request named draws anything.
+    let host: TxController.Host
+
     var body: some View {
         ZStack {
-            if let details = tx.pending {
+            if tx.host != host {
+                EmptyView()
+            } else if let details = tx.pending {
                 TxConfirmSheet(details: details)
                     .transition(.opacity)
             } else if tx.submitting {

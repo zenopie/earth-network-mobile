@@ -52,6 +52,31 @@ public final class TxController {
         }
     }
 
+    /// Where the confirmation should draw.
+    ///
+    /// The sheets are one overlay, and an overlay renders inside the view it is
+    /// attached to — so an overlay on the root view is *behind* anything
+    /// presented over it. That is invisible until a flow is more than one sheet
+    /// deep: Send and Stake reveal the root overlay by closing themselves,
+    /// while Govern's slider editor sits under a stream sheet that would still
+    /// be covering it.
+    ///
+    /// Dismissing both was tried and is not enough — landing back on the tab
+    /// still drew the confirmation under it. So the confirmation is hosted
+    /// wherever the request came from instead of always at the root, and the
+    /// requester says which. There is still exactly one controller and one
+    /// broadcast path; only the place the card draws moves.
+    public enum Host: Equatable, Sendable {
+        /// The root view, behind no presentation. Everything that raises a
+        /// transaction from a tab or a single sheet.
+        case root
+        /// The allocation stream sheet, which presents the slider editor over
+        /// itself and is the app's only two-sheet-deep flow.
+        case allocation
+    }
+
+    public private(set) var host: Host = .root
+
     /// What is waiting on the confirmation sheet, if anything.
     public private(set) var pending: Details?
     /// What came back, if anything.
@@ -70,11 +95,13 @@ public final class TxController {
     /// cannot be baked in while the sheet sits open.
     public func request(
         _ details: Details,
+        host: Host = .root,
         onSuccess: (() async -> Void)? = nil,
         build: @escaping (EarthKey) throws -> [ProtoAny]
     ) {
         self.build = build
         self.onSuccess = onSuccess
+        self.host = host
         pending = details
     }
 
@@ -82,6 +109,7 @@ public final class TxController {
         pending = nil
         build = nil
         onSuccess = nil
+        host = .root
     }
 
     public func confirm(in model: AppModel) async {
@@ -126,5 +154,8 @@ public final class TxController {
         )
     }
 
-    public func dismissOutcome() { outcome = nil }
+    public func dismissOutcome() {
+        outcome = nil
+        host = .root
+    }
 }

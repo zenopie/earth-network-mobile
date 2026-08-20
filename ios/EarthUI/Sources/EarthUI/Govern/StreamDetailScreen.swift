@@ -79,6 +79,12 @@ struct StreamDetailScreen: View {
                 AllocationEditSheet(stream: stream, state: state, onChanged: onChanged)
                     .earthThemed()
             }
+            // This sheet hosts its own confirmation. It is the only flow that
+            // presents a sheet over itself, and the root's copy draws behind
+            // both — closing them to reveal it was tried and still left the
+            // card under the tab. Hosting it here keeps you on the stream you
+            // were editing, which is where the confirmation makes sense anyway.
+            .overlay { TxOverlay(host: .allocation) }
         }
     }
 
@@ -201,10 +207,16 @@ struct AllocationEditSheet: View {
             .sorted { $0.optionID < $1.optionID }
         let target = stream
 
-        tx.request(.init(
-            action: "Set allocation",
-            rows: chosen.map { (label($0.optionID), "\($0.percent)%") }
-        ), onSuccess: { onChanged() }) { key in
+        tx.request(
+            .init(
+                action: "Set allocation",
+                rows: chosen.map { (label($0.optionID), "\($0.percent)%") }
+            ),
+            // Drawn by the stream sheet this editor sits on, not by the root:
+            // a root overlay cannot appear over a sheet that is still up.
+            host: .allocation,
+            onSuccess: { onChanged() }
+        ) { key in
             [model.client.msgSetAllocations(creator: key.address, stream: target, weights: chosen)]
         }
         dismiss()

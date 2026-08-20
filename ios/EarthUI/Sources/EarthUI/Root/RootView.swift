@@ -40,7 +40,13 @@ public struct RootView: View {
         // dismissing does not reliably present anything. And a sheet's own
         // dismissal would have to be told apart from a confirmation, which is
         // the kind of distinction that silently stops working.
-        .overlay { TxOverlay() }
+        //
+        // This copy serves everything that raises a transaction from a tab or
+        // a single sheet, which is all of them but one. An overlay draws inside
+        // the view it decorates, so it cannot appear over a sheet that is still
+        // presented; a flow nested deeper than one sheet hosts its own — see
+        // TxController.Host.
+        .overlay { TxOverlay(host: .root) }
         .environment(model)
         .environment(tx)
         .earthThemed()
