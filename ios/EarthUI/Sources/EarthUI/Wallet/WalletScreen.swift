@@ -307,50 +307,71 @@ struct HomePanel: View {
         .scrollContentBackground(.hidden)
     }
 
-    /// Everything held that is not ERTH or ANML.
+    /// What is held beyond the spendable balance.
     ///
-    /// Those two are the balance widget above — repeating them here would say
-    /// the same thing twice on one screen. What is left is whatever else the
-    /// chain has listed, which on a young chain is usually nothing, and LP
-    /// shares once liquidity is provided.
+    /// ERTH and ANML are the widget directly above, so repeating them would
+    /// say the same thing twice on one screen — but *staked* ERTH is not that
+    /// balance. It is held and not spendable, which is exactly the distinction
+    /// the balance above cannot make, and a wallet that shows only the
+    /// spendable figure looks to its owner like it lost the rest.
     @ViewBuilder
     private var portfolio: some View {
         let others = model.holdings.filter { $0.token != .erth && $0.token != .anml && $0.amount > 0 }
-        if others.isEmpty {
-            Text("Nothing else yet. Tokens other than ERTH and ANML appear here — including your share of any pool you provide liquidity to.")
+        let hasPosition = model.totalStaked > 0 || model.rewards > 0 || model.unbondingTotal > 0
+
+        if others.isEmpty, !hasPosition {
+            Text("Nothing else yet. Staked ERTH, rewards, and any token other than ERTH and ANML appear here — including your share of a pool you provide liquidity to.")
                 .font(EarthType.bodySmall)
                 .foregroundStyle(theme.colors.textTertiary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 24)
                 .padding(.vertical, 16)
         } else {
+            if model.totalStaked > 0 {
+                positionRow("Staked", "Delegated · earning", "shield.fill",
+                            Figures.whole(model.totalStaked) + " ERTH")
+            }
+            if model.rewards > 0 {
+                positionRow("Rewards", "Claimable", "sparkles",
+                            Figures.precise(model.rewards) + " ERTH")
+            }
+            if model.unbondingTotal > 0 {
+                // Neither spendable nor earning, and it returns on its own —
+                // so it is named apart rather than folded into staked, where
+                // it would look like it was still working.
+                positionRow("Unbonding", "Returns when the period ends", "clock.arrow.circlepath",
+                            Figures.whole(model.unbondingTotal) + " ERTH")
+            }
             ForEach(others, id: \.token.denom) { row in
-                HStack(spacing: 12) {
-                    Text(String(row.token.symbol.prefix(1)))
-                        .font(EarthType.bodySmall)
-                        .foregroundStyle(theme.colors.accentInk)
-                        .frame(width: 32, height: 32)
-                        .background(theme.colors.accentTint, in: .rect(cornerRadius: 12))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(row.token.symbol)
-                            .font(EarthType.body)
-                            .foregroundStyle(theme.colors.textPrimary)
-                        Text(row.token.denom)
-                            .font(EarthType.bodySmall)
-                            .foregroundStyle(theme.colors.textTertiary)
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 8)
-                    Text(model.balancesVisible
-                         ? Figures.whole(row.amount, decimals: row.token.decimals)
-                         : "••••")
-                        .font(EarthType.amount)
-                        .foregroundStyle(theme.colors.textPrimary)
-                }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 12)
+                positionRow(row.token.symbol, row.token.denom, "circle.hexagongrid.fill",
+                            Figures.whole(row.amount, decimals: row.token.decimals))
             }
         }
+    }
+
+    private func positionRow(_ title: String, _ subtitle: String, _ symbol: String, _ value: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol)
+                .font(.system(size: 14))
+                .foregroundStyle(theme.colors.accentInk)
+                .frame(width: 32, height: 32)
+                .background(theme.colors.accentTint, in: .rect(cornerRadius: 12))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(EarthType.body)
+                    .foregroundStyle(theme.colors.textPrimary)
+                Text(subtitle)
+                    .font(EarthType.bodySmall)
+                    .foregroundStyle(theme.colors.textTertiary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Text(model.balancesVisible ? value : "••••")
+                .font(EarthType.amount)
+                .foregroundStyle(theme.colors.textPrimary)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 12)
     }
 }
 

@@ -461,6 +461,11 @@ public final class AppModel {
         delegations.reduce(BigInt(0)) { $0 + (BigInt($1.amount) ?? 0) }
     }
 
+    /// Stake on its way back out. Not spendable and not earning.
+    public var unbondingTotal: BigInt {
+        unbondings.reduce(BigInt(0)) { $0 + (BigInt($1.balance) ?? 0) }
+    }
+
     public func pool(for token: Token) -> Dex.Pool? {
         pools.first { $0.tokenDenom == token.denom }
     }
