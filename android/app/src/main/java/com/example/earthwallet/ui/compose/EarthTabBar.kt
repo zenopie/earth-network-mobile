@@ -23,7 +23,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import network.erth.wallet.ui.vendor.component.EarthHorizontalDivider
@@ -66,7 +65,7 @@ fun EarthTabBar(
                     Modifier
                         .weight(1f)
                         .clickable(
-                            // No ripple: five of these side by side, and a
+                            // No ripple: four of these side by side, and a
                             // rectangular ripple on each reads as a grid of
                             // boxes rather than a row of icons.
                             interactionSource = remember { MutableInteractionSource() },
@@ -78,7 +77,9 @@ fun EarthTabBar(
                 ) {
                     Image(
                         modifier = Modifier.size(22.dp),
-                        painter = painterResource(tab.icon),
+                        // Stroke weight carries the selection alongside ink and
+                        // label weight, which is what the iOS bar does.
+                        imageVector = tabGlyph(tab, selected),
                         colorFilter = ColorFilter.tint(tint),
                         contentDescription = null,
                     )

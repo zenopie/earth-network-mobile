@@ -66,7 +66,7 @@ class RegistrationActivity : ComponentActivity() {
 
         setContent {
             EarthTheme {
-                var step: Step by remember { mutableStateOf(Step.Camera) }
+                var step: Step by remember { mutableStateOf(Step.Intro) }
                 var mrz: PassportSession.Mrz? by remember { mutableStateOf(null) }
                 var stage: NfcStage by remember { mutableStateOf(NfcStage.Waiting) }
                 var mrzError: String? by remember { mutableStateOf(null) }
@@ -121,7 +121,8 @@ class RegistrationActivity : ComponentActivity() {
                 // the first step where there is nothing behind it.
                 BackHandler {
                     when (step) {
-                        Step.Camera -> finish()
+                        Step.Intro -> finish()
+                        Step.Camera -> step = Step.Intro
                         Step.Confirm -> step = Step.Camera
                         Step.Scan -> step = Step.Confirm
                     }
@@ -270,13 +271,15 @@ class RegistrationActivity : ComponentActivity() {
                         if (step == Step.Camera) return@BlankBgScaffold
                         EarthDetailTopBar(
                             title = when (step) {
+                                Step.Intro -> "Register"
                                 Step.Camera -> "Scan passport"
                                 Step.Confirm -> "Passport details"
                                 Step.Scan -> "Read the chip"
                             },
                             onBack = {
                                 when (step) {
-                                    Step.Camera -> finish()
+                                    Step.Intro -> finish()
+                                    Step.Camera -> step = Step.Intro
                                     Step.Confirm -> step = Step.Camera
                                     Step.Scan -> step = Step.Confirm
                                 }
@@ -289,10 +292,14 @@ class RegistrationActivity : ComponentActivity() {
                         bottom = padding.calculateBottomPadding(),
                     )
                     when (step) {
+                        Step.Intro -> RegistrationIntroScreen(
+                            onStart = { step = Step.Camera },
+                            modifier = inset,
+                        )
                         Step.Camera -> MrzCameraScreen(
                             onDetected = { mrz = it; step = Step.Confirm },
                             onManualEntry = { mrz = null; step = Step.Confirm },
-                            onBack = { finish() },
+                            onBack = { step = Step.Intro },
                             // No inset: the preview runs edge to edge and its
                             // own scrims carry the system bar padding.
                         )
@@ -325,7 +332,7 @@ class RegistrationActivity : ComponentActivity() {
         }
     }
 
-    private enum class Step { Camera, Confirm, Scan }
+    private enum class Step { Intro, Camera, Confirm, Scan }
 
     /**
      * Take NFC while in the foreground.
