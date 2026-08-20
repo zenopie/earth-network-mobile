@@ -17,6 +17,10 @@ struct WalletScreen: View {
     @State private var sending = false
     @State private var receiving = false
     @State private var registering = false
+    /// Which list is under the cards. The third action toggles it.
+    @State private var panel = Panel.activity
+
+    enum Panel { case activity, portfolio }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -24,6 +28,7 @@ struct WalletScreen: View {
             BalanceWidget()
             Spacer().frame(height: 16)
             HomeActions(
+                panel: $panel,
                 onReceive: { receiving = true },
                 onSend: { sending = true },
                 onRegister: { registering = true }
@@ -32,7 +37,7 @@ struct WalletScreen: View {
             .offset(y: 8)
             .zIndex(1)
             Spacer().frame(height: 2)
-            ActivityPanel()
+            HomePanel(panel: panel)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(theme.colors.bgPrimary)
@@ -119,6 +124,8 @@ struct HomeActions: View {
     @Environment(AppModel.self) private var model
     @Environment(TxController.self) private var tx
 
+    @Binding var panel: WalletScreen.Panel
+
     let onReceive: () -> Void
     let onSend: () -> Void
     let onRegister: () -> Void
@@ -131,7 +138,16 @@ struct HomeActions: View {
         HStack(spacing: 9) {
             BigIconButton(label: "Receive", symbol: "arrow.down", action: onReceive)
             BigIconButton(label: "Send", symbol: "arrow.up", action: onSend)
-            BigIconButton(label: "Earn", symbol: "chart.line.uptrend.xyaxis") { model.tab = .earn }
+            // Not a second way to the Earn tab — that is one tap away in the
+            // bar already. This swaps the list below, and names what it will
+            // switch to rather than what is showing, so the card is always an
+            // action.
+            BigIconButton(
+                label: panel == .activity ? "Portfolio" : "Activity",
+                symbol: panel == .activity ? "chart.pie" : "list.bullet"
+            ) {
+                panel = panel == .activity ? .portfolio : .activity
+            }
             // The ANML coin in its own colour: this is the one action here
             // about a specific token rather than about the balance, and the
             // mark says which token faster than the word does.
@@ -244,16 +260,18 @@ struct BigIconButton: View {
     }
 }
 
-/// The activity list, tucked under the action cards.
-struct ActivityPanel: View {
+/// The list under the action cards: what has happened, or what is held.
+struct HomePanel: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
+
+    let panel: WalletScreen.Panel
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
                 HStack {
-                    Text("Activity")
+                    Text(panel == .activity ? "Activity" : "Portfolio")
                         .font(EarthType.body).fontWeight(.semibold)
                         .foregroundStyle(theme.colors.textPrimary)
                     Spacer()
@@ -261,7 +279,9 @@ struct ActivityPanel: View {
                 .padding(.horizontal, 24)
                 .padding(.vertical, 8)
 
-                if let activity = model.activity {
+                if panel == .portfolio {
+                    portfolio
+                } else if let activity = model.activity {
                     if activity.isEmpty {
                         Text("Nothing yet. Transactions appear here once they are confirmed.")
                             .font(EarthType.bodySmall)
@@ -285,6 +305,52 @@ struct ActivityPanel: View {
         }
         .refreshable { await model.refresh() }
         .scrollContentBackground(.hidden)
+    }
+
+    /// Everything held that is not ERTH or ANML.
+    ///
+    /// Those two are the balance widget above — repeating them here would say
+    /// the same thing twice on one screen. What is left is whatever else the
+    /// chain has listed, which on a young chain is usually nothing, and LP
+    /// shares once liquidity is provided.
+    @ViewBuilder
+    private var portfolio: some View {
+        let others = model.holdings.filter { $0.token != .erth && $0.token != .anml && $0.amount > 0 }
+        if others.isEmpty {
+            Text("Nothing else yet. Tokens other than ERTH and ANML appear here — including your share of any pool you provide liquidity to.")
+                .font(EarthType.bodySmall)
+                .foregroundStyle(theme.colors.textTertiary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 16)
+        } else {
+            ForEach(others, id: \.token.denom) { row in
+                HStack(spacing: 12) {
+                    Text(String(row.token.symbol.prefix(1)))
+                        .font(EarthType.bodySmall)
+                        .foregroundStyle(theme.colors.accentInk)
+                        .frame(width: 32, height: 32)
+                        .background(theme.colors.accentTint, in: .rect(cornerRadius: 12))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(row.token.symbol)
+                            .font(EarthType.body)
+                            .foregroundStyle(theme.colors.textPrimary)
+                        Text(row.token.denom)
+                            .font(EarthType.bodySmall)
+                            .foregroundStyle(theme.colors.textTertiary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    Text(model.balancesVisible
+                         ? Figures.whole(row.amount, decimals: row.token.decimals)
+                         : "••••")
+                        .font(EarthType.amount)
+                        .foregroundStyle(theme.colors.textPrimary)
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 12)
+            }
+        }
     }
 }
 
