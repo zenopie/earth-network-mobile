@@ -259,13 +259,18 @@ struct EarthTabBar: View {
                         }
                         .foregroundStyle(selected ? theme.colors.textPrimary : theme.colors.textTertiary)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, theme.space.x4)
+                        .padding(.vertical, theme.space.x2)
                         .contentShape(.rect)
                     }
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.vertical, theme.space.x8)
+            // Top only. The home indicator already reserves room below, and
+            // padding on top of a safe-area inset is the gap being complained
+            // about — it reads as the bar floating rather than sitting on the
+            // edge.
+            .padding(.top, theme.space.x8)
+            .padding(.bottom, theme.space.x2)
         }
         .background(theme.colors.bgPrimary)
     }

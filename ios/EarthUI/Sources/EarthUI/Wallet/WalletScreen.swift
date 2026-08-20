@@ -129,9 +129,9 @@ struct HomeActions: View {
 
     var body: some View {
         HStack(spacing: 9) {
-            BigIconButton(label: "Receive", glyph: TabGlyphPaths.receive, action: onReceive)
-            BigIconButton(label: "Send", glyph: TabGlyphPaths.send, action: onSend)
-            BigIconButton(label: "Earn", glyph: TabGlyphPaths.earn, action: {})
+            BigIconButton(label: "Receive", symbol: "arrow.down", action: onReceive)
+            BigIconButton(label: "Send", symbol: "arrow.up", action: onSend)
+            BigIconButton(label: "Earn", symbol: "chart.line.uptrend.xyaxis", action: {})
             // The ANML coin in its own colour: this is the one action here
             // about a specific token rather than about the balance, and the
             // mark says which token faster than the word does.
@@ -193,7 +193,10 @@ struct HomeActions: View {
 struct BigIconButton: View {
     @Environment(\.earth) private var theme
     let label: String
-    var glyph: String?
+    /// A system glyph, tinted with the card's ink.
+    var symbol: String?
+    /// Artwork, drawn as-is. Only the ANML coin: it names a specific token,
+    /// and a monochrome outline of a coin identifies nothing.
     var image: Image?
     var enabled = true
     let action: () -> Void
@@ -211,8 +214,10 @@ struct BigIconButton: View {
                         // which token it claims, and greying it out costs that
                         // to restate what the fill and the label already say.
                         image.resizable().scaledToFit()
-                    } else if let glyph {
-                        VectorGlyph(pathData: glyph).foregroundStyle(ink)
+                    } else if let symbol {
+                        Image(systemName: symbol)
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundStyle(ink)
                     }
                 }
                 .frame(width: 24, height: 24)
