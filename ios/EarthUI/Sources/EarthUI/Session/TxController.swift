@@ -107,12 +107,12 @@ public final class TxController {
         build: @escaping (EarthKey) throws -> [ProtoAny],
         model: AppModel
     ) async throws -> String {
-        // The phrase is read behind its own prompt here, at the moment of
-        // signing — not cached when the app unlocked. The key lives for this
-        // call and no longer, which is why `withKey` is not used: the broadcast
-        // is async and the key has to outlive a synchronous closure.
-        let wallets = try model.store.list(
-            reason: "Sign this \(details.action.lowercased()) transaction")
+        // Decrypted at the moment of signing rather than kept resident. What
+        // the session holds is the PIN, not the phrase — so a snapshot of the
+        // app's memory between transactions has nothing to take.
+        guard let pin = model.pin else { throw WalletStore.Error.notFound }
+        let store = model.store
+        let wallets = try await Task.detached { try store.unlock(pin: pin) }.value
         guard let wallet = wallets.first(where: { $0.address == model.address })
             ?? wallets.first
         else { throw WalletStore.Error.notFound }

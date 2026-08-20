@@ -69,6 +69,13 @@ public final class AppModel {
     /// would block both.
     public private(set) var lastError: String?
 
+    /// The PIN, held only while the app is unlocked.
+    ///
+    /// Android keeps the PIN for the session and decrypts on demand rather
+    /// than keeping the phrase resident; this does the same. Locking drops it,
+    /// and with it the ability to read anything.
+    private var sessionPin: String?
+
     public let client: EarthClient
     public let store: WalletStore
 
@@ -92,38 +99,60 @@ public final class AppModel {
         // Simulator-only and compiled out of every device build.
         if let phrase = UserDefaults.standard.string(forKey: "demoWallet"),
            BIP39.isValid(mnemonic: phrase) {
-            Task { try? await adopt(mnemonic: phrase) }
+            // A fixed PIN, since nothing can type one either.
+            Task { try? await adopt(mnemonic: phrase, name: "Wallet 1", pin: "0000") }
             return
         }
         #endif
         phase = store.exists ? .locked : .setup
     }
 
-    /// Unlock by proving presence once, and keep only the address.
+    /// Unlock with the PIN.
     ///
-    /// The key itself is not held: every signature re-reads the phrase behind
-    /// its own prompt. What unlocking buys is the address, which is needed to
-    /// query anything at all.
-    public func unlock() async -> Bool {
+    /// A wrong PIN is counted, because four digits is 10,000 combinations and
+    /// the only thing making that a secret is how many guesses are allowed.
+    public func unlock(pin: String) async -> Bool {
+        guard !UnlockAttempts.status().lockedOut else { return false }
+
         do {
-            let wallets = try store.list(reason: "Unlock your Earth wallet")
+            // Stretching the PIN is deliberately slow — 200,000 rounds — so it
+            // runs off the main actor. On the main thread it is a visible
+            // freeze on every unlock and, because signing re-opens the vault,
+            // on every transaction too.
+            let store = self.store
+            let wallets = try await Task.detached { try store.unlock(pin: pin) }.value
             guard !wallets.isEmpty else { throw WalletStore.Error.notFound }
+            UnlockAttempts.recordSuccess()
+            sessionPin = pin
             self.wallets = wallets
             selected = min(UserDefaults.standard.integer(forKey: "selectedWallet"),
                            wallets.count - 1)
             address = wallets[selected].address
             walletName = wallets[selected].name
+            lastError = nil
             phase = .ready
             await refresh()
             return true
         } catch {
-            lastError = describe(error)
+            if case WalletStore.Error.wrongPin = error {
+                UnlockAttempts.recordFailure()
+            } else {
+                lastError = describe(error)
+            }
             return false
         }
     }
 
-    public func adopt(mnemonic: String, name: String = "Wallet 1") async throws {
-        try store.save(mnemonic: mnemonic, name: name)
+    /// The PIN, for the paths that need to read the vault again.
+    ///
+    /// Returns nil when locked, which is the only correct answer then.
+    public var pin: String? { sessionPin }
+
+    public func adopt(mnemonic: String, name: String, pin: String) async throws {
+        try store.create(mnemonic: mnemonic, name: name, pin: pin)
+        sessionPin = pin
+        UnlockAttempts.recordSuccess()
+        wallets = try store.unlock(pin: pin)
         walletName = name
         selected = 0
         UserDefaults.standard.set(name, forKey: "walletName")
@@ -163,9 +192,10 @@ public final class AppModel {
         UserDefaults.standard.set(true, forKey: marker)
     }
 
-    /// Read the wallet list. Costs one prompt.
+    /// Re-read the wallet list from the vault.
     public func loadWallets() {
-        wallets = (try? store.list(reason: "Show your wallets")) ?? []
+        guard let sessionPin else { return }
+        wallets = (try? store.unlock(pin: sessionPin)) ?? wallets
         selected = min(UserDefaults.standard.integer(forKey: "selectedWallet"),
                        max(0, wallets.count - 1))
     }
@@ -194,7 +224,8 @@ public final class AppModel {
 
     /// Add a wallet and switch to it.
     public func addWallet(mnemonic: String, name: String) async throws {
-        let index = try store.add(mnemonic: mnemonic, name: name)
+        guard let sessionPin else { throw WalletStore.Error.notFound }
+        let index = try store.add(mnemonic: mnemonic, name: name, pin: sessionPin)
         loadWallets()
         await select(index)
     }
@@ -204,6 +235,8 @@ public final class AppModel {
     }
 
     public func lock() {
+        sessionPin = nil
+        wallets = []
         phase = store.exists ? .locked : .setup
     }
 
@@ -328,6 +361,8 @@ public final class AppModel {
         case WalletStore.Error.noDeviceLock:
             "Set a passcode on this device first. Your recovery phrase is stored behind it, and without one there is nothing to protect it with."
         case WalletStore.Error.invalidMnemonic: "That is not a valid recovery phrase."
+        case WalletStore.Error.wrongPin: "Incorrect PIN."
+        case WalletStore.Error.corrupt: "The stored wallet could not be read."
         case let EarthClient.Error.rejected(code, log): "Rejected (code \(code)): \(log)"
         case let EarthClient.Error.executionFailed(code, log): "Failed (code \(code)): \(log)"
         default: String(describing: error)

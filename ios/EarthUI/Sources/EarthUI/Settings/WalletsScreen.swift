@@ -110,11 +110,12 @@ struct WalletsScreen: View {
         .buttonStyle(.plain)
     }
 
-    /// Reading the phrase goes through the same prompt every signature does —
-    /// showing it is exactly as sensitive as spending with it.
+    /// Reading the phrase needs the same PIN a signature does — showing it is
+    /// exactly as sensitive as spending with it.
     private func reveal() {
         do {
-            let wallets = try model.store.list(reason: "Reveal your recovery phrase")
+            guard let pin = model.pin else { throw WalletStore.Error.notFound }
+            let wallets = try model.store.unlock(pin: pin)
             revealed = wallets.first { $0.address == model.address }?.mnemonic
             error = nil
         } catch {
