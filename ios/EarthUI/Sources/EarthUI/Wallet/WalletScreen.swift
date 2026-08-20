@@ -131,7 +131,7 @@ struct HomeActions: View {
         HStack(spacing: 9) {
             BigIconButton(label: "Receive", symbol: "arrow.down", action: onReceive)
             BigIconButton(label: "Send", symbol: "arrow.up", action: onSend)
-            BigIconButton(label: "Earn", symbol: "chart.line.uptrend.xyaxis", action: {})
+            BigIconButton(label: "Earn", symbol: "chart.line.uptrend.xyaxis") { model.tab = .earn }
             // The ANML coin in its own colour: this is the one action here
             // about a specific token rather than about the balance, and the
             // mark says which token faster than the word does.

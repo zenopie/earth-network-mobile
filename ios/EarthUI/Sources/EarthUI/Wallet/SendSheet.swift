@@ -11,6 +11,7 @@ struct SendSheet: View {
     @State private var token = Token.erth
     @State private var recipient = ""
     @State private var amount = ""
+    @State private var scanning = false
 
     var body: some View {
         NavigationStack {
@@ -24,6 +25,9 @@ struct SendSheet: View {
                         .disabled(!isValid)
                 }
                 .padding(theme.space.gutter)
+            }
+            .sheet(isPresented: $scanning) {
+                QRScanSheet { recipient = $0 }.earthThemed()
             }
             .navigationTitle("Send")
             .navigationBarTitleDisplayMode(.inline)
@@ -46,10 +50,19 @@ struct SendSheet: View {
     private var recipientField: some View {
         VStack(alignment: .leading, spacing: theme.space.x8) {
             EarthLabel("To")
-            TextField("earth1…", text: $recipient, axis: .vertical)
-                .font(EarthType.mono)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
+            HStack(spacing: theme.space.x8) {
+                TextField("earth1…", text: $recipient, axis: .vertical)
+                    .font(EarthType.mono)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                // Inside the field rather than beside it: scanning is a way of
+                // filling this in, not a separate action on the screen.
+                Button { scanning = true } label: {
+                    Image(systemName: "qrcode.viewfinder")
+                        .font(.system(size: 20))
+                        .foregroundStyle(theme.colors.accentInk)
+                }
+            }
                 .padding(theme.space.x12)
                 .background(theme.colors.bgPrimary, in: .rect(cornerRadius: theme.space.radiusMd))
                 .overlay {

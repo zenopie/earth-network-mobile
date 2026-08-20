@@ -187,7 +187,7 @@ extension MRZScanner: AVCaptureVideoDataOutputSampleBufferDelegate {
 struct CameraPreview: UIViewRepresentable {
     let session: AVCaptureSession
     /// Applied to the preview layer's own connection, which the session's
-    /// outputs do not cover.
+    /// outputs do not cover. 90 is upright for a portrait screen.
     let angle: CGFloat
 
     func makeUIView(context: Context) -> PreviewView {

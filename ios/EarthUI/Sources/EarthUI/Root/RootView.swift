@@ -47,10 +47,10 @@ public struct RootView: View {
     }
 }
 
-enum Tab: String, CaseIterable, Hashable {
+public enum Tab: String, CaseIterable, Hashable {
     case wallet, earn, swap, govern
 
-    var label: String { rawValue.capitalized }
+    public var label: String { rawValue.capitalized }
 
     /// `-demoTab swap` opens on that tab. Simulator-only, and for the same
     /// reason `-demoWallet` exists: nothing can tap a simulator from the
@@ -88,7 +88,6 @@ enum Tab: String, CaseIterable, Hashable {
 struct TabsView: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
-    @State private var selection = Tab.initialSelection
     @State private var settingsOpen = false
     @State private var liquidityOpen = false
     /// `-demoSheet settings` opens straight into one, for the same reason
@@ -114,19 +113,19 @@ struct TabsView: View {
                 // The Wallet tab is named for whose wallet it is; the other
                 // tabs are named for what they do. "Wallet" over a balance
                 // says nothing the balance does not.
-                title: selection == .wallet ? model.walletName : selection.label,
-                showsBalances: selection == .wallet || selection == .earn,
+                title: model.tab == .wallet ? model.walletName : model.tab.label,
+                showsBalances: model.tab == .wallet || model.tab == .earn,
                 // Tabs are destinations, not toolbars, so most have no action.
                 // Swap has one because providing liquidity is adjacent to
                 // swapping without being part of it — same market, different
                 // thing to do with it.
-                tabAction: selection == .swap
+                tabAction: model.tab == .swap
                     ? .init(icon: "drop", label: "Liquidity") { liquidityOpen = true }
                     : nil,
                 onSettings: { settingsOpen = true }
             )
             Group {
-                switch selection {
+                switch model.tab {
                 case .wallet: WalletScreen()
                 case .earn: EarnScreen()
                 case .swap: SwapScreen()
@@ -134,10 +133,13 @@ struct TabsView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            EarthTabBar(selection: $selection)
+            EarthTabBar(selection: Binding(get: { model.tab }, set: { model.tab = $0 }))
         }
         .background(theme.colors.bgPrimary.ignoresSafeArea())
-        .task { await model.loadLPShare() }
+        .task {
+            model.tab = Tab.initialSelection
+            await model.loadLPShare()
+        }
         .sheet(isPresented: $settingsOpen) { SettingsSheet().earthThemed() }
         .sheet(item: $demoSheet) { sheet in
             switch sheet {

@@ -59,6 +59,13 @@ public final class AppModel {
     /// Shoulder-surfing is the reason it exists, and the state is deliberately
     /// not persisted: unhiding is a decision about the room you are in, not a
     /// setting.
+    /// Which tab is showing.
+    ///
+    /// On the model rather than in the tab view because screens need to send
+    /// you elsewhere — the home screen's Earn card is a link to a tab, and a
+    /// card that cannot reach the selection is a button that does nothing.
+    public var tab: Tab = .wallet
+
     public private(set) var balancesVisible = true
 
     public private(set) var refreshing = false
