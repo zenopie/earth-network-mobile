@@ -61,7 +61,7 @@ public extension EarthClient {
 
     func registrationStatus(_ address: String) async -> Personhood.RegistrationStatus {
         guard let json = try? await rest.get(
-            "/earth-network/earth/personhood/v1/registration/\(address)"
+            "/earth/personhood/v1/registration/\(address)"
         ) else { return .none }
         return Personhood.RegistrationStatus(
             registered: json.registered.bool ?? false,
@@ -78,7 +78,7 @@ public extension EarthClient {
     /// stream, since every registration carries the same weight.
     func registrationCount() async -> Int64 {
         guard let json = try? await rest.get(
-            "/earth-network/earth/personhood/v1/registration_count"
+            "/earth/personhood/v1/registration_count"
         ) else { return 0 }
         return json.count.int64(default: 0)
     }
@@ -86,7 +86,7 @@ public extension EarthClient {
     /// Registrations per issuing country, largest first.
     func registrationCountries() async -> [Personhood.CountryCount] {
         guard let json = try? await rest.get(
-            "/earth-network/earth/personhood/v1/registration_countries"
+            "/earth/personhood/v1/registration_countries"
         ) else { return [] }
         return json.countries.array
             .map {
@@ -102,7 +102,7 @@ public extension EarthClient {
     func registrations(byDSC dscKeyHex: String) async -> Int64 {
         let key = dscKeyHex.hasPrefix("0x") ? String(dscKeyHex.dropFirst(2)) : dscKeyHex
         guard let json = try? await rest.get(
-            "/earth-network/earth/personhood/v1/registrations_by_dsc/\(key)"
+            "/earth/personhood/v1/registrations_by_dsc/\(key)"
         ) else { return 0 }
         return json.count.int64(default: 0)
     }

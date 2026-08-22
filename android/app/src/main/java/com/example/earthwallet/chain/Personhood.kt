@@ -19,7 +19,7 @@ import org.json.JSONObject
 object Personhood {
 
     fun isRegistered(address: String): Boolean {
-        val (code, body) = EarthRest.get("/earth-network/earth/personhood/v1/registration/$address")
+        val (code, body) = EarthRest.get("/earth/personhood/v1/registration/$address")
         if (code !in 200..299) return false
         return JSONObject(body).optBoolean("registered", false)
     }
@@ -28,7 +28,7 @@ object Personhood {
     data class RegistrationStatus(val registered: Boolean, val expired: Boolean, val lastAnmlClaim: Long)
 
     fun registrationStatus(address: String): RegistrationStatus {
-        val (code, body) = EarthRest.get("/earth-network/earth/personhood/v1/registration/$address")
+        val (code, body) = EarthRest.get("/earth/personhood/v1/registration/$address")
         if (code !in 200..299) return RegistrationStatus(false, false, 0L)
         val json = JSONObject(body)
         val reg = json.optJSONObject("registration")
@@ -69,7 +69,7 @@ object Personhood {
      * query now that the options belong to x/allocation.
      */
     fun registrationCount(): Long {
-        val (code, body) = EarthRest.get("/earth-network/earth/personhood/v1/registration_count")
+        val (code, body) = EarthRest.get("/earth/personhood/v1/registration_count")
         if (code !in 200..299) return 0L
         return JSONObject(body).optString("count", "0").toLongOrNull() ?: 0L
     }
@@ -83,7 +83,7 @@ object Personhood {
      * no country attribute. Powers the explorer's registrations tab.
      */
     fun registrationCountries(): List<CountryCount> {
-        val (code, body) = EarthRest.get("/earth-network/earth/personhood/v1/registration_countries")
+        val (code, body) = EarthRest.get("/earth/personhood/v1/registration_countries")
         if (code !in 200..299) return emptyList()
         val arr = JSONObject(body).optJSONArray("countries") ?: return emptyList()
         val out = ArrayList<CountryCount>(arr.length())
@@ -103,7 +103,7 @@ object Personhood {
     fun registrationsByDsc(dscKeyHex: String): Long {
         val key = dscKeyHex.removePrefix("0x")
         val (code, body) = EarthRest.get(
-            "/earth-network/earth/personhood/v1/registrations_by_dsc/$key"
+            "/earth/personhood/v1/registrations_by_dsc/$key"
         )
         if (code !in 200..299) return 0L
         return JSONObject(body).optString("count", "0").toLongOrNull() ?: 0L

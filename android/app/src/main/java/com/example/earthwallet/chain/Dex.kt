@@ -38,7 +38,7 @@ object Dex {
 
     /** How long withdrawn shares are escrowed before they pay out. */
     fun lpUnbondingSeconds(): Long {
-        val (code, body) = EarthRest.get("/earth-network/earth/dex/v1/params")
+        val (code, body) = EarthRest.get("/earth/dex/v1/params")
         if (code !in 200..299) return 0
         return JSONObject(body).getJSONObject("params")
             .optString("lp_unbonding_seconds", "0").toLongOrNull() ?: 0
@@ -50,7 +50,7 @@ object Dex {
     // --- queries ---
 
     fun pools(): List<Pool> {
-        val (code, body) = EarthRest.get("/earth-network/earth/dex/v1/pool")
+        val (code, body) = EarthRest.get("/earth/dex/v1/pool")
         if (code !in 200..299) return emptyList()
         val arr = JSONObject(body).optJSONArray("pool") ?: return emptyList()
         val out = ArrayList<Pool>(arr.length())
@@ -86,7 +86,7 @@ object Dex {
      * without this the week looks like the funds went nowhere.
      */
     fun unbondings(address: String): List<Unbonding> {
-        val (code, body) = EarthRest.get("/earth-network/earth/dex/v1/unbondings/$address")
+        val (code, body) = EarthRest.get("/earth/dex/v1/unbondings/$address")
         if (code !in 200..299) return emptyList()
         val arr = JSONObject(body).optJSONArray("unbondings") ?: return emptyList()
         return (0 until arr.length()).map { i ->
@@ -104,7 +104,7 @@ object Dex {
 
     /** Swap fee as a percent string (e.g. "0.3"). */
     fun swapFeePercent(): String {
-        val (code, body) = EarthRest.get("/earth-network/earth/dex/v1/params")
+        val (code, body) = EarthRest.get("/earth/dex/v1/params")
         if (code !in 200..299) return "0"
         return JSONObject(body).getJSONObject("params").optString("swap_fee", "0")
     }

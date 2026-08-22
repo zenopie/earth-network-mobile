@@ -63,7 +63,7 @@ object Allocation {
 
     fun stream(streamId: StreamId): Stream {
         val (code, body) = EarthRest.get(
-            "/earth-network/earth/allocation/v1/options/${path(streamId)}"
+            "/earth/allocation/v1/options/${path(streamId)}"
         )
         if (code !in 200..299) return Stream(emptyList(), "0")
         val json = JSONObject(body)
@@ -75,7 +75,7 @@ object Allocation {
 
     /** All of a stream's allocation options. */
     fun allocationOptions(stream: StreamId): List<OptionInfo> {
-        val (code, body) = EarthRest.get("/earth-network/earth/allocation/v1/options/${path(stream)}")
+        val (code, body) = EarthRest.get("/earth/allocation/v1/options/${path(stream)}")
         if (code !in 200..299) return emptyList()
         return parseOptions(JSONObject(body))
     }
@@ -108,7 +108,7 @@ object Allocation {
      */
     fun voterAllocations(stream: StreamId, address: String): List<Pair<Long, Long>> {
         val (code, body) = EarthRest.get(
-            "/earth-network/earth/allocation/v1/voter/${path(stream)}/$address"
+            "/earth/allocation/v1/voter/${path(stream)}/$address"
         )
         if (code !in 200..299) return emptyList()
         val voter = JSONObject(body).optJSONObject("voter") ?: return emptyList()

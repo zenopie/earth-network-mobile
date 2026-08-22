@@ -65,7 +65,7 @@ public extension EarthClient {
 
     func stream(_ stream: Msg.StreamID) async -> Allocation.Stream {
         guard let json = try? await rest.get(
-            "/earth-network/earth/allocation/v1/options/\(Allocation.path(stream))"
+            "/earth/allocation/v1/options/\(Allocation.path(stream))"
         ) else { return .empty }
         return Allocation.Stream(
             options: json.options.array.map {
@@ -93,7 +93,7 @@ public extension EarthClient {
     /// a valid state for someone who has never allocated.
     func voterAllocations(_ stream: Msg.StreamID, address: String) async -> [Allocation.Weight] {
         guard let json = try? await rest.get(
-            "/earth-network/earth/allocation/v1/voter/\(Allocation.path(stream))/\(address)"
+            "/earth/allocation/v1/voter/\(Allocation.path(stream))/\(address)"
         ) else { return [] }
         return json.voter.percentages.array.map {
             Allocation.Weight(

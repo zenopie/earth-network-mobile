@@ -54,7 +54,7 @@ public enum Dex {
 public extension EarthClient {
 
     func pools() async -> [Dex.Pool] {
-        guard let json = try? await rest.get("/earth-network/earth/dex/v1/pool") else { return [] }
+        guard let json = try? await rest.get("/earth/dex/v1/pool") else { return [] }
         return json.pool.array.compactMap { p in
             Dex.Pool(
                 id: p.pool_id.uint64(default: 0),
@@ -74,13 +74,13 @@ public extension EarthClient {
 
     /// Swap fee as a percent string, e.g. "0.3".
     func swapFeePercent() async -> String {
-        guard let json = try? await rest.get("/earth-network/earth/dex/v1/params") else { return "0" }
+        guard let json = try? await rest.get("/earth/dex/v1/params") else { return "0" }
         return json.params.swap_fee.string(default: "0")
     }
 
     /// How long withdrawn shares are escrowed before they pay out.
     func lpUnbondingSeconds() async -> Int64 {
-        guard let json = try? await rest.get("/earth-network/earth/dex/v1/params") else { return 0 }
+        guard let json = try? await rest.get("/earth/dex/v1/params") else { return 0 }
         return json.params.lp_unbonding_seconds.int64(default: 0)
     }
 
@@ -90,7 +90,7 @@ public extension EarthClient {
     /// show for it — the shares have left and the assets have not arrived — so
     /// without this the week looks like the funds went nowhere.
     func unbondings(_ address: String) async -> [Dex.Unbonding] {
-        guard let json = try? await rest.get("/earth-network/earth/dex/v1/unbondings/\(address)")
+        guard let json = try? await rest.get("/earth/dex/v1/unbondings/\(address)")
         else { return [] }
         return json.unbondings.array.map { u in
             Dex.Unbonding(
