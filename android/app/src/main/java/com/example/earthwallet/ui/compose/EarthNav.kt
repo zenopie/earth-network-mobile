@@ -81,6 +81,9 @@ sealed interface EarthRoute {
     /** Chain proposals — the SDK's governance, not the streams. */
     data object Proposals : EarthRoute
 
+    /** One proposal in full, and where it is voted on. */
+    data class ProposalDetail(val id: Long) : EarthRoute
+
     data object Personhood : EarthRoute
     data object Wallets : EarthRoute
     data object CreateWallet : EarthRoute

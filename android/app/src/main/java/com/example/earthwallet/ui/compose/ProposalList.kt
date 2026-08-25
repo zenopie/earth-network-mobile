@@ -1,6 +1,7 @@
 package network.erth.wallet.ui.compose
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,6 +15,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import network.erth.wallet.chain.Gov
@@ -36,6 +38,8 @@ import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
 fun ProposalList(
     proposals: List<Gov.Proposal>?,
     modifier: Modifier = Modifier,
+    /** Opens the proposal in full. Null leaves the rows inert.  */
+    onOpen: ((Gov.Proposal) -> Unit)? = null,
 ) {
     val dimens = EarthTheme.dimens
 
@@ -56,7 +60,7 @@ fun ProposalList(
             )
 
             else -> proposals.forEach { p ->
-                ProposalRow(p)
+                ProposalRow(p, onOpen)
                 Spacer(Modifier.height(dimens.space8))
             }
         }
@@ -64,15 +68,19 @@ fun ProposalList(
 }
 
 @Composable
-private fun ProposalRow(proposal: Gov.Proposal) {
+private fun ProposalRow(
+    proposal: Gov.Proposal,
+    onOpen: ((Gov.Proposal) -> Unit)?,
+) {
     val dimens = EarthTheme.dimens
     Column(
         Modifier
             .fillMaxWidth()
-            .background(
-                EarthColors.Surfaces.bgSecondary,
-                RoundedCornerShape(EarthDimensions.Radius.radius3xl),
-            )
+            .clip(RoundedCornerShape(EarthDimensions.Radius.radius3xl))
+            .background(EarthColors.Surfaces.bgSecondary)
+            // Clickable before the padding so the whole card is the target,
+            // not just the text inside it.
+            .let { m -> if (onOpen != null) m.clickable { onOpen(proposal) } else m }
             .padding(dimens.space16),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -82,7 +90,7 @@ private fun ProposalRow(proposal: Gov.Proposal) {
                 color = EarthColors.Text.textTertiary,
             )
             Spacer(Modifier.weight(1f))
-            StatusPill(proposal.status)
+            ProposalStatusPill(proposal.status)
         }
         Spacer(Modifier.height(dimens.space4))
         Text(
@@ -132,6 +140,7 @@ private fun ProposalRow(proposal: Gov.Proposal) {
                 color = EarthColors.Text.textTertiary,
             )
         }
+
     }
 }
 
@@ -154,7 +163,7 @@ private fun androidx.compose.foundation.layout.RowScope.TallyPart(
 }
 
 @Composable
-private fun StatusPill(status: String) {
+internal fun ProposalStatusPill(status: String) {
     val dimens = EarthTheme.dimens
     // The chain's enum names are for the wire; these are for reading.
     val (label, tint) = when (status) {
