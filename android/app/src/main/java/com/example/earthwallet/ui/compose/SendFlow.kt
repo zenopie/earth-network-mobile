@@ -89,7 +89,6 @@ fun SendFlow(
                 details = TxConfirmDetails(
                     action = "Send ${selected.symbol}",
                     msgTypeUrl = "/cosmos.bank.v1beta1.MsgSend",
-                    feeUerth = TxController.DEFAULT_FEE_UERTH,
                     balanceUerth = state.balanceUerth,
                     amountLabel = "Amount",
                     amountValue = "$amount ${selected.symbol}",

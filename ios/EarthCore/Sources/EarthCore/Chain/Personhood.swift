@@ -50,11 +50,15 @@ public enum Personhood {
     /// precisely the case that matters, since a new human's first transaction
     /// is always this one.
     ///
-    /// Generous rather than tuned: the fee is flat rather than gas x price, so
-    /// headroom costs nothing while an under-estimate burns both the fee and
-    /// the ad view that paid for it.
+    /// Generous rather than tuned. Note that headroom is NOT free: the fee is
+    /// `ceil(gas x minimum-gas-prices)`, so this limit costs 15,000 uerth at
+    /// 0.005uerth whether or not the gas is used. The flat "2000" that used to
+    /// sit here was the fee for 400,000 gas, and every registration was
+    /// rejected with "insufficient fees; got: 2000uerth required: 15000uerth".
+    /// An under-estimate still burns both the fee and the ad view that paid for
+    /// it, so the headroom stays — but it is a priced decision, not a free one.
     public static let registerGasLimit: UInt64 = 3_000_000
-    public static let registerFeeUerth = "2000"
+    public static var registerFeeUerth: String { Fees.forGas(registerGasLimit) }
 }
 
 public extension EarthClient {

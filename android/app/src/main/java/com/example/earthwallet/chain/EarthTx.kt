@@ -48,8 +48,15 @@ object EarthTx {
         key: ECKey,
         msgs: List<ProtoAny>,
         gasLimit: Long = 400_000L,
-        feeUerth: String = "2000",
+        // Defaults to whatever gasLimit costs, so a caller that raises the gas
+        // and forgets the fee gets a valid transaction rather than a rejection.
+        feeUerth: String = Fees.forGasString(gasLimit),
     ): String {
+        // Already on a background thread here (broadcast does network IO), so
+        // this is the right place to learn the node's gas price. Fees.forGas
+        // falls back to a constant until this succeeds.
+        Fees.prime()
+
         val signer = EarthWallet.address(key)
         val account = getAccount(signer)
 

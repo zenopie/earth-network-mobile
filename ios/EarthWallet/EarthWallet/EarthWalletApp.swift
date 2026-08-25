@@ -1,3 +1,4 @@
+import EarthCore
 import EarthUI
 import SwiftUI
 import UIKit
@@ -17,6 +18,14 @@ struct EarthWalletApp: App {
         // EarthUI is a library and cannot see the delegate, so it is handed a
         // setter rather than reaching for one.
         AppOrientation.install { AppDelegate.orientations = $0 }
+
+        // Learn the node's minimum gas price before any screen quotes a fee.
+        // Fees.forGas is synchronous — it is read while laying out a sheet and
+        // while working out a spendable balance — so it answers from cache or a
+        // fallback, and this is what fills the cache. Detached and unawaited: a
+        // node that cannot be reached must not delay launch, and the fallback
+        // is the right answer on this chain anyway.
+        Task.detached(priority: .utility) { await Fees.prime() }
     }
 
     var body: some Scene {

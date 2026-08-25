@@ -1,8 +1,10 @@
 package network.erth.wallet
 
 import android.app.Application
+import network.erth.wallet.chain.Fees
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import java.security.Security
+import kotlin.concurrent.thread
 
 /**
  * Application entry point.
@@ -21,6 +23,16 @@ class App : Application() {
             Security.insertProviderAt(BouncyCastleProvider(), 1)
         } catch (e: Throwable) {
             // Best-effort: fall back to the platform providers if replacement fails.
+        }
+
+        // Learn the node's minimum gas price before any screen needs to quote a
+        // fee. Fees.forGas must never block — it is read from composables — so
+        // it answers from cache or a fallback, and this is what fills the cache.
+        // On a background thread and best-effort: a node that cannot be reached
+        // at launch must not stop the app from starting, and the fallback is
+        // the right answer on this chain anyway.
+        thread(isDaemon = true, name = "fees-prime") {
+            runCatching { Fees.prime() }
         }
     }
 }

@@ -18,6 +18,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableLongStateOf
 import kotlinx.coroutines.delay
 import network.erth.wallet.Constants
+import network.erth.wallet.chain.Fees
+import network.erth.wallet.chain.Personhood
 import network.erth.wallet.chain.Bank
 import network.erth.wallet.ui.ads.RewardedAds
 import network.erth.wallet.ui.compose.TxConfirmDetails
@@ -370,8 +372,16 @@ class RegistrationActivity : ComponentActivity() {
     }
 
     companion object {
-        /** What MsgRegister costs at the chain's minimum gas price. */
-        private const val REGISTER_FEE = 2_000L
+        /**
+         * What MsgRegister costs at the node's minimum gas price.
+         *
+         * Both the fee shown on the confirm sheet and the threshold the gas
+         * poll waits for, so a stale value here is doubly wrong: it understates
+         * the cost to the user AND stops waiting for the ad grant before enough
+         * has arrived to pay for the transaction. It was a flat 2,000 while the
+         * transaction actually needed 15,000.
+         */
+        private val REGISTER_FEE: Long get() = Fees.forGas(Personhood.REGISTER_GAS_LIMIT)
 
         // The grant is a bank send, so it lands in a block. Roughly a minute of
         // patience, which is generous for a five-second block time and cheap

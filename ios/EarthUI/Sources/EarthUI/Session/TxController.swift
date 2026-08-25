@@ -25,18 +25,22 @@ public final class TxController {
         /// Label/value lines, in the order they should be read.
         public let rows: [(String, String)]
         public var gasLimit: UInt64 = TransactionSigner.defaultGasLimit
-        public var feeUerth: String = TransactionSigner.defaultFeeUerth
+
+        /// Always `Fees.forGas(gasLimit)`. Derived rather than passed so the
+        /// fee shown on the sheet and the fee broadcast cannot diverge — on
+        /// Android they did, and claiming rewards (whose gas scales with the
+        /// validator count) declared the flat default while broadcasting more.
+        /// The sheet then reported the account funded when it was not.
+        public var feeUerth: String { Fees.forGas(gasLimit) }
 
         public init(
             action: String,
             rows: [(String, String)],
-            gasLimit: UInt64 = TransactionSigner.defaultGasLimit,
-            feeUerth: String = TransactionSigner.defaultFeeUerth
+            gasLimit: UInt64 = TransactionSigner.defaultGasLimit
         ) {
             self.action = action
             self.rows = rows
             self.gasLimit = gasLimit
-            self.feeUerth = feeUerth
         }
     }
 

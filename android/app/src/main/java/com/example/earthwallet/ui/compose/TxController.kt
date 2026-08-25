@@ -8,8 +8,10 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import network.erth.wallet.chain.Fees
 import network.erth.wallet.chain.EarthTx
 import network.erth.wallet.wallet.services.EarthWallet
 import network.erth.wallet.wallet.services.SecureWalletManager
@@ -42,6 +44,10 @@ class TxController : ViewModel() {
     var submitting: Boolean by mutableStateOf(false)
         private set
 
+    /** True from the moment an ad is watched until the gas lands (or gives up). */
+    var awaitingGas: Boolean by mutableStateOf(false)
+        private set
+
     /** What is in flight, for the pending sheet to name. */
     var lastAction: String? by mutableStateOf(null)
         private set
@@ -63,15 +69,26 @@ class TxController : ViewModel() {
     fun request(
         details: TxConfirmDetails,
         gasLimit: Long = DEFAULT_GAS_LIMIT,
-        feeUerth: Long = DEFAULT_FEE_UERTH,
         onSuccess: (() -> Unit)? = null,
         build: (Context) -> List<ProtoAny>,
     ) {
+        // The fee comes from the gas limit and nowhere else, and the sheet is
+        // shown the same number that will be broadcast.
+        //
+        // It used to be passed twice — once in `details` for the sheet, once
+        // here for the broadcast — and the two drifted. Claiming rewards
+        // scales its gas by validator count but declared the flat default fee,
+        // so with a balance between the two the sheet said "funded", never
+        // offered the rewarded ad, and the transaction was then rejected by
+        // the node for insufficient fee. Making it impossible to state twice is
+        // the fix; correcting the one call site would only have postponed it.
+        val fee = feeFor(gasLimit)
+
         this.build = build
         this.gasLimit = gasLimit
-        this.feeUerth = feeUerth
+        this.feeUerth = fee
         this.onDone = onSuccess
-        pending = details
+        pending = details.copy(feeUerth = fee)
     }
 
     fun confirm(context: Context) {
@@ -99,9 +116,45 @@ class TxController : ViewModel() {
         }
     }
 
+    /**
+     * Waits for an ad grant to arrive, then lets the sheet notice.
+     *
+     * The reward callback fires when the *ad* finished, not when the gas lands:
+     * Google calls the backend, the backend sends from its hot wallet, and that
+     * send has to be included in a block. So a single balance read straight
+     * after the ad always runs too early. This path used to do exactly that —
+     * one refresh, no retry — so the grant arrived, the sheet never saw it, and
+     * the confirm button stayed disabled behind "Watch an ad for gas" with no
+     * indication anything was happening. Registration had the poll; every other
+     * transaction did not.
+     *
+     * [fetchBalance] reads the chain directly rather than going through
+     * WalletViewModel.refresh(), which is fire-and-forget: it returns before
+     * the new balance exists, so a poll built on it would race itself.
+     */
+    fun awaitGas(fetchBalance: suspend () -> Long, onFunded: () -> Unit = {}) {
+        val needed = pending?.feeUerth ?: return
+        awaitingGas = true
+        viewModelScope.launch {
+            try {
+                repeat(GAS_POLL_ATTEMPTS) {
+                    delay(GAS_POLL_INTERVAL_MS)
+                    val now = runCatching { fetchBalance() }.getOrNull() ?: 0L
+                    if (now >= needed) {
+                        onFunded()
+                        return@launch
+                    }
+                }
+            } finally {
+                awaitingGas = false
+            }
+        }
+    }
+
     fun cancel() {
         pending = null
         build = null
+        awaitingGas = false
     }
 
     fun dismissResult() {
@@ -110,7 +163,41 @@ class TxController : ViewModel() {
 
     companion object {
         const val DEFAULT_GAS_LIMIT = 400_000L
-        const val DEFAULT_FEE_UERTH = 2_000L
+
+        // The grant is a bank send, so it lands in a block. Roughly a minute of
+        // patience against a ~6s block time, matching the registration flow.
+        private const val GAS_POLL_ATTEMPTS = 20
+        private const val GAS_POLL_INTERVAL_MS = 3_000L
+
+        /**
+         * The fee for [DEFAULT_GAS_LIMIT]. Derived rather than flat: a screen
+         * that raises the gas limit and keeps a flat fee builds a transaction
+         * the node rejects. Use [feeFor] wherever the gas is not the default.
+         */
+        val DEFAULT_FEE_UERTH: Long get() = Fees.forGas(DEFAULT_GAS_LIMIT)
+
+        /** The fee for an arbitrary gas limit. */
+        fun feeFor(gasLimit: Long): Long = Fees.forGas(gasLimit)
+
+        /**
+         * What a "max" button leaves behind so the account can still act.
+         *
+         * Subtracting one minimum fee is not enough. Staking the maximum used
+         * to leave exactly [DEFAULT_FEE_UERTH] — one 400,000-gas transaction
+         * and nothing more — so the very next thing a staker wants to do,
+         * claiming rewards, needed 2,750 against a 2,000 balance and was
+         * unaffordable the moment it was offered. The position was staked and
+         * the account was stranded.
+         *
+         * A million gas covers the realistic follow-ups: claim across a few
+         * validators, then unstake. At 0.005uerth that is 5,000 uerth — small
+         * against a stake, and the difference between an account that can act
+         * and one that cannot.
+         *
+         * Deliberately NOT applied to sending: emptying an account on purpose
+         * should be allowed to empty it, less the fee.
+         */
+        val GAS_RESERVE_UERTH: Long get() = Fees.forGas(1_000_000L)
     }
 }
 
@@ -135,6 +222,7 @@ fun TxSheets(
             onConfirm = { controller.confirm(context) },
             onDismiss = controller::cancel,
             onWatchAd = onWatchAd,
+            awaitingGas = controller.awaitingGas,
         )
     }
     // Pending, then result — one sheet position, three states, so the result's

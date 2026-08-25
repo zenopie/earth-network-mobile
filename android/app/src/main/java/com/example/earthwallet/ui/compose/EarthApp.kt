@@ -26,6 +26,8 @@ import network.erth.earth.proto.allocation.StreamId
 import network.erth.wallet.R
 import network.erth.wallet.Constants
 import network.erth.wallet.chain.Bank
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import network.erth.wallet.ui.ads.RewardedAds
 import network.erth.wallet.ui.compose.registration.RegistrationActivity
 import network.erth.wallet.chain.Dex
@@ -158,7 +160,6 @@ fun EarthApp(
             details = TxConfirmDetails(
                 action = "Claim ANML",
                 msgTypeUrl = "/earth.personhood.v1.MsgClaimAnml",
-                feeUerth = TxController.DEFAULT_FEE_UERTH,
                 balanceUerth = state?.balanceUerth ?: 0L,
             ),
             onSuccess = refreshAll,
@@ -253,10 +254,25 @@ fun EarthApp(
             val address = state?.address
             if (host != null && !address.isNullOrEmpty()) {
                 RewardedAds.show(host, address) { granted ->
-                    // The grant lands as a bank send from the gas wallet, so
-                    // the balance has to be re-read before the sheet can tell
-                    // whether the fee is now covered.
-                    if (granted) wallet.refresh()
+                    // The grant lands as a bank send from the gas wallet, and
+                    // that send has to make it into a block — so the balance is
+                    // polled, not read once. A single refresh here always ran
+                    // before the grant existed, which left the sheet insisting
+                    // the account was unfunded after the gas had arrived.
+                    if (granted) {
+                        tx.awaitGas(
+                            fetchBalance = {
+                                withContext(Dispatchers.IO) {
+                                    runCatching {
+                                        Bank.balance(address, Constants.UERTH_DENOM).toLong()
+                                    }.getOrDefault(0L)
+                                }
+                            },
+                            // Bring the rest of the UI in line once it lands;
+                            // the sheet reads its balance from this view model.
+                            onFunded = { wallet.refresh() },
+                        )
+                    }
                 }
             }
         },
@@ -362,19 +378,18 @@ private fun EarthContent(
             onUnstake = { staking = StakeIntent.Unstake },
             onClaim = {
                 val validators = earnState?.delegations?.map { it.validatorOperator }.orEmpty()
+                // One withdraw per validator, so the gas scales with how many
+                // you delegate to.
+                val claimGas = TxController.DEFAULT_GAS_LIMIT + 150_000L * validators.size
                 tx.request(
                     details = TxConfirmDetails(
                         action = "Claim rewards",
                         msgTypeUrl = "/cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward",
-                        feeUerth = TxController.DEFAULT_FEE_UERTH,
                         balanceUerth = loaded.balanceUerth,
                         amountLabel = "Rewards",
                         amountValue = "${formatUerth(earnState?.rewardsUerth ?: 0)} ERTH",
                     ),
-                    // One withdraw per validator, so the gas scales with how
-                    // many you delegate to.
-                    gasLimit = TxController.DEFAULT_GAS_LIMIT +
-                        150_000L * validators.size,
+                    gasLimit = claimGas,
                     onSuccess = onRefresh,
                     build = earn.claimAll(validators),
                 )
@@ -395,7 +410,6 @@ private fun EarthContent(
                     details = TxConfirmDetails(
                         action = "Swap",
                         msgTypeUrl = "/earth.dex.v1.MsgSwap",
-                        feeUerth = TxController.DEFAULT_FEE_UERTH,
                         balanceUerth = loaded.balanceUerth,
                         amountLabel = "You pay",
                         amountValue = "${formatUerth(amountIn.toLong())} " +
@@ -596,7 +610,9 @@ private fun EarthContent(
             // what is already with that validator.
             capFor = { v ->
                 if (stake) {
-                    (loaded.balanceUerth - TxController.DEFAULT_FEE_UERTH).coerceAtLeast(0)
+                    // A reserve, not one fee: staking everything-but-the-fee
+                    // leaves an account that cannot afford to claim or unstake.
+                    (loaded.balanceUerth - TxController.GAS_RESERVE_UERTH).coerceAtLeast(0)
                 } else {
                     v.amountUerth
                 }
@@ -613,7 +629,6 @@ private fun EarthContent(
                         } else {
                             "/cosmos.staking.v1beta1.MsgUndelegate"
                         },
-                        feeUerth = TxController.DEFAULT_FEE_UERTH,
                         balanceUerth = loaded.balanceUerth,
                         amountLabel = "Amount",
                         amountValue = "${formatUerth(amount)} ERTH",
@@ -635,8 +650,10 @@ private fun EarthContent(
             pool = pool,
             // The fee comes out of the same ERTH being deposited, so the
             // spendable figure has to exclude it or "max" builds a deposit the
-            // ante handler cannot charge for.
-            erthAvailable = (loaded.balanceUerth - TxController.DEFAULT_FEE_UERTH)
+            // ante handler cannot charge for. A reserve rather than a single
+            // fee, for the same reason as staking: withdrawing this liquidity
+            // later is itself a transaction that has to be payable.
+            erthAvailable = (loaded.balanceUerth - TxController.GAS_RESERVE_UERTH)
                 .coerceAtLeast(0),
             tokenAvailable = loaded.holdings
                 .firstOrNull { it.denom == pool.tokenDenom }?.amount ?: 0L,
@@ -654,7 +671,6 @@ private fun EarthContent(
                         } else {
                             "/earth.dex.v1.MsgRemoveLiquidity"
                         },
-                        feeUerth = TxController.DEFAULT_FEE_UERTH,
                         balanceUerth = loaded.balanceUerth,
                         amountLabel = if (adding) "Deposit" else "Shares",
                         amountValue = if (adding) {
@@ -716,8 +732,7 @@ private fun EarthContent(
                         details = TxConfirmDetails(
                             action = "Set allocation",
                             msgTypeUrl = "/earth.allocation.v1.MsgSetAllocations",
-                            feeUerth = TxController.DEFAULT_FEE_UERTH,
-                            balanceUerth = loaded.balanceUerth,
+                                balanceUerth = loaded.balanceUerth,
                         ),
                         onSuccess = onRefresh,
                         build = allocation.setAllocations(stream, weights),

@@ -386,8 +386,13 @@ private fun AmountChip(label: String, onClick: () -> Unit) {
 /** The reverse button's diameter, needed to centre it on the seam. */
 private val REVERSE_BUTTON_SIZE = 48.dp
 
-/** What a swap costs at the chain's minimum gas price. */
-private const val SWAP_FEE_UERTH = 2_000L
+/**
+ * What a swap costs at the node's minimum gas price. Derived from the gas limit
+ * the swap actually broadcasts with, rather than a copy of the number: this is
+ * subtracted from the spendable balance, so a stale value lets the user spend
+ * their way past what the fee needs.
+ */
+private val SWAP_FEE_UERTH: Long get() = TxController.DEFAULT_FEE_UERTH
 
 /** Base units to a plain decimal, for putting a computed amount in the field. */
 private fun Long.asDecimalAmount(): String =

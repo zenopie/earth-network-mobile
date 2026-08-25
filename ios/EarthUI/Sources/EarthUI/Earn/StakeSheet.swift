@@ -97,9 +97,10 @@ struct StakeSheet: View {
 
     private var available: BigInt {
         if unstaking { return staked }
-        // Leave the fee behind, or the delegation cannot be paid for.
-        let fee = BigInt(TransactionSigner.defaultFeeUerth) ?? 0
-        return max(0, model.balance(.erth) - fee)
+        // Leave a reserve, not one fee: staking everything-but-the-fee leaves
+        // an account that cannot afford to claim rewards or unstake again.
+        let reserve = BigInt(TransactionSigner.gasReserveUerth) ?? 0
+        return max(0, model.balance(.erth) - reserve)
     }
 
     private var parsed: BigInt? {

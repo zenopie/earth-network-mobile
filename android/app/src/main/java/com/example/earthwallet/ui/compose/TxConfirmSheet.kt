@@ -28,7 +28,13 @@ data class TxConfirmDetails(
     val action: String,
     /** What the chain sees: "/cosmos.staking.v1beta1.MsgDelegate". */
     val msgTypeUrl: String,
-    val feeUerth: Long,
+    /**
+     * What the node will charge. Filled in by [TxController.request] from the
+     * gas limit, so callers going through the controller should leave it alone
+     * — anything they set here is overwritten. Set it only when driving
+     * [TxConfirmSheet] directly, as the registration flow does.
+     */
+    val feeUerth: Long = 0,
     val balanceUerth: Long,
     /** Optional, e.g. the amount being staked. */
     val amountLabel: String? = null,

@@ -23,8 +23,13 @@ struct SwapScreen: View {
 
     /// The reverse button's diameter, needed to centre it on the seam.
     private static let reverseSize: CGFloat = 48
-    /// What a swap costs at the chain's minimum gas price.
-    private static let feeUerth = BigInt(2_000)
+    /// What a swap costs at the node's minimum gas price. Derived from the gas
+    /// the swap actually broadcasts with rather than a copy of the number: this
+    /// is subtracted from the spendable balance, so a stale value lets the user
+    /// spend past what the fee needs.
+    private static var feeUerth: BigInt {
+        BigInt(TransactionSigner.defaultFeeUerth) ?? 0
+    }
     /// Tolerances offered, in basis points.
     ///
     /// A short list rather than a free-text field. The useful range is narrow,

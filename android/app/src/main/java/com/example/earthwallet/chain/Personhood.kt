@@ -141,7 +141,14 @@ object Personhood {
      * under-estimate burns the fee and the ad view that paid for it.
      */
     const val REGISTER_GAS_LIMIT = 3_000_000L
-    const val REGISTER_FEE_UERTH = "2000"
+
+    /**
+     * Derived, not flat. At the validator's 0.005uerth this is 15,000 uerth —
+     * the flat "2000" that used to sit here was the fee for 400,000 gas, and
+     * every registration was rejected with "insufficient fees; got: 2000uerth
+     * required: 15000uerth". See [Fees].
+     */
+    val REGISTER_FEE_UERTH: String get() = Fees.forGasString(REGISTER_GAS_LIMIT)
 
     fun register(
         key: ECKey,
