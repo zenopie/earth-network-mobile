@@ -47,33 +47,21 @@ object AprMath {
     private const val DAYS_PER_YEAR = 365L
 
     /**
-     * The chain's daily volume decay, applied forward to [today].
+     * The pool's 14-day-weighted volume, in real uerth.
      *
-     * This has to be recomputed client-side rather than trusting the stored
-     * figure: the chain decays lazily, only when a swap or a liquidity change
-     * touches a pool. A pool nobody has traded in three days still reports the
-     * volume it had three days ago, and summing those raw would inflate the
-     * denominator and understate every active pool's share.
+     * A read, not a calculation. This used to reproduce the chain's decay
+     * client-side, and the chain stopped decaying: it scales new volume by a
+     * chain-wide index instead, so the stored figure carried a multiplier that
+     * grew 7.7% a day forever. Nothing here divided it out, and the fee APR
+     * inflated with it — right by accident on day one, out by 18x within a
+     * month.
      *
-     * Integer arithmetic in the same order as the chain's, so a pool's decayed
-     * figure here matches what the chain will compute when it next touches it.
+     * The chain now de-scales it before returning it, so there is nothing left
+     * to mirror. Reimplementing chain arithmetic in a client is what caused the
+     * drift; not having any to reimplement is the fix.
      */
-    fun decayedVolume(pool: Dex.Pool, today: Long): BigInteger {
-        val stored = pool.volume.toBigIntegerOrNull() ?: return BigInteger.ZERO
-        if (pool.lastVolumeDay == 0L || today <= pool.lastVolumeDay) return stored
-
-        val elapsed = today - pool.lastVolumeDay
-        if (elapsed >= Dex.VOLUME_WINDOW_DAYS) return BigInteger.ZERO
-
-        var v = stored
-        val w = BigInteger.valueOf(Dex.VOLUME_WINDOW_DAYS.toLong())
-        val wLess = BigInteger.valueOf(Dex.VOLUME_WINDOW_DAYS - 1L)
-        repeat(elapsed.toInt()) { v = v * wLess / w }
-        return v
-    }
-
-    /** Today's day index, the same way the chain computes it. */
-    fun today(): Long = System.currentTimeMillis() / 1000 / SECONDS_PER_DAY
+    fun volumeErth(pool: Dex.Pool): BigInteger =
+        pool.volumeErth.toBigIntegerOrNull() ?: BigInteger.ZERO
 
     /**
      * The rate for one pool, given every pool (for the volume denominator) and
@@ -88,7 +76,6 @@ object AprMath {
         allPools: List<Dex.Pool>,
         lpOptionShare: Double,
         swapFeePercent: BigDecimal,
-        today: Long = today(),
     ): PoolApr? {
         val reserveErth = pool.erthReserve.toBigIntegerOrNull() ?: return null
         if (reserveErth.signum() <= 0) return null
@@ -98,15 +85,15 @@ object AprMath {
         // pool's own ratio would just restate the same number.
         val tvl = BigDecimal(reserveErth).multiply(BigDecimal(2))
 
-        val mine = decayedVolume(pool, today)
-        val total = allPools.fold(BigInteger.ZERO) { acc, p -> acc + decayedVolume(p, today) }
+        val mine = volumeErth(pool)
+        val total = allPools.fold(BigInteger.ZERO) { acc, p -> acc + volumeErth(p) }
 
         // --- fees ---
         //
-        // At a steady trading rate the decay settles the stored volume at
-        // roughly window * daily, so daily volume is the stored figure over the
-        // window. Right after a burst it overstates, and after a quiet spell it
-        // understates; there is no per-day history on chain to do better.
+        // At a steady trading rate the weighting settles at roughly window *
+        // daily, so daily volume is the reported figure over the window. Right
+        // after a burst it overstates, and after a quiet spell it understates;
+        // there is no per-day history on chain to do better.
         val dailyVolume = BigDecimal(mine)
             .divide(BigDecimal(Dex.VOLUME_WINDOW_DAYS), 18, RoundingMode.HALF_UP)
 

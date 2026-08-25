@@ -18,20 +18,24 @@ object Dex {
         val tokenDenom: String,
         val tokenReserve: String,
         /**
-         * ERTH-denominated swap volume, decayed daily over a rolling window.
+         * 14-day-weighted swap volume, in real uerth.
          *
-         * Not a plain total: each elapsed day multiplies it by 6/7, so at a
-         * steady trading rate it settles at roughly seven times the daily
-         * volume. It is what weights this pool's share of the LP reward
-         * stream, and what an APR estimate has to work back from.
+         * The chain does the weighting and hands over a plain number: a trade a
+         * week ago counts (13/14)^7 of one made today. Nothing here has to age
+         * it, and nothing here should try — an earlier version decayed this
+         * client-side against a mechanism the chain had already replaced, and
+         * the resulting APR drifted further out every day.
+         *
+         * At a steady trading rate it settles at about fourteen times the daily
+         * volume, which is how an APR estimate works back to a daily figure.
          */
-        val volume: String = "0",
-        /** Day index the volume was last decayed to (block time / 86400). */
-        val lastVolumeDay: Long = 0,
+        val volumeErth: String = "0",
+        /** Day index this pool last traded (block time / 86400). */
+        val lastTradedDay: Long = 0,
     )
 
-    /** Days in the rolling volume window. Mirrors types.VolumeWindowDays. */
-    const val VOLUME_WINDOW_DAYS = 7
+    /** Days in the rolling volume window. Mirrors types.VolumeDecayWindowDays. */
+    const val VOLUME_WINDOW_DAYS = 14
 
     /** The LP share denom for a pool. Mirrors types.LPShareDenom. */
     fun shareDenom(poolId: Long): String = "dexlp/$poolId"
@@ -62,8 +66,8 @@ object Dex {
                     erthReserve = p.getJSONObject("reserve_erth").getString("amount"),
                     tokenDenom = p.getJSONObject("reserve_token").getString("denom"),
                     tokenReserve = p.getJSONObject("reserve_token").getString("amount"),
-                    volume = p.optString("volume", "0"),
-                    lastVolumeDay = p.optString("last_volume_day", "0").toLongOrNull() ?: 0L,
+                    volumeErth = p.optString("volume_erth", "0"),
+                    lastTradedDay = p.optString("last_traded_day", "0").toLongOrNull() ?: 0L,
                 )
             )
         }

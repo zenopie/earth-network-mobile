@@ -1,3 +1,4 @@
+import BigInt
 import EarthCore
 import Observation
 import SwiftUI
@@ -87,6 +88,10 @@ public final class TxController {
     public private(set) var outcome: Outcome?
     public private(set) var submitting = false
 
+    /// True from the moment an ad is watched until the gas lands, or the wait
+    /// gives up. Drives the sheet's "Waiting for gas…" state.
+    public private(set) var awaitingGas = false
+
     private var build: ((EarthKey) throws -> [ProtoAny])?
     private var onSuccess: (() async -> Void)?
 
@@ -114,7 +119,42 @@ public final class TxController {
         build = nil
         onSuccess = nil
         host = .root
+        awaitingGas = false
     }
+
+    /// Waits for an ad grant to arrive, then lets the sheet notice.
+    ///
+    /// The reward callback fires when the *ad* finished, not when the gas
+    /// lands: Google calls the backend, the backend sends from its hot wallet,
+    /// and that send has to be included in a block. So a single balance read
+    /// straight after the ad always runs too early — which is exactly how this
+    /// failed on Android, where the grant arrived, the sheet never looked
+    /// again, and the confirm button stayed behind "Watch an ad for gas" with
+    /// nothing to say why.
+    ///
+    /// Reads the chain directly rather than going through the app model's
+    /// refresh, so the check cannot race a refresh that has not landed yet.
+    public func awaitGas(in model: AppModel) async {
+        guard let needed = BigInt(pending?.feeUerth ?? ""), !model.address.isEmpty else { return }
+        awaitingGas = true
+        defer { awaitingGas = false }
+
+        for _ in 0 ..< Self.gasPollAttempts {
+            try? await Task.sleep(nanoseconds: Self.gasPollIntervalNanos)
+            let raw = await model.client.balance(model.address, denom: Constants.gasDenom)
+            if let now = BigInt(raw), now >= needed {
+                // Bring the rest of the UI in line; the sheet reads its balance
+                // from the model.
+                await model.refresh()
+                return
+            }
+        }
+    }
+
+    // The grant is a bank send, so it lands in a block. Roughly a minute of
+    // patience against a ~6s block time, matching Android.
+    private static let gasPollAttempts = 20
+    private static let gasPollIntervalNanos: UInt64 = 3_000_000_000
 
     public func confirm(in model: AppModel) async {
         guard let details = pending, let build else { return }

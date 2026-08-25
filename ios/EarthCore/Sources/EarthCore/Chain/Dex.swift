@@ -3,8 +3,8 @@ import Foundation
 /// x/dex — the hub-and-spoke AMM. Every pool pairs ERTH with one token.
 public enum Dex {
 
-    /// Days in the rolling volume window. Mirrors `types.VolumeWindowDays`.
-    public static let volumeWindowDays = 7
+    /// Days in the rolling volume window. Mirrors `types.VolumeDecayWindowDays`.
+    public static let volumeWindowDays = 14
 
     /// The LP share denom for a pool. Mirrors `types.LPShareDenom`.
     public static func shareDenom(poolID: UInt64) -> String { "dexlp/\(poolID)" }
@@ -15,30 +15,34 @@ public enum Dex {
         public let erthReserve: String
         public let tokenDenom: String
         public let tokenReserve: String
-        /// ERTH-denominated swap volume, decayed daily over a rolling window.
+        /// 14-day-weighted swap volume, in real uerth.
         ///
-        /// Not a plain total: each elapsed day multiplies it by 6/7, so at a
-        /// steady rate it settles at roughly seven times the daily volume. It
-        /// weights this pool's share of the LP reward stream, and an APR
-        /// estimate has to work back from it.
-        public let volume: String
-        /// Day index the volume was last decayed to (block time / 86400).
-        public let lastVolumeDay: Int64
+        /// The chain does the weighting and returns a plain number: a trade a
+        /// week ago counts (13/14)^7 of one made today. Nothing here ages it,
+        /// and nothing here should try — the wallet used to decay this
+        /// client-side against a mechanism the chain had already replaced, and
+        /// the fee APR drifted further out every day as a result.
+        ///
+        /// At a steady trading rate it settles at about fourteen times the
+        /// daily volume.
+        public let volumeErth: String
+        /// Day index this pool last traded (block time / 86400).
+        public let lastTradedDay: Int64
 
         public init(
             id: UInt64,
             erthReserve: String,
             tokenDenom: String,
             tokenReserve: String,
-            volume: String = "0",
-            lastVolumeDay: Int64 = 0
+            volumeErth: String = "0",
+            lastTradedDay: Int64 = 0
         ) {
             self.id = id
             self.erthReserve = erthReserve
             self.tokenDenom = tokenDenom
             self.tokenReserve = tokenReserve
-            self.volume = volume
-            self.lastVolumeDay = lastVolumeDay
+            self.volumeErth = volumeErth
+            self.lastTradedDay = lastTradedDay
         }
     }
 
@@ -61,8 +65,8 @@ public extension EarthClient {
                 erthReserve: p.reserve_erth.amount.string(default: "0"),
                 tokenDenom: p.reserve_token.denom.string(default: ""),
                 tokenReserve: p.reserve_token.amount.string(default: "0"),
-                volume: p.volume.string(default: "0"),
-                lastVolumeDay: p.last_volume_day.int64(default: 0)
+                volumeErth: p.volume_erth.string(default: "0"),
+                lastTradedDay: p.last_traded_day.int64(default: 0)
             )
         }
     }

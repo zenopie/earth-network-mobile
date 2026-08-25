@@ -1,5 +1,9 @@
+import BigInt
 import EarthCore
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 /// The confirmation, the wait, and the result — in that order, over everything.
 struct TxOverlay: View {
@@ -55,30 +59,66 @@ struct TxConfirmSheet: View {
                 }
             }
 
-            if !model.hasGas {
+            if !funded {
                 // The gas gate's place. A new human has no ERTH and no account
                 // on chain, so the fee cannot be paid — and this is the moment
                 // that becomes true rather than a surprise at broadcast.
-                GasWarning()
+                GasWarning(awaitingGas: tx.awaitingGas)
             }
 
             HStack(spacing: theme.space.x12) {
                 EarthButton(title: "Cancel", role: .secondary) { tx.cancel() }
-                // `confirm` clears `pending` itself, which is what takes this
-                // card away — there is no dismissal to coordinate with.
-                EarthButton(title: "Confirm") { Task { await tx.confirm(in: model) } }
+                if funded {
+                    // `confirm` clears `pending` itself, which is what takes
+                    // this card away — there is no dismissal to coordinate.
+                    EarthButton(title: "Confirm") { Task { await tx.confirm(in: model) } }
+                } else {
+                    EarthButton(title: tx.awaitingGas ? "Waiting for gas…" : "Watch an ad for gas") {
+                        watchAd()
+                    }
+                }
             }
         }
+    }
+
+    /// Whether the balance covers this transaction's fee.
+    ///
+    /// Against the fee, not against zero. `model.hasGas` asks whether the
+    /// account holds any ERTH at all, which says nothing about whether it holds
+    /// enough: an account with 2,000 uerth cannot pay for a claim across two
+    /// validators, and would have been shown a Confirm button that fails at
+    /// broadcast.
+    private var funded: Bool {
+        guard let needed = BigInt(details.feeUerth) else { return true }
+        return model.balance(.erth) >= needed
+    }
+
+    private func watchAd() {
+        #if canImport(GoogleMobileAds) && os(iOS)
+        guard !tx.awaitingGas, let host = UIApplication.shared.topViewController else { return }
+        RewardedAds.show(from: host, walletAddress: model.address) { earned in
+            // Earned means the ad completed, not that the dust landed: Google
+            // calls the backend out of band and the send has to reach a block.
+            // So the chain is polled rather than trusted to be ready.
+            guard earned else { return }
+            Task { await tx.awaitGas(in: model) }
+        }
+        #endif
     }
 }
 
 struct GasWarning: View {
     @Environment(\.earth) private var theme
 
+    /// True once the ad has been watched and the grant is still in flight.
+    var awaitingGas: Bool = false
+
     var body: some View {
         HStack(alignment: .top, spacing: theme.space.x8) {
             Image(systemName: "fuelpump.fill").foregroundStyle(theme.colors.warnInk)
-            Text("This account holds no ERTH, so the fee cannot be paid. The rewarded-ad gas grant is not built yet on iOS.")
+            Text(awaitingGas
+                ? "The gas hasn't arrived yet. Give it a moment."
+                : "Not enough ERTH for the fee. Watch a short ad and we'll cover it.")
                 .font(EarthType.bodySmall)
                 .foregroundStyle(theme.colors.textSecondary)
         }

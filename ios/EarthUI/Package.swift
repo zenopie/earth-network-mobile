@@ -13,12 +13,24 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "../EarthCore"),
+        // The rewarded ad behind "ads for gas". A binary xcframework, and
+        // iOS-only — hence the platform condition on the target dependency
+        // below, which keeps the macOS platform declaration above honest.
+        .package(
+            url: "https://github.com/googleads/swift-package-manager-google-mobile-ads.git",
+            from: "13.8.0"
+        ),
     ],
     targets: [
         .target(
             name: "EarthUI",
             dependencies: [
                 .product(name: "EarthCore", package: "EarthCore"),
+                .product(
+                    name: "GoogleMobileAds",
+                    package: "swift-package-manager-google-mobile-ads",
+                    condition: .when(platforms: [.iOS])
+                ),
             ],
             // The real marks, taken from the Android app rather than
             // approximated with SF Symbols. The tab glyphs were 24dp vector

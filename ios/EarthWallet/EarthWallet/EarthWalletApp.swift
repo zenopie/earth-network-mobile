@@ -26,6 +26,11 @@ struct EarthWalletApp: App {
         // node that cannot be reached must not delay launch, and the fallback
         // is the right answer on this chain anyway.
         Task.detached(priority: .utility) { await Fees.prime() }
+
+        // Fetching a rewarded ad takes seconds, so it is loaded ahead of the
+        // tap — asking for one when the button is pressed makes the button look
+        // broken. See RewardedAds.
+        RewardedAds.preload()
     }
 
     var body: some Scene {

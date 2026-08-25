@@ -53,25 +53,30 @@ func checkMath() {
                SwapMath.tokenForHub(reserveErth: 1000, reserveToken: 0,
                                     amountIn: 10, feePercent: fee) == nil)
 
-    Check.group("volume decay")
+    Check.group("pool volume")
 
-    // The chain multiplies by 6/7 per elapsed day, truncating each time — so
-    // decaying once by (6/7)^n is not the same number.
+    // Nothing to decay any more: the chain returns 14-day-weighted volume in
+    // real uerth, and the client reads it. These checks exist to stop the
+    // client-side decay coming back — it was reintroducing chain arithmetic
+    // that the chain had already stopped performing.
     let pool = Dex.Pool(id: 1, erthReserve: "1000000", tokenDenom: "uanml",
-                        tokenReserve: "1000000", volume: "1000000", lastVolumeDay: 100)
-    Check.equal("same day is undecayed", AprMath.decayedVolume(pool, today: 100).description, "1000000")
-    Check.equal("one day", AprMath.decayedVolume(pool, today: 101).description, "857142")
-    Check.equal("two days", AprMath.decayedVolume(pool, today: 102).description, "734693")
-    // Past the window the chain drops it entirely rather than decaying on.
-    Check.equal("past the window", AprMath.decayedVolume(pool, today: 107).description, "0")
+                        tokenReserve: "1000000", volumeErth: "1000000", lastTradedDay: 100)
+    Check.equal("read as-is", AprMath.volumeErth(pool).description, "1000000")
     Check.equal(
-        "no last-decay day means no decay",
-        AprMath.decayedVolume(
+        "an old last-traded day changes nothing",
+        AprMath.volumeErth(
             Dex.Pool(id: 1, erthReserve: "1", tokenDenom: "u", tokenReserve: "1",
-                     volume: "500", lastVolumeDay: 0),
-            today: 999
+                     volumeErth: "500", lastTradedDay: 1)
         ).description,
         "500"
+    )
+    Check.equal(
+        "a missing figure is zero, not a crash",
+        AprMath.volumeErth(
+            Dex.Pool(id: 1, erthReserve: "1", tokenDenom: "u", tokenReserve: "1",
+                     volumeErth: "", lastTradedDay: 0)
+        ).description,
+        "0"
     )
 
     Check.group("staking apr")

@@ -40,33 +40,19 @@ public enum AprMath {
     static let secondsPerDay: Int64 = 86_400
     static let daysPerYear: Int64 = 365
 
-    /// The chain's daily volume decay, applied forward to `today`.
+    /// The pool's 14-day-weighted volume, in real uerth.
     ///
-    /// This has to be recomputed client-side rather than trusting the stored
-    /// figure: the chain decays lazily, only when a swap or a liquidity change
-    /// touches a pool. A pool nobody has traded in three days still reports the
-    /// volume it had three days ago, and summing those raw would inflate the
-    /// denominator and understate every active pool's share.
+    /// A read, not a calculation. This used to reproduce the chain's decay
+    /// client-side, and the chain stopped decaying: it scales new volume by a
+    /// chain-wide index instead, so the stored figure carried a multiplier
+    /// growing 7.7% a day forever. Nothing here divided it out and the fee APR
+    /// inflated with it — right by accident on day one, out by 18x in a month.
     ///
-    /// Integer arithmetic in the same order as the chain's, so a pool's decayed
-    /// figure here matches what the chain will compute when it next touches it.
-    public static func decayedVolume(_ pool: Dex.Pool, today: Int64) -> BigInt {
-        guard let stored = BigInt(pool.volume) else { return 0 }
-        if pool.lastVolumeDay == 0 || today <= pool.lastVolumeDay { return stored }
-
-        let elapsed = today - pool.lastVolumeDay
-        if elapsed >= Int64(Dex.volumeWindowDays) { return 0 }
-
-        var v = stored
-        let window = BigInt(Dex.volumeWindowDays)
-        let windowLess = BigInt(Dex.volumeWindowDays - 1)
-        for _ in 0 ..< elapsed { v = v * windowLess / window }
-        return v
-    }
-
-    /// Today's day index, the same way the chain computes it.
-    public static func today(now: Date = Date()) -> Int64 {
-        Int64(now.timeIntervalSince1970) / secondsPerDay
+    /// The chain de-scales it before returning it now, so there is nothing left
+    /// to mirror. Reimplementing chain arithmetic in a client is what caused
+    /// the drift; having none to reimplement is the fix.
+    public static func volumeErth(_ pool: Dex.Pool) -> BigInt {
+        BigInt(pool.volumeErth) ?? 0
     }
 
     /// The rate for one pool, given every pool (for the volume denominator) and
@@ -80,7 +66,6 @@ public enum AprMath {
         allPools: [Dex.Pool],
         lpOptionShare: Double,
         swapFeePercent: Decimal,
-        today: Int64 = today()
     ) -> PoolApr? {
         guard let reserveErth = BigInt(pool.erthReserve), reserveErth > 0 else { return nil }
 
@@ -89,8 +74,8 @@ public enum AprMath {
         // pool's own ratio would just restate the same number.
         let tvl = Double(reserveErth) * 2
 
-        let mine = decayedVolume(pool, today: today)
-        let total = allPools.reduce(BigInt(0)) { $0 + decayedVolume($1, today: today) }
+        let mine = volumeErth(pool)
+        let total = allPools.reduce(BigInt(0)) { $0 + volumeErth($1) }
 
         // --- fees ---
         //
