@@ -14,6 +14,7 @@ import net.sf.scuba.smartcards.CardService
 import network.erth.wallet.chain.Personhood
 import network.erth.wallet.wallet.services.EarthWallet
 import network.erth.wallet.wallet.services.SecureWalletManager
+import org.jmrtd.AccessDeniedException
 import org.jmrtd.BACKey
 import org.jmrtd.BACKeySpec
 import org.jmrtd.PassportService
@@ -89,32 +90,37 @@ object PassportSession {
         val isoDep = IsoDep.get(tag)
             ?: return Result.failure(FailureException(Failure.Unreadable))
 
+        // Held for the finally: the work below uses non-null locals, and these
+        // only exist so the close can reach whatever was opened before a throw.
+        var cardService: CardService? = null
+        var passportService: PassportService? = null
+
         return try {
             isoDep.connect()
             isoDep.timeout = 5000
 
-            val cardService = CardService.getInstance(isoDep)
-            cardService.open()
+            val card = CardService.getInstance(isoDep).also { cardService = it }
+            card.open()
 
-            val passportService = PassportService(
-                cardService,
+            val service = PassportService(
+                card,
                 PassportService.NORMAL_MAX_TRANCEIVE_LENGTH,
                 PassportService.DEFAULT_MAX_BLOCKSIZE,
                 false,
                 false,
-            )
-            passportService.open()
-            passportService.sendSelectApplet(false)
+            ).also { passportService = it }
+            service.open()
+            service.sendSelectApplet(false)
 
             val bacKey: BACKeySpec =
                 BACKey(mrz.passportNumber, mrz.dateOfBirth, mrz.dateOfExpiry)
-            passportService.doBAC(bacKey)
+            service.doBAC(bacKey)
 
-            val dg1Bytes = passportService.getInputStream(PassportService.EF_DG1)
+            val dg1Bytes = service.getInputStream(PassportService.EF_DG1)
                 ?.let { readAllBytes(it) }
                 ?: return Result.failure(FailureException(Failure.Unreadable))
 
-            val sodBytes = passportService.getInputStream(PassportService.EF_SOD)
+            val sodBytes = service.getInputStream(PassportService.EF_SOD)
                 ?.let { readAllBytes(it) }
                 ?: return Result.failure(FailureException(Failure.NoSod))
 
@@ -125,8 +131,6 @@ object PassportSession {
             // proof's dsc_key output. No pre-submission and no registry wait.
             val dsc = PassportInputs.scannedDsc(sodBytes)
             val proof = PassportProver.prove(context, dg1Bytes, sodBytes, todayYymmddUtc())
-
-            closeQuietly(passportService, cardService, isoDep)
 
             Result.success(
                 Scan(
@@ -139,17 +143,28 @@ object PassportSession {
                     dscDer = dsc.certificateDer,
                 ),
             )
+        } catch (e: AccessDeniedException) {
+            // The chip refused the key, which in practice means a mistyped
+            // passport number or date rather than anything wrong with the
+            // document — by far the most common failure in this flow.
+            //
+            // Caught by type, not by message: this used to test the message for
+            // "BAC", and jmrtd does not put that word in it. What it actually
+            // says is "Mutual authentication failed ... SW = 0x6985", so every
+            // refused key fell through to Failure.Error and the screen asked
+            // the user to hold the passport flatter — sending them back to the
+            // chip over and over instead of to the three fields they mistyped.
+            Log.e(TAG, "passport refused the access key", e)
+            Result.failure(FailureException(Failure.WrongMrz))
         } catch (e: Exception) {
             Log.e(TAG, "passport read failed", e)
-            // jmrtd reports a refused BAC key as a plain exception, and it is
-            // by far the most common failure — a mistyped passport number
-            // rather than anything wrong with the chip.
-            val failure = if (e.message?.contains("BAC", ignoreCase = true) == true) {
-                Failure.WrongMrz
-            } else {
-                Failure.Error(e)
-            }
-            Result.failure(FailureException(failure))
+            Result.failure(FailureException(Failure.Error(e)))
+        } finally {
+            // Every exit, not just the successful one. An abandoned session can
+            // leave the applet mid-authentication, and the next tap is then
+            // refused with the same 0x6985 a wrong MRZ produces — which makes a
+            // stale connection and a mistyped number indistinguishable.
+            closeQuietly(passportService, cardService, isoDep)
         }
     }
 
@@ -201,14 +216,17 @@ object PassportSession {
      * The passport is usually gone by this point, so every close here can throw
      * and none of them matters — but leaving the IsoDep open because the
      * service above it threw does matter for the next scan.
+     *
+     * Nullable because this runs from a finally: a throw in connect() or
+     * open() gets here with nothing above the IsoDep yet constructed.
      */
     private fun closeQuietly(
-        passportService: PassportService,
-        cardService: CardService,
+        passportService: PassportService?,
+        cardService: CardService?,
         isoDep: IsoDep,
     ) {
-        runCatching { passportService.close() }
-        runCatching { cardService.close() }
+        runCatching { passportService?.close() }
+        runCatching { cardService?.close() }
         runCatching { isoDep.close() }
     }
 }
