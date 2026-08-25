@@ -14,6 +14,7 @@ import network.erth.earth.proto.allocation.StreamId
 import network.erth.wallet.chain.Allocation
 import network.erth.wallet.chain.Gov
 import network.erth.wallet.wallet.services.SecureWalletManager
+import kotlin.math.floor
 
 /** One stream's options and this wallet's split across them. */
 data class StreamUiState(
@@ -31,16 +32,46 @@ data class StreamUiState(
      */
     val actualSlices: List<AllocationSlice>
         get() {
-            val total = options.sumOf { it.amountAllocated.toDoubleOrNull() ?: 0.0 }
+            val weights = options.map { it.amountAllocated.toDoubleOrNull() ?: 0.0 }
+            val total = weights.sum()
             if (total <= 0) return emptyList()
-            return options
-                .mapNotNull { o ->
-                    val weight = o.amountAllocated.toDoubleOrNull() ?: 0.0
-                    val pct = (weight / total * 100).toInt()
-                    if (pct > 0) AllocationSlice(o.description, pct) else null
-                }
+            val percents = apportion(weights, total)
+            return options.asSequence()
+                .zip(percents.asSequence())
+                .mapNotNull { (o, pct) -> if (pct > 0) AllocationSlice(o.description, pct) else null }
                 .sortedByDescending { it.percent }
+                .toList()
         }
+
+    /**
+     * Whole percentages that sum to exactly 100.
+     *
+     * Truncating each share independently loses up to one point per option, and
+     * did: a 95/5 split against a stake weight that divides as 95.000000000680
+     * and 4.999999999320 truncated to 95 and 4, and the screen reported 99%.
+     * The chain was paying 95.0000/5.0000 the whole time — the shortfall was
+     * only ever in the arithmetic used to describe it.
+     *
+     * Largest remainder: floor everything, then hand the leftover points to the
+     * shares with the biggest fractional parts. Rounding each share on its own
+     * would fix this case and produce 101% in others.
+     */
+    private fun apportion(weights: List<Double>, total: Double): List<Int> {
+        val exact = weights.map { it / total * 100.0 }
+        val out = exact.map { floor(it).toInt() }.toMutableList()
+        var leftover = 100 - out.sum()
+        if (leftover <= 0) return out
+        // Biggest fractional part first; ties go to the larger share.
+        val order = exact.indices.sortedWith(
+            compareByDescending<Int> { exact[it] - floor(exact[it]) }.thenByDescending { exact[it] },
+        )
+        for (i in order) {
+            if (leftover == 0) break
+            out[i]++
+            leftover--
+        }
+        return out
+    }
 
     val slices: List<AllocationSlice>
         get() = options

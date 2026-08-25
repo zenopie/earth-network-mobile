@@ -125,14 +125,43 @@ final class StreamsModel {
         /// computed against the total rather than read off, because the chain
         /// stores weights and not shares.
         var actualSlices: [AllocationSlice] {
-            let total = stream.options.reduce(0.0) { $0 + (Double($1.amountAllocated) ?? 0) }
+            let weights = stream.options.map { Double($0.amountAllocated) ?? 0 }
+            let total = weights.reduce(0, +)
             guard total > 0 else { return [] }
-            return stream.options.compactMap { option in
-                let weight = Double(option.amountAllocated) ?? 0
-                let percent = Int(weight / total * 100)
-                return percent > 0 ? AllocationSlice(name: option.description, percent: percent) : nil
+            let percents = Self.apportion(weights, total: total)
+            return zip(stream.options, percents).compactMap { option, percent in
+                percent > 0 ? AllocationSlice(name: option.description, percent: percent) : nil
             }
             .sorted { $0.percent > $1.percent }
+        }
+
+        /// Whole percentages that sum to exactly 100.
+        ///
+        /// Truncating each share independently loses up to one point per
+        /// option, and did: a 95/5 split against a stake weight that divides as
+        /// 95.000000000680 and 4.999999999320 truncated to 95 and 4, and the
+        /// screen reported 99%. The chain was paying 95.0000/5.0000 the whole
+        /// time — the shortfall was only ever in the arithmetic describing it.
+        ///
+        /// Largest remainder: floor everything, then hand the leftover points
+        /// to the shares with the biggest fractional parts. Rounding each share
+        /// on its own fixes this case and produces 101% in others.
+        static func apportion(_ weights: [Double], total: Double) -> [Int] {
+            let exact = weights.map { $0 / total * 100 }
+            var out = exact.map { Int($0.rounded(.down)) }
+            var leftover = 100 - out.reduce(0, +)
+            guard leftover > 0 else { return out }
+            // Biggest fractional part first; ties go to the larger share.
+            let order = exact.indices.sorted {
+                let l = exact[$0] - exact[$0].rounded(.down)
+                let r = exact[$1] - exact[$1].rounded(.down)
+                return l == r ? exact[$0] > exact[$1] : l > r
+            }
+            for i in order where leftover > 0 {
+                out[i] += 1
+                leftover -= 1
+            }
+            return out
         }
 
         /// Where this wallet asked its share to go.
