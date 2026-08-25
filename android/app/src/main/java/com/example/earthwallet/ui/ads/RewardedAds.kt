@@ -2,10 +2,12 @@ package network.erth.wallet.ui.ads
 
 import android.app.Activity
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.util.Log
 import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.FullScreenContentCallback
 import com.google.android.gms.ads.LoadAdError
+import com.google.android.gms.ads.MobileAds
 import com.google.android.gms.ads.rewarded.RewardedAd
 import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback
 import com.google.android.gms.ads.rewarded.ServerSideVerificationOptions
@@ -30,6 +32,44 @@ object RewardedAds {
     /** Rewarded unit for "ads for gas". Must match the app's REWARDED_AD_UNIT_ID. */
     private const val AD_UNIT_ID = "ca-app-pub-8662126294069074/9040854138"
 
+    /**
+     * Development phones registered with AdMob as test devices.
+     *
+     * The live unit answers "No fill" to an ordinary development phone, and the
+     * gas gate turns a failed load into a silent no-op, so the button is dead
+     * for the whole of development with nothing on screen to say why.
+     * Registering the device makes that same unit serve test ads, which fill
+     * every time.
+     *
+     * Pointing the app at Google's demo unit fixes the fill and breaks the
+     * grant: the SSV callback URL belongs to an ad unit, Google's demo unit is
+     * not ours to configure, and the backend checks the ad_unit it is called
+     * with against ADMOB_AD_UNIT_ID. Test ads on the real unit are the only
+     * arrangement where both the ad and the dust arrive.
+     */
+    private val TEST_DEVICE_IDS = listOf("1DD50A79508E9DC1329640935C11C604")
+
+    private var testDevicesRegistered = false
+
+    /**
+     * Debug builds only, and only once per process.
+     *
+     * Read off the debuggable flag rather than BuildConfig.DEBUG: this module
+     * does not enable the buildConfig feature, and turning it on to learn one
+     * boolean is a bigger change than asking ApplicationInfo.
+     */
+    private fun registerTestDevices(context: Context) {
+        if (testDevicesRegistered) return
+        testDevicesRegistered = true
+        if (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) return
+        MobileAds.setRequestConfiguration(
+            MobileAds.getRequestConfiguration().toBuilder()
+                .setTestDeviceIds(TEST_DEVICE_IDS)
+                .build(),
+        )
+        Log.d(TAG, "registered ${TEST_DEVICE_IDS.size} AdMob test device(s)")
+    }
+
     private var ad: RewardedAd? = null
     private var loading = false
 
@@ -38,6 +78,7 @@ object RewardedAds {
     /** Loads an ad if one is not already loaded or in flight. Safe to call often. */
     fun preload(context: Context) {
         if (ad != null || loading) return
+        registerTestDevices(context)
         loading = true
         RewardedAd.load(
             context,
