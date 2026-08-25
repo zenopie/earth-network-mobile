@@ -1,0 +1,25 @@
+syntax = "proto3";
+package cosmos.gov.v1;
+
+option java_package = "cosmos.gov.v1";
+option java_multiple_files = true;
+
+// Trimmed to the one message the wallet sends, like every other vendored proto
+// here. The SDK declares VoteOption in gov.proto, but an enum travels as a
+// varint and only the message's type URL identifies it to the chain, so
+// declaring it here keeps the file self-contained instead of pulling gov.proto
+// and its dependencies in behind it.
+enum VoteOption {
+  VOTE_OPTION_UNSPECIFIED = 0;
+  VOTE_OPTION_YES = 1;
+  VOTE_OPTION_ABSTAIN = 2;
+  VOTE_OPTION_NO = 3;
+  VOTE_OPTION_NO_WITH_VETO = 4;
+}
+
+message MsgVote {
+  uint64 proposal_id = 1;
+  string voter = 2;
+  VoteOption option = 3;
+  string metadata = 4;
+}

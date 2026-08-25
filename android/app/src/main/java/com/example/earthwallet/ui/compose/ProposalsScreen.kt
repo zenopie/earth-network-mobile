@@ -28,6 +28,7 @@ import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
 fun ProposalsScreen(
     proposals: List<Gov.Proposal>?,
     modifier: Modifier = Modifier,
+    onOpen: ((Gov.Proposal) -> Unit)? = null,
 ) {
     val dimens = EarthTheme.dimens
 
@@ -48,7 +49,10 @@ fun ProposalsScreen(
             color = EarthColors.Text.textSecondary,
         )
         Spacer(Modifier.height(dimens.space16))
-        ProposalList(proposals = proposals)
+        // Voting lives on the proposal itself. Whether this wallet may vote is
+        // answered there too, next to the buttons it governs, rather than as a
+        // warning up here about buttons that are two taps away.
+        ProposalList(proposals = proposals, onOpen = onOpen)
         Spacer(Modifier.height(dimens.space32))
     }
 }

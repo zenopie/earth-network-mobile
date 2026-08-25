@@ -31,6 +31,7 @@ import kotlinx.coroutines.withContext
 import network.erth.wallet.ui.ads.RewardedAds
 import network.erth.wallet.ui.compose.registration.RegistrationActivity
 import network.erth.wallet.chain.Dex
+import network.erth.wallet.chain.Gov
 import network.erth.wallet.chain.Personhood
 import network.erth.wallet.ui.vendor.component.BlankBgScaffold
 
@@ -587,6 +588,36 @@ private fun EarthContent(
         EarthRoute.Proposals -> ProposalsScreen(
             proposals = allocationState?.proposals,
             modifier = inset,
+            onOpen = { nav.push(EarthRoute.ProposalDetail(it.id)) },
+        )
+
+        is EarthRoute.ProposalDetail -> ProposalDetailScreen(
+            // Read from the list already loaded rather than fetched again:
+            // the tally on it is the live one, and refetching one proposal
+            // would put a spinner in front of data that is already here.
+            proposal = allocationState?.proposals?.firstOrNull { it.id == route.id },
+            modifier = inset,
+            // x/gov weighs bonded stake and nothing else, so being a verified
+            // human — which carries the allocation streams — buys no say here.
+            eligibility = if (loaded.stakedUerth <= 0) {
+                "Stake ERTH to vote. Voting power here is bonded stake alone."
+            } else {
+                null
+            },
+            onVote = { proposal, vote ->
+                tx.request(
+                    details = TxConfirmDetails(
+                        action = "Vote ${vote.label} on #${proposal.id}",
+                        msgTypeUrl = Gov.MSG_VOTE_TYPE_URL,
+                        balanceUerth = loaded.balanceUerth,
+                    ),
+                    gasLimit = Gov.VOTE_GAS_LIMIT,
+                    onSuccess = onRefresh,
+                    build = { ctx ->
+                        listOf(Gov.msgVote(walletAddress(ctx), proposal.id, vote))
+                    },
+                )
+            },
         )
 
         is EarthRoute.TransactionDetail -> TransactionDetailScreen(
@@ -811,6 +842,7 @@ private fun EarthRoute.title(): String = when (this) {
     EarthRoute.About -> "About"
     is EarthRoute.Stream -> if (human) "Caretaker Fund" else "Groundworks Fund"
     EarthRoute.Proposals -> "Proposals"
+    is EarthRoute.ProposalDetail -> "Proposal #$id"
     EarthRoute.Explore -> "Explorer"
     EarthRoute.Personhood -> "Identity"
     EarthRoute.Wallets -> "Wallets"
