@@ -119,6 +119,30 @@ private func checkMRZ() {
     Check.throwsError("rejects a short zone") { _ = try MRZ(td3: "P<UTO") }
 
     // ICAO Doc 9303 Part 11 §9.7.2, the published BAC worked example.
+    //
+    // The material is asserted as well as the seed it hashes to, because it is
+    // what the reader session is handed directly — NFCPassportReader calls it
+    // the "MRZ key" and derives the same seed from it inside the library. A
+    // mismatch here surfaces on a phone as a chip that refuses a correct MRZ.
+    Check.equal(
+        "MRZ key material",
+        try! MRZ.keyMaterial(mrz.key),
+        "L898902C<369080619406236"
+    )
+    // Nine characters is the field width, and a document number shorter than
+    // that is filler-padded *before* its check digit is computed — which is
+    // why the eight characters a user types produce `L898902C<3`. Concatenating
+    // without the padding computes the digit over different material and yields
+    // a key the chip refuses.
+    Check.equal(
+        "a short document number is filler-padded",
+        try! MRZ.keyMaterial(MRZ.Key(
+            documentNumber: "L898902C",
+            dateOfBirth: "690806",
+            dateOfExpiry: "940623"
+        )),
+        "L898902C<369080619406236"
+    )
     let seed = try! MRZ.bacKeySeed(mrz.key)
     Check.equal("BAC key seed", seed.hexString, "239ab9cb282daf66231dc5a4df6bfbae")
     Check.equal(

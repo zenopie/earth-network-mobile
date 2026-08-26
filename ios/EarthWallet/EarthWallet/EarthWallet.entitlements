@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Reading an ePassport means exchanging raw ISO 7816 APDUs, which iOS
+	     only permits in the TAG reader-session format. NDEF — the format an app
+	     gets without any of this — can read a tag's message and nothing else,
+	     and a passport does not have one.
+
+	     TAG needs the "Near Field Communication Tag Reading" capability enabled
+	     on the App ID, which is self-service in the developer portal but paid
+	     accounts only: a free Personal Team cannot turn it on, which is why
+	     this file did not exist until the Apple Developer Program enrolment
+	     landed. The applet this talks to (A0000002471001, the ICAO eMRTD
+	     application identifier) is declared in Info.plist alongside
+	     NFCReaderUsageDescription; both are required and iOS refuses the
+	     session if either is missing. -->
+	<key>com.apple.developer.nfc.readersession.formats</key>
+	<array>
+		<string>TAG</string>
+	</array>
+</dict>
+</plist>

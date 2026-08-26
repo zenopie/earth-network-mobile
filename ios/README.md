@@ -272,14 +272,89 @@ Running it needs Xcode's iOS platform component, which is a separate download
 from the SDK and which a connected device needs too — see
 `ios/EarthWallet/README.md`.
 
+## Phase 5: the chip, and the pathway end to end
+
+The NFC dialogue is `ios/EarthWallet/EarthWallet/ChipReader.swift`, over
+`NFCPassportReader` — the iOS jmrtd. It asks for **DG1 and EF.SOD only**: a
+full read pulls DG2, the JPEG of the holder's face, over a link that manages a
+few KB a second, and nothing downstream wants it. PACE is left on and the
+library falls back to BAC itself, because a growing share of issues refuse BAC
+outright.
+
+The flow is scan → three fields → chip → proof → `MsgRegister`, and the split
+between the last two is the load-bearing part: the proof completes *before* the
+confirmation appears, so nobody is asked to watch an ad for gas on a
+transaction that may never exist. Registration raises its message through
+`TxController` like every other screen, which is what makes the gas gate the
+same one everything else gets.
+
+### What lives in the app target, and why
+
+`EarthUI` holds two seams — `PassportChip` and `PassportProving` — that the app
+fills at launch, alongside `AppOrientation`. Neither implementation could live
+in the library:
+
+- **`NFCPassportReader`** declares no macOS floor while its OpenSSL dependency
+  requires 10.15, so SwiftPM fails the platform check for any graph macOS is
+  part of — and `EarthCore` keeps macOS in it so its checks stay runnable on a
+  Mac. Symptom if you try: *"the library 'NFCPassportReader' requires macos
+  10.13, but depends on the product 'OpenSSL' which requires macos 10.15"*, on
+  an iOS-only build.
+- **Barretenberg** is a ~140MB framework and the circuits are ~14MB of JSON.
+  `EarthUI` has to stay typecheckable from the command line.
+
+The circuits are **referenced**, not copied: the folder reference in the Xcode
+project points straight at `android/app/src/main/assets/circuits`, so one
+recompile cannot leave the two platforms proving against different circuits.
+
+### The SRS is not free, and not cached
+
+`DeviceProver` loads circuits with `size: nil`, so the SRS is provisioned from
+the circuit's own gate count rather than a hardcoded hint. Seven circuits ship
+and they are not the same size, and **barretenberg honours only the first SRS
+initialization of a process** — a hint too small for the circuit a passport
+selects cannot be corrected afterwards.
+
+With no `srsPath`, noir_rs fetches the SRS from Aztec. There is no cache: it is
+a download every time `setup_srs` does real work — which is once per process,
+so once per app launch that reaches a proof. Do **not** pass a path to fix
+that unless the file is definitely there: `LocalSrs::new` reads it with
+`fs::read(..).unwrap()`, so a missing file is a Rust panic across the FFI
+boundary, not a Swift error.
+
+### Signing
+
+The `TAG` reader-session format needs the **Near Field Communication Tag
+Reading** capability on the App ID (`network.erth.wallet`). Self-service in the
+developer portal, but paid accounts only — a Personal Team cannot enable it,
+which is why `EarthWallet.entitlements` did not exist until enrolment landed.
+Without it the build fails before compiling anything:
+
+    error: Provisioning profile "iOS Team Provisioning Profile: network.erth.wallet"
+    doesn't include the NFC Tag Reading capability.
+
+Note also that Apple requires crypto wallet apps to be published by an
+**organization**, not an individual — that binds at submission, not at
+development.
+
+### Building it
+
+The simulator link fails as `x86_64`: Swoirenberg publishes `arm64-ios-sim` and
+no Intel slice.
+
+    xcodebuild -project EarthWallet.xcodeproj -scheme EarthWallet \
+      -destination 'generic/platform=iOS Simulator' \
+      CODE_SIGNING_ALLOWED=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=NO
+
+A device build is the real one, and needs the capability above.
+
 ## Not yet started
 
-The **NFC chip dialogue** (`NFCPassportReader` replacing jmrtd) is the rest of
-Phase 3, and it is blocked from outside the code: raw APDU exchange needs the
-`TAG` reader-session format, which needs the "Near Field Communication Tag
-Reading" entitlement, which a free Personal Team cannot enable. It also cannot
-be tested without a device. `PassportRegistration.Scan` is the seam it plugs
-into — it takes DG1 and EF.SOD and nothing else — so the work is bounded.
+Referrals from a link. Android captures a referrer from a deep link or the Play
+install referrer; iOS needs
+`/.well-known/apple-app-site-association` served from erth.network alongside the
+`assetlinks.json` already there, and there is no iOS equivalent of the install
+referrer — so a fresh install from a link needs another mechanism. The manual
+referrer field on the registration screen works today.
 
-Then phases 4–5: the SwiftUI four-tab app, AdMob gas gate and referrals. See
-`../IOS_PORT_PROMPT.md`.
+See `../IOS_PORT_PROMPT.md`.

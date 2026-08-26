@@ -143,17 +143,33 @@ public struct MRZ: Equatable {
             .trimmingCharacters(in: .whitespaces)
     }
 
-    /// The BAC key seed: SHA-1 over the three key fields with their check
-    /// digits, truncated to 16 bytes (ICAO Doc 9303 Part 11, §9.7.2).
+    /// The three key fields, each followed by its check digit — the 24
+    /// characters the chip's access key is derived from (ICAO Doc 9303 Part 11,
+    /// §9.7.2).
+    ///
+    /// This is also verbatim what `NFCPassportReader` calls the "MRZ key", so
+    /// the reader session is handed this rather than re-deriving it from
+    /// fields the user typed. A document number shorter than nine characters is
+    /// filler-padded, which is the case the chip is strict about and a naive
+    /// concatenation gets wrong.
+    public static func keyMaterial(_ key: Key) throws -> String {
+        let number = key.documentNumber
+            .trimmingCharacters(in: .whitespaces)
+            .uppercased()
+            .padding(toLength: 9, withPad: "<", startingAt: 0)
+        return try number + String(checkDigit(number))
+            + key.dateOfBirth + String(checkDigit(key.dateOfBirth))
+            + key.dateOfExpiry + String(checkDigit(key.dateOfExpiry))
+    }
+
+    /// The BAC key seed: SHA-1 over `keyMaterial`, truncated to 16 bytes
+    /// (ICAO Doc 9303 Part 11, §9.7.2).
     ///
     /// Reproduced here rather than left to the NFC library so the MRZ a user
     /// confirms can be checked before the reader session opens — and so this
     /// half is testable without a passport in hand.
     public static func bacKeySeed(_ key: Key) throws -> Data {
-        let number = key.documentNumber.padding(toLength: 9, withPad: "<", startingAt: 0).uppercased()
-        let material = try number + String(checkDigit(number))
-            + key.dateOfBirth + String(checkDigit(key.dateOfBirth))
-            + key.dateOfExpiry + String(checkDigit(key.dateOfExpiry))
+        let material = try keyMaterial(key)
         return Data(Insecure.SHA1.hash(data: Data(material.utf8)).prefix(16))
     }
 }

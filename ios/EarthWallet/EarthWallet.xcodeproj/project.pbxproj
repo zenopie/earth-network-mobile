@@ -10,6 +10,11 @@
 		E1000000000000000000A1 /* EarthWalletApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1000000000000000000B1 /* EarthWalletApp.swift */; };
 		E1000000000000000000A2 /* EarthUI in Frameworks */ = {isa = PBXBuildFile; productRef = E10000000000000000010B /* EarthUI */; };
 		E1000000000000000000A3 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E1000000000000000000B4 /* Assets.xcassets */; };
+		E1000000000000000000A4 /* ChipReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1000000000000000000B6 /* ChipReader.swift */; };
+		E1000000000000000000A5 /* DeviceProver.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1000000000000000000B7 /* DeviceProver.swift */; };
+		E1000000000000000000A6 /* circuits in Resources */ = {isa = PBXBuildFile; fileRef = E1000000000000000000B8 /* circuits */; };
+		E1000000000000000000A7 /* ProverGate in Frameworks */ = {isa = PBXBuildFile; productRef = E10000000000000000010D /* ProverGate */; };
+		E1000000000000000000A8 /* NFCPassportReader in Frameworks */ = {isa = PBXBuildFile; productRef = E10000000000000000010F /* NFCPassportReader */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -17,6 +22,10 @@
 		E1000000000000000000B2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		E1000000000000000000B4 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		E1000000000000000000B3 /* EarthWallet.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = EarthWallet.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E1000000000000000000B5 /* EarthWallet.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = EarthWallet.entitlements; sourceTree = "<group>"; };
+		E1000000000000000000B6 /* ChipReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChipReader.swift; sourceTree = "<group>"; };
+		E1000000000000000000B7 /* DeviceProver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceProver.swift; sourceTree = "<group>"; };
+		E1000000000000000000B8 /* circuits */ = {isa = PBXFileReference; lastKnownFileType = folder; name = circuits; path = "../../android/app/src/main/assets/circuits"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -25,6 +34,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				E1000000000000000000A2 /* EarthUI in Frameworks */,
+				E1000000000000000000A7 /* ProverGate in Frameworks */,
+				E1000000000000000000A8 /* NFCPassportReader in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -35,6 +46,7 @@
 			isa = PBXGroup;
 			children = (
 				E1000000000000000000D2 /* EarthWallet */,
+				E1000000000000000000B8 /* circuits */,
 				E1000000000000000000D3 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -43,8 +55,11 @@
 			isa = PBXGroup;
 			children = (
 				E1000000000000000000B1 /* EarthWalletApp.swift */,
+				E1000000000000000000B6 /* ChipReader.swift */,
+				E1000000000000000000B7 /* DeviceProver.swift */,
 				E1000000000000000000B4 /* Assets.xcassets */,
 				E1000000000000000000B2 /* Info.plist */,
+				E1000000000000000000B5 /* EarthWallet.entitlements */,
 			);
 			path = EarthWallet;
 			sourceTree = "<group>";
@@ -75,6 +90,8 @@
 			name = EarthWallet;
 			packageProductDependencies = (
 				E10000000000000000010B /* EarthUI */,
+				E10000000000000000010D /* ProverGate */,
+				E10000000000000000010F /* NFCPassportReader */,
 			);
 			productName = EarthWallet;
 			productReference = E1000000000000000000B3 /* EarthWallet.app */;
@@ -106,6 +123,8 @@
 			mainGroup = E1000000000000000000D1;
 			packageReferences = (
 				E10000000000000000010A /* XCLocalSwiftPackageReference "../EarthUI" */,
+				E10000000000000000010C /* XCLocalSwiftPackageReference "../ProverGate" */,
+				E10000000000000000010E /* XCRemoteSwiftPackageReference "NFCPassportReader" */,
 			);
 			productRefGroup = E1000000000000000000D3 /* Products */;
 			projectDirPath = "";
@@ -122,6 +141,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				E1000000000000000000A3 /* Assets.xcassets in Resources */,
+				E1000000000000000000A6 /* circuits in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -133,6 +153,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				E1000000000000000000A1 /* EarthWalletApp.swift in Sources */,
+				E1000000000000000000A4 /* ChipReader.swift in Sources */,
+				E1000000000000000000A5 /* DeviceProver.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -179,9 +201,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = EarthWallet/EarthWallet.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 3MAPA7S624;
+				DEVELOPMENT_TEAM = XD8VH8WKVX;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = EarthWallet/Info.plist;
@@ -190,7 +213,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = network.erth.wallet;
+				PRODUCT_BUNDLE_IDENTIFIER = network.erth.EarthWallet;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -202,9 +225,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = EarthWallet/EarthWallet.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 3MAPA7S624;
+				DEVELOPMENT_TEAM = XD8VH8WKVX;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = EarthWallet/Info.plist;
@@ -213,7 +237,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = network.erth.wallet;
+				PRODUCT_BUNDLE_IDENTIFIER = network.erth.EarthWallet;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -249,12 +273,36 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../EarthUI;
 		};
+		E10000000000000000010C /* XCLocalSwiftPackageReference "../ProverGate" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../ProverGate;
+		};
 /* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		E10000000000000000010E /* XCRemoteSwiftPackageReference "NFCPassportReader" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/AndyQ/NFCPassportReader.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.3.3;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		E10000000000000000010B /* EarthUI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = EarthUI;
+		};
+		E10000000000000000010D /* ProverGate */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ProverGate;
+		};
+		E10000000000000000010F /* NFCPassportReader */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E10000000000000000010E /* XCRemoteSwiftPackageReference "NFCPassportReader" */;
+			productName = NFCPassportReader;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

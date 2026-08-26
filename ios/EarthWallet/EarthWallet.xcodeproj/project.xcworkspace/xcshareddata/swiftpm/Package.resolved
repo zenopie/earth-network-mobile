@@ -1,5 +1,5 @@
 {
-  "originHash" : "47aac97049a57ddac15933151f50490ff49b6e677ce230c434ddc9d53e10a719",
+  "originHash" : "7dfb6d3f3c2ba7c85db82f0bc6f33448ab999de328339ec4deeb98a297697c9f",
   "pins" : [
     {
       "identity" : "bigint",
@@ -8,6 +8,24 @@
       "state" : {
         "revision" : "e07e00fa1fd435143a2dcf8b7eec9a7710b2fdfe",
         "version" : "5.7.0"
+      }
+    },
+    {
+      "identity" : "nfcpassportreader",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/AndyQ/NFCPassportReader.git",
+      "state" : {
+        "revision" : "6e37f1ab249fef82771da46d32707f2b94ed090f",
+        "version" : "2.3.3"
+      }
+    },
+    {
+      "identity" : "openssl-package",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/krzyzanowskim/OpenSSL-Package.git",
+      "state" : {
+        "revision" : "a3809db22a45e3ff658377a24da252982a306b9b",
+        "version" : "3.6.3000"
       }
     },
     {
@@ -35,6 +53,33 @@
       "state" : {
         "revision" : "9683e8e311c76d8114cd308b697dad2f9fc58fed",
         "version" : "0.17.0"
+      }
+    },
+    {
+      "identity" : "swoir",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Swoir/Swoir.git",
+      "state" : {
+        "revision" : "d826e0053751bcb580948b2aa983e1e3e7a63134",
+        "version" : "1.0.0-beta.22-2"
+      }
+    },
+    {
+      "identity" : "swoircore",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Swoir/SwoirCore.git",
+      "state" : {
+        "revision" : "fb88807fd62dc9143dfac90e81442dd1e64e5a30",
+        "version" : "0.11.0"
+      }
+    },
+    {
+      "identity" : "swoirenberg",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Swoir/Swoirenberg.git",
+      "state" : {
+        "revision" : "7e31f79d044a0be4274fc8c4c02e458f080b8ee3",
+        "version" : "1.0.0-beta.22-2"
       }
     }
   ],

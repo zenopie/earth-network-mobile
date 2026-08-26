@@ -1,28 +1,51 @@
 import EarthCore
 import SwiftUI
 
-/// Registration: the three MRZ fields, then the chip, then a proof.
+/// Registration: the three MRZ fields, then the chip, then a proof, then one
+/// transaction.
 ///
-/// The chip step is not built. Raw APDU exchange needs the `TAG` reader-session
-/// format, which needs the "Near Field Communication Tag Reading" entitlement,
-/// which a free Personal Team cannot enable — so it cannot be written *and*
-/// run until the Apple Developer Program enrolment lands. The step is shown
-/// rather than hidden: someone opening this should learn what registration
-/// involves and what is missing, not find a dead end.
+/// The order is the one the Android flow settled on, and the split between
+/// proving and broadcasting is the load-bearing part of it. Proving is slow and
+/// can fail; broadcasting needs a fee a new human does not have yet. Doing them
+/// as one step means asking someone to watch an ad for gas before anyone knows
+/// whether the proof will succeed — spending their time on a transaction that
+/// may never exist. So the proof completes first, and only then does the
+/// confirmation (and with it the gas gate) appear.
 ///
-/// Everything on either side of it is real. The MRZ is validated here with the
-/// same check digits the chip uses, and `PassportRegistration` already turns a
-/// DG1 and an EF.SOD into a witness the circuit accepts.
+/// The chip step owns nothing on screen while it runs: iOS gives the reader
+/// session its own system sheet and will not let anything draw over it, so this
+/// starts the read and waits.
 struct RegistrationSheet: View {
     @Environment(\.earth) private var theme
     @Environment(\.dismiss) private var dismiss
+    @Environment(AppModel.self) private var model
+    @Environment(TxController.self) private var tx
 
     @State private var step = Step.intro
     @State private var key = MRZ.Key(documentNumber: "", dateOfBirth: "", dateOfExpiry: "")
 
     @State private var referrer = ""
 
-    enum Step: Hashable { case intro, scan, mrz, chip }
+    /// What the chip gave up, held only until the proof is built from it.
+    @State private var scan: PassportRegistration.Scan?
+    @State private var proof: PassportRegistration.Proof?
+    @State private var failure: String?
+
+    /// The chip step's own progress. Not an enum on `Step` because the step
+    /// does not change — the same screen reports reading, then proving, then
+    /// what went wrong.
+    @State private var phase = Phase.idle
+
+    enum Step: Hashable { case intro, scan, mrz, chip, ready }
+
+    enum Phase: Equatable {
+        case idle
+        /// The system sheet is up and the passport is against the phone.
+        case reading
+        /// The passport can go back in a pocket; Barretenberg is working.
+        case proving
+        case failed
+    }
 
     var body: some View {
         NavigationStack {
@@ -43,6 +66,7 @@ struct RegistrationSheet: View {
                     case .scan: EmptyView()
                     case .mrz: mrzEntry
                     case .chip: chip
+                    case .ready: ready
                     }
                     }
                     .padding(theme.space.gutter)
@@ -51,9 +75,22 @@ struct RegistrationSheet: View {
             }
             .navigationTitle(step == .scan ? "Scan" : "Register")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    // Closing mid-read would leave the reader session up with
+                    // nothing behind it, and mid-proof would throw away a proof
+                    // that is nearly done.
+                    Button("Close") { dismiss() }
+                        .disabled(phase == .reading || phase == .proving)
+                }
+            }
             .earthBackground()
             .scrollContentBackground(.hidden)
+            // The passport is in shot for the whole flow. Keeping the screen
+            // awake is not a nicety here: the reader session dies with the
+            // display, and it takes a few attempts to seat a passport well.
+            .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
+            .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
         }
     }
 
@@ -72,10 +109,16 @@ struct RegistrationSheet: View {
             EarthCard {
                 StepRow(number: 1, title: "Type three fields", detail: "Document number, date of birth, date of expiry — from the two lines at the bottom of the photo page.")
                 StepRow(number: 2, title: "Hold the passport to the phone", detail: "The chip is read over NFC.")
-                StepRow(number: 3, title: "Prove and register", detail: "About a second and a half of proving, then one transaction.")
+                StepRow(number: 3, title: "Prove and register", detail: "A few seconds of proving, then one transaction.")
             }
 
-            EarthButton(title: "Start") { step = .scan }
+            if !PassportChip.isAvailable {
+                unsupported("This device cannot read passport chips. Registration needs an iPhone 7 or later.")
+            } else if !PassportProving.isAvailable {
+                unsupported("This build has no prover, so a chip read would have nothing to prove with.")
+            } else {
+                EarthButton(title: "Start") { step = .scan }
+            }
         }
     }
 
@@ -127,43 +170,211 @@ struct RegistrationSheet: View {
                 }
             }
 
-            EarthButton(title: "Read the chip") { step = .chip }
-                .disabled(seed == nil || referrerInvalid)
+            EarthButton(title: "Read the chip") {
+                step = .chip
+                start()
+            }
+            .disabled(seed == nil || referrerInvalid)
             EarthButton(title: "Scan again", role: .secondary) { step = .scan }
         }
     }
 
     private var chip: some View {
         VStack(alignment: .leading, spacing: theme.space.x16) {
-            EarthGlyph(systemName: "wave.3.right", size: 56)
-            Text("Chip reading is not in this build")
+            EarthGlyph(systemName: phase == .proving ? "cpu" : "wave.3.right", size: 56)
+
+            Text(chipTitle)
                 .font(EarthType.headline)
                 .foregroundStyle(theme.colors.textPrimary)
 
-            Text("Reading a passport needs raw APDU exchange, which iOS only allows with the Near Field Communication Tag Reading entitlement. That entitlement requires a paid Apple Developer account, so this step cannot be enabled yet.")
+            Text(chipDetail)
+                .font(EarthType.body)
+                .foregroundStyle(theme.colors.textSecondary)
+
+            if phase == .reading || phase == .proving {
+                ProgressView().progressViewStyle(.circular)
+            }
+
+            if phase == .failed, let failure {
+                EarthCard {
+                    Text(failure)
+                        .font(EarthType.bodySmall)
+                        .foregroundStyle(theme.colors.textError)
+                        .textSelection(.enabled)
+                }
+            }
+
+            if phase == .idle || phase == .failed {
+                EarthButton(title: phase == .failed ? "Try again" : "Hold the passport to the phone") {
+                    start()
+                }
+                EarthButton(title: "Check the three fields", role: .secondary) { step = .mrz }
+            }
+        }
+    }
+
+    /// The proof is built and the passport is no longer needed. What is left is
+    /// one transaction, which goes through `TxController` like every other —
+    /// so the gas gate a new human needs is the same one every screen gets.
+    private var ready: some View {
+        VStack(alignment: .leading, spacing: theme.space.x16) {
+            EarthGlyph(systemName: "checkmark.seal.fill", size: 56)
+            Text("Proved")
+                .font(EarthType.headline)
+                .foregroundStyle(theme.colors.textPrimary)
+            Text("The proof is on this device. Registering it is one transaction; the passport can go away now.")
                 .font(EarthType.body)
                 .foregroundStyle(theme.colors.textSecondary)
 
             EarthCard {
-                EarthLabel("What is already done")
-                Text("Everything after the chip read. The MRZ you just typed is validated with the same check digits the chip uses, and a passport's DG1 and EF.SOD already produce a proof this chain's own verifier accepts.")
-                    .font(EarthType.bodySmall)
-                    .foregroundStyle(theme.colors.textSecondary)
-            }
-
-            // Shown so the step reads as a real one waiting on a key, not as an
-            // unwritten screen.
-            EarthCard {
-                EarthDetailRow(label: "Document number", value: key.documentNumber.uppercased())
-                EarthDetailRow(label: "Date of birth", value: key.dateOfBirth)
-                EarthDetailRow(label: "Date of expiry", value: key.dateOfExpiry)
-                if let seed {
-                    EarthDetailRow(label: "Chip access key", value: String(seed.hexString.prefix(16)) + "…")
+                if let mrz = scan?.mrz {
+                    EarthDetailRow(label: "Issued by", value: mrz.issuingState)
+                    EarthDetailRow(label: "Nationality", value: mrz.nationality)
+                }
+                if let proof {
+                    EarthDetailRow(label: "Circuit", value: proof.signatureAlgorithm)
+                    if let nullifier = proof.nullifier {
+                        // The one figure worth showing: it is what the chain
+                        // stores, it is one per human, and it is not derived
+                        // from anything that identifies the document.
+                        EarthDetailRow(label: "Nullifier", value: String(nullifier.prefix(12)) + "…")
+                    }
                 }
             }
 
-            EarthButton(title: "Back", role: .secondary) { step = .mrz }
+            if let failure {
+                Text(failure)
+                    .font(EarthType.bodySmall)
+                    .foregroundStyle(theme.colors.textError)
+                    .textSelection(.enabled)
+            }
+
+            EarthButton(title: "Register") { register() }
         }
+    }
+
+    private var chipTitle: String {
+        switch phase {
+        case .idle: "Hold the passport to the phone"
+        case .reading: "Reading the chip"
+        case .proving: "Building the proof"
+        case .failed: "That did not work"
+        }
+    }
+
+    private var chipDetail: String {
+        switch phase {
+        case .idle:
+            "Rest the passport flat against the top of the phone, photo page down, and hold it still."
+        case .reading:
+            "Keep it still. This takes a few seconds."
+        case .proving:
+            "The passport can go away now. This runs on the phone and takes a few seconds."
+        case .failed:
+            "Nothing has been sent anywhere."
+        }
+    }
+
+    private func unsupported(_ text: String) -> some View {
+        EarthCard {
+            Text(text)
+                .font(EarthType.bodySmall)
+                .foregroundStyle(theme.colors.textSecondary)
+        }
+    }
+
+    /// Read the chip, then prove — one task, because the two are a single wait
+    /// from the user's side and nothing between them needs a decision.
+    private func start() {
+        failure = nil
+        phase = .reading
+        let key = key
+        Task {
+            do {
+                let scan = try await PassportChip.read(key: key)
+                self.scan = scan
+                phase = .proving
+                // Off the main actor: proving holds a core for seconds and
+                // peaks a few hundred megabytes, and the screen has a spinner
+                // on it that has to keep turning.
+                let proof = try await Task.detached(priority: .userInitiated) {
+                    try await PassportProving.prove(scan: scan)
+                }.value
+                self.proof = proof
+                phase = .idle
+                step = .ready
+            } catch let error as PassportChip.Failure {
+                // Cancelling is a decision, not a failure — the system sheet
+                // has its own Cancel and pressing it should land back on a
+                // screen offering another go, not on an error.
+                failure = error == .cancelled ? nil : error.message
+                phase = error == .cancelled ? .idle : .failed
+            } catch {
+                failure = describe(error)
+                phase = .failed
+            }
+        }
+    }
+
+    private func register() {
+        guard let scan, let proof else { return }
+        let affiliate = referrer.trimmingCharacters(in: .whitespacesAndNewlines)
+        let address = model.address
+
+        // Built once, here, so a message the chain would reject for a bad
+        // referrer fails on this screen rather than at broadcast — after the
+        // confirmation, after the ad.
+        let message: ProtoAny
+        do {
+            message = try PassportRegistration.message(
+                scan: scan,
+                proof: proof,
+                creator: address,
+                referrer: affiliate
+            )
+        } catch {
+            failure = describe(error)
+            return
+        }
+
+        tx.request(
+            .init(
+                action: "Register",
+                rows: [
+                    ("Nullifier", proof.nullifier.map { String($0.prefix(12)) + "…" } ?? "—"),
+                    ("Circuit", proof.signatureAlgorithm),
+                    ("Referrer", affiliate.isEmpty ? "None" : affiliate),
+                    ("Fee", "\(Token.erth.format(Personhood.registerFeeUerth)) ERTH"),
+                ],
+                // Registration verifies a proof on chain, which costs far more
+                // than a transfer. The default limit is nowhere near enough.
+                gasLimit: Personhood.registerGasLimit
+            )
+        ) { _ in
+            [message]
+        }
+        // Out of the way, so the confirmation card at the root is not drawn
+        // behind this sheet. Same reason Send does it.
+        dismiss()
+    }
+
+    private func describe(_ error: Error) -> String {
+        if let failure = error as? PassportChip.Failure { return failure.message }
+        if case PassportProving.Failure.unavailable = error {
+            return "This build has no prover."
+        }
+        if let inputs = error as? PassportInputs.Error {
+            return "This passport's chip data is not in a shape the circuit accepts (\(inputs))."
+        }
+        if let registration = error as? PassportRegistration.Error {
+            switch registration {
+            case .referrerIsSelf: return "You cannot refer yourself."
+            case let .malformedReferrer(address): return "\(address) is not a valid earth address."
+            case let .algorithmMismatch(expected, got):
+                return "The proof came from \(got) but the certificate selects \(expected)."
+            }
+        }
+        return model.describe(error)
     }
 
     /// The BAC key seed, which doubles as a validity check: it only computes
