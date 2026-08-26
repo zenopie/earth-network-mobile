@@ -70,6 +70,47 @@ enum Palette {
         static let b800 = hex(0x056624)
     }
 
+    /// Chart series, in a fixed order that must not be reordered or cycled.
+    ///
+    /// The order *is* the colourblind-safety mechanism: it was validated as a
+    /// sequence, adjacent pair by adjacent pair, under simulated protanopia and
+    /// deuteranopia. Leading with the brand green was tried and measured — it
+    /// drops the worst adjacent pair from ΔE 9.1 to 6.1, into the band that is
+    /// only legal with a secondary encoding — so green stays at slot 6 and the
+    /// chart wears blue first.
+    ///
+    /// These are deliberately *not* the accent. Identity needs distinct hues:
+    /// the ring previously stepped one hue's opacity by 16% per slice, which is
+    /// a sequential ramp doing a categorical job, and adjacent slices were
+    /// nearly indistinguishable. The one-accent rule still holds everywhere
+    /// else — this is the inside of a chart, where hue carries meaning.
+    ///
+    /// Three of these sit below 3:1 on white, which is allowed only because the
+    /// legend names every slice and its share beside the ring. Do not use the
+    /// chart without its legend.
+    enum Series {
+        static let all: [Color] = [
+            hex(0x2A78D6), // blue
+            hex(0xEB6834), // orange
+            hex(0x1BAF7A), // aqua
+            hex(0xEDA100), // yellow
+            hex(0xE87BA4), // magenta
+            hex(0x008300), // green
+            hex(0x4A3AA7), // violet
+            hex(0xE34948), // red
+        ]
+
+        /// Slot `index`, or a neutral past the eighth.
+        ///
+        /// Never cycled. A ninth slice reusing slot 1's blue would claim to be
+        /// the same thing as the first, which is worse than reading as "one of
+        /// the rest" — if a stream ever grows past eight options, the fix is to
+        /// fold the tail into an "Other" slice rather than to invent a hue.
+        static func slot(_ index: Int) -> Color {
+            index < all.count ? all[index] : Gray.g400
+        }
+    }
+
     enum Error {
         static let e50 = hex(0xFDECEA)
         static let e300 = hex(0xF7B8B1)

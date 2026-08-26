@@ -33,6 +33,25 @@ func checkTransactions(writingTo artifacts: URL) {
     // field 1 (denom): tag 0x0a, len 5; field 2 (amount): tag 0x12, len 4.
     Check.equal("Coin", coin.encoded().hexString, "0a057565727468120431303030")
 
+    // MsgVote, byte for byte. Field 1 varint, field 2 string, field 3 enum —
+    // the expectation is encoded independently rather than read back out of the
+    // writer, which would only prove it agrees with itself.
+    let vote = Msg.Vote(
+        proposalID: 7,
+        voter: "earth1s7rgscltvw8v3kzhj46pptdqg843ngs7th9ywp",
+        option: .no
+    )
+    Check.equal(
+        "MsgVote",
+        vote.encoded().hexString,
+        "0807122c6561727468317337726773636c7476773876336b7a686a34367070746471673834336e6773377468397977701803"
+    )
+    Check.equal("MsgVote type url", Msg.Vote.typeURL, "/cosmos.gov.v1.MsgVote")
+    // Yes is 1, not 0. The proto enum reserves 0 for unspecified, and a zero
+    // would be elided as a default — leaving a vote with no option on it.
+    Check.equal("vote options match the proto enum",
+                Gov.Vote.allCases.map(\.proto), [1, 2, 3, 4])
+
     Check.group("transaction assembly")
 
     let send = Msg.Send(

@@ -8,7 +8,27 @@ import Foundation
 /// itself, run for a fixed period, and are weighted by bonded stake alone.
 public enum Gov {
 
-    public struct Proposal: Sendable, Equatable, Identifiable {
+    /// How to vote. Raw values are the proto enum's, which is why they are
+    /// spelled out rather than left to declaration order.
+    public enum Vote: Int, Sendable, CaseIterable {
+        case yes = 1
+        case abstain = 2
+        case no = 3
+        case noWithVeto = 4
+
+        public var proto: Int { rawValue }
+
+        public var label: String {
+            switch self {
+            case .yes: "Yes"
+            case .abstain: "Abstain"
+            case .no: "No"
+            case .noWithVeto: "No with veto"
+            }
+        }
+    }
+
+    public struct Proposal: Sendable, Equatable, Hashable, Identifiable {
         public let id: UInt64
         public let title: String
         public let summary: String
@@ -21,6 +41,9 @@ public enum Gov {
         public let veto: Int64
 
         public var total: Int64 { yes + no + abstain + veto }
+
+        /// Open for voting. The only state in which a vote is accepted.
+        public var isLive: Bool { status == "PROPOSAL_STATUS_VOTING_PERIOD" }
     }
 }
 
@@ -53,7 +76,27 @@ public extension EarthClient {
         }
     }
 
-    // Voting needs cosmos/gov/v1beta1/tx.proto. Reading comes first: there is
-    // nothing to vote on until a proposal exists, and a chain with no proposals
-    // still needs to say so rather than have no governance screen at all.
+    // --- messages ---
+
+    /// A vote on `proposalID`.
+    ///
+    /// Weighted by bonded stake alone. An address with nothing delegated can
+    /// broadcast this successfully and move the tally by nothing, so the screen
+    /// says so rather than letting it look like a vote that failed.
+    func msgVote(voter: String, proposalID: UInt64, option: Gov.Vote) -> ProtoAny {
+        Msg.Vote(proposalID: proposalID, voter: voter, option: option)
+            .asAny(typeURL: Msg.Vote.typeURL)
+    }
+
+    @discardableResult
+    func vote(
+        key: EarthKey,
+        proposalID: UInt64,
+        option: Gov.Vote
+    ) async throws -> String {
+        try await broadcast(
+            [msgVote(voter: key.address, proposalID: proposalID, option: option)],
+            key: key
+        )
+    }
 }

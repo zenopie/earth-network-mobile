@@ -1,3 +1,4 @@
+import BigInt
 import EarthCore
 import SwiftUI
 
@@ -41,10 +42,11 @@ struct StreamDetailScreen: View {
                     Spacer().frame(height: theme.space.x24)
                     PieChart(
                         slices: slices,
-                        // The hole states what the ring cannot: a stream
-                        // nobody has voted in draws as an empty circle, which
-                        // is indistinguishable from one that failed to load.
-                        centreLabel: slices.isEmpty ? "none" : "\(allocated)%"
+                        // Only when there is nothing to draw. A stream nobody
+                        // has voted in is an empty circle, indistinguishable
+                        // from one that failed to load; a total in the middle
+                        // of a populated ring is just "100%" restated.
+                        centreLabel: slices.isEmpty ? "none" : nil
                     )
                     .frame(maxWidth: .infinity)
 
@@ -115,8 +117,6 @@ struct StreamDetailScreen: View {
     private var slices: [AllocationSlice] {
         lens == .actual ? state.actualSlices : state.slices
     }
-
-    private var allocated: Int { slices.reduce(0) { $0 + $1.percent } }
 
     private var caption: String {
         if lens == .actual {
@@ -235,6 +235,7 @@ struct ProposalsScreen: View {
 
     let proposals: [Gov.Proposal]
 
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -244,15 +245,19 @@ struct ProposalsScreen: View {
                             .font(EarthType.bodySmall)
                             .foregroundStyle(theme.colors.textTertiary)
                     } else {
-                        ForEach(proposals) { ProposalRow(proposal: $0) }
-                        // Voting needs cosmos/gov/v1beta1/tx.proto, which the
-                        // message set here does not carry. Reading comes
-                        // first: a chain with no proposals still needs to say
-                        // so.
-                        Text("Voting on chain proposals is not in this build.")
-                            .font(EarthType.caption)
-                            .foregroundStyle(theme.colors.textTertiary)
-                            .padding(.top, theme.space.x8)
+                        // Pushed, not presented. This screen is already a
+                        // sheet; a sheet over it would put the detail two
+                        // presentations deep, and a confirmation raised from
+                        // there — hosted on the root — draws behind both. A
+                        // push stays inside this presentation, so voting can
+                        // close the whole sheet and land on the confirmation
+                        // the way Send and Stake do.
+                        ForEach(proposals) { proposal in
+                            NavigationLink(value: proposal) {
+                                ProposalRow(proposal: proposal)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                 }
                 .padding(theme.space.gutter)
@@ -262,6 +267,12 @@ struct ProposalsScreen: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
             .background(theme.colors.bgPrimary)
             .scrollContentBackground(.hidden)
+            .navigationDestination(for: Gov.Proposal.self) { proposal in
+                // `onVoted` closes this sheet rather than popping the push:
+                // dismiss() inside a pushed view pops, which would leave the
+                // list on screen and the confirmation behind it.
+                ProposalDetailScreen(proposal: proposal, onVoted: { dismiss() })
+            }
         }
     }
 }
@@ -313,6 +324,152 @@ struct ProposalRow: View {
             .replacingOccurrences(of: "PROPOSAL_STATUS_", with: "")
             .replacingOccurrences(of: "_", with: " ")
             .lowercased()
+    }
+}
+
+/// One proposal in full, and the four ways to vote on it.
+///
+/// A pushed screen, not a sheet. `ProposalsScreen` is itself presented, so a
+/// sheet here would be the second presentation — and `TxController`'s
+/// confirmation is hosted on the root view, which cannot draw over anything
+/// presented above it. Pushing keeps the whole flow inside one presentation,
+/// which is what lets `onVoted` close it and reveal the confirmation.
+///
+/// Four options, not two. Abstain counts toward quorum without taking a side,
+/// and no-with-veto is a distinct outcome on this chain — collapsing them into
+/// a yes/no pair would hide the two votes that behave differently.
+struct ProposalDetailScreen: View {
+    @Environment(\.earth) private var theme
+    @Environment(AppModel.self) private var model
+    @Environment(TxController.self) private var tx
+
+    let proposal: Gov.Proposal
+    /// Closes the presentation this was pushed inside.
+    let onVoted: () -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: theme.space.x16) {
+                HStack {
+                    Text("#\(proposal.id)")
+                        .font(EarthType.caption)
+                        .foregroundStyle(theme.colors.textTertiary)
+                    Spacer()
+                    EarthStatusPill(status: pillStatus, text: shortStatus)
+                }
+
+                Text(proposal.title)
+                    .font(EarthType.headline)
+                    .foregroundStyle(theme.colors.textPrimary)
+
+                if !proposal.summary.isEmpty {
+                    Text(proposal.summary)
+                        .font(EarthType.body)
+                        .foregroundStyle(theme.colors.textSecondary)
+                        .textSelection(.enabled)
+                }
+
+                EarthCard {
+                    EarthDetailRow(label: "Status", value: shortStatus)
+                    if !closesAt.isEmpty {
+                        EarthDetailRow(label: proposal.isLive ? "Voting ends" : "Voting ended",
+                                       value: closesAt)
+                    }
+                }
+
+                if proposal.total > 0 {
+                    EarthLabel("Tally")
+                    TallyBar(proposal: proposal)
+                    EarthCard {
+                        EarthDetailRow(label: "Yes", value: Figures.display(BigInt(proposal.yes)))
+                        EarthDetailRow(label: "No", value: Figures.display(BigInt(proposal.no)))
+                        EarthDetailRow(label: "Abstain", value: Figures.display(BigInt(proposal.abstain)))
+                        EarthDetailRow(label: "No with veto", value: Figures.display(BigInt(proposal.veto)))
+                    }
+                } else if proposal.isLive {
+                    Text("No votes counted yet.")
+                        .font(EarthType.bodySmall)
+                        .foregroundStyle(theme.colors.textTertiary)
+                }
+
+                if proposal.isLive { voting }
+            }
+            .padding(theme.space.gutter)
+        }
+        .navigationTitle("Proposal")
+        .navigationBarTitleDisplayMode(.inline)
+        .background(theme.colors.bgPrimary)
+        .scrollContentBackground(.hidden)
+    }
+
+    private var voting: some View {
+        VStack(alignment: .leading, spacing: theme.space.x12) {
+            EarthDivider()
+            // Stake decides this, not personhood — unlike an allocation vote.
+            // An address with nothing delegated can broadcast a vote that
+            // succeeds and moves the tally by nothing, which would otherwise
+            // look like a vote that failed.
+            if model.totalStaked <= 0 {
+                EarthCard {
+                    Text("You have no ERTH staked")
+                        .font(EarthType.body)
+                        .foregroundStyle(theme.colors.textPrimary)
+                    Text("Chain proposals are weighted by bonded stake alone. A vote from here would be accepted and count for nothing. Stake first, from Earn.")
+                        .font(EarthType.bodySmall)
+                        .foregroundStyle(theme.colors.textSecondary)
+                }
+            } else {
+                Text("Voting with \(Figures.display(model.totalStaked)) ERTH of stake.")
+                    .font(EarthType.bodySmall)
+                    .foregroundStyle(theme.colors.textTertiary)
+            }
+
+            ForEach(Gov.Vote.allCases, id: \.rawValue) { option in
+                EarthButton(
+                    title: option.label,
+                    role: option == .yes ? .primary : .secondary
+                ) { cast(option) }
+                .disabled(model.totalStaked <= 0)
+            }
+        }
+    }
+
+    private var pillStatus: EarthStatus {
+        switch proposal.status {
+        case "PROPOSAL_STATUS_PASSED": .success
+        case "PROPOSAL_STATUS_VOTING_PERIOD", "PROPOSAL_STATUS_DEPOSIT_PERIOD": .pending
+        case "PROPOSAL_STATUS_REJECTED", "PROPOSAL_STATUS_FAILED": .failed
+        default: .neutral
+        }
+    }
+
+    private var shortStatus: String {
+        proposal.status
+            .replacingOccurrences(of: "PROPOSAL_STATUS_", with: "")
+            .replacingOccurrences(of: "_", with: " ")
+            .lowercased()
+    }
+
+    /// The chain sends RFC 3339; the date alone is what anyone plans around.
+    private var closesAt: String {
+        String(proposal.votingEndTime.prefix(10))
+    }
+
+    private func cast(_ option: Gov.Vote) {
+        let id = proposal.id
+        let title = proposal.title
+        tx.request(.init(
+            action: "Vote",
+            rows: [
+                ("Proposal", "#\(id) \(title)"),
+                ("Vote", option.label),
+                ("Weight", "\(Figures.display(model.totalStaked)) ERTH staked"),
+                ("Fee", "\(Token.erth.format(TransactionSigner.defaultFeeUerth)) ERTH"),
+            ]
+        )) { key in
+            [model.client.msgVote(voter: key.address, proposalID: id, option: option)]
+        }
+        onVoted()
     }
 }
 
