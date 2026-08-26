@@ -117,6 +117,32 @@ public enum Msg {
         }
     }
 
+    /// A vote on a chain proposal.
+    ///
+    /// `cosmos.gov.v1`, not v1beta1. The chain runs SDK 0.53 and the read side
+    /// already uses v1 — mixing the two would have the app reading a proposal
+    /// by one id space and voting in another.
+    public struct Vote: ProtoMessage {
+        public static let typeURL = "/cosmos.gov.v1.MsgVote"
+        public let proposalID: UInt64, voter: String, option: Gov.Vote
+
+        public init(proposalID: UInt64, voter: String, option: Gov.Vote) {
+            self.proposalID = proposalID; self.voter = voter; self.option = option
+        }
+
+        public func encoded() -> Data {
+            var w = ProtoWriter()
+            w.uint64(1, proposalID)
+            w.string(2, voter)
+            // Never `.unspecified`, which is zero and would be elided — the
+            // chain then reads a vote with no option and rejects it.
+            w.enumValue(3, option.proto)
+            // metadata (4) is left off: proto3 elides an empty string, and
+            // emitting one changes the bytes SIGN_MODE_DIRECT signs over.
+            return w.data
+        }
+    }
+
     // --- earth/dex ---
 
     public struct Swap: ProtoMessage {
