@@ -40,6 +40,60 @@ enum Figures {
         "\(whole(baseUnits, decimals: token.decimals)) \(token.symbol)"
     }
 
+    /// A balance someone holds or is about to move, with its fraction.
+    ///
+    /// `whole` divides in integers, so it renders 2.5 ANML as "2" and anything
+    /// below one whole unit as "0" — a held balance shown as nothing at all.
+    /// That is fine for a pool reserve sharing a line with three other figures
+    /// and wrong for every number a person is deciding against, which is why
+    /// this exists separately rather than `whole` being changed.
+    ///
+    /// ANML is where it shows: it accrues one claim at a time, so a fractional
+    /// balance is the normal case rather than the edge.
+    static func balance(_ baseUnits: BigInt, _ token: Token) -> String {
+        "\(plain(baseUnits, decimals: token.decimals)) \(token.symbol)"
+    }
+
+    /// A headline figure: enough precision to be honest, little enough to fit.
+    ///
+    /// `balance` keeps every decimal, which is right in a list row and too long
+    /// at headline size — six places on a staked balance runs off the panel.
+    /// `whole` fits but rounds small figures to nothing, which is the bug this
+    /// pair exists to avoid.
+    ///
+    /// So: two decimals once there is a whole unit, and below that, enough
+    /// places to reach two significant digits — 0.0034 rather than 0.00. All of
+    /// it done on the decimal string rather than a Double, because these are
+    /// exact base-unit integers and a large one does not survive the round trip.
+    static func display(_ baseUnits: BigInt, decimals: Int = Constants.denomExponent) -> String {
+        let text = Amounts.fromBaseUnits(baseUnits, exponent: decimals)
+        let parts = text.split(separator: ".", maxSplits: 1)
+        let wholePart = String(parts[0])
+        let groupedWhole = grouped.string(from: NSDecimalNumber(string: wholePart)) ?? wholePart
+        guard parts.count > 1 else { return groupedWhole }
+
+        var fraction = String(parts[1])
+        let hasWholeUnit = wholePart != "0" && wholePart != "-0"
+        if hasWholeUnit {
+            fraction = String(fraction.prefix(2))
+        } else {
+            // Count past the leading zeros, then take two more digits.
+            let leadingZeros = fraction.prefix { $0 == "0" }.count
+            fraction = String(fraction.prefix(leadingZeros + 2))
+        }
+        while fraction.hasSuffix("0") { fraction.removeLast() }
+        return fraction.isEmpty ? groupedWhole : "\(groupedWhole).\(fraction)"
+    }
+
+    /// The same, when the symbol is already on the line.
+    static func balance(_ baseUnits: BigInt, decimals: Int = Constants.denomExponent) -> String {
+        plain(baseUnits, decimals: decimals)
+    }
+
+    static func balance(_ baseUnits: String, decimals: Int = Constants.denomExponent) -> String {
+        BigInt(baseUnits).map { plain($0, decimals: decimals) } ?? baseUnits
+    }
+
     static func amount(_ baseUnits: String, _ token: Token) -> String {
         "\(whole(baseUnits, decimals: token.decimals)) \(token.symbol)"
     }

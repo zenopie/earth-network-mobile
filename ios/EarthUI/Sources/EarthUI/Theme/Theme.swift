@@ -142,6 +142,15 @@ enum EarthType {
     static let headline = Font.system(size: 28, weight: .regular)
     /// The balance. 48/60 — set semibold at the call site.
     static let header2 = Font.system(size: 48).monospacedDigit()
+    /// An amount being typed. 32, monospaced digits.
+    ///
+    /// Not `header2`: that is the balance widget, which owns a whole row and is
+    /// laid out to fit 48pt. An input shares its row with a denom label and a
+    /// Max button, so 48 truncated anything longer than a few digits — and a
+    /// number cut off mid-digit is one the person entering it cannot check.
+    /// Monospaced because it changes under the cursor, and proportional digits
+    /// make the whole field shift as you type.
+    static let amountField = Font.system(size: 32).monospacedDigit()
     /// The wallet name in the top bar. 24/32.
     static let header6 = Font.system(size: 24)
     static let textXl = Font.system(size: 20)

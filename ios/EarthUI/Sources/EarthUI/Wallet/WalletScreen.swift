@@ -340,11 +340,11 @@ struct HomePanel: View {
                 // so it is named apart rather than folded into staked, where
                 // it would look like it was still working.
                 positionRow("Unbonding", "Returns when the period ends", "clock.arrow.circlepath",
-                            Figures.whole(model.unbondingTotal) + " ERTH")
+                            Figures.balance(model.unbondingTotal) + " ERTH")
             }
             ForEach(others, id: \.token.denom) { row in
                 positionRow(row.token.symbol, row.token.denom, "circle.hexagongrid.fill",
-                            Figures.whole(row.amount, decimals: row.token.decimals))
+                            Figures.balance(row.amount, decimals: row.token.decimals))
             }
         }
     }
