@@ -92,6 +92,13 @@ public final class TxController {
     /// gives up. Drives the sheet's "Waiting for gas…" state.
     public private(set) var awaitingGas = false
 
+    /// The action of the transaction in flight — "Send", "Register".
+    ///
+    /// Kept because `pending` is cleared the instant it is confirmed, and the
+    /// waiting sheet still has to name what is being waited for. Android keeps
+    /// it for the same reason.
+    public private(set) var lastAction: String?
+
     private var build: ((EarthKey) throws -> [ProtoAny])?
     private var onSuccess: (() async -> Void)?
 
@@ -159,6 +166,7 @@ public final class TxController {
     public func confirm(in model: AppModel) async {
         guard let details = pending, let build else { return }
         pending = nil
+        lastAction = details.action
         submitting = true
         defer { submitting = false }
 

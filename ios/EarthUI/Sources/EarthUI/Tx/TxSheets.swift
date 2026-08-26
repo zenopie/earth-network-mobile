@@ -14,24 +14,42 @@ struct TxOverlay: View {
     /// and only the one the request named draws anything.
     let host: TxController.Host
 
+    /// Whether this copy is the one showing something. The scrim keys off it
+    /// rather than off each branch, so moving between confirm -> submitting ->
+    /// result slides the card without flashing the dim behind it.
+    private var presenting: Bool {
+        tx.host == host && (tx.pending != nil || tx.submitting || tx.outcome != nil)
+    }
+
     var body: some View {
-        ZStack {
+        ZStack(alignment: .bottom) {
+            if presenting {
+                Color.black.opacity(0.35)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+            }
+
             if tx.host != host {
                 EmptyView()
             } else if let details = tx.pending {
                 TxConfirmSheet(details: details)
-                    .transition(.opacity)
+                    .transition(.move(edge: .bottom))
             } else if tx.submitting {
                 TxSubmittingOverlay()
-                    .transition(.opacity)
+                    .transition(.move(edge: .bottom))
             } else if let outcome = tx.outcome {
                 TxResultSheet(outcome: outcome)
-                    .transition(.opacity)
+                    .transition(.move(edge: .bottom))
             }
         }
-        .animation(.easeInOut(duration: 0.15), value: tx.pending?.id)
-        .animation(.easeInOut(duration: 0.15), value: tx.submitting)
-        .animation(.easeInOut(duration: 0.15), value: tx.outcome?.id)
+        // Rises rather than fades, matching Android's ModalBottomSheet. A
+        // spring rather than easeInOut because a card that travels the height
+        // of a sheet reads as sticky on a linear curve; the low bounce is what
+        // Material's own sheet does.
+        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: presenting)
+        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: tx.pending?.id)
+        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: tx.submitting)
+        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: tx.outcome?.id)
     }
 }
 
@@ -168,18 +186,49 @@ struct TxResultSheet: View {
 }
 
 /// A card floating over the app, with the scrim that makes it modal.
+/// The container every transaction step draws into: a bottom sheet.
+///
+/// Ports `EarthSheet` from `ui/compose/EarthUi.kt`, which wraps Material's
+/// `ModalBottomSheet` — full width against the bottom edge, only the top
+/// corners rounded, `bgPrimary` behind it.
+///
+/// Not a SwiftUI `.sheet`. This is an overlay hosted wherever the request came
+/// from, which is what lets a confirmation raised from inside another sheet
+/// draw over it — a real `.sheet` presented from the root would land *behind*
+/// whatever was already presented, which is the bug `TxController.Host` exists
+/// to route around. The scrim is not here either: it belongs to `TxOverlay`, so
+/// it can stay put while the card slides.
 struct TxOverlayCard<Content: View>: View {
     @Environment(\.earth) private var theme
     @ViewBuilder var content: Content
 
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.35).ignoresSafeArea()
+        VStack(spacing: theme.space.x16) {
+            // Material's sheet draws a drag handle, and without one this reads
+            // as a card that happens to be at the bottom rather than as
+            // something that came up from it.
+            Capsule()
+                .fill(theme.colors.strokePrimary)
+                .frame(width: 36, height: 4)
+                .padding(.top, theme.space.x8)
+
             VStack(alignment: .leading, spacing: theme.space.x16) { content }
-                .padding(theme.space.gutter)
-                .background(theme.colors.bgSecondary, in: .rect(cornerRadius: theme.space.radiusSheet))
-                .padding(theme.space.gutter)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .padding(.horizontal, theme.space.gutter)
+        .padding(.bottom, theme.space.x32)
+        .frame(maxWidth: .infinity)
+        .background(
+            // Top corners only. `.rect(cornerRadius:)` would round the bottom
+            // two as well, which then float above the home indicator instead of
+            // sitting on the edge.
+            UnevenRoundedRectangle(
+                topLeadingRadius: theme.space.radiusSheet,
+                topTrailingRadius: theme.space.radiusSheet
+            )
+            .fill(theme.colors.bgPrimary)
+            .ignoresSafeArea(edges: .bottom)
+        )
     }
 }
 
@@ -188,20 +237,42 @@ struct TxOverlayCard<Content: View>: View {
 /// The broadcast waits for the block rather than returning at accept time, so
 /// this is up for a couple of seconds and a caller that re-queries straight
 /// after sees its own effect.
+/// The wait between confirming and the chain answering.
+///
+/// Ports `TxPendingSheet` from `ui/compose/TxResultSheet.kt`, including where it
+/// sits: the same bottom sheet as the confirmation and the result, so the three
+/// are one position and three states. The result's badge then grows in over the
+/// spinner instead of appearing from nowhere, which is the whole reason Android
+/// put it there.
+///
+/// It used to be a small centred pill with a scrim of its own, which dimmed a
+/// second time over `TxOverlay`'s and jumped from the bottom of the screen to
+/// the middle and back for every transaction.
 struct TxSubmittingOverlay: View {
     @Environment(\.earth) private var theme
+    @Environment(TxController.self) private var tx
 
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.25).ignoresSafeArea()
-            VStack(spacing: theme.space.x12) {
-                ProgressView()
-                Text("Waiting for the block")
+        TxOverlayCard {
+            VStack(spacing: theme.space.x8) {
+                // The web app's orbit loader, so the three clients wait the
+                // same way. Smaller than the web's 160 — that is drawn across a
+                // page, and this is most of the width of a sheet.
+                OrbitLoader(diameter: 120)
+                    .frame(maxWidth: .infinity)
+                    .padding(.bottom, theme.space.x8)
+
+                Text("Sending")
+                    .font(EarthType.headline)
+                    .foregroundStyle(theme.colors.textPrimary)
+
+                Text("\(tx.lastAction ?? "It") is on its way to the chain. This takes a few seconds.")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textSecondary)
+                    .multilineTextAlignment(.center)
             }
-            .padding(theme.space.x24)
-            .background(theme.colors.bgPrimary, in: .rect(cornerRadius: theme.space.radiusLg))
+            .frame(maxWidth: .infinity)
+            .padding(.top, theme.space.x8)
         }
     }
 }
