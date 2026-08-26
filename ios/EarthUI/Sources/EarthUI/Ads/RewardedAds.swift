@@ -1,4 +1,6 @@
 #if canImport(GoogleMobileAds) && os(iOS)
+import AdSupport
+import CryptoKit
 import GoogleMobileAds
 import UIKit
 
@@ -20,12 +22,72 @@ public enum RewardedAds {
 
     /// The iOS rewarded unit. NOT Android's — an ad unit belongs to one
     /// platform, and Android's `ca-app-pub-8662126294069074/9040854138` will
-    /// never fill here. Create the iOS unit in the AdMob console and paste it.
+    /// never fill here.
     ///
-    /// Until then this is Google's public test unit, which always fills and
-    /// pays nothing: the flow is exercisable end to end except for the grant,
-    /// because the backend only ever sees a callback for a real unit.
-    public static var adUnitID = "ca-app-pub-3940256099942544/1712485313"
+    /// Not Google's demo unit either, tempting as it is during development.
+    /// The SSV callback URL belongs to an ad unit, the demo unit is not ours to
+    /// configure, and the backend checks the `ad_unit` it is called with
+    /// against its own `ADMOB_AD_UNIT_ID`. An ad would fill and no dust would
+    /// ever arrive. See `testDeviceIdentifiers` for the arrangement that gets
+    /// both.
+    public static var adUnitID = "ca-app-pub-8662126294069074/1484036231"
+
+    /// Development phones registered with AdMob as test devices.
+    ///
+    /// The live unit answers "No fill" to an ordinary development phone, and
+    /// the gas gate turns a failed load into a silent no-op — so the button is
+    /// dead for the whole of development with nothing on screen to say why.
+    /// Registering the device makes that *same* unit serve test ads, which fill
+    /// every time and still drive the server-side verification callback. Test
+    /// ads on the real unit are the only arrangement where both the ad and the
+    /// dust arrive; this is what `TEST_DEVICE_IDS` does on Android.
+    ///
+    /// iOS identifiers are per-device, so unlike Android's they cannot be
+    /// written down in advance. The SDK prints this device's on the first ad
+    /// request:
+    ///
+    ///     <Google> To get test ads on this device, set:
+    ///     GADMobileAds.sharedInstance.requestConfiguration.testDeviceIdentifiers = @[ "…" ]
+    ///
+    /// but that goes to the unified log, which needs root to read off a device,
+    /// so `debugIdentifiers` below derives it instead. Anything set here is
+    /// registered as well, for the case where that derivation stops matching.
+    /// Debug builds only — see `startIfNeeded`.
+    public static var testDeviceIdentifiers: [String] = []
+
+    /// The identifiers this device would be known by, derived rather than
+    /// copied out of a log.
+    ///
+    /// Google hashes a device id to make the test identifier. Which one has
+    /// changed across SDK versions — the advertising id when it is available,
+    /// the vendor id when it is not, and on a phone that never granted App
+    /// Tracking Transparency the advertising id is all zeroes. Rather than pick,
+    /// this returns every candidate: the SDK matches the request against a
+    /// *list*, so an identifier that is not the right one is inert, and
+    /// including all of them means the right one is always among them.
+    ///
+    /// Printed as well as registered, because `print` reaches stderr and
+    /// `devicectl --console` captures that — which is the only way to read this
+    /// off a device without root.
+    static var debugIdentifiers: [String] {
+        var ids: [String] = []
+        if let vendor = UIDevice.current.identifierForVendor?.uuidString {
+            ids.append(md5(vendor))
+            ids.append(md5(vendor.lowercased()))
+        }
+        let advertising = ASIdentifierManager.shared().advertisingIdentifier.uuidString
+        // All-zeroes is what an ungranted ATT prompt yields; hashing it would
+        // register an identifier every such device shares.
+        if advertising != "00000000-0000-0000-0000-000000000000" {
+            ids.append(md5(advertising))
+            ids.append(md5(advertising.lowercased()))
+        }
+        return Array(Set(ids))
+    }
+
+    private static func md5(_ text: String) -> String {
+        Insecure.MD5.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
 
     private static var ad: RewardedAd?
     private static var loading = false
@@ -59,6 +121,16 @@ public enum RewardedAds {
     private static func startIfNeeded() async {
         guard !started else { return }
         started = true
+        #if DEBUG
+        // Debug builds only. A release build that registered a test device
+        // would serve that device test ads in production, and the grants
+        // behind them are real dust.
+        let identifiers = Array(Set(testDeviceIdentifiers + debugIdentifiers))
+        if !identifiers.isEmpty {
+            MobileAds.shared.requestConfiguration.testDeviceIdentifiers = identifiers
+            print("[ads] registered test device identifiers: \(identifiers.joined(separator: ", "))")
+        }
+        #endif
         await MobileAds.shared.start()
     }
 

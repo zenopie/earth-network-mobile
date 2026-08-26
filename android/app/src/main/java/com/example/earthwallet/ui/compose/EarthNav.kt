@@ -62,7 +62,6 @@ sealed interface EarthRoute {
     data object Send : EarthRoute
     data object Receive : EarthRoute
     data object Activity : EarthRoute
-    data object Liquidity : EarthRoute
     data object Settings : EarthRoute
     data object About : EarthRoute
     data object Security : EarthRoute

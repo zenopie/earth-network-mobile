@@ -90,7 +90,8 @@ fun EarthApp(
     LaunchedEffect(nav.currentTab, walletEpoch) {
         when (nav.currentTab) {
             EarthRoute.Wallet -> wallet.refresh()
-            EarthRoute.Earn -> earn.refresh()
+            // Earn shows pools now, so it needs the market data too.
+            EarthRoute.Earn -> { earn.refresh(); markets.refresh() }
             EarthRoute.Swap -> markets.refresh()
             EarthRoute.Govern -> allocation.refresh()
         }
@@ -99,7 +100,7 @@ fun EarthApp(
     val refreshAll = {
         wallet.refresh()
         when (nav.currentTab) {
-            EarthRoute.Earn -> earn.refresh()
+            EarthRoute.Earn -> { earn.refresh(); markets.refresh() }
             EarthRoute.Govern -> allocation.refresh()
             EarthRoute.Swap -> markets.refresh()
             else -> Unit
@@ -190,16 +191,13 @@ fun EarthApp(
                     balancesVisible = balancesVisible,
                     onToggleBalances = { balancesVisible = !balancesVisible },
                     onSettings = { nav.push(EarthRoute.Settings) },
-                    showsBalances = route == EarthRoute.Wallet || route == EarthRoute.Earn,
-                    tabAction = if (route == EarthRoute.Swap) {
-                        TabAction(
-                            icon = R.drawable.ic_bar_liquidity,
-                            label = "Liquidity",
-                            onClick = { nav.push(EarthRoute.Liquidity) },
-                        )
-                    } else {
-                        null
-                    },
+                    // Wallet only. Earn had it too, but balancesVisible is read
+                    // by HomeScreen alone, so the eye there toggled state that
+                    // masked nothing.
+                    showsBalances = route == EarthRoute.Wallet,
+                    // No tab carries an action any more. Swap had one for
+                    // liquidity; pools live on Earn now, behind a selector.
+                    tabAction = null,
                 )
                 else -> EarthDetailTopBar(title = route.title(), onBack = { nav.pop() })
             }
@@ -375,6 +373,13 @@ private fun EarthContent(
 
         EarthRoute.Earn -> EarnScreen(
             state = earnState,
+            pools = marketsState?.pools,
+            swapFeePercent = marketsState?.swapFeePercent,
+            lpOptionShare = marketsState?.lpOptionShare ?: 0.0,
+            lpUnbondings = marketsState?.unbondings.orEmpty(),
+            lpShares = shares,
+            onAddLiquidity = { liquidity = LiquidityAction.Add to it },
+            onRemoveLiquidity = { liquidity = LiquidityAction.Remove to it },
             onStake = { staking = StakeIntent.Stake },
             onUnstake = { staking = StakeIntent.Unstake },
             onClaim = {
@@ -465,17 +470,6 @@ private fun EarthContent(
             state = loaded,
             tx = tx,
             onSent = onRefresh,
-            modifier = inset,
-        )
-
-        EarthRoute.Liquidity -> LiquidityScreen(
-            pools = marketsState?.pools,
-            swapFeePercent = marketsState?.swapFeePercent,
-            lpOptionShare = marketsState?.lpOptionShare ?: 0.0,
-            unbondings = marketsState?.unbondings.orEmpty(),
-            shares = shares,
-            onAdd = { liquidity = LiquidityAction.Add to it },
-            onRemove = { liquidity = LiquidityAction.Remove to it },
             modifier = inset,
         )
 
@@ -835,7 +829,6 @@ private fun EarthRoute.title(): String = when (this) {
     is EarthRoute.Tab -> label
     EarthRoute.Send -> "Send"
     EarthRoute.Receive -> "Receive"
-    EarthRoute.Liquidity -> "Liquidity"
     EarthRoute.Activity -> "Activity"
     EarthRoute.Settings -> "Settings"
     EarthRoute.Security -> "Unlocking"

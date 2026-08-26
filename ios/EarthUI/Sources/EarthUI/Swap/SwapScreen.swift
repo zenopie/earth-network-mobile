@@ -219,7 +219,7 @@ struct SwapScreen: View {
         let inDenom = fromToken.denom
         let outDenom = toToken.denom
         let floor = minimumOut
-        let paying = "\(Figures.whole(input)) \(fromToken.symbol)"
+        let paying = "\(Figures.balance(input)) \(fromToken.symbol)"
 
         tx.request(.init(
             action: "Swap",

@@ -2,7 +2,6 @@ package network.erth.wallet.ui.compose
 
 import network.erth.wallet.ui.vendor.component.EarthButton
 import network.erth.wallet.ui.vendor.component.EarthButtonDefaults
-import network.erth.wallet.ui.vendor.component.EarthCard
 import network.erth.wallet.ui.vendor.theme.colors.EarthColors
 import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
 import androidx.compose.animation.core.Animatable
@@ -11,17 +10,7 @@ import androidx.compose.animation.core.keyframes
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.draw.scale
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import network.erth.wallet.ui.theme.EarthAccent
-import androidx.compose.runtime.getValue
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -30,7 +19,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -39,6 +27,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import network.erth.wallet.ui.theme.EarthTheme
+import androidx.compose.ui.unit.dp
 
 /** What happened. Success carries a hash; failure carries the whole error. */
 sealed interface TxOutcome {
@@ -199,37 +188,14 @@ private const val BADGE_SETTLE_MS = 150
 fun TxPendingSheet(action: String) {
     val dimens = EarthTheme.dimens
 
-    // The ring turns while the chain is asked; it is not progress, because
-    // nothing here knows how far along a broadcast is. A determinate bar that
-    // invents a percentage is worse than an honest spin.
-    val spin = rememberInfiniteTransition(label = "pending")
-    val angle by spin.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing)),
-        label = "angle",
-    )
-
-    val ink = EarthAccent.ink
-
+    // Not progress: nothing here knows how far along a broadcast is, and a
+    // determinate bar that invents a percentage is worse than an honest wait.
+    // The web app's orbit loader, so the three clients wait the same way —
+    // smaller than its 160, which is drawn across a page rather than into a
+    // sheet.
     EarthSheet(onDismiss = {}) {
         Box(Modifier.fillMaxWidth(), Alignment.Center) {
-            Box(
-                Modifier
-                    .size(dimens.space48)
-                    .background(EarthAccent.tint, CircleShape),
-                Alignment.Center,
-            ) {
-                Canvas(Modifier.size(dimens.space24)) {
-                    drawArc(
-                        color = ink,
-                        startAngle = angle,
-                        sweepAngle = 90f,
-                        useCenter = false,
-                        style = Stroke(width = 6f, cap = StrokeCap.Round),
-                    )
-                }
-            }
+            OrbitLoader(diameter = 120.dp)
         }
         Text(
             text = "Sending",

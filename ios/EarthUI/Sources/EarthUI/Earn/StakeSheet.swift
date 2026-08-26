@@ -42,7 +42,9 @@ struct StakeSheet: View {
                         EarthLabel("Amount")
                         HStack {
                             TextField("0", text: $amount)
-                                .font(EarthType.header2)
+                                .font(EarthType.amountField)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
                                 .keyboardType(.decimalPad)
                                 .onChange(of: amount) { previous, new in
                                     amount = Amounts.filterAmountInput(new, previous: previous)
@@ -54,7 +56,7 @@ struct StakeSheet: View {
                                 .font(EarthType.bodySmall)
                                 .foregroundStyle(theme.colors.accentInk)
                         }
-                        Text("Available \(Figures.whole(available)) ERTH")
+                        Text("Available \(Figures.balance(available)) ERTH")
                             .font(EarthType.bodySmall)
                             .foregroundStyle(theme.colors.textTertiary)
 
@@ -126,7 +128,7 @@ struct StakeSheet: View {
         tx.request(.init(
             action: taking ? "Unstake" : "Stake",
             rows: [
-                ("Amount", "\(Figures.whole(value)) ERTH"),
+                ("Amount", "\(Figures.balance(value)) ERTH"),
                 ("Validator", validator.moniker.isEmpty ? target : validator.moniker),
             ]
         )) { key in

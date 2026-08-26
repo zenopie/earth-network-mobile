@@ -23,12 +23,11 @@
 	<!-- AdMob, for the rewarded "ads for gas" grant. The SDK raises at startup
 	     if this key is absent, naming it in the message.
 
-	     PLACEHOLDER: the app id below is the Android account's publisher id with
-	     a zeroed app suffix. An iOS app has its own id, created in the AdMob
-	     console; until it is pasted here no ad will fill. The rewarded unit id
-	     lives in EarthUI/Ads/RewardedAds.swift and needs the same treatment. -->
+	     This is the iOS app's own id — an AdMob app belongs to one platform, so
+	     it is not the Android app's ~6689630767. The rewarded unit id that goes
+	     with it lives in EarthUI/Ads/RewardedAds.swift. -->
 	<key>GADApplicationIdentifier</key>
-	<string>ca-app-pub-8662126294069074~0000000000</string>
+	<string>ca-app-pub-8662126294069074~4766046364</string>
 	<!-- SKAdNetwork attribution for Google's own network. Google publishes a
 	     longer list covering mediation partners; this is the entry that matters
 	     for a first-party AdMob rewarded unit. -->

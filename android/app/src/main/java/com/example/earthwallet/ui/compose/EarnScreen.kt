@@ -28,9 +28,20 @@ import network.erth.wallet.ui.vendor.theme.colors.EarthColors
 import network.erth.wallet.ui.vendor.theme.dimensions.EarthDimensions
 import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
 import com.valentinilk.shimmer.shimmer
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
+import network.erth.wallet.chain.Dex
 
 /**
- * Earn: staking and its rewards, and nothing else.
+ * Earn: the two ways to put capital to work — staking, and pools.
+ *
+ * Pools used to be their own route, reached from a Liquidity button on the swap
+ * tab, on the argument that providing liquidity is adjacent to swapping. The
+ * question people actually arrive with is "where do I earn on what I hold",
+ * which has one answer rather than two places to look — so both live here now,
+ * one selector apart. iOS is laid out the same way.
  *
  * The daily ANML claim used to sit here too. It moved to the wallet screen's
  * action row, where it belongs: claiming ANML is a one-tap action on a balance,
@@ -54,10 +65,19 @@ fun EarnScreen(
     onUnstake: () -> Unit,
     onClaim: () -> Unit,
     modifier: Modifier = Modifier,
+    // --- the liquidity half ---
+    pools: List<Dex.Pool>? = null,
+    swapFeePercent: String? = null,
+    lpOptionShare: Double = 0.0,
+    lpUnbondings: List<Dex.Unbonding> = emptyList(),
+    lpShares: Map<Long, Long> = emptyMap(),
+    onAddLiquidity: (Dex.Pool) -> Unit = {},
+    onRemoveLiquidity: (Dex.Pool) -> Unit = {},
 ) {
     val dimens = EarthTheme.dimens
     val shape = RoundedCornerShape(EarthDimensions.Radius.radius3xl)
     val shimmer = rememberEarthShimmer()
+    var showPools by rememberSaveable { mutableStateOf(false) }
 
     Column(
         modifier
@@ -67,6 +87,27 @@ fun EarnScreen(
             .padding(horizontal = dimens.gutter),
     ) {
         Spacer(Modifier.height(dimens.space16))
+
+        EarthSegmented(
+            options = listOf("Stake", "Liquidity"),
+            selectedIndex = if (showPools) 1 else 0,
+            onSelect = { showPools = it == 1 },
+        )
+        Spacer(Modifier.height(dimens.space16))
+
+        if (showPools) {
+            PoolList(
+                pools = pools,
+                swapFeePercent = swapFeePercent,
+                lpOptionShare = lpOptionShare,
+                unbondings = lpUnbondings,
+                shares = lpShares,
+                onAdd = onAddLiquidity,
+                onRemove = onRemoveLiquidity,
+            )
+            Spacer(Modifier.height(dimens.space32))
+            return@Column
+        }
 
         Column(
             Modifier

@@ -52,11 +52,29 @@ public enum LeanPoaProver {
     }
 
     /// Loads a compiled Noir circuit (the JSON emitted by `nargo compile`) and
-    /// provisions its SRS. `setupSrs` downloads from Aztec on first run and
-    /// caches, so the first call needs network.
-    public static func loadCircuit(manifest: Data, srsPath: String? = nil) throws -> Circuit {
+    /// provisions its SRS.
+    ///
+    /// `size` is the SRS provisioning hint. The default is `srsSize`, which is
+    /// what the gate proves lean_poa with and what Android passes. Pass `nil`
+    /// to size the SRS from the circuit's own gate count instead — which is
+    /// what the app does, because it ships seven circuits of very different
+    /// sizes and barretenberg **only honours the first SRS initialization of a
+    /// process**. A hint that is too small for the circuit a passport selects
+    /// cannot be corrected afterwards; deriving it from the bytecode cannot be
+    /// wrong.
+    ///
+    /// With `srsPath` nil the SRS is fetched from Aztec — every call, there is
+    /// no cache. Per process, though, not per proof: the first initialization
+    /// is the only one that does any work. Do not pass a path unless the file
+    /// is there. noir_rs reads it with `fs::read(..).unwrap()`, so a missing
+    /// file is a Rust panic across the FFI boundary rather than a Swift error.
+    public static func loadCircuit(
+        manifest: Data,
+        size: UInt32? = srsSize,
+        srsPath: String? = nil
+    ) throws -> Circuit {
         let swoir = Swoir(Swoirenberg.self)
-        let circuit = try swoir.createCircuit(manifest: manifest, size: srsSize)
+        let circuit = try swoir.createCircuit(manifest: manifest, size: size)
         try circuit.setupSrs(srs_path: srsPath)
         return circuit
     }
