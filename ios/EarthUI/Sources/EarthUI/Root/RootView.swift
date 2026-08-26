@@ -95,7 +95,6 @@ struct TabsView: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
     @State private var settingsOpen = false
-    @State private var liquidityOpen = false
     /// `-demoSheet settings` opens straight into one, for the same reason
     /// `-demoTab` exists: nothing can tap a simulator from the command line.
     @State private var demoSheet = TabsView.demoSheet
@@ -120,14 +119,16 @@ struct TabsView: View {
                 // tabs are named for what they do. "Wallet" over a balance
                 // says nothing the balance does not.
                 title: model.tab == .wallet ? model.walletName : model.tab.label,
-                showsBalances: model.tab == .wallet || model.tab == .earn,
-                // Tabs are destinations, not toolbars, so most have no action.
-                // Swap has one because providing liquidity is adjacent to
-                // swapping without being part of it — same market, different
-                // thing to do with it.
-                tabAction: model.tab == .swap
-                    ? .init(icon: "drop", label: "Liquidity") { liquidityOpen = true }
-                    : nil,
+                // Wallet only. Earn had it too, but `balancesVisible` is read
+                // in exactly one place — the wallet's own figures — so the eye
+                // there toggled state that masked nothing.
+                showsBalances: model.tab == .wallet,
+                // Tabs are destinations, not toolbars, so none has an action.
+                // Swap used to carry one for liquidity; pools live on Earn now,
+                // behind a selector, because that put the deposit sheet two
+                // presentations deep and its confirmation could not draw over
+                // them.
+                tabAction: nil,
                 onSettings: { settingsOpen = true }
             )
             Group {
@@ -154,7 +155,6 @@ struct TabsView: View {
             case .explorer: ExploreScreen().earthThemed()
             }
         }
-        .sheet(isPresented: $liquidityOpen) { LiquiditySheet().earthThemed() }
     }
 }
 

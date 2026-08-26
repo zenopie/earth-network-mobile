@@ -2,12 +2,20 @@ import BigInt
 import EarthCore
 import SwiftUI
 
-/// Earn: staking and its rewards, and nothing else.
+/// Earn: the two ways to put capital to work — staking, and pools.
 ///
 /// The daily ANML claim sits on the wallet screen's action row, where it
-/// belongs — claiming ANML is a one-tap action on a balance, not a position to
-/// manage. Pools are not here either; they hang off the swap tab, because
-/// providing liquidity is adjacent to swapping rather than to staking.
+/// belongs: claiming ANML is a one-tap action on a balance, not a position to
+/// manage.
+///
+/// Pools used to hang off the swap tab, on the argument that providing
+/// liquidity is adjacent to swapping. Two things were wrong with that. It put
+/// the pool list a sheet deep and the deposit sheet a second sheet deep, and a
+/// transaction raised from there had its confirmation drawn *behind* both — the
+/// overlay is hosted on a view, and a view cannot draw over what is presented
+/// on top of it. And the question "where do I earn on what I hold" has one
+/// answer, not two places to look. Both are here now, one selector apart, and
+/// the deposit sheet is a single presentation from a tab like every other.
 ///
 /// Staked and claimable lead because the common question is how much rather
 /// than with whom. Claim is disabled at zero rather than hidden: a button that
@@ -20,13 +28,43 @@ struct EarnScreen: View {
     @Environment(TxController.self) private var tx
 
     @State private var staking: StakeIntent?
+    @State private var mode = Mode.stake
 
     enum StakeIntent: String, Identifiable { case stake, unstake; var id: String { rawValue } }
+
+    enum Mode: Hashable { case stake, liquidity }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Spacer().frame(height: theme.space.x16)
+                Picker("", selection: $mode) {
+                    Text("Stake").tag(Mode.stake)
+                    Text("Liquidity").tag(Mode.liquidity)
+                }
+                .pickerStyle(.segmented)
+                Spacer().frame(height: theme.space.x16)
+
+                if mode == .liquidity {
+                    PoolList()
+                } else {
+                    stakeContent
+                }
+
+                Spacer().frame(height: theme.space.x32)
+            }
+            .padding(.horizontal, theme.space.gutter)
+        }
+        .refreshable { await model.refresh() }
+        .background(theme.colors.bgPrimary)
+        .scrollContentBackground(.hidden)
+        .sheet(item: $staking) { intent in
+            StakeSheet(unstaking: intent == .unstake).earthThemed()
+        }
+    }
+
+    private var stakeContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
                 figures
                 Spacer().frame(height: theme.space.x16)
 
@@ -51,7 +89,7 @@ struct EarnScreen: View {
                             // commission alone is only half the comparison
                             // anyone is making between validators.
                             subtitle: subtitle(commission: commission),
-                            value: Figures.whole(delegation.amount),
+                            value: Figures.balance(delegation.amount),
                             badgeBackground: theme.colors.accentTint,
                             badgeForeground: theme.colors.accentInk
                         )
@@ -70,22 +108,13 @@ struct EarnScreen: View {
                             initial: String(moniker(entry.validator).prefix(1)).uppercased(),
                             name: moniker(entry.validator),
                             subtitle: "Returns \(entry.completionTime.prefix(10))",
-                            value: Figures.whole(entry.balance),
+                            value: Figures.balance(entry.balance),
                             badgeBackground: theme.colors.bgSecondary,
                             badgeForeground: theme.colors.textTertiary
                         )
                     }
                 }
 
-                Spacer().frame(height: theme.space.x32)
-            }
-            .padding(.horizontal, theme.space.gutter)
-        }
-        .refreshable { await model.refresh() }
-        .background(theme.colors.bgPrimary)
-        .scrollContentBackground(.hidden)
-        .sheet(item: $staking) { intent in
-            StakeSheet(unstaking: intent == .unstake).earthThemed()
         }
     }
 
@@ -95,15 +124,23 @@ struct EarnScreen: View {
     private var figures: some View {
         VStack(alignment: .leading, spacing: 0) {
             EarthLabel("Staked")
-            Text("\(Figures.whole(model.totalStaked)) ERTH")
+            // `display` rather than `balance`: six decimals at headline size
+            // overflows the panel. `minimumScaleFactor` is the backstop for the
+            // figure that is long anyway — a shrunk number is readable, a
+            // truncated one is wrong.
+            Text("\(Figures.display(model.totalStaked)) ERTH")
                 .font(EarthType.headline)
                 .foregroundStyle(theme.colors.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
 
             Spacer().frame(height: theme.space.x12)
             EarthLabel("Claimable rewards")
-            Text("\(Figures.whole(model.rewards)) ERTH")
+            Text("\(Figures.display(model.rewards)) ERTH")
                 .font(EarthType.headline)
                 .foregroundStyle(theme.colors.accentInk)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
 
             if let rate = StakingApr.base(bondedUerth: bonded) {
                 Spacer().frame(height: theme.space.x12)
@@ -165,7 +202,7 @@ struct EarnScreen: View {
         tx.request(.init(
             action: "Claim rewards",
             rows: [
-                ("Rewards", "\(Figures.whole(model.rewards)) ERTH"),
+                ("Rewards", "\(Figures.balance(model.rewards)) ERTH"),
                 ("From", Figures.count(validators.count, "validator")),
             ],
             gasLimit: TransactionSigner.defaultGasLimit + UInt64(150_000 * validators.count)

@@ -48,6 +48,18 @@ public final class AppModel {
 
     public private(set) var pools: [Dex.Pool] = []
     public private(set) var swapFeePercent = Decimal(string: "0.3")!
+    /// The escrow a withdrawal from a pool waits out, in seconds.
+    ///
+    /// A chain parameter, so it is read rather than assumed — the withdraw
+    /// sheet states the wait before anyone commits to it, and a hardcoded
+    /// number would quietly become a lie the day the parameter changed.
+    public private(set) var lpUnbondingSeconds: Int64 = 0
+    /// Withdrawals from pools waiting out their escrow.
+    ///
+    /// Between submitting one and it landing there is nothing in the balance to
+    /// show for it — the shares have left and the assets have not arrived — so
+    /// without this the wait looks like the funds went nowhere.
+    public private(set) var lpUnbondings: [Dex.Unbonding] = []
     public private(set) var validators: [Staking.Validator] = []
     public private(set) var delegations: [Staking.Delegation] = []
     public private(set) var unbondings: [Staking.UnbondingEntry] = []
@@ -421,6 +433,8 @@ public final class AppModel {
         async let registration = client.registrationStatus(address)
         async let pools = client.pools()
         async let fee = client.swapFeePercent()
+        async let lpUnbonding = client.lpUnbondingSeconds()
+        async let lpQueue = client.unbondings(address)
         async let validators = client.bondedValidators()
         async let delegations = client.delegations(address)
         async let unbondings = client.unbondingDelegations(address)
@@ -432,6 +446,8 @@ public final class AppModel {
         self.registration = await registration
         self.pools = await pools
         self.swapFeePercent = Decimal(string: await fee) ?? self.swapFeePercent
+        self.lpUnbondingSeconds = await lpUnbonding
+        self.lpUnbondings = await lpQueue
         self.validators = await validators
         self.delegations = await delegations
         self.unbondings = await unbondings
@@ -454,6 +470,14 @@ public final class AppModel {
     // MARK: - derived
 
     public func balance(_ token: Token) -> BigInt { balances[token.denom] ?? 0 }
+
+    /// LP shares held in one pool.
+    ///
+    /// Shares are an ordinary bank denom — `dexlp/<id>` — so they arrive with
+    /// every other balance and need no query of their own.
+    public func lpShares(poolID: UInt64) -> BigInt {
+        balances[Dex.shareDenom(poolID: poolID)] ?? 0
+    }
 
     /// Tokens worth listing: the registry, plus anything held that it does not
     /// know about, minus registry entries with no balance beyond the two this

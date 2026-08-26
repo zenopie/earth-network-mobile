@@ -47,7 +47,7 @@ import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
  * after they have provided.
  */
 @Composable
-fun LiquidityScreen(
+fun PoolList(
     pools: List<Dex.Pool>?,
     swapFeePercent: String?,
     lpOptionShare: Double,
@@ -62,14 +62,13 @@ fun LiquidityScreen(
     val dimens = EarthTheme.dimens
     val shimmer = rememberEarthShimmer()
 
-    Column(
-        modifier
-            .fillMaxSize()
-            .background(EarthColors.Surfaces.bgPrimary)
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = dimens.gutter),
-    ) {
-        Spacer(Modifier.height(dimens.space16))
+    // No scroll, no background, no gutter: this is content inside Earn's
+    // column now rather than a screen of its own, and a nested scroll would
+    // fight the one already there.
+    Column(modifier.fillMaxWidth()) {
+        // Impermanent loss, said before providing rather than after. See the
+        // doc comment: this is the part that surprises people, and a help page
+        // is somewhere nobody goes first.
         Text(
             text = if (swapFeePercent != null) {
                 "Providing liquidity earns a share of that pool's " +
@@ -84,7 +83,6 @@ fun LiquidityScreen(
             style = EarthTypography.textSm,
             color = EarthColors.Text.textSecondary,
         )
-
         Spacer(Modifier.height(dimens.space24))
 
         if (pools == null) {

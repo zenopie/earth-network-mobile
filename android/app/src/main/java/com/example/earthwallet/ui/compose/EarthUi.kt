@@ -29,6 +29,11 @@ import androidx.compose.ui.Modifier
 import network.erth.wallet.ui.theme.EarthTheme
 import network.erth.wallet.ui.vendor.theme.colors.EarthColors
 import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import network.erth.wallet.ui.theme.EarthAccent
 
 /**
  * The handful of pieces the vendored library does not carry.
@@ -209,6 +214,55 @@ fun EarthListRow(
         }
         if (value != null) {
             Text(text = value, style = EarthTypography.textMd.copy(color = EarthColors.Text.textPrimary))
+        }
+    }
+}
+
+/**
+ * A two-way selector.
+ *
+ * Earth has one place that needs it — Earn, choosing between staking and pools
+ * — so this is two pills rather than Material's SegmentedButton, which brings a
+ * border treatment and a check icon that fit nothing else on these screens.
+ */
+@Composable
+fun EarthSegmented(
+    options: List<String>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val dimens = EarthTheme.dimens
+    Row(
+        modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(dimens.space12))
+            .background(EarthColors.Surfaces.bgSecondary)
+            .padding(dimens.space4),
+        horizontalArrangement = Arrangement.spacedBy(dimens.space4),
+    ) {
+        options.forEachIndexed { index, label ->
+            val selected = index == selectedIndex
+            Box(
+                Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(dimens.space8))
+                    .background(if (selected) EarthAccent.tint else Color.Transparent)
+                    .clickable { onSelect(index) }
+                    .padding(vertical = dimens.space8),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = label,
+                    style = EarthTypography.textSm,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (selected) {
+                        EarthAccent.ink
+                    } else {
+                        EarthColors.Text.textSecondary
+                    },
+                )
+            }
         }
     }
 }
