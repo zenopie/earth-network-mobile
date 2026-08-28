@@ -42,8 +42,13 @@ public enum Gov {
 
         public var total: Int64 { yes + no + abstain + veto }
 
+        /// The status the chain reports while a proposal is open. Named rather
+        /// than spelled out twice: `proposals()` has to test it before it has a
+        /// Proposal to ask.
+        public static let votingPeriodStatus = "PROPOSAL_STATUS_VOTING_PERIOD"
+
         /// Open for voting. The only state in which a vote is accepted.
-        public var isLive: Bool { status == "PROPOSAL_STATUS_VOTING_PERIOD" }
+        public var isLive: Bool { status == Self.votingPeriodStatus }
     }
 }
 
@@ -58,22 +63,42 @@ public extension EarthClient {
         guard let json = try? await rest.get(
             "/cosmos/gov/v1/proposals?pagination.limit=\(limit)&pagination.reverse=true"
         ) else { return [] }
-        return json.proposals.array.map { p in
+        var out: [Gov.Proposal] = []
+        for p in json.proposals.array {
             let id = p.id.uint64(default: 0)
-            let tally = p.final_tally_result
+            let status = p.status.string(default: "")
+
+            // final_tally_result is written by the gov EndBlocker when voting
+            // closes, so it reads 0/0/0/0 for as long as a proposal is open --
+            // which is exactly when the numbers are worth looking at. A voter
+            // who has just voted sees their vote missing and reasonably
+            // concludes it did not land.
+            //
+            // The running count is its own endpoint, and only while the
+            // proposal is live: for a closed one final_tally_result is both
+            // correct and the historical record, and costs no second request.
+            // A failed tally call falls back to those zeros rather than
+            // dropping the proposal from the list.
+            var tally = p.final_tally_result
+            if status == Gov.Proposal.votingPeriodStatus,
+               let running = try? await rest.get("/cosmos/gov/v1/proposals/\(id)/tally") {
+                tally = running.tally
+            }
+
             let title = p.title.string(default: "")
-            return Gov.Proposal(
+            out.append(Gov.Proposal(
                 id: id,
                 title: title.isEmpty ? "Proposal \(id)" : title,
                 summary: p.summary.string(default: ""),
-                status: p.status.string(default: ""),
+                status: status,
                 votingEndTime: p.voting_end_time.string(default: ""),
                 yes: tally.yes_count.int64(default: 0),
                 no: tally.no_count.int64(default: 0),
                 abstain: tally.abstain_count.int64(default: 0),
                 veto: tally.no_with_veto_count.int64(default: 0)
-            )
+            ))
         }
+        return out
     }
 
     // --- messages ---
