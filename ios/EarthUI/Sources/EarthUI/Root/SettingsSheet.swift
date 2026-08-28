@@ -121,6 +121,7 @@ struct SettingsSheet: View {
 struct IdentityScreen: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
+    @Environment(TxController.self) private var tx
     @Environment(\.dismiss) private var dismiss
     @State private var registering = false
 
@@ -142,7 +143,19 @@ struct IdentityScreen: View {
                         .font(EarthType.bodySmall)
                         .foregroundStyle(theme.colors.textTertiary)
 
-                    if !model.isRegistered {
+                    if model.isRegistered {
+                        // The consequence is written above the button rather
+                        // than behind a second "are you sure" — the
+                        // confirmation sheet already asks that, and what
+                        // someone needs before pressing this is the one fact
+                        // that makes the answer obvious: the passport is
+                        // required to come back.
+                        Text("Unregistering frees your proof so it can be registered again — by this wallet or another one. You stop counting as a person in the human stream and stop earning ANML; what you have already claimed stays yours. Coming back means scanning your passport again.")
+                            .font(EarthType.bodySmall)
+                            .foregroundStyle(theme.colors.textTertiary)
+
+                        EarthButton(title: "Unregister", role: .destructive, action: unregister)
+                    } else {
                         EarthButton(title: "Register with your passport") { registering = true }
                     }
                 }
@@ -154,6 +167,18 @@ struct IdentityScreen: View {
             .background(theme.colors.bgPrimary)
             .scrollContentBackground(.hidden)
             .sheet(isPresented: $registering) { RegistrationSheet().earthThemed() }
+            // A sheet over the settings sheet, so the root's confirmation
+            // would draw behind both. See TxController.Host.
+            .overlay { TxOverlay(host: .identity) }
+        }
+    }
+
+    private func unregister() {
+        tx.request(
+            .init(action: "Unregister", rows: [("Registration", "Retired"), ("ANML claimed", "Kept")]),
+            host: .identity
+        ) { key in
+            [model.client.msgUnregister(creator: key.address)]
         }
     }
 }

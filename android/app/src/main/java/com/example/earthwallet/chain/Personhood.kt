@@ -4,6 +4,7 @@ import com.google.protobuf.Any as ProtoAny
 import com.google.protobuf.ByteString
 import network.erth.earth.proto.personhood.MsgClaimAnml
 import network.erth.earth.proto.personhood.MsgRegister
+import network.erth.earth.proto.personhood.MsgUnregister
 import network.erth.wallet.Constants
 import network.erth.wallet.wallet.services.EarthWallet
 import org.bitcoinj.core.ECKey
@@ -190,4 +191,25 @@ object Personhood {
     /** Daily ANML claim. Returns tx hash. */
     fun claimAnml(key: ECKey): String =
         EarthTx.broadcast(key, listOf(msgClaimAnml(EarthWallet.address(key))))
+
+    /**
+     * Retire this wallet's own registration, as a message.
+     *
+     * Takes no proof: the signer is the registered address, so the worst a
+     * wrong signature can do is retire the signer's own registration. It frees
+     * the nullifier, which is the point — until this message existed, a
+     * registration bound to a wallet could only be undone by the chain lapsing
+     * it, or by resetting the chain from genesis.
+     *
+     * The ANML already claimed stays with the holder. The default gas limit
+     * covers it; it deletes rows rather than verifying anything.
+     */
+    fun msgUnregister(creator: String): ProtoAny {
+        val msg = MsgUnregister.newBuilder().setCreator(creator).build()
+        return EarthTx.anyOf("/earth.personhood.v1.MsgUnregister", msg)
+    }
+
+    /** Retire this wallet's registration. Returns tx hash. */
+    fun unregister(key: ECKey): String =
+        EarthTx.broadcast(key, listOf(msgUnregister(EarthWallet.address(key))))
 }

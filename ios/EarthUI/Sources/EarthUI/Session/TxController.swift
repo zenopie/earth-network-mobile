@@ -76,8 +76,12 @@ public final class TxController {
         /// transaction from a tab or a single sheet.
         case root
         /// The allocation stream sheet, which presents the slider editor over
-        /// itself and is the app's only two-sheet-deep flow.
+        /// itself.
         case allocation
+        /// The identity screen, which is a sheet over the settings sheet — so
+        /// the root's copy draws behind both, the same way it does under the
+        /// stream editor.
+        case identity
     }
 
     public private(set) var host: Host = .root
