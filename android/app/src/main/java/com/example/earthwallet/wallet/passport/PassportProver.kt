@@ -16,7 +16,8 @@ import java.math.BigInteger
  * (proof, publicSignals) form.
  *
  * The lean_poa circuit's public inputs are, in order:
- *   [0] current_date, [1] nullifier, [2] dsc_key (the DSC commitment).
+ *   [0] current_date, [1] address, [2] nullifier, [3] dsc_key (the DSC
+ *   commitment).
  *
  * VERSION LOCKSTEP: on-device proofs verify on-chain only when noir_android's
  * bundled bb matches the chain verifier's bb (v5.0.0). A nightly bb produces

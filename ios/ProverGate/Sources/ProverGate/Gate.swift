@@ -44,11 +44,22 @@ public enum Gate {
         report.record("proof generated", result.rawProof.isEmpty ? .failed : .passed,
                       "\(result.rawProof.count) bytes in \(String(format: "%.1f", elapsed))s")
 
-        report.record("public input count",
-                      result.publicSignals.count == LeanPoaProver.numPublicInputs ? .passed : .failed,
-                      "\(result.publicSignals.count) signals")
+        // Against the circuit's own ABI, not against `numPublicInputs`. Checking
+        // the constant against itself is what let a06180a through: making
+        // `address` a public input took every variant from three public inputs
+        // to four, and this check passed unchanged while splitProof kept the old
+        // framing -- so the dsc_key stayed glued to the front of the proof body
+        // and the chain rejected every registration with "dsc key index 3 out of
+        // range". The ABI is the ground truth: bb flattens the public parameters
+        // first, then the return values.
+        let declared = try Self.declaredPublicInputCount(manifest: manifest)
+        let countAgrees = result.publicSignals.count == declared
+            && declared == LeanPoaProver.numPublicInputs
+        report.record("public input count", countAgrees ? .passed : .failed,
+                      "\(result.publicSignals.count) signals, circuit declares \(declared), "
+                          + "splitProof assumes \(LeanPoaProver.numPublicInputs)")
 
-        // splitProof's framing (4-byte prefix, then 3x32-byte public inputs) is
+        // splitProof's framing (4-byte prefix, then 4x32-byte public inputs) is
         // asserted rather than assumed: current_date is a known input, so a wrong
         // framing shows up as a signal that does not round-trip.
         let expectedDate = (witness["current_date"] as? String).map { decimalFromHex($0) }
@@ -132,5 +143,26 @@ public enum Gate {
         try result.publicSignals.joined(separator: "\n")
             .write(to: dir.appendingPathComponent("swift_public_signals.txt"),
                    atomically: true, encoding: .utf8)
+    }
+
+    /// How many public inputs the compiled circuit declares — its public
+    /// parameters, then its return values, in the order bb flattens them into
+    /// the proof. Read from the manifest so the gate cannot agree with a stale
+    /// constant.
+    private static func declaredPublicInputCount(manifest: Data) throws -> Int {
+        let json = try JSONSerialization.jsonObject(with: manifest) as? [String: Any]
+        let abi = json?["abi"] as? [String: Any]
+        let parameters = abi?["parameters"] as? [[String: Any]] ?? []
+        let publicParameters = parameters.filter { $0["visibility"] as? String == "public" }.count
+
+        // A tuple return contributes one field each; any other return type
+        // contributes one; no return type contributes none.
+        guard let returnType = abi?["return_type"] as? [String: Any],
+              let type = returnType["abi_type"] as? [String: Any]
+        else { return publicParameters }
+        if type["kind"] as? String == "tuple", let fields = type["fields"] as? [Any] {
+            return publicParameters + fields.count
+        }
+        return publicParameters + 1
     }
 }
