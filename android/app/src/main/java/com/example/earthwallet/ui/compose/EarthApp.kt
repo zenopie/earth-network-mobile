@@ -169,6 +169,21 @@ fun EarthApp(
         )
     }
 
+    // Unregistering changes the identity, the ANML the wallet can claim and
+    // its weight in the human stream, so it invalidates rather than refreshes
+    // — the same reasoning as coming back from registration.
+    val unregister = {
+        tx.request(
+            details = TxConfirmDetails(
+                action = "Unregister",
+                msgTypeUrl = "/earth.personhood.v1.MsgUnregister",
+                balanceUerth = state?.balanceUerth ?: 0L,
+            ),
+            onSuccess = invalidateWallet,
+            build = { ctx -> listOf(Personhood.msgUnregister(walletAddress(ctx))) },
+        )
+    }
+
     val rows = remember(activity, nav) {
         activity?.map { row ->
             row.copy(onClick = { nav.push(EarthRoute.TransactionDetail(row.txHash)) })
@@ -232,6 +247,7 @@ fun EarthApp(
             onSwitchWallet = switchWallet,
             onClaimAnml = claimAnml,
             onRegister = openRegistration,
+            onUnregister = unregister,
             version = version,
             balancesVisible = balancesVisible,
             onOpenUrl = onOpenUrl,
@@ -321,6 +337,7 @@ private fun EarthContent(
     onSwitchWallet: (Int) -> Unit,
     onClaimAnml: () -> Unit,
     onRegister: () -> Unit,
+    onUnregister: () -> Unit,
     version: String,
     balancesVisible: Boolean,
     onOpenUrl: (String) -> Unit,
@@ -497,6 +514,7 @@ private fun EarthContent(
             anmlBalance = loaded.anmlBalance,
             onRegister = onRegister,
             onClaim = onClaimAnml,
+            onUnregister = onUnregister,
             modifier = inset,
         )
 

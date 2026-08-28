@@ -42,7 +42,7 @@ public struct RootView: View {
         // the kind of distinction that silently stops working.
         //
         // This copy serves everything that raises a transaction from a tab or
-        // a single sheet, which is all of them but one. An overlay draws inside
+        // a single sheet, which is most of them. An overlay draws inside
         // the view it decorates, so it cannot appear over a sheet that is still
         // presented; a flow nested deeper than one sheet hosts its own — see
         // TxController.Host.

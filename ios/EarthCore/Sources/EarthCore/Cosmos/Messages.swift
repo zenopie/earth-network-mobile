@@ -254,6 +254,22 @@ public enum Msg {
         }
     }
 
+    /// Retires the signer's own registration and frees its nullifier. Carries
+    /// no proof: the signer is the registered address, so the worst a wrong
+    /// signature can do is retire the signer's own registration.
+    public struct Unregister: ProtoMessage {
+        public static let typeURL = "/earth.personhood.v1.MsgUnregister"
+        public let creator: String
+
+        public init(creator: String) { self.creator = creator }
+
+        public func encoded() -> Data {
+            var w = ProtoWriter()
+            w.string(1, creator)
+            return w.data
+        }
+    }
+
     // --- earth/allocation ---
 
     public enum StreamID: Int {

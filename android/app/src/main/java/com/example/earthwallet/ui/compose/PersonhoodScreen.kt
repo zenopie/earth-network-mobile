@@ -35,7 +35,7 @@ import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
  *
  * Built on their ReceiveView composition — a large-radius panel with a circular
  * badge, a title and a subtitle — because this screen answers the same kind of
- * question: one piece of state, stated plainly, with one action under it.
+ * question: one piece of state, stated plainly, with the actions under it.
  *
  * The claim of what the passport scan does and does not send is on the screen
  * rather than in a help page. It is the objection someone has at the moment
@@ -48,6 +48,7 @@ fun PersonhoodScreen(
     anmlBalance: String?,
     onRegister: () -> Unit,
     onClaim: () -> Unit,
+    onUnregister: () -> Unit,
     modifier: Modifier = Modifier,
     claiming: Boolean = false,
 ) {
@@ -121,6 +122,31 @@ fun PersonhoodScreen(
                 isLoading = claiming,
                 modifier = Modifier.fillMaxWidth(),
                 colors = brandButtonColors(),
+            )
+
+            // Leaving, under the claim rather than beside it. The consequence
+            // is written above the button instead of behind a second dialog:
+            // the transaction sheet already asks for a confirmation, and what
+            // someone needs before pressing this is not another "are you sure"
+            // but the one fact that makes the answer obvious — the passport is
+            // required again, and the ANML already claimed is not clawed back.
+            Spacer(Modifier.height(dimens.space32))
+            Text(
+                text = "Unregistering frees your proof so it can be registered " +
+                    "again — by this wallet or another one. You stop counting " +
+                    "as a person in the human stream and stop earning ANML; " +
+                    "what you have already claimed stays yours. Coming back " +
+                    "means scanning your passport again.",
+                style = EarthTypography.textSm,
+                color = EarthColors.Text.textTertiary,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(dimens.space12))
+            EarthButton(
+                text = "Unregister",
+                onClick = onUnregister,
+                modifier = Modifier.fillMaxWidth(),
+                colors = EarthButtonDefaults.destructive1Colors(),
             )
         } else {
             Spacer(Modifier.height(dimens.space24))
