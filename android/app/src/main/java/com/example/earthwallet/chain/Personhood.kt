@@ -116,10 +116,11 @@ object Personhood {
      * Client-side proof-of-personhood registration. Returns tx hash.
      *
      * proof is the Barretenberg UltraHonk proof bytes; publicSignals are the
-     * circuit public signals as decimal strings ([current_date, nullifier,
-     * dsc_key] for lean_poa); signatureAlgorithm selects the on-chain verifying
-     * key; dscDer is the Document Signer certificate the chain verifies against
-     * its CSCA trust store and binds to the proof's dsc_key output.
+     * circuit public signals as decimal strings ([current_date, address,
+     * nullifier, dsc_key] for lean_poa); signatureAlgorithm selects the
+     * on-chain verifying key; dscDer is the Document Signer certificate the
+     * chain verifies against its CSCA trust store and binds to the proof's
+     * dsc_key output.
      */
     /**
      * Registration's gas limit and fee, defined here — beside the message they

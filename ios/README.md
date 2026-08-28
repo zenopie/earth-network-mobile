@@ -35,7 +35,7 @@ Run it:
     .build/manual/progate ../..
 
 Checks: witness shape, proof generated, public-input count, proof framing
-(`splitProof`'s 4-byte prefix + 3×32-byte public inputs — asserted via
+(`splitProof`'s 4-byte prefix + 4×32-byte public inputs — asserted via
 `current_date`, not assumed), and verification against its own VK. Proof and VK
 land in `ios/ProverGate/.artifacts/` so the chain verifier
 (`earth-network-chain/third_party/barretenberg-go`) can be run against a
@@ -114,9 +114,9 @@ Phase 1 question.
 On an M-series Mac, macOS slice, `lean_poa` (~130k gates):
 
     proving key   ~160 ms
-    proof         14756 bytes in 1.5s
+    proof         14788 bytes in 1.5s
     memory        ~320 MiB peak
-    public inputs [current_date, nullifier, dsc_key]
+    public inputs [current_date, address, nullifier, dsc_key]
 
 ~320 MiB peak is the number to watch when this moves to a phone — iOS is
 stricter than macOS about it, and `Swoirenberg` exposes `low_memory_mode` and
