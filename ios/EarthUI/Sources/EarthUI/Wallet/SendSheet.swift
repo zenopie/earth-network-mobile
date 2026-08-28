@@ -91,7 +91,9 @@ struct SendSheet: View {
             }
             HStack {
                 TextField("0", text: $amount)
-                    .font(EarthType.display)
+                    .font(EarthType.amountField)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
                     .keyboardType(.decimalPad)
                     .onChange(of: amount) { previous, new in
                         amount = Amounts.filterAmountInput(new, previous: previous)
