@@ -31,8 +31,15 @@ public enum PassportProving {
     /// Scan in, proof out. The witness is built inside
     /// `PassportRegistration.prove`, which also checks that the proof came back
     /// from the circuit the certificate selected.
-    static func prove(scan: PassportRegistration.Scan) async throws -> PassportRegistration.Proof {
+    ///
+    /// - Parameter address: the account that will sign MsgRegister. The chain
+    ///   takes it as a public input, so a proof built for one account cannot be
+    ///   broadcast from another.
+    static func prove(
+        scan: PassportRegistration.Scan,
+        address: String
+    ) async throws -> PassportRegistration.Proof {
         guard let prover else { throw Failure.unavailable }
-        return try await PassportRegistration.prove(scan: scan, using: prover)
+        return try await PassportRegistration.prove(scan: scan, address: address, using: prover)
     }
 }

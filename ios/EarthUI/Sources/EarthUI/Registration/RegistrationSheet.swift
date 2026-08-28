@@ -289,6 +289,11 @@ struct RegistrationSheet: View {
         failure = nil
         phase = .reading
         let key = key
+        // Read once, here, rather than inside the task. The proof is bound to
+        // this address, and reading it after the chip does would let a wallet
+        // switched mid-scan bind the proof to an account other than the one
+        // [register] then broadcasts from — which the chain rejects.
+        let address = model.address
         Task {
             do {
                 let scan = try await PassportChip.read(key: key)
@@ -298,7 +303,7 @@ struct RegistrationSheet: View {
                 // peaks a few hundred megabytes, and the screen has a spinner
                 // on it that has to keep turning.
                 let proof = try await Task.detached(priority: .userInitiated) {
-                    try await PassportProving.prove(scan: scan)
+                    try await PassportProving.prove(scan: scan, address: address)
                 }.value
                 self.proof = proof
                 phase = .idle
