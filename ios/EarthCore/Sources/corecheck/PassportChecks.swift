@@ -3,6 +3,19 @@ import CryptoKit
 import EarthCore
 import Foundation
 
+/// The account the witness-building checks prove against.
+///
+/// Any valid earth address would do — the circuit binds whatever it is handed —
+/// but it must be a real bech32 one, because the input builder decodes it and
+/// verifies its checksum. Checks that have a real key in scope use that instead,
+/// since proving for the account that signs is the invariant worth exercising.
+private let checkAddress = "earth1v4shyarg94nxj7r5w4ex2tthv9kxcet5fft9fs"
+
+/// The account the passport checks prove against. Any valid earth address will
+/// do -- the circuit binds whatever it is handed -- but it has to be a real
+/// bech32 one, because the input builder decodes and checksums it.
+
+
 func checkPassport(writingTo artifacts: URL) {
     checkMRZ()
     checkCertificates()
@@ -37,14 +50,15 @@ private func checkRegistration() {
         seenAlgorithm = inputs.algorithm
         return PassportRegistration.Proof(
             proof: Data(repeating: 0xab, count: 14_656),
-            publicSignals: ["260819", "12345", "67890"],
+            // [current_date, address, nullifier, dsc_key]
+            publicSignals: ["260819", "999", "12345", "67890"],
             signatureAlgorithm: inputs.algorithm
         )
     }
 
-    let proof = runBlocking { try await PassportRegistration.prove(scan: scan, using: prover) }
+    let proof = runBlocking { try await PassportRegistration.prove(scan: scan, address: key.address, using: prover) }
     Check.equal("the prover is handed the circuit the certificate selects", seenAlgorithm, "lean_poa")
-    Check.equal("nullifier is the second public signal", proof?.nullifier, "12345")
+    Check.equal("nullifier is the third public signal", proof?.nullifier, "12345")
 
     // A prover that answered with a different circuit would have the chain
     // look up the wrong verifying key, so it is caught rather than broadcast.
@@ -53,7 +67,7 @@ private func checkRegistration() {
                                    signatureAlgorithm: "lean_poa_rsa2048")
     }
     Check.that("a proof from the wrong circuit is refused",
-               runBlocking { try await PassportRegistration.prove(scan: scan, using: wrongProver) } == nil)
+               runBlocking { try await PassportRegistration.prove(scan: scan, address: key.address, using: wrongProver) } == nil)
 
     let message = try! PassportRegistration.message(
         scan: scan, proof: proof!, creator: key.address)
@@ -277,7 +291,7 @@ private func checkSODAndInputs(writingTo artifacts: URL) {
     Check.group("witness map")
 
     let inputs = try! PassportInputs.build(dg1: passport.dg1, efSOD: passport.efSOD,
-                                           currentDateYYMMDD: 260819)
+                                           currentDateYYMMDD: 260819, address: checkAddress)
     Check.equal("selects the P-256 circuit", inputs.algorithm, "lean_poa")
 
     let witness = inputs.witness
@@ -331,7 +345,7 @@ private func checkSODAndInputs(writingTo artifacts: URL) {
     tampered[20] ^= 0x01
     Check.throwsError("a DG1 that does not match the SOD is refused") {
         _ = try PassportInputs.build(dg1: Data(tampered), efSOD: passport.efSOD,
-                                     currentDateYYMMDD: 260819)
+                                     currentDateYYMMDD: 260819, address: checkAddress)
     }
 
     // Everything above shows the witness has the right shape. Whether it is

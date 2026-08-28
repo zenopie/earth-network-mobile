@@ -20,6 +20,7 @@ fn main(
     dsc_redc: [u128; 18],    // Barrett reduction parameter
     sod_signature: [u128; 18],
     current_date: pub u32,
+    address: pub Field,
 ) -> pub (Field, Field) {
     let msg_hash = poa_core::hash_and_bind(
         dg1,
@@ -39,5 +40,5 @@ fn main(
     // Canonical big-endian modulus bytes = chain's RSA canonical pubkey.
     let modulus: RuntimeBigNum<18, 2048> = RuntimeBigNum::from_array(params, dsc_modulus);
     let commitment = poa_core::dsc_commitment(modulus.to_be_bytes());
-    poa_core::finalize(dg1, commitment, current_date)
+    poa_core::finalize(dg1, commitment, current_date, address)
 }

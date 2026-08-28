@@ -19,6 +19,10 @@ pub global DG1_MAX: u32 = 95;
 // TD3 MRZ field offsets within DG1 (5-byte DG1 header + 88-char MRZ).
 global NAME_OFFSET: u32 = 10; // MRZ line 1, chars 5..44 (39 bytes)
 global NAME_LEN: u32 = 39;
+// MRZ line 2 begins at DG1[49] (5-byte header + 44-char line 1); the document
+// number is its first nine characters.
+global DOC_NUM_OFFSET: u32 = 49;
+global DOC_NUM_LEN: u32 = 9;
 global DOB_OFFSET: u32 = 62; // MRZ line 2, DOB YYMMDD (6 bytes)
 global EXPIRY_OFFSET: u32 = 70; // MRZ line 2, expiry YYMMDD (6 bytes)
 
@@ -89,15 +93,48 @@ pub fn finalize(
     dg1: [u8; DG1_MAX],
     dsc_key: Field,
     current_date: u32,
+    address: Field,
 ) -> (Field, Field) {
     assert(yymmdd(dg1, EXPIRY_OFFSET) >= current_date);
 
-    let mut id: [Field; 45] = [0; 45];
-    for i in 0..NAME_LEN {
-        id[i] = dg1[NAME_OFFSET + i] as Field;
+    // Bind the proof to the account it was proved for.
+    //
+    // Without this, a proof is a bearer token. It travels in the clear inside
+    // MsgRegister, so anyone who reads a block has the bytes; the only thing
+    // that made replaying them pointless was the chain refusing a nullifier
+    // that was already live. The moment re-registering is allowed to MOVE a
+    // registration -- which is what a person who lost their wallet needs -- that
+    // refusal is gone, and a replay becomes theft of somebody's personhood.
+    //
+    // Being a public input is what binds it: the verifier checks the proof
+    // against the public input vector it is handed, so a proof made for one
+    // address simply does not verify against another. The assert is here so the
+    // parameter cannot be optimised out of the circuit for being otherwise
+    // unread, and it costs a constraint to also reject the zero address.
+    assert(address != 0);
+
+    // The nullifier is Poseidon2(document number ‖ DOB), NOT name ‖ DOB.
+    //
+    // This is a deliberate reversal of SECURITY.md finding #1 -- see the
+    // reopened entry there. Name ‖ DOB is stable across a passport renewal,
+    // which is why it was chosen; the cost is that it is guessable. A nullifier
+    // is public, and a name and birth date are not secrets, so anyone holding a
+    // candidate pair could confirm which on-chain address belongs to that
+    // person and read their balance. That is a confirmation attack that scales
+    // to anyone with a phone book.
+    //
+    // A document number carries far more entropy and is not published anywhere.
+    // The price is that it changes on renewal, so one human can end up with two
+    // live registrations across a ten-year cycle. That is bounded by the cost
+    // and cadence of actually renewing a passport, and it was judged the better
+    // side of the trade: linking every wallet to a named person is a permanent
+    // harm to every user, a duplicate registration is a rate-limited one.
+    let mut id: [Field; 15] = [0; 15];
+    for i in 0..DOC_NUM_LEN {
+        id[i] = dg1[DOC_NUM_OFFSET + i] as Field;
     }
     for i in 0..6 {
-        id[NAME_LEN + i] = dg1[DOB_OFFSET + i] as Field;
+        id[DOC_NUM_LEN + i] = dg1[DOB_OFFSET + i] as Field;
     }
-    (Poseidon2::hash(id, 45), dsc_key)
+    (Poseidon2::hash(id, 15), dsc_key)
 }

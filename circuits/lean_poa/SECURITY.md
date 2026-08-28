@@ -5,10 +5,10 @@ tampered signature, and rejects an expired passport; `bb verify` passes. This is
 self-review — a **professional ZK/crypto audit is still required before it guards
 real value.**
 
-**Variants (workspace):** the shared logic (hash binding, registry membership,
-expiry, name‖DOB nullifier) lives in `../poa_core`; each binary differs only in the
+**Variants (workspace):** the shared logic (hash binding, expiry, the
+document-number‖DOB nullifier, and the address binding) lives in `../poa_core`; each binary differs only in the
 SOD→DSC signature verify + DSC-leaf encoding, and all share the public interface
-`[registry_root, current_date] → nullifier`:
+`[current_date, address] → (nullifier, dsc_key)`:
 | circuit | DSC algorithm | gates | leaf |
 |---|---|---|---|
 | `lean_poa` | ECDSA-P256 (std secp256r1) | 108k | Poseidon2(x‖y) |
@@ -34,17 +34,43 @@ Given a passport's DG1 + SOD, it proves in zero knowledge:
 3. those signed attributes are ECDSA-P256 signed by a Document Signer key,
 4. that DSC key is a Poseidon2-Merkle leaf under the public `registry_root`,
 5. the passport's MRZ expiry date is `>= current_date` (public input),
-and outputs `nullifier = Poseidon2(name ‖ DOB)`.
+and outputs `nullifier = Poseidon2(document number ‖ DOB)` — see finding #1 for
+why it is the document number and what that costs.
 
 Trust reduces to: **the registry contains only genuine government DSC keys**
 (inherited ICAO PKI trust), the holder can't forge a DSC signature, and the
 chain pins `current_date` to ~today (see finding #7).
 
 ## Findings
-1. **Nullifier stability — RESOLVED.** The nullifier is now
-   `Poseidon2(name ‖ DOB)` over the MRZ name field (DG1[10..49], 39 bytes) and
-   date of birth (DG1[62..68], YYMMDD). It excludes the passport number, so a
-   renewed passport yields the **same** nullifier — one person, one registration.
+1. **Nullifier stability — REOPENED 2026-08-27, deliberately.** The nullifier is
+   now `Poseidon2(document number ‖ DOB)` over DG1[49..58] (MRZ line 2, chars
+   0..8) and date of birth (DG1[62..68], YYMMDD). It was `Poseidon2(name ‖ DOB)`,
+   which excluded the passport number precisely so that a renewed passport kept
+   the same nullifier.
+
+   **What this costs.** A document number changes on renewal, so one human can
+   hold two live registrations across a ten-year cycle — two ANML streams and
+   two votes. Uniqueness is no longer absolute; it is rate-limited by the cost
+   and cadence of renewing a passport. An auditor should treat this as a known,
+   accepted sybil bound rather than an oversight.
+
+   **Why it was taken anyway.** A nullifier is public and permanently linked to
+   an address on chain. A name and a date of birth are not secrets, so under the
+   old derivation anyone holding a candidate pair could recompute the nullifier,
+   find the address, and read that person's balance and voting history. That is
+   a confirmation attack requiring no privileged access and scaling to anyone
+   with a phone book — a permanent harm to every user. A document number is high
+   entropy and published nowhere. The judgement was that unlinkability of wallet
+   from person is the property worth protecting, and that a duplicate
+   registration behind a renewal fee is the cheaper failure.
+
+   Note that name ‖ DOB was never fully stable either: marriage, transition and
+   legal name changes break it the same way, just more rarely.
+
+   The intended end state is that the nullifier is not guessable by anyone,
+   including a state actor holding the document number — via FHE or an
+   equivalent — at which point the entropy of the input stops carrying this
+   burden alone.
 2. **Expiry check — RESOLVED.** `main` takes a `current_date: pub u32` (YYMMDD)
    and asserts the MRZ expiry (DG1[70..76], parsed YYMMDD) `>= current_date`.
    Expired passports fail to prove (validated: a future `current_date` is
@@ -53,9 +79,29 @@ chain pins `current_date` to ~today (see finding #7).
    supplies `current_date`; nothing in-circuit forces it to be today. The caretaker
    verifier (`verifyRegistrationProof`) now rejects a proof whose public
    `current_date` isn't within `params.current_date_max_skew_seconds` of the block
-   time (default 2 days; `current_date_index=1` for this circuit). Without it a
+   time (default 2 days; `current_date_index=0` for this circuit). Without it a
    holder backdates `current_date` to pass an expired passport. (Same pattern as
    `registry_root == params.dsc_root`.)
+9. **Proof replay across addresses — RESOLVED.** `main` takes the registrant's
+   account as `address: pub Field` (the twenty address bytes big-endian, one
+   field element; 160 bits into a ~254-bit field, so the encoding is injective).
+   `poa_core::finalize` asserts it non-zero so it cannot be optimised out of the
+   circuit for being otherwise unread.
+
+   Proof bytes travel in the clear inside `MsgRegister`, so anyone who reads a
+   block holds them. Previously the only thing making a replay pointless was the
+   chain refusing a nullifier that was already live — which also meant losing the
+   wallet you registered from stranded your personhood until the registration
+   lapsed. Allowing a re-registration to **move** a registration is what unstrands
+   that, and it is safe only because a proof now verifies solely against the
+   address it was made for. The chain requires that address to equal the
+   transaction signer (`verifyRegistrationProof`), and rejects a mismatch for
+   ~12k gas rather than the ~1.03M a verification costs.
+
+   Demonstrated, not argued: `zk/ultrahonk` `TestProofDoesNotVerifyForAnotherAddress`
+   verifies one fixture proof twice, changing only the address in the public
+   input vector, and the verifier rejects it — then accepts again when restored.
+
 8. **ECDSA low-s is mandatory (input-gen).** Noir's `std::ecdsa_secp256r1`
    `verify_signature` **enforces low-s** (rejects `s > n/2` as malleable). ICAO
    DSC signatures are NOT required to be low-s, so ~half of real passports would
@@ -93,9 +139,12 @@ chain pins `current_date` to ~today (see finding #7).
 | `merkle_path_bits` | `[bool;16]` | DSC leaf's path in the registry tree |
 | `merkle_siblings` | `[Field;16]` | sibling nodes from the registry data |
 | `current_date` | u32 (pub) | YYMMDD "today"; **chain must pin to ~block time** (finding #7) |
+| `address` | Field (pub) | the registrant's account, 20 address bytes big-endian as one field element; chain requires it to equal the tx signer (finding #9) |
 
-Public outputs (in order): `registry_root`, `current_date`, then the returned
-`nullifier`.
+Public inputs then outputs, in order: `current_date`, `address`, then the
+returned `nullifier` and `dsc_key`. bb appends return values after declared
+inputs, which is why the chain's index params are `current_date_index=0`,
+`address_index=1`, `nullifier_index=2`, `dsc_key_index=3`.
 
 Registry leaf = `Poseidon2(dsc_pubkey_x‖dsc_pubkey_y as 64 field bytes)`; tree is a
 binary Poseidon2 Merkle tree, depth 16. The registry builder (offline) and the

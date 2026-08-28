@@ -25,12 +25,14 @@ import java.math.BigInteger
 object PassportProver {
 
     /** Public-input positions in the lean_poa circuit. */
-    private const val ROOT_INDEX = 0
-    private const val CURRENT_DATE_INDEX = 1
-    // Public signals are [current_date, nullifier, dsc_key]: current_date is the
-    // only declared public input, and bb appends the circuit's return values.
-    private const val NULLIFIER_INDEX = 1
-    private const val NUM_PUBLIC_INPUTS = 3
+    // Public signals are [current_date, address, nullifier, dsc_key]:
+    // current_date and address are the declared public inputs, and bb appends
+    // the circuit's return values after them. address binds the proof to the
+    // wallet it was made for -- see circuits/lean_poa/SECURITY.md finding #9.
+    private const val CURRENT_DATE_INDEX = 0
+    private const val ADDRESS_INDEX = 1
+    private const val NULLIFIER_INDEX = 2
+    private const val NUM_PUBLIC_INPUTS = 4
 
     /**
      * SRS size hint for [NoirProver.loadCircuit]. Must cover the circuit's domain
@@ -61,10 +63,11 @@ object PassportProver {
         dg1: ByteArray,
         sodBytes: ByteArray,
         currentDateYymmdd: Int,
+        address: String,
     ): Result {
         // Build inputs + select the circuit matching the passport's DSC algorithm
         // (lean_poa / lean_poa_rsa2048 / lean_poa_rsa4096).
-        val inputs = PassportInputs.buildInputs(dg1, sodBytes, currentDateYymmdd)
+        val inputs = PassportInputs.buildInputs(dg1, sodBytes, currentDateYymmdd, address)
         val circuitJson = context.assets.open("circuits/${inputs.algorithm}.json")
             .bufferedReader().use { it.readText() }
         val circuit = NoirProver.loadCircuit(circuitJson, SRS_SIZE)

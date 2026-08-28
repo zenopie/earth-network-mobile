@@ -8,6 +8,7 @@ import org.bouncycastle.cert.X509CertificateHolder
 import org.bouncycastle.cms.CMSSignedData
 import java.math.BigInteger
 import java.security.MessageDigest
+import network.erth.wallet.wallet.utils.Bech32
 
 /**
  * PassportInputs — builds the inputs for the lean_poa Noir circuit
@@ -23,7 +24,8 @@ import java.security.MessageDigest
  * Circuit input contract (see circuits/lean_poa/SECURITY.md):
  *   dg1[95] + dg1_len, e_content[200] + e_content_len + dg1_hash_offset,
  *   signed_attrs[200] + signed_attrs_len + econtent_hash_offset,
- *   dsc_pubkey_x[32], dsc_pubkey_y[32], sod_signature[64] (low-s), current_date.
+ *   dsc_pubkey_x[32], dsc_pubkey_y[32], sod_signature[64] (low-s), current_date,
+ *   address.
  */
 object PassportInputs {
 
@@ -91,6 +93,7 @@ object PassportInputs {
         dg1: ByteArray,
         sodBytes: ByteArray,
         currentDateYymmdd: Int,
+        address: String,
     ): Inputs {
         require(dg1.size <= DG1_MAX) { "DG1 is ${dg1.size} bytes, exceeds circuit max $DG1_MAX" }
 
@@ -171,6 +174,11 @@ object PassportInputs {
         }
 
         map["current_date"] = scalarInput(currentDateYymmdd)
+        // The account this proof is for. It is a public input, so the proof only
+        // verifies for this address and cannot be lifted out of a block and
+        // replayed from another wallet -- which is what lets the chain treat a
+        // re-registration as MOVING a registration rather than refusing it.
+        map["address"] = addressInput(address)
         return Inputs(algorithm, map)
     }
 
@@ -195,6 +203,14 @@ object PassportInputs {
      * a hard reject, so every scalar has to go through here.
      */
     private fun scalarInput(v: Int): String = "0x%x".format(v)
+
+    /** The twenty address bytes big-endian as one field element — the same
+     *  encoding the chain compares against in verifyRegistrationProof. */
+    private fun addressInput(bech32: String): String {
+        val bytes = Bech32.decode(bech32)
+        require(bytes.size == 20) { "expected a 20-byte account address, got ${bytes.size}" }
+        return "0x" + BigInteger(1, bytes).toString(16)
+    }
 
     private val LIMB_MASK = BigInteger.ONE.shiftLeft(120).subtract(BigInteger.ONE)
 

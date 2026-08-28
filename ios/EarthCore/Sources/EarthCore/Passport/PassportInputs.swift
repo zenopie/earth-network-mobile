@@ -16,10 +16,12 @@ import Foundation
 ///     e_content[200] + e_content_len + dg1_hash_offset
 ///     signed_attrs[200] + signed_attrs_len + econtent_hash_offset
 ///     dsc_pubkey_x[32], dsc_pubkey_y[32], sod_signature[64] (low-s)
-///     current_date
+///     current_date, address
 public enum PassportInputs {
 
     public enum Error: Swift.Error, Equatable {
+        /// The account address did not decode to twenty bytes.
+        case badAddress(Int)
         case dg1TooLong(Int)
         case eContentTooLong(Int)
         case signedAttributesTooLong(Int)
@@ -63,10 +65,17 @@ public enum PassportInputs {
     ///   - currentDateYYMMDD: today as a YYMMDD integer. The chain pins this to
     ///     block time within `current_date_max_skew_seconds`, so it must be
     ///     roughly now — see finding 7 in the circuit's SECURITY.md.
+    ///   - address: the bech32 account this registration is for. The circuit
+    ///     takes it as a public input, so the proof verifies only for this
+    ///     account and cannot be lifted out of a block and replayed from another
+    ///     wallet — which is what lets the chain treat a re-registration as
+    ///     MOVING a registration rather than refusing it. It must be the account
+    ///     that will sign MsgRegister; the chain rejects any other.
     public static func build(
         dg1: Data,
         efSOD: Data,
-        currentDateYYMMDD: Int
+        currentDateYYMMDD: Int,
+        address: String
     ) throws -> Inputs {
         guard dg1.count <= dg1Max else { throw Error.dg1TooLong(dg1.count) }
 
@@ -100,6 +109,7 @@ public enum PassportInputs {
             "signed_attrs_len": scalar(signedAttributes.count),
             "econtent_hash_offset": scalar(eContentHashOffset),
             "current_date": scalar(currentDateYYMMDD),
+            "address": try addressField(address),
         ]
 
         switch sod.certificate.publicKey {
@@ -159,6 +169,16 @@ public enum PassportInputs {
     /// Scalars are hex strings too, and the binding enforces it: a decimal
     /// string is not parsed loosely, it is rejected outright.
     static func scalar(_ value: Int) -> String { "0x" + String(value, radix: 16) }
+
+    /// The twenty address bytes big-endian as one field element — the same
+    /// encoding the chain compares against in `verifyRegistrationProof`.
+    /// 160 bits into BN254's ~254-bit field, so the encoding is injective and
+    /// two accounts can never collide onto one element.
+    static func addressField(_ bech32: String) throws -> String {
+        let (_, payload) = try Bech32.decode(bech32)
+        guard payload.count == 20 else { throw Error.badAddress(payload.count) }
+        return "0x" + payload.map { String(format: "%02x", $0) }.joined()
+    }
 
     /// A big integer as `count` 120-bit little-endian limbs.
     static func limbArray(_ value: BigInt, count: Int) -> [String] {

@@ -71,6 +71,16 @@ object PassportSession {
         /** The chip read but would not produce what the proof needs. */
         data object NoSod : Failure
 
+        /**
+         * No wallet to bind the proof to.
+         *
+         * The circuit takes the registrant's address as a public input, so a
+         * proof cannot be produced before a wallet exists -- there is nothing to
+         * prove it *for*. Reachable only if the passport flow is entered before
+         * setup, which the UI does not offer.
+         */
+        data object NoWallet : Failure
+
         data class Error(val cause: Throwable) : Failure
     }
 
@@ -130,7 +140,14 @@ object PassportSession {
             // verifies it against the CSCA trust store and binds it to the
             // proof's dsc_key output. No pre-submission and no registry wait.
             val dsc = PassportInputs.scannedDsc(sodBytes)
-            val proof = PassportProver.prove(context, dg1Bytes, sodBytes, todayYymmddUtc())
+            // The proof is bound to the wallet that will broadcast it: the
+            // circuit takes the address as a public input, and the chain refuses
+            // a proof whose address is not the transaction signer. Read from
+            // SecureWalletManager, the same source register() derives its key
+            // from, so the two cannot drift apart.
+            val address = SecureWalletManager.getWalletAddress(context)
+                ?: return Result.failure(FailureException(Failure.NoWallet))
+            val proof = PassportProver.prove(context, dg1Bytes, sodBytes, todayYymmddUtc(), address)
 
             Result.success(
                 Scan(

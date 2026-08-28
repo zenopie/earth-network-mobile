@@ -39,7 +39,9 @@ public struct PassportRegistration {
     /// stubbed in tests.
     public struct Proof {
         public let proof: Data
-        /// `[current_date, nullifier, dsc_key]` as decimal strings.
+        /// `[current_date, address, nullifier, dsc_key]` as decimal strings.
+        /// address is the account the proof is bound to; the chain requires it
+        /// to equal the transaction signer.
         public let publicSignals: [String]
         /// The circuit variant that produced it — the chain uses it to pick a
         /// verifying key, so it must be the one `PassportInputs` selected.
@@ -51,11 +53,20 @@ public struct PassportRegistration {
             self.signatureAlgorithm = signatureAlgorithm
         }
 
-        /// The nullifier: one per human, stable across a passport renewal
-        /// because it commits to name and date of birth rather than to the
-        /// document number.
-        public var nullifier: String? {
+        /// The account the proof is bound to, as a decimal field element.
+        public var address: String? {
             publicSignals.count > 1 ? publicSignals[1] : nil
+        }
+
+        /// The nullifier: one per human per passport.
+        ///
+        /// It commits to the document number and date of birth, so it is NOT
+        /// stable across a renewal — a renewed passport yields a new nullifier
+        /// and can register again. That is a deliberate trade for making the
+        /// nullifier unguessable from a name and birth date; see finding #1 in
+        /// circuits/lean_poa/SECURITY.md.
+        public var nullifier: String? {
+            publicSignals.count > 2 ? publicSignals[2] : nil
         }
     }
 
@@ -91,15 +102,20 @@ public struct PassportRegistration {
     /// a fee and can wait until the passport is back in a pocket; asking
     /// someone to watch an ad for gas *before* knowing the proof succeeded
     /// spends their time on a transaction that may never exist.
+    /// - Parameter address: the account that will sign MsgRegister. The proof is
+    ///   bound to it as a public input, so proving for one account and
+    ///   broadcasting from another produces a proof the chain refuses.
     public static func prove(
         scan: Scan,
+        address: String,
         now: Date = Date(),
         using prover: Prover
     ) async throws -> Proof {
         let inputs = try PassportInputs.build(
             dg1: scan.dg1,
             efSOD: scan.efSOD,
-            currentDateYYMMDD: todayYYMMDD(now: now)
+            currentDateYYMMDD: todayYYMMDD(now: now),
+            address: address
         )
         let proof = try await prover(inputs)
         guard proof.signatureAlgorithm == inputs.algorithm else {

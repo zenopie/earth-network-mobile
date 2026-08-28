@@ -21,6 +21,7 @@ fn main(
     sod_signature_r: [u8; 32],
     sod_signature_s: [u8; 32],
     current_date: pub u32,
+    address: pub Field,
 ) -> pub (Field, Field) {
     let msg_hash = poa_core::hash_and_bind(
         dg1, dg1_len, e_content, e_content_len, dg1_hash_offset,
@@ -38,5 +39,5 @@ fn main(
         key[32 + i] = dsc_pubkey_y[i];
     }
     let commitment = poa_core::dsc_commitment(key);
-    poa_core::finalize(dg1, commitment, current_date)
+    poa_core::finalize(dg1, commitment, current_date, address)
 }

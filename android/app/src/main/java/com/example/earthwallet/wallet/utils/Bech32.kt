@@ -1,8 +1,8 @@
 package network.erth.wallet.wallet.utils
 
 /**
- * Minimal Bech32 encoder with convertBits helper (BIP-0173).
- * Supports lowercase HRP only. Decoding is not implemented.
+ * Minimal Bech32 codec with convertBits helper (BIP-0173).
+ * Supports lowercase HRP only.
  */
 object Bech32 {
 
@@ -108,5 +108,40 @@ object Bech32 {
         }
 
         return ret.toByteArray()
+    }
+
+    /**
+     * Decodes a bech32 address to its payload bytes, verifying the checksum.
+     *
+     * Added for the register circuit: it takes the registrant's account as a
+     * public input, so the prover needs the twenty raw address bytes rather
+     * than the bech32 string the rest of the app passes around. A wrong address
+     * here does not fail loudly at proving time -- it produces a proof the chain
+     * refuses as bound to somebody else -- so the checksum is verified rather
+     * than assumed.
+     */
+    @JvmStatic
+    fun decode(addr: String): ByteArray {
+        require(addr == addr.lowercase()) { "bech32 must be lowercase" }
+        val sep = addr.lastIndexOf('1')
+        require(sep >= 1 && sep + 7 <= addr.length) { "malformed bech32: no separator" }
+
+        val hrp = addr.substring(0, sep)
+        val dataPart = addr.substring(sep + 1)
+        val data = ByteArray(dataPart.length)
+        for (i in dataPart.indices) {
+            val v = CHARSET.indexOf(dataPart[i])
+            require(v >= 0) { "invalid bech32 character '${dataPart[i]}'" }
+            data[i] = v.toByte()
+        }
+
+        val values = hrpExpand(hrp) + data
+        require(polymod(values) == 1) { "bad bech32 checksum" }
+
+        // Drop the 6-character checksum, then 5-bit groups back to bytes. No
+        // padding on the way back: convertBits(pad = false) rejects a payload
+        // whose leftover bits are non-zero, which is what makes a truncated
+        // address fail rather than silently decode short.
+        return convertBits(data.copyOfRange(0, data.size - 6), 5, 8, false)
     }
 }
