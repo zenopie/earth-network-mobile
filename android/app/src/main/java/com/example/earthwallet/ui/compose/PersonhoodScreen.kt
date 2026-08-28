@@ -25,7 +25,6 @@ import androidx.compose.ui.text.style.TextAlign
 import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.theme.EarthTheme
 import network.erth.wallet.ui.vendor.component.EarthButton
-import network.erth.wallet.ui.vendor.component.EarthButtonDefaults
 import network.erth.wallet.ui.vendor.theme.colors.EarthColors
 import network.erth.wallet.ui.vendor.theme.dimensions.EarthDimensions
 import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
@@ -48,7 +47,6 @@ fun PersonhoodScreen(
     anmlBalance: String?,
     onRegister: () -> Unit,
     onClaim: () -> Unit,
-    onUnregister: () -> Unit,
     modifier: Modifier = Modifier,
     claiming: Boolean = false,
 ) {
@@ -124,29 +122,25 @@ fun PersonhoodScreen(
                 colors = brandButtonColors(),
             )
 
-            // Leaving, under the claim rather than beside it. The consequence
-            // is written above the button instead of behind a second dialog:
-            // the transaction sheet already asks for a confirmation, and what
-            // someone needs before pressing this is not another "are you sure"
-            // but the one fact that makes the answer obvious — the passport is
-            // required again, and the ANML already claimed is not clawed back.
+            // There is no way to leave from here any more. The chain removed
+            // MsgUnregister: retiring a registration freed its nullifier, and
+            // Register pays the registration reward to any nullifier that is
+            // not already live, so leaving and returning was a way to draw the
+            // reward pool repeatedly.
+            //
+            // Moving a registration still works, and is the thing people
+            // actually wanted this for — but it starts from the wallet being
+            // moved to, so it is described rather than offered.
             Spacer(Modifier.height(dimens.space32))
             Text(
-                text = "Unregistering frees your proof so it can be registered " +
-                    "again — by this wallet or another one. You stop counting " +
-                    "as a person in the human stream and stop earning ANML; " +
-                    "what you have already claimed stays yours. Coming back " +
-                    "means scanning your passport again.",
+                text = "Your registration stays with this wallet until it " +
+                    "expires. To move it to another wallet, register there " +
+                    "with the same passport — the proof moves the registration " +
+                    "across rather than making a second one, and pays nothing " +
+                    "the second time.",
                 style = EarthTypography.textSm,
                 color = EarthColors.Text.textTertiary,
                 textAlign = TextAlign.Center,
-            )
-            Spacer(Modifier.height(dimens.space12))
-            EarthButton(
-                text = "Unregister",
-                onClick = onUnregister,
-                modifier = Modifier.fillMaxWidth(),
-                colors = EarthButtonDefaults.destructive1Colors(),
             )
         } else {
             Spacer(Modifier.height(dimens.space24))

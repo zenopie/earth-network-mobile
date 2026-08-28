@@ -254,21 +254,9 @@ public enum Msg {
         }
     }
 
-    /// Retires the signer's own registration and frees its nullifier. Carries
-    /// no proof: the signer is the registered address, so the worst a wrong
-    /// signature can do is retire the signer's own registration.
-    public struct Unregister: ProtoMessage {
-        public static let typeURL = "/earth.personhood.v1.MsgUnregister"
-        public let creator: String
-
-        public init(creator: String) { self.creator = creator }
-
-        public func encoded() -> Data {
-            var w = ProtoWriter()
-            w.string(1, creator)
-            return w.data
-        }
-    }
+    // MsgUnregister is deliberately absent. The chain still decodes the ones in
+    // its history, but the handler rejects every new one, so there is nothing
+    // for a client to build.
 
     // --- earth/allocation ---
 

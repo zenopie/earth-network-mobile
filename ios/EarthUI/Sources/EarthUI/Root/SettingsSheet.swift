@@ -144,17 +144,20 @@ struct IdentityScreen: View {
                         .foregroundStyle(theme.colors.textTertiary)
 
                     if model.isRegistered {
-                        // The consequence is written above the button rather
-                        // than behind a second "are you sure" — the
-                        // confirmation sheet already asks that, and what
-                        // someone needs before pressing this is the one fact
-                        // that makes the answer obvious: the passport is
-                        // required to come back.
-                        Text("Unregistering frees your proof so it can be registered again — by this wallet or another one. You stop counting as a person in the human stream and stop earning ANML; what you have already claimed stays yours. Coming back means scanning your passport again.")
+                        // There is no way to leave from here any more. The
+                        // chain removed MsgUnregister: retiring a registration
+                        // freed its nullifier, and Register pays the
+                        // registration reward to any nullifier that is not
+                        // already live, so leaving and returning was a way to
+                        // draw the reward pool repeatedly.
+                        //
+                        // Moving a registration still works, and is the thing
+                        // people actually wanted this for — but it starts from
+                        // the wallet being moved to, so it is described rather
+                        // than offered.
+                        Text("Your registration stays with this wallet until it expires. To move it to another wallet, register there with the same passport — the proof moves the registration across rather than making a second one, and pays nothing the second time.")
                             .font(EarthType.bodySmall)
                             .foregroundStyle(theme.colors.textTertiary)
-
-                        EarthButton(title: "Unregister", role: .destructive, action: unregister)
                     } else {
                         EarthButton(title: "Register with your passport") { registering = true }
                     }
@@ -170,15 +173,6 @@ struct IdentityScreen: View {
             // A sheet over the settings sheet, so the root's confirmation
             // would draw behind both. See TxController.Host.
             .overlay { TxOverlay(host: .identity) }
-        }
-    }
-
-    private func unregister() {
-        tx.request(
-            .init(action: "Unregister", rows: [("Registration", "Retired"), ("ANML claimed", "Kept")]),
-            host: .identity
-        ) { key in
-            [model.client.msgUnregister(creator: key.address)]
         }
     }
 }
