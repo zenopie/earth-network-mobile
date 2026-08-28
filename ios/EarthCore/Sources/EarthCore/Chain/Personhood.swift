@@ -172,18 +172,9 @@ public extension EarthClient {
         try await broadcast([msgClaimAnml(creator: key.address)], key: key)
     }
 
-    /// Retire this wallet's own registration.
-    ///
-    /// Takes no proof, and the default gas limit covers it: it deletes rows
-    /// rather than verifying anything. Freeing the nullifier is the point —
-    /// until this message existed a registration could only be undone by the
-    /// chain lapsing it, or by resetting the chain from genesis.
-    func msgUnregister(creator: String) -> ProtoAny {
-        Msg.Unregister(creator: creator).asAny(typeURL: Msg.Unregister.typeURL)
-    }
-
-    @discardableResult
-    func unregister(key: EarthKey) async throws -> String {
-        try await broadcast([msgUnregister(creator: key.address)], key: key)
-    }
+    // No unregister. The chain removed MsgUnregister — retiring a registration
+    // freed its nullifier, and Register pays the registration reward to any
+    // nullifier that is not already live, so leaving and returning drew on the
+    // reward pool once per block. A registration now ends only by expiring, and
+    // moves between wallets by registering again from the new one.
 }

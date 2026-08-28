@@ -31,9 +31,7 @@ message MsgClaimAnml {
   string creator = 1;
 }
 
-// Retires the signer's own registration and frees its nullifier. No proof: the
-// signer is the registered address, and giving up a registration is not a claim
-// about who you are. Re-registering needs the passport again.
-message MsgUnregister {
-  string creator = 1;
-}
+// MsgUnregister is deliberately absent. The chain still decodes the ones in its
+// history, but the handler rejects every new one, so there is nothing for a
+// client to build. Transaction history is read as JSON from the LCD, which does
+// its own decoding, so nothing here needs the type to render an old one.
