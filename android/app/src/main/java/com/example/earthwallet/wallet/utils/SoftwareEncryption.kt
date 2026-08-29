@@ -19,11 +19,13 @@ import javax.crypto.spec.SecretKeySpec
  *
  * How much this is worth depends entirely on what the secret is, and it is
  * worth being blunt about the weak end. Against a four-digit PIN the search
- * space is 10,000; at 100,000 iterations that is about 10^9 PBKDF2 rounds to
- * exhaust, which is minutes on a laptop and less on a GPU. So for a PIN-only
- * wallet this stops someone reading the preferences file, and does not stop
- * someone who copies it and works offline. UnlockAttempts does not help there
- * either — it guards the unlock screen, not extracted bytes.
+ * space is 10,000; at 600,000 iterations that is about 6x10^9 PBKDF2 rounds to
+ * exhaust, which is hours on a laptop rather than minutes and still well under
+ * a day on a GPU. Raising the count buys time proportional to a search space
+ * that is small whatever the count, so for a PIN-only wallet this stops someone
+ * reading the preferences file and does not stop someone who copies it and
+ * works offline. UnlockAttempts does not help there either — it guards the
+ * unlock screen, not extracted bytes.
  *
  * Two things carry the real weight, and both are outside this file:
  * android:allowBackup="false" in the manifest, which keeps the ciphertext off
@@ -38,7 +40,16 @@ object SoftwareEncryption {
     private const val GCM_IV_LENGTH = 12
     private const val GCM_TAG_LENGTH = 16
     private const val KEY_LENGTH = 32 // 256 bits
-    private const val PBKDF2_ITERATIONS = 100_000 // Industry standard for mobile
+    // OWASP's figure for PBKDF2-HMAC-SHA256. The iOS vault stretches its PIN
+    // 200,000 times with SHA-512 (WalletStore.swift), which is at the matching
+    // recommendation for that hash; 100,000 here left Android the weaker half
+    // of the same wallet.
+    //
+    // No migration path and none needed: this is pre-release, so there are no
+    // blobs sealed at the old count. Once there are, changing this number
+    // without recording the count that sealed each blob makes every existing
+    // wallet undecryptable.
+    private const val PBKDF2_ITERATIONS = 600_000
 
     /**
      * Data class for software encrypted data

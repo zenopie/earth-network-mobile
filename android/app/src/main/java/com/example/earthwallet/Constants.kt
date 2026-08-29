@@ -1,8 +1,9 @@
 package network.erth.wallet
 
 object Constants {
-    // Backend base URL (passport proof verification + app update metadata)
-    const val BACKEND_BASE_URL = "https://api.erth.network"
+    // No backend. Registration is proved on-device and verified on-chain, and
+    // updates go through Play's in-app update API (UpdateCheckActivity), so the
+    // app talks to the chain and to Google and to nothing else.
 
     // --- earth chain (native Cosmos SDK chain; proof-of-personhood registration) ---
     // LCD/REST base. The node runs on Akash behind a Cloudflare Tunnel, which

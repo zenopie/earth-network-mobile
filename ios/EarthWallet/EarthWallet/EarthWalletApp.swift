@@ -46,6 +46,16 @@ struct EarthWalletApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                // Cover the whole app in the multitasking snapshot rather than
+                // the phrase and PIN screens individually. iOS takes that
+                // snapshot on the way out of `.active`, so covering per screen
+                // means auditing every view and every sheet that could be
+                // frontmost when it happens — and getting one wrong is silent.
+                // Covering the window costs nothing but the switcher thumbnail.
+                //
+                // Screenshots are a separate matter and are not preventable on
+                // iOS at all; Android blocks both with one flag (SecureScreen).
+                .privacyCovered()
                 // Light only, deliberately. The palette has a full dark ramp
                 // and `EarthTheme.resolve` still honours it, so this is one
                 // line to remove — but the app is designed and checked in

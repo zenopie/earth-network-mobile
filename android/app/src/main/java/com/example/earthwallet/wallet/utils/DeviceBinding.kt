@@ -17,7 +17,7 @@ import javax.crypto.spec.GCMParameterSpec
  *
  * [SoftwareEncryption] derives its key from the unlock secret with PBKDF2, and
  * for a PIN-only wallet that secret is four digits. Ten thousand candidates at
- * a hundred thousand iterations is about 10^9 PBKDF2 rounds — minutes on a
+ * six hundred thousand iterations is about 6x10^9 PBKDF2 rounds — hours on a
  * laptop, less on a GPU. Every part of that is fine while the ciphertext stays
  * on the device, and worth nothing the moment a copy of it does not: iteration
  * count buys time proportional to the search space, and a four-digit search

@@ -96,13 +96,16 @@
             tools:replace="android:screenOrientation" />
 
     
-        <!-- Design-system gallery. Not in the launcher; started directly:
-             adb shell am start -n network.erth.wallet/.ui.compose.ShowcaseActivity -->
+        <!-- The design-system gallery is declared in src/debug/AndroidManifest.xml
+             so it is launchable during development and absent from release. -->
         <!-- The Compose app against the real chain, alongside the existing
              HostActivity while screens are ported one at a time. -->
+        <!-- exported="false": started only by UpdateCheckActivity, which is the
+             launcher. It has no intent filter, so exporting it just let any
+             installed app bring the wallet UI to the front. -->
         <activity
             android:name=".ui.compose.ComposeAppActivity"
-            android:exported="true"
+            android:exported="false"
             android:screenOrientation="portrait"
             android:launchMode="singleTop"
             android:theme="@style/Theme.AppCompat.NoActionBar" />
@@ -112,11 +115,6 @@
             android:exported="false"
             android:launchMode="singleTop"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
-            android:theme="@style/Theme.AppCompat.NoActionBar" />
-
-        <activity
-            android:name=".ui.compose.ShowcaseActivity"
-            android:exported="true"
             android:theme="@style/Theme.AppCompat.NoActionBar" />
 
     </application>

@@ -56,6 +56,10 @@ fun CreateWalletScreen(
     onConfirm: (name: String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // The phrase is on screen here. Keep it out of screenshots and out of the
+    // recents snapshot the system takes when the user switches away to write
+    // it down — which is exactly what this screen asks them to do.
+    SecureScreen()
     val dimens = EarthTheme.dimens
     var name by remember { mutableStateOf("") }
     var acknowledged by remember { mutableStateOf(false) }
@@ -178,6 +182,8 @@ fun ImportWalletScreen(
     onImport: (name: String, phrase: String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // A phrase being typed in is as sensitive as one being shown.
+    SecureScreen()
     val dimens = EarthTheme.dimens
     var name by remember { mutableStateOf("") }
     var phrase by remember { mutableStateOf("") }

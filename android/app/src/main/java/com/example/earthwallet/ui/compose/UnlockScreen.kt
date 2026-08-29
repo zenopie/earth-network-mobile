@@ -70,6 +70,8 @@ fun UnlockScreen(
     /** What to say when nothing has gone wrong yet. */
     prompt: String = "Enter your PIN to continue",
 ) {
+    // Four digits are short enough to read off a shoulder-surfed screenshot.
+    SecureScreen()
     val dimens = EarthTheme.dimens
     var pin by remember { mutableStateOf("") }
 
@@ -165,6 +167,7 @@ fun SetPinScreen(
     onChosen: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    SecureScreen()
     val dimens = EarthTheme.dimens
     var first by remember { mutableStateOf<String?>(null) }
     var pin by remember { mutableStateOf("") }
