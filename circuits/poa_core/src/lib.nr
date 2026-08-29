@@ -157,6 +157,21 @@ pub fn finalize(
     // and cadence of actually renewing a passport, and it was judged the better
     // side of the trade: linking every wallet to a named person is a permanent
     // harm to every user, a duplicate registration is a rate-limited one.
+    //
+    // TODO(nullifier-country): fold the issuing state into this preimage. The
+    // document number is unique only WITHIN an issuing country, but nothing here
+    // separates by country -- so two distinct people, different countries, same
+    // 9-char document number and same DOB, hash to the same nullifier. On chain
+    // that collision is not an error: a live-nullifier match is treated as a
+    // wallet switch (x/personhood msg_server_register.go), so the second person
+    // to register silently displaces the first person's registration onto their
+    // own wallet. Not attacker-targetable (the document number is signature-
+    // bound, so nobody can aim a collision), but an accidental collision costs a
+    // real human their personhood. The issuing state is three ASCII chars in the
+    // MRZ at DG1 offset 7..10, already covered by the SOD hash, so mixing it in
+    // is nearly free -- but it changes the nullifier format, so it lands with a
+    // verifying-key rotation, not as a hot patch. Widen `id` from 15 to 18 and
+    // prepend the issuing-state bytes; the chain's dedup key changes with it.
     let mut id: [Field; 15] = [0; 15];
     for i in 0..DOC_NUM_LEN {
         id[i] = dg1[DOC_NUM_OFFSET + i] as Field;
