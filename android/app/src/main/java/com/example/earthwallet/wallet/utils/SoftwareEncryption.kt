@@ -15,8 +15,21 @@ import javax.crypto.spec.SecretKeySpec
 /**
  * SoftwareEncryption
  *
- * Provides software-based AES encryption using PIN-derived keys with PBKDF2.
- * Offers strong protection against backup extraction attacks.
+ * AES-GCM under a key derived from the unlock secret with PBKDF2.
+ *
+ * How much this is worth depends entirely on what the secret is, and it is
+ * worth being blunt about the weak end. Against a four-digit PIN the search
+ * space is 10,000; at 100,000 iterations that is about 10^9 PBKDF2 rounds to
+ * exhaust, which is minutes on a laptop and less on a GPU. So for a PIN-only
+ * wallet this stops someone reading the preferences file, and does not stop
+ * someone who copies it and works offline. UnlockAttempts does not help there
+ * either — it guards the unlock screen, not extracted bytes.
+ *
+ * Two things carry the real weight, and both are outside this file:
+ * android:allowBackup="false" in the manifest, which keeps the ciphertext off
+ * Google's servers, and UnlockMethod.BIOMETRIC / BOTH, which put 32 random
+ * bytes behind the Keystore prompt and make the derived key unguessable. A
+ * wallet holding anything worth stealing wants one of those two methods.
  */
 object SoftwareEncryption {
 
@@ -81,10 +94,12 @@ object SoftwareEncryption {
             val plaintextBytes = plaintext.toByteArray(StandardCharsets.UTF_8)
             val ciphertext = cipher.doFinal(plaintextBytes)
 
-            // Clear sensitive data
+            // Zero the plaintext. The key is deliberately not zeroed here:
+            // SecretKeySpec.getEncoded() hands back a fresh copy, so filling it
+            // wipes a throwaway array and leaves the real key material exactly
+            // where it was. Writing that line is worse than omitting it — it
+            // reads as a wipe that never happened.
             plaintextBytes.fill(0)
-            key.encoded?.fill(0)
-
 
             EncryptedData(
                 ciphertext = ciphertext,
@@ -115,9 +130,12 @@ object SoftwareEncryption {
             val decryptedBytes = cipher.doFinal(encryptedData.ciphertext)
             val result = String(decryptedBytes, StandardCharsets.UTF_8)
 
-            // Clear sensitive data
+            // Zero the intermediate buffer. `result` itself cannot be wiped —
+            // it is an immutable String and lives until the GC collects it,
+            // which is the reason callers hand the mnemonic straight to
+            // deriveKeyFromSecureMnemonic rather than holding it. The key is
+            // not zeroed for the reason given in encrypt().
             decryptedBytes.fill(0)
-            key.encoded?.fill(0)
 
             result
 

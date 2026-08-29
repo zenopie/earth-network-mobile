@@ -81,7 +81,12 @@ object WalletCrypto {
     }
 
     /**
-     * Derive ECKey from mnemonic using BIP-44 path m/44'/529'/0'/0/0
+     * Derive ECKey from mnemonic using the Cosmos BIP-44 path m/44'/118'/0'/0/0.
+     *
+     * Coin type 118, not 529. 529 is Secret Network and is what this derived
+     * before the port; the two produce different addresses from the same words,
+     * so the number here is the difference between finding your funds and
+     * concluding they are gone.
      */
     @JvmStatic
     fun deriveKeyFromMnemonic(mnemonic: String): ECKey {
@@ -97,8 +102,12 @@ object WalletCrypto {
     }
 
     /**
-     * Secure version: Derive ECKey from mnemonic char array using BIP-44 path m/44'/529'/0'/0/0
-     * More secure as it minimizes String creation in memory
+     * Secure version: derive ECKey from a mnemonic char array, same
+     * m/44'/118'/0'/0/0 path as deriveKeyFromMnemonic.
+     *
+     * More secure only in degree: it avoids holding the mnemonic in a String
+     * the caller owns. bitcoinj still builds Strings internally, so this
+     * narrows the window rather than closing it.
      */
     @JvmStatic
     fun deriveKeyFromSecureMnemonic(mnemonicChars: CharArray): ECKey {
