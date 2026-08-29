@@ -8,6 +8,7 @@ import android.util.Base64
 import android.util.Log
 import network.erth.wallet.wallet.utils.WalletCrypto
 import network.erth.wallet.wallet.utils.SoftwareEncryption
+import network.erth.wallet.wallet.utils.UnlockMethod
 import network.erth.wallet.wallet.utils.WalletStorageVersion
 import org.json.JSONArray
 import org.json.JSONObject
@@ -311,14 +312,28 @@ object SecureWalletManager {
     }
 
     /**
-     * Get security status message for UI display
+     * Get security status message for UI display.
+     *
+     * Reports the unlock method, not just "encrypted". Every method here runs
+     * the same AES-GCM, so saying so told the user nothing about the thing that
+     * actually decides how strong their wallet is — whether the key is derived
+     * from four digits or from 32 random bytes held in the Keystore. A PIN-only
+     * wallet is brute-forceable offline in minutes (see SoftwareEncryption), and
+     * that is worth saying where someone can act on it.
      */
     @Throws(Exception::class)
     fun getSecurityStatusMessage(context: Context): String {
-        return if (SoftwareEncryption.isAvailable()) {
-            "🔐 PIN Encrypted: Encrypted using PIN-derived keys (PBKDF2)"
-        } else {
-            "⚠️ Insecure: Encryption not available on this device"
+        if (!SoftwareEncryption.isAvailable()) {
+            return "⚠️ Insecure: encryption is not available on this device"
+        }
+        return when (UnlockMethod.current(context)) {
+            UnlockMethod.BOTH ->
+                "🔐 PIN + biometric: unlocked by both, and neither alone is enough"
+            UnlockMethod.BIOMETRIC ->
+                "🔐 Biometric: the key is held in this device's secure hardware"
+            UnlockMethod.PIN ->
+                "⚠️ PIN only: a four-digit PIN is all that protects this wallet. " +
+                    "Add biometric unlock in Settings to hold the key in secure hardware."
         }
     }
 
