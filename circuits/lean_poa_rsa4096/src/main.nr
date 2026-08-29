@@ -39,6 +39,6 @@ fn main(
 
     // Canonical big-endian modulus bytes = chain's RSA canonical pubkey.
     let modulus: RuntimeBigNum<35, 4096> = RuntimeBigNum::from_array(params, dsc_modulus);
-    let commitment = poa_core::dsc_commitment(modulus.to_be_bytes());
+    let commitment = poa_core::dsc_commitment(poa_core::CURVE_TAG_RSA, modulus.to_be_bytes());
     poa_core::finalize(dg1, commitment, current_date, address)
 }

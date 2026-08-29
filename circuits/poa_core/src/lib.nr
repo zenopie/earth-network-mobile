@@ -71,12 +71,40 @@ pub fn hash_and_bind(
     sha256_var(signed_attrs, signed_attrs_len)
 }
 
-/// Commitment to a DSC = Poseidon2 over its canonical public-key bytes (ECDSA:
-/// x‖y; RSA: modulus big-endian). The chain recomputes this from the submitted
-/// DSC certificate with the same Poseidon2 parameters, so it identifies exactly
-/// which Document Signer produced the proof.
-pub fn dsc_commitment<let N: u32>(pubkey: [u8; N]) -> Field {
-    Poseidon2::hash(bytes_to_fields(pubkey), N)
+/// Curve tags, absorbed into the DSC commitment ahead of the key bytes.
+///
+/// These values are consensus. They must match certs.Tag* in
+/// earth-network-chain/x/pki/certs/commitment.go exactly and for ever: the chain
+/// recomputes the commitment from the submitted certificate and requires it to
+/// equal this circuit's public output, so a mismatch on either side breaks every
+/// registration. Append only; never renumber.
+pub global CURVE_TAG_P256: Field = 1;
+pub global CURVE_TAG_P384: Field = 2;
+pub global CURVE_TAG_P521: Field = 3;
+pub global CURVE_TAG_BRAINPOOL_P256R1: Field = 4;
+pub global CURVE_TAG_BRAINPOOL_P384R1: Field = 5;
+pub global CURVE_TAG_BRAINPOOL_P512R1: Field = 6;
+pub global CURVE_TAG_RSA: Field = 7;
+
+/// Commitment to a DSC = Poseidon2 over a curve tag followed by its canonical
+/// public-key bytes (ECDSA: x‖y; RSA: modulus big-endian). The chain recomputes
+/// this from the submitted DSC certificate with the same Poseidon2 parameters,
+/// so it identifies exactly which Document Signer produced the proof.
+///
+/// The tag is what stops two curves of the same coordinate width sharing a
+/// commitment. The sponge already absorbs the input length into its capacity
+/// slot, so RSA — 256 or 512 bytes — collides with nothing; what length cannot
+/// separate is P-256 from brainpoolP256r1 (64 bytes each) and P-384 from
+/// brainpoolP384r1 (96 each). Each variant passes its own constant, because a
+/// circuit knows statically which curve it verifies against.
+pub fn dsc_commitment<let N: u32>(tag: Field, pubkey: [u8; N]) -> Field {
+    let key = bytes_to_fields(pubkey);
+    let mut input: [Field; N + 1] = [0; N + 1];
+    input[0] = tag;
+    for i in 0..N {
+        input[i + 1] = key[i];
+    }
+    Poseidon2::hash(input, N + 1)
 }
 
 /// Expiry + nullifier + DSC commitment, shared by every variant.

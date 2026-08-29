@@ -37,6 +37,6 @@ fn main(
         key[i] = dsc_pubkey_x[i];
         key[32 + i] = dsc_pubkey_y[i];
     }
-    let commitment = poa_core::dsc_commitment(key);
+    let commitment = poa_core::dsc_commitment(poa_core::CURVE_TAG_P256, key);
     poa_core::finalize(dg1, commitment, current_date, address)
 }
