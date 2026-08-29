@@ -3,6 +3,7 @@ package network.erth.wallet.wallet.services
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
+import network.erth.wallet.wallet.utils.DeviceBinding
 import network.erth.wallet.wallet.utils.SoftwareEncryption
 import network.erth.wallet.wallet.utils.SecurePreferencesUtil
 import network.erth.wallet.wallet.utils.WalletStorageVersion
@@ -21,6 +22,11 @@ object SessionManager {
 
     private const val TAG = "SessionManager"
     private const val PREF_FILE = "secret_wallet_prefs"
+
+    // The IV for the device binding layer. Every blob this app writes has one,
+    // and a blob without one is refused rather than read — see
+    // parseSoftwareEncryptedData and DeviceBinding.
+    private const val KEY_DEVICE_IV = "device_iv"
 
     // Session state
     private var isSessionActive = false
@@ -211,14 +217,41 @@ object SessionManager {
     }
 
     /**
-     * Parse software encrypted data from JSON string
+     * Parse the stored blob and unwrap its device binding layer.
+     *
+     * Device binding is required, not optional. Every blob this app writes
+     * carries `device_iv`, so one without it is not an older format to fall
+     * back on — it is a blob this app did not write, and treating it as
+     * loadable would mean accepting storage sealed by nothing but a four-digit
+     * PIN. Refusing is the safe reading.
      */
     @Throws(Exception::class)
     private fun parseSoftwareEncryptedData(jsonString: String): SoftwareEncryption.EncryptedData {
+        val json = try {
+            JSONObject(jsonString)
+        } catch (e: Exception) {
+            throw Exception("Failed to parse software encrypted data", e)
+        }
+        if (!json.has(KEY_DEVICE_IV)) {
+            throw Exception("Stored wallet is not bound to this device and cannot be opened")
+        }
+
+        val wrapped = DeviceBinding.Wrapped(
+            ciphertext = Base64.decode(json.getString("ciphertext"), Base64.DEFAULT),
+            iv = Base64.decode(json.getString(KEY_DEVICE_IV), Base64.DEFAULT),
+        )
+        // A null unwrap is the device key having gone — a factory reset, cleared
+        // app data, or this file moved to other hardware. Reported separately
+        // from a bad PIN, because it is unrecoverable and inviting the user to
+        // try again would waste their time.
+        val ciphertext = DeviceBinding.unwrap(wrapped) ?: throw Exception(
+            "This wallet is sealed to a device key that is no longer present. " +
+                "It cannot be opened here; restore from your recovery phrase."
+        )
+
         return try {
-            val json = JSONObject(jsonString)
             SoftwareEncryption.EncryptedData(
-                ciphertext = Base64.decode(json.getString("ciphertext"), Base64.DEFAULT),
+                ciphertext = ciphertext,
                 iv = Base64.decode(json.getString("iv"), Base64.DEFAULT),
                 salt = Base64.decode(json.getString("salt"), Base64.DEFAULT)
             )
@@ -258,10 +291,24 @@ object SessionManager {
         // Serialize versioned storage to JSON
         val storageJson = WalletStorageVersion.serializeWalletStorage(storage)
 
-        // Encrypt and save
+        // Encrypt, then bind the result to this device.
+        //
+        // The PBKDF2 layer alone is only as strong as the unlock secret, and for
+        // a PIN that is four digits — fine while the bytes stay here, worth
+        // nothing against anyone who copies them. Wrapping the ciphertext under
+        // a non-exportable Keystore key means a copy cannot be opened off this
+        // device at any iteration count. See DeviceBinding.
+        //
+        // A failure here propagates and the save fails. There is deliberately no
+        // fallback to storing unbound: minSdk is 24 and AES in the Keystore has
+        // worked since 23, so a device that cannot do this is a broken device
+        // rather than an old one — and the fallback's whole effect would be to
+        // silently write the weak storage this exists to prevent.
         val encryptedData = SoftwareEncryption.encrypt(storageJson, pin, context)
+        val wrapped = DeviceBinding.wrap(encryptedData.ciphertext)
         val json = JSONObject().apply {
-            put("ciphertext", Base64.encodeToString(encryptedData.ciphertext, Base64.DEFAULT))
+            put("ciphertext", Base64.encodeToString(wrapped.ciphertext, Base64.DEFAULT))
+            put(KEY_DEVICE_IV, Base64.encodeToString(wrapped.iv, Base64.DEFAULT))
             put("iv", Base64.encodeToString(encryptedData.iv, Base64.DEFAULT))
             put("salt", Base64.encodeToString(encryptedData.salt, Base64.DEFAULT))
         }
