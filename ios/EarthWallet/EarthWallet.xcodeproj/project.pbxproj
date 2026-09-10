@@ -82,6 +82,7 @@
 				E1000000000000000000C2 /* Sources */,
 				E1000000000000000000C1 /* Frameworks */,
 				E1000000000000000000C3 /* Resources */,
+				E10000000000000000011A /* Fix SwoirenbergLib minimum OS */,
 			);
 			buildRules = (
 			);
@@ -147,6 +148,24 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		E10000000000000000011A /* Fix SwoirenbergLib minimum OS */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Fix SwoirenbergLib minimum OS";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Swoirenberg's ios-arm64 slice declares MinimumOSVersion 15.2 in its\n# Info.plist while its binary is linked minos 17.0. App Store validation\n# compares a framework against its own declared minimum and rejects the\n# mismatch (ITMS-90208), so an upload dies in processing rather than at build.\n#\n# Fixed here rather than by moving the dependency: Swoirenberg is pinned to\n# barretenberg v5.0.0 to stay in lockstep with the chain's verifier, and a\n# proof from a floated bb does not verify on chain. Editing the plist breaks\n# the framework's signature, so it is re-signed with the same identity.\nset -e\nFW=\"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/SwoirenbergLib.framework\"\nif [ ! -d \"$FW\" ]; then exit 0; fi\nPLIST=\"$FW/Info.plist\"\nWANT=\"${IPHONEOS_DEPLOYMENT_TARGET}\"\nHAVE=$(/usr/libexec/PlistBuddy -c \"Print :MinimumOSVersion\" \"$PLIST\" 2>/dev/null || echo \"\")\nif [ \"$HAVE\" = \"$WANT\" ]; then exit 0; fi\n/usr/libexec/PlistBuddy -c \"Set :MinimumOSVersion $WANT\" \"$PLIST\"\necho \"note: SwoirenbergLib MinimumOSVersion $HAVE -> $WANT\"\nif [ \"${CODE_SIGNING_ALLOWED}\" = \"YES\" ] && [ -n \"${EXPANDED_CODE_SIGN_IDENTITY}\" ]; then\n  codesign --force --sign \"${EXPANDED_CODE_SIGN_IDENTITY}\" --preserve-metadata=identifier,entitlements,flags \"$FW\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		E1000000000000000000C2 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -203,7 +222,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = EarthWallet/EarthWallet.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = XD8VH8WKVX;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -227,7 +246,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = EarthWallet/EarthWallet.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = XD8VH8WKVX;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
