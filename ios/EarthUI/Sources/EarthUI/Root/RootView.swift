@@ -95,6 +95,7 @@ struct TabsView: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
     @State private var settingsOpen = false
+    @State private var update = AppUpdateModel()
     /// `-demoSheet settings` opens straight into one, for the same reason
     /// `-demoTab` exists: nothing can tap a simulator from the command line.
     @State private var demoSheet = TabsView.demoSheet
@@ -131,6 +132,9 @@ struct TabsView: View {
                 tabAction: nil,
                 onSettings: { settingsOpen = true }
             )
+            if let available = update.available {
+                UpdateBanner(available: available) { update.dismiss() }
+            }
             Group {
                 switch model.tab {
                 case .wallet: WalletScreen()
@@ -146,6 +150,10 @@ struct TabsView: View {
         .task {
             model.tab = Tab.initialSelection
             await model.loadLPShare()
+            // After the chain work, not beside it: the banner is the least
+            // important thing on screen and should not compete for the first
+            // round trip.
+            await update.check()
         }
         .sheet(isPresented: $settingsOpen) { SettingsSheet().earthThemed() }
         .sheet(item: $demoSheet) { sheet in
