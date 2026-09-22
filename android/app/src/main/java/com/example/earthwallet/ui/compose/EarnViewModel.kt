@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -58,8 +59,16 @@ class EarnViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow<EarnUiState?>(null)
     val state: StateFlow<EarnUiState?> = _state.asStateFlow()
 
-    fun refresh() {
-        viewModelScope.launch {
+    /**
+     * Re-read from the chain, and hand back the read so a caller can wait on
+     * it.
+     *
+     * The [Job] is what pull-to-refresh needs: its spinner has to stay down
+     * until the read it started has finished, and the read itself belongs to
+     * [viewModelScope] so that leaving the screen mid-read does not cancel it.
+     */
+    fun refresh(): Job {
+        return viewModelScope.launch {
             val ctx = getApplication<Application>()
             val address = withContext(Dispatchers.IO) {
                 runCatching { SecureWalletManager.getWalletAddress(ctx) }.getOrNull()
