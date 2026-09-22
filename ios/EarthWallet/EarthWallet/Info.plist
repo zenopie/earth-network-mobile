@@ -17,20 +17,19 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
+	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
-	<string>2</string>
-	<!-- AdMob, for the rewarded "ads for gas" grant. The SDK raises at startup
-	     if this key is absent, naming it in the message.
-
-	     This is the iOS app's own id — an AdMob app belongs to one platform, so
-	     it is not the Android app's ~6689630767. The rewarded unit id that goes
-	     with it lives in EarthUI/Ads/RewardedAds.swift. -->
+	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>GADApplicationIdentifier</key>
 	<string>ca-app-pub-8662126294069074~4766046364</string>
-	<!-- SKAdNetwork attribution for Google's own network. Google publishes a
-	     longer list covering mediation partners; this is the entry that matters
-	     for a first-party AdMob rewarded unit. -->
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>NFCReaderUsageDescription</key>
+	<string>Read your passport's chip to prove you are a unique human.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Read the printed lines at the bottom of your passport, to unlock its chip.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Unlock your wallet and approve transactions.</string>
 	<key>SKAdNetworkItems</key>
 	<array>
 		<dict>
@@ -38,35 +37,14 @@
 			<string>cstr6suwn9.skadnetwork</string>
 		</dict>
 	</array>
-	<key>LSRequiresIPhoneOS</key>
-	<true/>
 	<key>UILaunchScreen</key>
 	<dict/>
-	<!-- Portrait everywhere except the MRZ scanner, which needs the long way
-	     round to fill the frame with two 44-character lines. The app delegate
-	     narrows this per screen; declaring only portrait here would stop it
-	     turning at all. -->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
-	<!-- Reading the recovery phrase out of the Keychain is behind biometrics,
-	     so the system needs a reason to show. -->
-	<key>NSFaceIDUsageDescription</key>
-	<string>Unlock your wallet and approve transactions.</string>
-	<!-- The machine-readable zone is read with the camera to unlock the chip.
-	     Nothing scanned is stored or sent. -->
-	<key>NSCameraUsageDescription</key>
-	<string>Read the printed lines at the bottom of your passport, to unlock its chip.</string>
-	<!-- The passport chip read needs these, and needs the Near Field
-	     Communication Tag Reading entitlement on the App ID, which a free
-	     Personal Team cannot enable. Declared now so the shape is on record;
-	     the reader session itself is not built. A0000002471001 is the ICAO
-	     eMRTD application identifier. -->
-	<key>NFCReaderUsageDescription</key>
-	<string>Read your passport's chip to prove you are a unique human.</string>
 	<key>com.apple.developer.nfc.readersession.iso7816.select-identifiers</key>
 	<array>
 		<string>A0000002471001</string>
