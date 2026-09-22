@@ -143,6 +143,32 @@ public enum Msg {
         }
     }
 
+    // --- earth/assembly ---
+
+    /// A human vote on an x/gov proposal.
+    ///
+    /// Not `Msg.Vote`, which is the same proposal's other house. Both are cast
+    /// on the same proposal id into two separate tallies, and sending one does
+    /// nothing to the other.
+    public struct VoteProposal: ProtoMessage {
+        public static let typeURL = "/earth.assembly.v1.MsgVoteProposal"
+        public let voter: String, proposalID: UInt64, option: Assembly.Vote
+
+        public init(voter: String, proposalID: UInt64, option: Assembly.Vote) {
+            self.voter = voter; self.proposalID = proposalID; self.option = option
+        }
+
+        public func encoded() -> Data {
+            var w = ProtoWriter()
+            w.string(1, voter)
+            w.uint64(2, proposalID)
+            // Never `.unspecified`, which is zero and would be elided — the
+            // chain then reads a vote naming no side and rejects it.
+            w.enumValue(3, option.proto)
+            return w.data
+        }
+    }
+
     // --- earth/dex ---
 
     public struct Swap: ProtoMessage {

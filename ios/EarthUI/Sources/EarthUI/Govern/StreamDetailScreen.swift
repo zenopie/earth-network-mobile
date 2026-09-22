@@ -347,6 +347,19 @@ struct ProposalDetailScreen: View {
     /// Closes the presentation this was pushed inside.
     let onVoted: () -> Void
 
+    /// The human house's tally, loaded when this screen opens.
+    ///
+    /// Fetched here rather than with the proposal list: it is one request per
+    /// proposal and only the open ones have an answer, so loading twenty of
+    /// them to show one would be nineteen wasted round trips on a screen that
+    /// may never be opened.
+    ///
+    /// `nil` means this chain has no assembly, which is every node older than
+    /// v0.9.0. The whole second house is hidden in that case rather than shown
+    /// empty — before the upgrade there genuinely is only one, and explaining a
+    /// house that does not exist yet would be worse than saying nothing.
+    @State private var assembly: Assembly.Tally?
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: theme.space.x16) {
@@ -378,7 +391,12 @@ struct ProposalDetailScreen: View {
                 }
 
                 if proposal.total > 0 {
-                    EarthLabel("Tally")
+                    // Labelled by house once there are two. Stake and people
+                    // are different quantities — one is ERTH, the other a
+                    // headcount — so they are never combined into one score;
+                    // there is no exchange rate between them and the chain does
+                    // not have one either. Both must clear their own bar.
+                    EarthLabel(assembly == nil ? "Tally" : "Stake")
                     TallyBar(proposal: proposal)
                     EarthCard {
                         EarthDetailRow(label: "Yes", value: Figures.display(BigInt(proposal.yes)))
@@ -392,6 +410,8 @@ struct ProposalDetailScreen: View {
                         .foregroundStyle(theme.colors.textTertiary)
                 }
 
+                if let assembly { people(assembly) }
+
                 if proposal.isLive { voting }
             }
             .padding(theme.space.gutter)
@@ -400,21 +420,57 @@ struct ProposalDetailScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .background(theme.colors.bgPrimary)
         .scrollContentBackground(.hidden)
+        .task { assembly = await model.client.assemblyTally(proposalID: proposal.id) }
+    }
+
+    /// The human house.
+    private func people(_ tally: Assembly.Tally) -> some View {
+        VStack(alignment: .leading, spacing: theme.space.x8) {
+            EarthLabel("People")
+            if tally.isSilent {
+                // Not "no votes yet". Silence is a refusal here, and a voter
+                // who reads it as "nothing has happened" is looking at the one
+                // state that decides the proposal if it holds.
+                Text(proposal.isLive
+                    ? "Nobody has voted. A proposal with no human votes fails, however much stake is behind it."
+                    : "No human votes were cast.")
+                    .font(EarthType.bodySmall)
+                    .foregroundStyle(theme.colors.textTertiary)
+            } else {
+                PeopleTallyBar(tally: tally)
+                EarthCard {
+                    // Plain counts, not run through the ERTH formatter: these
+                    // are headcounts, and formatting two voters as a token
+                    // amount renders them "0.000002".
+                    EarthDetailRow(label: "Yes", value: "\(tally.yes)")
+                    EarthDetailRow(label: "No", value: "\(tally.no)")
+                }
+                Text(tally.approved
+                    ? "Clearing two thirds."
+                    : "Below the two thirds needed.")
+                    .font(EarthType.caption)
+                    .foregroundStyle(theme.colors.textTertiary)
+            }
+        }
     }
 
     private var voting: some View {
         VStack(alignment: .leading, spacing: theme.space.x12) {
             EarthDivider()
-            // Stake decides this, not personhood — unlike an allocation vote.
-            // An address with nothing delegated can broadcast a vote that
-            // succeeds and moves the tally by nothing, which would otherwise
-            // look like a vote that failed.
+            // Named only when there are two houses. With one, a heading over
+            // the buttons is noise; with two, unlabelled buttons leave it
+            // ambiguous which tally they move.
+            if assembly != nil { EarthLabel("Vote with stake") }
+
+            // Stake decides this half, not personhood. An address with nothing
+            // delegated can broadcast a vote that succeeds and moves the tally
+            // by nothing, which would otherwise look like a vote that failed.
             if model.totalStaked <= 0 {
                 EarthCard {
                     Text("You have no ERTH staked")
                         .font(EarthType.body)
                         .foregroundStyle(theme.colors.textPrimary)
-                    Text("Chain proposals are weighted by bonded stake alone. A vote from here would be accepted and count for nothing. Stake first, from Earn.")
+                    Text("This house is weighted by bonded stake alone. A vote from here would be accepted and count for nothing. Stake first, from Earn.")
                         .font(EarthType.bodySmall)
                         .foregroundStyle(theme.colors.textSecondary)
                 }
@@ -430,6 +486,37 @@ struct ProposalDetailScreen: View {
                     role: option == .yes ? .primary : .secondary
                 ) { cast(option) }
                 .disabled(model.totalStaked <= 0)
+            }
+
+            // The human house. A separate vote on the same proposal, not a
+            // confirmation of the one above: a wallet with stake and a
+            // registration has two to cast, and casting one does nothing to the
+            // other.
+            if assembly != nil {
+                EarthDivider()
+                EarthLabel("Vote as a person")
+                if model.isRegistered {
+                    Text("Your vote counts once, whatever you hold. There is no abstain — not voting is the same as abstaining.")
+                        .font(EarthType.bodySmall)
+                        .foregroundStyle(theme.colors.textTertiary)
+                } else {
+                    EarthCard {
+                        Text("You are not registered")
+                            .font(EarthType.body)
+                            .foregroundStyle(theme.colors.textPrimary)
+                        Text("This house counts people, not holdings — one registration is one vote. Register with your passport to take part.")
+                            .font(EarthType.bodySmall)
+                            .foregroundStyle(theme.colors.textSecondary)
+                    }
+                }
+
+                ForEach(Assembly.Vote.allCases, id: \.rawValue) { option in
+                    EarthButton(
+                        title: option.label,
+                        role: option == .yes ? .primary : .secondary
+                    ) { castAsPerson(option) }
+                    .disabled(!model.isRegistered)
+                }
             }
         }
     }
@@ -470,6 +557,59 @@ struct ProposalDetailScreen: View {
             [model.client.msgVote(voter: key.address, proposalID: id, option: option)]
         }
         onVoted()
+    }
+
+    private func castAsPerson(_ option: Assembly.Vote) {
+        let id = proposal.id
+        let title = proposal.title
+        tx.request(.init(
+            // Says which house: the stake vote on the same proposal produces an
+            // otherwise identical confirmation, and the two are different acts.
+            action: "Vote as a person",
+            rows: [
+                ("Proposal", "#\(id) \(title)"),
+                ("Vote", option.label),
+                ("Weight", "One person, one vote"),
+                ("Fee", "\(Token.erth.format(TransactionSigner.defaultFeeUerth)) ERTH"),
+            ]
+        )) { key in
+            [model.client.msgVoteProposal(voter: key.address, proposalID: id, option: option)]
+        }
+        onVoted()
+    }
+}
+
+/// The human tally, drawn like ``TallyBar`` but over two options and counts.
+struct PeopleTallyBar: View {
+    @Environment(\.earth) private var theme
+    let tally: Assembly.Tally
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: theme.space.x4) {
+            GeometryReader { geometry in
+                HStack(spacing: 1) {
+                    segment(tally.yes, theme.colors.accentInk, geometry.size.width)
+                    segment(tally.no, theme.colors.errorInk, geometry.size.width)
+                }
+            }
+            .frame(height: 6)
+            .clipShape(.capsule)
+
+            Text("\(fraction(tally.yes)) yes · \(fraction(tally.no)) no · two thirds needed")
+                .font(EarthType.caption)
+                .foregroundStyle(theme.colors.textTertiary)
+        }
+    }
+
+    private func segment(_ votes: Int64, _ color: Color, _ width: CGFloat) -> some View {
+        Rectangle()
+            .fill(color)
+            .frame(width: width * (tally.total > 0 ? Double(votes) / Double(tally.total) : 0))
+    }
+
+    private func fraction(_ votes: Int64) -> String {
+        guard tally.total > 0 else { return "0%" }
+        return String(format: "%.0f%%", Double(votes) / Double(tally.total) * 100)
     }
 }
 

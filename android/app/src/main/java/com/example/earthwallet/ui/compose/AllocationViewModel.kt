@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -12,6 +13,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import network.erth.earth.proto.allocation.StreamId
 import network.erth.wallet.chain.Allocation
+import network.erth.wallet.chain.Assembly
 import network.erth.wallet.chain.Gov
 import network.erth.wallet.wallet.services.SecureWalletManager
 import kotlin.math.floor
@@ -84,6 +86,19 @@ data class AllocationUiState(
     val capital: StreamUiState,
     /** Chain proposals — the SDK's governance, not the streams. */
     val proposals: List<Gov.Proposal>,
+    /**
+     * The human house's tally on each proposal still open, by proposal id.
+     *
+     * Only the open ones: the chain purges a proposal's assembly votes when it
+     * resolves, so a closed proposal would answer 0/0 and read as "nobody
+     * voted" rather than "this is no longer recorded". What ended a closed
+     * proposal is in its [Gov.Proposal.failedReason] instead.
+     *
+     * Missing means the chain has no assembly — the expected answer on a node
+     * older than v0.9.0, which the wallet has to render without complaining
+     * about, since it ships before the upgrade it is preparing for.
+     */
+    val assemblyTallies: Map<Long, Assembly.Tally> = emptyMap(),
 )
 
 /**
@@ -99,22 +114,46 @@ class AllocationViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow<AllocationUiState?>(null)
     val state: StateFlow<AllocationUiState?> = _state.asStateFlow()
 
-    fun refresh() {
-        viewModelScope.launch {
+    /**
+     * Re-read from the chain, and hand back the read so a caller can wait on
+     * it.
+     *
+     * The [Job] is what pull-to-refresh needs: its spinner has to stay down
+     * until the read it started has finished, and the read itself belongs to
+     * [viewModelScope] so that leaving the screen mid-read does not cancel it.
+     */
+    fun refresh(): Job {
+        return viewModelScope.launch {
             val ctx = getApplication<Application>()
             val address = withContext(Dispatchers.IO) {
                 runCatching { SecureWalletManager.getWalletAddress(ctx) }.getOrNull()
             } ?: return@launch
 
             _state.value = withContext(Dispatchers.IO) {
+                val proposals = runCatching { Gov.proposals() }.getOrDefault(emptyList())
                 AllocationUiState(
                     human = load(StreamId.STREAM_ID_CARETAKER, address),
                     capital = load(StreamId.STREAM_ID_GROUNDWORKS, address),
-                    proposals = runCatching { Gov.proposals() }.getOrDefault(emptyList()),
+                    proposals = proposals,
+                    assemblyTallies = assemblyTallies(proposals),
                 )
             }
         }
     }
+
+    /**
+     * The human tally for each open proposal — one request apiece.
+     *
+     * Restricted to the open ones because that is the only place the answer
+     * exists, and because it bounds the cost: a refresh reads twenty proposals
+     * and usually none of them are open, so this is normally zero extra
+     * requests and never more than a handful.
+     */
+    private fun assemblyTallies(proposals: List<Gov.Proposal>): Map<Long, Assembly.Tally> =
+        proposals.asSequence()
+            .filter { it.isVoting }
+            .mapNotNull { p -> runCatching { Assembly.tally(p.id) }.getOrNull()?.let { p.id to it } }
+            .toMap()
 
     private fun load(stream: StreamId, address: String) = StreamUiState(
         options = runCatching { Allocation.stream(stream).options }.getOrDefault(emptyList()),

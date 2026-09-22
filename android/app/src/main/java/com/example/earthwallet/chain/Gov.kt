@@ -12,6 +12,12 @@ import org.json.JSONObject
  * different thing: allocation votes direct an emission stream continuously and
  * are weighted by personhood or stake, while these proposals change the chain
  * itself, run for a fixed period and are weighted by bonded stake alone.
+ *
+ * Stake alone decides nothing, though. Since v0.9.0 the same proposal is also
+ * voted in [Assembly], the human house, and needs two thirds there before the
+ * result below is allowed to take effect. This object stays unaware of that on
+ * purpose — the two houses are separate tallies over separate state, and
+ * merging them here would make one of them look like a detail of the other.
  */
 object Gov {
 
@@ -47,6 +53,15 @@ object Gov {
          */
         val planName: String? = null,
         val planHeight: String? = null,
+        /**
+         * Why a failed proposal failed, as the chain recorded it.
+         *
+         * The one case worth showing is the assembly refusing a proposal stake
+         * had passed: the human tally is purged when the proposal resolves, so
+         * after the fact this string is the only record that the second house
+         * is what ended it.
+         */
+        val failedReason: String = "",
     ) {
         val total: Long get() = yes + no + abstain + veto
 
@@ -112,6 +127,7 @@ object Gov {
                 proposer = p.optString("proposer"),
                 planName = plan?.optString("name")?.ifBlank { null },
                 planHeight = plan?.optString("height")?.ifBlank { null },
+                failedReason = p.optString("failed_reason"),
             )
         }
     }

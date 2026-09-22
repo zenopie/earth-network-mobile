@@ -67,4 +67,5 @@ public struct JSON {
     public func int64(default fallback: Int64) -> Int64 { int64 ?? fallback }
     public func uint64(default fallback: UInt64) -> UInt64 { uint64 ?? fallback }
     public func double(default fallback: Double) -> Double { double ?? fallback }
+    public func bool(default fallback: Bool) -> Bool { bool ?? fallback }
 }

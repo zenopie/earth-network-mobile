@@ -2,7 +2,9 @@ package network.erth.wallet.ui.compose
 
 import android.content.Context
 import android.content.Intent
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -16,7 +18,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.pullToRefresh
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -25,10 +32,16 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import network.erth.earth.proto.allocation.StreamId
 import network.erth.wallet.R
 import network.erth.wallet.Constants
+import network.erth.wallet.chain.Assembly
 import network.erth.wallet.chain.Bank
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import network.erth.wallet.ui.ads.RewardedAds
+import network.erth.wallet.ui.theme.EarthAccent
+import network.erth.wallet.ui.vendor.theme.colors.EarthColors
 import network.erth.wallet.ui.compose.registration.RegistrationActivity
 import network.erth.wallet.chain.Dex
 import network.erth.wallet.chain.Gov
@@ -97,15 +110,35 @@ fun EarthApp(
         }
     }
 
-    val refreshAll = {
-        wallet.refresh()
-        when (nav.currentTab) {
-            EarthRoute.Earn -> { earn.refresh(); markets.refresh() }
-            EarthRoute.Govern -> allocation.refresh()
-            EarthRoute.Swap -> markets.refresh()
-            else -> Unit
+    /**
+     * Re-read everything the screen in front of you shows, and hand back the
+     * reads so a caller that wants to wait can.
+     *
+     * Pull-to-refresh is that caller: its spinner has to stay down until the
+     * reads it started have finished, which is what iOS's
+     * `.refreshable { await … }` gets for free.
+     *
+     * The explorer is asked for by route rather than by tab — it is pushed
+     * rather than a tab, and keyed off the tab a pull there would refresh the
+     * balance behind it and nothing you could see.
+     */
+    val refreshCurrent: () -> List<Job> = {
+        if (nav.current == EarthRoute.Explore) {
+            listOf(explore.refresh())
+        } else {
+            buildList {
+                add(wallet.refresh())
+                when (nav.currentTab) {
+                    EarthRoute.Earn -> { add(earn.refresh()); add(markets.refresh()) }
+                    EarthRoute.Govern -> add(allocation.refresh())
+                    EarthRoute.Swap -> add(markets.refresh())
+                    else -> Unit
+                }
+            }
         }
     }
+
+    val refreshAll = { refreshCurrent(); Unit }
 
     /**
      * Switch to another wallet, or re-key after creating one.
@@ -211,33 +244,92 @@ fun EarthApp(
             }
         },
     ) { padding ->
-        EarthContent(
-            route = nav.current,
-            nav = nav,
-            tx = tx,
-            state = state,
-            activity = rows,
-            earnState = earnState,
-            allocationState = allocationState,
-            marketsState = marketsState,
-            exploreState = exploreState,
-            earn = earn,
-            allocation = allocation,
-            markets = markets,
-            explore = explore,
-            wallets = wallets,
-            walletsState = walletsState,
-            draftMnemonic = draftMnemonic,
-            walletsError = walletsError,
-            onSwitchWallet = switchWallet,
-            onClaimAnml = claimAnml,
-            onRegister = openRegistration,
-            version = version,
-            balancesVisible = balancesVisible,
-            onOpenUrl = onOpenUrl,
-            onRefresh = refreshAll,
-            padding = padding,
-        )
+        // Pull down to re-read the chain. iOS carries `.refreshable` on every
+        // screen that reads from the chain, and these are the same screens:
+        // the four tabs, the activity list, and the explorer. The rest show
+        // what is already on the device and have nothing to re-read.
+        //
+        // One box either way, with the gesture disabled where it has no
+        // meaning, rather than a box that comes and goes — the screens below
+        // keep their own modifiers and nothing about the layout moves as you
+        // navigate.
+        val route = nav.current
+        val pullable = route is EarthRoute.Tab ||
+            route == EarthRoute.Activity ||
+            route == EarthRoute.Explore
+
+        // Only a pull spins this. The app also re-reads on resume and on a tab
+        // switch, and an indicator dropping down by itself for those reads
+        // looks like the screen reloading on its own.
+        val pullScope = rememberCoroutineScope()
+        val pullState = rememberPullToRefreshState()
+        var pulling by remember { mutableStateOf(false) }
+
+        Box(
+            Modifier
+                .fillMaxSize()
+                .pullToRefresh(
+                    isRefreshing = pulling,
+                    state = pullState,
+                    enabled = pullable,
+                    onRefresh = {
+                        // The reads belong to the view models and outlive this
+                        // scope, so leaving the screen mid-pull abandons the
+                        // spinner rather than the read.
+                        val reads = refreshCurrent()
+                        pullScope.launch {
+                            pulling = true
+                            try {
+                                reads.joinAll()
+                            } finally {
+                                pulling = false
+                            }
+                        }
+                    },
+                ),
+        ) {
+            EarthContent(
+                route = route,
+                nav = nav,
+                tx = tx,
+                state = state,
+                activity = rows,
+                earnState = earnState,
+                allocationState = allocationState,
+                marketsState = marketsState,
+                exploreState = exploreState,
+                earn = earn,
+                allocation = allocation,
+                markets = markets,
+                explore = explore,
+                wallets = wallets,
+                walletsState = walletsState,
+                draftMnemonic = draftMnemonic,
+                walletsError = walletsError,
+                onSwitchWallet = switchWallet,
+                onClaimAnml = claimAnml,
+                onRegister = openRegistration,
+                version = version,
+                balancesVisible = balancesVisible,
+                onOpenUrl = onOpenUrl,
+                onRefresh = refreshAll,
+                padding = padding,
+            )
+
+            if (pullable) {
+                PullToRefreshDefaults.Indicator(
+                    state = pullState,
+                    isRefreshing = pulling,
+                    containerColor = EarthColors.Surfaces.bgPrimary,
+                    color = EarthAccent.ink,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        // Below the top bar rather than under it: the box is
+                        // full-bleed, the bar is not part of it.
+                        .padding(top = padding.calculateTopPadding()),
+                )
+            }
+        }
     }
 
     // The ads-for-gas gate, restored to the Compose flow. It hung off TxFlow
@@ -591,10 +683,12 @@ private fun EarthContent(
             // would put a spinner in front of data that is already here.
             proposal = allocationState?.proposals?.firstOrNull { it.id == route.id },
             modifier = inset,
-            // x/gov weighs bonded stake and nothing else, so being a verified
-            // human — which carries the allocation streams — buys no say here.
+            // The stake house weighs bonded ERTH and nothing else, so being a
+            // verified human buys no say in it — and vice versa below. The two
+            // are separate standings and a wallet can hold either, both or
+            // neither.
             eligibility = if (loaded.stakedUerth <= 0) {
-                "Stake ERTH to vote. Voting power here is bonded stake alone."
+                "Stake ERTH to vote here. This house is weighted by bonded stake alone."
             } else {
                 null
             },
@@ -609,6 +703,32 @@ private fun EarthContent(
                     onSuccess = onRefresh,
                     build = { ctx ->
                         listOf(Gov.msgVote(walletAddress(ctx), proposal.id, vote))
+                    },
+                )
+            },
+            // Absent on a chain without an assembly, which hides the whole
+            // second house rather than explaining one that is not there yet.
+            assembly = allocationState?.assemblyTallies?.get(route.id),
+            assemblyEligibility = if (!loaded.registered) {
+                "Register your identity to vote here. This house counts people, " +
+                    "not holdings — one registration is one vote."
+            } else {
+                null
+            },
+            onAssemblyVote = { proposal, vote ->
+                tx.request(
+                    details = TxConfirmDetails(
+                        // Says which house, because the stake vote on the same
+                        // proposal produces an otherwise identical confirmation
+                        // and the two are genuinely different actions.
+                        action = "Vote ${vote.label} as a person on #${proposal.id}",
+                        msgTypeUrl = Assembly.MSG_VOTE_PROPOSAL_TYPE_URL,
+                        balanceUerth = loaded.balanceUerth,
+                    ),
+                    gasLimit = Assembly.VOTE_GAS_LIMIT,
+                    onSuccess = onRefresh,
+                    build = { ctx ->
+                        listOf(Assembly.msgVoteProposal(walletAddress(ctx), proposal.id, vote))
                     },
                 )
             },
