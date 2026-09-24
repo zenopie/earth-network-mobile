@@ -112,11 +112,17 @@ chain pins `current_date` to ~today (see finding #7).
 3. **Registry freshness / revocation.** `registry_root` must be kept current and
    support revocation, or a revoked DSC stays valid. Needs a registry update path
    + the chain pinning a recent root.
-4. **eContent structure.** The circuit checks `dg1_hash` sits *at an offset* in
-   `e_content` but doesn't fully validate the LDS ASN.1 structure. Safe only
-   because a valid DSC signature over the chain is unforgeable — but an auditor
-   should confirm no offset/aliasing attack lets a crafted `e_content`/
-   `signed_attrs` bind an unintended DG1.
+4. **eContent structure.** ~~The circuit checks `dg1_hash` sits *at an offset*
+   in `e_content` but doesn't fully validate the LDS ASN.1 structure.~~
+   **Found exploitable, fixed 2026-09-23 (chain v0.9.1).** The offset was bounded
+   only by the fixed array size, not by the hashed length, and `sha256_var`
+   ignores bytes past its length — so a genuine SOD's signed prefix could be kept
+   and the hash of an invented DG1 parked in the unhashed tail, giving unlimited
+   nullifiers from one passport. A short `dg1_len` likewise left the MRZ fields
+   unhashed. `poa_core` now requires `offset + 32 <= len`, the DER prefix directly
+   ahead of each hash (DG1's DataGroupHash entry; the messageDigest attribute),
+   and a whole 93-byte TD3 DG1 with its header. It still does not parse the full
+   LDS structure; the prefixes are what pin each hash to its role.
 5. **Under-constrained checks.** Standard ZK audit: confirm every `assert` and the
    Merkle/hash-at-offset logic is fully constrained (no free witness values).
 6. **One algorithm.** Covers ECDSA-P256 only; RSA/other-curve passports need
