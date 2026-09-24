@@ -31,7 +31,6 @@ import network.erth.wallet.ui.theme.EarthTheme
 import network.erth.wallet.ui.vendor.component.EarthButton
 import network.erth.wallet.ui.vendor.theme.colors.EarthColors
 import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
-import network.erth.wallet.wallet.services.SecureWalletManager
 import network.erth.wallet.wallet.services.SessionManager
 import network.erth.wallet.wallet.utils.BiometricVault
 import network.erth.wallet.wallet.utils.UnlockMethod
@@ -62,7 +61,6 @@ class SecurityViewModel(app: Application) : AndroidViewModel(app) {
             val ok = withContext(Dispatchers.IO) {
                 runCatching {
                     SessionManager.changeSecret(ctx, secret)
-                    SecureWalletManager.setPinHash(ctx, secret.sha256Hex())
                 }.isSuccess
             }
             if (!ok) {

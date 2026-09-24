@@ -2,6 +2,8 @@ package network.erth.wallet
 
 import android.app.Application
 import network.erth.wallet.chain.Fees
+import network.erth.wallet.wallet.services.AutoLock
+import network.erth.wallet.wallet.services.SessionManager
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import java.security.Security
 import kotlin.concurrent.thread
@@ -24,6 +26,12 @@ class App : Application() {
         } catch (e: Throwable) {
             // Best-effort: fall back to the platform providers if replacement fails.
         }
+
+        AutoLock.install(this)
+
+        // Before anything else can read it: earlier builds left the unlock
+        // secret's bare SHA-256 on disk, which for a PIN is the PIN.
+        runCatching { SessionManager.purgeLegacyPinHash(this) }
 
         // Learn the node's minimum gas price before any screen needs to quote a
         // fee. Fees.forGas must never block — it is read from composables — so

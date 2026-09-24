@@ -10,6 +10,10 @@ import network.erth.wallet.wallet.utils.WalletStorageVersion
 import org.json.JSONArray
 import org.json.JSONObject
 import android.util.Base64
+import javax.crypto.BadPaddingException
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * SessionManager
@@ -28,8 +32,22 @@ object SessionManager {
     // parseSoftwareEncryptedData and DeviceBinding.
     private const val KEY_DEVICE_IV = "device_iv"
 
+    private const val KEY_WALLETS_ENCRYPTED = "wallets_encrypted"
+
+    // An unsalted SHA-256 of the unlock secret, written by earlier builds in
+    // plain preferences. For a four-digit PIN that is the PIN, so it is deleted
+    // wherever it is found and never read. See purgeLegacyPinHash.
+    private const val KEY_LEGACY_PIN_HASH = "pin_hash"
+
+    /** The secret did not open the stored wallet: a wrong guess, and counted as one. */
+    class WrongSecretException : Exception("The secret does not open this wallet")
+
     // Session state
     private var isSessionActive = false
+    private val _active = MutableStateFlow(false)
+
+    /** Whether a session is open, for screens that must leave when it closes. */
+    val active: StateFlow<Boolean> = _active.asStateFlow()
     private var sessionPin: String? = null
     private var versionedWalletStorage: WalletStorageVersion.VersionedWalletStorage? = null
     private var otherPrefsData = mutableMapOf<String, Any?>()
@@ -37,6 +55,7 @@ object SessionManager {
     /**
      * Start a new session by decrypting wallet data with PIN
      */
+    @Synchronized
     @Throws(Exception::class)
     fun startSession(context: Context, pin: String) {
         try {
@@ -52,10 +71,20 @@ object SessionManager {
             val softwarePrefs = context.getSharedPreferences(PREF_FILE + "_software", Context.MODE_PRIVATE)
 
             // Load encrypted wallet data
-            val encryptedWalletsJson = softwarePrefs.getString("wallets_encrypted", null)
+            val encryptedWalletsJson = softwarePrefs.getString(KEY_WALLETS_ENCRYPTED, null)
             if (encryptedWalletsJson != null) {
                 val encryptedData = parseSoftwareEncryptedData(encryptedWalletsJson)
-                val decryptedStorageJson = SoftwareEncryption.decrypt(encryptedData, pin, context)
+                // The decrypt is the PIN check. Nothing else on disk can confirm
+                // a guess, so an offline attacker pays the full PBKDF2 cost per
+                // try. A failed GCM tag here is the wrong secret; anything that
+                // fails before it (the device key, a corrupt blob) is not a
+                // guess and must not be counted as one.
+                val decryptedStorageJson = try {
+                    SoftwareEncryption.decrypt(encryptedData, pin, context)
+                } catch (e: Exception) {
+                    if (e.causes().any { it is BadPaddingException }) throw WrongSecretException()
+                    throw e
+                }
 
                 // Parse with versioning support
                 versionedWalletStorage = WalletStorageVersion.parseWalletStorage(decryptedStorageJson)
@@ -63,11 +92,17 @@ object SessionManager {
                 versionedWalletStorage = WalletStorageVersion.createVersionedStorage(JSONArray())
             }
 
+            purgeLegacyPinHash(context)
+
             // Load other preferences data (non-encrypted)
             loadOtherPrefsData(softwarePrefs)
 
             isSessionActive = true
+            _active.value = true
 
+        } catch (e: WrongSecretException) {
+            clearSession()
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start session", e)
             clearSession()
@@ -78,8 +113,32 @@ object SessionManager {
     /**
      * End the current session and clear sensitive data from memory
      */
+    @Synchronized
     fun endSession() {
         clearSession()
+    }
+
+    /**
+     * Whether a wallet has been sealed on this device, i.e. whether there is
+     * anything for an unlock secret to open. Reads only the blob's presence.
+     */
+    fun hasSealedStorage(context: Context): Boolean =
+        context.getSharedPreferences(PREF_FILE + "_software", Context.MODE_PRIVATE)
+            .contains(KEY_WALLETS_ENCRYPTED)
+
+    /**
+     * Delete the PIN hash earlier builds kept beside the blob.
+     *
+     * Called on every launch and every unlock, so an install that had one
+     * stops carrying it the first time it runs this build, locked or not.
+     */
+    @Synchronized
+    fun purgeLegacyPinHash(context: Context) {
+        val prefs = context.getSharedPreferences(PREF_FILE + "_software", Context.MODE_PRIVATE)
+        if (prefs.contains(KEY_LEGACY_PIN_HASH)) {
+            prefs.edit().remove(KEY_LEGACY_PIN_HASH).commit()
+        }
+        otherPrefsData.remove(KEY_LEGACY_PIN_HASH)
     }
 
     /**
@@ -197,6 +256,7 @@ object SessionManager {
         versionedWalletStorage = null
         otherPrefsData.clear()
         isSessionActive = false
+        _active.value = false
 
     }
 
@@ -209,7 +269,7 @@ object SessionManager {
         val allPrefs = softwarePrefs.all
         for ((key, value) in allPrefs) {
             // Skip encrypted wallet data
-            if (key != "wallets_encrypted") {
+            if (key != KEY_WALLETS_ENCRYPTED) {
                 otherPrefsData[key] = value
             }
         }
@@ -282,6 +342,21 @@ object SessionManager {
     }
 
     /**
+     * Write the open storage out under the session's secret.
+     *
+     * First run needs this: a session opened with nothing stored has nothing
+     * on disk, and the blob's existence is what says a wallet is set up.
+     */
+    @Throws(Exception::class)
+    fun seal(context: Context) {
+        if (!isSessionActive) {
+            throw IllegalStateException("No active session - call startSession() first")
+        }
+        val pin = sessionPin ?: throw IllegalStateException("Session PIN not available")
+        saveVersionedStorageToEncryption(context, pin)
+    }
+
+    /**
      * Save versioned wallet storage to encrypted storage
      */
     @Throws(Exception::class)
@@ -314,10 +389,18 @@ object SessionManager {
         }
 
         val softwarePrefs = context.getSharedPreferences(PREF_FILE + "_software", Context.MODE_PRIVATE)
-        softwarePrefs.edit().putString("wallets_encrypted", json.toString()).apply()
+        // commit, not apply. A secret change has BiometricVault drop the old
+        // slot as soon as this returns, so a write still in flight when the
+        // process dies would leave the blob sealed by a key that is gone.
+        if (!softwarePrefs.edit().putString(KEY_WALLETS_ENCRYPTED, json.toString()).commit()) {
+            throw Exception("Failed to write encrypted wallet storage")
+        }
 
     }
 }
+
+private fun Throwable.causes(): Sequence<Throwable> =
+    generateSequence(this) { it.cause?.takeIf { cause -> cause !== it } }
 
 /**
  * Session-aware SharedPreferences implementation

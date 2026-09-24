@@ -11,6 +11,7 @@ import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import network.erth.wallet.ui.theme.EarthTheme
+import network.erth.wallet.wallet.services.AutoLock
 import network.erth.wallet.wallet.services.SessionManager
 import network.erth.wallet.wallet.utils.UnlockMethod
 
@@ -24,10 +25,14 @@ import network.erth.wallet.wallet.utils.UnlockMethod
  * The first state was missing until now, and its absence was fatal on a fresh
  * install. This screen only ever asked whether a session was open, so with no
  * wallet it showed the PIN screen — and since nothing in the Compose app had
- * ever called setPinHash, no PIN could be right. Three attempts, then a
+ * ever sealed a wallet, no PIN could be right. Three attempts, then a
  * lockout, and the wallet screens that would have fixed it sit behind the same
- * gate. HostActivity branched on hasPinSet and was deleted with the old app;
- * this is that branch, back.
+ * gate. HostActivity branched on whether a PIN was set and was deleted with
+ * the old app; this is that branch, back.
+ *
+ * Open follows the session, not the unlock that started it: [AutoLock] can
+ * end the session underneath this screen, and the gate has to come back when
+ * it does.
  */
 // FragmentActivity rather than ComponentActivity: BiometricPrompt attaches
 // to a fragment manager, and there is no way to raise it without one.
@@ -45,7 +50,6 @@ class ComposeAppActivity : FragmentActivity() {
                 val unlock: UnlockViewModel = viewModel()
                 val onboarding: OnboardingViewModel = viewModel()
 
-                val unlocked by unlock.unlocked.collectAsStateWithLifecycle()
                 val error by unlock.error.collectAsStateWithLifecycle()
                 val lockout by unlock.lockout.collectAsStateWithLifecycle()
 
@@ -53,9 +57,7 @@ class ComposeAppActivity : FragmentActivity() {
                 val needsWallet by onboarding.needsWallet.collectAsStateWithLifecycle()
                 val setupError by onboarding.error.collectAsStateWithLifecycle()
 
-                // A session can already be open — the process may have been
-                // restarted while the app was backgrounded.
-                val open = unlocked || SessionManager.isSessionActive()
+                val open by SessionManager.active.collectAsStateWithLifecycle()
 
                 // Asked once a session exists, because the count can only be
                 // read through it. Catches a setup abandoned between choosing

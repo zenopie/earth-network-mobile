@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableLongStateOf
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import network.erth.wallet.Constants
 import network.erth.wallet.chain.Fees
 import network.erth.wallet.chain.Personhood
@@ -28,6 +29,7 @@ import network.erth.wallet.ui.compose.TxOutcome
 import network.erth.wallet.ui.compose.TxPendingSheet
 import network.erth.wallet.ui.compose.TxResultSheet
 import network.erth.wallet.wallet.services.SecureWalletManager
+import network.erth.wallet.wallet.services.SessionManager
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,6 +67,14 @@ class RegistrationActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         nfcAdapter = NfcAdapter.getDefaultAdapter(this)
+
+        // AutoLock ended the session. Nothing here can sign without it, and the
+        // unlock gate is in ComposeAppActivity underneath, so step aside. Also
+        // covers a restore after process death, which starts with no session.
+        lifecycleScope.launch {
+            SessionManager.active.first { !it }
+            finish()
+        }
 
         setContent {
             EarthTheme {

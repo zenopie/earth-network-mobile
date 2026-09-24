@@ -37,8 +37,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.viewmodel.compose.viewModel
-import java.nio.charset.StandardCharsets
-import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -62,7 +60,7 @@ import network.erth.wallet.wallet.utils.UnlockMethod
  *
  * This is the branch HostActivity had and the Compose rewrite did not carry
  * over. Without it a fresh install opens straight onto the PIN screen, and
- * because nothing had ever called setPinHash there was no PIN that could
+ * because nothing had ever sealed a wallet there was no PIN that could
  * work — three attempts, then a lockout, and no way to reach the wallet
  * screens because they live behind the same gate.
  *
@@ -72,7 +70,7 @@ import network.erth.wallet.wallet.utils.UnlockMethod
  */
 class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
 
-    /** No PIN stored, so nothing can be unlocked and nothing can be created. */
+    /** Nothing sealed, so nothing can be unlocked and nothing can be created. */
     private val _needsPin = MutableStateFlow(!hasPin())
     val needsPin: StateFlow<Boolean> = _needsPin.asStateFlow()
 
@@ -89,11 +87,15 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
+    // The blob, not a stored PIN verifier: its presence says a secret exists
+    // without saying anything about what the secret is. An install from before
+    // this that set a PIN but never made a wallet has no blob, and comes back
+    // through setup — it has nothing to lose.
     private fun hasPin(): Boolean =
-        runCatching { SecureWalletManager.hasPinSet(getApplication()) }.getOrDefault(false)
+        runCatching { SessionManager.hasSealedStorage(getApplication()) }.getOrDefault(false)
 
     /**
-     * Open a session with the sealing secret, then record its hash.
+     * Open a session with the sealing secret, then seal the empty wallet under it.
      *
      * The secret is whatever [UnlockMethod] says it is — the PIN, a random
      * value held behind the biometric prompt, or the two folded together. This
@@ -101,12 +103,12 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
      * is sealed by one secret however it was assembled, so there is one path
      * that seals it.
      *
-     * The order is forced and it is also the safe one. setPinHash writes
-     * through session preferences and throws without a session, so the session
-     * has to come first — and startSession works with nothing stored, which is
-     * exactly the first-run case. Writing the hash last also means hasPinSet
-     * only becomes true once a session can actually be opened, so an
-     * interrupted setup comes back here rather than to a gate guarding nothing.
+     * The order is forced and it is also the safe one. seal needs a session,
+     * and startSession works with nothing stored, which is exactly the
+     * first-run case. Sealing last also means the blob — which is what says a
+     * PIN is set — only exists once a session can actually be opened with it,
+     * so an interrupted setup comes back here rather than to a gate guarding
+     * nothing.
      */
     fun finishSetup(method: UnlockMethod, secret: String, stagedSlot: String?) {
         viewModelScope.launch {
@@ -114,7 +116,7 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
             val ok = withContext(Dispatchers.IO) {
                 runCatching {
                     SessionManager.startSession(ctx, secret)
-                    SecureWalletManager.setPinHash(ctx, secret.sha256Hex())
+                    SessionManager.seal(ctx)
                 }.isSuccess
             }
             if (!ok) {
