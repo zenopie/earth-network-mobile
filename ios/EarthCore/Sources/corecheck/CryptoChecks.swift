@@ -104,6 +104,22 @@ func checkCrypto() {
     Check.that("rejects a corrupted address",
                !EarthKey.isValidAddress("earth19rl4cm2hmr8afy4kldpxz3fka4jguq0a8wkm3v"))
 
+    // Validation folds case and the seed does not, so a shouted phrase used
+    // to validate and then derive a different wallet. Entry points canonicalise
+    // first; this pins that the canonical form lands on the same key.
+    let shouted = "  ABANDON Abandon abandon\tabandon abandon abandon abandon abandon abandon abandon abandon ABOUT \n"
+    Check.that("mixed-case phrase validates", BIP39.isValid(mnemonic: shouted))
+    Check.equal("canonical form", BIP39.canonical(shouted), abandon)
+    Check.equal(
+        "canonical seed matches lowercase",
+        BIP39.seed(fromMnemonic: BIP39.canonical(shouted)).hexString,
+        BIP39.seed(fromMnemonic: abandon).hexString
+    )
+    Check.equal("canonical address matches lowercase",
+                try! EarthKey(mnemonic: BIP39.canonical(shouted)).address, key.address)
+    Check.that("raw mixed case would not have",
+               BIP39.seed(fromMnemonic: shouted) != BIP39.seed(fromMnemonic: abandon))
+
     Check.group("signing")
     let message = Data(SHA256.hash(data: Data("earth-1".utf8)))
     let signature = try! key.sign(message)

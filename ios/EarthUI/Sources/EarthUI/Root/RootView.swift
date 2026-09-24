@@ -10,6 +10,7 @@ import SwiftUI
 public struct RootView: View {
     @State private var model = AppModel()
     @State private var tx = TxController()
+    @Environment(\.scenePhase) private var scenePhase
 
     public init() {}
 
@@ -47,6 +48,9 @@ public struct RootView: View {
         // presented; a flow nested deeper than one sheet hosts its own — see
         // TxController.Host.
         .overlay { TxOverlay(host: .root) }
+        // Here rather than in the App, which EarthUI cannot see: the root
+        // view's scene phase is the window's, and the model is here.
+        .onChange(of: scenePhase) { _, phase in model.scenePhaseChanged(to: phase) }
         .environment(model)
         .environment(tx)
         .earthThemed()

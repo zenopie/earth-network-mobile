@@ -46,6 +46,11 @@ public struct WalletStore: Sendable {
         /// with no lock is not self-custody. It is also the state every fresh
         /// simulator is in.
         case noDeviceLock
+        /// The secret behind the biometric prompt is gone because the enrolled
+        /// faces or fingers changed. Deliberate — see `stageBiometrics` — and
+        /// permanent: the vault was sealed under that secret, so only the
+        /// recovery phrase gets back in.
+        case biometricsInvalidated
         /// The PIN did not decrypt the wallet.
         case wrongPin
         case corrupt
@@ -245,13 +250,20 @@ public struct WalletStore: Sendable {
     /// otherwise — which is what makes changing the unlock method survive a
     /// failure halfway through. Writing a Keychain item does not prompt; only
     /// reading one back does.
+    ///
+    /// `.biometryCurrentSet`, not `.userPresence`. The latter accepts the
+    /// device passcode in place of a face, and keeps working for a face
+    /// enrolled after the fact — so anyone who learns the passcode could enrol
+    /// their own and inherit the wallet. This matches Android's
+    /// `setInvalidatedByBiometricEnrollment(true)` with `BIOMETRIC_STRONG`: any
+    /// change to the enrolled set destroys the item.
     @discardableResult
     public func stageBiometrics(secret: String) throws -> String {
         var error: Unmanaged<CFError>?
         let control = SecAccessControlCreateWithFlags(
             nil,
             kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly,
-            .userPresence,
+            .biometryCurrentSet,
             &error
         )
         guard let control else { throw Error.noDeviceLock }
@@ -279,7 +291,27 @@ public struct WalletStore: Sendable {
         let previous = Self.liveSlot
         guard previous != slot else { return }
         Self.liveSlot = slot
+        UserDefaults.standard.set(true, forKey: Self.currentSetKey)
         SecItemDelete(Self.biometricQuery(slot: previous) as CFDictionary)
+    }
+
+    /// Whether the live item was written with `.biometryCurrentSet`.
+    ///
+    /// Items staged before the switch still carry `.userPresence`, and the
+    /// Keychain will not change an item's access control in place.
+    private static let currentSetKey = "biometricCurrentSet"
+
+    /// Re-write a `.userPresence` item under `.biometryCurrentSet`, given the
+    /// secret it holds. A no-op once done.
+    ///
+    /// Called with a secret just read from the live item, so staging it again
+    /// and committing is the same two-slot move a method change makes — the
+    /// old item keeps opening the wallet until the new one is live.
+    public func upgradeBiometricsIfNeeded(secret: String) {
+        guard !UserDefaults.standard.bool(forKey: Self.currentSetKey),
+              let slot = try? stageBiometrics(secret: secret)
+        else { return }
+        commitBiometrics(slot: slot)
     }
 
     /// Throw away a staged slot after a change that did not go through.
@@ -311,8 +343,20 @@ public struct WalletStore: Sendable {
                 throw Error.notFound
             }
             return secret
-        case errSecItemNotFound: throw Error.notFound
-        case errSecUserCanceled, errSecAuthFailed: throw Error.authenticationFailed
+        // Only asked for when the configured method uses biometrics, so the
+        // item should be there. A `.biometryCurrentSet` item that vanished is
+        // what an enrolment change looks like from here — the Keychain does
+        // not say so in as many words.
+        case errSecItemNotFound: throw Error.biometricsInvalidated
+        case errSecUserCanceled, errSecAuthFailed:
+            // Removing every face also invalidates the item, but surfaces as a
+            // failed authentication — there is nothing left to match.
+            var reason: NSError?
+            if !LAContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &reason),
+               reason?.code == LAError.biometryNotEnrolled.rawValue {
+                throw Error.biometricsInvalidated
+            }
+            throw Error.authenticationFailed
         default: throw Error.keychain(status)
         }
     }

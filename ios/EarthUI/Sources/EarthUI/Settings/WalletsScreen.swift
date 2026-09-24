@@ -17,64 +17,90 @@ struct WalletsScreen: View {
 
     @State private var adding: Adding?
     @State private var revealed: String?
+    @State private var confirming = false
     @State private var error: String?
 
     enum Adding: String, Identifiable { case create, restore; var id: String { rawValue } }
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    Spacer().frame(height: theme.space.x8)
-
-                    ForEach(Array(model.wallets.enumerated()), id: \.element.id) { index, wallet in
-                        walletRow(wallet, selected: index == model.selected) {
-                            Task { await model.select(index) }
-                        }
+            Group {
+                if confirming {
+                    ConfirmIdentity(reason: "Show your recovery phrase") { confirmation in
+                        reveal(from: confirmation)
+                        confirming = false
                     }
-
-                    Spacer().frame(height: theme.space.x24)
-                    EarthButton(title: "Create a wallet") { adding = .create }
-                    Spacer().frame(height: theme.space.x8)
-                    EarthButton(title: "Import a recovery phrase", role: .secondary) { adding = .restore }
-
-                    // Not on the Android screen. Self-custody without a way to
-                    // read the phrase back is custody with extra steps, and the
-                    // prompt in front of it is the same one a signature needs.
-                    Spacer().frame(height: theme.space.x24)
-                    EarthLabel("Recovery phrase")
-                    Spacer().frame(height: theme.space.x8)
-                    if let revealed {
-                        SeedGrid(words: revealed.split(separator: " ").map(String.init))
-                        Spacer().frame(height: theme.space.x8)
-                        EarthButton(title: "Hide", role: .secondary) { self.revealed = nil }
-                    } else {
-                        Text("Anyone who has these twelve words has this wallet.")
-                            .font(EarthType.bodySmall)
-                            .foregroundStyle(theme.colors.textTertiary)
-                        Spacer().frame(height: theme.space.x8)
-                        EarthButton(title: "Reveal", role: .secondary) { reveal() }
-                    }
-
-                    if let error {
-                        Spacer().frame(height: theme.space.x8)
-                        Text(error)
-                            .font(EarthType.bodySmall)
-                            .foregroundStyle(theme.colors.textError)
-                    }
-
-                    Spacer().frame(height: theme.space.x32)
+                } else {
+                    list
                 }
-                .padding(.horizontal, theme.space.gutter)
             }
-            .navigationTitle("Wallets")
+            .navigationTitle(confirming ? "Recovery phrase" : "Wallets")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    if confirming {
+                        Button("Cancel") { confirming = false }
+                    } else {
+                        Button("Done") { dismiss() }
+                    }
+                }
+            }
             .background(theme.colors.bgPrimary)
-            .scrollContentBackground(.hidden)
             .task { model.loadWallets() }
             .sheet(item: $adding) { AddWalletSheet(mode: $0).earthThemed() }
         }
+    }
+
+    private var list: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Spacer().frame(height: theme.space.x8)
+
+                ForEach(Array(model.wallets.enumerated()), id: \.element.id) { index, wallet in
+                    walletRow(wallet, selected: index == model.selected) {
+                        Task { await model.select(index) }
+                    }
+                }
+
+                Spacer().frame(height: theme.space.x24)
+                EarthButton(title: "Create a wallet") { adding = .create }
+                Spacer().frame(height: theme.space.x8)
+                EarthButton(title: "Import a recovery phrase", role: .secondary) { adding = .restore }
+
+                // Not on the Android screen. Self-custody without a way to
+                // read the phrase back is custody with extra steps. It sits
+                // behind a fresh unlock, not the session's: an unlocked
+                // phone should not be enough to read the wallet out of it.
+                Spacer().frame(height: theme.space.x24)
+                EarthLabel("Recovery phrase")
+                Spacer().frame(height: theme.space.x8)
+                if let revealed {
+                    SeedGrid(words: revealed.split(separator: " ").map(String.init))
+                    Spacer().frame(height: theme.space.x8)
+                    EarthButton(title: "Hide", role: .secondary) { self.revealed = nil }
+                } else {
+                    Text("Anyone who has these twelve words has this wallet.")
+                        .font(EarthType.bodySmall)
+                        .foregroundStyle(theme.colors.textTertiary)
+                    Spacer().frame(height: theme.space.x8)
+                    EarthButton(title: "Reveal", role: .secondary) {
+                        error = nil
+                        confirming = true
+                    }
+                }
+
+                if let error {
+                    Spacer().frame(height: theme.space.x8)
+                    Text(error)
+                        .font(EarthType.bodySmall)
+                        .foregroundStyle(theme.colors.textError)
+                }
+
+                Spacer().frame(height: theme.space.x32)
+            }
+            .padding(.horizontal, theme.space.gutter)
+        }
+        .scrollContentBackground(.hidden)
     }
 
     private func walletRow(_ wallet: WalletStore.Entry, selected: Bool, action: @escaping () -> Void) -> some View {
@@ -110,17 +136,11 @@ struct WalletsScreen: View {
         .buttonStyle(.plain)
     }
 
-    /// Reading the phrase needs the same PIN a signature does — showing it is
-    /// exactly as sensitive as spending with it.
-    private func reveal() {
-        do {
-            guard let pin = model.pin else { throw WalletStore.Error.notFound }
-            let wallets = try model.store.unlock(pin: pin)
-            revealed = wallets.first { $0.address == model.address }?.mnemonic
-            error = nil
-        } catch {
-            self.error = model.describe(error)
-        }
+    /// Read from the vault the confirmation just opened, not from the
+    /// session — which is the point of asking.
+    private func reveal(from confirmation: AppModel.Confirmation) {
+        revealed = confirmation.wallets.first { $0.address == model.address }?.mnemonic
+        error = revealed == nil ? model.describe(WalletStore.Error.notFound) : nil
     }
 }
 
@@ -214,7 +234,7 @@ struct AddWalletSheet: View {
         Task {
             do {
                 try await model.addWallet(
-                    mnemonic: phrase,
+                    mnemonic: BIP39.canonical(phrase),
                     name: name.trimmingCharacters(in: .whitespaces).isEmpty ? defaultName : name
                 )
                 dismiss()

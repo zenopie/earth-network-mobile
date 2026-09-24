@@ -113,7 +113,7 @@ struct NewWalletFlow: View {
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
 
-                methodRow(.pin, "PIN", "Four digits, entered each time you open the app.")
+                methodRow(.pin, "PIN", "Four digits. Asked for when you return after a minute away, and before your recovery phrase is shown.")
                 if WalletStore.biometricsAvailable {
                     methodRow(.biometrics, WalletStore.biometryName,
                               "No PIN to remember. If \(WalletStore.biometryName) stops working, only your recovery phrase gets you back in.")
@@ -228,8 +228,10 @@ struct NewWalletFlow: View {
         saving = true
         Task {
             do {
+                // Canonical, not as typed: the checksum ignores case but the
+                // seed does not, so "Abandon" would restore a different wallet.
                 try await model.adopt(
-                    mnemonic: phrase,
+                    mnemonic: BIP39.canonical(phrase),
                     name: name.trimmingCharacters(in: .whitespaces).isEmpty ? defaultName : name,
                     method: method,
                     pin: method.usesPin ? pin : nil
@@ -282,17 +284,24 @@ struct UnlockScreen: View {
     @State private var now = Date()
     /// The prompt is raised once per appearance, not once per `task`.
     @State private var prompted = false
+    @State private var confirmingRestore = false
+
+    /// Shown in place of the usual line once the biometric secret is known to
+    /// be gone. Nothing typed here can help after that.
+    private var invalidated: String? {
+        model.biometricsInvalidated ? model.describe(WalletStore.Error.biometricsInvalidated) : nil
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             if model.method.usesPin {
                 PinKeypad(
                     title: "Welcome back",
-                    message: status.message ?? error ?? (model.method == .both
+                    message: invalidated ?? status.message ?? error ?? (model.method == .both
                         ? "Enter your PIN, then \(WalletStore.biometryName)"
                         : "Enter your PIN to continue"),
-                    isError: status.message != nil || error != nil,
-                    enabled: !status.lockedOut,
+                    isError: invalidated != nil || status.message != nil || error != nil,
+                    enabled: !status.lockedOut && invalidated == nil,
                     onComplete: submit
                 )
             } else {
@@ -304,16 +313,35 @@ struct UnlockScreen: View {
                 Text("Welcome back")
                     .font(EarthType.headline)
                     .foregroundStyle(theme.colors.textPrimary)
-                Text(error ?? "Unlock with \(WalletStore.biometryName).")
+                Text(invalidated ?? error ?? "Unlock with \(WalletStore.biometryName).")
                     .font(EarthType.bodySmall)
-                    .foregroundStyle(error != nil ? theme.colors.textError : theme.colors.textTertiary)
+                    .foregroundStyle((invalidated ?? error) != nil ? theme.colors.textError : theme.colors.textTertiary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, theme.space.gutter)
                 Spacer()
             }
 
-            // Only where the prompt is a way in by itself. On a two-factor
-            // wallet it is raised after the PIN instead, so a button offering
-            // it here would promise a door that does not exist.
-            if model.method == .biometrics {
+            if invalidated != nil {
+                // Without this the lock screen is a dead end: iOS keeps the
+                // vault across a reinstall, and nothing else here leads back
+                // to setup.
+                Button("Restore from recovery phrase") { confirmingRestore = true }
+                    .font(EarthType.body)
+                    .foregroundStyle(theme.colors.accentInk)
+                    .padding(.bottom, theme.space.x32)
+                    .confirmationDialog(
+                        "Remove this wallet from the device?",
+                        isPresented: $confirmingRestore,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Remove and restore", role: .destructive) { model.forget() }
+                    } message: {
+                        Text("It can no longer be opened here. You will need its recovery phrase to restore it.")
+                    }
+            } else if model.method == .biometrics {
+                // Only where the prompt is a way in by itself. On a two-factor
+                // wallet it is raised after the PIN instead, so a button
+                // offering it here would promise a door that does not exist.
                 Button("Use \(WalletStore.biometryName)") {
                     Task { _ = await model.unlockWithBiometrics() }
                 }
@@ -353,11 +381,86 @@ struct UnlockScreen: View {
 
     private func submit(_ pin: String) {
         Task {
-            if await model.unlock(pin: pin) { return }
+            if await model.unlock(pin: pin) || model.biometricsInvalidated { return }
             status = UnlockAttempts.status()
             error = status.lockedOut
                 ? nil
                 : "Incorrect PIN. \(status.attemptsLeft) attempts left."
+        }
+    }
+}
+
+/// The wallet's own unlock, asked for again inside an unlocked session.
+///
+/// In front of revealing a phrase and changing the unlock method, so an
+/// unlocked phone is not enough for either. The same keypad and prompt as the
+/// lock screen, so it reads as the familiar thing rather than a new flow, and
+/// a wrong PIN here counts toward the same lockout.
+struct ConfirmIdentity: View {
+    @Environment(\.earth) private var theme
+    @Environment(AppModel.self) private var model
+
+    /// What is being confirmed, as the biometric prompt's reason.
+    let reason: String
+    let onConfirmed: (AppModel.Confirmation) -> Void
+
+    @State private var status = UnlockAttempts.status()
+    @State private var error: String?
+    @State private var prompted = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if model.method.usesPin {
+                PinKeypad(
+                    title: "Confirm it's you",
+                    message: status.message ?? error ?? (model.method == .both
+                        ? "Enter your PIN, then \(WalletStore.biometryName)"
+                        : "Enter your PIN to continue"),
+                    isError: status.message != nil || error != nil,
+                    enabled: !status.lockedOut && !model.biometricsInvalidated,
+                    onComplete: { attempt(pin: $0) }
+                )
+            } else {
+                Spacer()
+                Text(error ?? "Confirm with \(WalletStore.biometryName) to continue.")
+                    .font(EarthType.bodySmall)
+                    .foregroundStyle(error != nil ? theme.colors.textError : theme.colors.textTertiary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, theme.space.gutter)
+                Spacer()
+                if !model.biometricsInvalidated {
+                    Button("Use \(WalletStore.biometryName)") { attempt(pin: nil) }
+                        .font(EarthType.body)
+                        .foregroundStyle(theme.colors.accentInk)
+                        .padding(.bottom, theme.space.x32)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(theme.colors.bgPrimary)
+        .task {
+            if model.method == .biometrics, !prompted {
+                prompted = true
+                attempt(pin: nil)
+            }
+        }
+    }
+
+    private func attempt(pin: String?) {
+        Task {
+            do {
+                onConfirmed(try await model.reauthenticate(pin: pin, reason: reason))
+            } catch {
+                status = UnlockAttempts.status()
+                self.error = switch error {
+                case WalletStore.Error.wrongPin:
+                    status.lockedOut ? nil : "Incorrect PIN. \(status.attemptsLeft) attempts left."
+                case WalletStore.Error.authenticationFailed:
+                    status.lockedOut ? nil : "Not confirmed. Try again."
+                default:
+                    model.describe(error)
+                }
+            }
         }
     }
 }

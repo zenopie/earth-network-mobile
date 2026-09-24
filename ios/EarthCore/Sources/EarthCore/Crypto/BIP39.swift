@@ -82,6 +82,20 @@ public enum BIP39 {
         return entropy
     }
 
+    /// A phrase as a person typed or pasted it, in the one form it is stored
+    /// and derived from: trimmed, lowercased, single-spaced.
+    ///
+    /// Apply at every point where a phrase enters the app. `isValid` folds case
+    /// but `seed` does not — see `normalize` — so "Abandon …" validates yet
+    /// derives a different, empty wallet. Folding here, before either sees it,
+    /// is what keeps the two agreeing without bending `seed` off the spec.
+    public static func canonical(_ input: String) -> String {
+        input
+            .lowercased()
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+    }
+
     public static func isValid(mnemonic: String) -> Bool {
         (try? entropy(fromMnemonic: mnemonic)) != nil
     }

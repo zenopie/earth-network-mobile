@@ -7,29 +7,49 @@ import SwiftUI
 /// the encryption key, and choosing away from one stops it opening anything.
 /// That is why this asks for the new PIN before it will do it, and why it can
 /// only be done while unlocked.
+///
+/// The current method is asked for first, fresh. Otherwise anyone holding the
+/// phone unlocked could set a PIN of their own — or swap in their own face —
+/// and keep the wallet after it locks.
 struct SecurityScreen: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
 
     @State private var choice: WalletStore.Method = .pin
-    @State private var askingPin = false
+    @State private var step = Step.form
     @State private var error: String?
     @State private var saved = false
+
+    enum Step {
+        case form, confirming
+        case newPin(AppModel.Confirmation)
+    }
 
     var body: some View {
         NavigationStack {
             Group {
-                if askingPin {
-                    SetPinScreen(error: error) { pin in
-                        apply(pin: pin)
-                        askingPin = false
-                    }
-                } else {
+                switch step {
+                case .form:
                     form
+                case .confirming:
+                    ConfirmIdentity(reason: "Change how your wallet unlocks") { confirmation in
+                        // A method with a PIN needs one chosen now: the old one
+                        // cannot be reused, because on a biometrics-only wallet
+                        // there never was one.
+                        if choice.usesPin {
+                            step = .newPin(confirmation)
+                        } else {
+                            apply(pin: nil, confirmation: confirmation)
+                        }
+                    }
+                case let .newPin(confirmation):
+                    SetPinScreen(error: error) { pin in
+                        apply(pin: pin, confirmation: confirmation)
+                    }
                 }
             }
-            .navigationTitle(askingPin ? "New PIN" : "Unlocking")
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
             .background(theme.colors.bgPrimary)
@@ -44,7 +64,7 @@ struct SecurityScreen: View {
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
 
-                row(.pin, "PIN", "Four digits, entered each time you open the app.")
+                row(.pin, "PIN", "Four digits. Asked for when you return after a minute away, and before your recovery phrase is shown.")
                 if WalletStore.biometricsAvailable {
                     row(.biometrics, WalletStore.biometryName,
                         "No PIN to remember. If \(WalletStore.biometryName) stops working, only your recovery phrase gets you back in.")
@@ -95,24 +115,27 @@ struct SecurityScreen: View {
         .buttonStyle(.plain)
     }
 
-    private func save() {
-        error = nil
-        // A method with a PIN needs one chosen now: the old one cannot be
-        // reused, because on a biometrics-only wallet there never was one.
-        if choice.usesPin {
-            askingPin = true
-        } else {
-            apply(pin: nil)
+    private var title: String {
+        switch step {
+        case .form: "Unlocking"
+        case .confirming: "Current unlock"
+        case .newPin: "New PIN"
         }
     }
 
-    private func apply(pin: String?) {
+    private func save() {
+        error = nil
+        step = .confirming
+    }
+
+    private func apply(pin: String?, confirmation: AppModel.Confirmation) {
         do {
-            try model.setMethod(choice, pin: pin)
+            try model.setMethod(choice, pin: pin, confirmedBy: confirmation)
             saved = true
             error = nil
         } catch {
             self.error = model.describe(error)
         }
+        step = .form
     }
 }

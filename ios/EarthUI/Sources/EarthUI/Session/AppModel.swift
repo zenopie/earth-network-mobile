@@ -103,6 +103,28 @@ public final class AppModel {
     /// the second on screen.
     private var unlocking = false
 
+    /// When the scene last went to the background, if it is there now.
+    ///
+    /// A continuous clock rather than `Date`: wall time can be wound back in
+    /// Settings, and this one keeps counting while the device sleeps.
+    private var backgroundedAt: ContinuousClock.Instant?
+
+    /// How long the app may sit in the background before it locks.
+    ///
+    /// Measured from `.background`, not `.inactive`. The Face ID prompt and the
+    /// NFC reader sheet both take the scene only as far as `.inactive`, so
+    /// neither starts this clock — and a minute is generous for anything that
+    /// does, such as a trip to the Mail app for a code.
+    private static let backgroundGrace: Duration = .seconds(60)
+
+    /// Set when the biometric secret turned out to be gone because the
+    /// enrolled faces or fingers changed.
+    ///
+    /// The unlock screen needs to tell this apart from a wrong PIN or a
+    /// cancelled prompt: it is permanent, and the only way forward is the
+    /// recovery phrase.
+    public private(set) var biometricsInvalidated = false
+
     /// How this wallet is opened. Not a secret, so it lives in defaults —
     /// knowing that a wallet unlocks biometrically does not help anyone open it.
     public private(set) var method: WalletStore.Method =
@@ -150,20 +172,8 @@ public final class AppModel {
         defer { unlocking = false }
 
         do {
-            // A two-factor wallet needs the half held behind the prompt as
-            // well, so this raises it — the PIN on its own decrypts nothing.
             let store = self.store
-            let secret: String
-            if method == .both {
-                // Same reason as above: raised off the main actor, so the
-                // thread the prompt needs is not the one waiting on it.
-                let half = try await Task.detached {
-                    try store.biometricSecret(reason: "Unlock your Earth wallet")
-                }.value
-                secret = WalletStore.combine(pin: pin, half: half)
-            } else {
-                secret = pin
-            }
+            let secret = try await unlockSecret(pin: pin, reason: "Unlock your Earth wallet")
 
             // Stretching is deliberately slow — 200,000 rounds — so it runs
             // off the main actor. On the main thread it is a visible freeze on
@@ -190,10 +200,64 @@ public final class AppModel {
                 // A dismissed prompt is not a wrong PIN, and counting it as
                 // one would lock someone out for tapping cancel.
                 break
+            case WalletStore.Error.biometricsInvalidated:
+                biometricsInvalidated = true
             default:
                 lastError = describe(error)
             }
             return false
+        }
+    }
+
+    /// The secret the vault is sealed under, assembled however this wallet's
+    /// method says. Raises the biometric prompt when the method has one.
+    ///
+    /// A two-factor wallet needs the half held behind the prompt as well —
+    /// the PIN on its own decrypts nothing.
+    private func unlockSecret(pin: String?, reason: String) async throws -> String {
+        guard method.usesBiometrics else { return pin ?? "" }
+        let store = self.store
+        // Off the main actor. `SecItemCopyMatching` blocks its thread until
+        // the user answers, and blocking the main thread is what the system
+        // needs free to present the prompt at all.
+        let half = try await Task.detached { try store.biometricSecret(reason: reason) }.value
+        store.upgradeBiometricsIfNeeded(secret: half)
+        return method == .both ? WalletStore.combine(pin: pin ?? "", half: half) : half
+    }
+
+    /// Proof that the user just authenticated, for the actions that should
+    /// not ride on an unlock that happened minutes ago.
+    ///
+    /// The secret is not public: the only way to get one of these is
+    /// `reauthenticate`, so `setMethod` cannot be called on the strength of
+    /// the session alone.
+    public struct Confirmation {
+        public let wallets: [WalletStore.Entry]
+        fileprivate let secret: String
+    }
+
+    /// Ask for the wallet's unlock again — PIN, prompt or both — and prove it
+    /// by opening the vault.
+    ///
+    /// For revealing a phrase and changing the unlock method. An unlocked
+    /// phone left on a table should not hand over either: one is the wallet
+    /// itself, the other lets whoever holds the phone replace the PIN.
+    /// Wrong PINs count toward the same lockout the unlock screen uses.
+    public func reauthenticate(pin: String?, reason: String) async throws -> Confirmation {
+        guard phase == .ready, sessionPin != nil else { throw WalletStore.Error.notFound }
+        guard !UnlockAttempts.status().lockedOut else { throw WalletStore.Error.authenticationFailed }
+        do {
+            let store = self.store
+            let secret = try await unlockSecret(pin: pin, reason: reason)
+            let wallets = try await Task.detached { try store.unlock(pin: secret) }.value
+            UnlockAttempts.recordSuccess()
+            return Confirmation(wallets: wallets, secret: secret)
+        } catch WalletStore.Error.wrongPin {
+            UnlockAttempts.recordFailure()
+            throw WalletStore.Error.wrongPin
+        } catch WalletStore.Error.biometricsInvalidated {
+            biometricsInvalidated = true
+            throw WalletStore.Error.biometricsInvalidated
         }
     }
 
@@ -236,12 +300,7 @@ public final class AppModel {
 
         do {
             let store = self.store
-            // Off the main actor. `SecItemCopyMatching` blocks its thread until
-            // the user answers, and blocking the main thread is what the system
-            // needs free to present the prompt at all.
-            let secret = try await Task.detached {
-                try store.biometricSecret(reason: "Unlock your Earth wallet")
-            }.value
+            let secret = try await unlockSecret(pin: nil, reason: "Unlock your Earth wallet")
             let wallets = try await Task.detached { try store.unlock(pin: secret) }.value
             guard !wallets.isEmpty else { throw WalletStore.Error.notFound }
             UnlockAttempts.recordSuccess()
@@ -260,6 +319,10 @@ public final class AppModel {
             // pad is still on screen behind it, and on a biometrics-only
             // wallet the button is still there to try again.
             if case WalletStore.Error.authenticationFailed = error { return false }
+            if case WalletStore.Error.biometricsInvalidated = error {
+                biometricsInvalidated = true
+                return false
+            }
             lastError = describe(error)
             return false
         }
@@ -270,8 +333,12 @@ public final class AppModel {
     /// The vault is re-sealed rather than re-gated: switching to a PIN means
     /// the PIN becomes the key, and switching away from one means it stops
     /// being able to open anything.
-    public func setMethod(_ new: WalletStore.Method, pin: String?) throws {
-        guard let current = sessionPin else { throw WalletStore.Error.notFound }
+    ///
+    /// Takes a fresh `Confirmation` rather than the session's secret, so the
+    /// old method is asked for again before it can be replaced.
+    public func setMethod(_ new: WalletStore.Method, pin: String?, confirmedBy confirmation: Confirmation) throws {
+        guard sessionPin != nil else { throw WalletStore.Error.notFound }
+        let current = confirmation.secret
         let sealed = try seal(method: new, pin: pin)
 
         // Re-seal before anything is promoted or thrown away. If this throws,
@@ -306,6 +373,9 @@ public final class AppModel {
         method: WalletStore.Method,
         pin: String?
     ) async throws {
+        // Again here, so no caller can store a phrase that validates but
+        // derives a different key than the one it names.
+        let mnemonic = BIP39.canonical(mnemonic)
         let sealed = try seal(method: method, pin: pin)
         let secret = sealed.secret
         do {
@@ -331,6 +401,9 @@ public final class AppModel {
 
     public func forget() {
         store.delete()
+        sessionPin = nil
+        wallets = []
+        biometricsInvalidated = false
         address = ""
         balances = [:]
         activity = nil
@@ -392,7 +465,7 @@ public final class AppModel {
     /// Add a wallet and switch to it.
     public func addWallet(mnemonic: String, name: String) async throws {
         guard let sessionPin else { throw WalletStore.Error.notFound }
-        let index = try store.add(mnemonic: mnemonic, name: name, pin: sessionPin)
+        let index = try store.add(mnemonic: BIP39.canonical(mnemonic), name: name, pin: sessionPin)
         loadWallets()
         await select(index)
     }
@@ -404,7 +477,26 @@ public final class AppModel {
     public func lock() {
         sessionPin = nil
         wallets = []
+        lastError = nil
         phase = store.exists ? .locked : .setup
+    }
+
+    /// Follow the scene, locking after `backgroundGrace` away.
+    ///
+    /// Checked on the way back to `.active` rather than timed in the
+    /// background, where a suspended app runs nothing. The privacy cover is
+    /// already up by then, so nothing is shown between returning and locking.
+    public func scenePhaseChanged(to scenePhase: ScenePhase) {
+        switch scenePhase {
+        case .background:
+            backgroundedAt = backgroundedAt ?? .now
+        case .active:
+            defer { backgroundedAt = nil }
+            guard phase == .ready, let away = backgroundedAt else { return }
+            if ContinuousClock.now - away > Self.backgroundGrace { lock() }
+        default:
+            break
+        }
     }
 
     // MARK: - chain
@@ -545,6 +637,11 @@ public final class AppModel {
         case WalletStore.Error.noDeviceLock:
             "Set a passcode on this device first. Your recovery phrase is stored behind it, and without one there is nothing to protect it with."
         case WalletStore.Error.invalidMnemonic: "That is not a valid recovery phrase."
+        case WalletStore.Error.biometricsInvalidated:
+            // Not a PIN fallback on a two-factor wallet: the vault is sealed
+            // under PIN and prompt together, so the PIN alone opens nothing.
+            // Android's UnlockGate says the same thing for the same reason.
+            "\(WalletStore.biometryName) changed since this wallet was set up — a face or fingerprint was added or removed — so it can no longer open it. Restore the wallet from its recovery phrase."
         case WalletStore.Error.wrongPin: "Incorrect PIN."
         case WalletStore.Error.corrupt: "The stored wallet could not be read."
         case let EarthClient.Error.rejected(code, log): "Rejected (code \(code)): \(log)"
