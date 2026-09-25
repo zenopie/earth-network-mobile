@@ -164,6 +164,15 @@ struct TxResultSheet: View {
                 header(status: .success, title: "\(action) confirmed", glyph: "checkmark.circle.fill")
                 EarthLabel("Transaction")
                 EarthCodeBlock(text: hash)
+            case let .unconfirmed(action, hash):
+                header(status: .pending, title: "\(action) not confirmed yet", glyph: "clock.fill")
+                Text("The network accepted it, but it hasn't appeared in a block yet. It may still go through, or be dropped. Check your activity before trying again.")
+                    .font(EarthType.bodySmall)
+                    .foregroundStyle(theme.colors.textSecondary)
+                if !hash.isEmpty {
+                    EarthLabel("Transaction")
+                    EarthCodeBlock(text: hash)
+                }
             case let .failed(action, reason):
                 header(status: .failed, title: "\(action) failed", glyph: "xmark.circle.fill")
                 EarthLabel("The chain said")
@@ -173,11 +182,19 @@ struct TxResultSheet: View {
         }
     }
 
+    private func glyphColor(_ status: EarthStatus) -> Color {
+        switch status {
+        case .success: theme.colors.accentInk
+        case .pending: theme.colors.warnInk
+        default: theme.colors.errorInk
+        }
+    }
+
     private func header(status: EarthStatus, title: String, glyph: String) -> some View {
         HStack(spacing: theme.space.x12) {
             Image(systemName: glyph)
                 .font(.system(size: 28))
-                .foregroundStyle(status == .success ? theme.colors.accentInk : theme.colors.errorInk)
+                .foregroundStyle(glyphColor(status))
             Text(title)
                 .font(EarthType.headline)
                 .foregroundStyle(theme.colors.textPrimary)

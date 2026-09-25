@@ -47,11 +47,16 @@ public final class TxController {
 
     public enum Outcome: Identifiable {
         case succeeded(action: String, hash: String)
+        /// Accepted by the node but not seen in a block before the wait ran
+        /// out. It may still land or be dropped, so it is reported as neither
+        /// — calling it a success is how a dropped send read as sent.
+        case unconfirmed(action: String, hash: String)
         case failed(action: String, reason: String)
 
         public var id: String {
             switch self {
             case let .succeeded(_, hash): hash
+            case let .unconfirmed(_, hash): "unconfirmed" + hash
             case let .failed(action, reason): action + reason
             }
         }
@@ -178,6 +183,11 @@ public final class TxController {
             let hash = try await broadcast(details: details, build: build, model: model)
             outcome = .succeeded(action: details.action, hash: hash)
             await onSuccess?()
+            await model.refresh()
+        } catch let EarthClient.Error.notCommitted(hash) {
+            // Not `onSuccess`: that clears the form, and the user may need what
+            // they typed if this never lands.
+            outcome = .unconfirmed(action: details.action, hash: hash)
             await model.refresh()
         } catch {
             outcome = .failed(action: details.action, reason: model.describe(error))

@@ -21,6 +21,9 @@ public struct EarthClient: Sendable {
         /// It made it into a block and failed there — out of gas, or the
         /// message's own validation.
         case executionFailed(code: Int, log: String)
+        /// Accepted into the mempool but not seen in a block within the wait.
+        /// Not a failure and not a success: it may still land, or be dropped.
+        /// `hash` is empty only if the node accepted it without naming one.
         case notCommitted(hash: String)
     }
 
@@ -86,8 +89,11 @@ public struct EarthClient: Sendable {
 
     /// Poll until the transaction appears in a block, then check how it ran.
     ///
-    /// Returns the hash unchanged if it has not appeared within the window —
-    /// a slow block is not a failure, and the caller has a hash it can look up.
+    /// Throws ``Error/notCommitted(hash:)`` if it has not appeared within the
+    /// window. That used to return the hash as though it had landed, which the
+    /// app then reported as a success — for a transaction that could still be
+    /// dropped. A slow block is not a failure either, so the caller gets the
+    /// hash to look up and says it does not know yet.
     public func awaitCommit(
         _ hash: String,
         attempts: Int = 20,
@@ -109,6 +115,6 @@ public struct EarthClient: Sendable {
             }
             try? await Task.sleep(for: delay)
         }
-        return hash
+        throw Error.notCommitted(hash: hash)
     }
 }
