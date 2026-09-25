@@ -1,5 +1,6 @@
 package network.erth.wallet.wallet.services
 
+import org.bitcoinj.crypto.MnemonicCode
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Build
@@ -616,12 +617,17 @@ object SecureWalletManager {
     }
 
     /**
-     * Validate a BIP-39 mnemonic
+     * Validate a BIP-39 mnemonic: every word in the list, and the checksum.
+     *
+     * Deriving a key is not a check. BIP-32 turns any string into a seed, so a
+     * single mistyped word used to import cleanly as a different, empty wallet
+     * — indistinguishable from funds having vanished. The checksum is what
+     * catches that.
      */
     fun validateMnemonic(context: Context, mnemonic: String): Boolean {
         return try {
             WalletCrypto.initialize(context)
-            // Try to derive a key - if it fails, mnemonic is invalid
+            MnemonicCode.INSTANCE.check(mnemonic.trim().split(Regex("\\s+")))
             WalletCrypto.deriveKeyFromMnemonic(mnemonic)
             true
         } catch (e: Exception) {
