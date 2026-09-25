@@ -31,6 +31,17 @@ public enum Fees {
     /// build a transaction at all is not.
     static let fallbackPrice = Decimal(string: "0.005")!
 
+    /// The most this app will pay per unit of gas, whatever the node says.
+    ///
+    /// The price is read from whichever node the app talks to, unauthenticated,
+    /// and it multiplies every fee. A node misconfigured — or lying — at, say,
+    /// 5uerth would make a registration cost 15 ERTH, and the confirmation
+    /// would show that as though it were normal. Twenty times the validator's
+    /// price leaves room for an operator to raise it; a quote above this is
+    /// ignored and the fallback used, and the node's rejection names the real
+    /// figure if it was genuine.
+    static let maximumPrice = Decimal(string: "0.1")!
+
     private static let lock = NSLock()
     private static var cached: Decimal?
 
@@ -93,7 +104,9 @@ public enum Fees {
             return nil
         }
         let digits = raw.prefix { $0.isNumber || $0 == "." }
-        guard !digits.isEmpty, let price = Decimal(string: String(digits)) else { return nil }
+        guard !digits.isEmpty, let price = Decimal(string: String(digits)),
+              price <= maximumPrice
+        else { return nil }
         return price
     }
 }
