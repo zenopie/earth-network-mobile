@@ -37,6 +37,17 @@ object Fees {
      */
     private val FALLBACK_PRICE: BigDecimal = BigDecimal("0.005")
 
+    /**
+     * The most the app will accept from the node, 20x the validator's price.
+     *
+     * The node's answer sets what every transaction pays, and the sheet shows
+     * the fee but nobody checks it against a price they cannot see. Without a
+     * ceiling a misconfigured or hostile endpoint could quote a price that
+     * spends a balance on one fee. Above this the fallback is used instead:
+     * the worst case becomes a rejected transaction, which is recoverable.
+     */
+    private val MAX_PRICE: BigDecimal = BigDecimal("0.1")
+
     @Volatile
     private var cached: BigDecimal? = null
 
@@ -80,7 +91,7 @@ object Fees {
      * denom appended, so the denom has to come off before parsing. Only uerth
      * is handled: this app pays fees in nothing else, and a node quoting a
      * different denom is a misconfiguration the fallback handles better than a
-     * silently wrong number would.
+     * silently wrong number would. So is one above [MAX_PRICE].
      */
     private fun fetch(): BigDecimal? = runCatching {
         val (code, body) = EarthRest.get("/cosmos/base/node/v1beta1/config")
@@ -88,6 +99,6 @@ object Fees {
         val raw = JSONObject(body).optString("minimum_gas_price").ifEmpty { return null }
         val digits = raw.takeWhile { it.isDigit() || it == '.' }
         if (digits.isEmpty() || !raw.endsWith("uerth")) return null
-        BigDecimal(digits)
+        BigDecimal(digits).takeIf { it <= MAX_PRICE }
     }.getOrNull()
 }
