@@ -189,14 +189,24 @@ public struct WalletStore: Sendable {
         return SymmetricKey(data: stretched)
     }
 
+    /// Replace the vault in one Keychain operation.
+    ///
+    /// Updated in place rather than deleted and re-added. The delete-then-add
+    /// this used to be had a window with no vault at all, and an add that
+    /// failed in it — no passcode any more, a full Keychain, the app killed —
+    /// left the phrase gone with nothing to unlock. `SecItemUpdate` either
+    /// swaps the data or leaves the old item untouched.
     private func store(_ payload: Data) throws {
-        SecItemDelete(Self.baseQuery as CFDictionary)
-
-        var attributes = Self.baseQuery
-        attributes[kSecValueData as String] = payload
-        attributes[kSecAttrAccessible as String] = Self.accessibility
-
-        let status = SecItemAdd(attributes as CFDictionary, nil)
+        let changes: [String: Any] = [
+            kSecValueData as String: payload,
+            kSecAttrAccessible as String: Self.accessibility,
+        ]
+        var status = SecItemUpdate(Self.baseQuery as CFDictionary, changes as CFDictionary)
+        if status == errSecItemNotFound {
+            var attributes = Self.baseQuery
+            attributes.merge(changes) { $1 }
+            status = SecItemAdd(attributes as CFDictionary, nil)
+        }
         switch status {
         case errSecSuccess:
             return
