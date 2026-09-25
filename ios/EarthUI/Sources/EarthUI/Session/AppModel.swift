@@ -427,6 +427,9 @@ public final class AppModel {
         let marker = "installed"
         guard !UserDefaults.standard.bool(forKey: marker) else { return }
         store.delete()
+        // The attempt count lives in the Keychain too, and has nothing left
+        // to protect once the vault is gone.
+        UnlockAttempts.recordSuccess()
         UserDefaults.standard.removeObject(forKey: "walletName")
         UserDefaults.standard.removeObject(forKey: "selectedWallet")
         UserDefaults.standard.set(true, forKey: marker)
