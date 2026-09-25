@@ -13,6 +13,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import network.erth.wallet.chain.Fees
 import network.erth.wallet.chain.EarthTx
+import network.erth.wallet.chain.TxUnconfirmedException
 import network.erth.wallet.wallet.services.EarthWallet
 import network.erth.wallet.wallet.services.SecureWalletManager
 import com.google.protobuf.Any as ProtoAny
@@ -108,6 +109,12 @@ class TxController : ViewModel() {
                 }
                 onDone?.invoke()
                 TxOutcome.Success(details.action, hash)
+            } catch (e: TxUnconfirmedException) {
+                // Still run onDone: it clears the form and refreshes, and
+                // leaving a filled-in send on screen invites sending it again
+                // while the first may yet land.
+                onDone?.invoke()
+                TxOutcome.Pending(details.action, e.txHash)
             } catch (e: Exception) {
                 TxOutcome.Failure(details.action, e)
             } finally {

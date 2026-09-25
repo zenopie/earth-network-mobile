@@ -22,6 +22,7 @@ import network.erth.wallet.Constants
 import network.erth.wallet.chain.Fees
 import network.erth.wallet.chain.Personhood
 import network.erth.wallet.chain.Bank
+import network.erth.wallet.chain.TxUnconfirmedException
 import network.erth.wallet.ui.ads.RewardedAds
 import network.erth.wallet.ui.compose.TxConfirmDetails
 import network.erth.wallet.ui.compose.TxConfirmSheet
@@ -214,7 +215,11 @@ class RegistrationActivity : ComponentActivity() {
                                     setResult(RESULT_OK, Intent().putExtra(EXTRA_TX_HASH, it))
                                     finish()
                                 }.onFailure { e ->
-                                    outcome = TxOutcome.Failure("Register", e)
+                                    outcome = if (e is TxUnconfirmedException) {
+                                        TxOutcome.Pending("Register", e.txHash)
+                                    } else {
+                                        TxOutcome.Failure("Register", e)
+                                    }
                                 }
                             }
                         },

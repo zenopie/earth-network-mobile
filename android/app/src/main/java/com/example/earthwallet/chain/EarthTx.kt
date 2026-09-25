@@ -114,9 +114,13 @@ object EarthTx {
 
     /**
      * Polls for a broadcast tx until it is committed in a block, then returns its
-     * hash (throwing if it executed with a non-zero code). Falls back to returning
-     * the hash if it hasn't appeared within the timeout. Runs on the caller's
-     * (IO) thread.
+     * hash (throwing if it executed with a non-zero code). Throws
+     * [TxUnconfirmedException] if it hasn't appeared within the timeout. Runs on
+     * the caller's (IO) thread.
+     *
+     * The timeout used to return the hash as if it had landed, so a transaction
+     * still in the mempool — or one that later failed in DeliverTx — was shown
+     * as a success. Not knowing is its own outcome.
      */
     private fun awaitCommit(txHash: String, attempts: Int = 20, delayMs: Long = 800): String {
         for (i in 0 until attempts) {
@@ -132,10 +136,18 @@ object EarthTx {
             // Not in a block yet — wait and retry.
             try { Thread.sleep(delayMs) } catch (e: InterruptedException) { Thread.currentThread().interrupt() }
         }
-        return txHash
+        throw TxUnconfirmedException(txHash)
     }
 
     /** Wraps a proto message as an Any with the given type URL. */
     fun anyOf(typeUrl: String, msg: com.google.protobuf.MessageLite): ProtoAny =
         ProtoAny.newBuilder().setTypeUrl(typeUrl).setValue(msg.toByteString()).build()
 }
+
+/**
+ * Accepted into the mempool (CheckTx passed) but not seen in a block before the
+ * wait ran out. It may still land, or fail — the outcome is unknown, and a
+ * retry could send it twice.
+ */
+class TxUnconfirmedException(val txHash: String) :
+    IOException("transaction $txHash was broadcast but not yet confirmed")
