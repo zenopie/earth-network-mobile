@@ -39,6 +39,20 @@ data class TxConfirmDetails(
     /** Optional, e.g. the amount being staked. */
     val amountLabel: String? = null,
     val amountValue: String? = null,
+    /**
+     * Who receives it, in full: a send's recipient, a delegation's validator.
+     * Never truncated — an address that differs only in the middle is exactly
+     * what a clipboard-swapping attack produces, and the confirmation is the
+     * last place to catch it.
+     */
+    val recipient: String? = null,
+    val recipientLabel: String = "To",
+    /**
+     * A swap's floor: the least the chain will pay out before rejecting it.
+     * Shown because it is the number actually signed — "You pay" alone says
+     * nothing about how much slippage the message allows.
+     */
+    val minReceived: String? = null,
 )
 
 /**
@@ -87,6 +101,18 @@ fun TxConfirmSheet(
 
         if (details.amountLabel != null && details.amountValue != null) {
             EarthDetailRow(details.amountLabel, details.amountValue)
+        }
+        if (details.minReceived != null) {
+            EarthDetailRow("Minimum received", details.minReceived)
+        }
+        if (details.recipient != null) {
+            Text(
+                text = details.recipientLabel,
+                style = EarthTypography.textMd,
+                color = EarthColors.Text.textTertiary,
+                modifier = Modifier.fillMaxWidth().padding(top = dimens.space8),
+            )
+            Box(Modifier.padding(vertical = dimens.space8)) { EarthCodeBlock(details.recipient) }
         }
         EarthDetailRow("Network fee", formatErth(details.feeUerth))
         EarthDetailRow("Balance", formatErth(details.balanceUerth))
