@@ -6,7 +6,7 @@ self-review — a **professional ZK/crypto audit is still required before it gua
 real value.**
 
 **Variants (workspace):** the shared logic (hash binding, expiry, the
-document-number‖DOB nullifier, and the address binding) lives in `../poa_core`; each binary differs only in the
+issuing-state‖document-number‖DOB nullifier, and the address binding) lives in `../poa_core`; each binary differs only in the
 SOD→DSC signature verify + DSC-leaf encoding, and all share the public interface
 `[current_date, address] → (nullifier, dsc_key)`:
 | circuit | DSC algorithm | gates | leaf |
@@ -34,15 +34,26 @@ Given a passport's DG1 + SOD, it proves in zero knowledge:
 3. those signed attributes are ECDSA-P256 signed by a Document Signer key,
 4. that DSC key is a Poseidon2-Merkle leaf under the public `registry_root`,
 5. the passport's MRZ expiry date is `>= current_date` (public input),
-and outputs `nullifier = Poseidon2(document number ‖ DOB)` — see finding #1 for
-why it is the document number and what that costs.
+and outputs `nullifier = Poseidon2(issuing state ‖ document number ‖ check digit ‖ DOB ‖ optional data)`
+— see finding #1 for why it is the document number and what that costs.
 
 Trust reduces to: **the registry contains only genuine government DSC keys**
 (inherited ICAO PKI trust), the holder can't forge a DSC signature, and the
 chain pins `current_date` to ~today (see finding #7).
 
 ## Findings
-1. **Nullifier stability — REOPENED 2026-08-27, deliberately.** The nullifier is
+1. **Nullifier stability — REOPENED 2026-08-27, deliberately; widened 2026-09-25.**
+   Since v0.9.2 the preimage also carries the issuing state (DG1[7..10]), the
+   document number's check digit (DG1[58]) and the optional data field
+   (DG1[77..91]). Document numbers are unique only within a state, so two
+   people from different states with the same number and birth date used to
+   share a nullifier, and the second to register took over the first's
+   registration as a wallet switch. A number longer than nine characters puts
+   `<` in the check digit and continues in the optional data (ICAO 9303), and
+   used to be cut to its first nine. All of it is covered by the SOD hash. The
+   rest of this entry describes the document-number choice, which is unchanged.
+
+   The nullifier is
    now `Poseidon2(document number ‖ DOB)` over DG1[49..58] (MRZ line 2, chars
    0..8) and date of birth (DG1[62..68], YYMMDD). It was `Poseidon2(name ‖ DOB)`,
    which excluded the passport number precisely so that a renewed passport kept

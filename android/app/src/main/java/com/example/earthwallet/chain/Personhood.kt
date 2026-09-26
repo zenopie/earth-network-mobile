@@ -137,11 +137,15 @@ object Personhood {
      * 400324 gas against a 400000 limit — over, and precisely the case that
      * matters, since a new human's first transaction is always this one.
      *
-     * Generous rather than tuned: the fee is flat rather than gas x price, and
-     * the chain reports max_gas -1, so headroom costs nothing while an
-     * under-estimate burns the fee and the ad view that paid for it.
+     * Generous rather than tuned: an under-estimate burns the fee and the ad
+     * view that paid for it.
+     *
+     * 6M from v0.9.2, which raised the chain's proof charge to 3M and its
+     * certificate charge to 300k; with the account and store writes a
+     * registration is near 4M. The fee at the validator's price, 30,000 uerth,
+     * stays inside the 50,000 an ad pays out.
      */
-    const val REGISTER_GAS_LIMIT = 3_000_000L
+    const val REGISTER_GAS_LIMIT = 6_000_000L
 
     /**
      * Derived, not flat. At the validator's 0.005uerth this is 15,000 uerth —

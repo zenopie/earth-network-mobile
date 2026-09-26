@@ -24,6 +24,18 @@ global NAME_LEN: u32 = 39;
 global DOC_NUM_OFFSET: u32 = 49;
 global DOC_NUM_LEN: u32 = 9;
 global DOB_OFFSET: u32 = 62; // MRZ line 2, DOB YYMMDD (6 bytes)
+// MRZ line 1, chars 2..4: the issuing state or organisation.
+global ISSUER_OFFSET: u32 = 7;
+global ISSUER_LEN: u32 = 3;
+// MRZ line 2, char 9: the document number's check digit, and chars 28..41: the
+// optional data field. A document number longer than nine characters puts '<'
+// in the check digit and continues in the optional data (ICAO 9303), so the
+// two together carry whatever the nine-character field could not.
+global DOC_CHECK_OFFSET: u32 = 58;
+global OPTIONAL_OFFSET: u32 = 77;
+global OPTIONAL_LEN: u32 = 14;
+// Issuing state + document number + its check digit + DOB + optional data.
+global NULLIFIER_PREIMAGE_LEN: u32 = 33;
 global EXPIRY_OFFSET: u32 = 70; // MRZ line 2, expiry YYMMDD (6 bytes)
 
 pub fn bytes_to_fields<let N: u32>(b: [u8; N]) -> [Field; N] {
@@ -167,7 +179,8 @@ pub fn dsc_commitment<let N: u32>(tag: Field, pubkey: [u8; N]) -> Field {
 /// transaction. A prover therefore cannot sign with one key and name another.
 ///
 /// Also asserts the passport is unexpired against `current_date` and that the
-/// nullifier Poseidon2(name‖DOB) is renewal-stable.
+/// nullifier is Poseidon2 over the issuing state, the whole document number and
+/// the date of birth (see nullifier_preimage).
 pub fn finalize(
     dg1: [u8; DG1_MAX],
     dsc_key: Field,
@@ -209,28 +222,44 @@ pub fn finalize(
     // side of the trade: linking every wallet to a named person is a permanent
     // harm to every user, a duplicate registration is a rate-limited one.
     //
-    // TODO(nullifier-country): fold the issuing state into this preimage. The
-    // document number is unique only WITHIN an issuing country, but nothing here
-    // separates by country -- so two distinct people, different countries, same
-    // 9-char document number and same DOB, hash to the same nullifier. On chain
-    // that collision is not an error: a live-nullifier match is treated as a
-    // wallet switch (x/personhood msg_server_register.go), so the second person
-    // to register silently displaces the first person's registration onto their
-    // own wallet. Not attacker-targetable (the document number is signature-
-    // bound, so nobody can aim a collision), but an accidental collision costs a
-    // real human their personhood. The issuing state is three ASCII chars in the
-    // MRZ at DG1 offset 7..10, already covered by the SOD hash, so mixing it in
-    // is nearly free -- but it changes the nullifier format, so it lands with a
-    // verifying-key rotation, not as a hot patch. Widen `id` from 15 to 18 and
-    // prepend the issuing-state bytes; the chain's dedup key changes with it.
-    let mut id: [Field; 15] = [0; 15];
+    // The preimage also carries the issuing state, and everything a long
+    // document number spills into.
+    //
+    // A document number is unique only within the state that issued it. Without
+    // the state, two people from different countries with the same nine-char
+    // number and birth date got one nullifier, and the second to register
+    // silently took over the first's registration as a "wallet switch". And a
+    // number longer than nine characters was cut to its first nine, so two
+    // documents sharing that prefix collided the same way. Every byte added is
+    // already covered by the SOD hash, so none of it can be chosen.
+    let id = nullifier_preimage(dg1);
+    (Poseidon2::hash(id, NULLIFIER_PREIMAGE_LEN), dsc_key)
+}
+
+/// Issuing state ‖ document number ‖ check digit ‖ DOB ‖ optional data.
+fn nullifier_preimage(dg1: [u8; DG1_MAX]) -> [Field; NULLIFIER_PREIMAGE_LEN] {
+    let mut id: [Field; NULLIFIER_PREIMAGE_LEN] = [0; NULLIFIER_PREIMAGE_LEN];
+    let mut at = 0;
+    for i in 0..ISSUER_LEN {
+        id[at] = dg1[ISSUER_OFFSET + i] as Field;
+        at += 1;
+    }
     for i in 0..DOC_NUM_LEN {
-        id[i] = dg1[DOC_NUM_OFFSET + i] as Field;
+        id[at] = dg1[DOC_NUM_OFFSET + i] as Field;
+        at += 1;
     }
+    id[at] = dg1[DOC_CHECK_OFFSET] as Field;
+    at += 1;
     for i in 0..6 {
-        id[DOC_NUM_LEN + i] = dg1[DOB_OFFSET + i] as Field;
+        id[at] = dg1[DOB_OFFSET + i] as Field;
+        at += 1;
     }
-    (Poseidon2::hash(id, 15), dsc_key)
+    for i in 0..OPTIONAL_LEN {
+        id[at] = dg1[OPTIONAL_OFFSET + i] as Field;
+        at += 1;
+    }
+    assert(at == NULLIFIER_PREIMAGE_LEN);
+    id
 }
 
 // --- hash-binding tests ------------------------------------------------------
@@ -333,4 +362,48 @@ fn test_chain(
     let (ec, ec_len, dg1_off) = test_embed(sha256_var(dg1, DG1_LEN), DG1_HASH_PREFIX, dg1_offset);
     let (sa, sa_len, ec_off) = test_embed(sha256_var(ec, ec_len), MESSAGE_DIGEST_PREFIX, ec_offset);
     (dg1, ec, ec_len, dg1_off, sa, sa_len, ec_off)
+}
+
+// --- nullifier tests ---------------------------------------------------------
+
+fn nullifier_of(dg1: [u8; DG1_MAX]) -> Field {
+    Poseidon2::hash(nullifier_preimage(dg1), NULLIFIER_PREIMAGE_LEN)
+}
+
+fn sample_dg1() -> [u8; DG1_MAX] {
+    let mut dg1: [u8; DG1_MAX] = [0x3C; DG1_MAX]; // '<'
+    // Issuing state UTO, document number L898902C3, DOB 740812.
+    let state = [0x55, 0x54, 0x4F];
+    for i in 0..3 {
+        dg1[ISSUER_OFFSET + i] = state[i];
+    }
+    let doc = [0x4C, 0x38, 0x39, 0x38, 0x39, 0x30, 0x32, 0x43, 0x33];
+    for i in 0..9 {
+        dg1[DOC_NUM_OFFSET + i] = doc[i];
+    }
+    let dob = [0x37, 0x34, 0x30, 0x38, 0x31, 0x32];
+    for i in 0..6 {
+        dg1[DOB_OFFSET + i] = dob[i];
+    }
+    dg1
+}
+
+#[test]
+fn nullifier_separates_issuing_states() {
+    let a = sample_dg1();
+    let mut b = a;
+    b[ISSUER_OFFSET] = 0x44; // DTO: same number and birth date, another state
+    assert(nullifier_of(a) != nullifier_of(b));
+}
+
+#[test]
+fn nullifier_covers_a_long_document_number() {
+    // Two twelve-character numbers sharing their first nine: the check digit
+    // is '<' and the rest continues in the optional data.
+    let mut a = sample_dg1();
+    a[DOC_CHECK_OFFSET] = 0x3C;
+    a[OPTIONAL_OFFSET] = 0x31;
+    let mut b = a;
+    b[OPTIONAL_OFFSET] = 0x32;
+    assert(nullifier_of(a) != nullifier_of(b));
 }
