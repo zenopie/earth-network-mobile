@@ -51,13 +51,15 @@ public enum Personhood {
     /// is always this one.
     ///
     /// Generous rather than tuned. Note that headroom is NOT free: the fee is
-    /// `ceil(gas x minimum-gas-prices)`, so this limit costs 15,000 uerth at
-    /// 0.005uerth whether or not the gas is used. The flat "2000" that used to
+    /// `ceil(gas x minimum-gas-prices)`, so this limit costs 30,000 uerth at
+    /// 0.005uerth whether or not the gas is used. 6M from v0.9.2, which raised
+    /// the chain's proof charge to 3M and its certificate charge to 300k; a
+    /// registration is near 4M, and 30,000 stays inside the 50,000 an ad pays. The flat "2000" that used to
     /// sit here was the fee for 400,000 gas, and every registration was
     /// rejected with "insufficient fees; got: 2000uerth required: 15000uerth".
     /// An under-estimate still burns both the fee and the ad view that paid for
     /// it, so the headroom stays — but it is a priced decision, not a free one.
-    public static let registerGasLimit: UInt64 = 3_000_000
+    public static let registerGasLimit: UInt64 = 6_000_000
     public static var registerFeeUerth: String { Fees.forGas(registerGasLimit) }
 }
 
