@@ -11,6 +11,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import android.view.WindowManager
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Modifier
@@ -22,6 +23,7 @@ import network.erth.wallet.Constants
 import network.erth.wallet.chain.Fees
 import network.erth.wallet.chain.Personhood
 import network.erth.wallet.chain.Bank
+import network.erth.wallet.chain.TxUnconfirmedException
 import network.erth.wallet.ui.ads.RewardedAds
 import network.erth.wallet.ui.compose.TxConfirmDetails
 import network.erth.wallet.ui.compose.TxConfirmSheet
@@ -65,6 +67,11 @@ class RegistrationActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // The whole activity, unlike the wallet's per-screen SecureScreen: every
+        // step here shows passport data — the MRZ scan, the chip's name, date of
+        // birth and document number — so there is nothing in it worth a
+        // screenshot and a recents card of it is a copy of the passport.
+        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         enableEdgeToEdge()
         nfcAdapter = NfcAdapter.getDefaultAdapter(this)
 
@@ -214,7 +221,11 @@ class RegistrationActivity : ComponentActivity() {
                                     setResult(RESULT_OK, Intent().putExtra(EXTRA_TX_HASH, it))
                                     finish()
                                 }.onFailure { e ->
-                                    outcome = TxOutcome.Failure("Register", e)
+                                    outcome = if (e is TxUnconfirmedException) {
+                                        TxOutcome.Pending("Register", e.txHash)
+                                    } else {
+                                        TxOutcome.Failure("Register", e)
+                                    }
                                 }
                             }
                         },

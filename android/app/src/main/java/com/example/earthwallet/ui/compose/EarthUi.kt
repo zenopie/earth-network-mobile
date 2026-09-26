@@ -18,6 +18,12 @@ import androidx.compose.material3.Text
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import android.text.InputType
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.platform.InterceptPlatformTextInput
+import androidx.compose.ui.platform.PlatformTextInputMethodRequest
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
@@ -350,6 +356,39 @@ fun doneKeyboard(
         autoCorrectEnabled = autoCorrect,
         capitalization = capitalization,
     ) to KeyboardActions(onDone = { focus.clearFocus() })
+}
+
+/**
+ * A keyboard that neither learns nor suggests, for the recovery phrase.
+ *
+ * Compose's KeyboardOptions cannot reach IME_FLAG_NO_PERSONALIZED_LEARNING,
+ * and autoCorrectEnabled = false only drops the autocorrect flag — the
+ * keyboard still suggests, and still adds every word it sees to its
+ * personal dictionary, where the phrase outlives the wallet. So the request
+ * is intercepted on its way to the IME and the editor info rewritten: a
+ * visible-password field with no suggestions and no learning, which is the
+ * combination keyboards treat as incognito.
+ */
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+fun IncognitoKeyboard(content: @Composable () -> Unit) {
+    InterceptPlatformTextInput(
+        interceptor = { request, next ->
+            val incognito = object : PlatformTextInputMethodRequest {
+                override fun createInputConnection(outAttributes: EditorInfo): InputConnection {
+                    val connection = request.createInputConnection(outAttributes)
+                    outAttributes.inputType = InputType.TYPE_CLASS_TEXT or
+                        InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD or
+                        InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                    outAttributes.imeOptions = outAttributes.imeOptions or
+                        EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
+                    return connection
+                }
+            }
+            next.startInputMethod(incognito)
+        },
+        content = content,
+    )
 }
 
 /**

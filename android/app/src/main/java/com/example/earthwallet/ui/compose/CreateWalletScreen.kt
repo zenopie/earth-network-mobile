@@ -21,7 +21,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.theme.EarthTheme
@@ -206,13 +209,20 @@ fun ImportWalletScreen(
         Spacer(Modifier.height(dimens.space16))
         EarthLabel("Recovery phrase")
         Spacer(Modifier.height(dimens.space8))
-        EarthTextField(
-            value = phrase,
-            onValueChange = { phrase = it },
-            modifier = Modifier.fillMaxWidth(),
-            error = error,
-            placeholder = { Text("word word word…") },
-        )
+        IncognitoKeyboard {
+            EarthTextField(
+                value = phrase,
+                onValueChange = { phrase = it },
+                modifier = Modifier.fillMaxWidth(),
+                error = error,
+                placeholder = { Text("word word word…") },
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Password,
+                    autoCorrectEnabled = false,
+                    capitalization = KeyboardCapitalization.None,
+                ),
+            )
+        }
 
         Spacer(Modifier.height(dimens.space16))
         EarthLabel("Name")

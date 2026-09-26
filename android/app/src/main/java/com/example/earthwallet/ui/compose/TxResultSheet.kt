@@ -35,6 +35,9 @@ sealed interface TxOutcome {
 
     data class Failure(val action: String, val error: Throwable?) : TxOutcome
 
+    /** Broadcast, but not seen in a block before the wait ran out. */
+    data class Pending(val action: String, val txHash: String) : TxOutcome
+
     data class Message(val title: String, val detail: String) : TxOutcome
 }
 
@@ -65,6 +68,14 @@ fun TxResultSheet(outcome: TxOutcome, onDismiss: () -> Unit) {
                 Quint(
                     "✕", EarthColors.Utility.ErrorRed.utilityError50, EarthColors.Utility.ErrorRed.utilityError700,
                     "${outcome.action} failed", describe(outcome.error),
+                )
+            is TxOutcome.Pending ->
+                Quint(
+                    "…", EarthColors.Utility.Gray.utilityGray100, EarthColors.Utility.Gray.utilityGray700,
+                    "${outcome.action} not confirmed yet",
+                    "It was sent but has not appeared in a block yet, so it may " +
+                        "still succeed or fail. Check Activity before trying again.\n\n" +
+                        "Transaction hash\n${outcome.txHash}",
                 )
             is TxOutcome.Message ->
                 Quint(

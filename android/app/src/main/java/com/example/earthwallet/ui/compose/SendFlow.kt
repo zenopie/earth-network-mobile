@@ -92,6 +92,7 @@ fun SendFlow(
                     balanceUerth = state.balanceUerth,
                     amountLabel = "Amount",
                     amountValue = "$amount ${selected.symbol}",
+                    recipient = recipient,
                 ),
                 onSuccess = {
                     recipient = ""

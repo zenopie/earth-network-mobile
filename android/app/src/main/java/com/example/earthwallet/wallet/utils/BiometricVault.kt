@@ -2,6 +2,7 @@ package network.erth.wallet.wallet.utils
 
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import androidx.biometric.BiometricManager
@@ -159,10 +160,18 @@ object BiometricVault {
             Cipher.getInstance(TRANSFORMATION).apply {
                 init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, Base64.decode(iv, Base64.NO_WRAP)))
             }
-        } catch (e: Exception) {
-            // Thrown when a new biometric was enrolled since: the key is gone
-            // and the secret with it, which is the intended outcome.
+        } catch (e: KeyPermanentlyInvalidatedException) {
+            // A new biometric was enrolled since: the key is gone and the
+            // secret with it, which is the intended outcome.
             forget(activity)
+            onResult(null)
+            return
+        } catch (e: Exception) {
+            // Anything else — a Keystore daemon hiccup, a locked secure element
+            // straight after boot — says nothing about the key. It used to be
+            // treated like an enrolment change and wiped biometric unlock, so
+            // one transient error sent the user to their PIN for good. Refuse
+            // this attempt and keep the slot.
             onResult(null)
             return
         }

@@ -512,6 +512,8 @@ private fun EarthContent(
                         amountLabel = "You pay",
                         amountValue = "${formatUerth(amountIn.toLong())} " +
                             denomIn.removePrefix("u").uppercase(),
+                        minReceived = "${formatUerth(minOut.toLong())} " +
+                            denomOut.removePrefix("u").uppercase(),
                     ),
                     onSuccess = {
                         onRefresh()
@@ -777,6 +779,8 @@ private fun EarthContent(
                         balanceUerth = loaded.balanceUerth,
                         amountLabel = "Amount",
                         amountValue = "${formatUerth(amount)} ERTH",
+                        recipient = validator,
+                        recipientLabel = if (stake) "Validator" else "From validator",
                     ),
                     onSuccess = onRefresh,
                     build = if (stake) {
