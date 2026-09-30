@@ -17,6 +17,4 @@ object EarthWallet {
     @JvmStatic
     fun address(key: ECKey): String = WalletCrypto.getAddress(key)
 
-    @JvmStatic
-    fun addressFromMnemonic(mnemonic: String): String = WalletCrypto.getAddressFromMnemonic(mnemonic)
 }

@@ -1,6 +1,5 @@
 package network.erth.wallet.ui.compose
 
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable

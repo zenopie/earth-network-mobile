@@ -103,9 +103,6 @@ object Dex {
         }
     }
 
-    /** Pool that pairs ERTH with the given spoke token denom, if any. */
-    fun poolForToken(tokenDenom: String): Pool? = pools().find { it.tokenDenom == tokenDenom }
-
     /** Swap fee as a percent string (e.g. "0.3"). */
     fun swapFeePercent(): String {
         val (code, body) = EarthRest.get("/earth/dex/v1/params")

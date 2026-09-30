@@ -17,17 +17,5 @@ import androidx.compose.runtime.staticCompositionLocalOf
 val EarthColors: EarthColorsInternal
     @Composable get() = LocalEarthColors.current
 
-val EarthLightColors: EarthColorsInternal
-    @Composable get() = LocalLightEarthColors.current
-
-val EarthDarkColors: EarthColorsInternal
-    @Composable get() = LocalDarkEarthColors.current
-
 @Suppress("CompositionLocalAllowlist")
 internal val LocalEarthColors = staticCompositionLocalOf<EarthColorsInternal> { error("no colors specified") }
-
-@Suppress("CompositionLocalAllowlist")
-internal val LocalLightEarthColors = staticCompositionLocalOf { LightEarthColorsInternal }
-
-@Suppress("CompositionLocalAllowlist")
-internal val LocalDarkEarthColors = staticCompositionLocalOf { DarkEarthColorsInternal }

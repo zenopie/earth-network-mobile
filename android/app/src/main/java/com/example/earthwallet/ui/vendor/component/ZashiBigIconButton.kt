@@ -11,9 +11,7 @@ package network.erth.wallet.ui.vendor.component
 
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -30,21 +28,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import network.erth.wallet.R
-import network.erth.wallet.ui.vendor.newcomponent.PreviewScreens
-import network.erth.wallet.ui.vendor.theme.ZcashTheme
 import network.erth.wallet.ui.vendor.theme.colors.EarthColors
 import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
 import network.erth.wallet.ui.vendor.util.StringResource
 import network.erth.wallet.ui.vendor.util.getValue
 import network.erth.wallet.ui.vendor.util.orDark
-import network.erth.wallet.ui.vendor.util.stringRes
 
 @Suppress("MagicNumber")
 @Composable
@@ -55,19 +49,6 @@ fun EarthBigIconButton(
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val shadowElevation by animateDpAsState(if (isPressed) 0.dp else (2.dp orDark 4.dp))
-
-    val darkBgGradient =
-        Brush.verticalGradient(
-            0f to EarthColors.Surfaces.strokeSecondary,
-            .66f to EarthColors.Surfaces.strokeSecondary.copy(alpha = 0.5f),
-            1f to EarthColors.Surfaces.strokeSecondary.copy(alpha = 0.25f),
-        )
-
-    val darkBorderGradient =
-        Brush.verticalGradient(
-            0f to EarthColors.Surfaces.strokePrimary,
-            1f to EarthColors.Surfaces.strokePrimary.copy(alpha = 0f),
-        )
 
     // Earth change: filled as a primary, not outlined.
     //
@@ -157,17 +138,3 @@ data class BigIconButtonState(
      */
     val tint: Boolean = true,
 )
-
-@PreviewScreens
-@Composable
-private fun Preview() =
-    ZcashTheme {
-        EarthBigIconButton(
-            state =
-                BigIconButtonState(
-                    text = stringRes("Text"),
-                    icon = R.drawable.ic_reveal,
-                    onClick = {}
-                )
-        )
-    }

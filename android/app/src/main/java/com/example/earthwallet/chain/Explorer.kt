@@ -221,13 +221,6 @@ object Explorer {
         return out
     }
 
-    /** Chain-wide recent transactions. */
-    fun recentTxs(limit: Int = 20): List<Tx> = searchTxs("tx.height>0", limit)
-
-    /** Transactions included in a single block. */
-    fun txsAtHeight(height: Long, limit: Int = 50): List<Tx> =
-        searchTxs("tx.height=$height", limit)
-
     /**
      * Transactions involving an address — both those it signed and those that
      * paid it. A `message.sender` query alone misses incoming transfers, since
@@ -239,13 +232,6 @@ object Explorer {
         val byHash = LinkedHashMap<String, Tx>()
         for (tx in sent + received) byHash[tx.hash] = tx
         return byHash.values.sortedByDescending { it.height }.take(limit)
-    }
-
-    /** A single transaction by hash, or null if not found / not indexed. */
-    fun txByHash(hash: String): Tx? {
-        val json = getJson("/cosmos/tx/v1beta1/txs/${hash.uppercase()}") ?: return null
-        val res = json.optJSONObject("tx_response") ?: return null
-        return toTx(res, json.optJSONObject("tx"))
     }
 
     private fun toTx(res: JSONObject, body: JSONObject?): Tx {
@@ -401,26 +387,6 @@ object Explorer {
     }
 
     // --- search ---
-
-    enum class SearchKind { BLOCK, TX, ACCOUNT }
-
-    data class Search(val kind: SearchKind, val value: String)
-
-    /**
-     * Classifies a search term so the UI knows where to route it: heights are
-     * digits, tx hashes are 64 hex chars, everything else bech32.
-     */
-    fun classifySearch(term: String): Search? {
-        val t = term.trim()
-        return when {
-            t.isEmpty() -> null
-            t.all { it.isDigit() } -> Search(SearchKind.BLOCK, t)
-            t.length == 64 && t.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' } ->
-                Search(SearchKind.TX, t.uppercase())
-            t.startsWith(Constants.EARTH_PREFIX) && t.length > 10 -> Search(SearchKind.ACCOUNT, t)
-            else -> null
-        }
-    }
 
     // --- helpers ---
 

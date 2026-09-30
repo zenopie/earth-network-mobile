@@ -3,14 +3,9 @@ package network.erth.wallet.wallet.services
 import org.bitcoinj.crypto.MnemonicCode
 import android.content.Context
 import android.content.SharedPreferences
-import android.os.Build
 import android.text.TextUtils
-import android.util.Base64
 import android.util.Log
 import network.erth.wallet.wallet.utils.WalletCrypto
-import network.erth.wallet.wallet.utils.SoftwareEncryption
-import network.erth.wallet.wallet.utils.UnlockMethod
-import network.erth.wallet.wallet.utils.WalletStorageVersion
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -88,75 +83,6 @@ object SecureWalletManager {
         // Ensure WalletCrypto is initialized before any mnemonic operations
         WalletCrypto.initialize(context)
         return executeWithMnemonic(context, null, operation)
-    }
-
-    /**
-     * Execute an operation with secure mnemonic from active session.
-     * More secure version that uses char arrays instead of Strings.
-     *
-     * @param context Android context
-     * @param operation The operation to execute with the mnemonic char array
-     * @return The result of the operation
-     * @throws Exception If no active session or mnemonic retrieval fails
-     */
-    @Throws(Exception::class)
-    fun <T> executeWithSecureMnemonic(context: Context, operation: SecureMnemonicOperation<T>): T {
-        // Ensure WalletCrypto is initialized before any mnemonic operations
-        WalletCrypto.initialize(context)
-        var mnemonicChars: CharArray? = null
-        return try {
-
-            // Fetch mnemonic from active session
-            val mnemonic = fetchMnemonicFromSession(context)
-            if (TextUtils.isEmpty(mnemonic)) {
-                throw IllegalStateException("No wallet mnemonic found - wallet may not be initialized")
-            }
-
-            mnemonicChars = mnemonic.toCharArray()
-            // Clear the String immediately
-            securelyClearString(mnemonic)
-
-            // Execute the operation with the char array
-            operation.execute(mnemonicChars)
-
-        } finally {
-            // Securely zero the char array regardless of success or failure
-            mnemonicChars?.let { chars ->
-                chars.fill('\u0000')
-                mnemonicChars = null
-            }
-        }
-    }
-
-    /**
-     * Execute a suspend operation with mnemonic from active session.
-     * Allows calling suspend functions within the operation.
-     *
-     * @param context Android context
-     * @param operation The suspend operation to execute with the mnemonic
-     * @return The result of the operation
-     * @throws Exception If no active session or mnemonic retrieval fails
-     */
-    @Throws(Exception::class)
-    suspend fun <T> executeWithSuspendMnemonic(context: Context, operation: SuspendMnemonicOperation<T>): T {
-        // Ensure WalletCrypto is initialized before any mnemonic operations
-        WalletCrypto.initialize(context)
-        var mnemonic: String? = null
-        return try {
-            // Fetch mnemonic from active session
-            mnemonic = fetchMnemonicFromSession(context)
-
-            if (TextUtils.isEmpty(mnemonic)) {
-                throw IllegalStateException("No wallet mnemonic found - wallet may not be initialized")
-            }
-
-            // Execute the suspend operation
-            operation.execute(mnemonic!!)
-
-        } finally {
-            // Securely clear the mnemonic String
-            mnemonic?.let { securelyClearString(it) }
-        }
     }
 
     /**
@@ -309,32 +235,6 @@ object SecureWalletManager {
     fun getWalletAddress(context: Context, securePrefs: SharedPreferences): String? {
         return executeWithMnemonic(context, securePrefs) { mnemonic ->
             WalletCrypto.getAddressFromMnemonic(mnemonic)
-        }
-    }
-
-    /**
-     * Get security status message for UI display.
-     *
-     * Reports the unlock method, not just "encrypted". Every method here runs
-     * the same AES-GCM, so saying so told the user nothing about the thing that
-     * actually decides how strong their wallet is — whether the key is derived
-     * from four digits or from 32 random bytes held in the Keystore. A PIN-only
-     * wallet is brute-forceable offline in minutes (see SoftwareEncryption), and
-     * that is worth saying where someone can act on it.
-     */
-    @Throws(Exception::class)
-    fun getSecurityStatusMessage(context: Context): String {
-        if (!SoftwareEncryption.isAvailable()) {
-            return "⚠️ Insecure: encryption is not available on this device"
-        }
-        return when (UnlockMethod.current(context)) {
-            UnlockMethod.BOTH ->
-                "🔐 PIN + biometric: unlocked by both, and neither alone is enough"
-            UnlockMethod.BIOMETRIC ->
-                "🔐 Biometric: the key is held in this device's secure hardware"
-            UnlockMethod.PIN ->
-                "⚠️ PIN only: a four-digit PIN is all that protects this wallet. " +
-                    "Add biometric unlock in Settings to hold the key in secure hardware."
         }
     }
 
@@ -811,57 +711,5 @@ object SecureWalletManager {
         }
     }
 
-    /**
-     * Create session-based preferences
-     */
-    @Throws(Exception::class)
-    private fun createSessionPrefs(context: Context): SharedPreferences {
-        if (!SessionManager.isSessionActive()) {
-            throw IllegalStateException("No active session - call startSession() first")
-        }
-        return SessionManager.createSessionPreferences(context)
-    }
 
-
-    /**
-     * Get wallet storage version information (for debugging/admin purposes)
-     */
-    @Throws(Exception::class)
-    fun getStorageVersionInfo(context: Context): JSONObject {
-        return try {
-            if (!SessionManager.isSessionActive()) {
-                // Read encrypted storage to check version without decrypting
-                val softwarePrefs = context.getSharedPreferences(PREF_FILE + "_software", Context.MODE_PRIVATE)
-                val encryptedWalletsJson = softwarePrefs.getString("wallets_encrypted", null)
-
-                JSONObject().apply {
-                    put("session_active", false)
-                    put("has_encrypted_storage", encryptedWalletsJson != null)
-                    put("current_version", WalletStorageVersion.CURRENT_VERSION)
-                    put("min_supported_version", WalletStorageVersion.MIN_SUPPORTED_VERSION)
-                    put("storage_version", "unknown - session required to decrypt")
-                }
-            } else {
-                // Get version from active session
-                val sessionPrefs = SessionManager.createSessionPreferences(context)
-                val walletsJson = sessionPrefs.getString("wallets", "[]") ?: "[]"
-
-                // This will be versioned storage format since SessionManager handles migration
-                JSONObject().apply {
-                    put("session_active", true)
-                    put("current_version", WalletStorageVersion.CURRENT_VERSION)
-                    put("min_supported_version", WalletStorageVersion.MIN_SUPPORTED_VERSION)
-                    put("storage_version", WalletStorageVersion.CURRENT_VERSION) // Always current in session
-                    put("wallet_count", JSONArray(walletsJson).length())
-                    put("needs_migration", false) // Already migrated in session
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to get storage version info", e)
-            JSONObject().apply {
-                put("error", e.message)
-                put("current_version", WalletStorageVersion.CURRENT_VERSION)
-            }
-        }
-    }
 }

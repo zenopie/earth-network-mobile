@@ -37,13 +37,3 @@ fun RowScope.Spacer(weight: Float) {
 fun RowScope.Spacer(width: Dp) {
     Spacer(Modifier.width(width))
 }
-
-@Composable
-fun HorizontalSpacer(width: Dp) {
-    Spacer(Modifier.width(width))
-}
-
-@Composable
-fun VerticalSpacer(height: Dp) {
-    Spacer(Modifier.height(height))
-}

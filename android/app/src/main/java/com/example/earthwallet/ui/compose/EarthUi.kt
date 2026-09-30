@@ -3,9 +3,6 @@ package network.erth.wallet.ui.compose
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -101,75 +98,6 @@ fun EarthCodeBlock(text: String, modifier: Modifier = Modifier) {
                 )
                 .padding(dimens.space12),
         )
-    }
-}
-
-/** Transaction and registration state, as colour *and* word. */
-enum class EarthStatus { Success, Pending, Failed, Neutral }
-
-@Composable
-fun EarthStatusPill(status: EarthStatus, text: String, modifier: Modifier = Modifier) {
-    val dimens = EarthTheme.dimens
-    val (bg, fg) = when (status) {
-        EarthStatus.Success ->
-            EarthColors.Utility.SuccessGreen.utilitySuccess50 to
-                EarthColors.Utility.SuccessGreen.utilitySuccess700
-        EarthStatus.Pending ->
-            EarthColors.Utility.WarningYellow.utilityOrange50 to
-                EarthColors.Utility.WarningYellow.utilityOrange700
-        EarthStatus.Failed ->
-            EarthColors.Utility.ErrorRed.utilityError50 to
-                EarthColors.Utility.ErrorRed.utilityError700
-        EarthStatus.Neutral ->
-            EarthColors.Utility.Gray.utilityGray100 to EarthColors.Utility.Gray.utilityGray700
-    }
-    Box(
-        modifier
-            .background(bg, RoundedCornerShape(dimens.radiusPill))
-            .padding(horizontal = dimens.space12, vertical = dimens.space4),
-    ) {
-        Text(text = text, style = EarthTypography.textSm.copy(color = fg))
-    }
-}
-
-/**
- * A titled, scrolling screen.
- *
- * Their EarthSmallTopAppBar expects their navigation and scaffold plumbing, so
- * this is the same idea over the vendored tokens: a title, and a column that
- * scrolls under it.
- */
-@Composable
-fun EarthScaffold(
-    title: String,
-    modifier: Modifier = Modifier,
-    scrollable: Boolean = true,
-    content: @Composable () -> Unit,
-) {
-    val dimens = EarthTheme.dimens
-    Column(
-        modifier
-            .fillMaxSize()
-            .background(EarthColors.Surfaces.bgPrimary),
-    ) {
-        Text(
-            text = title,
-            style = EarthTypography.header5.copy(color = EarthColors.Text.textPrimary),
-            modifier = Modifier.padding(horizontal = dimens.gutter, vertical = dimens.space16),
-        )
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .then(
-                    if (scrollable) {
-                        Modifier.verticalScroll(rememberScrollState())
-                    } else {
-                        Modifier
-                    },
-                )
-                .padding(horizontal = dimens.gutter)
-                .padding(bottom = dimens.space32),
-        ) { content() }
     }
 }
 

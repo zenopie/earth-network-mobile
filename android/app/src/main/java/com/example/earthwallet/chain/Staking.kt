@@ -3,8 +3,6 @@ package network.erth.wallet.chain
 import com.google.protobuf.Any as ProtoAny
 import cosmos.base.v1beta1.CoinOuterClass
 import cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward
-import cosmos.staking.v1beta1.MsgBeginRedelegate
-import cosmos.staking.v1beta1.MsgCancelUnbondingDelegation
 import cosmos.staking.v1beta1.MsgDelegate
 import cosmos.staking.v1beta1.MsgUndelegate
 import network.erth.wallet.Constants
@@ -175,42 +173,6 @@ object Staking {
             "/cosmos.staking.v1beta1.MsgUndelegate",
             MsgUndelegate.newBuilder()
                 .setDelegatorAddress(delegator).setValidatorAddress(validator).setAmount(uerth(amountUerth))
-                .build()
-        )
-
-    /**
-     * Move stake between validators without unbonding — it keeps earning, with no
-     * 21-day gap. The chain refuses to redelegate stake that is already in flight,
-     * and caps concurrent entries between any validator pair.
-     */
-    fun msgBeginRedelegate(delegator: String, src: String, dst: String, amountUerth: String): ProtoAny =
-        EarthTx.anyOf(
-            "/cosmos.staking.v1beta1.MsgBeginRedelegate",
-            MsgBeginRedelegate.newBuilder()
-                .setDelegatorAddress(delegator)
-                .setValidatorSrcAddress(src)
-                .setValidatorDstAddress(dst)
-                .setAmount(uerth(amountUerth))
-                .build()
-        )
-
-    /**
-     * Cancel an in-progress unbonding, returning the stake to the same validator.
-     * Partial cancels are allowed; the remainder keeps its original schedule.
-     */
-    fun msgCancelUnbonding(
-        delegator: String,
-        validator: String,
-        amountUerth: String,
-        creationHeight: Long,
-    ): ProtoAny =
-        EarthTx.anyOf(
-            "/cosmos.staking.v1beta1.MsgCancelUnbondingDelegation",
-            MsgCancelUnbondingDelegation.newBuilder()
-                .setDelegatorAddress(delegator)
-                .setValidatorAddress(validator)
-                .setAmount(uerth(amountUerth))
-                .setCreationHeight(creationHeight)
                 .build()
         )
 

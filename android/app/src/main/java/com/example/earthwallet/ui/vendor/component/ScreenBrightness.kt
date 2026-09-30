@@ -39,9 +39,3 @@ fun BrightenScreen() {
         onDispose { screenBrightness.restoreBrightness() }
     }
 }
-
-@Composable
-fun RestoreScreenBrightness() {
-    val screenBrightness = LocalScreenBrightness.current
-    screenBrightness.restoreBrightness()
-}

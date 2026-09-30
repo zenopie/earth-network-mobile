@@ -27,7 +27,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -44,13 +43,10 @@ import com.valentinilk.shimmer.shimmer
 import network.erth.wallet.ui.vendor.component.ShimmerRectangle
 import network.erth.wallet.ui.vendor.component.rememberEarthShimmer
 import network.erth.wallet.ui.vendor.component.EarthButton
-import network.erth.wallet.ui.vendor.component.EarthIconButton
 import network.erth.wallet.ui.vendor.component.EarthTextField
-import network.erth.wallet.ui.vendor.component.IconButtonState
 import network.erth.wallet.ui.vendor.theme.colors.EarthColors
 import network.erth.wallet.ui.vendor.theme.dimensions.EarthDimensions
 import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
-import network.erth.wallet.ui.vendor.util.stringRes
 
 /**
  * Swap, against the chain's pools.

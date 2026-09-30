@@ -74,10 +74,6 @@ class WalletsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun discardDraft() {
-        _draftMnemonic.value = null
-    }
-
     /**
      * Store the draft under [name] and switch to it.
      *

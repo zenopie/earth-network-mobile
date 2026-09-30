@@ -15,10 +15,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -45,8 +43,6 @@ import network.erth.wallet.ui.vendor.component.ButtonStyle.DESTRUCTIVE2
 import network.erth.wallet.ui.vendor.component.ButtonStyle.PRIMARY
 import network.erth.wallet.ui.vendor.component.ButtonStyle.SECONDARY
 import network.erth.wallet.ui.vendor.component.ButtonStyle.TERTIARY
-import network.erth.wallet.ui.vendor.newcomponent.PreviewScreens
-import network.erth.wallet.ui.vendor.theme.ZcashTheme
 import network.erth.wallet.ui.vendor.theme.colors.EarthColors
 import network.erth.wallet.ui.vendor.theme.colors.EarthColorsInternal
 import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
@@ -369,74 +365,4 @@ fun EarthButtonColors.toButtonColors() =
 val LocalEarthButtonColors =
     compositionLocalOf<EarthButtonColors?> {
         null
-    }
-
-@PreviewScreens
-@Composable
-private fun PrimaryPreview() =
-    ZcashTheme {
-        BlankSurface {
-            EarthButton(
-                modifier = Modifier.fillMaxWidth(),
-                text = "Primary",
-                onClick = {},
-            )
-        }
-    }
-
-@PreviewScreens
-@Composable
-private fun PrimaryWithIconPreview() =
-    ZcashTheme {
-        BlankSurface {
-            EarthButton(
-                modifier = Modifier.fillMaxWidth(),
-                text = "Primary",
-                icon = android.R.drawable.ic_secure,
-                onClick = {},
-            )
-        }
-    }
-
-@PreviewScreens
-@Composable
-private fun TertiaryPreview() =
-    ZcashTheme {
-        BlankSurface {
-            EarthButton(
-                modifier = Modifier.fillMaxWidth(),
-                text = "Primary",
-                colors = EarthButtonDefaults.tertiaryColors(),
-                onClick = {},
-            )
-        }
-    }
-
-@PreviewScreens
-@Composable
-private fun DestroyPreview() =
-    ZcashTheme {
-        BlankSurface {
-            EarthButton(
-                modifier = Modifier.fillMaxWidth(),
-                text = "Primary",
-                colors = EarthButtonDefaults.destructive1Colors(),
-                isLoading = true,
-                onClick = {},
-            )
-        }
-    }
-
-@PreviewScreens
-@Composable
-private fun SmallWidthPreview() =
-    ZcashTheme {
-        BlankSurface {
-            EarthButton(
-                modifier = Modifier.wrapContentWidth(),
-                text = "Small Width Button",
-                colors = EarthButtonDefaults.destructive1Colors(),
-                onClick = {},
-            )
-        }
     }

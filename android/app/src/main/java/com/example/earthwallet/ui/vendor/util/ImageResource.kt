@@ -11,8 +11,6 @@ package network.erth.wallet.ui.vendor.util
 
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.ui.Alignment
@@ -21,11 +19,6 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.DefaultAlpha
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
-import network.erth.wallet.ui.vendor.component.ShimmerCircle
-import network.erth.wallet.ui.vendor.component.rememberEarthShimmer
-import com.valentinilk.shimmer.shimmer
 
 sealed interface ImageResource {
     @JvmInline
@@ -48,18 +41,6 @@ fun imageRes(
 
 @Stable
 fun imageRes(value: String): ImageResource = ImageResource.DisplayString(value)
-
-@Stable
-fun loadingImageRes(): ImageResource = ImageResource.Loading
-
-@Composable
-fun ImageResource.Loading.ComposeAsShimmerCircle(modifier: Modifier = Modifier, size: Dp = 24.dp) {
-    Box(
-        modifier = modifier.shimmer(rememberEarthShimmer())
-    ) {
-        ShimmerCircle(size = size)
-    }
-}
 
 @Composable
 fun ImageResource.ByDrawable.Compose(

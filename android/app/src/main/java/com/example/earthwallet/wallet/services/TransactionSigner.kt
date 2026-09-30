@@ -5,7 +5,6 @@ import org.bitcoinj.core.ECKey
 import org.bitcoinj.core.Sha256Hash
 import com.google.protobuf.ByteString
 import cosmos.tx.v1beta1.Tx
-import network.erth.wallet.wallet.utils.WalletCrypto
 import kotlin.math.max
 import kotlin.math.min
 
@@ -84,22 +83,6 @@ object TransactionSigner {
     }
 
     /**
-     * Validates that a wallet key matches a sender address
-     */
-    @JvmStatic
-    @Throws(Exception::class)
-    fun validateWalletMatchesSender(senderAddress: String, walletKey: ECKey) {
-        val walletAddress = WalletCrypto.getAddress(walletKey)
-
-        if (walletAddress != senderAddress) {
-            throw Exception("Wallet/sender mismatch: " +
-                "Expected: $senderAddress, " +
-                "Wallet derives to: $walletAddress")
-        }
-
-    }
-
-    /**
      * Wrapper class for transaction signatures
      */
     class TransactionSignature @Throws(Exception::class) constructor(
@@ -146,10 +129,6 @@ object TransactionSigner {
         val length: Int
             get() = signatureBytes.size
 
-        fun getPublicKey(): ByteArray {
-            return publicKey
-        }
-
         val hex: String
             get() {
                 val hex = StringBuilder()
@@ -159,11 +138,5 @@ object TransactionSigner {
                 return hex.toString()
             }
 
-        // Future enhancement: Add method to convert to raw format
-        @Throws(Exception::class)
-        fun getRawBytes(): ByteArray {
-            // TODO: Convert DER to raw 64-byte format for Cosmos compatibility
-            throw UnsupportedOperationException("Raw format not yet implemented")
-        }
     }
 }

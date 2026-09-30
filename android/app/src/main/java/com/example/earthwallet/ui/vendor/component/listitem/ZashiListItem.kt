@@ -12,7 +12,6 @@ package network.erth.wallet.ui.vendor.component.listitem
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Arrangement.spacedBy
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -38,16 +37,12 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import network.erth.wallet.R
-import network.erth.wallet.ui.vendor.component.BlankSurface
-import network.erth.wallet.ui.vendor.newcomponent.PreviewScreens
-import network.erth.wallet.ui.vendor.theme.ZcashTheme
 import network.erth.wallet.ui.vendor.theme.colors.EarthColors
 import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
 import network.erth.wallet.ui.vendor.util.ImageResource
 import network.erth.wallet.ui.vendor.util.Itemizable
 import network.erth.wallet.ui.vendor.util.StringResource
 import network.erth.wallet.ui.vendor.util.getValue
-import network.erth.wallet.ui.vendor.util.imageRes
 import network.erth.wallet.ui.vendor.util.stringRes
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
@@ -308,60 +303,3 @@ object EarthListItemDefaults {
         backgroundColor: Color = Color.Transparent
     ): EarthListItemColors = EarthListItemColors(borderColor = borderColor, backgroundColor = backgroundColor)
 }
-
-@PreviewScreens
-@Composable
-private fun PrimaryPreview() =
-    ZcashTheme {
-        BlankSurface {
-            Column(
-                verticalArrangement = spacedBy(16.dp)
-            ) {
-                EarthListItem(
-                    title = "Test",
-                    subtitle = "Subtitle",
-                    icon = imageRes(R.drawable.ic_item_keystone),
-                    badge = imageRes(R.drawable.ic_item_keystone),
-                    onClick = {},
-                    titleIcons =
-                        persistentListOf(
-                            R.drawable.ic_radio_button_checked,
-                            R.drawable.ic_radio_button_checked,
-                        )
-                )
-                EarthListItem(
-                    title = "Test",
-                    subtitle = "Subtitle",
-                    isEnabled = false,
-                    onClick = {},
-                )
-            }
-        }
-    }
-
-@PreviewScreens
-@Composable
-private fun SecondaryPreview() =
-    ZcashTheme {
-        BlankSurface {
-            Column(
-                verticalArrangement = spacedBy(16.dp)
-            ) {
-                EarthListItem(
-                    title = "Test",
-                    subtitle = "Subtitle",
-                    type = EarthListItemDesignType.SECONDARY,
-                    icon = imageRes(R.drawable.ic_radio_button_checked),
-                    onClick = {},
-                    titleIcons = persistentListOf(R.drawable.ic_radio_button_checked)
-                )
-                EarthListItem(
-                    title = "Test",
-                    subtitle = "Subtitle",
-                    type = EarthListItemDesignType.SECONDARY,
-                    isEnabled = false,
-                    onClick = {},
-                )
-            }
-        }
-    }

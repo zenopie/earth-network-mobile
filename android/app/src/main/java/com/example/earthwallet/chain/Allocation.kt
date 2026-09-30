@@ -2,7 +2,6 @@ package network.erth.wallet.chain
 
 import com.google.protobuf.Any as ProtoAny
 import network.erth.earth.proto.allocation.AllocationWeight
-import network.erth.earth.proto.allocation.MsgClaimAllocation
 import network.erth.earth.proto.allocation.MsgSetAllocations
 import network.erth.earth.proto.allocation.StreamId
 import org.json.JSONObject
@@ -73,13 +72,6 @@ object Allocation {
         )
     }
 
-    /** All of a stream's allocation options. */
-    fun allocationOptions(stream: StreamId): List<OptionInfo> {
-        val (code, body) = EarthRest.get("/earth/allocation/v1/options/${path(stream)}")
-        if (code !in 200..299) return emptyList()
-        return parseOptions(JSONObject(body))
-    }
-
     private fun parseOptions(json: JSONObject): List<OptionInfo> {
         val arr = json.optJSONArray("options") ?: return emptyList()
         val out = ArrayList<OptionInfo>(arr.length())
@@ -133,12 +125,4 @@ object Allocation {
         return EarthTx.anyOf("/earth.allocation.v1.MsgSetAllocations", builder.build())
     }
 
-    fun msgClaimAllocation(creator: String, stream: StreamId, optionId: Long): ProtoAny {
-        val msg = MsgClaimAllocation.newBuilder()
-            .setCreator(creator)
-            .setStream(stream)
-            .setOptionId(optionId)
-            .build()
-        return EarthTx.anyOf("/earth.allocation.v1.MsgClaimAllocation", msg)
-    }
 }

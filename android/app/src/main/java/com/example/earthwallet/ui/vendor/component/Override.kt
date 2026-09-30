@@ -11,51 +11,6 @@ package network.erth.wallet.ui.vendor.component
 
 import android.content.res.Configuration
 import android.os.LocaleList
-import android.view.ContextThemeWrapper
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.movableContentOf
-import androidx.compose.runtime.remember
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
-import kotlinx.coroutines.flow.StateFlow
-
-/**
- * Wrap a Composable with a way to override the Android Configuration.  This is primarily useful
- * for automated tests.
- */
-@Composable
-fun Override(
-    configurationOverrideFlow: StateFlow<ConfigurationOverride?>,
-    content: @Composable () -> Unit,
-) {
-    val configurationOverride = configurationOverrideFlow.collectAsState().value
-    val contentSlot = remember { movableContentOf { content() } }
-
-    if (null == configurationOverride) {
-        contentSlot()
-    } else {
-        val configuration = configurationOverride.newConfiguration(LocalConfiguration.current)
-
-        val contextWrapper =
-            run {
-                val context = LocalContext.current
-                object : ContextThemeWrapper(context, null) {
-                    init {
-                        applyOverrideConfiguration(configuration)
-                    }
-                }
-            }
-
-        CompositionLocalProvider(
-            LocalConfiguration provides configuration,
-            LocalContext provides contextWrapper
-        ) {
-            contentSlot()
-        }
-    }
-}
 
 data class ConfigurationOverride(
     val uiMode: UiMode?,

@@ -9,7 +9,6 @@
  */
 package network.erth.wallet.ui.vendor.util
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 

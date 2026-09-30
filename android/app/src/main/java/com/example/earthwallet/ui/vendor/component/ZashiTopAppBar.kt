@@ -17,7 +17,6 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import network.erth.wallet.ui.vendor.newcomponent.PreviewScreens
 import network.erth.wallet.ui.vendor.theme.ZcashTheme
 import network.erth.wallet.ui.vendor.theme.internal.SecondaryTypography
 import network.erth.wallet.ui.vendor.theme.internal.TopAppBarColors
@@ -72,13 +71,3 @@ fun EarthSmallTopAppBar(
         windowInsets = windowInsets,
     )
 }
-
-@PreviewScreens
-@Composable
-private fun EarthSmallTopAppBarPreview() =
-    ZcashTheme {
-        EarthSmallTopAppBar(
-            title = "Test Title",
-            subtitle = "Subtitle",
-        )
-    }

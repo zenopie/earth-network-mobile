@@ -4,7 +4,6 @@ import android.content.Context
 import android.util.Log
 import org.bitcoinj.core.ECKey
 import org.bitcoinj.core.Utils
-import org.bitcoinj.crypto.ChildNumber
 import org.bitcoinj.crypto.HDUtils
 import org.bitcoinj.crypto.MnemonicCode
 import org.bitcoinj.wallet.DeterministicKeyChain
@@ -151,11 +150,4 @@ object WalletCrypto {
         return getAddress(key)
     }
 
-    /**
-     * Get private key as hex string
-     */
-    @JvmStatic
-    fun getPrivateKeyHex(key: ECKey): String {
-        return key.privateKeyAsHex
-    }
 }

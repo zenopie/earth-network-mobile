@@ -2,23 +2,20 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- NFC Permissions -->
+    <!-- NFC: reading the passport chip. -->
     <uses-permission android:name="android.permission.NFC" />
     <uses-feature
         android:name="android.hardware.nfc"
         android:required="true" />
 
-    <!-- Internet Permission for fetching CRLs and other data -->
-    <uses-permission android:name="android.permission.INTERNET" />
     
-    <!-- Camera Permission for capturing passport photo -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Camera: scanning the passport MRZ and QR codes. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature
         android:name="android.hardware.camera"
         android:required="false" />
-    
-    <!-- Notification Permission for Android 13+ -->
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:name=".App"
@@ -32,8 +29,8 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:pageSizeCompat="enabled"
         tools:targetApi="31">
-        
-        <!-- Update Check Activity - checks Play Store for updates before app start -->
+    
+        <!-- Launcher: checks Play for an update, then starts ComposeAppActivity. -->
         <activity
             android:name=".ui.UpdateCheckActivity"
             android:exported="true"
@@ -69,20 +66,6 @@
             </intent-filter>
         </activity>
 
-
-        <!-- NFC Scanner Activity - handles all NFC scanning -->
-
-
-
-
-        
-        
-        <!-- Transaction Activity (universal transaction handler with UI) -->
-
-        
-        
-
-
         <!-- ZXing Capture Activity with forced portrait orientation -->
         <activity
             android:name="com.journeyapps.barcodescanner.CaptureActivity"
@@ -92,11 +75,6 @@
             android:windowSoftInputMode="stateAlwaysHidden"
             tools:replace="android:screenOrientation" />
 
-    
-        <!-- The design-system gallery is declared in src/debug/AndroidManifest.xml
-             so it is launchable during development and absent from release. -->
-        <!-- The Compose app against the real chain, alongside the existing
-             HostActivity while screens are ported one at a time. -->
         <!-- exported="false": started only by UpdateCheckActivity, which is the
              launcher. It has no intent filter, so exporting it just let any
              installed app bring the wallet UI to the front. -->

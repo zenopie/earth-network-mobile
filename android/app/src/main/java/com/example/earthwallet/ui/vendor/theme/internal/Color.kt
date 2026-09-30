@@ -11,7 +11,6 @@
 
 package network.erth.wallet.ui.vendor.theme.internal
 
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
@@ -127,19 +126,6 @@ internal object Light {
     val transparentTopAppBarColors = TransparentTopAppBarColors()
 }
 
-internal val DarkColorPalette =
-    darkColorScheme(
-        // Our colors intentionally use a different naming than the ones from MaterialTheme
-        primary = Dark.textPrimary,
-        secondary = Dark.secondaryColor,
-        onPrimary = Dark.textPrimary,
-        onSecondary = Dark.textSecondary,
-        surface = Dark.backgroundColor,
-        onSurface = Dark.textPrimary,
-        background = Dark.backgroundColor,
-        onBackground = Dark.textPrimary,
-    )
-
 internal val LightColorPalette =
     lightColorScheme(
         // Our colors intentionally use a different naming than the ones from MaterialTheme
@@ -151,51 +137,6 @@ internal val LightColorPalette =
         onSurface = Light.textPrimary,
         background = Light.backgroundColor,
         onBackground = Light.textPrimary,
-    )
-
-internal val DarkExtendedColorPalette =
-    ExtendedColors(
-        primaryColor = Dark.primaryColor,
-        secondaryColor = Dark.secondaryColor,
-        backgroundColor = Dark.backgroundColor,
-        gridColor = Dark.gridColor,
-        circularProgressBarSmall = Dark.circularProgressBarSmall,
-        circularProgressBarSmallDark = Dark.circularProgressBarSmallDark,
-        circularProgressBarScreen = Dark.circularProgressBarScreen,
-        linearProgressBarTrack = Dark.linearProgressBarTrack,
-        linearProgressBarBackground = Dark.linearProgressBarBackground,
-        textPrimary = Dark.textPrimary,
-        textSecondary = Dark.textSecondary,
-        textDisabled = Dark.textDisabled,
-        textFieldFrame = Dark.textFieldFrame,
-        textFieldWarning = Dark.textFieldWarning,
-        textFieldHint = Dark.textFieldHint,
-        textDescription = Dark.textDescription,
-        textDescriptionDark = Dark.textDescriptionDark,
-        layoutStroke = Dark.layoutStroke,
-        layoutStrokeSecondary = Dark.layoutStrokeSecondary,
-        overlay = Dark.overlay,
-        overlayProgressBar = Dark.overlayProgressBar,
-        reference = Dark.reference,
-        welcomeAnimationColor = Dark.welcomeAnimationColor,
-        complementaryColor = Dark.complementaryColor,
-        primaryDividerColor = Dark.primaryDividerColor,
-        secondaryDividerColor = Dark.secondaryDividerColor,
-        tertiaryDividerColor = Dark.tertiaryDividerColor,
-        panelBackgroundColor = Dark.panelBackgroundColor,
-        panelBackgroundColorActive = Dark.panelBackgroundColorActive,
-        cameraDisabledBackgroundColor = Dark.cameraDisabledBackgroundColor,
-        cameraDisabledFrameColor = Dark.cameraDisabledFrameColor,
-        historyBackgroundColor = Dark.historyBackgroundColor,
-        historyRedColor = Dark.historyRedColor,
-        historySyncingColor = Dark.historySyncingColor,
-        historyMessageBubbleColor = Dark.historyMessageBubbleColor,
-        historyMessageBubbleStrokeColor = Dark.historyMessageBubbleStrokeColor,
-        topAppBarColors = Dark.topAppBarColors,
-        transparentTopAppBarColors = Dark.transparentTopAppBarColors,
-        primaryButtonColors = Dark.primaryButtonColors,
-        secondaryButtonColors = Dark.secondaryButtonColors,
-        tertiaryButtonColors = Dark.tertiaryButtonColors,
     )
 
 internal val LightExtendedColorPalette =

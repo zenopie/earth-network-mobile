@@ -37,7 +37,6 @@ object Constants {
 
     const val EARTH_CHAIN_ID = "earth-1"
     const val EARTH_PREFIX = "earth"
-    const val EARTH_COIN_TYPE = 118
     const val UERTH_DENOM = "uerth"
     const val MSG_REGISTER_TYPE_URL = "/earth.personhood.v1.MsgRegister"
 }

@@ -71,19 +71,6 @@ internal object Shark {
     val `950` = Color(0xFF0B0D0A)
 }
 
-internal object SharkShades {
-    val `00dp` = Color(0xFF0F120E)
-    val `01dp` = Color(0xFF14180F)
-    val `02dp` = Color(0xFF181D14)
-    val `03dp` = Color(0xFF1B2118)
-    val `04dp` = Color(0xFF1E2419)
-    val `06dp` = Color(0xFF23291E)
-    val `08dp` = Color(0xFF272E22)
-    val `12dp` = Color(0xFF2C3427)
-    val `16dp` = Color(0xFF313A2B)
-    val `24dp` = Color(0xFF3A4433)
-}
-
 internal object SuccessGreen {
     val `25` = Color(0xFFF2FDF5)
     val `50` = Color(0xFFE4FBEA)

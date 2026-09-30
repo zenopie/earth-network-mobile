@@ -9,13 +9,11 @@
  */
 package network.erth.wallet.ui.vendor.util
 
+import androidx.compose.ui.text.SpanStyle
 import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.Stable
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 
 sealed interface StyledStringResource {
@@ -39,89 +37,8 @@ private data class CompositeStyledStringResource(
     val resources: List<StyledStringResource>
 ) : StyledStringResource
 
-@Stable
-fun styledStringResource(
-    value: String,
-    style: StyledStringStyle = StyledStringStyle(),
-): StyledStringResource =
-    stringRes(value).withStyle(style)
-
 infix fun StringResource.withStyle(style: StyledStringStyle = StyledStringStyle()): StyledStringResource =
     StyledStringResource.ByStringResource(resource = this, style = style)
-
-@Stable
-fun styledStringResource(
-    @StringRes resource: Int,
-    style: StyledStringStyle,
-    vararg args: Any
-): StyledStringResource =
-    StyledStringResource.ByResource(
-        resource = resource,
-        style = style,
-        args = args.toList()
-    )
-
-@Stable
-fun styledStringResource(
-    @StringRes resource: Int,
-    color: StringResourceColor,
-    fontWeight: FontWeight?,
-    font: StyledStringFont?,
-    vararg args: Any
-): StyledStringResource =
-    StyledStringResource.ByResource(
-        resource = resource,
-        style =
-            StyledStringStyle(
-                color = color,
-                fontWeight = fontWeight,
-                font = font
-            ),
-        args = args.toList()
-    )
-
-@Stable
-fun styledStringResource(
-    @StringRes resource: Int,
-    fontWeight: FontWeight?,
-    vararg args: Any
-): StyledStringResource =
-    StyledStringResource.ByResource(
-        resource = resource,
-        style =
-            StyledStringStyle(
-                color = StringResourceColor.PRIMARY,
-                fontWeight = fontWeight
-            ),
-        args = args.toList()
-    )
-
-@Stable
-fun styledStringResource(
-    @StringRes resource: Int,
-    color: StringResourceColor,
-    vararg args: Any
-): StyledStringResource =
-    StyledStringResource.ByResource(
-        resource = resource,
-        style =
-            StyledStringStyle(
-                color = color,
-                fontWeight = null
-            ),
-        args = args.toList()
-    )
-
-@Stable
-fun styledStringResource(
-    @StringRes resource: Int,
-    vararg args: Any
-): StyledStringResource =
-    StyledStringResource.ByResource(
-        resource = resource,
-        style = StyledStringStyle(),
-        args = args.toList()
-    )
 
 @Suppress("SpreadOperator")
 @Composable

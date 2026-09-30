@@ -12,7 +12,6 @@
 package network.erth.wallet.ui.vendor.util
 
 import android.content.Context
-import android.icu.util.Currency
 import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
@@ -127,75 +126,8 @@ fun stringRes(value: String): StringResource =
     StringResource.ByString(value)
 
 @Stable
-fun stringResByDynamicCurrencyNumber(
-    amount: Number,
-    ticker: String,
-    tickerLocation: TickerLocation =
-        if (ticker == "USD") TickerLocation.BEFORE else TickerLocation.AFTER,
-    includeGroupingSeparator: Boolean = true
-): StringResource =
-    StringResource.ByDynamicCurrencyNumber(
-        amount = amount,
-        ticker = ticker,
-        includeGroupingSeparator = includeGroupingSeparator,
-        tickerLocation = tickerLocation
-    )
-
-@Stable
-fun stringResByCurrencyNumber(
-    amount: Number,
-    ticker: String,
-    tickerLocation: TickerLocation =
-        if (ticker == "USD") TickerLocation.BEFORE else TickerLocation.AFTER,
-    minDecimals: Int = 2,
-    maxDecimals: Int? = null,
-    includeGroupingSeparator: Boolean = true
-): StringResource =
-    StringResource.ByCurrencyNumber(
-        amount = amount,
-        ticker = ticker,
-        tickerLocation = tickerLocation,
-        minDecimals = minDecimals,
-        maxDecimals = maxDecimals,
-        includeGroupingSeparator = includeGroupingSeparator
-    )
-
-@Stable
-fun stringResByDateTime(zonedDateTime: ZonedDateTime, useFullFormat: Boolean): StringResource =
-    StringResource.ByDateTime(zonedDateTime, useFullFormat)
-
-@Stable
 fun stringRes(yearMonth: YearMonth): StringResource =
     StringResource.ByYearMonth(yearMonth)
-
-@Stable
-fun stringResByAddress(value: String, ellipsize: Ellipsize = Ellipsize.MIDDLE): StyledStringResource =
-    StringResource.ByAddress(value, ellipsize).styleAsAddress()
-
-fun StringResource.styleAsAddress(): StyledStringResource =
-    StyledStringResource.ByStringResource(this, StyledStringStyle(font = StyledStringFont.ROBOTO_MONO))
-
-@Stable
-fun stringResByTransactionId(value: String, abbreviated: Boolean): StringResource =
-    StringResource.ByTransactionId(value, abbreviated)
-
-@Stable
-fun stringResByNumber(
-    number: Number,
-    minDecimals: Int = 2,
-    maxDecimals: Int? = null,
-    includeGroupingSeparator: Boolean = true
-): StringResource =
-    StringResource.ByNumber(number, minDecimals, maxDecimals, includeGroupingSeparator)
-
-@Stable
-fun stringResByDynamicNumber(number: Number, includeGroupingSeparator: Boolean = true): StringResource =
-    StringResource.ByDynamicNumber(number, includeGroupingSeparator)
-
-@Stable
-infix fun StringResource.asPrivacySensitive(
-    other: StringResource = stringRes(R.string.general_hideBalancesMost)
-): StringResource = PrivacySensitiveResource(this, other)
 
 @Stable
 @Composable
@@ -268,7 +200,6 @@ private fun StringResource.ByResource.convertResource(context: StringContext) =
 
 private fun StringResource.ByNumber.convertNumber(): String =
     convertNumberToString(number, minDecimals, maxDecimals, includeGroupingSeparator)
-
 
 private fun StringResource.ByCurrencyNumber.convertCurrencyNumber(): String {
     val amount = convertNumberToString(amount, minDecimals, maxDecimals, includeGroupingSeparator)

@@ -50,8 +50,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import network.erth.wallet.ui.vendor.newcomponent.PreviewScreens
-import network.erth.wallet.ui.vendor.theme.ZcashTheme
 import network.erth.wallet.ui.vendor.theme.colors.EarthColors
 import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
 import network.erth.wallet.ui.vendor.util.StringResource
@@ -257,15 +255,6 @@ fun EarthTextField(
         contentPadding = contentPadding,
         modifier = modifier,
         innerModifier = innerModifier
-    )
-}
-
-@Composable
-fun EarthTextFieldPlaceholder(res: StringResource) {
-    Text(
-        text = res.getValue(),
-        style = EarthTypography.textMd,
-        color = EarthColors.Inputs.Default.text
     )
 }
 
@@ -648,28 +637,3 @@ sealed interface TextSelection {
         val range: TextRange
     ) : TextSelection
 }
-
-@PreviewScreens
-@Composable
-private fun DefaultPreview() =
-    ZcashTheme {
-        EarthTextField(
-            state =
-                TextFieldState(
-                    value = stringRes("Text")
-                ) {}
-        )
-    }
-
-@PreviewScreens
-@Composable
-private fun ErrorPreview() =
-    ZcashTheme {
-        EarthTextField(
-            state =
-                TextFieldState(
-                    value = stringRes("Text"),
-                    error = stringRes("Error"),
-                ) {}
-        )
-    }

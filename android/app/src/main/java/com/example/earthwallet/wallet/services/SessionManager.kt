@@ -5,7 +5,6 @@ import android.content.SharedPreferences
 import android.util.Log
 import network.erth.wallet.wallet.utils.DeviceBinding
 import network.erth.wallet.wallet.utils.SoftwareEncryption
-import network.erth.wallet.wallet.utils.SecurePreferencesUtil
 import network.erth.wallet.wallet.utils.WalletStorageVersion
 import org.json.JSONArray
 import org.json.JSONObject

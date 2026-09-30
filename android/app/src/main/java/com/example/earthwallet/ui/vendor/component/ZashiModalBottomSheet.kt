@@ -27,11 +27,8 @@ import androidx.compose.material3.ModalBottomSheetDefaults
 import androidx.compose.material3.ModalBottomSheetProperties
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.SheetValue
-import androidx.compose.material3.SheetValue.Expanded
 import androidx.compose.material3.SheetValue.Hidden
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,8 +37,6 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import network.erth.wallet.ui.vendor.newcomponent.PreviewScreens
-import network.erth.wallet.ui.vendor.theme.ZcashTheme
 import network.erth.wallet.ui.vendor.theme.colors.EarthColors
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -150,30 +145,4 @@ object EarthModalBottomSheetDefaults {
     val ContainerColor: Color
         @Composable
         get() = EarthColors.Surfaces.bgPrimary
-    val ContentColor: Color
-        @Composable
-        get() = EarthColors.Text.textPrimary
 }
-
-@OptIn(ExperimentalMaterial3Api::class)
-@PreviewScreens
-@Composable
-private fun EarthModalBottomSheetPreview() =
-    ZcashTheme {
-        val sheetState =
-            rememberModalBottomSheetState(
-                skipPartiallyExpanded = true,
-                confirmValueChange = { false },
-                skipHiddenState = true,
-                initialValue = Expanded
-            )
-
-        LaunchedEffect(Unit) { sheetState.show() }
-
-        EarthModalBottomSheet(
-            onDismissRequest = {},
-            sheetState = sheetState
-        ) {
-            Text("Content")
-        }
-    }

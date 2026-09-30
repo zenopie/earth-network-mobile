@@ -15,15 +15,6 @@ import java.text.DecimalFormatSymbols
 
 private const val ZEC_MAXIMUM_FRACTION_DIGITS = 6
 private const val ZEC_MINIMUM_FRACTION_DIGITS = 0
-private const val ZATOSHI_MAXIMUM_FRACTION_DIGITS = 8
-private const val ZATOSHI_MINIMUM_FRACTION_DIGITS = 3
-
-fun zatoshiFormatter(): DecimalFormat =
-    currencyFormatter(
-        maximumFractionDigits = ZATOSHI_MAXIMUM_FRACTION_DIGITS,
-        minimumFractionDigits = ZATOSHI_MINIMUM_FRACTION_DIGITS
-    )
-
 /**
  * Builds a [DecimalFormat] for monetary/number values. The locale is intentionally fixed to
  * [StringResource.NUMBER_FORMAT_LOCALE] so amounts always render with a period decimal separator and

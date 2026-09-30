@@ -18,31 +18,10 @@ import androidx.compose.ui.unit.sp
 import network.erth.wallet.R
 
 object EarthTypographyInternal {
-    val header1: TextStyle =
-        TextStyle(
-            fontSize = 56.sp,
-            lineHeight = 68.sp,
-            fontFamily = InterFontFamily,
-            fontWeight = FontWeight.Normal,
-        )
     val header2: TextStyle =
         TextStyle(
             fontSize = 48.sp,
             lineHeight = 60.sp,
-            fontFamily = InterFontFamily,
-            fontWeight = FontWeight.Normal,
-        )
-    val header3: TextStyle =
-        TextStyle(
-            fontSize = 40.sp,
-            lineHeight = 52.sp,
-            fontFamily = InterFontFamily,
-            fontWeight = FontWeight.Normal,
-        )
-    val header4: TextStyle =
-        TextStyle(
-            fontSize = 32.sp,
-            lineHeight = 40.sp,
             fontFamily = InterFontFamily,
             fontWeight = FontWeight.Normal,
         )
@@ -57,13 +36,6 @@ object EarthTypographyInternal {
         TextStyle(
             fontSize = 24.sp,
             lineHeight = 32.sp,
-            fontFamily = InterFontFamily,
-            fontWeight = FontWeight.Normal,
-        )
-    val textXl: TextStyle =
-        TextStyle(
-            fontSize = 20.sp,
-            lineHeight = 30.sp,
             fontFamily = InterFontFamily,
             fontWeight = FontWeight.Normal,
         )
@@ -92,13 +64,6 @@ object EarthTypographyInternal {
         TextStyle(
             fontSize = 12.sp,
             lineHeight = 16.sp,
-            fontFamily = InterFontFamily,
-            fontWeight = FontWeight.Normal,
-        )
-    val textXxs: TextStyle =
-        TextStyle(
-            fontSize = 10.sp,
-            lineHeight = 18.sp,
             fontFamily = InterFontFamily,
             fontWeight = FontWeight.Normal,
         )

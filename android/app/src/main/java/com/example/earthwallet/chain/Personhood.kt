@@ -74,41 +74,6 @@ object Personhood {
         return JSONObject(body).optString("count", "0").toLongOrNull() ?: 0L
     }
 
-    /** One issuing country's registration total. */
-    data class CountryCount(val country: String, val count: Long)
-
-    /**
-     * Registrations per issuing country, largest first. `country` is an ISO
-     * 3166-1 alpha-2 code, or "" when the Document Signer's certificate carries
-     * no country attribute. Powers the explorer's registrations tab.
-     */
-    fun registrationCountries(): List<CountryCount> {
-        val (code, body) = EarthRest.get("/earth/personhood/v1/registration_countries")
-        if (code !in 200..299) return emptyList()
-        val arr = JSONObject(body).optJSONArray("countries") ?: return emptyList()
-        val out = ArrayList<CountryCount>(arr.length())
-        for (i in 0 until arr.length()) {
-            val c = arr.getJSONObject(i)
-            out.add(
-                CountryCount(
-                    country = c.optString("country", ""),
-                    count = c.optString("count", "0").toLongOrNull() ?: 0L,
-                )
-            )
-        }
-        return out.sortedByDescending { it.count }
-    }
-
-    /** How many humans registered with a given Document Signer (hex dsc_key). */
-    fun registrationsByDsc(dscKeyHex: String): Long {
-        val key = dscKeyHex.removePrefix("0x")
-        val (code, body) = EarthRest.get(
-            "/earth/personhood/v1/registrations_by_dsc/$key"
-        )
-        if (code !in 200..299) return 0L
-        return JSONObject(body).optString("count", "0").toLongOrNull() ?: 0L
-    }
-
     // --- messages ---
 
     /**

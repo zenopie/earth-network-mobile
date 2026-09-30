@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -25,12 +24,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import network.erth.wallet.R
-import network.erth.wallet.ui.vendor.newcomponent.PreviewScreens
-import network.erth.wallet.ui.vendor.theme.ZcashTheme
 import network.erth.wallet.ui.vendor.theme.colors.EarthColors
 import network.erth.wallet.ui.vendor.util.StringResource
 import network.erth.wallet.ui.vendor.util.getValue
-import network.erth.wallet.ui.vendor.util.stringRes
 
 @Composable
 fun EarthVersion(
@@ -68,12 +64,3 @@ fun EarthVersion(
         )
     }
 }
-
-@PreviewScreens
-@Composable
-private fun EarthVersionPreview() =
-    ZcashTheme {
-        BlankSurface {
-            EarthVersion(version = stringRes("Version"))
-        }
-    }

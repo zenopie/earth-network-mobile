@@ -26,7 +26,6 @@ enum class UnlockMethod {
     BOTH,
     ;
 
-    val usesPin: Boolean get() = this != BIOMETRIC
     val usesBiometric: Boolean get() = this != PIN
 
     companion object {
