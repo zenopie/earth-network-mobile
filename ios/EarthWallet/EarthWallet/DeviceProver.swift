@@ -12,7 +12,7 @@ import ProverGate
 /// runnable on a Mac, and neither survives that. The app bundle is the one
 /// place that can carry it.
 ///
-/// Ports `wallet/passport/PassportProver.kt`, whose shape this follows exactly:
+/// Ports `passport/PassportProver.kt`, whose shape this follows exactly:
 /// pick the circuit the certificate selects, load it, prove, hand back the
 /// chain's (proof, public signals) form.
 enum DeviceProver {

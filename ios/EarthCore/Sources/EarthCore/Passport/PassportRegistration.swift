@@ -8,7 +8,7 @@ import Foundation
 /// arrives through `Prover`, injected. What is left is the part with the
 /// decisions in it, and it runs and is tested on any Mac.
 ///
-/// Ports the half of `wallet/passport/PassportSession.kt` that is not Android's
+/// Ports the half of `passport/PassportSession.kt` that is not Android's
 /// `IsoDep`.
 public struct PassportRegistration {
 

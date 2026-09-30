@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Add to a pool, or start withdrawing from it.
 ///
-/// Ports `ui/compose/LiquiditySheet.kt`. One sheet for both directions, for the
+/// Ports `ui/swap/LiquiditySheet.kt`. One sheet for both directions, for the
 /// reason that one does: they are the same shape — an amount, what it converts
 /// to, a confirm — and two screens would drift apart on the amount rules, which
 /// are the part that matters.

@@ -20,7 +20,7 @@ import Foundation
 ///    implies.
 ///
 /// Every figure here is an estimate from a snapshot, and the volume-weighted
-/// half moves whenever any pool trades. Mirrors `ui/compose/PoolApr.kt`.
+/// half moves whenever any pool trades. Mirrors `chain/math/PoolApr.kt`.
 public struct PoolApr: Equatable {
     /// From swap fees, as a fraction — 0.05 is 5%.
     public let fee: Double

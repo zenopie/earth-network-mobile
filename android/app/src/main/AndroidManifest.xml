@@ -30,7 +30,7 @@
         android:pageSizeCompat="enabled"
         tools:targetApi="31">
     
-        <!-- Launcher: checks Play for an update, then starts ComposeAppActivity. -->
+        <!-- Launcher: checks Play for an update, then starts MainActivity. -->
         <activity
             android:name=".ui.UpdateCheckActivity"
             android:exported="true"
@@ -44,7 +44,7 @@
 
             <!-- Referral links for someone who already has the app.
                  Installs come through the Play install referrer instead; see
-                 wallet/utils/Referral.kt.
+                 referral/Referral.kt.
 
                  autoVerify needs /.well-known/assetlinks.json served from
                  erth.network. Without it these still work, but Android offers
@@ -79,14 +79,14 @@
              launcher. It has no intent filter, so exporting it just let any
              installed app bring the wallet UI to the front. -->
         <activity
-            android:name=".ui.compose.ComposeAppActivity"
+            android:name=".ui.MainActivity"
             android:exported="false"
             android:screenOrientation="portrait"
             android:launchMode="singleTop"
             android:theme="@style/Theme.AppCompat.NoActionBar" />
 
         <activity
-            android:name=".ui.compose.registration.RegistrationActivity"
+            android:name=".ui.registration.RegistrationActivity"
             android:exported="false"
             android:launchMode="singleTop"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"

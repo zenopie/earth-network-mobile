@@ -3,7 +3,7 @@ import Foundation
 
 /// A chain transaction, resolved into a row a person can read.
 ///
-/// Ports `ui/compose/ActivityMapper.kt`. Anything unrecognised falls through
+/// Ports `ui/wallet/ActivityMapper.kt`. Anything unrecognised falls through
 /// to the raw message name rather than being dropped — a wallet that silently
 /// hides transactions it does not understand is worse than one that shows an
 /// unfamiliar word. The second can be searched for; the first looks like funds

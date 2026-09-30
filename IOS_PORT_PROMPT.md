@@ -118,10 +118,10 @@ building the gas gate, not after.
 Read the Android implementation for behaviour rather than inventing it,
 particularly:
 
-    ui/compose/registration/     the passport flow, step by step
-    wallet/passport/             headless read() and register()
-    ui/compose/PoolApr.kt        APR maths that must match the chain
-    ui/compose/SwapQuote.kt      AMM quoting, mirrors x/dex/keeper/amm.go
+    ui/registration/             the passport flow, step by step
+    passport/                    headless read() and register()
+    chain/math/PoolApr.kt        APR maths that must match the chain
+    chain/math/SwapQuote.kt      AMM quoting, mirrors x/dex/keeper/amm.go
     Constants.kt                 every endpoint and denom
 
 Where the Android app does something surprising, there is usually a comment

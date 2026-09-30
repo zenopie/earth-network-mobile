@@ -32,8 +32,8 @@ Gradle lives in `android/`, so **every `./gradlew` command runs from there**.
     ./gradlew lint                        # configured not to abort on errors
     ./gradlew clean
 
-There are **no JVM unit tests** — `app/src/test` does not exist, so
-`./gradlew test` does nothing. The only tests are instrumented and need a real
+JVM unit tests are few (`./gradlew :app:testDebugUnitTest`; currently the
+gas-grant request body). The prover tests are instrumented and need a real
 device (the prover does not run on an emulator usefully):
 
     ./gradlew :app:connectedDebugAndroidTest \
@@ -67,21 +67,31 @@ with one token), `x/personhood`, `x/allocation`, `x/earth`, `x/pki`.
 
 ## Android layout
 
-Source sits under `app/src/main/java/com/example/earthwallet/`, but the
-declared package is `network.erth.wallet.*`. **The directory path does not
-match the package** — a leftover from an old rename that Kotlin tolerates.
-Do not "fix" one to match the other casually; it touches every file.
+Source is under `app/src/main/java/network/erth/wallet/`, package
+`network.erth.wallet.*`.
 
     chain/              typed clients per module (Dex, Personhood, Staking, …)
-    wallet/passport/    headless passport read + proof generation
-    wallet/services/    key storage, signing, session, price
-    wallet/utils/       Bech32, crypto, biometrics, PIN, referrals
-    ui/compose/         all screens (Compose); tabs are Wallet/Earn/Swap/Govern
-    ui/compose/registration/  the passport flow, step by step
+    chain/math/         APR and AMM maths that mirror the chain
+    backend/            the gas-grant client (api.erth.network)
+    crypto/             BIP-39/44 keys, Bech32, signing
+    wallet/             key storage, session, unlock (PIN, biometric), attestation
+    passport/           headless passport read + proof generation
+    referral/           deep-link and install-referrer capture
+    ui/                 MainActivity, UpdateCheckActivity (launcher), EarthApp root
+    ui/<feature>/       home, wallet, earn, swap, govern, explore, personhood,
+                        settings, onboarding, unlock, registration
+    ui/tx/              the one confirm → broadcast → result path
+    ui/navigation/      routes, tab bar, top bars
+    ui/components/      shared Earth composables
+    ui/theme/           EarthTheme, dimensions, accent
+    ui/designsystem/    vendored Zodl design library (see ../LICENSES.md)
     app/src/main/proto/ cosmos + earth protobuf definitions
 
+`UpdateCheckActivity` is the launcher. Keep its class name and package: a
+launcher shortcut on a user's home screen points at that component.
+
 Two files encode chain maths that **must** match the chain exactly:
-`ui/compose/PoolApr.kt` and `ui/compose/SwapQuote.kt` (mirrors
+`chain/math/PoolApr.kt` and `chain/math/SwapQuote.kt` (mirrors
 `x/dex/keeper/amm.go`). Changing either without checking the chain is a bug.
 
 ## Things that will bite you

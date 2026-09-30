@@ -5,7 +5,7 @@ import SwiftUI
 
 /// One path for every transaction: confirm, broadcast, report.
 ///
-/// Ports `ui/compose/TxController.kt`, and exists for the reason that one does:
+/// Ports `ui/tx/TxController.kt`, and exists for the reason that one does:
 /// before it, each screen broadcast on its own and reported the outcome in a
 /// pair of toasts, so nobody could see what they were about to sign or read why
 /// it failed. Keeping it in one place is also what will make the gas gate

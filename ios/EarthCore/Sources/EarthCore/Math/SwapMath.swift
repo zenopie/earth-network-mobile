@@ -4,7 +4,7 @@ import Foundation
 /// What a swap returns, priced the way the chain prices it.
 ///
 /// Mirrors `x/dex/keeper/amm.go` rather than approximating it — and mirrors
-/// `ui/compose/SwapQuote.kt`, which does the same on Android. The two
+/// `chain/math/SwapQuote.kt`, which does the same on Android. The two
 /// differences that matter, and that a generic constant-product quote gets
 /// wrong:
 ///

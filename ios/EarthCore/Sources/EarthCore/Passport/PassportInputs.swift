@@ -2,7 +2,7 @@ import BigInt
 import Foundation
 
 /// Builds the `lean_poa` circuit inputs from a scanned passport's EF.DG1 and
-/// EF.SOD. Ports `wallet/passport/PassportInputs.kt`.
+/// EF.SOD. Ports `passport/PassportInputs.kt`.
 ///
 /// Everything is derived from the passport itself. The circuit computes the
 /// nullifier (Poseidon2 over name‖DOB) and the DSC commitment in-circuit and
