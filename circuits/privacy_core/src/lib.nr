@@ -39,6 +39,10 @@ pub fn h4(a: Field, b: Field, c: Field, d: Field) -> Field {
     Poseidon2::hash([a, b, c, d], 4)
 }
 
+pub fn h5(a: Field, b: Field, c: Field, d: Field, e: Field) -> Field {
+    Poseidon2::hash([a, b, c, d, e], 5)
+}
+
 /// idc = H(TAG_ID, id_secret)
 pub fn idc(id_secret: Field) -> Field {
     h2(TAG_ID, id_secret)
@@ -74,6 +78,13 @@ pub fn note_cm(asset: Field, value: u64, pc: Field) -> Field {
 /// different nullifier (a double spend).
 pub fn note_nf(nk: Field, rho: Field, position: u32) -> Field {
     h4(TAG_NF, nk, rho, position as Field)
+}
+
+/// Per-proposal vote nullifier = H(TAG_VOTE, nk, rho, position, proposal_id).
+/// One per note per proposal, and unlinkable to the note's spend nullifier
+/// without nk. `position` is a u32 for the same reason as in note_nf.
+pub fn vote_nullifier(nk: Field, rho: Field, position: u32, proposal_id: u64) -> Field {
+    h5(TAG_VOTE, nk, rho, position as Field, proposal_id as Field)
 }
 
 /// Root of the depth-32 tree from a leaf, its index and siblings (leaf level
