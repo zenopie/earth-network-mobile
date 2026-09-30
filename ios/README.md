@@ -283,10 +283,11 @@ outright.
 
 The flow is scan → three fields → chip → proof → `MsgRegister`, and the split
 between the last two is the load-bearing part: the proof completes *before* the
-confirmation appears, so nobody spends a free-gas grant on a transaction
-that may never exist. Registration raises its message through
-`TxController` like every other screen, which is what makes the gas gate the
-same one everything else gets.
+confirmation appears, and the free gas for registration is paid against that
+finished `MsgRegister` — the backend runs the chain's own checks on it — so
+there is nothing to ask with until the proof exists. Registration raises its
+message through `TxController` like every other screen, which is what makes
+the gas gate the same one everything else gets.
 
 ### What lives in the app target, and why
 

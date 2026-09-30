@@ -119,10 +119,13 @@ hold value — anyone in the world can spend from it.
     FREE GAS
 
     Users with an empty balance can tap "Get free gas" to have the network
-    fee for a transaction covered. The app uses Apple's App Attest to prove to
-    our server that the request comes from a genuine copy of the app; the
-    server then sends a small amount of ERTH to the user's address. The app
-    contains no advertising and no tracking.
+    fee for a transaction covered. For registration, our server checks the
+    same zero-knowledge proof the network will (the proof and the issuing
+    country's signing certificate, which go on the public ledger anyway — no
+    personal passport data) and sends a small amount of ERTH if the network would accept it;
+    after that, registered users can receive a small grant once a day. No
+    device identifiers are used. The app contains no advertising and no
+    tracking.
 
     CRYPTOCURRENCY
 

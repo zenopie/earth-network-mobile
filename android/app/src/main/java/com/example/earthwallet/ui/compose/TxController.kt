@@ -135,6 +135,9 @@ class TxController : ViewModel() {
     /**
      * Asks the backend for free gas for [address], then waits for it to land.
      *
+     * The registered-human grant: every transaction but registration, which
+     * asks on its passport proof instead (RegistrationActivity).
+     *
      * [fetchBalance] reads the chain directly rather than going through
      * WalletViewModel.refresh(), which is fire-and-forget: it returns before
      * the new balance exists, so a poll built on it would race itself.
@@ -149,7 +152,7 @@ class TxController : ViewModel() {
         requestingGas = true
         viewModelScope.launch {
             val result = try {
-                GasGrant.request(address)
+                GasGrant.forHuman(address)
             } finally {
                 requestingGas = false
             }

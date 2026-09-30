@@ -6,11 +6,11 @@ import SwiftUI
 ///
 /// The order is the one the Android flow settled on, and the split between
 /// proving and broadcasting is the load-bearing part of it. Proving is slow and
-/// can fail; broadcasting needs a fee a new human does not have yet. Doing them
-/// as one step means granting someone gas before anyone knows whether the
-/// proof will succeed — spending a rate-limited grant on a transaction that
-/// may never exist. So the proof completes first, and only then does the
-/// confirmation (and with it the gas gate) appear.
+/// can fail; broadcasting needs a fee a new human does not have yet, and the
+/// backend pays that fee only against the finished message — it runs the
+/// chain's checks on the proof before sending anything. So the proof completes
+/// first, and only then does the confirmation (and with it the gas gate)
+/// appear.
 ///
 /// The chip step owns nothing on screen while it runs: iOS gives the reader
 /// session its own system sheet and will not let anything draw over it, so this
@@ -329,9 +329,9 @@ struct RegistrationSheet: View {
         // Built once, here, so a message the chain would reject for a bad
         // referrer fails on this screen rather than at broadcast — after the
         // confirmation, after the gas grant.
-        let message: ProtoAny
+        let message: Msg.Register
         do {
-            message = try PassportRegistration.message(
+            message = try PassportRegistration.register(
                 scan: scan,
                 proof: proof,
                 creator: address,
@@ -353,10 +353,14 @@ struct RegistrationSheet: View {
                 ],
                 // Registration verifies a proof on chain, which costs far more
                 // than a transfer. The default limit is nowhere near enough.
-                gasLimit: Personhood.registerGasLimit
+                gasLimit: Personhood.registerGasLimit,
+                // Free gas for a registration is paid against this message,
+                // and the same one is broadcast once it lands — the proof is
+                // made once.
+                registration: message
             )
         ) { _ in
-            [message]
+            [message.asAny(typeURL: Msg.Register.typeURL)]
         }
         // Out of the way, so the confirmation card at the root is not drawn
         // behind this sheet. Same reason Send does it.

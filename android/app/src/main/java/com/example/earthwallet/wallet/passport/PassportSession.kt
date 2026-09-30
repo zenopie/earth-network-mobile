@@ -11,6 +11,7 @@ import java.io.InputStream
 import java.util.Calendar
 import java.util.TimeZone
 import net.sf.scuba.smartcards.CardService
+import network.erth.earth.proto.personhood.MsgRegister
 import network.erth.wallet.chain.Personhood
 import network.erth.wallet.wallet.services.EarthWallet
 import network.erth.wallet.wallet.services.SecureWalletManager
@@ -90,8 +91,9 @@ object PassportSession {
      * Split from [register] on purpose. Proving is the slow, failure-prone
      * step and it needs the passport held against the phone throughout;
      * broadcasting needs a signature and a fee and can be confirmed at leisure
-     * once the passport is back in a pocket. Asking for gas *before* knowing
-     * the proof succeeds spends a grant on a transaction that may never exist.
+     * once the passport is back in a pocket. It is also what free gas for
+     * registration is granted on: the backend checks this proof, so there is
+     * nothing to ask for until it exists.
      */
     fun read(context: Context, tag: Tag, mrz: Mrz): Result<Scan> {
         if (!mrz.isComplete) return Result.failure(FailureException(Failure.WrongMrz))
@@ -200,11 +202,29 @@ object PassportSession {
                 scan.proof.proof,
                 scan.proof.publicSignals,
                 scan.proof.signatureAlgorithm,
-                affiliate?.trim()?.takeIf { it.isNotEmpty() },
+                normalizeAffiliate(affiliate),
                 scan.dscDer,
             )
         }
     }
+
+    /**
+     * The message [register] will broadcast for [address], unsigned. What the
+     * registration gas grant sends the backend, so it must be built from the
+     * same scan and the same affiliate rule as the broadcast.
+     */
+    fun registerMsg(address: String, scan: Scan, affiliate: String? = null): MsgRegister =
+        Personhood.registerMsg(
+            address,
+            scan.proof.proof,
+            scan.proof.publicSignals,
+            scan.proof.signatureAlgorithm,
+            normalizeAffiliate(affiliate),
+            scan.dscDer,
+        )
+
+    private fun normalizeAffiliate(affiliate: String?): String? =
+        affiliate?.trim()?.takeIf { it.isNotEmpty() }
 
     class FailureException(val failure: Failure) : Exception(failure.toString())
 

@@ -245,7 +245,13 @@ class RegistrationActivity : ComponentActivity() {
                             requestingGas = true
                             lifecycleScope.launch {
                                 val result = try {
-                                    GasGrant.request(address)
+                                    // The proof already exists, so the
+                                    // grant is asked for on it: the backend
+                                    // checks this exact message, and it is
+                                    // what gets broadcast once the gas lands.
+                                    GasGrant.forRegistration(
+                                        PassportSession.registerMsg(address, ready, referrer),
+                                    )
                                 } finally {
                                     requestingGas = false
                                 }

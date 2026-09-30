@@ -99,9 +99,9 @@ public struct PassportRegistration {
     /// Prove personhood from a scan, without broadcasting anything.
     ///
     /// Split from `message(...)` on purpose. Broadcasting needs a signature and
-    /// a fee and can wait until the passport is back in a pocket; granting
-    /// someone gas *before* knowing the proof succeeded spends a rate-limited
-    /// grant on a transaction that may never exist.
+    /// a fee and can wait until the passport is back in a pocket — and a new
+    /// human's fee is itself paid against this proof (`GasGrant`), so the
+    /// proof has to exist before there is any gas to ask for.
     /// - Parameter address: the account that will sign MsgRegister. The proof is
     ///   bound to it as a public input, so proving for one account and
     ///   broadcasting from another produces a proof the chain refuses.
@@ -136,6 +136,18 @@ public struct PassportRegistration {
         creator: String,
         referrer: String? = nil
     ) throws -> ProtoAny {
+        try register(scan: scan, proof: proof, creator: creator, referrer: referrer)
+            .asAny(typeURL: Msg.Register.typeURL)
+    }
+
+    /// The same message, unwrapped — what `GasGrant.Request.register` sends,
+    /// so the backend judges exactly the fields that will be broadcast.
+    public static func register(
+        scan: Scan,
+        proof: Proof,
+        creator: String,
+        referrer: String? = nil
+    ) throws -> Msg.Register {
         let affiliate = try validate(referrer: referrer, creator: creator)
         let dsc = try PassportInputs.scannedDSC(efSOD: scan.efSOD)
         return Msg.Register(
@@ -148,7 +160,7 @@ public struct PassportRegistration {
             // checks it against the CSCA trust store and binds it to the
             // proof's dsc_key output. No pre-submission, no registry wait.
             dscDer: dsc.certificateDER
-        ).asAny(typeURL: Msg.Register.typeURL)
+        )
     }
 
     /// Refuse a referrer the chain would refuse, before spending a fee finding

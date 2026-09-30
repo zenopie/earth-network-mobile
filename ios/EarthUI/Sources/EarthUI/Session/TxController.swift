@@ -34,14 +34,21 @@ public final class TxController {
         /// The sheet then reported the account funded when it was not.
         public var feeUerth: String { Fees.forGas(gasLimit) }
 
+        /// Set only for registration, whose free gas is paid against the
+        /// registration itself: the backend checks this exact message the way
+        /// the chain will, so it is the one later broadcast, not a copy.
+        public var registration: Msg.Register?
+
         public init(
             action: String,
             rows: [(String, String)],
-            gasLimit: UInt64 = TransactionSigner.defaultGasLimit
+            gasLimit: UInt64 = TransactionSigner.defaultGasLimit,
+            registration: Msg.Register? = nil
         ) {
             self.action = action
             self.rows = rows
             self.gasLimit = gasLimit
+            self.registration = registration
         }
     }
 
@@ -97,16 +104,16 @@ public final class TxController {
     public private(set) var outcome: Outcome?
     public private(set) var submitting = false
 
-    /// True while the grant is being asked for — challenge, attestation, and
-    /// the backend's answer. Keeps a second tap from spending a second grant.
+    /// True while the grant is being asked for and the backend has not
+    /// answered. Keeps a second tap from spending a second grant.
     public private(set) var requestingGas = false
 
     /// True from the moment the backend accepts a grant until the gas lands,
     /// or the wait gives up. Drives the sheet's "Waiting for gas…" state.
     public private(set) var awaitingGas = false
 
-    /// Why the last grant was refused, in the backend's or Apple's words made
-    /// readable. Cleared on the next attempt.
+    /// Why the last grant was refused, in the backend's words. Cleared on the
+    /// next attempt.
     public private(set) var gasError: String?
 
     /// The action of the transaction in flight — "Send", "Register".
@@ -149,22 +156,43 @@ public final class TxController {
 
     /// Asks the backend for free gas, then waits for it to land.
     ///
-    /// A 202 is treated like a 200: either way the send exists or is about to,
-    /// and the chain is the only authority on when it arrives.
+    /// Registration asks against its own message, every other transaction as
+    /// a registered human. A 202 is treated like a 200: either way the send
+    /// exists or is about to, and the chain is the only authority on when it
+    /// arrives.
     public func requestGas(in model: AppModel) async {
         guard !requestingGas, !awaitingGas, !model.address.isEmpty else { return }
+        let request: GasGrant.Request = pending?.registration.map { .register($0) }
+            ?? .human(address: model.address)
         requestingGas = true
         gasError = nil
         do {
-            try await AppAttestGas.request(for: model.address)
+            _ = try await GasGrant.request(request)
         } catch {
             requestingGas = false
-            gasError = (error as? AppAttestGas.Failure)?.message
-                ?? "Couldn't get free gas right now. Try again shortly."
+            gasError = Self.describeGasFailure(error, for: request)
             return
         }
         requestingGas = false
         await awaitGas(in: model)
+    }
+
+    private static func describeGasFailure(_ error: Error, for request: GasGrant.Request) -> String {
+        if let refused = error as? GasGrant.Refused {
+            // The one refusal with something to do about it. The backend's
+            // wording ("this address is not a registered human") is accurate
+            // but reads as a verdict rather than a next step.
+            if case .human = request, refused.status == 403 {
+                return "Register to get free gas."
+            }
+            return refused.message
+        }
+        if let url = error as? URLError {
+            return url.code == .timedOut
+                ? "The gas service took too long to answer. Try again."
+                : "Couldn't reach the gas service. Check your connection and try again."
+        }
+        return "Couldn't get free gas right now. Try again shortly."
     }
 
     /// Waits for a gas grant to arrive, then lets the sheet notice.

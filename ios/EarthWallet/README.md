@@ -49,12 +49,16 @@ Three things, each with a comment saying why it is not in `EarthUI`:
 The last two are installed into `EarthUI`'s seams in `EarthWalletApp.init`.
 See `../README.md` for the packaging reasons and the SRS behaviour.
 
-## Free gas (App Attest)
+## Free gas
 
-An underfunded account gets its fee from the backend, which only pays out
-against an App Attest attestation (`EarthUI/Gas/AppAttestGas.swift`, HTTP in
-`EarthCore/Backend/GasGrant.swift`). No entitlement is needed. App Attest is
-unavailable on the Simulator, so the gas button there always reports that the
-device can't verify the app — test it on a phone. A development build attests
-against Apple's development environment, and the backend has to accept that
-environment for the grant to go through.
+An underfunded account gets its fee from the backend
+(`EarthCore/Backend/GasGrant.swift`, driven by `TxController.requestGas`),
+which pays on the chain's own personhood checks — no device attestation, no
+ads, and it works the same on the Simulator:
+
+- Registration posts the finished `MsgRegister` to `/gas/register`. The
+  backend runs the chain's checks on it (proof, address binding, DSC chain)
+  and pays if the chain would accept it, once per passport per month. The same
+  message is broadcast once the gas lands; the proof is not made twice.
+- Everything else posts the address to `/gas/human`, paid once per day to a
+  registered human.

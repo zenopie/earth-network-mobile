@@ -75,6 +75,26 @@ private func checkRegistration() {
     Check.that("it carries the Document Signer on to the chain",
                message.value.range(of: try! PassportInputs.scannedDSC(efSOD: passport.efSOD).certificateDER) != nil)
 
+    // The free-gas request carries the message that will be broadcast, in the
+    // encodings the backend decodes it with: standard base64 for bytes (it
+    // has to rebuild the same MsgRegister), signals as the same strings.
+    let msg = try! PassportRegistration.register(
+        scan: scan, proof: proof!, creator: key.address, referrer: "")
+    let body = GasGrant.Request.register(msg).body
+    Check.equal("gas grant goes to /gas/register", GasGrant.Request.register(msg).path, "/gas/register")
+    Check.equal("gas body address is the creator", body["address"] as? String, key.address)
+    Check.equal("gas body proof is standard base64",
+                body["proof"] as? String, proof!.proof.base64EncodedString())
+    Check.equal("gas body dsc_der is standard base64",
+                (body["dsc_der"] as? String).flatMap { Data(base64Encoded: $0) },
+                try! PassportInputs.scannedDSC(efSOD: passport.efSOD).certificateDER)
+    Check.equal("gas body public_signals pass through unchanged",
+                body["public_signals"] as? [String], proof!.publicSignals)
+    Check.equal("gas body signature_algorithm", body["signature_algorithm"] as? String, proof!.signatureAlgorithm)
+    Check.equal("gas body affiliate empty when unreferred", body["affiliate"] as? String, "")
+    Check.that("gas body is valid JSON", JSONSerialization.isValidJSONObject(body))
+    Check.equal("the wrapped message is the same bytes", message.value, msg.encoded())
+
     // The chain rejects both of these; catching them here saves a fee and,
     // for a new human, the gas grant that paid for it.
     Check.throwsError("refuses self-referral") {

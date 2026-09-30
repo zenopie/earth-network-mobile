@@ -163,14 +163,14 @@ object Personhood {
         affiliate: String?,
         dscDer: ByteArray,
     ): String {
-        val msg = MsgRegister.newBuilder()
-            .setCreator(EarthWallet.address(key))
-            .setProof(ByteString.copyFrom(proof))
-            .addAllPublicSignals(publicSignals)
-            .setSignatureAlgorithm(signatureAlgorithm)
-            .setAffiliate(affiliate ?: "")
-            .setDscDer(ByteString.copyFrom(dscDer))
-            .build()
+        val msg = registerMsg(
+            EarthWallet.address(key),
+            proof,
+            publicSignals,
+            signatureAlgorithm,
+            affiliate,
+            dscDer,
+        )
         return EarthTx.broadcast(
             key,
             listOf(EarthTx.anyOf(Constants.MSG_REGISTER_TYPE_URL, msg)),
@@ -178,6 +178,30 @@ object Personhood {
             feeUerth = REGISTER_FEE_UERTH,
         )
     }
+
+    /**
+     * The MsgRegister [register] broadcasts, built without a key.
+     *
+     * The gas grant for registration (GasGrant.forRegistration) sends the
+     * backend this same message before it is signed, and the backend pays only
+     * if the chain would accept it. Building both from here is what keeps the
+     * message the backend checked and the one broadcast identical.
+     */
+    fun registerMsg(
+        creator: String,
+        proof: ByteArray,
+        publicSignals: List<String>,
+        signatureAlgorithm: String,
+        affiliate: String?,
+        dscDer: ByteArray,
+    ): MsgRegister = MsgRegister.newBuilder()
+        .setCreator(creator)
+        .setProof(ByteString.copyFrom(proof))
+        .addAllPublicSignals(publicSignals)
+        .setSignatureAlgorithm(signatureAlgorithm)
+        .setAffiliate(affiliate ?: "")
+        .setDscDer(ByteString.copyFrom(dscDer))
+        .build()
 
     /**
      * The daily ANML claim, as a message.
