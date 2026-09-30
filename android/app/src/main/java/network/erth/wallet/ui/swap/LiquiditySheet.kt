@@ -27,19 +27,19 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import network.erth.wallet.chain.Dex
-import network.erth.wallet.chain.math.asAmountInput
-import network.erth.wallet.chain.math.fromBaseUnits
-import network.erth.wallet.chain.math.toBaseUnits
+import network.erth.wallet.ui.components.asAmountInput
+import network.erth.wallet.ui.components.fromBaseUnits
+import network.erth.wallet.ui.components.toBaseUnits
 import network.erth.wallet.ui.components.EarthLabel
 import network.erth.wallet.ui.components.EarthSheet
 import network.erth.wallet.ui.components.brandButtonColors
 import network.erth.wallet.ui.components.doneKeyboard
+import network.erth.wallet.ui.components.formatUerth
 import network.erth.wallet.ui.designsystem.component.EarthButton
 import network.erth.wallet.ui.designsystem.component.EarthTextField
 import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
 import network.erth.wallet.ui.designsystem.theme.dimensions.EarthDimensions
 import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
-import network.erth.wallet.ui.formatUerth
 import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.theme.EarthTheme
 import network.erth.wallet.ui.wallet.Tokens
@@ -288,8 +288,6 @@ private fun Long.asDays(): String {
     }
 }
 
-private fun String.toBigIntegerOrNull(): BigInteger? =
-    runCatching { BigInteger(this) }.getOrNull()
 
 /**
  * One side of a deposit: a mark, an amount, and what is available.

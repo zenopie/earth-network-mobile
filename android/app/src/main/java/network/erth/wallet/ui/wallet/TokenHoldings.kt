@@ -1,7 +1,7 @@
 package network.erth.wallet.ui.wallet
 
 import network.erth.wallet.R
-import network.erth.wallet.ui.formatUerth
+import network.erth.wallet.ui.components.formatUerth
 
 /**
  * A denom this wallet holds, ready to display or send.

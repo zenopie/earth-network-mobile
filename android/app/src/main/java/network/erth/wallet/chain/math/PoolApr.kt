@@ -169,5 +169,3 @@ object StakingApr {
         base(bondedUerth)?.times(1.0 - commission.coerceIn(0.0, 1.0))
 }
 
-private fun String.toBigIntegerOrNull(): BigInteger? =
-    runCatching { BigInteger(this) }.getOrNull()

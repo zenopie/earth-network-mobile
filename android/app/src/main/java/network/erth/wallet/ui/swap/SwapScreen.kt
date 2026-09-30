@@ -40,14 +40,15 @@ import androidx.compose.ui.unit.dp
 import com.valentinilk.shimmer.shimmer
 import network.erth.wallet.R
 import network.erth.wallet.chain.math.SwapMath
-import network.erth.wallet.chain.math.asAmountInput
-import network.erth.wallet.chain.math.fromBaseUnits
-import network.erth.wallet.chain.math.toBaseUnits
+import network.erth.wallet.ui.components.asAmountInput
+import network.erth.wallet.ui.components.fromBaseUnits
+import network.erth.wallet.ui.components.toBaseUnits
 import network.erth.wallet.ui.components.EarthDetailRow
 import network.erth.wallet.ui.components.EarthLabel
 import network.erth.wallet.ui.components.brandButtonColors
 import network.erth.wallet.ui.components.dismissKeyboardOnTap
 import network.erth.wallet.ui.components.doneKeyboard
+import network.erth.wallet.ui.components.formatUerth
 import network.erth.wallet.ui.designsystem.component.EarthButton
 import network.erth.wallet.ui.designsystem.component.EarthTextField
 import network.erth.wallet.ui.designsystem.component.ShimmerRectangle
@@ -55,7 +56,6 @@ import network.erth.wallet.ui.designsystem.component.rememberEarthShimmer
 import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
 import network.erth.wallet.ui.designsystem.theme.dimensions.EarthDimensions
 import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
-import network.erth.wallet.ui.formatUerth
 import network.erth.wallet.ui.theme.EarthTheme
 import network.erth.wallet.ui.tx.TxController
 
@@ -406,8 +406,6 @@ private fun Long.asDecimalAmount(): String =
     java.math.BigDecimal(this).movePointLeft(6).stripTrailingZeros().toPlainString()
 
 /** The chain sends reserves as decimal strings; anything else is a broken response. */
-private fun String.toBigIntegerOrNull(): java.math.BigInteger? =
-    runCatching { java.math.BigInteger(this) }.getOrNull()
 
 /**
  * The floor the swap will accept, given a tolerance in basis points.

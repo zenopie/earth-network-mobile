@@ -19,17 +19,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import network.erth.wallet.chain.math.asAmountInput
+import network.erth.wallet.ui.components.asAmountInput
 import network.erth.wallet.ui.components.EarthLabel
 import network.erth.wallet.ui.components.EarthSheet
 import network.erth.wallet.ui.components.brandButtonColors
 import network.erth.wallet.ui.components.dismissKeyboardOnTap
 import network.erth.wallet.ui.components.doneKeyboard
+import network.erth.wallet.ui.components.formatUerth
+import network.erth.wallet.ui.components.toUerthOrNull
 import network.erth.wallet.ui.designsystem.component.EarthButton
 import network.erth.wallet.ui.designsystem.component.EarthTextField
 import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
 import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
-import network.erth.wallet.ui.formatUerth
 import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.theme.EarthTheme
 
@@ -160,10 +161,6 @@ fun StakeSheet(
         Spacer(Modifier.height(dimens.space16))
     }
 }
-
-/** ERTH as typed, to uerth. Null when it is not a number. */
-internal fun String.toUerthOrNull(): Long? =
-    runCatching { java.math.BigDecimal(this).movePointRight(6).toLong() }.getOrNull()
 
 /** uerth back to a plain decimal, for filling the field from "max". */
 private fun Long.asDecimal(): String =

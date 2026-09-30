@@ -42,6 +42,7 @@ import network.erth.wallet.chain.Bank
 import network.erth.wallet.chain.Dex
 import network.erth.wallet.chain.Gov
 import network.erth.wallet.chain.Personhood
+import network.erth.wallet.ui.components.formatUerth
 import network.erth.wallet.ui.designsystem.component.BlankBgScaffold
 import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
 import network.erth.wallet.ui.earn.EarnScreen
@@ -1005,10 +1006,4 @@ private fun EarthRoute.title(): String = when (this) {
     EarthRoute.CreateWallet -> "New wallet"
     EarthRoute.ImportWallet -> "Import wallet"
     is EarthRoute.TransactionDetail -> "Transaction"
-}
-
-internal fun formatUerth(micro: Long): String {
-    val whole = micro / 1_000_000
-    val frac = (micro % 1_000_000).toString().padStart(6, '0').trimEnd('0')
-    return if (frac.isEmpty()) "%,d".format(whole) else "%,d.%s".format(whole, frac)
 }

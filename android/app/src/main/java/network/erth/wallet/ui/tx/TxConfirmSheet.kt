@@ -17,6 +17,7 @@ import network.erth.wallet.ui.components.EarthDetailRow
 import network.erth.wallet.ui.components.EarthSheet
 import network.erth.wallet.ui.components.brandButtonColors
 import network.erth.wallet.ui.components.destructiveButtonColors
+import network.erth.wallet.ui.components.formatErth
 import network.erth.wallet.ui.designsystem.component.EarthButton
 import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
 import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
@@ -177,11 +178,4 @@ fun TxConfirmSheet(
             )
         }
     }
-}
-
-/** uerth is micro-ERTH; six places, trimmed. */
-internal fun formatErth(uerth: Long): String {
-    val whole = uerth / 1_000_000
-    val frac = (uerth % 1_000_000).toString().padStart(6, '0').trimEnd('0')
-    return if (frac.isEmpty()) "$whole ERTH" else "$whole.$frac ERTH"
 }

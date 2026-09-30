@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import network.erth.wallet.chain.Staking
+import network.erth.wallet.ui.components.shortAddress
 import network.erth.wallet.wallet.SecureWalletManager
 
 /** Everything the Earn screen shows, resolved together. */
@@ -84,7 +85,7 @@ class EarnViewModel(app: Application) : AndroidViewModel(app) {
                         val v = byOperator[d.validator]
                         DelegationRow(
                             validatorOperator = d.validator,
-                            moniker = v?.moniker ?: d.validator.abbreviate(),
+                            moniker = v?.moniker ?: d.validator.shortAddress(),
                             amountUerth = d.amount.toLongOrNull() ?: 0L,
                             commission = v?.commission ?: 0.0,
                         )
@@ -95,7 +96,7 @@ class EarnViewModel(app: Application) : AndroidViewModel(app) {
                     .map { u ->
                         UnbondingRow(
                             moniker = byOperator[u.validator]?.moniker
-                                ?: u.validator.abbreviate(),
+                                ?: u.validator.shortAddress(),
                             amountUerth = u.balance.toLongOrNull() ?: 0L,
                             completesIn = u.completionTime,
                         )
@@ -161,6 +162,3 @@ class EarnViewModel(app: Application) : AndroidViewModel(app) {
     }
 
 }
-
-private fun String.abbreviate(): String =
-    if (length <= 16) this else "${take(10)}…${takeLast(4)}"

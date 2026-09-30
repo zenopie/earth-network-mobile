@@ -25,13 +25,14 @@ import network.erth.wallet.chain.Gov
 import network.erth.wallet.ui.components.EarthDetailRow
 import network.erth.wallet.ui.components.brandButtonColors
 import network.erth.wallet.ui.components.destructiveButtonColors
+import network.erth.wallet.ui.components.formatErth
+import network.erth.wallet.ui.components.shortAddress
 import network.erth.wallet.ui.designsystem.component.EarthButton
 import network.erth.wallet.ui.designsystem.component.EarthButtonDefaults
 import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
 import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
 import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.theme.EarthTheme
-import network.erth.wallet.ui.tx.formatErth
 
 /**
  * One proposal, in full, and the place it is voted on — twice.
@@ -275,7 +276,7 @@ fun ProposalDetailScreen(
             )
         }
         if (proposal.proposer.isNotBlank()) {
-            EarthDetailRow("Proposer", shortAddress(proposal.proposer))
+            EarthDetailRow("Proposer", proposal.proposer.shortAddress())
         }
         // The human tally is purged when a proposal resolves, so for a closed
         // one this string is the only surviving record of which house ended it.
@@ -489,6 +490,3 @@ private fun androidx.compose.foundation.layout.RowScope.TallyBarPart(
             .background(color),
     )
 }
-
-private fun shortAddress(a: String): String =
-    if (a.length > 16) "${a.take(10)}…${a.takeLast(4)}" else a

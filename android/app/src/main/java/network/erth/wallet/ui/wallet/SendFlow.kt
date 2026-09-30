@@ -8,9 +8,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import network.erth.wallet.Constants
 import network.erth.wallet.chain.Bank
-import network.erth.wallet.chain.math.asAmountInput
+import network.erth.wallet.ui.components.asAmountInput
 import network.erth.wallet.ui.components.rememberAddressScanner
-import network.erth.wallet.ui.earn.toUerthOrNull
+import network.erth.wallet.ui.components.toUerthOrNull
 import network.erth.wallet.ui.tx.TxConfirmDetails
 import network.erth.wallet.ui.tx.TxController
 import network.erth.wallet.wallet.SecureWalletManager

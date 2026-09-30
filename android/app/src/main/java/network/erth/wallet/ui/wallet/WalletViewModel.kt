@@ -15,6 +15,7 @@ import network.erth.wallet.chain.Bank
 import network.erth.wallet.chain.Explorer
 import network.erth.wallet.chain.Personhood
 import network.erth.wallet.chain.Staking
+import network.erth.wallet.ui.components.formatUerth
 import network.erth.wallet.wallet.SecureWalletManager
 
 /**
@@ -116,7 +117,7 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
                         }.getOrDefault(""),
                         address = address,
                         balanceUerth = erth,
-                        anmlBalance = if (anml > 0) formatSix(anml) else null,
+                        anmlBalance = if (anml > 0) formatUerth(anml) else null,
                         stakedUerth = staked,
                         rewardsUerth = rewards,
                         holdings = holdings,
@@ -145,15 +146,6 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
             } finally {
                 _loading.value = false
             }
-        }
-    }
-
-    private companion object {
-
-        fun formatSix(micro: Long): String {
-            val whole = micro / 1_000_000
-            val frac = (micro % 1_000_000).toString().padStart(6, '0').trimEnd('0')
-            return if (frac.isEmpty()) "$whole" else "$whole.$frac"
         }
     }
 

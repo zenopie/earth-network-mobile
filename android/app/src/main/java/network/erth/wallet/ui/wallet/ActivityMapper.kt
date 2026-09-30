@@ -1,7 +1,8 @@
 package network.erth.wallet.ui.wallet
 
 import network.erth.wallet.chain.Explorer
-import network.erth.wallet.ui.formatUerth
+import network.erth.wallet.ui.components.formatUerth
+import network.erth.wallet.ui.components.shortAddress
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -58,16 +59,12 @@ internal fun Explorer.Tx.toActivityRow(self: String): ActivityRow {
     return ActivityRow(
         txHash = hash,
         kind = kind,
-        counterparty = counterparty.abbreviate(),
+        counterparty = counterparty.shortAddress(),
         amount = msg.amountLabel(kind),
         timestamp = timestamp.toRelative(),
         failed = !success,
     )
 }
-
-/** "earth1jtc…aar6" — enough to recognise an address you know, short enough for a row. */
-private fun String.abbreviate(): String =
-    if (length <= 16) this else "${take(10)}…${takeLast(4)}"
 
 /**
  * The signed amount, from the message's own coin field.

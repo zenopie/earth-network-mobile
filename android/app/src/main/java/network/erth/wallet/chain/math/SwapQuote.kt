@@ -93,39 +93,3 @@ object SwapMath {
         return ((spot - effective) / spot).coerceIn(0.0, 1.0)
     }
 }
-
-/**
- * Keep only what can be part of a decimal number, and only one point.
- *
- * A filter rather than validation-after-the-fact: the numeric keyboard still
- * offers a comma on many locales and a paste can carry anything at all, so the
- * field has to refuse the character rather than accept it and complain.
- */
-internal fun String.asAmountInput(previous: String): String {
-    if (isEmpty()) return ""
-    val cleaned = buildString {
-        var seenPoint = false
-        for (c in this@asAmountInput) {
-            when {
-                c.isDigit() -> append(c)
-                (c == '.' || c == ',') && !seenPoint -> {
-                    seenPoint = true
-                    append('.')
-                }
-                else -> Unit
-            }
-        }
-    }
-    // Six decimals is the denomination's precision; more cannot be sent.
-    val frac = cleaned.substringAfter('.', "")
-    return if (frac.length > 6) previous else cleaned
-}
-
-/** Base units from a typed decimal, or null when it is not a number. */
-internal fun String.toBaseUnits(): BigInteger? =
-    runCatching { BigDecimal(this).movePointRight(6).setScale(0, RoundingMode.DOWN).toBigInteger() }
-        .getOrNull()
-
-/** Base units back to a plain decimal for display. */
-internal fun BigInteger.fromBaseUnits(): String =
-    BigDecimal(this).movePointLeft(6).stripTrailingZeros().toPlainString()

@@ -4,7 +4,6 @@ import android.content.Context
 import android.util.Log
 import network.erth.wallet.crypto.WalletCrypto
 import org.bitcoinj.crypto.MnemonicCode
-import org.json.JSONArray
 import org.json.JSONObject
 
 /**

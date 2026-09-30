@@ -52,7 +52,7 @@ import network.erth.wallet.ui.designsystem.component.rememberEarthShimmer
 import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
 import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
 import network.erth.wallet.ui.designsystem.util.stringRes
-import network.erth.wallet.ui.formatUerth
+import network.erth.wallet.ui.components.formatUerth
 import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.wallet.ActivityItem
 import network.erth.wallet.ui.wallet.ActivityRow
