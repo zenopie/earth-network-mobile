@@ -1,6 +1,9 @@
 [workspace]
 members = [
   "poa_core",
+  "privacy_core",
+  "membership",
+  "transfer",
   "lean_poa",
   "lean_poa_rsa2048",
   "lean_poa_rsa4096",
