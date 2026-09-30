@@ -245,7 +245,7 @@ class RegistrationActivity : ComponentActivity() {
                             requestingGas = true
                             lifecycleScope.launch {
                                 val result = try {
-                                    GasGrant.request(this@RegistrationActivity, address)
+                                    GasGrant.request(address)
                                 } finally {
                                     requestingGas = false
                                 }

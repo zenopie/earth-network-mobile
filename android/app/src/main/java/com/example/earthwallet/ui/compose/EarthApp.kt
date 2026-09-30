@@ -348,7 +348,6 @@ fun EarthApp(
                 // grant existed, which left the sheet insisting the account was
                 // unfunded after the gas had arrived.
                 tx.requestGas(
-                    context = context,
                     address = address,
                     fetchBalance = {
                         withContext(Dispatchers.IO) {

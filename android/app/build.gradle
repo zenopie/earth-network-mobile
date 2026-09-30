@@ -24,8 +24,8 @@ android {
         applicationId = "network.erth.wallet"
         minSdk = 24
         targetSdk = 36
-        versionCode = 33
-        versionName = "1.0.28"
+        versionCode = 34
+        versionName = "1.0.29"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -230,10 +230,6 @@ dependencies {
     implementation 'com.google.zxing:core:3.5.2'
     implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
     
-    // Play Integrity, for the free-gas grant (ui/gas/GasGrant.kt): the backend
-    // pays only a request whose verdict says it came from this app, from Play.
-    implementation 'com.google.android.play:integrity:1.6.0'
-
     // Google Play In-App Updates
     implementation 'com.google.android.play:app-update:2.1.0'
     implementation 'com.google.android.play:app-update-ktx:2.1.0'

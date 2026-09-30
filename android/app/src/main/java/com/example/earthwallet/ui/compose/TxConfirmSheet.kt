@@ -143,7 +143,7 @@ fun TxConfirmSheet(
                     text = if (awaitingGas) "Waiting for gas…" else "Get free gas",
                     onClick = onGetGas,
                     // A second tap while one is in flight would ask for a
-                    // second challenge and spend a second integrity request.
+                    // second challenge and attest a second key.
                     enabled = !requestingGas && !awaitingGas,
                     isLoading = requestingGas || awaitingGas,
                     colors = brandButtonColors(),

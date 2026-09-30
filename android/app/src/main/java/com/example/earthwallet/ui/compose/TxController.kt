@@ -140,7 +140,6 @@ class TxController : ViewModel() {
      * the new balance exists, so a poll built on it would race itself.
      */
     fun requestGas(
-        context: Context,
         address: String,
         fetchBalance: suspend () -> Long,
         onFunded: () -> Unit = {},
@@ -150,7 +149,7 @@ class TxController : ViewModel() {
         requestingGas = true
         viewModelScope.launch {
             val result = try {
-                GasGrant.request(context, address)
+                GasGrant.request(address)
             } finally {
                 requestingGas = false
             }
