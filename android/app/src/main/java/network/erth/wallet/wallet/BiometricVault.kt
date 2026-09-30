@@ -63,14 +63,12 @@ object BiometricVault {
         slots.first { it != liveSlot(context) }
 
     /** Whether this device can authenticate the user biometrically at all. */
-    @JvmStatic
     fun isAvailable(context: Context): Boolean =
         BiometricManager.from(context)
             .canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) ==
             BiometricManager.BIOMETRIC_SUCCESS
 
     /** Whether a live secret is held. Does not prompt. */
-    @JvmStatic
     fun isEnrolled(context: Context): Boolean {
         val slot = liveSlot(context)
         return prefs(context).contains(payloadKey(slot)) && keystoreKey(slot) != null
@@ -88,7 +86,6 @@ object BiometricVault {
      * proves the thing that will be asked for later actually works before the
      * wallet depends on it.
      */
-    @JvmStatic
     fun stage(
         activity: FragmentActivity,
         secret: String,
@@ -127,7 +124,6 @@ object BiometricVault {
      * losing power between the two leaves a stale key nobody reads, which the
      * next [stage] overwrites.
      */
-    @JvmStatic
     fun commit(context: Context, slot: String) {
         val previous = liveSlot(context)
         if (previous == slot) return
@@ -136,7 +132,6 @@ object BiometricVault {
     }
 
     /** Throw away a staged slot after a change that did not go through. */
-    @JvmStatic
     fun discard(context: Context, slot: String) {
         if (slot == liveSlot(context)) return
         prefs(context).edit().remove(payloadKey(slot)).remove(ivKey(slot)).apply()
@@ -144,7 +139,6 @@ object BiometricVault {
     }
 
     /** Ask for the live secret. Null means the user refused, or the key is gone. */
-    @JvmStatic
     fun retrieve(
         activity: FragmentActivity,
         reason: String,
@@ -186,7 +180,6 @@ object BiometricVault {
     }
 
     /** Forget everything, both slots. */
-    @JvmStatic
     fun forget(context: Context) {
         prefs(context).edit().clear().apply()
         slots.forEach(::deleteKey)

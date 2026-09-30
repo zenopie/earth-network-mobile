@@ -17,8 +17,6 @@ data class Holding(
     val symbol: String,
     /** Base units, as the chain returns them. */
     val amount: Long,
-    /** Decimal places between the two. */
-    val exponent: Int = 6,
     val icon: Int = R.drawable.ic_token_default,
 ) {
     /** The amount as a person reads it. */

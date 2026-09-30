@@ -47,7 +47,6 @@ object WalletStorageVersion {
     /**
      * Create a new versioned wallet storage with current format
      */
-    @JvmStatic
     fun createVersionedStorage(wallets: JSONArray): VersionedWalletStorage {
         val metadata = JSONObject().apply {
             put(KEY_CREATED_AT, System.currentTimeMillis())
@@ -65,7 +64,6 @@ object WalletStorageVersion {
     /**
      * Parse wallet storage from JSON string (versioned format only)
      */
-    @JvmStatic
     @Throws(Exception::class)
     fun parseWalletStorage(storageJson: String): VersionedWalletStorage {
         if (storageJson.isBlank()) {
@@ -106,7 +104,6 @@ object WalletStorageVersion {
     /**
      * Serialize versioned wallet storage to JSON string
      */
-    @JvmStatic
     fun serializeWalletStorage(storage: VersionedWalletStorage): String {
         return storage.toJSON().toString()
     }
@@ -114,7 +111,6 @@ object WalletStorageVersion {
     /**
      * Get wallets array from versioned storage (for backward compatibility)
      */
-    @JvmStatic
     fun getWalletsArray(storage: VersionedWalletStorage): JSONArray {
         return storage.wallets
     }
@@ -122,7 +118,6 @@ object WalletStorageVersion {
     /**
      * Update wallets in versioned storage
      */
-    @JvmStatic
     fun updateWallets(storage: VersionedWalletStorage, newWallets: JSONArray): VersionedWalletStorage {
         return storage.copy(wallets = newWallets)
     }
@@ -130,7 +125,6 @@ object WalletStorageVersion {
     /**
      * Migrate wallet storage from old version to current version
      */
-    @JvmStatic
     @Throws(Exception::class)
     private fun migrateStorage(oldStorage: VersionedWalletStorage): VersionedWalletStorage {
 
@@ -160,7 +154,6 @@ object WalletStorageVersion {
      * Future migration example to version 2
      * This is a placeholder for when you need to change the wallet format
      */
-    @JvmStatic
     @Throws(Exception::class)
     private fun migrateToV2(storage: VersionedWalletStorage): VersionedWalletStorage {
 
@@ -182,7 +175,6 @@ object WalletStorageVersion {
     /**
      * Future migration example to version 3
      */
-    @JvmStatic
     @Throws(Exception::class)
     private fun migrateToV3(storage: VersionedWalletStorage): VersionedWalletStorage {
 

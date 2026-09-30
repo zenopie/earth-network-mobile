@@ -33,7 +33,6 @@ object WalletCrypto {
      * Initialize MnemonicCode with the English word list from assets.
      * Must be called before any mnemonic operations.
      */
-    @JvmStatic
     fun initialize(context: Context) {
         if (isInitialized) return
         synchronized(lock) {
@@ -54,7 +53,6 @@ object WalletCrypto {
     /**
      * Generate a new BIP-39 mnemonic (12 words)
      */
-    @JvmStatic
     fun generateMnemonic(): String {
         return try {
             // 128 bits entropy (12 words)
@@ -87,7 +85,6 @@ object WalletCrypto {
      * so the number here is the difference between finding your funds and
      * concluding they are gone.
      */
-    @JvmStatic
     fun deriveKeyFromMnemonic(mnemonic: String): ECKey {
         return try {
             val words = mnemonic.trim().split("\\s+".toRegex())
@@ -108,7 +105,6 @@ object WalletCrypto {
      * the caller owns. bitcoinj still builds Strings internally, so this
      * narrows the window rather than closing it.
      */
-    @JvmStatic
     fun deriveKeyFromSecureMnemonic(mnemonicChars: CharArray): ECKey {
         return try {
             // Convert char array to string only temporarily for processing
@@ -130,7 +126,6 @@ object WalletCrypto {
     /**
      * Get earth address from ECKey
      */
-    @JvmStatic
     fun getAddress(key: ECKey): String {
         // Compressed public key
         val pubCompressed = key.pubKeyPoint.getEncoded(true)
@@ -144,7 +139,6 @@ object WalletCrypto {
     /**
      * Get earth address from mnemonic
      */
-    @JvmStatic
     fun getAddressFromMnemonic(mnemonic: String): String {
         val key = deriveKeyFromMnemonic(mnemonic)
         return getAddress(key)

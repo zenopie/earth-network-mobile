@@ -32,13 +32,11 @@ enum class UnlockMethod {
         private const val PREF_FILE = "unlock_method"
         private const val KEY = "method"
 
-        @JvmStatic
         fun current(context: Context): UnlockMethod =
             runCatching {
                 valueOf(prefs(context).getString(KEY, PIN.name) ?: PIN.name)
             }.getOrDefault(PIN)
 
-        @JvmStatic
         fun set(context: Context, method: UnlockMethod) {
             prefs(context).edit().putString(KEY, method.name).apply()
         }
@@ -49,7 +47,6 @@ enum class UnlockMethod {
          * Hashed rather than concatenated, so the PIN's boundary is not visible
          * in the result and the secret is fixed-width whatever the PIN's length.
          */
-        @JvmStatic
         fun combine(pin: String, half: String): String =
             MessageDigest.getInstance("SHA-256")
                 .digest("$pin|$half".toByteArray(StandardCharsets.UTF_8))
@@ -60,7 +57,6 @@ enum class UnlockMethod {
          * keeps behind the prompt. 32 random bytes, so what stands behind the
          * prompt is a real key rather than four digits.
          */
-        @JvmStatic
         fun generatedSecret(): String {
             val bytes = ByteArray(32)
             SecureRandom().nextBytes(bytes)

@@ -51,7 +51,6 @@ dex/allocation/personhood/assembly), compiled to javalite.
 | `Personhood.kt` | Registration status and count, `register`, ANML claims. |
 | `Gov.kt`, `Assembly.kt` | Proposals, tallies, and votes in both chambers. |
 | `Explorer.kt` | Blocks, transactions and validators for the explorer screens. |
-| `Tokens.kt` | Token registry: denom, decimals, symbol, logo. |
 | `math/PoolApr.kt`, `math/SwapQuote.kt` | Must match `x/dex` and the chain's reward maths. |
 
 ## Every write goes through TxController

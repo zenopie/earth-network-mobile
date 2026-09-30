@@ -22,7 +22,6 @@ object NoirProver {
      * @param circuitJson stringified compiled-circuit manifest.
      * @param size circuit size hint (for SRS sizing).
      */
-    @JvmStatic
     fun loadCircuit(circuitJson: String, size: Int): Circuit =
         Circuit.fromJsonManifest(circuitJson, size, false, 0L)
 
@@ -31,7 +30,6 @@ object NoirProver {
      * circuit's verifying key (`bb write_vk`) string. Returns the proof (with its
      * public inputs) in Barretenberg's encoding.
      */
-    @JvmStatic
     fun prove(circuit: Circuit, inputs: Map<String, Any>, vk: String): String =
         circuit.prove(inputs, vk) ?: throw IllegalStateException("noir_android returned no proof")
 }

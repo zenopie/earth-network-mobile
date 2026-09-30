@@ -58,7 +58,6 @@ object PassportProver {
      * @param registry the DSC's certificate-registry inclusion proof (from the
      *   registry service; its root must equal the chain's params.dsc_root).
      */
-    @JvmStatic
     fun prove(
         context: Context,
         dg1: ByteArray,

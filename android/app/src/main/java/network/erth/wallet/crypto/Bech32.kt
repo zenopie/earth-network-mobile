@@ -15,7 +15,6 @@ object Bech32 {
         0x2a1462b3
     )
 
-    @JvmStatic
     fun encode(hrp: String?, data: ByteArray?): String {
         require(!hrp.isNullOrEmpty()) { "hrp required" }
         requireNotNull(data) { "data required" }
@@ -81,7 +80,6 @@ object Bech32 {
      * Convert groups of bits. For Bech32, fromBits=8, toBits=5 with padding.
      * Ported from reference implementation.
      */
-    @JvmStatic
     fun convertBits(data: ByteArray, fromBits: Int, toBits: Int, pad: Boolean): ByteArray {
         var acc = 0
         var bits = 0
@@ -120,7 +118,6 @@ object Bech32 {
      * refuses as bound to somebody else -- so the checksum is verified rather
      * than assumed.
      */
-    @JvmStatic
     fun decode(addr: String): ByteArray {
         require(addr == addr.lowercase()) { "bech32 must be lowercase" }
         val sep = addr.lastIndexOf('1')

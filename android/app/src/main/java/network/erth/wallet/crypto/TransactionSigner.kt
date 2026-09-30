@@ -22,7 +22,6 @@ object TransactionSigner {
      * @param walletKey The wallet key to sign with
      * @return Signed transaction bytes ready for broadcast
      */
-    @JvmStatic
     @Throws(Exception::class)
     fun signTransaction(signDoc: Tx.SignDoc, walletKey: ECKey): ByteArray {
 
@@ -49,7 +48,6 @@ object TransactionSigner {
     /**
      * Creates a signature for the given data
      */
-    @JvmStatic
     @Throws(Exception::class)
     fun createSignature(data: ByteArray, walletKey: ECKey): TransactionSignature {
 

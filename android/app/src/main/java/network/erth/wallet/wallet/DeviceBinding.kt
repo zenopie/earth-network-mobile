@@ -88,7 +88,6 @@ object DeviceBinding {
      * failure, because the alternative is silently writing a blob weaker than
      * the one it replaced.
      */
-    @JvmStatic
     @Throws(Exception::class)
     fun wrap(plaintext: ByteArray): Wrapped {
         val secret = key() ?: createKey() ?: throw IllegalStateException(
@@ -106,7 +105,6 @@ object DeviceBinding {
      * data, a restore onto different hardware. That is unrecoverable and the
      * caller should say so plainly rather than reporting a wrong PIN.
      */
-    @JvmStatic
     @Throws(Exception::class)
     fun unwrap(wrapped: Wrapped): ByteArray? {
         val secret = key() ?: return null

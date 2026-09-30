@@ -1,7 +1,7 @@
 import BigInt
 import Foundation
 
-/// The token registry. Ports `chain/Tokens.kt`.
+/// The token registry.
 ///
 /// Every token here is a native bank denom — this chain has no contract tokens,
 /// no viewing keys, and nothing to approve before a swap.

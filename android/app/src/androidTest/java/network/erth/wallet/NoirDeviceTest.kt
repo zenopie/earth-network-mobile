@@ -22,8 +22,9 @@ class NoirDeviceTest {
 
     @Test
     fun proveAndVerifyOnDevice() {
-        val ctx = InstrumentationRegistry.getInstrumentation().targetContext
-        val circuitJson = ctx.assets.open("circuits/e2e.json")
+        val instr = InstrumentationRegistry.getInstrumentation()
+        // The toy circuit ships in the test APK's assets, not the app's.
+        val circuitJson = instr.context.assets.open("circuits/e2e.json")
             .bufferedReader().use { it.readText() }
 
         // size = SRS points to provision (must cover the circuit's domain).
@@ -39,7 +40,7 @@ class NoirDeviceTest {
         // Persist proof + VK so the chain verifier can be validated against a real
         // device-generated proof (adb pull from getExternalFilesDir).
         val vk = circuit.getVerificationKey()
-        val dir = ctx.getExternalFilesDir(null)!!
+        val dir = instr.targetContext.getExternalFilesDir(null)!!
         java.io.File(dir, "device_proof.hex").writeText(proof)
         java.io.File(dir, "device_vk.hex").writeText(vk)
     }
