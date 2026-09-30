@@ -3,7 +3,7 @@ import Security
 
 /// The attempt count and the backoff around it.
 ///
-/// Ported from `wallet/utils/UnlockAttempts.kt`, including its shape: three
+/// Ported from `wallet/UnlockAttempts.kt`, including its shape: three
 /// tries, then a lockout that lengthens each time it is tripped. The lockout
 /// is what makes a four-digit PIN worth anything — 10,000 combinations falls
 /// in seconds to something that can guess freely.

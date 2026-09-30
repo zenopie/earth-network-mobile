@@ -1,0 +1,193 @@
+package network.erth.wallet.chain
+
+import com.google.protobuf.Any as ProtoAny
+import com.google.protobuf.ByteString
+import network.erth.earth.proto.personhood.MsgClaimAnml
+import network.erth.earth.proto.personhood.MsgRegister
+import network.erth.wallet.Constants
+import network.erth.wallet.crypto.EarthWallet
+import org.bitcoinj.core.ECKey
+import org.json.JSONObject
+
+/**
+ * x/personhood — proof-of-personhood registration and the daily ANML claim.
+ *
+ * The one-human-one-vote allocation stream this module gates lives in
+ * x/allocation (see [Allocation], STREAM_ID_CARETAKER). This module only decides who
+ * counts as a live human; the votes and options belong to the allocation module.
+ */
+object Personhood {
+
+    fun isRegistered(address: String): Boolean {
+        val (code, body) = EarthRest.get("/earth/personhood/v1/registration/$address")
+        if (code !in 200..299) return false
+        return JSONObject(body).optBoolean("registered", false)
+    }
+
+    /** Registration status, including the last ANML-claim time (unix seconds, 0 if never). */
+    data class RegistrationStatus(val registered: Boolean, val expired: Boolean, val lastAnmlClaim: Long)
+
+    fun registrationStatus(address: String): RegistrationStatus {
+        val (code, body) = EarthRest.get("/earth/personhood/v1/registration/$address")
+        if (code !in 200..299) return RegistrationStatus(false, false, 0L)
+        val json = JSONObject(body)
+        val reg = json.optJSONObject("registration")
+        return RegistrationStatus(
+            registered = json.optBoolean("registered", false),
+            expired = json.optBoolean("expired", false),
+            lastAnmlClaim = reg?.optString("last_anml_claim", "0")?.toLongOrNull() ?: 0L,
+        )
+    }
+
+    /**
+     * ANML is claimable once per UTC day.
+     *
+     * Compared as day numbers, matching the chain. A rolling
+     * `now - last >= 86400` gives the same answer only while the chain stores a
+     * midnight-truncated timestamp; against a real claim time it under-reports
+     * by up to a day, hiding a claim that is actually available.
+     */
+    fun isAnmlClaimable(status: RegistrationStatus): Boolean {
+        if (!status.registered) return false
+        val nowSec = System.currentTimeMillis() / 1000
+        return nowSec / SECONDS_PER_DAY != status.lastAnmlClaim / SECONDS_PER_DAY
+    }
+
+    /** Unix seconds at the next UTC midnight, when the claim window reopens. */
+    fun nextClaimOpensAt(): Long {
+        val nowSec = System.currentTimeMillis() / 1000
+        return (nowSec / SECONDS_PER_DAY + 1) * SECONDS_PER_DAY
+    }
+
+    private const val SECONDS_PER_DAY = 86_400L
+
+    /**
+     * How many humans are currently registered — the denominator of the human
+     * emission stream, since every registration carries the same weight.
+     *
+     * This used to ride along on the democratic-options response; it is its own
+     * query now that the options belong to x/allocation.
+     */
+    fun registrationCount(): Long {
+        val (code, body) = EarthRest.get("/earth/personhood/v1/registration_count")
+        if (code !in 200..299) return 0L
+        return JSONObject(body).optString("count", "0").toLongOrNull() ?: 0L
+    }
+
+    // --- messages ---
+
+    /**
+     * Client-side proof-of-personhood registration. Returns tx hash.
+     *
+     * proof is the Barretenberg UltraHonk proof bytes; publicSignals are the
+     * circuit public signals as decimal strings ([current_date, address,
+     * nullifier, dsc_key] for lean_poa); signatureAlgorithm selects the
+     * on-chain verifying key; dscDer is the Document Signer certificate the
+     * chain verifies against its CSCA trust store and binds to the proof's
+     * dsc_key output.
+     */
+    /**
+     * Registration's gas limit and fee, defined here — beside the message they
+     * pay for — because the caller cannot set them by being careful.
+     *
+     * This existed as a constant in PassportScannerFragment that fed only the
+     * confirmation sheet, while register() fell through to EarthTx.broadcast's
+     * 400_000 default. Raising the fragment's copy changed the number the user
+     * was shown and not the number sent, and the transaction still ran out of
+     * gas at exactly the old limit.
+     *
+     * MsgRegister verifies an UltraHonk proof on-chain and is the most expensive
+     * message the app sends. A fresh account pays more than a used one: the ante
+     * handler stores its public key on the first transaction, which measured as
+     * 400324 gas against a 400000 limit — over, and precisely the case that
+     * matters, since a new human's first transaction is always this one.
+     *
+     * Generous rather than tuned: an under-estimate burns the fee and the gas
+     * grant that paid for it.
+     *
+     * 6M from v0.9.2, which raised the chain's proof charge to 3M and its
+     * certificate charge to 300k; with the account and store writes a
+     * registration is near 4M. The fee at the validator's price, 30,000 uerth,
+     * stays inside the 100,000 a gas grant pays out.
+     */
+    const val REGISTER_GAS_LIMIT = 6_000_000L
+
+    /**
+     * Derived, not flat. At the validator's 0.005uerth this is 15,000 uerth —
+     * the flat "2000" that used to sit here was the fee for 400,000 gas, and
+     * every registration was rejected with "insufficient fees; got: 2000uerth
+     * required: 15000uerth". See [Fees].
+     */
+    val REGISTER_FEE_UERTH: String get() = Fees.forGasString(REGISTER_GAS_LIMIT)
+
+    fun register(
+        key: ECKey,
+        proof: ByteArray,
+        publicSignals: List<String>,
+        signatureAlgorithm: String,
+        affiliate: String?,
+        dscDer: ByteArray,
+    ): String {
+        val msg = registerMsg(
+            EarthWallet.address(key),
+            proof,
+            publicSignals,
+            signatureAlgorithm,
+            affiliate,
+            dscDer,
+        )
+        return EarthTx.broadcast(
+            key,
+            listOf(EarthTx.anyOf(Constants.MSG_REGISTER_TYPE_URL, msg)),
+            gasLimit = REGISTER_GAS_LIMIT,
+            feeUerth = REGISTER_FEE_UERTH,
+        )
+    }
+
+    /**
+     * The MsgRegister [register] broadcasts, built without a key.
+     *
+     * The gas grant for registration (GasGrant.forRegistration) sends the
+     * backend this same message before it is signed, and the backend pays only
+     * if the chain would accept it. Building both from here is what keeps the
+     * message the backend checked and the one broadcast identical.
+     */
+    fun registerMsg(
+        creator: String,
+        proof: ByteArray,
+        publicSignals: List<String>,
+        signatureAlgorithm: String,
+        affiliate: String?,
+        dscDer: ByteArray,
+    ): MsgRegister = MsgRegister.newBuilder()
+        .setCreator(creator)
+        .setProof(ByteString.copyFrom(proof))
+        .addAllPublicSignals(publicSignals)
+        .setSignatureAlgorithm(signatureAlgorithm)
+        .setAffiliate(affiliate ?: "")
+        .setDscDer(ByteString.copyFrom(dscDer))
+        .build()
+
+    /**
+     * The daily ANML claim, as a message.
+     *
+     * Separate from [claimAnml] because the Compose app builds messages and
+     * broadcasts them elsewhere — one confirmation gate and one result sheet
+     * for every transaction — while the remaining fragments still broadcast
+     * inline. Both go through the same message so the two paths cannot drift.
+     */
+    fun msgClaimAnml(creator: String): ProtoAny {
+        val msg = MsgClaimAnml.newBuilder().setCreator(creator).build()
+        return EarthTx.anyOf("/earth.personhood.v1.MsgClaimAnml", msg)
+    }
+
+    /** Daily ANML claim. Returns tx hash. */
+    fun claimAnml(key: ECKey): String =
+        EarthTx.broadcast(key, listOf(msgClaimAnml(EarthWallet.address(key))))
+
+    // No unregister. The chain removed MsgUnregister — retiring a registration
+    // freed its nullifier, and Register pays the registration reward to any
+    // nullifier that is not already live, so leaving and returning drew on the
+    // reward pool once per block. A registration now ends only by expiring, and
+    // moves between wallets by registering again from the new one.
+}

@@ -15,5 +15,5 @@ dependencyResolutionManagement {
         maven { url = 'https://s01.oss.sonatype.org/content/repositories/snapshots/' }
     }
 }
-rootProject.name = "PassportScanner"
+rootProject.name = "EarthWallet"
 include ':app'

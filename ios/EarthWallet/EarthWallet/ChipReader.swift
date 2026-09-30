@@ -14,7 +14,7 @@ import NFCPassportReader
 /// stay runnable on a Mac. Here there is no such graph, and this is where the
 /// entitlement and the Info.plist keys live anyway.
 ///
-/// Ports the half of `wallet/passport/PassportSession.kt` that talks to the
+/// Ports the half of `passport/PassportSession.kt` that talks to the
 /// card. jmrtd there, `NFCPassportReader` here, for the same reason: BAC, PACE
 /// and secure messaging are not worth reimplementing, and a mistake in them
 /// looks like a passport that will not read rather than like a bug.

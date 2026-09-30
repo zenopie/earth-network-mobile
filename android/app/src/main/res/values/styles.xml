@@ -1,51 +1,35 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- Base application theme without an ActionBar (no top title bar). -->
+    <!-- Window theme. The screens themselves are Compose and draw their own
+         colours; this covers the window, status bar and UpdateCheckActivity. -->
     <style name="Theme.EarthWallet" parent="Theme.MaterialComponents.Light.NoActionBar">
-        <!-- Primary brand color. -->
         <item name="colorPrimary">#4caf50</item>
         <item name="colorPrimaryVariant">#388e3c</item>
         <item name="colorOnPrimary">@android:color/white</item>
-        <!-- Secondary brand color. -->
         <item name="colorSecondary">#FF9800</item>
         <item name="colorSecondaryVariant">#F57C00</item>
         <item name="colorOnSecondary">@android:color/black</item>
-        <!-- Status bar color: use white so notification area matches app background -->
         <item name="android:statusBarColor" tools:targetApi="l">@android:color/white</item>
-        <!-- Make status bar icons dark (for white background) -->
         <item name="android:windowLightStatusBar">true</item>
-        <!-- Set splash screen background to white -->
         <item name="android:windowBackground">@android:color/white</item>
-        <!-- Ensure no window title or action bar is shown as a fallback -->
         <item name="windowActionBar">false</item>
         <item name="android:windowNoTitle">true</item>
-        <!-- Properly handle window insets for status bar -->
         <item name="android:fitsSystemWindows">true</item>
-        <!-- Customize your theme here. -->
-    </style>
-<!-- NoDisplay variant that is still AppCompat-compatible (transparent/translucent, no UI) -->
-    <style name="Theme.EarthWallet.NoDisplay" parent="Theme.EarthWallet">
-        <item name="android:windowIsTranslucent">true</item>
-        <item name="android:windowBackground">@android:color/transparent</item>
-        <item name="android:colorBackgroundCacheHint">@null</item>
-        <item name="android:windowNoTitle">true</item>
-        <item name="windowActionBar">false</item>
-        <item name="android:windowAnimationStyle">@null</item>
     </style>
 
-    <!-- Dialog-like theme for TransactionActivity -->
-    <style name="Theme.EarthWallet.Dialog" parent="Theme.EarthWallet">
-        <item name="android:windowIsTranslucent">true</item>
-        <item name="android:windowBackground">@android:color/transparent</item>
-        <item name="android:windowContentOverlay">@null</item>
-        <item name="android:windowNoTitle">true</item>
-        <item name="android:windowIsFloating">false</item>
-        <item name="android:backgroundDimEnabled">false</item>
+    <!--
+      Applied at runtime to the Material ModalBottomSheet's own dialog window (see
+      EarthScreenModalBottomSheet). Slide-down exit only; opening uses Material's in-Compose
+      slide-up so we must not double-animate the enter.
+    -->
+    <style name="EarthBottomSheetDialogAnimation">
+        <item name="android:windowExitAnimation">@anim/sheet_slide_out_bottom</item>
     </style>
 
-    <!-- Tab text style -->
-    <style name="TabTextStyle" parent="TextAppearance.Design.Tab">
-        <item name="android:textSize">11sp</item>
-        <item name="android:textAllCaps">false</item>
-        <item name="textAllCaps">false</item>
+    <!--
+      Applied at runtime to the host window that carries the bottom-sheet dim. Fades the dim
+      out in place when the dialog is dismissed, so the dim never slides with the sheet.
+    -->
+    <style name="EarthBottomSheetScrimAnimation">
+        <item name="android:windowExitAnimation">@anim/scrim_fade_out</item>
     </style>
 </resources>

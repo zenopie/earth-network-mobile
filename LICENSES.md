@@ -2,7 +2,7 @@
 
 ## Zodl (Zashi) — MIT
 
-`app/src/main/java/com/example/earthwallet/ui/vendor/` is vendored from
+`android/app/src/main/java/network/erth/wallet/ui/designsystem/` is vendored from
 [Zodl](https://github.com/zodl-inc/zodl-android), the Electric Coin Company's
 Zcash wallet.
 
@@ -16,6 +16,10 @@ across 52 groups, and separate light and dark mappings. A mature wallet colour s
 every button variant with its hover and disabled states, every input across nine
 states — and reproducing it from scratch is weeks of work that this already
 solves.
+
+**What remains.** The library was later trimmed to what the app uses: about 60
+files, with the unused components, previews, icons, strings and the dark
+palette removed.
 
 **What was changed.** The package was renamed, `Zashi` became `Earth`, and the
 raw palette was re-skinned to the Sprout ramps: Zcash's gold brand became
@@ -37,8 +41,7 @@ while keeping the abstraction 38 of their components depend on.
 **Versions.** The library is built against Material 3 1.4.0 and Compose 1.10.4;
 its modal sheet uses APIs absent from earlier versions, so those are pinned
 rather than taken from a BOM. It also needs compose-shimmer, lottie-compose,
-kotlinx-collections-immutable, constraintlayout-compose and
-ui-text-google-fonts.
+kotlinx-collections-immutable and ui-text-google-fonts.
 
 Vendored rather than depended on because `ui-design-lib` declares
 `api(libs.zcash.sdk)` — depending on it would put the Zcash SDK in an Earth

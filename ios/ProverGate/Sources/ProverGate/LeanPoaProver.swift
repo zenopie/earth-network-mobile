@@ -3,7 +3,7 @@ import Swoir
 import Swoirenberg
 import ProverGateCore
 
-/// Swift counterpart of android/.../wallet/passport/{NoirProver,PassportProver}.kt.
+/// Swift counterpart of android/.../passport/{NoirProver,PassportProver}.kt.
 ///
 /// Generates the client-side proof-of-personhood proof on device: a Barretenberg
 /// **UltraHonk** proof (bb v5.0.0, poseidon2 flavor) of the lean_poa circuit,

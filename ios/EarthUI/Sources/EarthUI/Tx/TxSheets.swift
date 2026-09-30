@@ -196,7 +196,7 @@ struct TxResultSheet: View {
 /// A card floating over the app, with the scrim that makes it modal.
 /// The container every transaction step draws into: a bottom sheet.
 ///
-/// Ports `EarthSheet` from `ui/compose/EarthUi.kt`, which wraps Material's
+/// Ports `EarthSheet` from `ui/components/EarthUi.kt`, which wraps Material's
 /// `ModalBottomSheet` — full width against the bottom edge, only the top
 /// corners rounded, `bgPrimary` behind it.
 ///
@@ -247,7 +247,7 @@ struct TxOverlayCard<Content: View>: View {
 /// after sees its own effect.
 /// The wait between confirming and the chain answering.
 ///
-/// Ports `TxPendingSheet` from `ui/compose/TxResultSheet.kt`, including where it
+/// Ports `TxPendingSheet` from `ui/tx/TxResultSheet.kt`, including where it
 /// sits: the same bottom sheet as the confirmation and the result, so the three
 /// are one position and three states. The result's badge then grows in over the
 /// spinner instead of appearing from nowhere, which is the whole reason Android

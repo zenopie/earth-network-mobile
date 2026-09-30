@@ -1,45 +1,22 @@
-# Passport Scanner
+# Earth Wallet
 
-An Android application that uses JMRTD library to scan and read ePassport information via NFC.
+Self-custody wallet for **earth-1**, a Cosmos SDK chain built on
+proof-of-personhood. The app reads an ePassport's NFC chip, proves on the
+device in zero knowledge that its holder is a unique human, and registers that
+proof on-chain. No server sees the passport.
 
-## Features
+    android/    the shipping app: Kotlin + Jetpack Compose
+    ios/        the iOS app: see ios/README.md
+    circuits/   Noir circuits for the personhood proof
+    tools/      registry builder, proof checker, Go ground-truth checks
 
-- Scan ePassports using NFC
-- Extract basic passport information (document number, name, nationality, etc.)
-- Display extracted information in a user-friendly interface
+## Android
 
-## Requirements
+    cd android
+    ./gradlew :app:assembleDebug        # debug APK
+    ./gradlew :app:bundleRelease        # Play bundle (needs keystore.properties)
+    ./gradlew :app:testDebugUnitTest    # JVM tests
 
-- Android device with NFC capability
-- ePassport with NFC chip
-
-## How to Use
-
-1. Install the app on your Android device
-2. Open the app
-3. Place your ePassport on the back of your device
-4. The app will automatically detect and scan the passport
-5. View the extracted passport information
-
-## Implementation Details
-
-This app uses the JMRTD library to communicate with ePassports:
-
-- Uses NFC technology to communicate with the passport's RFID chip
-- Implements Basic Access Control (BAC) for secure communication
-- Extracts data from DG1 (basic information) file
-
-## Dependencies
-
-- JMRTD library (org.jmrtd:jmrtd:0.7.18)
-- Bouncy Castle for cryptographic operations
-- SCUBA for smart card operations
-
-## Note
-
-This is a demonstration app. In a production environment, you would need to:
-
-- Implement proper error handling
-- Get BAC keys (MRZ information) from user input
-- Add additional security measures
-- Handle various passport formats and data structures
+Structure and conventions: [ARCHITECTURE.md](ARCHITECTURE.md). Working notes
+and the version pins that must not float: [CLAUDE.md](CLAUDE.md).
+Third-party code: [LICENSES.md](LICENSES.md).

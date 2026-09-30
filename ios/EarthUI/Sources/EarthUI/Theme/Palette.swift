@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The raw ramps, ported from `ui/vendor/theme/colors/ZashiColorPalette.kt`.
+/// The raw ramps, ported from `ui/designsystem/theme/colors/EarthColorPalette.kt`.
 ///
 /// The Android app vendors Zashi's design system and re-skins its palette to
 /// the Sprout ramps — Zcash gold becomes Earth green, and the warm olive
