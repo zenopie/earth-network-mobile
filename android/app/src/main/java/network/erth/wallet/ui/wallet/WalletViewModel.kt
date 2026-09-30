@@ -112,7 +112,7 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
 
                     WalletUiState(
                         name = runCatching {
-                            SecureWalletManager.getCurrentWalletName(ctx)
+                            SecureWalletManager.getCurrentWalletName()
                         }.getOrDefault(""),
                         address = address,
                         balanceUerth = erth,

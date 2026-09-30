@@ -42,10 +42,10 @@ class WalletsViewModel(app: Application) : AndroidViewModel(app) {
             val ctx = getApplication<Application>()
             _state.value = withContext(Dispatchers.IO) {
                 WalletsUiState(
-                    wallets = runCatching { SecureWalletManager.listWallets(ctx) }
+                    wallets = runCatching { SecureWalletManager.listWallets() }
                         .getOrDefault(emptyList()),
                     selectedIndex = runCatching {
-                        SecureWalletManager.getSelectedWalletIndex(ctx)
+                        SecureWalletManager.getSelectedWalletIndex()
                     }.getOrDefault(0),
                 )
             }

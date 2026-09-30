@@ -12,15 +12,14 @@ import org.json.JSONObject
 import javax.crypto.BadPaddingException
 
 /**
- * SessionManager
- *
- * Manages session-based decryption where wallet data is decrypted once at startup
- * and kept in memory for the duration of the app session. Handles re-encryption
- * when data changes during the session.
+ * The unlocked session: the wallet storage is decrypted once at unlock, held
+ * in memory while the session is open, and re-sealed whenever it changes.
  */
 object SessionManager {
 
     private const val TAG = "SessionManager"
+    // The file name is older than this app. Every install has it on disk, so
+    // it stays.
     private const val PREF_FILE = "secret_wallet_prefs"
 
     // The IV for the device binding layer. Every blob this app writes has one,
@@ -29,6 +28,7 @@ object SessionManager {
     private const val KEY_DEVICE_IV = "device_iv"
 
     private const val KEY_WALLETS_ENCRYPTED = "wallets_encrypted"
+    private const val KEY_SELECTED_WALLET = "selected_wallet_index"
 
     // An unsalted SHA-256 of the unlock secret, written by earlier builds in
     // plain preferences. For a four-digit PIN that is the PIN, so it is deleted
@@ -55,7 +55,6 @@ object SessionManager {
     @Throws(Exception::class)
     fun startSession(context: Context, pin: String) {
         try {
-
             if (!SoftwareEncryption.isAvailable()) {
                 throw Exception("Software encryption not available")
             }
@@ -64,7 +63,7 @@ object SessionManager {
             sessionPin = pin
 
             // Load and decrypt wallet data
-            val softwarePrefs = context.getSharedPreferences(PREF_FILE + "_software", Context.MODE_PRIVATE)
+            val softwarePrefs = softwarePrefs(context)
 
             // Load encrypted wallet data
             val encryptedWalletsJson = softwarePrefs.getString(KEY_WALLETS_ENCRYPTED, null)
@@ -95,7 +94,6 @@ object SessionManager {
 
             isSessionActive = true
             _active.value = true
-
         } catch (e: WrongSecretException) {
             clearSession()
             throw e
@@ -106,9 +104,7 @@ object SessionManager {
         }
     }
 
-    /**
-     * End the current session and clear sensitive data from memory
-     */
+    /** End the session and drop the decrypted storage from memory. */
     @Synchronized
     fun endSession() {
         clearSession()
@@ -119,7 +115,7 @@ object SessionManager {
      * anything for an unlock secret to open. Reads only the blob's presence.
      */
     fun hasSealedStorage(context: Context): Boolean =
-        context.getSharedPreferences(PREF_FILE + "_software", Context.MODE_PRIVATE)
+        softwarePrefs(context)
             .contains(KEY_WALLETS_ENCRYPTED)
 
     /**
@@ -130,53 +126,30 @@ object SessionManager {
      */
     @Synchronized
     fun purgeLegacyPinHash(context: Context) {
-        val prefs = context.getSharedPreferences(PREF_FILE + "_software", Context.MODE_PRIVATE)
+        val prefs = softwarePrefs(context)
         if (prefs.contains(KEY_LEGACY_PIN_HASH)) {
             prefs.edit().remove(KEY_LEGACY_PIN_HASH).commit()
         }
         otherPrefsData.remove(KEY_LEGACY_PIN_HASH)
     }
 
-    /**
-     * Check if session is active
-     */
-    fun isSessionActive(): Boolean {
-        return isSessionActive
-    }
+    fun isSessionActive(): Boolean = isSessionActive
 
-    /**
-     * Get decrypted wallet data (requires active session)
-     */
-    @Throws(Exception::class)
-    fun getWalletData(): String {
-        if (!isSessionActive) {
-            throw IllegalStateException("No active session - call startSession() first")
-        }
+    /** The session's wallet list: a copy, written back with [saveWallets]. */
+    fun wallets(): JSONArray {
+        requireActive()
         val storage = versionedWalletStorage ?: throw IllegalStateException("No wallet storage available")
-        return WalletStorageVersion.getWalletsArray(storage).toString()
+        return JSONArray(WalletStorageVersion.getWalletsArray(storage).toString())
     }
 
-    /**
-     * Update wallet data and re-encrypt to storage
-     */
-    @Throws(Exception::class)
-    fun updateWalletData(context: Context, newWalletData: String) {
-        if (!isSessionActive) {
-            throw IllegalStateException("No active session - call startSession() first")
-        }
-
+    /** Replace the wallet list and re-seal it under the session's secret. */
+    fun saveWallets(context: Context, wallets: JSONArray) {
+        requireActive()
         val pin = sessionPin ?: throw IllegalStateException("Session PIN not available")
-
         try {
-            // Parse new wallet data as JSONArray and update versioned storage
-            val newWalletsArray = JSONArray(newWalletData)
-            val currentStorage = versionedWalletStorage ?: throw IllegalStateException("No wallet storage available")
-            versionedWalletStorage = WalletStorageVersion.updateWallets(currentStorage, newWalletsArray)
-
-            // Save to encrypted storage
+            val storage = versionedWalletStorage ?: throw IllegalStateException("No wallet storage available")
+            versionedWalletStorage = WalletStorageVersion.updateWallets(storage, wallets)
             saveVersionedStorageToEncryption(context, pin)
-
-
         } catch (e: Exception) {
             Log.e(TAG, "Failed to update wallet data", e)
             throw Exception("Failed to update wallet data: ${e.message}", e)
@@ -184,76 +157,36 @@ object SessionManager {
     }
 
     /**
-     * Get other preferences data (non-wallet data)
+     * Which wallet is selected, or -1. Kept beside the sealed blob rather than
+     * in it: an index is not a secret.
      */
-    fun getPrefsData(): Map<String, Any?> {
+    fun selectedWalletIndex(): Int {
+        requireActive()
+        return otherPrefsData[KEY_SELECTED_WALLET] as? Int ?: -1
+    }
+
+    fun setSelectedWalletIndex(context: Context, index: Int) {
+        requireActive()
+        otherPrefsData[KEY_SELECTED_WALLET] = index
+        softwarePrefs(context).edit().putInt(KEY_SELECTED_WALLET, index).apply()
+    }
+
+    private fun requireActive() {
         if (!isSessionActive) {
             throw IllegalStateException("No active session - call startSession() first")
         }
-        return otherPrefsData.toMap()
     }
 
-    /**
-     * Update other preferences data
-     */
-    @Throws(Exception::class)
-    fun updatePrefsData(context: Context, key: String, value: Any?) {
-        if (!isSessionActive) {
-            throw IllegalStateException("No active session - call startSession() first")
-        }
+    private fun softwarePrefs(context: Context): SharedPreferences =
+        context.getSharedPreferences(PREF_FILE + "_software", Context.MODE_PRIVATE)
 
-        try {
-            // Update in-memory data
-            otherPrefsData[key] = value
-
-            // Save to storage
-            val softwarePrefs = context.getSharedPreferences(PREF_FILE + "_software", Context.MODE_PRIVATE)
-            val editor = softwarePrefs.edit()
-
-            when (value) {
-                is String -> editor.putString(key, value)
-                is Int -> editor.putInt(key, value)
-                is Boolean -> editor.putBoolean(key, value)
-                is Float -> editor.putFloat(key, value)
-                is Long -> editor.putLong(key, value)
-                null -> editor.remove(key)
-                else -> throw IllegalArgumentException("Unsupported value type: ${value::class.java}")
-            }
-
-            editor.apply()
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to update preferences data for key: $key", e)
-            throw Exception("Failed to update preferences data: ${e.message}", e)
-        }
-    }
-
-    /**
-     * Create a session-aware SharedPreferences proxy
-     */
-    @Throws(Exception::class)
-    fun createSessionPreferences(context: Context): SharedPreferences {
-        if (!isSessionActive) {
-            throw IllegalStateException("No active session - call startSession() first")
-        }
-        return SessionSharedPreferences(this, context)
-    }
-
-    /**
-     * Clear sensitive session data from memory
-     */
     private fun clearSession() {
-        sessionPin?.let { pin ->
-            // Clear PIN from memory
-            pin.toCharArray().fill('\u0000')
-        }
         sessionPin = null
 
         versionedWalletStorage = null
         otherPrefsData.clear()
         isSessionActive = false
         _active.value = false
-
     }
 
     /**
@@ -269,7 +202,6 @@ object SessionManager {
                 otherPrefsData[key] = value
             }
         }
-
     }
 
     /**
@@ -330,9 +262,7 @@ object SessionManager {
      */
     @Throws(Exception::class)
     fun changeSecret(context: Context, newSecret: String) {
-        if (!isSessionActive) {
-            throw IllegalStateException("No active session - call startSession() first")
-        }
+        requireActive()
         saveVersionedStorageToEncryption(context, newSecret)
         sessionPin = newSecret
     }
@@ -345,9 +275,7 @@ object SessionManager {
      */
     @Throws(Exception::class)
     fun seal(context: Context) {
-        if (!isSessionActive) {
-            throw IllegalStateException("No active session - call startSession() first")
-        }
+        requireActive()
         val pin = sessionPin ?: throw IllegalStateException("Session PIN not available")
         saveVersionedStorageToEncryption(context, pin)
     }
@@ -384,237 +312,15 @@ object SessionManager {
             put("salt", Base64.encodeToString(encryptedData.salt, Base64.DEFAULT))
         }
 
-        val softwarePrefs = context.getSharedPreferences(PREF_FILE + "_software", Context.MODE_PRIVATE)
+        val softwarePrefs = softwarePrefs(context)
         // commit, not apply. A secret change has BiometricVault drop the old
         // slot as soon as this returns, so a write still in flight when the
         // process dies would leave the blob sealed by a key that is gone.
         if (!softwarePrefs.edit().putString(KEY_WALLETS_ENCRYPTED, json.toString()).commit()) {
             throw Exception("Failed to write encrypted wallet storage")
         }
-
     }
 }
 
 private fun Throwable.causes(): Sequence<Throwable> =
     generateSequence(this) { it.cause?.takeIf { cause -> cause !== it } }
-
-/**
- * Session-aware SharedPreferences implementation
- */
-private class SessionSharedPreferences(
-    private val sessionManager: SessionManager,
-    private val context: Context
-) : SharedPreferences {
-
-    override fun getString(key: String?, defValue: String?): String? {
-        if (key == null) return defValue
-
-        return try {
-            if (key == "wallets") {
-                sessionManager.getWalletData()
-            } else {
-                val prefsData = sessionManager.getPrefsData()
-                prefsData[key] as? String ?: defValue
-            }
-        } catch (e: Exception) {
-            Log.e("SessionSharedPreferences", "Failed to get string for key: $key", e)
-            defValue
-        }
-    }
-
-    override fun getInt(key: String?, defValue: Int): Int {
-        if (key == null) return defValue
-
-        return try {
-            val prefsData = sessionManager.getPrefsData()
-            prefsData[key] as? Int ?: defValue
-        } catch (e: Exception) {
-            Log.e("SessionSharedPreferences", "Failed to get int for key: $key", e)
-            defValue
-        }
-    }
-
-    override fun getBoolean(key: String?, defValue: Boolean): Boolean {
-        if (key == null) return defValue
-
-        return try {
-            val prefsData = sessionManager.getPrefsData()
-            prefsData[key] as? Boolean ?: defValue
-        } catch (e: Exception) {
-            Log.e("SessionSharedPreferences", "Failed to get boolean for key: $key", e)
-            defValue
-        }
-    }
-
-    override fun getFloat(key: String?, defValue: Float): Float {
-        if (key == null) return defValue
-
-        return try {
-            val prefsData = sessionManager.getPrefsData()
-            prefsData[key] as? Float ?: defValue
-        } catch (e: Exception) {
-            Log.e("SessionSharedPreferences", "Failed to get float for key: $key", e)
-            defValue
-        }
-    }
-
-    override fun getLong(key: String?, defValue: Long): Long {
-        if (key == null) return defValue
-
-        return try {
-            val prefsData = sessionManager.getPrefsData()
-            prefsData[key] as? Long ?: defValue
-        } catch (e: Exception) {
-            Log.e("SessionSharedPreferences", "Failed to get long for key: $key", e)
-            defValue
-        }
-    }
-
-    override fun getStringSet(key: String?, defValues: MutableSet<String>?): MutableSet<String>? {
-        // String sets not commonly used in wallet storage, but can be implemented if needed
-        return defValues
-    }
-
-    override fun contains(key: String?): Boolean {
-        if (key == null) return false
-
-        return try {
-            if (key == "wallets") {
-                sessionManager.getWalletData().isNotEmpty()
-            } else {
-                val prefsData = sessionManager.getPrefsData()
-                prefsData.containsKey(key)
-            }
-        } catch (e: Exception) {
-            false
-        }
-    }
-
-    override fun edit(): SharedPreferences.Editor {
-        return SessionEditor(sessionManager, context)
-    }
-
-    override fun getAll(): MutableMap<String, *> {
-        return try {
-            val result = mutableMapOf<String, Any?>()
-            result["wallets"] = sessionManager.getWalletData()
-            result.putAll(sessionManager.getPrefsData())
-            result
-        } catch (e: Exception) {
-            mutableMapOf<String, Any?>()
-        }
-    }
-
-    override fun registerOnSharedPreferenceChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener?) {
-        // Session-based preferences don't support change listeners
-    }
-
-    override fun unregisterOnSharedPreferenceChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener?) {
-        // Session-based preferences don't support change listeners
-    }
-}
-
-/**
- * Session-aware SharedPreferences.Editor implementation
- */
-private class SessionEditor(
-    private val sessionManager: SessionManager,
-    private val context: Context
-) : SharedPreferences.Editor {
-
-    private val pendingChanges = mutableMapOf<String, Any?>()
-
-    override fun putString(key: String?, value: String?): SharedPreferences.Editor {
-        if (key != null) {
-            pendingChanges[key] = value
-        }
-        return this
-    }
-
-    override fun putInt(key: String?, value: Int): SharedPreferences.Editor {
-        if (key != null) {
-            pendingChanges[key] = value
-        }
-        return this
-    }
-
-    override fun putBoolean(key: String?, value: Boolean): SharedPreferences.Editor {
-        if (key != null) {
-            pendingChanges[key] = value
-        }
-        return this
-    }
-
-    override fun putFloat(key: String?, value: Float): SharedPreferences.Editor {
-        if (key != null) {
-            pendingChanges[key] = value
-        }
-        return this
-    }
-
-    override fun putLong(key: String?, value: Long): SharedPreferences.Editor {
-        if (key != null) {
-            pendingChanges[key] = value
-        }
-        return this
-    }
-
-    override fun putStringSet(key: String?, values: MutableSet<String>?): SharedPreferences.Editor {
-        if (key != null) {
-            pendingChanges[key] = values
-        }
-        return this
-    }
-
-    override fun remove(key: String?): SharedPreferences.Editor {
-        if (key != null) {
-            pendingChanges[key] = null
-        }
-        return this
-    }
-
-    override fun clear(): SharedPreferences.Editor {
-        // Mark all keys for removal
-        try {
-            val allData = sessionManager.getPrefsData()
-            for (key in allData.keys) {
-                pendingChanges[key] = null
-            }
-            pendingChanges["wallets"] = null
-        } catch (e: Exception) {
-            Log.e("SessionEditor", "Failed to clear preferences", e)
-        }
-        return this
-    }
-
-    override fun commit(): Boolean {
-        return try {
-            applyChanges()
-            true
-        } catch (e: Exception) {
-            Log.e("SessionEditor", "Failed to commit changes", e)
-            false
-        }
-    }
-
-    override fun apply() {
-        try {
-            applyChanges()
-        } catch (e: Exception) {
-            Log.e("SessionEditor", "Failed to apply changes", e)
-        }
-    }
-
-    private fun applyChanges() {
-        for ((key, value) in pendingChanges) {
-            if (key == "wallets") {
-                if (value != null) {
-                    sessionManager.updateWalletData(context, value as String)
-                }
-            } else {
-                sessionManager.updatePrefsData(context, key, value)
-            }
-        }
-        pendingChanges.clear()
-    }
-}

@@ -148,7 +148,7 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val ctx = getApplication<Application>()
             val count = withContext(Dispatchers.IO) {
-                runCatching { SecureWalletManager.getWalletCount(ctx) }.getOrDefault(0)
+                runCatching { SecureWalletManager.getWalletCount() }.getOrDefault(0)
             }
             _needsWallet.value = count == 0
         }
