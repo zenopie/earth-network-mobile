@@ -126,4 +126,28 @@ func checkCrypto() {
     Check.equal("signature is 64 raw bytes", signature.count, 64)
     // Deterministic per RFC 6979, so the same message must sign identically.
     Check.equal("deterministic", try! key.sign(message).hexString, signature.hexString)
+
+    Check.group("gas grant clientDataHash")
+    // Expected digests from Python's hashlib over the same bytes, so this pins
+    // the derivation the backend recomputes rather than restating it.
+    Check.equal(
+        "32 zero bytes || \"earth1test\"",
+        GasGrant.clientDataHash(
+            challenge: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            address: "earth1test"
+        )?.hexString,
+        "314fb6ad6cfe942e9a386b3507f7887d23935af58b6702fa4673e337d604d294"
+    )
+    // A challenge using both url-safe characters, which standard base64
+    // would reject outright.
+    Check.equal(
+        "url-safe alphabet decodes",
+        GasGrant.clientDataHash(
+            challenge: "-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-__v8",
+            address: "earth1test"
+        )?.hexString,
+        "866269a5380017c9a0b22f91855860a95300b1bd07bc213a12324b29a44e8e5f"
+    )
+    Check.that("not base64url is nil",
+               GasGrant.clientDataHash(challenge: "not base64!", address: "earth1test") == nil)
 }

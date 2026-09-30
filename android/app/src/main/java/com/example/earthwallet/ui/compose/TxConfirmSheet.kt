@@ -67,17 +67,20 @@ data class TxConfirmDetails(
  * Its second job is onboarding. A new human has no ERTH and no on-chain
  * account, and an address the chain has never seen cannot sign anything at all:
  * the ante handler rejects an unknown signer before it looks at who is paying.
- * So when the balance cannot cover the fee, this offers a rewarded ad.
+ * So when the balance cannot cover the fee, this offers free gas (GasGrant).
  */
 @Composable
 fun TxConfirmSheet(
     details: TxConfirmDetails,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
-    onWatchAd: () -> Unit,
-    /** True once the ad has been watched and the grant is still in flight. */
+    onGetGas: () -> Unit,
+    /** True once the grant has been sent and has not yet landed. */
     awaitingGas: Boolean = false,
-    adLoading: Boolean = false,
+    /** True while the grant is being asked for. */
+    requestingGas: Boolean = false,
+    /** Why the last request for gas was refused, if it was. */
+    gasError: String? = null,
 ) {
     val colors = EarthTheme.colors
     val dimens = EarthTheme.dimens
@@ -126,23 +129,25 @@ fun TxConfirmSheet(
                     .padding(dimens.space12),
             ) {
                 Text(
-                    text =
-                        if (awaitingGas) {
-                            "The gas hasn't arrived yet. Give it a moment and try again."
-                        } else {
-                            "Not enough ERTH for the fee. Watch a short ad and we'll cover it."
-                        },
+                    text = when {
+                        awaitingGas -> "The gas hasn't arrived yet. Give it a moment."
+                        gasError != null -> gasError
+                        else -> "Not enough ERTH for the fee. Tap to get free gas for this transaction."
+                    },
                     style = EarthTypography.textSm,
                     color = EarthAccent.warnInk,
                 )
             }
             Box(Modifier.padding(top = dimens.space12)) {
                 EarthButton(
-                    text = if (awaitingGas) "Waiting for gas…" else "Watch an ad for gas",
-                    onClick = onWatchAd,
-                    isLoading = adLoading || awaitingGas,
-            colors = brandButtonColors(),
-        )
+                    text = if (awaitingGas) "Waiting for gas…" else "Get free gas",
+                    onClick = onGetGas,
+                    // A second tap while one is in flight would ask for a
+                    // second challenge and spend a second integrity request.
+                    enabled = !requestingGas && !awaitingGas,
+                    isLoading = requestingGas || awaitingGas,
+                    colors = brandButtonColors(),
+                )
             }
         }
 

@@ -9,8 +9,8 @@ import SwiftUI
 /// before it, each screen broadcast on its own and reported the outcome in a
 /// pair of toasts, so nobody could see what they were about to sign or read why
 /// it failed. Keeping it in one place is also what will make the gas gate
-/// universal — any transaction from an underfunded account can offer the
-/// rewarded ad, not only registration.
+/// universal — any transaction from an underfunded account can offer free
+/// gas, not only registration.
 ///
 /// Screens never broadcast. A screen raises an intent ("stake 100"), hands the
 /// messages here, and the sheets are driven by this state — so a caller who
@@ -97,9 +97,17 @@ public final class TxController {
     public private(set) var outcome: Outcome?
     public private(set) var submitting = false
 
-    /// True from the moment an ad is watched until the gas lands, or the wait
-    /// gives up. Drives the sheet's "Waiting for gas…" state.
+    /// True while the grant is being asked for — challenge, attestation, and
+    /// the backend's answer. Keeps a second tap from spending a second grant.
+    public private(set) var requestingGas = false
+
+    /// True from the moment the backend accepts a grant until the gas lands,
+    /// or the wait gives up. Drives the sheet's "Waiting for gas…" state.
     public private(set) var awaitingGas = false
+
+    /// Why the last grant was refused, in the backend's or Apple's words made
+    /// readable. Cleared on the next attempt.
+    public private(set) var gasError: String?
 
     /// The action of the transaction in flight — "Send", "Register".
     ///
@@ -136,17 +144,37 @@ public final class TxController {
         onSuccess = nil
         host = .root
         awaitingGas = false
+        gasError = nil
     }
 
-    /// Waits for an ad grant to arrive, then lets the sheet notice.
+    /// Asks the backend for free gas, then waits for it to land.
     ///
-    /// The reward callback fires when the *ad* finished, not when the gas
-    /// lands: Google calls the backend, the backend sends from its hot wallet,
-    /// and that send has to be included in a block. So a single balance read
-    /// straight after the ad always runs too early — which is exactly how this
-    /// failed on Android, where the grant arrived, the sheet never looked
-    /// again, and the confirm button stayed behind "Watch an ad for gas" with
-    /// nothing to say why.
+    /// A 202 is treated like a 200: either way the send exists or is about to,
+    /// and the chain is the only authority on when it arrives.
+    public func requestGas(in model: AppModel) async {
+        guard !requestingGas, !awaitingGas, !model.address.isEmpty else { return }
+        requestingGas = true
+        gasError = nil
+        do {
+            try await AppAttestGas.request(for: model.address)
+        } catch {
+            requestingGas = false
+            gasError = (error as? AppAttestGas.Failure)?.message
+                ?? "Couldn't get free gas right now. Try again shortly."
+            return
+        }
+        requestingGas = false
+        await awaitGas(in: model)
+    }
+
+    /// Waits for a gas grant to arrive, then lets the sheet notice.
+    ///
+    /// The backend answering is not the gas landing: it sends from its hot
+    /// wallet, and that send has to be included in a block. So a single
+    /// balance read straight after the grant always runs too early — which is
+    /// exactly how this failed on Android, where the grant arrived, the sheet
+    /// never looked again, and the confirm button stayed behind the gas button
+    /// with nothing to say why.
     ///
     /// Reads the chain directly rather than going through the app model's
     /// refresh, so the check cannot race a refresh that has not landed yet.

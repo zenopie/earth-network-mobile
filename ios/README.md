@@ -283,8 +283,8 @@ outright.
 
 The flow is scan → three fields → chip → proof → `MsgRegister`, and the split
 between the last two is the load-bearing part: the proof completes *before* the
-confirmation appears, so nobody is asked to watch an ad for gas on a
-transaction that may never exist. Registration raises its message through
+confirmation appears, so nobody spends a free-gas grant on a transaction
+that may never exist. Registration raises its message through
 `TxController` like every other screen, which is what makes the gas gate the
 same one everything else gets.
 

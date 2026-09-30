@@ -230,8 +230,9 @@ dependencies {
     implementation 'com.google.zxing:core:3.5.2'
     implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
     
-    // Google AdMob for advertisements
-    implementation 'com.google.android.gms:play-services-ads:22.6.0'
+    // Play Integrity, for the free-gas grant (ui/gas/GasGrant.kt): the backend
+    // pays only a request whose verdict says it came from this app, from Play.
+    implementation 'com.google.android.play:integrity:1.6.0'
 
     // Google Play In-App Updates
     implementation 'com.google.android.play:app-update:2.1.0'

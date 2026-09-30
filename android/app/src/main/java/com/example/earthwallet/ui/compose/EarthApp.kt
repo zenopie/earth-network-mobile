@@ -39,7 +39,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import network.erth.wallet.ui.ads.RewardedAds
 import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.vendor.theme.colors.EarthColors
 import network.erth.wallet.ui.compose.registration.RegistrationActivity
@@ -179,7 +178,7 @@ fun EarthApp(
         // Registration changes the balance, the identity and the activity list,
         // so coming back has to re-read rather than resume whatever was on
         // screen when the flow started. Ignoring the result code on purpose: a
-        // cancelled scan can still have spent gas on an ad grant.
+        // cancelled scan can still have received a gas grant.
         invalidateWallet()
     }
 
@@ -332,46 +331,39 @@ fun EarthApp(
         }
     }
 
-    // The ads-for-gas gate, restored to the Compose flow. It hung off TxFlow
-    // before, so it applied to every transaction from an underfunded account
-    // rather than only to registration — which matters because registration is
-    // not necessarily the first thing a new human tries.
-    val host = context as? android.app.Activity
+    // The free-gas gate. It hung off TxFlow before, so it applies to every
+    // transaction from an underfunded account rather than only to
+    // registration — which matters because registration is not necessarily
+    // the first thing a new human tries.
     TxSheets(
         controller = tx,
         balanceUerth = state?.balanceUerth ?: 0L,
         context = context,
-        onWatchAd = {
+        onGetGas = {
             val address = state?.address
-            if (host != null && !address.isNullOrEmpty()) {
-                RewardedAds.show(host, address) { granted ->
-                    // The grant lands as a bank send from the gas wallet, and
-                    // that send has to make it into a block — so the balance is
-                    // polled, not read once. A single refresh here always ran
-                    // before the grant existed, which left the sheet insisting
-                    // the account was unfunded after the gas had arrived.
-                    if (granted) {
-                        tx.awaitGas(
-                            fetchBalance = {
-                                withContext(Dispatchers.IO) {
-                                    runCatching {
-                                        Bank.balance(address, Constants.UERTH_DENOM).toLong()
-                                    }.getOrDefault(0L)
-                                }
-                            },
-                            // Bring the rest of the UI in line once it lands;
-                            // the sheet reads its balance from this view model.
-                            onFunded = { wallet.refresh() },
-                        )
-                    }
-                }
+            if (!address.isNullOrEmpty()) {
+                // The grant lands as a bank send from the gas wallet, and that
+                // send has to make it into a block — so the balance is polled,
+                // not read once. A single refresh here always ran before the
+                // grant existed, which left the sheet insisting the account was
+                // unfunded after the gas had arrived.
+                tx.requestGas(
+                    context = context,
+                    address = address,
+                    fetchBalance = {
+                        withContext(Dispatchers.IO) {
+                            runCatching {
+                                Bank.balance(address, Constants.UERTH_DENOM).toLong()
+                            }.getOrDefault(0L)
+                        }
+                    },
+                    // Bring the rest of the UI in line once it lands; the
+                    // sheet reads its balance from this view model.
+                    onFunded = { wallet.refresh() },
+                )
             }
         },
     )
-
-    // Loaded ahead of the tap. Fetching a rewarded ad takes seconds, and doing
-    // it when the button is pressed makes the button look broken.
-    LaunchedEffect(Unit) { RewardedAds.preload(context) }
 
     // Re-read whenever the app comes back to the foreground.
     //

@@ -14,6 +14,7 @@ import kotlinx.coroutines.withContext
 import network.erth.wallet.chain.Fees
 import network.erth.wallet.chain.EarthTx
 import network.erth.wallet.chain.TxUnconfirmedException
+import network.erth.wallet.ui.gas.GasGrant
 import network.erth.wallet.wallet.services.EarthWallet
 import network.erth.wallet.wallet.services.SecureWalletManager
 import com.google.protobuf.Any as ProtoAny
@@ -25,7 +26,7 @@ import com.google.protobuf.Any as ProtoAny
  * TxFlow each screen broadcast on its own and reported the outcome in a pair of
  * toasts, so nobody could see what they were about to sign or read why it
  * failed. Keeping that in one place is also what makes the gas gate universal —
- * any transaction from an underfunded account offers the rewarded ad, not just
+ * any transaction from an underfunded account offers free gas, not just
  * registration.
  *
  * The screens never touch this directly. A screen raises intent ("stake 100"),
@@ -45,8 +46,16 @@ class TxController : ViewModel() {
     var submitting: Boolean by mutableStateOf(false)
         private set
 
-    /** True from the moment an ad is watched until the gas lands (or gives up). */
+    /** True while the grant is being asked for, before anything is sent. */
+    var requestingGas: Boolean by mutableStateOf(false)
+        private set
+
+    /** True from the moment the grant is sent until the gas lands (or gives up). */
     var awaitingGas: Boolean by mutableStateOf(false)
+        private set
+
+    /** Why the backend or Play refused the last request for gas. */
+    var gasError: String? by mutableStateOf(null)
         private set
 
     /** What is in flight, for the pending sheet to name. */
@@ -80,7 +89,7 @@ class TxController : ViewModel() {
         // here for the broadcast — and the two drifted. Claiming rewards
         // scales its gas by validator count but declared the flat default fee,
         // so with a balance between the two the sheet said "funded", never
-        // offered the rewarded ad, and the transaction was then rejected by
+        // offered free gas, and the transaction was then rejected by
         // the node for insufficient fee. Making it impossible to state twice is
         // the fix; correcting the one call site would only have postponed it.
         val fee = feeFor(gasLimit)
@@ -124,22 +133,46 @@ class TxController : ViewModel() {
     }
 
     /**
-     * Waits for an ad grant to arrive, then lets the sheet notice.
-     *
-     * The reward callback fires when the *ad* finished, not when the gas lands:
-     * Google calls the backend, the backend sends from its hot wallet, and that
-     * send has to be included in a block. So a single balance read straight
-     * after the ad always runs too early. This path used to do exactly that —
-     * one refresh, no retry — so the grant arrived, the sheet never saw it, and
-     * the confirm button stayed disabled behind "Watch an ad for gas" with no
-     * indication anything was happening. Registration had the poll; every other
-     * transaction did not.
+     * Asks the backend for free gas for [address], then waits for it to land.
      *
      * [fetchBalance] reads the chain directly rather than going through
      * WalletViewModel.refresh(), which is fire-and-forget: it returns before
      * the new balance exists, so a poll built on it would race itself.
      */
-    fun awaitGas(fetchBalance: suspend () -> Long, onFunded: () -> Unit = {}) {
+    fun requestGas(
+        context: Context,
+        address: String,
+        fetchBalance: suspend () -> Long,
+        onFunded: () -> Unit = {},
+    ) {
+        if (requestingGas || awaitingGas) return
+        gasError = null
+        requestingGas = true
+        viewModelScope.launch {
+            val result = try {
+                GasGrant.request(context, address)
+            } finally {
+                requestingGas = false
+            }
+            when (result) {
+                is GasGrant.Result.Refused -> gasError = result.message
+                GasGrant.Result.Sent, GasGrant.Result.Pending -> awaitGas(fetchBalance, onFunded)
+            }
+        }
+    }
+
+    /**
+     * Waits for a sent grant to arrive, then lets the sheet notice.
+     *
+     * The backend answers when it has *broadcast* the send from its gas wallet,
+     * not when the gas lands: that send has to be included in a block. So a
+     * single balance read straight after the grant always runs too early. This
+     * path used to do exactly that — one refresh, no retry — so the grant
+     * arrived, the sheet never saw it, and the confirm button stayed disabled
+     * with no indication anything was happening. Registration had the poll;
+     * every other transaction did not.
+     */
+    private fun awaitGas(fetchBalance: suspend () -> Long, onFunded: () -> Unit) {
         val needed = pending?.feeUerth ?: return
         awaitingGas = true
         viewModelScope.launch {
@@ -162,6 +195,7 @@ class TxController : ViewModel() {
         pending = null
         build = null
         awaitingGas = false
+        gasError = null
     }
 
     fun dismissResult() {
@@ -221,15 +255,17 @@ fun TxSheets(
     controller: TxController,
     balanceUerth: Long,
     context: Context,
-    onWatchAd: () -> Unit = {},
+    onGetGas: () -> Unit = {},
 ) {
     controller.pending?.let { details ->
         TxConfirmSheet(
             details = details.copy(balanceUerth = balanceUerth),
             onConfirm = { controller.confirm(context) },
             onDismiss = controller::cancel,
-            onWatchAd = onWatchAd,
+            onGetGas = onGetGas,
             awaitingGas = controller.awaitingGas,
+            requestingGas = controller.requestingGas,
+            gasError = controller.gasError,
         )
     }
     // Pending, then result — one sheet position, three states, so the result's

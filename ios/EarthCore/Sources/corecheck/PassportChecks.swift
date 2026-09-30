@@ -76,7 +76,7 @@ private func checkRegistration() {
                message.value.range(of: try! PassportInputs.scannedDSC(efSOD: passport.efSOD).certificateDER) != nil)
 
     // The chain rejects both of these; catching them here saves a fee and,
-    // for a new human, the ad view that paid for it.
+    // for a new human, the gas grant that paid for it.
     Check.throwsError("refuses self-referral") {
         _ = try PassportRegistration.message(scan: scan, proof: proof!,
                                              creator: key.address, referrer: key.address)

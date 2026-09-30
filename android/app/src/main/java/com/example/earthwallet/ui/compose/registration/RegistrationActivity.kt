@@ -24,7 +24,7 @@ import network.erth.wallet.chain.Fees
 import network.erth.wallet.chain.Personhood
 import network.erth.wallet.chain.Bank
 import network.erth.wallet.chain.TxUnconfirmedException
-import network.erth.wallet.ui.ads.RewardedAds
+import network.erth.wallet.ui.gas.GasGrant
 import network.erth.wallet.ui.compose.TxConfirmDetails
 import network.erth.wallet.ui.compose.TxConfirmSheet
 import network.erth.wallet.ui.compose.TxOutcome
@@ -106,6 +106,8 @@ class RegistrationActivity : ComponentActivity() {
                 var scan: PassportSession.Scan? by remember { mutableStateOf(null) }
                 var balanceUerth: Long by remember { mutableLongStateOf(0L) }
                 var awaitingGas: Boolean by remember { mutableStateOf(false) }
+                var requestingGas: Boolean by remember { mutableStateOf(false) }
+                var gasError: String? by remember { mutableStateOf(null) }
                 var outcome: TxOutcome? by remember { mutableStateOf(null) }
 
                 // MsgRegister verifies an UltraHonk proof on chain and is by
@@ -123,7 +125,7 @@ class RegistrationActivity : ComponentActivity() {
 
                 // A wallet that has never received anything has no account on
                 // chain, so this reads 0 rather than failing — which is the
-                // state a new human is in, and exactly what the ad is for.
+                // state a new human is in, and exactly what free gas is for.
                 suspend fun refreshBalance() {
                     balanceUerth = withContext(Dispatchers.IO) {
                         runCatching {
@@ -131,10 +133,6 @@ class RegistrationActivity : ComponentActivity() {
                         }.getOrDefault(0L)
                     }
                 }
-
-                // Loaded on entry: fetching a rewarded ad takes seconds, and
-                // the gate is reached within seconds of a successful read.
-                LaunchedEffect(Unit) { RewardedAds.preload(this@RegistrationActivity) }
 
                 // Back moves through the flow rather than out of it, except at
                 // the first step where there is nothing behind it.
@@ -163,11 +161,10 @@ class RegistrationActivity : ComponentActivity() {
                         result
                             .onSuccess { read ->
                                 // Proof done, passport no longer needed. The
-                                // fee gate comes next, and it may involve
-                                // watching an ad — which is why proving runs
-                                // first, so nobody pays attention to an advert
-                                // for a registration that was never going to
-                                // exist.
+                                // fee gate comes next, and it may involve a
+                                // gas grant — which is why proving runs first,
+                                // so no grant is spent on a registration that
+                                // was never going to exist.
                                 scan = read
                                 refreshBalance()
                             }
@@ -205,6 +202,8 @@ class RegistrationActivity : ComponentActivity() {
                             balanceUerth = balanceUerth,
                         ),
                         awaitingGas = awaitingGas,
+                        requestingGas = requestingGas,
+                        gasError = gasError,
                         onConfirm = {
                             scan = null
                             submitting = true
@@ -240,23 +239,34 @@ class RegistrationActivity : ComponentActivity() {
                                 canRetry = false,
                             )
                         },
-                        onWatchAd = {
-                            RewardedAds.show(this@RegistrationActivity, address) { earned ->
-                                if (!earned) return@show
+                        onGetGas = getGas@{
+                            if (requestingGas || awaitingGas || address.isEmpty()) return@getGas
+                            gasError = null
+                            requestingGas = true
+                            lifecycleScope.launch {
+                                val result = try {
+                                    GasGrant.request(this@RegistrationActivity, address)
+                                } finally {
+                                    requestingGas = false
+                                }
+                                if (result is GasGrant.Result.Refused) {
+                                    gasError = result.message
+                                    return@launch
+                                }
                                 awaitingGas = true
-                                lifecycleScope.launch {
-                                    // The reward callback fires when the ad
-                                    // finished, not when the gas lands — the
-                                    // grant is a send from the gas wallet, made
-                                    // out of band when Google calls the backend.
-                                    // So the chain is polled rather than
-                                    // trusted to be ready.
+                                try {
+                                    // The backend answers once it has broadcast
+                                    // the send from its gas wallet, not once the
+                                    // gas lands. So the chain is polled rather
+                                    // than trusted to be ready.
                                     repeat(GAS_POLL_ATTEMPTS) {
                                         delay(GAS_POLL_INTERVAL_MS)
                                         refreshBalance()
                                         if (balanceUerth >= REGISTER_FEE) return@launch
                                     }
-                                }.invokeOnCompletion { awaitingGas = false }
+                                } finally {
+                                    awaitingGas = false
+                                }
                             }
                         },
                     )
@@ -398,7 +408,7 @@ class RegistrationActivity : ComponentActivity() {
          *
          * Both the fee shown on the confirm sheet and the threshold the gas
          * poll waits for, so a stale value here is doubly wrong: it understates
-         * the cost to the user AND stops waiting for the ad grant before enough
+         * the cost to the user AND stops waiting for the gas grant before enough
          * has arrived to pay for the transaction. It was a flat 2,000 while the
          * transaction actually needed 15,000.
          */

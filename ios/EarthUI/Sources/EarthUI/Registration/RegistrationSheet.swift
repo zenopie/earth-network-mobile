@@ -7,8 +7,8 @@ import SwiftUI
 /// The order is the one the Android flow settled on, and the split between
 /// proving and broadcasting is the load-bearing part of it. Proving is slow and
 /// can fail; broadcasting needs a fee a new human does not have yet. Doing them
-/// as one step means asking someone to watch an ad for gas before anyone knows
-/// whether the proof will succeed — spending their time on a transaction that
+/// as one step means granting someone gas before anyone knows whether the
+/// proof will succeed — spending a rate-limited grant on a transaction that
 /// may never exist. So the proof completes first, and only then does the
 /// confirmation (and with it the gas gate) appear.
 ///
@@ -328,7 +328,7 @@ struct RegistrationSheet: View {
 
         // Built once, here, so a message the chain would reject for a bad
         // referrer fails on this screen rather than at broadcast — after the
-        // confirmation, after the ad.
+        // confirmation, after the gas grant.
         let message: ProtoAny
         do {
             message = try PassportRegistration.message(

@@ -21,7 +21,7 @@ import androidx.lifecycle.ProcessLifecycleOwner
  * memory the whole time and every transaction a tap away.
  *
  * Process-wide rather than per-activity, so moving between this app's own
- * activities — registration, the QR scanner, an ad — never counts as leaving.
+ * activities — registration, the QR scanner — never counts as leaving.
  * The passport read, the MRZ camera and the biometric prompt all stay inside
  * a started activity and do not stop the process at all; the grace period is
  * for the user who glances at another app and comes straight back.

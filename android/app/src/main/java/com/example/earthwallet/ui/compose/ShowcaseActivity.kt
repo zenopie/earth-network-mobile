@@ -170,7 +170,7 @@ private fun Showcase() {
             ),
             onConfirm = { confirming = false },
             onDismiss = { confirming = false },
-            onWatchAd = {},
+            onGetGas = {},
         )
     }
 }

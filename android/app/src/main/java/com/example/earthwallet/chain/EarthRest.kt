@@ -44,9 +44,14 @@ object EarthRest {
         }
     }
 
-    /** Returns (httpCode, body). Does not throw on non-2xx. */
-    fun postJson(path: String, json: String): Pair<Int, String> {
-        val conn = URL(Constants.EARTH_LCD_URL + path).openConnection() as HttpURLConnection
+    /**
+     * Returns (httpCode, body). Does not throw on non-2xx.
+     *
+     * [base] is the LCD unless told otherwise; the gas grant posts to the
+     * backend through here too rather than growing a second HTTP client.
+     */
+    fun postJson(path: String, json: String, base: String = Constants.EARTH_LCD_URL): Pair<Int, String> {
+        val conn = URL(base + path).openConnection() as HttpURLConnection
         return try {
             conn.connectTimeout = 20000
             conn.readTimeout = 30000

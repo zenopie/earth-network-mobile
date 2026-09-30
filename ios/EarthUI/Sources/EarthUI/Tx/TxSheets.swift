@@ -1,9 +1,6 @@
 import BigInt
 import EarthCore
 import SwiftUI
-#if os(iOS)
-import UIKit
-#endif
 
 /// The confirmation, the wait, and the result — in that order, over everything.
 struct TxOverlay: View {
@@ -81,7 +78,7 @@ struct TxConfirmSheet: View {
                 // The gas gate's place. A new human has no ERTH and no account
                 // on chain, so the fee cannot be paid — and this is the moment
                 // that becomes true rather than a surprise at broadcast.
-                GasWarning(awaitingGas: tx.awaitingGas)
+                GasWarning(awaitingGas: tx.awaitingGas, error: tx.gasError)
             }
 
             HStack(spacing: theme.space.x12) {
@@ -91,8 +88,11 @@ struct TxConfirmSheet: View {
                     // this card away — there is no dismissal to coordinate.
                     EarthButton(title: "Confirm") { Task { await tx.confirm(in: model) } }
                 } else {
-                    EarthButton(title: tx.awaitingGas ? "Waiting for gas…" : "Watch an ad for gas") {
-                        watchAd()
+                    EarthButton(
+                        title: tx.awaitingGas ? "Waiting for gas…" : "Get free gas",
+                        busy: tx.requestingGas || tx.awaitingGas
+                    ) {
+                        Task { await tx.requestGas(in: model) }
                     }
                 }
             }
@@ -110,33 +110,24 @@ struct TxConfirmSheet: View {
         guard let needed = BigInt(details.feeUerth) else { return true }
         return model.balance(.erth) >= needed
     }
-
-    private func watchAd() {
-        #if canImport(GoogleMobileAds) && os(iOS)
-        guard !tx.awaitingGas, let host = UIApplication.shared.topViewController else { return }
-        RewardedAds.show(from: host, walletAddress: model.address) { earned in
-            // Earned means the ad completed, not that the dust landed: Google
-            // calls the backend out of band and the send has to reach a block.
-            // So the chain is polled rather than trusted to be ready.
-            guard earned else { return }
-            Task { await tx.awaitGas(in: model) }
-        }
-        #endif
-    }
 }
 
 struct GasWarning: View {
     @Environment(\.earth) private var theme
 
-    /// True once the ad has been watched and the grant is still in flight.
+    /// True once the backend has accepted a grant and it is still in flight.
     var awaitingGas: Bool = false
+
+    /// Why the last grant was refused, shown in place of the prompt so the
+    /// button stays a retry rather than a mystery.
+    var error: String? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: theme.space.x8) {
             Image(systemName: "fuelpump.fill").foregroundStyle(theme.colors.warnInk)
             Text(awaitingGas
                 ? "The gas hasn't arrived yet. Give it a moment."
-                : "Not enough ERTH for the fee. Watch a short ad and we'll cover it.")
+                : error ?? "Not enough ERTH for the fee. Tap to get free gas for this transaction.")
                 .font(EarthType.bodySmall)
                 .foregroundStyle(theme.colors.textSecondary)
         }

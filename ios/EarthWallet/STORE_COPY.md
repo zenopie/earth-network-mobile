@@ -116,11 +116,13 @@ hold value — anyone in the world can spend from it.
     how the ICAO standard works, and the chip refuses to answer without them.
     Neither the scan nor the chip contents are stored or transmitted.
 
-    ADS
+    FREE GAS
 
-    The app offers an optional rewarded video to cover transaction fees for
-    users with an empty balance. On a build that is not yet public, the ad
-    unit usually returns "No fill" — an empty ad slot rather than a broken one.
+    Users with an empty balance can tap "Get free gas" to have the network
+    fee for a transaction covered. The app uses Apple's App Attest to prove to
+    our server that the request comes from a genuine copy of the app; the
+    server then sends a small amount of ERTH to the user's address. The app
+    contains no advertising and no tracking.
 
     CRYPTOCURRENCY
 

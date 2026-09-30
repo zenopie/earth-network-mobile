@@ -99,9 +99,9 @@ public struct PassportRegistration {
     /// Prove personhood from a scan, without broadcasting anything.
     ///
     /// Split from `message(...)` on purpose. Broadcasting needs a signature and
-    /// a fee and can wait until the passport is back in a pocket; asking
-    /// someone to watch an ad for gas *before* knowing the proof succeeded
-    /// spends their time on a transaction that may never exist.
+    /// a fee and can wait until the passport is back in a pocket; granting
+    /// someone gas *before* knowing the proof succeeded spends a rate-limited
+    /// grant on a transaction that may never exist.
     /// - Parameter address: the account that will sign MsgRegister. The proof is
     ///   bound to it as a public input, so proving for one account and
     ///   broadcasting from another produces a proof the chain refuses.

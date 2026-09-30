@@ -1,9 +1,10 @@
 package network.erth.wallet
 
 object Constants {
-    // No backend. Registration is proved on-device and verified on-chain, and
-    // updates go through Play's in-app update API (UpdateCheckActivity), so the
-    // app talks to the chain and to Google and to nothing else.
+    // One backend, for one thing: free gas. Registration is proved on-device
+    // and verified on-chain, and updates go through Play's in-app update API
+    // (UpdateCheckActivity), so apart from the gas grant (ui/gas/GasGrant.kt)
+    // the app talks to the chain and to Google and to nothing else.
 
     // --- earth chain (native Cosmos SDK chain; proof-of-personhood registration) ---
     // LCD/REST base. The node runs on Akash behind a Cloudflare Tunnel, which
@@ -29,6 +30,10 @@ object Constants {
     // For a locally-served chain: "http://127.0.0.1:26657" with
     // `adb reverse tcp:26657 tcp:26657`, or "http://10.0.2.2:26657".
     const val EARTH_RPC_URL = "https://rpc.erth.network"
+
+    // The gas-grant backend. Never on the path of a transaction the account can
+    // already pay for, so the wallet works without it.
+    const val EARTH_API_URL = "https://api.erth.network"
 
     const val EARTH_CHAIN_ID = "earth-1"
     const val EARTH_PREFIX = "earth"

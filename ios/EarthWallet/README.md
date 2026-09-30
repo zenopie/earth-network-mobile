@@ -49,14 +49,12 @@ Three things, each with a comment saying why it is not in `EarthUI`:
 The last two are installed into `EarthUI`'s seams in `EarthWalletApp.init`.
 See `../README.md` for the packaging reasons and the SRS behaviour.
 
-## AdMob
+## Free gas (App Attest)
 
-`GADApplicationIdentifier` in `Info.plist` and `RewardedAds.adUnitID` in
-`EarthUI` are the live iOS app and rewarded unit — not Android's, which will
-never fill here, and not Google's demo unit, which fills but breaks the grant
-(the SSV callback URL belongs to an ad unit, and the backend checks the
-`ad_unit` it is called with). A development phone gets "No fill" from the live
-unit until it is registered as an AdMob test device; paste this device's
-identifier into `RewardedAds.testDeviceIdentifiers` — the SDK prints it on the
-first ad request — and the same unit serves test ads that still drive the
-callback. Debug builds only.
+An underfunded account gets its fee from the backend, which only pays out
+against an App Attest attestation (`EarthUI/Gas/AppAttestGas.swift`, HTTP in
+`EarthCore/Backend/GasGrant.swift`). No entitlement is needed. App Attest is
+unavailable on the Simulator, so the gas button there always reports that the
+device can't verify the app — test it on a phone. A development build attests
+against Apple's development environment, and the backend has to accept that
+environment for the grant to go through.

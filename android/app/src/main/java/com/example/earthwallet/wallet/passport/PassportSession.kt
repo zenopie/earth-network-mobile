@@ -90,9 +90,8 @@ object PassportSession {
      * Split from [register] on purpose. Proving is the slow, failure-prone
      * step and it needs the passport held against the phone throughout;
      * broadcasting needs a signature and a fee and can be confirmed at leisure
-     * once the passport is back in a pocket. Asking someone to watch an ad for
-     * gas *before* knowing the proof succeeds wastes their time on a
-     * transaction that may never exist.
+     * once the passport is back in a pocket. Asking for gas *before* knowing
+     * the proof succeeds spends a grant on a transaction that may never exist.
      */
     fun read(context: Context, tag: Tag, mrz: Mrz): Result<Scan> {
         if (!mrz.isComplete) return Result.failure(FailureException(Failure.WrongMrz))
