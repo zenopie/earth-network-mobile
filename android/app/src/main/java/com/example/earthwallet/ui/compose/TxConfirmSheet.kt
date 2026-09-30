@@ -1,8 +1,8 @@
 package network.erth.wallet.ui.compose
 
-import network.erth.wallet.ui.vendor.component.EarthButton
-import network.erth.wallet.ui.vendor.theme.colors.EarthColors
-import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
+import network.erth.wallet.ui.designsystem.component.EarthButton
+import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
+import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box

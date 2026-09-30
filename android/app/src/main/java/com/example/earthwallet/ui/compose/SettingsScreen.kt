@@ -11,11 +11,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import network.erth.wallet.ui.vendor.component.EarthHorizontalDivider
-import network.erth.wallet.ui.vendor.component.EarthVersion
-import network.erth.wallet.ui.vendor.component.listitem.EarthListItem
-import network.erth.wallet.ui.vendor.util.imageRes
-import network.erth.wallet.ui.vendor.util.stringRes
+import network.erth.wallet.ui.designsystem.component.EarthHorizontalDivider
+import network.erth.wallet.ui.designsystem.component.EarthVersion
+import network.erth.wallet.ui.designsystem.component.listitem.EarthListItem
+import network.erth.wallet.ui.designsystem.util.imageRes
+import network.erth.wallet.ui.designsystem.util.stringRes
 
 /** One row in a settings list: what it is, and what happens when it is tapped. */
 data class SettingsItem(

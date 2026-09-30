@@ -24,7 +24,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import network.erth.wallet.R
-import network.erth.wallet.ui.vendor.theme.colors.EarthColors
+import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
 
 /**
  * ANML orbiting ERTH.

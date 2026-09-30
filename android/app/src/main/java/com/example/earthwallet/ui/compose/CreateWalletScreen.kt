@@ -27,13 +27,13 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import network.erth.wallet.ui.theme.EarthTheme
-import network.erth.wallet.ui.vendor.component.EarthButton
-import network.erth.wallet.ui.vendor.component.EarthCheckbox
-import network.erth.wallet.ui.vendor.component.EarthTextField
-import network.erth.wallet.ui.vendor.theme.colors.EarthColors
-import network.erth.wallet.ui.vendor.theme.dimensions.EarthDimensions
-import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
-import network.erth.wallet.ui.vendor.util.stringRes
+import network.erth.wallet.ui.designsystem.component.EarthButton
+import network.erth.wallet.ui.designsystem.component.EarthCheckbox
+import network.erth.wallet.ui.designsystem.component.EarthTextField
+import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
+import network.erth.wallet.ui.designsystem.theme.dimensions.EarthDimensions
+import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
+import network.erth.wallet.ui.designsystem.util.stringRes
 
 /**
  * A new wallet: the phrase, then a name.

@@ -2,7 +2,7 @@ package network.erth.wallet.ui.compose
 
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.text.font.FontWeight
-import network.erth.wallet.ui.vendor.component.EarthHorizontalDivider
+import network.erth.wallet.ui.designsystem.component.EarthHorizontalDivider
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,13 +20,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.theme.EarthTheme
-import network.erth.wallet.ui.vendor.component.EarthButton
-import network.erth.wallet.ui.vendor.component.EarthButtonDefaults
-import network.erth.wallet.ui.vendor.component.ShimmerRectangle
-import network.erth.wallet.ui.vendor.component.rememberEarthShimmer
-import network.erth.wallet.ui.vendor.theme.colors.EarthColors
-import network.erth.wallet.ui.vendor.theme.dimensions.EarthDimensions
-import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
+import network.erth.wallet.ui.designsystem.component.EarthButton
+import network.erth.wallet.ui.designsystem.component.EarthButtonDefaults
+import network.erth.wallet.ui.designsystem.component.ShimmerRectangle
+import network.erth.wallet.ui.designsystem.component.rememberEarthShimmer
+import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
+import network.erth.wallet.ui.designsystem.theme.dimensions.EarthDimensions
+import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
 import com.valentinilk.shimmer.shimmer
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue

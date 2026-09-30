@@ -47,7 +47,7 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import java.util.concurrent.Executors
-import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
+import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
 import network.erth.wallet.wallet.passport.PassportSession
 
 /**

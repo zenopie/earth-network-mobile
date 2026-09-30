@@ -21,8 +21,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.theme.EarthTheme
-import network.erth.wallet.ui.vendor.theme.colors.EarthColors
-import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
+import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
+import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
 
 /** A transaction, resolved for display. */
 data class ActivityRow(

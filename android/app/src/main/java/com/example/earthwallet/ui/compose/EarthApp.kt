@@ -40,12 +40,12 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import network.erth.wallet.ui.theme.EarthAccent
-import network.erth.wallet.ui.vendor.theme.colors.EarthColors
+import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
 import network.erth.wallet.ui.compose.registration.RegistrationActivity
 import network.erth.wallet.chain.Dex
 import network.erth.wallet.chain.Gov
 import network.erth.wallet.chain.Personhood
-import network.erth.wallet.ui.vendor.component.BlankBgScaffold
+import network.erth.wallet.ui.designsystem.component.BlankBgScaffold
 
 /**
  * The app shell.

@@ -44,15 +44,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import network.erth.wallet.R
 import network.erth.wallet.ui.theme.EarthAccent
-import network.erth.wallet.ui.vendor.component.ShimmerCircle
-import network.erth.wallet.ui.vendor.component.ShimmerRectangle
-import network.erth.wallet.ui.vendor.component.rememberEarthShimmer
+import network.erth.wallet.ui.designsystem.component.ShimmerCircle
+import network.erth.wallet.ui.designsystem.component.ShimmerRectangle
+import network.erth.wallet.ui.designsystem.component.rememberEarthShimmer
 import com.valentinilk.shimmer.shimmer
-import network.erth.wallet.ui.vendor.component.BigIconButtonState
-import network.erth.wallet.ui.vendor.component.EarthBigIconButton
-import network.erth.wallet.ui.vendor.theme.colors.EarthColors
-import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
-import network.erth.wallet.ui.vendor.util.stringRes
+import network.erth.wallet.ui.designsystem.component.BigIconButtonState
+import network.erth.wallet.ui.designsystem.component.EarthBigIconButton
+import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
+import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
+import network.erth.wallet.ui.designsystem.util.stringRes
 
 /**
  * Home.

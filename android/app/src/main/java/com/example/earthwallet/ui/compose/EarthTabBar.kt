@@ -25,9 +25,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import network.erth.wallet.ui.vendor.component.EarthHorizontalDivider
-import network.erth.wallet.ui.vendor.theme.colors.EarthColors
-import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
+import network.erth.wallet.ui.designsystem.component.EarthHorizontalDivider
+import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
+import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
 
 /**
  * The tab bar.

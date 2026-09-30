@@ -42,7 +42,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import network.erth.wallet.ui.compose.EarthDetailTopBar
 import network.erth.wallet.ui.theme.EarthTheme
-import network.erth.wallet.ui.vendor.component.BlankBgScaffold
+import network.erth.wallet.ui.designsystem.component.BlankBgScaffold
 import network.erth.wallet.wallet.passport.PassportSession
 import network.erth.wallet.wallet.utils.Referral
 

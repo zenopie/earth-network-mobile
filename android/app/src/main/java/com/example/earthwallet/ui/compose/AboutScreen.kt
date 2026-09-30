@@ -14,13 +14,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import network.erth.wallet.R
-import network.erth.wallet.ui.vendor.component.EarthHorizontalDivider
-import network.erth.wallet.ui.vendor.component.EarthVersion
-import network.erth.wallet.ui.vendor.component.listitem.EarthListItem
-import network.erth.wallet.ui.vendor.theme.colors.EarthColors
-import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
-import network.erth.wallet.ui.vendor.util.imageRes
-import network.erth.wallet.ui.vendor.util.stringRes
+import network.erth.wallet.ui.designsystem.component.EarthHorizontalDivider
+import network.erth.wallet.ui.designsystem.component.EarthVersion
+import network.erth.wallet.ui.designsystem.component.listitem.EarthListItem
+import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
+import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
+import network.erth.wallet.ui.designsystem.util.imageRes
+import network.erth.wallet.ui.designsystem.util.stringRes
 
 /**
  * About.

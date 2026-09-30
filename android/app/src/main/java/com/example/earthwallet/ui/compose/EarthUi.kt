@@ -30,8 +30,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import network.erth.wallet.ui.theme.EarthTheme
-import network.erth.wallet.ui.vendor.theme.colors.EarthColors
-import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
+import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
+import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -248,7 +248,7 @@ fun EarthSheet(
  */
 @Composable
 fun destructiveButtonColors() =
-    network.erth.wallet.ui.vendor.component.EarthButtonDefaults.secondaryColors(
+    network.erth.wallet.ui.designsystem.component.EarthButtonDefaults.secondaryColors(
         containerColor = EarthColors.Utility.ErrorRed.utilityError50,
         contentColor = EarthColors.Utility.ErrorRed.utilityError700,
         borderColor = androidx.compose.ui.graphics.Color.Unspecified,
@@ -256,7 +256,7 @@ fun destructiveButtonColors() =
 
 @Composable
 fun brandButtonColors() =
-    network.erth.wallet.ui.vendor.component.EarthButtonDefaults.primaryColors(
+    network.erth.wallet.ui.designsystem.component.EarthButtonDefaults.primaryColors(
         containerColor = EarthColors.Btns.Brand.btnBrandBg,
         contentColor = EarthColors.Btns.Brand.btnBrandFg,
         disabledContainerColor = EarthColors.Btns.Brand.btnBrandBgDisabled,

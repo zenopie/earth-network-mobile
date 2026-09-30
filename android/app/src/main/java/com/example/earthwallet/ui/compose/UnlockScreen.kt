@@ -36,9 +36,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.fragment.app.FragmentActivity
 import network.erth.wallet.R
 import network.erth.wallet.ui.theme.EarthTheme
-import network.erth.wallet.ui.vendor.theme.colors.EarthColors
-import network.erth.wallet.ui.vendor.component.EarthButton
-import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
+import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
+import network.erth.wallet.ui.designsystem.component.EarthButton
+import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
 import network.erth.wallet.wallet.utils.BiometricVault
 import network.erth.wallet.wallet.utils.UnlockMethod
 

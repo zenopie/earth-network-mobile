@@ -21,12 +21,12 @@ import com.valentinilk.shimmer.shimmer
 import network.erth.wallet.chain.Explorer
 import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.theme.EarthTheme
-import network.erth.wallet.ui.vendor.component.EarthHorizontalDivider
-import network.erth.wallet.ui.vendor.component.ShimmerRectangle
-import network.erth.wallet.ui.vendor.component.rememberEarthShimmer
-import network.erth.wallet.ui.vendor.theme.colors.EarthColors
-import network.erth.wallet.ui.vendor.theme.dimensions.EarthDimensions
-import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
+import network.erth.wallet.ui.designsystem.component.EarthHorizontalDivider
+import network.erth.wallet.ui.designsystem.component.ShimmerRectangle
+import network.erth.wallet.ui.designsystem.component.rememberEarthShimmer
+import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
+import network.erth.wallet.ui.designsystem.theme.dimensions.EarthDimensions
+import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
 
 /** What the explore tab shows, loaded together. */
 data class ExploreUiState(

@@ -22,10 +22,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import network.erth.wallet.ui.compose.EarthLabel
 import network.erth.wallet.ui.compose.dismissKeyboardOnTap
 import network.erth.wallet.ui.compose.doneKeyboard
-import network.erth.wallet.ui.vendor.component.EarthButton
-import network.erth.wallet.ui.vendor.component.EarthTextField
-import network.erth.wallet.ui.vendor.theme.colors.EarthColors
-import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
+import network.erth.wallet.ui.designsystem.component.EarthButton
+import network.erth.wallet.ui.designsystem.component.EarthTextField
+import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
+import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
 import network.erth.wallet.Constants
 import network.erth.wallet.wallet.passport.PassportSession
 

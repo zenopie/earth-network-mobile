@@ -3,9 +3,9 @@ package network.erth.wallet.ui.theme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
-import network.erth.wallet.ui.vendor.theme.ZcashTheme
-import network.erth.wallet.ui.vendor.theme.colors.EarthColorsInternal
-import network.erth.wallet.ui.vendor.theme.colors.LocalEarthColors
+import network.erth.wallet.ui.designsystem.theme.ZcashTheme
+import network.erth.wallet.ui.designsystem.theme.colors.EarthColorsInternal
+import network.erth.wallet.ui.designsystem.theme.colors.LocalEarthColors
 
 /**
  * The app's theme.

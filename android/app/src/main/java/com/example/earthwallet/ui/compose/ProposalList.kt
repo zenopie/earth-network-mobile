@@ -21,9 +21,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import network.erth.wallet.chain.Gov
 import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.theme.EarthTheme
-import network.erth.wallet.ui.vendor.theme.colors.EarthColors
-import network.erth.wallet.ui.vendor.theme.dimensions.EarthDimensions
-import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
+import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
+import network.erth.wallet.ui.designsystem.theme.dimensions.EarthDimensions
+import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
 
 /**
  * Chain proposals — the SDK's governance, not Earth's allocation streams.

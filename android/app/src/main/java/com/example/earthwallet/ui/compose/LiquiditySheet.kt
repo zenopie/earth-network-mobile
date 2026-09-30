@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.res.painterResource
-import network.erth.wallet.ui.vendor.theme.dimensions.EarthDimensions
+import network.erth.wallet.ui.designsystem.theme.dimensions.EarthDimensions
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -31,10 +31,10 @@ import java.math.BigInteger
 import network.erth.wallet.chain.Dex
 import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.theme.EarthTheme
-import network.erth.wallet.ui.vendor.component.EarthButton
-import network.erth.wallet.ui.vendor.component.EarthTextField
-import network.erth.wallet.ui.vendor.theme.colors.EarthColors
-import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
+import network.erth.wallet.ui.designsystem.component.EarthButton
+import network.erth.wallet.ui.designsystem.component.EarthTextField
+import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
+import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
 
 /** What the sheet is being opened to do. */
 enum class LiquidityAction { Add, Remove }

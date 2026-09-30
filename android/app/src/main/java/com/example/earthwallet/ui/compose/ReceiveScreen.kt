@@ -1,9 +1,9 @@
 package network.erth.wallet.ui.compose
 
 import network.erth.wallet.R
-import network.erth.wallet.ui.vendor.component.EarthQr
-import network.erth.wallet.ui.vendor.component.QrState
-import network.erth.wallet.ui.vendor.util.stringRes
+import network.erth.wallet.ui.designsystem.component.EarthQr
+import network.erth.wallet.ui.designsystem.component.QrState
+import network.erth.wallet.ui.designsystem.util.stringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -30,9 +30,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.theme.EarthTheme
-import network.erth.wallet.ui.vendor.theme.colors.EarthColors
-import network.erth.wallet.ui.vendor.theme.dimensions.EarthDimensions
-import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
+import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
+import network.erth.wallet.ui.designsystem.theme.dimensions.EarthDimensions
+import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
 
 /**
  * Receive.

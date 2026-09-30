@@ -19,13 +19,13 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import network.erth.wallet.R
-import network.erth.wallet.ui.vendor.component.EarthIconButton
-import network.erth.wallet.ui.vendor.component.EarthSmallTopAppBar
-import network.erth.wallet.ui.vendor.component.EarthTopAppBarBackNavigation
-import network.erth.wallet.ui.vendor.component.IconButtonState
-import network.erth.wallet.ui.vendor.theme.colors.EarthColors
-import network.erth.wallet.ui.vendor.theme.typography.EarthTypography
-import network.erth.wallet.ui.vendor.util.stringRes
+import network.erth.wallet.ui.designsystem.component.EarthIconButton
+import network.erth.wallet.ui.designsystem.component.EarthSmallTopAppBar
+import network.erth.wallet.ui.designsystem.component.EarthTopAppBarBackNavigation
+import network.erth.wallet.ui.designsystem.component.IconButtonState
+import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
+import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
+import network.erth.wallet.ui.designsystem.util.stringRes
 
 /**
  * The main bar: which wallet you are in, and the way out to settings.
