@@ -1,0 +1,76 @@
+syntax = "proto3";
+package earth.shieldedstaking.v1;
+
+option java_package = "network.erth.earth.proto.shieldedstaking";
+option java_multiple_files = true;
+
+import "cosmos/gov/v1/tx.proto";
+import "earth/allocation/v1/tx.proto";
+import "earth/shielded/v1/tx.proto";
+
+// Clean proto3 mirrors of the chain's x/shieldedstaking messages
+// (wire-compatible). All are private msgs: unsigned, a transfer paying the fee.
+
+message MsgDelegate {
+  earth.shielded.v1.Transfer transfer = 1;
+  string validator = 2;
+  bytes pc = 3;
+  bytes ciphertext = 4;
+}
+
+message MsgUndelegate {
+  earth.shielded.v1.Transfer transfer = 1;
+  string validator = 2;
+  bytes pc = 3;
+  bytes ciphertext = 4;
+}
+
+message MsgClaimUnbonding {
+  earth.shielded.v1.Transfer transfer = 1;
+  string validator = 2;
+  uint64 epoch = 3;
+  bytes pc = 4;
+  bytes ciphertext = 5;
+  uint64 fee_from_output = 6;
+}
+
+message MsgStakeVote {
+  earth.shielded.v1.Transfer transfer = 1;
+  uint64 proposal_id = 2;
+  string validator = 3;
+  repeated cosmos.gov.v1.WeightedVoteOption options = 7;
+  bytes pc = 9;
+  bytes ciphertext = 10;
+  earth.shielded.v1.Transfer fee_transfer = 11;
+  reserved 4, 5, 6, 8;
+}
+
+message MsgLockPosition {
+  earth.shielded.v1.Transfer transfer = 1;
+  string validator = 2;
+  repeated earth.allocation.v1.AllocationWeight splits = 3;
+  bytes pubkey = 4;
+}
+
+message MsgUpdatePosition {
+  earth.shielded.v1.Transfer transfer = 1;
+  uint64 position_id = 2;
+  repeated earth.allocation.v1.AllocationWeight splits = 3;
+  bytes signature = 4;
+}
+
+message MsgUnlockPosition {
+  earth.shielded.v1.Transfer transfer = 1;
+  uint64 position_id = 2;
+  bytes pc = 3;
+  bytes ciphertext = 4;
+  bytes signature = 5;
+}
+
+message MsgPositionVote {
+  earth.shielded.v1.Transfer transfer = 1;
+  uint64 position_id = 2;
+  uint64 proposal_id = 3;
+  repeated cosmos.gov.v1.WeightedVoteOption options = 4;
+  bytes signature = 5;
+}

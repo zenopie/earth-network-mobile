@@ -4,14 +4,18 @@ package earth.assembly.v1;
 option java_package = "network.erth.earth.proto.assembly";
 option java_multiple_files = true;
 
-// Clean proto3 mirrors of the earth chain's x/assembly messages (wire-compatible;
+import "earth/personhood/v1/tx.proto";
+import "earth/shielded/v1/tx.proto";
+
+// Clean proto3 mirrors of the chain's x/assembly messages (wire-compatible;
 // gogoproto/cosmos_proto annotations omitted so protobuf-javalite generates
 // cleanly on Android).
 //
 // The assembly is the chain's second governance house: one live
 // proof-of-personhood registration is one vote, and every x/gov proposal needs
 // two thirds of the human votes cast on it before x/gov's own result is allowed
-// to take effect. Stake weighs nothing here.
+// to take effect. Stake weighs nothing here. Every message is private: a
+// membership proof in the ballot's scope, the fee paid from a shielded note.
 
 // There is no abstain. Approval is two thirds of the votes cast, so abstaining
 // and not voting come to identical arithmetic.
@@ -21,26 +25,22 @@ enum VoteOption {
   VOTE_OPTION_NO = 2;
 }
 
-// MsgVoteProposal votes on an x/gov proposal as a human.
-//
-// Not to be confused with cosmos.gov.v1.MsgVote, which is the same proposal's
-// other house. Both are cast on the same proposal id and neither substitutes
-// for the other.
 message MsgVoteProposal {
-  string voter = 1;
-  uint64 proposal_id = 2;
-  VoteOption option = 3;
+  earth.shielded.v1.Transfer fee = 1;
+  earth.personhood.v1.Membership membership = 2;
+  uint64 proposal_id = 3;
+  VoteOption option = 4;
 }
 
-// MsgProposeRemoval opens a ballot to remove a groundworks allocation option.
 message MsgProposeRemoval {
-  string proposer = 1;
-  uint64 option_id = 2;
+  earth.shielded.v1.Transfer fee = 1;
+  earth.personhood.v1.Membership membership = 2;
+  uint64 option_id = 3;
 }
 
-// MsgVoteRemoval votes on an open removal ballot.
 message MsgVoteRemoval {
-  string voter = 1;
-  uint64 option_id = 2;
-  VoteOption option = 3;
+  earth.shielded.v1.Transfer fee = 1;
+  earth.personhood.v1.Membership membership = 2;
+  uint64 option_id = 3;
+  VoteOption option = 4;
 }

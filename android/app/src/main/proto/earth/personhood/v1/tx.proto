@@ -4,34 +4,64 @@ package earth.personhood.v1;
 option java_package = "network.erth.earth.proto.personhood";
 option java_multiple_files = true;
 
-// Clean proto3 mirrors of the earth chain's x/personhood messages (wire-compatible;
+import "earth/allocation/v1/tx.proto";
+import "earth/shielded/v1/tx.proto";
+
+// Clean proto3 mirrors of the chain's x/personhood messages (wire-compatible;
 // gogoproto/cosmos_proto annotations omitted so protobuf-javalite generates
 // cleanly on Android).
 //
-// The one-human-one-vote allocation stream this module gates lives in
-// x/allocation — see earth/allocation/v1/tx.proto.
+// Every message here is private: unsigned, alone in its tx, its fee paid from
+// the shielded pool by the Transfer it embeds. Nothing names an address of the
+// person acting; the signal (zk/privacy.ActionSignal) binds every field.
 
+// Membership is an anonymous proof of holding a live identity-tree leaf. The
+// chain supplies scope, signal, exclusions and max_activation itself.
+message Membership {
+  bytes proof = 1;
+  bytes root = 2;
+  bytes nullifier = 3;
+}
+
+// MsgRegister registers a passport. The passport proof's `address` input is
+// zk/privacy.RegistrationBinding(idc, pc_anml, pc_erth, Bytes(affiliate) | 0).
 message MsgRegister {
-  string creator = 1;
-  // proof is the Barretenberg UltraHonk proof bytes (bb v5.0.0, poseidon2 flavor).
+  earth.shielded.v1.Transfer fee = 1;
   bytes proof = 2;
-  // public_signals are the circuit public signals as decimal strings; for lean_poa
-  // the order is [current_date, nullifier, dsc_key].
+  // Public inputs as decimal strings: [current_date, address, nullifier, dsc_key] for lean_poa.
   repeated string public_signals = 3;
-  string affiliate = 4;
-  // signature_algorithm selects the on-chain verifying key (e.g. "lean_poa").
-  string signature_algorithm = 5;
-  // dsc_der is the Document Signer certificate that signed the passport SOD. The
-  // chain verifies it against its CSCA trust store and requires its Poseidon2
-  // commitment to equal the proof's dsc_key output.
-  bytes dsc_der = 6;
+  string signature_algorithm = 4;
+  bytes dsc_der = 5;
+  bytes idc = 6;
+  bytes pc_anml = 7;
+  bytes ciphertext_anml = 8;
+  bytes pc_erth = 9;
+  bytes ciphertext_erth = 10;
+  string affiliate = 13;
+  reserved 11, 12;
 }
 
+// MsgClaimAnml mints 1 ANML to pc, once per person per UTC day.
 message MsgClaimAnml {
-  string creator = 1;
+  earth.shielded.v1.Transfer fee = 1;
+  Membership membership = 2;
+  uint64 day = 3;
+  bytes pc = 4;
+  bytes ciphertext = 5;
 }
 
-// MsgUnregister is deliberately absent. The chain still decodes the ones in its
-// history, but the handler rejects every new one, so there is nothing for a
-// client to build. Transaction history is read as JSON from the LCD, which does
-// its own decoding, so nothing here needs the type to render an old one.
+// MsgSetCaretaker casts, replaces or (empty) clears a caretaker split.
+message MsgSetCaretaker {
+  earth.shielded.v1.Transfer fee = 1;
+  Membership membership = 2;
+  repeated earth.allocation.v1.AllocationWeight percentages = 3;
+  uint64 max_activation = 4;
+}
+
+// MsgBindReferrer binds (or, empty, clears) the prover's referral address.
+message MsgBindReferrer {
+  earth.shielded.v1.Transfer fee = 1;
+  Membership membership = 2;
+  string address = 3;
+  uint64 max_activation = 4;
+}

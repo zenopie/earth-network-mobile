@@ -122,7 +122,7 @@ object EarthTx {
      * still in the mempool — or one that later failed in DeliverTx — was shown
      * as a success. Not knowing is its own outcome.
      */
-    private fun awaitCommit(txHash: String, attempts: Int = 20, delayMs: Long = 800): String {
+    internal fun awaitCommit(txHash: String, attempts: Int = 20, delayMs: Long = 800): String {
         for (i in 0 until attempts) {
             val (code, body) = EarthRest.get("/cosmos/tx/v1beta1/txs/$txHash")
             if (code in 200..299) {

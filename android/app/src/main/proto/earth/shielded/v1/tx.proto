@@ -1,0 +1,42 @@
+syntax = "proto3";
+package earth.shielded.v1;
+
+option java_package = "network.erth.earth.proto.shielded";
+option java_multiple_files = true;
+
+import "cosmos/base/v1beta1/coin.proto";
+
+// Clean proto3 mirrors of the chain's x/shielded messages (wire-compatible;
+// gogoproto/cosmos_proto annotations omitted so protobuf-javalite generates
+// cleanly). PrivateMsgsEncodingTest checks every one byte for byte against
+// the chain's own gogoproto Marshal.
+
+// Transfer is one 3-in/3-out transfer proof and its public inputs. Public
+// input order: root, nf[3], cm_out[3], fee, v_pub_out, asset_pub, signal; the
+// chain computes asset_pub from denom_out and signal from the enclosing msg.
+message Transfer {
+  bytes proof = 1;
+  bytes root = 2;
+  repeated bytes nullifiers = 3;
+  repeated bytes commitments = 4;
+  repeated bytes ciphertexts = 5;
+  uint64 fee = 6;
+  uint64 value_out = 7;
+  string denom_out = 8;
+}
+
+// MsgShield moves amount from sender into the pool as one note to pc. Signed.
+message MsgShield {
+  string sender = 1;
+  cosmos.base.v1beta1.Coin amount = 2;
+  bytes pc = 3;
+  bytes ciphertext = 4;
+}
+
+// MsgTransfer is a private send, optionally unshielding value_out to
+// receiver. Unsigned; its fee is the transfer's (or fee_from_output).
+message MsgTransfer {
+  Transfer transfer = 1;
+  string receiver = 2;
+  uint64 fee_from_output = 3;
+}

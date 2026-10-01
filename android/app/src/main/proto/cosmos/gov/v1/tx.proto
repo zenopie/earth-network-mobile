@@ -23,3 +23,10 @@ message MsgVote {
   VoteOption option = 3;
   string metadata = 4;
 }
+
+// A weighted vote option, as private stake votes carry (x/shieldedstaking).
+// weight is a decimal string, e.g. "0.5".
+message WeightedVoteOption {
+  VoteOption option = 1;
+  string weight = 2;
+}

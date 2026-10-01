@@ -63,6 +63,9 @@ object Fees {
             .setScale(0, RoundingMode.CEILING)
             .toLong()
 
+    /** The gas price [forGas] uses: the node's once [prime] has learned it. */
+    fun price(): BigDecimal = cached ?: FALLBACK_PRICE
+
     /** As [forGas], for the call sites that want the amount as a string. */
     fun forGasString(gasLimit: Long): String = forGas(gasLimit).toString()
 
