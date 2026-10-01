@@ -72,6 +72,12 @@ android {
         ]
     }
 
+    testOptions {
+        // bitcoinj logs through slf4j-android, which calls android.util.Log;
+        // in a JVM unit test that is a stub that would otherwise throw.
+        unitTests.returnDefaultValues = true
+    }
+
     lint {
         abortOnError = false
         checkReleaseBuilds = false
