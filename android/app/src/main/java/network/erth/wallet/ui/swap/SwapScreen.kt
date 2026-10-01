@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -38,6 +39,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.valentinilk.shimmer.shimmer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import network.erth.wallet.R
 import network.erth.wallet.chain.math.SwapMath
 import network.erth.wallet.ui.components.asAmountInput
@@ -95,6 +99,9 @@ fun SwapScreen(
     onSwap: (denomIn: String, amountIn: java.math.BigInteger,
              denomOut: String, minOut: java.math.BigInteger) -> Unit,
     modifier: Modifier = Modifier,
+    /** The chain's price for a swap (blocking; run off the main thread), null to use local maths. */
+    simulate: (denomIn: String, amountIn: java.math.BigInteger, denomOut: String) -> network.erth.wallet.chain.Dex.Simulated? =
+        network.erth.wallet.chain.Dex::simulateSwapExactIn,
 ) {
     val dimens = EarthTheme.dimens
     val amountKeys = doneKeyboard(keyboardType = KeyboardType.Decimal)
@@ -115,8 +122,8 @@ fun SwapScreen(
      * What can actually be swapped, in base units (shielded balances: a note
      * swap spends notes).
      *
-     * Selling ERTH, the fee comes from a separate ERTH note, so a reserve
-     * stays behind. Selling ANML for ERTH, the fee is paid out of the ERTH
+     * Selling ERTH, the fee comes out of the same ERTH notes, so the fee's
+     * worth stays behind. Selling ANML for ERTH, the fee is paid out of the ERTH
      * received, so the whole balance is available.
      */
     val spendable = when {
@@ -127,7 +134,7 @@ fun SwapScreen(
 
     val fee = swapFeePercent?.let { runCatching { java.math.BigDecimal(it) }.getOrNull() }
 
-    val quote = remember(amount, erthIn, pools, fee) {
+    val localQuote = remember(amount, erthIn, pools, fee) {
         val input = amount.toBaseUnits() ?: return@remember null
         val f = fee ?: return@remember null
         val reserves = pools.orEmpty().mapNotNull { p ->
@@ -137,6 +144,22 @@ fun SwapScreen(
         }.toMap()
         SwapMath.route(reserves, "uerth", if (erthIn) "uerth" else "uanml", input, if (erthIn) "uanml" else "uerth", f)
     }
+    // The chain's own figure (pending LP rewards included) replaces the local
+    // one once the node answers; until then, or on a node without the query,
+    // the local maths stands.
+    var chainQuote by remember { mutableStateOf<Pair<String, network.erth.wallet.chain.Dex.Simulated>?>(null) }
+    val quoteKey = "$erthIn:$amount:${pools?.hashCode()}"
+    LaunchedEffect(quoteKey) {
+        val input = amount.toBaseUnits() ?: return@LaunchedEffect
+        if (input.signum() <= 0) return@LaunchedEffect
+        delay(QUOTE_DEBOUNCE_MS)
+        val sim = withContext(Dispatchers.IO) {
+            runCatching { simulate(if (erthIn) "uerth" else "uanml", input, if (erthIn) "uanml" else "uerth") }.getOrNull()
+        }
+        chainQuote = sim?.let { quoteKey to it }
+    }
+    val quote = chainQuote?.takeIf { it.first == quoteKey }?.second
+        .let { SwapMath.withChain(localQuote, it?.amountOut, it?.feeErth) }
 
     Column(
         modifier
@@ -416,6 +439,9 @@ private fun Long.asDecimalAmount(): String =
  */
 private val SLIPPAGE_CHOICES = listOf(50, 100, 300)
 private const val DEFAULT_SLIPPAGE_BPS = 100
+
+/** How long the amount must sit still before the chain is asked for a quote. */
+private const val QUOTE_DEBOUNCE_MS = 300L
 
 @Composable
 private fun SlippageChip(bps: Int, selected: Boolean, onClick: () -> Unit) {

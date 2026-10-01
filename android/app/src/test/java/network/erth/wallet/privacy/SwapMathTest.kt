@@ -51,4 +51,27 @@ class SwapMathTest {
         assertEquals(BigInteger.valueOf(98_999), SwapMath.withSlippage(BigInteger.valueOf(99_999), 100))
         assertEquals(BigInteger.ZERO, SwapMath.withSlippage(BigInteger.ONE, 50))
     }
+
+    /**
+     * x/dex SimulateSwapExactIn's REST body (grpc-gateway, snake_case) and
+     * the chain figure replacing the local quote's output and fee; anything
+     * else leaves the local quote standing.
+     */
+    @Test
+    fun chainSimulationReplacesLocalMaths() {
+        val body = """{"token_out":{"denom":"uanml","amount":"9871"},"fee":{"denom":"uerth","amount":"30"},"erth_burned":"15"}"""
+        val sim = network.erth.wallet.chain.Dex.parseSimulated(body)!!
+        assertEquals(BigInteger.valueOf(9871), sim.amountOut)
+        assertEquals(BigInteger.valueOf(30), sim.feeErth)
+        assertNull(network.erth.wallet.chain.Dex.parseSimulated("""{"code":12,"message":"Not Implemented"}"""))
+        assertNull(network.erth.wallet.chain.Dex.parseSimulated("""{"token_out":{"denom":"uanml","amount":"0"},"fee":{"denom":"uerth","amount":"0"}}"""))
+
+        val local = SwapMath.hubForToken(BigInteger.valueOf(1_000_000), BigInteger.valueOf(1_000_000), BigInteger.valueOf(10_000), BigDecimal("0.3"))!!
+        val merged = SwapMath.withChain(local, sim.amountOut, sim.feeErth)!!
+        assertEquals(sim.amountOut, merged.amountOut)
+        assertEquals(sim.feeErth, merged.feeErth)
+        assertEquals(local.priceImpact, merged.priceImpact, 0.0)
+        assertEquals(local, SwapMath.withChain(local, null, null))
+        assertNull(SwapMath.withChain(null, null, null))
+    }
 }

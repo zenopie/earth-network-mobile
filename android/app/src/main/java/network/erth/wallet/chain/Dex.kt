@@ -110,6 +110,33 @@ object Dex {
         return JSONObject(body).getJSONObject("params").optString("swap_fee", "0")
     }
 
+    /** The chain's own price for a swap: what it pays, and its uerth fee over every hop. */
+    data class Simulated(val amountOut: java.math.BigInteger, val feeErth: java.math.BigInteger)
+
+    /**
+     * x/dex SimulateSwapExactIn: the swap itself run at the current state
+     * (pending LP rewards settled into the reserves first) and discarded.
+     * Null when the node does not serve it (an older chain) or refuses the
+     * swap; callers fall back to SwapMath over the pool reserves.
+     */
+    fun simulateSwapExactIn(offerDenom: String, offerAmount: java.math.BigInteger, askDenom: String): Simulated? {
+        val q = "offer_denom=${enc(offerDenom)}&offer_amount=$offerAmount&ask_denom=${enc(askDenom)}"
+        val (code, body) = EarthRest.get("/earth/dex/v1/simulate_swap_exact_in?$q")
+        if (code !in 200..299) return null
+        return parseSimulated(body)
+    }
+
+    /** The REST response body of SimulateSwapExactIn, or null if it is not one. */
+    fun parseSimulated(body: String): Simulated? = runCatching {
+        val o = JSONObject(body)
+        Simulated(
+            o.getJSONObject("token_out").getString("amount").toBigInteger(),
+            o.getJSONObject("fee").getString("amount").toBigInteger(),
+        )
+    }.getOrNull()?.takeIf { it.amountOut.signum() > 0 }
+
+    private fun enc(s: String) = java.net.URLEncoder.encode(s, "UTF-8")
+
     // --- messages ---
 
     /** The token only shields hold: its pool's legs are note paths (MsgNoteSwap, MsgAddLiquidityShielded). */

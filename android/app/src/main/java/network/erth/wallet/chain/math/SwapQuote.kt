@@ -90,7 +90,8 @@ object SwapMath {
      *
      * The node's pool query leaves out LP rewards not yet compounded into the
      * ERTH reserve (settlePoolRewards runs at swap time), so the chain's own
-     * figure can differ by that much: the slippage floor absorbs it.
+     * figure can differ by that much: callers prefer the chain's
+     * SimulateSwapExactIn ([withChain]) and use this when it is unavailable.
      */
     fun route(
         pools: Map<String, Reserves>,
@@ -118,6 +119,17 @@ object SwapMath {
             }
         } ?: return null
         return q.takeIf { it.amountOut.signum() > 0 }
+    }
+
+    /**
+     * [local] with the chain's own figures for [amountOut] and [feeErth] (x/dex
+     * SimulateSwapExactIn, which settles pending LP rewards first) when the
+     * node gave them; the price impact stays the local estimate. Without a
+     * chain figure, [local] as it is.
+     */
+    fun withChain(local: SwapQuote?, chainOut: BigInteger?, chainFee: BigInteger?): SwapQuote? {
+        if (chainOut == null || chainFee == null || chainOut.signum() <= 0) return local
+        return SwapQuote(amountOut = chainOut, feeErth = chainFee, priceImpact = local?.priceImpact ?: 0.0)
     }
 
     /**
