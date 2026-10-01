@@ -53,9 +53,20 @@ pub fn owner_pk(nk: Field) -> Field {
     h2(TAG_OWNER, nk)
 }
 
-/// leaf = H(TAG_LEAF, idc, dsc_key, activated_at)
-pub fn identity_leaf(idc: Field, dsc_key: Field, activated_at: u64) -> Field {
-    h4(TAG_LEAF, idc, dsc_key, activated_at as Field)
+/// leaf = H(TAG_LEAF, idc, dsc_key, country, activated_at)
+///
+/// `country` is the issuing country as the chain records it (the CSCA's ISO
+/// 3166-1 alpha-2), encoded by country_code; 0 when unknown.
+pub fn identity_leaf(idc: Field, dsc_key: Field, country: Field, activated_at: u64) -> Field {
+    h5(TAG_LEAF, idc, dsc_key, country, activated_at as Field)
+}
+
+/// Field encoding of an ISO 3166-1 alpha-2 code: its two ASCII bytes read
+/// big-endian ("DE" = 0x4445). Never 0 for a real code; 0 means unknown.
+/// Wallets and tests only; the circuits take the encoded value. Matches
+/// zk/privacy.CountryField.
+pub fn country_code(a: u8, b: u8) -> Field {
+    (a as Field) * 256 + (b as Field)
 }
 
 /// Per-scope nullifier = H(TAG_SN, id_secret, scope)
@@ -127,6 +138,12 @@ pub fn zero_hashes() -> [Field; DEPTH + 1] {
 fn test_asset_erth_matches_derivation() {
     // "uerth" = 0x7565727468, 5 bytes, one chunk.
     assert(Poseidon2::hash([TAG_ASSET, 5, 0x7565727468], 3) == ASSET_ERTH);
+}
+
+#[test]
+fn test_country_code() {
+    // "DE" = 0x4445; Go parity: zk/privacy.CountryField("DE").
+    assert(country_code(0x44, 0x45) == 0x4445);
 }
 
 #[test]
