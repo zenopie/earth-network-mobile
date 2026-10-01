@@ -1,10 +1,19 @@
 //! transfer — 3-in / 3-out shielded transfer.
 //!
 //! Slots 0-1 (in and out) carry one hidden asset A; slot 2 (in and out) is
-//! always ERTH and pays the public fee. Balances:
-//!   in0 + in1 == out0 + out1 + v_pub_out      (asset A)
-//!   in2       == out2 + fee                   (ERTH)
-//! Every value is a u64 (range checked), so neither sum wraps the field.
+//! always ERTH and pays the public fee. Balances depend on A:
+//!
+//!   A != ERTH, two balances (the fee can never be paid in A):
+//!     in0 + in1 == out0 + out1 + v_pub_out    (asset A)
+//!     in2       == out2 + fee                 (ERTH)
+//!   A == ERTH, one combined balance (every slot is ERTH):
+//!     in0 + in1 + in2 == out0 + out1 + out2 + v_pub_out + fee
+//!
+//! so a wallet whose ERTH is one note can spend it and pay the fee from it.
+//! Enforced as dA + dF == 0 and (1 - [A == ERTH]) * dA == 0, where
+//! dA = in0 + in1 - out0 - out1 - v_pub_out and dF = in2 - out2 - fee.
+//! Every value is a u64 (range checked), so no sum wraps the field (each side
+//! is below 5 * 2^64).
 //! v_pub_out leaves the pool as asset A: `asset_pub == A` whenever
 //! v_pub_out > 0 (enforced as v_pub_out * (asset_pub - A) == 0). When
 //! v_pub_out == 0 asset_pub is unconstrained; the chain should pin it to 0.
@@ -60,10 +69,18 @@ fn main(
     assert(nf[0] != nf[2], "duplicate nullifier");
     assert(nf[1] != nf[2], "duplicate nullifier");
 
-    let in_a = in_value[0] as Field + in_value[1] as Field;
-    let out_a = out_value[0] as Field + out_value[1] as Field + v_pub_out as Field;
-    assert(in_a == out_a, "asset A unbalanced");
-    assert(in_value[2] as Field == out_value[2] as Field + fee as Field, "fee slot unbalanced");
+    // dA, dF as field elements: each is the difference of two sums of u64s,
+    // so it is zero exactly when the integer balance holds.
+    let d_a = (in_value[0] as Field + in_value[1] as Field)
+        - (out_value[0] as Field + out_value[1] as Field + v_pub_out as Field);
+    let d_f = in_value[2] as Field - (out_value[2] as Field + fee as Field);
+    // A != ERTH: asset A balances on its own (so the fee slot does too, below).
+    let separate = 1 - ((asset == ASSET_ERTH) as Field);
+    assert(separate * d_a == 0, "asset A unbalanced");
+    // Either way the total balances: for A == ERTH this is the one ERTH
+    // balance across all three slots; for A != ERTH, with dA == 0, it is the
+    // fee slot's own.
+    assert(d_a + d_f == 0, "total unbalanced");
 
     assert((v_pub_out as Field) * (asset_pub - asset) == 0, "asset_pub != A");
 
@@ -206,7 +223,7 @@ fn test_inflate_a() {
     run(fixture(ASSET_A, [70, 30, 10], [61, 40, 7], 3, 0));
 }
 
-#[test(should_fail_with = "fee slot unbalanced")]
+#[test(should_fail_with = "total unbalanced")]
 fn test_inflate_fee_slot() {
     run(fixture(ASSET_A, [70, 30, 10], [60, 40, 8], 3, 0));
 }
@@ -302,4 +319,112 @@ fn test_value_overflow() {
     let mut f = fixture(ASSET_A, [70, 30, 10], [60, 40, 7], 3, 0);
     f.out_value[0] = 0xffffffffffffffff + 1;
     run(f);
+}
+
+// ---- A == ERTH: one combined balance across all three slots
+
+#[test]
+fn test_erth_single_note_pays_its_own_fee() {
+    // The wallet's only ERTH note, in slot 0: 60 to the payee, 37 change, 3 fee.
+    run(fixture(ASSET_ERTH, [100, 0, 0], [60, 37, 0], 3, 0));
+}
+
+#[test]
+fn test_erth_single_note_in_fee_slot() {
+    // The same note in slot 2 funds an output in slot 0.
+    run(fixture(ASSET_ERTH, [0, 0, 100], [60, 0, 37], 3, 0));
+}
+
+#[test]
+fn test_erth_single_note_unshield_with_fee() {
+    run(fixture(ASSET_ERTH, [100, 0, 0], [0, 0, 10], 5, 85));
+}
+
+#[test]
+fn test_erth_fee_only_from_slot0() {
+    // A fee-only transfer whose ERTH note sits in an A slot.
+    run(fixture(ASSET_ERTH, [10, 0, 0], [0, 0, 4], 6, 0));
+}
+
+#[test]
+fn test_erth_three_notes_combined() {
+    run(fixture(ASSET_ERTH, [70, 30, 10], [100, 0, 7], 3, 0));
+}
+
+#[test]
+fn test_erth_max_values_combined() {
+    let m: u64 = 0xffffffffffffffff;
+    run(fixture(ASSET_ERTH, [m, m, m], [m, m, 0], m - 1, 1));
+}
+
+#[test(should_fail_with = "total unbalanced")]
+fn test_erth_combined_inflate_output() {
+    run(fixture(ASSET_ERTH, [100, 0, 0], [60, 38, 0], 3, 0));
+}
+
+#[test(should_fail_with = "total unbalanced")]
+fn test_erth_combined_inflate_fee_slot_output() {
+    run(fixture(ASSET_ERTH, [100, 0, 0], [60, 0, 38], 3, 0));
+}
+
+#[test(should_fail_with = "total unbalanced")]
+fn test_erth_combined_inflate_v_pub_out() {
+    run(fixture(ASSET_ERTH, [100, 0, 0], [0, 0, 10], 5, 86));
+}
+
+#[test(should_fail_with = "total unbalanced")]
+fn test_erth_combined_inflate_at_max() {
+    let m: u64 = 0xffffffffffffffff;
+    run(fixture(ASSET_ERTH, [m, m, m], [m, m, m], 0, 1));
+}
+
+#[test(should_fail_with = "total unbalanced")]
+fn test_erth_combined_underpaid_fee() {
+    // Declares a fee the inputs do not cover.
+    run(fixture(ASSET_ERTH, [100, 0, 0], [60, 37, 0], 4, 0));
+}
+
+#[test(should_fail_with = "asset_pub != A")]
+fn test_erth_unshield_wrong_public_asset() {
+    let mut f = fixture(ASSET_ERTH, [100, 0, 0], [0, 0, 10], 5, 85);
+    f.asset_pub = ASSET_A;
+    run(f);
+}
+
+#[test(should_fail_with = "input not in note tree")]
+fn test_claim_erth_mode_for_a_notes() {
+    // Asset-A notes cannot be spent under A = ERTH to reach the combined
+    // balance: their commitments are not ERTH commitments.
+    let mut f = fixture(ASSET_A, [100, 0, 10], [0, 0, 0], 3, 0);
+    f.asset = ASSET_ERTH;
+    f.out_value = [107, 0, 0];
+    for i in 0..3 {
+        f.cm_out[i] = note_cm(ASSET_ERTH, f.out_value[i], f.out_pc[i]);
+    }
+    run(f);
+}
+
+// ---- A != ERTH: the fee slot and asset A never mix
+
+#[test(should_fail_with = "asset A unbalanced")]
+fn test_non_erth_cannot_borrow_fee_from_a() {
+    // The fee paid out of A with the ERTH slot a dummy.
+    run(fixture(ASSET_A, [100, 0, 0], [97, 0, 0], 3, 0));
+}
+
+#[test(should_fail_with = "asset A unbalanced")]
+fn test_non_erth_cannot_move_erth_into_a() {
+    // Totals balance (dA = -10, dF = +10) but ERTH would become asset A.
+    run(fixture(ASSET_A, [70, 30, 10], [70, 40, 0], 0, 0));
+}
+
+#[test(should_fail_with = "asset A unbalanced")]
+fn test_non_erth_cannot_unshield_erth_as_a() {
+    run(fixture(ASSET_A, [70, 30, 10], [70, 30, 0], 0, 10));
+}
+
+#[test(should_fail_with = "asset A unbalanced")]
+fn test_non_erth_cannot_move_a_into_fee_slot() {
+    // dA = +10, dF = -10: asset A would become ERTH change.
+    run(fixture(ASSET_A, [70, 30, 10], [60, 30, 17], 3, 0));
 }
