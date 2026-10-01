@@ -212,9 +212,14 @@ public enum Msg {
     public struct RemoveLiquidity: ProtoMessage {
         public static let typeURL = "/earth.dex.v1.MsgRemoveLiquidity"
         public let creator: String, poolID: UInt64, shares: Coin
+        /// Pool 1 (ANML) only: the note its ANML leg is minted to when the
+        /// withdrawal matures — a self-mint pc, since the payout is priced
+        /// then (ANML exists only shielded). Empty for every other pool.
+        public let pc: Data, ciphertext: Data
 
-        public init(creator: String, poolID: UInt64, shares: Coin) {
+        public init(creator: String, poolID: UInt64, shares: Coin, pc: Data = Data(), ciphertext: Data = Data()) {
             self.creator = creator; self.poolID = poolID; self.shares = shares
+            self.pc = pc; self.ciphertext = ciphertext
         }
 
         public func encoded() -> Data {
@@ -222,6 +227,8 @@ public enum Msg {
             w.string(1, creator)
             w.uint64(2, poolID)
             w.message(3, shares)
+            w.bytes(4, pc)
+            w.bytes(5, ciphertext)
             return w.data
         }
     }
