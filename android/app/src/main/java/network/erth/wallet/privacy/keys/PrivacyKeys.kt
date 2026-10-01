@@ -42,6 +42,26 @@ class PrivacyKeys private constructor(
     /** The x25519 secret, for trial decryption only. */
     internal fun ek(): X25519PrivateKeyParameters = X25519PrivateKeyParameters(ekSecret, 0)
 
+    /**
+     * rho and rcm of self-mint [counter]: a note the chain mints to us at a
+     * value we cannot know when we name its pc (a registration reward, derth
+     * at the live rate, an unbonding payout, a gas grant). Its ciphertext
+     * cannot be written (the canonical format binds cm, which binds the value),
+     * so these notes are found instead by their public mint amount and a pc
+     * the wallet can rederive from the mnemonic alone (WalletSync):
+     *
+     *     rho = HMAC-SHA512("earth.privacy.v1", "mint-rho" || nk (32) || counter u32 BE) mod p
+     *     rcm = HMAC-SHA512("earth.privacy.v1", "mint-rcm" || nk (32) || counter u32 BE) mod p
+     */
+    fun mintSecrets(counter: Int): Pair<Fr, Fr> {
+        val c = java.nio.ByteBuffer.allocate(4).putInt(counter).array()
+        fun d(label: String) = Fr.fromWideBytes(hmac(label.toByteArray() + nk.toBytes() + c))
+        return d("mint-rho") to d("mint-rcm")
+    }
+
+    /** pc of self-mint [counter]. */
+    fun mintPc(counter: Int): Fr = mintSecrets(counter).let { (rho, rcm) -> Privacy.pc(ownerPk, rho, rcm) }
+
     /** Groundworks position key [index]: a 32-byte secp256k1 private key. */
     fun positionKey(index: Int): org.bitcoinj.core.ECKey =
         org.bitcoinj.core.ECKey.fromPrivate(
@@ -75,7 +95,7 @@ class PrivacyKeys private constructor(
             )
         }
 
-        private fun hmac(data: ByteArray): ByteArray {
+        internal fun hmac(data: ByteArray): ByteArray {
             val mac = Mac.getInstance("HmacSHA512")
             mac.init(SecretKeySpec(HMAC_KEY, "HmacSHA512"))
             return mac.doFinal(data)

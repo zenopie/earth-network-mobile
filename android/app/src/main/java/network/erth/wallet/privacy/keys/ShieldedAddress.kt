@@ -7,24 +7,22 @@ import network.erth.wallet.privacy.zk.Fr
  * owner_pk (the note's pc commits to it) and ek_pub (the note's ciphertext is
  * encrypted to it).
  *
- * The chain never sees one (it sees only pcs), so it does not define an
- * encoding; this is the wallet's, in PRIVACY_FORMATS.md:
+ * Canonical encoding (shared with chain zk/privacy and the web app):
  *
- *     bech32m( hrp "erth", [version 2] ++ 8-to-5-bit(owner_pk 32 BE || ek_pub 32) )
+ *     bech32m( hrp "erthz", 8-to-5-bit( 0x01 || owner_pk (32, BE, < p) || ek_pub (32) ) )
  *
- * Version 2 is the 5-bit value 'z', so every address reads "erth1z…": the
- * hrp is distinct from the transparent "earth", and the leading z marks it as
- * shielded at a glance. 115 characters, past BIP-173's 90 (the limit exists
- * for error-location guarantees; the checksum still detects errors).
+ * 65 payload bytes, so 116 characters, past BIP-173's 90-character cap (the
+ * cap exists for error-location guarantees; the checksum still detects
+ * errors, as with Zcash unified addresses). Unknown versions, any other
+ * length and a non-canonical owner_pk are refused.
  */
 data class ShieldedAddress(val ownerPk: Fr, val ekPub: ByteArray) {
     init { require(ekPub.size == 32) { "ek_pub is 32 bytes" } }
 
-    fun encode(): String {
-        val payload = ownerPk.toBytes() + ekPub
-        val data = byteArrayOf(VERSION.toByte()) + convertBits(payload, 8, 5, true)
-        return Bech32m.encode(HRP, data)
-    }
+    /** The 65 payload bytes. */
+    fun payload(): ByteArray = byteArrayOf(VERSION) + ownerPk.toBytes() + ekPub
+
+    fun encode(): String = Bech32m.encode(HRP, convertBits(payload(), 8, 5, true))
 
     override fun toString(): String = encode()
     override fun equals(other: Any?): Boolean =
@@ -32,19 +30,20 @@ data class ShieldedAddress(val ownerPk: Fr, val ekPub: ByteArray) {
     override fun hashCode(): Int = ownerPk.hashCode() * 31 + ekPub.contentHashCode()
 
     companion object {
-        const val HRP = "erth"
-        const val VERSION = 2
+        const val HRP = "erthz"
+        const val VERSION: Byte = 1
+        const val PAYLOAD_BYTES = 65
 
         fun decode(s: String): ShieldedAddress {
-            val (hrp, data) = Bech32m.decode(s)
+            val (hrp, data) = Bech32m.decode(s.trim())
             require(hrp == HRP) { "not a shielded earth address" }
-            require(data.isNotEmpty() && data[0].toInt() == VERSION) { "unknown shielded address version" }
-            val payload = convertBits(data.copyOfRange(1, data.size), 5, 8, false)
-            require(payload.size == 64) { "bad shielded address length" }
-            return ShieldedAddress(Fr.fromBytes(payload.copyOf(32)), payload.copyOfRange(32, 64))
+            val payload = convertBits(data, 5, 8, false)
+            require(payload.size == PAYLOAD_BYTES) { "bad shielded address length" }
+            require(payload[0] == VERSION) { "unknown shielded address version" }
+            return ShieldedAddress(Fr.fromBytes(payload.copyOfRange(1, 33)), payload.copyOfRange(33, 65))
         }
 
-        fun isShielded(s: String): Boolean = runCatching { decode(s.trim()) }.isSuccess
+        fun isShielded(s: String): Boolean = runCatching { decode(s) }.isSuccess
 
         internal fun convertBits(data: ByteArray, from: Int, to: Int, pad: Boolean): ByteArray {
             var acc = 0
@@ -54,7 +53,7 @@ data class ShieldedAddress(val ownerPk: Fr, val ekPub: ByteArray) {
             for (b in data) {
                 val v = b.toInt() and 0xff
                 require(v ushr from == 0) { "invalid data" }
-                acc = (acc shl from) or v
+                acc = ((acc shl from) or v) and 0xffff
                 bits += from
                 while (bits >= to) {
                     bits -= to

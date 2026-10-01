@@ -5,10 +5,10 @@ import network.erth.wallet.privacy.zk.Privacy
 import java.security.SecureRandom
 
 /**
- * A note's opening: what its owner needs to prove it, and what its
- * ciphertext carries. denom is carried as a string (the circuit needs only
- * AssetID(denom), but the wallet needs the denom to show it and to name it
- * when value leaves the pool).
+ * A note's opening: what its owner needs to prove it. The ciphertext
+ * carries the asset id, not the denom (NoteCipher); the wallet resolves it to
+ * a denom from the denoms it has seen ([AssetDenoms]), and an id it cannot
+ * resolve is kept as "asset/<hex>", spendable inside the pool all the same.
  *
  *     pc = H(TAG_PC, owner_pk, rho, rcm)     cm = H(TAG_CM, AssetID(denom), value, pc)
  */
@@ -19,7 +19,7 @@ data class NotePlaintext(
     val rcm: Fr,
     val memo: ByteArray = ByteArray(0),
 ) {
-    val asset: Fr get() = Privacy.assetId(denom)
+    val asset: Fr get() = assetOf(denom)
 
     fun pc(ownerPk: Fr): Fr = Privacy.pc(ownerPk, rho, rcm)
 
@@ -32,6 +32,11 @@ data class NotePlaintext(
 
     companion object {
         private val rng = SecureRandom()
+
+        const val UNRESOLVED_PREFIX = "asset/"
+
+        fun assetOf(denom: String): Fr =
+            if (denom.startsWith(UNRESOLVED_PREFIX)) Fr.fromHex(denom.removePrefix(UNRESOLVED_PREFIX)) else Privacy.assetId(denom)
 
         fun randomField(): Fr = ByteArray(64).also { rng.nextBytes(it) }.let(Fr::fromWideBytes)
 
@@ -49,6 +54,29 @@ data class OwnedNote(
     val cm: Fr,
     val nf: Fr,
     val spentHeight: Long? = null,
+    /** When a tx spending this note was broadcast (unix seconds), until sync sees its nullifier. */
+    val pendingAt: Long? = null,
 ) {
     val unspent: Boolean get() = spentHeight == null
+}
+
+/**
+ * Asset id -> denom, for the ids note ciphertexts carry. Seeded with the fee
+ * and personhood denoms; every public amount the indexer serves (shields and
+ * mints, which name their denom) teaches it more, and the first note of any
+ * derth/ or unbond/ denom is always a public mint, so a wallet learns a denom
+ * before it can be sent one privately.
+ */
+class AssetDenoms(known: Collection<String> = emptyList()) {
+    private val byId = HashMap<Fr, String>()
+
+    init { (listOf("uerth", "uanml") + known).forEach(::learn) }
+
+    fun learn(denom: String) {
+        if (denom.isNotEmpty() && !denom.startsWith(NotePlaintext.UNRESOLVED_PREFIX)) byId[Privacy.assetId(denom)] = denom
+    }
+
+    fun denoms(): Set<String> = byId.values.toSet()
+
+    fun resolve(asset: Fr): String = byId[asset] ?: (NotePlaintext.UNRESOLVED_PREFIX + asset.toHex())
 }
