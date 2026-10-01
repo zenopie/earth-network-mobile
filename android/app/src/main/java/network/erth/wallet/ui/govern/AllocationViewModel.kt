@@ -1,7 +1,6 @@
 package network.erth.wallet.ui.govern
 
 import android.app.Application
-import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -139,7 +138,12 @@ class AllocationViewModel(app: Application) : AndroidViewModel(app) {
                         options = runCatching { Allocation.stream(StreamId.STREAM_ID_CARETAKER).options }.getOrDefault(emptyList()),
                         mine = runCatching { PrivacySession.wallet(ctx).store.state.caretakerSplit }.getOrDefault(emptyMap()),
                     ),
-                    capital = load(StreamId.STREAM_ID_GROUNDWORKS, address),
+                    // Groundworks is directed by this wallet's positions:
+                    // their splits, weighted by the stake each holds.
+                    capital = StreamUiState(
+                        options = runCatching { Allocation.stream(StreamId.STREAM_ID_GROUNDWORKS).options }.getOrDefault(emptyList()),
+                        mine = runCatching { positionSplit(PrivacySession.wallet(ctx).positions().map { it.first }) }.getOrDefault(emptyMap()),
+                    ),
                     proposals = proposals,
                     assemblyTallies = assemblyTallies(proposals),
                 )
@@ -161,32 +165,6 @@ class AllocationViewModel(app: Application) : AndroidViewModel(app) {
             .mapNotNull { p -> runCatching { Assembly.tally(p.id) }.getOrNull()?.let { p.id to it } }
             .toMap()
 
-    private fun load(stream: StreamId, address: String) = StreamUiState(
-        options = runCatching { Allocation.stream(stream).options }.getOrDefault(emptyList()),
-        mine = runCatching { Allocation.voterAllocations(stream, address) }
-            .getOrDefault(emptyList())
-            .toMap(),
-    )
-
-    /**
-     * Replace a stream's split.
-     *
-     * The chain takes the whole split rather than a delta, so this sends every
-     * weight including the ones that did not change. Zero-percent entries are
-     * dropped: the chain treats an absent option as zero, and sending it
-     * explicitly only makes the message bigger.
-     */
-    fun setAllocations(stream: StreamId, weights: Map<Long, Long>) = { ctx: Context ->
-        val creator = SecureWalletManager.getWalletAddress(ctx).orEmpty()
-        listOf(
-            Allocation.msgSetAllocations(
-                creator,
-                stream,
-                weights.filterValues { it > 0 }.map { (id, pct) -> id to pct },
-            ),
-        )
-    }
-
     /**
      * Drop everything this holds about the current wallet.
      *
@@ -199,4 +177,23 @@ class AllocationViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = null
     }
 
+}
+
+/**
+ * Positions' splits combined, each weighted by its stake, as whole
+ * percents summing to 100 (largest remainder).
+ */
+internal fun positionSplit(positions: List<network.erth.wallet.privacy.PrivacyChainReads.Position>): Map<Long, Long> {
+    val weight = HashMap<Long, Double>()
+    positions.forEach { p -> p.splits.forEach { (id, pct) -> weight.merge(id, p.derth.toDouble() * pct, Double::plus) } }
+    val total = weight.values.sum()
+    if (total <= 0) return emptyMap()
+    val exact = weight.mapValues { it.value / total * 100 }
+    val out = exact.mapValues { floor(it.value).toLong() }.toMutableMap()
+    var left = 100 - out.values.sum()
+    for (id in exact.keys.sortedByDescending { exact[it]!! - floor(exact[it]!!) }) {
+        if (left <= 0) break
+        out[id] = out[id]!! + 1; left--
+    }
+    return out.filterValues { it > 0 }
 }

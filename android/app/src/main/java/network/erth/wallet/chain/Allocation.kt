@@ -1,8 +1,5 @@
 package network.erth.wallet.chain
 
-import com.google.protobuf.Any as ProtoAny
-import network.erth.earth.proto.allocation.AllocationWeight
-import network.erth.earth.proto.allocation.MsgSetAllocations
 import network.erth.earth.proto.allocation.StreamId
 import org.json.JSONObject
 
@@ -90,39 +87,9 @@ object Allocation {
         return out
     }
 
-    /**
-     * A voter's current split in one stream as (optionId, percent) pairs.
-     *
-     * QueryVoterResponse wraps the record in a `voter` field, so the percentages
-     * are one level down. Reading them off the top level parses as empty and the
-     * UI shows an unallocated voter — silently, since an empty split is a valid
-     * state for someone who has never allocated.
-     */
-    fun voterAllocations(stream: StreamId, address: String): List<Pair<Long, Long>> {
-        val (code, body) = EarthRest.get(
-            "/earth/allocation/v1/voter/${path(stream)}/$address"
-        )
-        if (code !in 200..299) return emptyList()
-        val voter = JSONObject(body).optJSONObject("voter") ?: return emptyList()
-        val arr = voter.optJSONArray("percentages") ?: return emptyList()
-        val out = ArrayList<Pair<Long, Long>>(arr.length())
-        for (i in 0 until arr.length()) {
-            val w = arr.getJSONObject(i)
-            out.add(w.optString("option_id", "0").toLong() to w.optString("percent", "0").toLong())
-        }
-        return out
-    }
-
-    // --- messages ---
-
-    fun msgSetAllocations(creator: String, stream: StreamId, weights: List<Pair<Long, Long>>): ProtoAny {
-        val builder = MsgSetAllocations.newBuilder().setCreator(creator).setStream(stream)
-        weights.forEach { (optionId, percent) ->
-            builder.addPercentages(
-                AllocationWeight.newBuilder().setOptionId(optionId).setPercent(percent).build()
-            )
-        }
-        return EarthTx.anyOf("/earth.allocation.v1.MsgSetAllocations", builder.build())
-    }
-
+    // No messages. The Caretaker split is cast privately
+    // (PrivacyWallet.setCaretaker) and Groundworks is directed by positions
+    // (PrivacyWallet.lockPosition / updatePosition). MsgSetAllocations
+    // remains only for a validator operator's self-bond, which this wallet
+    // does not manage.
 }

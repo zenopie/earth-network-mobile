@@ -84,6 +84,15 @@ sealed interface EarthRoute {
     data class ProposalDetail(val id: Long) : EarthRoute
 
     data object Personhood : EarthRoute
+
+    /** Groundworks positions: the private way to direct the Groundworks Fund. */
+    data object Positions : EarthRoute
+
+    /** The human chamber's ballots to remove Groundworks options. */
+    data object RemovalBallots : EarthRoute
+
+    /** Shielded notes per asset, and merging small ones. */
+    data object Notes : EarthRoute
     data object Wallets : EarthRoute
     data object CreateWallet : EarthRoute
     data object ImportWallet : EarthRoute

@@ -112,6 +112,9 @@ object Dex {
 
     // --- messages ---
 
+    /** The token only shields hold: its pool's legs are note paths (MsgNoteSwap, MsgAddLiquidityShielded). */
+    const val SHIELDED_ONLY = "uanml"
+
     fun msgSwap(creator: String, tokenInDenom: String, tokenInAmount: String, denomOut: String, minOut: String): ProtoAny {
         val msg = MsgSwap.newBuilder()
             .setCreator(creator)
@@ -130,11 +133,16 @@ object Dex {
         return EarthTx.anyOf("/earth.dex.v1.MsgAddLiquidity", msg)
     }
 
-    fun msgRemoveLiquidity(creator: String, poolId: Long, sharesDenom: String, sharesAmount: String): ProtoAny {
-        val msg = MsgRemoveLiquidity.newBuilder()
+    /**
+     * [pc] receives the token leg as a shielded note: required for a pool
+     * whose token is shielded-only (ANML, pool 1), refused for any other.
+     */
+    fun msgRemoveLiquidity(creator: String, poolId: Long, sharesDenom: String, sharesAmount: String, pc: ByteArray? = null): ProtoAny {
+        val b = MsgRemoveLiquidity.newBuilder()
             .setCreator(creator).setPoolId(poolId)
             .setShares(coin(sharesDenom, sharesAmount))
-            .build()
+        if (pc != null) b.setPc(com.google.protobuf.ByteString.copyFrom(pc))
+        val msg = b.build()
         return EarthTx.anyOf("/earth.dex.v1.MsgRemoveLiquidity", msg)
     }
 }

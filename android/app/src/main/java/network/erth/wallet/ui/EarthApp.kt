@@ -37,6 +37,7 @@ import network.erth.wallet.R
 import network.erth.wallet.chain.Bank
 import network.erth.wallet.privacy.PrivacyAutomation
 import network.erth.wallet.privacy.PrivacySession
+import network.erth.wallet.ui.privacy.PrivacyActionsViewModel
 import network.erth.wallet.privacy.tx.PrivateMsgs
 import network.erth.wallet.ui.designsystem.component.BlankBgScaffold
 import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
@@ -95,6 +96,7 @@ fun EarthApp(
     val markets: MarketsViewModel = viewModel()
     val wallets: WalletsViewModel = viewModel()
     val explore: ExploreViewModel = viewModel()
+    val privacy: PrivacyActionsViewModel = viewModel()
     val tx: TxController = viewModel()
 
     val state by wallet.state.collectAsStateWithLifecycle()
@@ -103,6 +105,7 @@ fun EarthApp(
     val allocationState by allocation.state.collectAsStateWithLifecycle()
     val marketsState by markets.state.collectAsStateWithLifecycle()
     val exploreState by explore.state.collectAsStateWithLifecycle()
+    val privacyState by privacy.state.collectAsStateWithLifecycle()
     val walletsState by wallets.state.collectAsStateWithLifecycle()
     val draftMnemonic by wallets.draftMnemonic.collectAsStateWithLifecycle()
     val walletsError by wallets.error.collectAsStateWithLifecycle()
@@ -124,7 +127,7 @@ fun EarthApp(
             // Earn shows pools now, so it needs the market data too.
             EarthRoute.Earn -> { earn.refresh(); markets.refresh() }
             EarthRoute.Swap -> markets.refresh()
-            EarthRoute.Govern -> allocation.refresh()
+            EarthRoute.Govern -> { allocation.refresh(); privacy.refresh() }
         }
     }
 
@@ -176,6 +179,7 @@ fun EarthApp(
         wallet.clear()
         earn.clear()
         allocation.clear()
+        privacy.clear()
         walletEpoch++
         wallet.refresh()
     }
@@ -323,6 +327,8 @@ fun EarthApp(
                 allocation = allocation,
                 markets = markets,
                 explore = explore,
+                privacy = privacy,
+                privacyState = privacyState,
                 wallets = wallets,
                 walletsState = walletsState,
                 draftMnemonic = draftMnemonic,
@@ -425,6 +431,9 @@ private fun EarthRoute.title(): String = when (this) {
     is EarthRoute.ProposalDetail -> "Proposal #$id"
     EarthRoute.Explore -> "Explorer"
     EarthRoute.Personhood -> "Identity"
+    EarthRoute.Positions -> "Groundworks positions"
+    EarthRoute.RemovalBallots -> "Removal ballots"
+    EarthRoute.Notes -> "Shielded notes"
     EarthRoute.Wallets -> "Wallets"
     EarthRoute.CreateWallet -> "New wallet"
     EarthRoute.ImportWallet -> "Import wallet"

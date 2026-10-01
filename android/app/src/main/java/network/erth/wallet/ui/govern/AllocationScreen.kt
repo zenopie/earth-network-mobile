@@ -57,6 +57,7 @@ fun AllocationScreen(
     stakedUerth: Long,
     onOpenStream: (StreamId) -> Unit,
     onOpenProposals: () -> Unit,
+    onOpenRemovals: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val dimens = EarthTheme.dimens
@@ -94,14 +95,24 @@ fun AllocationScreen(
         Spacer(Modifier.height(dimens.space8))
         GovernRow(
             title = "Groundworks Fund",
-            detail = "Weighted by the ERTH you have staked.",
+            detail = "Weighted by staked ERTH locked in positions.",
             status = state?.capital.statusFor(
                 eligible = stakedUerth > 0,
-                blocked = "Stake ERTH to take part",
+                blocked = "Stake ERTH privately to take part",
             ),
             loading = state == null,
             shimmer = shimmer,
             onClick = { onOpenStream(StreamId.STREAM_ID_GROUNDWORKS) },
+        )
+
+        Spacer(Modifier.height(dimens.space8))
+        GovernRow(
+            title = "Removal ballots",
+            detail = "People can vote a Groundworks option out.",
+            status = null,
+            loading = false,
+            shimmer = shimmer,
+            onClick = onOpenRemovals,
         )
 
         Spacer(Modifier.height(dimens.space24))

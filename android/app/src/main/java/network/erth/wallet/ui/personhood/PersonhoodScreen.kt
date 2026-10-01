@@ -51,6 +51,8 @@ fun PersonhoodScreen(
     onClaim: () -> Unit,
     modifier: Modifier = Modifier,
     claiming: Boolean = false,
+    /** The referrals section, shown to a registered wallet. */
+    referrals: (@Composable () -> Unit)? = null,
 ) {
     val dimens = EarthTheme.dimens
     val shape = RoundedCornerShape(EarthDimensions.Radius.radius3xl)
@@ -125,6 +127,10 @@ fun PersonhoodScreen(
             )
             Spacer(Modifier.height(dimens.space16))
             TransparentGasAction()
+            if (referrals != null) {
+                Spacer(Modifier.height(dimens.space24))
+                referrals()
+            }
 
             // There is no way to leave from here any more. The chain removed
             // MsgUnregister: retiring a registration freed its nullifier, and

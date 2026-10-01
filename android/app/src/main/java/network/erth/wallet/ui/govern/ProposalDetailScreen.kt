@@ -56,6 +56,8 @@ fun ProposalDetailScreen(
     /** Why this wallet cannot vote with stake, or null when it can. */
     eligibility: String? = null,
     onVote: ((Gov.Proposal, Gov.Vote) -> Unit)? = null,
+    /** Stake votes are private and final: each staked note votes once. */
+    stakeVoteFinal: Boolean = false,
     /**
      * The human house's tally, or null when this chain has no assembly — which
      * is every node older than v0.9.0. Null hides the section rather than
@@ -351,7 +353,13 @@ fun ProposalDetailScreen(
                 }
                 Spacer(Modifier.height(dimens.space8))
                 Text(
-                    text = "Voting again replaces your previous vote.",
+                    text = if (stakeVoteFinal) {
+                        "Your vote is private and final. Each staked note held when voting " +
+                            "opened votes once, with its full weight, and comes straight back to " +
+                            "you; it cannot be changed afterwards. Stake added since does not count."
+                    } else {
+                        "Voting again replaces your previous vote."
+                    },
                     style = EarthTypography.textXs,
                     color = EarthColors.Text.textTertiary,
                 )

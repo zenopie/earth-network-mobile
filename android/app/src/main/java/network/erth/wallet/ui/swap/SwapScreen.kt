@@ -79,8 +79,11 @@ fun SwapScreen(
      */
     erthUerth: Long?,
     anmlUnits: Long?,
-    /** The pool being traded against, for the quote. Null while loading. */
-    pool: network.erth.wallet.chain.Dex.Pool?,
+    /**
+     * Every pool, for the quote: routed the way x/dex routes it (through the
+     * ERTH hub). Null while loading.
+     */
+    pools: List<network.erth.wallet.chain.Dex.Pool>?,
     swapFeePercent: String?,
     /**
      * Denoms and amounts in base units, plus the minimum to accept.
@@ -109,32 +112,30 @@ fun SwapScreen(
     val toBalance = toUnits?.let { formatUerth(it) }
 
     /**
-     * What can actually be swapped, in base units.
+     * What can actually be swapped, in base units (shielded balances: a note
+     * swap spends notes).
      *
-     * The fee is always paid in ERTH, so selling ERTH has to leave it behind —
-     * "max" that spends the fee too produces a transaction the ante handler
-     * rejects, which costs a round trip to discover. Selling ANML, the whole
-     * balance is available and the ERTH for the fee has to already be there.
+     * Selling ERTH, the fee comes from a separate ERTH note, so a reserve
+     * stays behind. Selling ANML for ERTH, the fee is paid out of the ERTH
+     * received, so the whole balance is available.
      */
     val spendable = when {
         fromUnits == null -> null
-        erthIn -> (fromUnits - SWAP_FEE_UERTH).coerceAtLeast(0)
+        erthIn -> (fromUnits - TxController.GAS_RESERVE_UERTH).coerceAtLeast(0)
         else -> fromUnits
     }
 
     val fee = swapFeePercent?.let { runCatching { java.math.BigDecimal(it) }.getOrNull() }
 
-    val quote = remember(amount, erthIn, pool, fee) {
+    val quote = remember(amount, erthIn, pools, fee) {
         val input = amount.toBaseUnits() ?: return@remember null
-        val p = pool ?: return@remember null
         val f = fee ?: return@remember null
-        val erth = p.erthReserve.toBigIntegerOrNull() ?: return@remember null
-        val token = p.tokenReserve.toBigIntegerOrNull() ?: return@remember null
-        if (erthIn) {
-            SwapMath.hubForToken(erth, token, input, f)
-        } else {
-            SwapMath.tokenForHub(erth, token, input, f)
-        }
+        val reserves = pools.orEmpty().mapNotNull { p ->
+            val e = p.erthReserve.toBigIntegerOrNull() ?: return@mapNotNull null
+            val t = p.tokenReserve.toBigIntegerOrNull() ?: return@mapNotNull null
+            p.tokenDenom to SwapMath.Reserves(e, t)
+        }.toMap()
+        SwapMath.route(reserves, "uerth", if (erthIn) "uerth" else "uanml", input, if (erthIn) "uanml" else "uerth", f)
     }
 
     Column(
@@ -223,7 +224,7 @@ fun SwapScreen(
             // a tolerance setting.
             EarthDetailRow(
                 "Minimum received",
-                "${quote.amountOut.withSlippage(slippageBps).fromBaseUnits()} $toDenom",
+                "${SwapMath.withSlippage(quote.amountOut, slippageBps).fromBaseUnits()} $toDenom",
             )
 
             Spacer(Modifier.height(dimens.space12))
@@ -260,6 +261,14 @@ fun SwapScreen(
             }
         }
 
+        if (quote != null && !erthIn) {
+            Spacer(Modifier.height(dimens.space8))
+            Text(
+                text = "The network fee is paid out of the ERTH you receive.",
+                style = EarthTypography.textXs,
+                color = EarthColors.Text.textTertiary,
+            )
+        }
         Spacer(Modifier.height(dimens.space24))
         EarthButton(
             text = "Review swap",
@@ -271,7 +280,7 @@ fun SwapScreen(
                         if (erthIn) "uerth" else "uanml",
                         input,
                         if (erthIn) "uanml" else "uerth",
-                        out.withSlippage(slippageBps),
+                        SwapMath.withSlippage(out, slippageBps),
                     )
                 }
             },
@@ -393,35 +402,9 @@ private fun AmountChip(label: String, onClick: () -> Unit) {
 /** The reverse button's diameter, needed to centre it on the seam. */
 private val REVERSE_BUTTON_SIZE = 48.dp
 
-/**
- * What a swap costs at the node's minimum gas price. Derived from the gas limit
- * the swap actually broadcasts with, rather than a copy of the number: this is
- * subtracted from the spendable balance, so a stale value lets the user spend
- * their way past what the fee needs.
- */
-private val SWAP_FEE_UERTH: Long get() = TxController.DEFAULT_FEE_UERTH
-
 /** Base units to a plain decimal, for putting a computed amount in the field. */
 private fun Long.asDecimalAmount(): String =
     java.math.BigDecimal(this).movePointLeft(6).stripTrailingZeros().toPlainString()
-
-/** The chain sends reserves as decimal strings; anything else is a broken response. */
-
-/**
- * The floor the swap will accept, given a tolerance in basis points.
- *
- * The quote is computed against reserves read a moment ago, and anything
- * landing in a block before this one moves them. Without a floor the chain
- * fills at whatever price results; with the floor set at the quote itself, an
- * unrelated transaction in the same block fails the swap.
- *
- * Truncating division, so rounding always moves the floor down. Rounding it up
- * would quote a minimum the chain might refuse by a single unit.
- */
-private fun java.math.BigInteger.withSlippage(bps: Int): java.math.BigInteger {
-    val remaining = java.math.BigInteger.valueOf((10_000 - bps).toLong())
-    return this * remaining / java.math.BigInteger.valueOf(10_000)
-}
 
 /**
  * Tolerances offered, in basis points.

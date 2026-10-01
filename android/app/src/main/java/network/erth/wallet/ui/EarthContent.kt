@@ -41,6 +41,15 @@ import network.erth.wallet.ui.navigation.EarthRoute
 import network.erth.wallet.ui.onboarding.CreateWalletScreen
 import network.erth.wallet.ui.onboarding.ImportWalletScreen
 import network.erth.wallet.ui.personhood.PersonhoodScreen
+import network.erth.wallet.ui.privacy.NotesScreen
+import network.erth.wallet.ui.privacy.PositionRow
+import network.erth.wallet.ui.privacy.PositionsScreen
+import network.erth.wallet.ui.privacy.PrivacyActionsState
+import network.erth.wallet.ui.privacy.PrivacyActionsViewModel
+import network.erth.wallet.ui.privacy.ReferrerSection
+import network.erth.wallet.ui.privacy.RemovalBallotsScreen
+import network.erth.wallet.chain.math.SwapMath
+import cosmos.gov.v1.WeightedVoteOption
 import network.erth.wallet.ui.settings.AboutScreen
 import network.erth.wallet.ui.settings.SecurityScreen
 import network.erth.wallet.ui.settings.SettingsItem
@@ -84,6 +93,8 @@ internal fun EarthContent(
     allocation: AllocationViewModel,
     markets: MarketsViewModel,
     explore: ExploreViewModel,
+    privacy: PrivacyActionsViewModel,
+    privacyState: PrivacyActionsState?,
     wallets: WalletsViewModel,
     walletsState: WalletsUiState?,
     draftMnemonic: String?,
@@ -111,6 +122,21 @@ internal fun EarthContent(
     var staking by remember { mutableStateOf<StakeIntent?>(null) }
     var editing by remember { mutableStateOf<StreamId?>(null) }
     var liquidity by remember { mutableStateOf<Pair<LiquidityAction, Dex.Pool>?>(null) }
+    // Groundworks positions: choosing stake to lock, then its split; or re-splitting one.
+    var locking by remember { mutableStateOf(false) }
+    var lockDraft by remember { mutableStateOf<Pair<String, Long>?>(null) }
+    var resplitting by remember { mutableStateOf<PositionRow?>(null) }
+
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val onShare = { text: String ->
+        val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+            .putExtra(android.content.Intent.EXTRA_TEXT, text)
+        context.startActivity(android.content.Intent.createChooser(send, null))
+    }
+
+    // Private stake: derth notes per validator.
+    val derthHeld = loaded.shielded.filterKeys { it.startsWith("derth/") }
+    val privateStake = derthHeld.values.sum() + (privacyState?.positions?.sumOf { it.position.derth } ?: 0L)
 
     // LP shares arrive in the same balances call as everything else — they are
     // ordinary coins, denominated dexlp/<pool>.
@@ -186,39 +212,33 @@ internal fun EarthContent(
         )
 
         EarthRoute.Swap -> SwapScreen(
-            erthUerth = state?.balanceUerth,
-            anmlUnits = state?.holdings?.firstOrNull { it.denom == "uanml" }?.amount ?: state?.let { 0L },
-            // Only ERTH/ANML for now: it is the one pool, and pairing
-            // arbitrary spokes would need a two-hop quote through the hub that
-            // the screen has no way to let you choose yet.
-            pool = marketsState?.pools?.firstOrNull { it.tokenDenom == "uanml" },
+            // ANML exists only as notes and the dex refuses it on every
+            // transparent leg, so the swap is a note swap from shielded
+            // balances both ways.
+            erthUerth = state?.shieldedErthUerth,
+            anmlUnits = state?.let { it.shielded["uanml"] ?: 0L },
+            pools = marketsState?.pools,
             swapFeePercent = marketsState?.swapFeePercent,
             onSwap = { denomIn, amountIn, denomOut, minOut ->
-                tx.request(
+                tx.requestPrivate(
                     details = TxConfirmDetails(
                         action = "Swap",
-                        msgTypeUrl = "/earth.dex.v1.MsgSwap",
-                        balanceUerth = loaded.balanceUerth,
+                        msgTypeUrl = PrivateMsgs.NOTE_SWAP,
+                        balanceUerth = 0L,
                         amountLabel = "You pay",
                         amountValue = "${formatUerth(amountIn.toLong())} " +
                             denomIn.removePrefix("u").uppercase(),
                         minReceived = "${formatUerth(minOut.toLong())} " +
-                            denomOut.removePrefix("u").uppercase(),
+                            denomOut.removePrefix("u").uppercase() +
+                            if (denomOut == Constants.UERTH_DENOM) " (fee paid from it)" else "",
                     ),
+                    shieldedErth = loaded.shieldedErthUerth,
                     onSuccess = {
                         onRefresh()
                         markets.refresh()
                     },
-                    build = { ctx ->
-                        listOf(
-                            Dex.msgSwap(
-                                walletAddress(ctx),
-                                denomIn,
-                                amountIn.toString(),
-                                denomOut,
-                                minOut.toString(),
-                            ),
-                        )
+                    run = { ctx ->
+                        PrivacySession.wallet(ctx).noteSwap(denomIn, amountIn.toLong(), denomOut, minOut.toLong()).hash
                     },
                 )
             },
@@ -228,9 +248,10 @@ internal fun EarthContent(
         EarthRoute.Govern -> AllocationScreen(
             state = allocationState,
             registered = loaded.registered,
-            stakedUerth = loaded.stakedUerth,
+            stakedUerth = privateStake,
             onOpenStream = { nav.push(EarthRoute.Stream(it == StreamId.STREAM_ID_CARETAKER)) },
             onOpenProposals = { nav.push(EarthRoute.Proposals) },
+            onOpenRemovals = { nav.push(EarthRoute.RemovalBallots) },
             modifier = inset,
         )
 
@@ -276,13 +297,118 @@ internal fun EarthContent(
         )
 
 
-        EarthRoute.Personhood -> PersonhoodScreen(
-            registered = loaded.registered,
-            anmlBalance = loaded.anmlBalance,
-            onRegister = onRegister,
-            onClaim = onClaimAnml,
-            modifier = inset,
-        )
+        EarthRoute.Personhood -> {
+            LaunchedEffect(Unit) { privacy.refresh() }
+            PersonhoodScreen(
+                registered = loaded.registered,
+                anmlBalance = loaded.anmlBalance,
+                onRegister = onRegister,
+                onClaim = onClaimAnml,
+                modifier = inset,
+                referrals = {
+                    ReferrerSection(
+                        myAddress = loaded.address,
+                        boundAddress = privacyState?.referrerAddress.orEmpty(),
+                        boundAt = privacyState?.referrerBoundAt ?: 0L,
+                        lapseSeconds = privacyState?.referrerLapseSeconds ?: 30L * 86_400,
+                        onBind = {
+                            tx.requestPrivate(
+                                details = TxConfirmDetails(
+                                    action = "Bind referrer address",
+                                    msgTypeUrl = PrivateMsgs.BIND_REFERRER,
+                                    balanceUerth = 0L,
+                                    recipient = loaded.address,
+                                    recipientLabel = "Rewards to",
+                                ),
+                                shieldedErth = loaded.shieldedErthUerth,
+                                onSuccess = { privacy.refresh() },
+                                run = { ctx -> PrivacySession.wallet(ctx).bindReferrer(walletAddress(ctx)).hash },
+                            )
+                        },
+                        onShare = { onShare("Join Earth: https://erth.network/ref/${loaded.address}") },
+                    )
+                },
+            )
+        }
+
+        EarthRoute.Positions -> {
+            LaunchedEffect(Unit) { privacy.refresh() }
+            PositionsScreen(
+                state = privacyState,
+                lockable = derthHeld,
+                onLock = { locking = true },
+                onEditSplit = { resplitting = it },
+                onUnlock = { row ->
+                    tx.requestPrivate(
+                        details = TxConfirmDetails(
+                            action = "Unlock position",
+                            msgTypeUrl = PrivateMsgs.UNLOCK_POSITION,
+                            balanceUerth = 0L,
+                            amountLabel = "Returns",
+                            amountValue = "${formatUerth(row.position.derth)} staked ERTH",
+                        ),
+                        shieldedErth = loaded.shieldedErthUerth,
+                        onSuccess = { onRefresh(); privacy.refresh() },
+                        run = { ctx -> PrivacySession.wallet(ctx).unlockPosition(row.position, row.keyIndex).hash },
+                    )
+                },
+                modifier = inset,
+            )
+        }
+
+        EarthRoute.RemovalBallots -> {
+            LaunchedEffect(Unit) { privacy.refresh() }
+            RemovalBallotsScreen(
+                state = privacyState,
+                registered = loaded.registered,
+                onPropose = { optionId ->
+                    tx.requestPrivate(
+                        details = TxConfirmDetails(
+                            action = "Propose removing option $optionId",
+                            msgTypeUrl = PrivateMsgs.PROPOSE_REMOVAL,
+                            balanceUerth = 0L,
+                        ),
+                        shieldedErth = loaded.shieldedErthUerth,
+                        onSuccess = { privacy.refresh() },
+                        run = { ctx -> PrivacySession.wallet(ctx).proposeRemoval(optionId).hash },
+                    )
+                },
+                onVote = { optionId, yes ->
+                    tx.requestPrivate(
+                        details = TxConfirmDetails(
+                            action = "Vote ${if (yes) "Yes" else "No"} on removing option $optionId",
+                            msgTypeUrl = PrivateMsgs.VOTE_REMOVAL,
+                            balanceUerth = 0L,
+                        ),
+                        shieldedErth = loaded.shieldedErthUerth,
+                        onSuccess = { privacy.refresh() },
+                        run = { ctx -> PrivacySession.wallet(ctx).voteRemoval(optionId, yes).hash },
+                    )
+                },
+                modifier = inset,
+            )
+        }
+
+        EarthRoute.Notes -> {
+            LaunchedEffect(Unit) { privacy.refresh() }
+            NotesScreen(
+                state = privacyState,
+                shielded = loaded.shielded,
+                onMerge = { denom ->
+                    tx.requestPrivate(
+                        details = TxConfirmDetails(
+                            action = "Merge notes",
+                            msgTypeUrl = PrivateMsgs.TRANSFER,
+                            balanceUerth = 0L,
+                        ),
+                        shieldedErth = loaded.shieldedErthUerth,
+                        onSuccess = { onRefresh(); privacy.refresh() },
+                        run = { ctx -> PrivacySession.wallet(ctx).merge(denom).hash },
+                    )
+                },
+                modifier = inset,
+            )
+        }
 
         EarthRoute.Wallets -> {
             LaunchedEffect(Unit) { wallets.refresh() }
@@ -354,11 +480,12 @@ internal fun EarthContent(
                 eligibility = when {
                     route.human && !loaded.registered ->
                         "Register your identity to take part."
-                    !route.human && loaded.stakedUerth <= 0 ->
-                        "Stake ERTH to take part."
+                    !route.human && privateStake <= 0 ->
+                        "Stake ERTH privately, then lock it in a position, to take part."
                     else -> null
                 },
-                onEdit = { editing = id },
+                // Groundworks is directed by positions, not a per-account split.
+                onEdit = { if (route.human) editing = id else nav.push(EarthRoute.Positions) },
                 modifier = inset,
             )
         }
@@ -379,22 +506,33 @@ internal fun EarthContent(
             // verified human buys no say in it — and vice versa below. The two
             // are separate standings and a wallet can hold either, both or
             // neither.
-            eligibility = if (loaded.stakedUerth <= 0) {
-                "Stake ERTH to vote here. This house is weighted by bonded stake alone."
+            // The stake house: private stake votes. Every derth note in the
+            // tree when voting opened is spent against that snapshot and
+            // minted straight back, its weight counted; each position votes
+            // with its key. Final: a note votes once.
+            eligibility = if (privateStake <= 0) {
+                "Stake ERTH privately to vote here. Only stake held before voting opened counts."
             } else {
                 null
             },
+            stakeVoteFinal = true,
             onVote = { proposal, vote ->
-                tx.request(
+                tx.requestPrivate(
                     details = TxConfirmDetails(
-                        action = "Vote ${vote.label} on #${proposal.id}",
-                        msgTypeUrl = Gov.MSG_VOTE_TYPE_URL,
-                        balanceUerth = loaded.balanceUerth,
+                        action = "Vote ${vote.label} with stake on #${proposal.id} (final)",
+                        msgTypeUrl = PrivateMsgs.STAKE_VOTE,
+                        balanceUerth = 0L,
                     ),
-                    gasLimit = Gov.VOTE_GAS_LIMIT,
+                    shieldedErth = loaded.shieldedErthUerth,
                     onSuccess = onRefresh,
-                    build = { ctx ->
-                        listOf(Gov.msgVote(walletAddress(ctx), proposal.id, vote))
+                    run = { ctx ->
+                        val w = PrivacySession.wallet(ctx)
+                        val opts = listOf(WeightedVoteOption.newBuilder().setOption(vote.proto).setWeight("1").build())
+                        val notes = runCatching { w.stakeVoteNotes(proposal.id) }.getOrDefault(emptyList())
+                        val hashes = notes.map { w.stakeVote(proposal.id, it, opts).hash } +
+                            w.positions().map { (p, k) -> w.positionVote(p, k, proposal.id, opts).hash }
+                        check(hashes.isNotEmpty()) { "no stake from before this proposal's voting opened" }
+                        hashes.last()
                     },
                 )
             },
@@ -498,16 +636,45 @@ internal fun EarthContent(
             // ante handler cannot charge for. A reserve rather than a single
             // fee, for the same reason as staking: withdrawing this liquidity
             // later is itself a transaction that has to be payable.
-            erthAvailable = (loaded.balanceUerth - TxController.GAS_RESERVE_UERTH)
-                .coerceAtLeast(0),
-            tokenAvailable = loaded.holdings
-                .firstOrNull { it.denom == pool.tokenDenom }?.amount ?: 0L,
+            // Pool 1's token is ANML, which only notes hold: both legs come
+            // from shielded balances there, the fee from a separate ERTH note.
+            erthAvailable = (
+                (if (pool.tokenDenom == Dex.SHIELDED_ONLY) loaded.shieldedErthUerth else loaded.balanceUerth) -
+                    TxController.GAS_RESERVE_UERTH
+                ).coerceAtLeast(0),
+            tokenAvailable = if (pool.tokenDenom == Dex.SHIELDED_ONLY) {
+                loaded.shielded[pool.tokenDenom] ?: 0L
+            } else {
+                loaded.holdings.firstOrNull { it.denom == pool.tokenDenom }?.amount ?: 0L
+            },
             shareBalance = shares[pool.id] ?: 0L,
             unbondingSeconds = marketsState?.lpUnbondingSeconds ?: 0L,
             onDismiss = { liquidity = null },
             onConfirm = { erthIn, tokenIn, sharesOut ->
                 liquidity = null
                 val adding = action == LiquidityAction.Add
+                if (adding && pool.tokenDenom == Dex.SHIELDED_ONLY) {
+                    tx.requestPrivate(
+                        details = TxConfirmDetails(
+                            action = "Add liquidity",
+                            msgTypeUrl = PrivateMsgs.ADD_LIQUIDITY_SHIELDED,
+                            balanceUerth = 0L,
+                            amountLabel = "Deposit",
+                            amountValue = "${formatUerth(erthIn.toLong())} ERTH + ${formatUerth(tokenIn.toLong())} ANML",
+                            recipient = loaded.address,
+                            recipientLabel = "LP shares to",
+                        ),
+                        shieldedErth = loaded.shieldedErthUerth,
+                        onSuccess = { onRefresh(); markets.refresh() },
+                        run = { ctx ->
+                            PrivacySession.wallet(ctx).addLiquidityShielded(
+                                pool.id, pool.tokenDenom, tokenIn.toLong(), erthIn.toLong(), walletAddress(ctx),
+                                minShares(pool.id, erthIn, tokenIn),
+                            ).hash
+                        },
+                    )
+                    return@LiquiditySheet
+                }
                 tx.request(
                     details = TxConfirmDetails(
                         action = if (adding) "Add liquidity" else "Withdraw liquidity",
@@ -548,6 +715,12 @@ internal fun EarthContent(
                                     pool.id,
                                     Dex.shareDenom(pool.id),
                                     sharesOut.toString(),
+                                    // The ANML leg is paid as a note to us.
+                                    pc = if (pool.tokenDenom == Dex.SHIELDED_ONLY) {
+                                        PrivacySession.wallet(ctx).withdrawalPc()
+                                    } else {
+                                        null
+                                    },
                                 )
                             },
                         )
@@ -573,7 +746,7 @@ internal fun EarthContent(
                 onDismiss = { editing = null },
                 onConfirm = { weights ->
                     editing = null
-                    if (stream == StreamId.STREAM_ID_CARETAKER) {
+                    run {
                         // Private: a membership proof in the caretaker scope.
                         // The split is public, who cast it is not, and it
                         // lapses after R unless refreshed (the automation does).
@@ -587,21 +760,105 @@ internal fun EarthContent(
                             onSuccess = onRefresh,
                             run = { ctx -> PrivacySession.wallet(ctx).setCaretaker(weights.filterValues { it > 0 }).hash },
                         )
-                        return@AllocationEditSheet
                     }
-                    tx.request(
+
+                },
+            )
+        }
+    }
+
+    if (locking) {
+        StakeSheet(
+            title = "Lock stake in a position",
+            choices = derthHeld.map { (denom, amount) ->
+                val op = denom.removePrefix("derth/")
+                DelegationRow(
+                    validatorOperator = op,
+                    moniker = earnState?.validators?.firstOrNull { it.validatorOperator == op }?.moniker ?: op,
+                    amountUerth = amount,
+                    commission = 0.0,
+                )
+            },
+            capFor = { it.amountUerth },
+            confirmLabel = "Next: choose the split",
+            onDismiss = { locking = false },
+            onConfirm = { validator, amount ->
+                locking = false
+                lockDraft = validator to amount
+            },
+        )
+    }
+
+    val groundworks = allocationState?.capital
+    lockDraft?.let { (validator, amount) ->
+        if (groundworks != null) {
+            AllocationEditSheet(
+                title = "Position split",
+                stream = groundworks.copy(mine = emptyMap()),
+                onDismiss = { lockDraft = null },
+                onConfirm = { weights ->
+                    lockDraft = null
+                    tx.requestPrivate(
                         details = TxConfirmDetails(
-                            action = "Set allocation",
-                            msgTypeUrl = "/earth.allocation.v1.MsgSetAllocations",
-                                balanceUerth = loaded.balanceUerth,
+                            action = "Lock position",
+                            msgTypeUrl = PrivateMsgs.LOCK_POSITION,
+                            balanceUerth = 0L,
+                            amountLabel = "Locks",
+                            amountValue = "${formatUerth(amount)} staked ERTH",
+                            recipient = validator,
+                            recipientLabel = "Validator",
                         ),
-                        onSuccess = onRefresh,
-                        build = allocation.setAllocations(stream, weights),
+                        shieldedErth = loaded.shieldedErthUerth,
+                        onSuccess = { onRefresh(); privacy.refresh(); allocation.refresh() },
+                        run = { ctx ->
+                            PrivacySession.wallet(ctx).lockPosition(validator, amount, weights.filterValues { it > 0 }).hash
+                        },
                     )
                 },
             )
         }
     }
+
+    resplitting?.let { row ->
+        if (groundworks != null) {
+            AllocationEditSheet(
+                title = "Position split",
+                stream = groundworks.copy(mine = row.position.splits),
+                onDismiss = { resplitting = null },
+                onConfirm = { weights ->
+                    resplitting = null
+                    tx.requestPrivate(
+                        details = TxConfirmDetails(
+                            action = "Change position split",
+                            msgTypeUrl = PrivateMsgs.UPDATE_POSITION,
+                            balanceUerth = 0L,
+                        ),
+                        shieldedErth = loaded.shieldedErthUerth,
+                        onSuccess = { privacy.refresh(); allocation.refresh() },
+                        run = { ctx ->
+                            PrivacySession.wallet(ctx).updatePosition(row.position, row.keyIndex, weights.filterValues { it > 0 }).hash
+                        },
+                    )
+                },
+            )
+        }
+    }
+}
+
+/**
+ * The fewest LP shares a shielded pool deposit accepts: the shares the pool
+ * would mint now (the chain's deposit maths over the current reserves and
+ * share supply), less 1% for trades landing first. Blocking; "" (no bound)
+ * for an empty pool, which seeds at sqrt(erth x token) instead.
+ */
+private fun minShares(poolId: Long, erthIn: java.math.BigInteger, tokenIn: java.math.BigInteger): String {
+    val pool = Dex.pools().firstOrNull { it.id == poolId } ?: return ""
+    val supply = network.erth.wallet.privacy.chain.PrivacyQueries.lpShareSupply(poolId)
+    val re = pool.erthReserve.toBigInteger()
+    val rt = pool.tokenReserve.toBigInteger()
+    if (supply.signum() == 0 || re.signum() == 0 || rt.signum() == 0) return ""
+    val shares = minOf(erthIn * supply / re, tokenIn * supply / rt)
+    return SwapMath.withSlippage(shares, 100).toString()
 }
 
 /** Which direction the stake sheet was opened in. */
@@ -620,6 +877,12 @@ private fun settingsItems(nav: EarthNavController, state: WalletUiState?): List<
             },
             icon = R.drawable.ic_shield_check,
             onClick = { nav.push(EarthRoute.Personhood) },
+        ),
+        SettingsItem(
+            title = "Shielded notes",
+            subtitle = "Merge small notes",
+            icon = R.drawable.ic_shield_check,
+            onClick = { nav.push(EarthRoute.Notes) },
         ),
         SettingsItem(
             title = "Wallets",
