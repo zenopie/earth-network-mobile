@@ -43,6 +43,8 @@ interface NodeStore {
     fun set(level: Int, index: Long, v: Fr)
     /** Makes every set so far durable; a no-op for memory. */
     fun flush() {}
+    /** Drops every node. */
+    fun clear()
 }
 
 class MemNodeStore : NodeStore {
@@ -50,6 +52,7 @@ class MemNodeStore : NodeStore {
     private fun key(level: Int, index: Long) = (level.toLong() shl 40) or index
     override fun get(level: Int, index: Long): Fr? = m[key(level, index)]
     override fun set(level: Int, index: Long, v: Fr) { m[key(level, index)] = v }
+    override fun clear() = m.clear()
 }
 
 /**
@@ -88,7 +91,7 @@ class FileNodeStore(private val dir: File) : NodeStore {
     fun close() { files.forEach { it?.close() }; files.fill(null) }
 
     /** Drops everything (a resync from scratch). */
-    fun clear() {
+    override fun clear() {
         close()
         dir.listFiles()?.forEach { it.delete() }
     }
@@ -166,5 +169,44 @@ class MerkleTree(private val store: NodeStore, size: Long = 0) {
         return out
     }
 
+    /**
+     * The node at ([level], [index]) as it stood when the tree held [size]
+     * leaves. Append-only trees only: a subtree wholly below [size] has not
+     * changed since, one wholly above was empty, and only the nodes on the
+     * frontier between are rehashed. Used to prove against an older recorded
+     * root (a stake vote's proposal snapshot).
+     */
+    private fun nodeAt(level: Int, index: Long, size: Long): Fr {
+        val start = index shl level
+        val end = (index + 1) shl level
+        if (end <= size) return node(level, index)
+        if (start >= size) return Merkle.ZERO[level]
+        return Merkle.node(nodeAt(level - 1, 2 * index, size), nodeAt(level - 1, 2 * index + 1, size))
+    }
+
+    /** The root when the tree held [size] leaves (append-only trees). */
+    fun rootAt(size: Long): Fr {
+        require(size in 0..this.size)
+        return nodeAt(Merkle.DEPTH, 0, size)
+    }
+
+    /** [index]'s path against [rootAt] ([size]). */
+    fun pathAt(index: Long, size: Long): List<Fr> {
+        require(size in 0..this.size && index in 0 until size) { "leaf $index is not in the first $size" }
+        val out = ArrayList<Fr>(Merkle.DEPTH)
+        var i = index
+        for (lvl in 0 until Merkle.DEPTH) {
+            out.add(nodeAt(lvl, i xor 1L, size))
+            i = i ushr 1
+        }
+        return out
+    }
+
     fun flush() = store.flush()
+
+    /** Empties the tree (a resync from scratch). */
+    fun clear() {
+        store.clear()
+        size = 0
+    }
 }
