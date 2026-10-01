@@ -123,6 +123,8 @@ fun PersonhoodScreen(
                 modifier = Modifier.fillMaxWidth(),
                 colors = brandButtonColors(),
             )
+            Spacer(Modifier.height(dimens.space16))
+            TransparentGasAction()
 
             // There is no way to leave from here any more. The chain removed
             // MsgUnregister: retiring a registration freed its nullifier, and

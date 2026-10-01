@@ -71,7 +71,7 @@ object GasGrant {
         .put("pc_gas", pcGas.toByteString().base64())
         .put("ciphertext_gas", ciphertextGas.toByteString().base64())
 
-    private suspend fun post(
+    internal suspend fun post(
         path: String,
         body: JSONObject,
         onRefused: (String) -> String,

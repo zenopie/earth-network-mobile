@@ -118,6 +118,21 @@ object Privacy {
     fun removalScope(ballotId: Long): Fr = scope("removal", u64(ballotId))
     fun proposeRemovalScope(optionId: Long, day: Long): Fr = scope("propose_removal", u64(optionId), u64(day))
 
+    /**
+     * The transparent gas grant's scope for month [yyyymm] (UTC, e.g. 202610):
+     * H(TAG_SCOPE, Bytes("gas"), yyyymm). One grant per nullifier per month.
+     */
+    fun gasScope(yyyymm: Long): Fr = scope("gas", u64(yyyymm))
+
+    const val GAS_TRANSPARENT_SIGNAL_TYPE = "earth.gas.transparent"
+
+    /**
+     * The transparent gas grant's signal, binding the paid account's raw
+     * address bytes: H(TAG_SIGNAL, Bytes("earth.gas.transparent"), Bytes(chain_id), Bytes(addr)).
+     */
+    fun gasTransparentSignal(chainId: String, addr: ByteArray): Fr =
+        signal(GAS_TRANSPARENT_SIGNAL_TYPE, chainId, listOf(bytes(addr)))
+
     /** The passport proof's `address` input: H(TAG_REG, idc, pc_anml, pc_erth, affiliate). */
     fun registrationBinding(idc: Fr, pcAnml: Fr, pcErth: Fr, affiliate: Fr): Fr =
         h(TAG_REG, idc, pcAnml, pcErth, affiliate)
