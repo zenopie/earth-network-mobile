@@ -32,8 +32,13 @@ Gradle lives in `android/`, so **every `./gradlew` command runs from there**.
     ./gradlew lint                        # configured not to abort on errors
     ./gradlew clean
 
-JVM unit tests are few (`./gradlew :app:testDebugUnitTest`; currently the
-gas-grant request body). The prover tests are instrumented and need a real
+JVM unit tests (`./gradlew :app:testDebugUnitTest`) cover the gas-grant
+request body and the privacy core (`privacy/`): golden vectors from the
+chain's own Go code (`tools/privacyvectors/gen.sh <chain checkout>`), the
+chain's witness fixtures, every private msg's encoding and signal, and an
+end-to-end wallet flow against an in-memory chain. The formats the chain
+does not pin (keys, shielded address, note ciphertext) are in
+`PRIVACY_FORMATS.md`. The prover tests are instrumented and need a real
 device (the prover does not run on an emulator usefully):
 
     ./gradlew :app:connectedDebugAndroidTest \
