@@ -25,6 +25,7 @@ import (
 
 	allocationtypes "github.com/earth-network/earth/x/allocation/types"
 	assemblytypes "github.com/earth-network/earth/x/assembly/types"
+	dextypes "github.com/earth-network/earth/x/dex/types"
 	personhoodtypes "github.com/earth-network/earth/x/personhood/types"
 	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	stakingtypes "github.com/earth-network/earth/x/shieldedstaking/types"
@@ -139,15 +140,15 @@ func main() {
 	pc := privacy.PC(opk, rho, rcm)
 	out["derive"] = map[string]string{
 		"id_secret": hx(idSecret), "nk": hx(nk), "rho": hx(rho), "rcm": hx(rcm),
-		"idc":       hx(privacy.IDC(idSecret)),
-		"owner_pk":  hx(opk),
-		"leaf":      hx(privacy.IdentityLeaf(privacy.IDC(idSecret), fe(1005), privacy.CountryField("DE"), 1_790_000_000)),
-		"leaf_dsc":  hx(fe(1005)),
-		"sn":        hx(privacy.ScopeNullifier(idSecret, privacy.ClaimScope(20360))),
-		"pc":        hx(pc),
-		"cm":        hx(privacy.CM(privacy.AssetID("uanml"), 1_000_000, pc)),
-		"nf":        hx(privacy.NF(nk, rho, 4_000_000_000)),
-		"reg_none":  hx(privacy.RegistrationBinding(privacy.IDC(idSecret), fe(1), fe(2), fr.Element{})),
+		"idc":      hx(privacy.IDC(idSecret)),
+		"owner_pk": hx(opk),
+		"leaf":     hx(privacy.IdentityLeaf(privacy.IDC(idSecret), fe(1005), privacy.CountryField("DE"), 1_790_000_000)),
+		"leaf_dsc": hx(fe(1005)),
+		"sn":       hx(privacy.ScopeNullifier(idSecret, privacy.ClaimScope(20360))),
+		"pc":       hx(pc),
+		"cm":       hx(privacy.CM(privacy.AssetID("uanml"), 1_000_000, pc)),
+		"nf":       hx(privacy.NF(nk, rho, 4_000_000_000)),
+		"reg_none": hx(privacy.RegistrationBinding(privacy.IDC(idSecret), fe(1), fe(2), fr.Element{})),
 	}
 	out["scopes"] = map[string]string{
 		"claim_20360":           hx(privacy.ClaimScope(20360)),
@@ -194,16 +195,20 @@ func main() {
 	cts := [3][]byte{[]byte("a"), []byte("bb"), nil}
 	recvStr, recv := addr(1)
 	out["signals"] = map[string]string{
-		"transfer_send":      hx(privacy.TransferSignal(chainID, nil, cts, 0)),
-		"transfer_unshield":  hx(privacy.TransferSignal(chainID, recv, cts, 77)),
-		"action":             hx(privacy.ActionSignal("/x.y.Msg", chainID, cts, [3]fr.Element{fe(1), fe(2), fe(3)}, u(9))),
-		"multi":              hx(privacy.MultiSpendSignal("/x.y.Msg", chainID, [][3][]byte{cts, {[]byte("c"), nil, nil}}, [][3]fr.Element{{fe(1), fe(2), fe(3)}, {fe(4), fe(5), fe(6)}}, u(9))),
-		"receiver":           recvStr,
+		"transfer_send":     hx(privacy.TransferSignal(chainID, nil, cts, 0)),
+		"transfer_unshield": hx(privacy.TransferSignal(chainID, recv, cts, 77)),
+		"action":            hx(privacy.ActionSignal("/x.y.Msg", chainID, cts, [3]fr.Element{fe(1), fe(2), fe(3)}, u(9))),
+		"multi":             hx(privacy.MultiSpendSignal("/x.y.Msg", chainID, [][3][]byte{cts, {[]byte("c"), nil, nil}}, [][3]fr.Element{{fe(1), fe(2), fe(3)}, {fe(4), fe(5), fe(6)}}, u(9))),
+		"receiver":          recvStr,
 	}
 
 	// ---- msgs ---------------------------------------------------------------
 	msgs := map[string]msgVec{}
+	totalFees := map[string]string{}
 	add := func(name string, m sdk.Msg) {
+		if pm, ok := m.(shieldedtypes.PrivateMsg); ok {
+			totalFees[name] = shieldedtypes.TotalFee(pm).String()
+		}
 		bz, err := proto.Marshal(m)
 		must(err)
 		v := msgVec{TypeURL: sdk.MsgTypeURL(m), Proto: hex.EncodeToString(bz)}
@@ -257,6 +262,17 @@ func main() {
 	add("update_position", &stakingtypes.MsgUpdatePosition{Transfer: transfer(150, 2000, 0, ""), PositionId: 9, Splits: splits, Signature: sig})
 	add("unlock_position", &stakingtypes.MsgUnlockPosition{Transfer: transfer(160, 2000, 0, ""), PositionId: 9, Pc: fb(161), Ciphertext: []byte("x"), Signature: sig})
 	add("position_vote", &stakingtypes.MsgPositionVote{Transfer: transfer(170, 2000, 0, ""), PositionId: 9, ProposalId: 5, Options: opts, Signature: sig})
+
+	// x/dex note paths.
+	add("note_swap", &dextypes.MsgNoteSwap{Transfer: transfer(180, 2000, 300000, "uanml"), DenomOut: "uerth", MinAmountOut: 123456, Pc: fb(181)})
+	add("note_swap_fee_from_output", &dextypes.MsgNoteSwap{Transfer: transfer(190, 0, 300000, "uanml"), DenomOut: "uerth", MinAmountOut: 123456, Pc: fb(191), Ciphertext: []byte("s"), FeeFromOutput: 3000})
+	add("note_swap_to_anml", &dextypes.MsgNoteSwap{Transfer: transfer(200, 2000, 300000, "uerth"), DenomOut: "uanml", MinAmountOut: 1, Pc: fb(201)})
+	add("add_liquidity_shielded", &dextypes.MsgAddLiquidityShielded{Transfer: transfer(210, 0, 700000, "uanml"), ErthTransfer: transfer(220, 2500, 900000, "uerth"),
+		PoolId: 1, Provider: senderStr, MinShares: "777", RefundPc: fb(211)})
+	add("add_liquidity_shielded_no_min", &dextypes.MsgAddLiquidityShielded{Transfer: transfer(230, 2500, 700000, "uanml"), ErthTransfer: transfer(240, 0, 900000, "uerth"),
+		PoolId: 1, Provider: affStr, RefundPc: fb(231), RefundCiphertext: []byte("r")})
+	add("remove_liquidity_pc", &dextypes.MsgRemoveLiquidity{Creator: senderStr, PoolId: 1, Shares: sdk.NewCoin("dexlp/1", math.NewInt(4242)), Pc: fb(250)})
+	add("buy_anml", &dextypes.MsgBuyAnml{Creator: senderStr, TokenIn: sdk.NewCoin("uerth", math.NewInt(5000000)), MinAmountOut: "99", Pc: fb(260)})
 	out["msgs"] = msgs
 	out["validator"] = val
 	out["derth_denom"] = stakingtypes.DerthDenom(val)
@@ -280,6 +296,9 @@ func main() {
 	rawBz, err := proto.Marshal(raw)
 	must(err)
 	out["unsigned_tx"] = map[string]any{"msg": "claim_anml", "gas_limit": 2_600_000, "tx_raw": hex.EncodeToString(rawBz)}
+
+	// Every private msg's total fee (types.TotalFee): what the tx declares.
+	out["total_fees"] = totalFees
 
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")

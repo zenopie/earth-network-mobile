@@ -1,0 +1,78 @@
+// Copied by gen.sh into the exported chain's x/dex/keeper (package keeper,
+// so it reaches the unexported AMM) and run there; never part of the chain.
+// Writes the swap maths' golden vectors for the wallet's quote (SwapMath).
+package keeper
+
+import (
+	"encoding/json"
+	"os"
+	"testing"
+
+	"cosmossdk.io/math"
+)
+
+func TestPrivacyVectorsDexAmm(t *testing.T) {
+	out := os.Getenv("DEX_AMM_OUT")
+	if out == "" {
+		t.Skip("DEX_AMM_OUT not set")
+	}
+	type hop struct {
+		Fee         string `json:"fee"`
+		ReserveE    string `json:"reserve_erth"`
+		ReserveT    string `json:"reserve_token"`
+		AmountIn    string `json:"amount_in"`
+		Dir         string `json:"dir"` // "hub_for_token" (ERTH in) or "token_for_hub" (token in)
+		AmountOut   string `json:"amount_out"`
+		FeeErth     string `json:"fee_erth"`
+		Burn        string `json:"burn"`
+		NewReserveE string `json:"new_reserve_erth"`
+		NewReserveT string `json:"new_reserve_token"`
+	}
+	type two struct {
+		Fee       string `json:"fee"`
+		InE       string `json:"in_pool_erth"`
+		InT       string `json:"in_pool_token"`
+		OutE      string `json:"out_pool_erth"`
+		OutT      string `json:"out_pool_token"`
+		AmountIn  string `json:"amount_in"`
+		Mid       string `json:"mid"`
+		AmountOut string `json:"amount_out"`
+	}
+	fees := []string{"0.3", "0.25", "1", "0.333333333333333333", "10", "0"}
+	reserves := [][2]int64{{1_000_000_000_000, 250_000_000_000}, {12_345_678, 98_765_432_109}, {5_000_000, 5_000_000}, {1, 1_000_000_000}}
+	amounts := []int64{1, 7, 999, 1_000_000, 123_456_789, 50_000_000_000}
+	var hops []hop
+	for _, fs := range fees {
+		f := math.LegacyMustNewDecFromStr(fs)
+		for _, r := range reserves {
+			re, rt := math.NewInt(r[0]), math.NewInt(r[1])
+			for _, a := range amounts {
+				in := math.NewInt(a)
+				h := swapHubForToken(re, rt, in, f)
+				hops = append(hops, hop{fs, re.String(), rt.String(), in.String(), "hub_for_token",
+					h.amountOut.String(), feeOf(in, f).String(), h.burnErth.String(), h.newReserveErth.String(), h.newReserveToken.String()})
+				h = swapTokenForHub(re, rt, in, f)
+				gross := re.Mul(in).Quo(rt.Add(in))
+				hops = append(hops, hop{fs, re.String(), rt.String(), in.String(), "token_for_hub",
+					h.amountOut.String(), feeOf(gross, f).String(), h.burnErth.String(), h.newReserveErth.String(), h.newReserveToken.String()})
+			}
+		}
+	}
+	var twos []two
+	f := math.LegacyMustNewDecFromStr("0.3")
+	for _, a := range amounts {
+		in := math.NewInt(a)
+		inE, inT := math.NewInt(800_000_000_000), math.NewInt(3_000_000_000_000)
+		outE, outT := math.NewInt(400_000_000_000), math.NewInt(90_000_000)
+		h1 := swapTokenForHub(inE, inT, in, f)
+		h2 := swapHubForToken(outE, outT, h1.amountOut, f)
+		twos = append(twos, two{"0.3", inE.String(), inT.String(), outE.String(), outT.String(), in.String(), h1.amountOut.String(), h2.amountOut.String()})
+	}
+	bz, err := json.MarshalIndent(map[string]any{"hops": hops, "two_hop": twos}, "", " ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(out, bz, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

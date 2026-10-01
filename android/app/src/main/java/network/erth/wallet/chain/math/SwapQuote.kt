@@ -64,13 +64,68 @@ object SwapMath {
         )
     }
 
-    /** The chain's feeOf: percent of amount, truncated. */
-    private fun feeOf(amount: BigInteger, feePercent: BigDecimal): BigInteger =
+    /**
+     * The chain's feeOf: LegacyDec(amount).Mul(fee).Quo(100).TruncateInt().
+     * Mul is exact for an 18-place fee; Quo rounds its 18th place half-even
+     * (chopPrecisionAndRound) before the truncation, which only matters for a
+     * fee whose quotient lands within 1e-18 of an integer.
+     */
+    fun feeOf(amount: BigInteger, feePercent: BigDecimal): BigInteger =
         BigDecimal(amount)
             .multiply(feePercent)
             .divide(BigDecimal(100))
+            .setScale(18, RoundingMode.HALF_EVEN)
             .setScale(0, RoundingMode.DOWN)
             .toBigInteger()
+
+    /** One pool's reserves, ERTH and its token. */
+    data class Reserves(val erth: BigInteger, val token: BigInteger)
+
+    /**
+     * What swapping [amountIn] of [denomIn] for [denomOut] pays, routed the
+     * way x/dex swapExactIn routes it: one hop when either side is the hub
+     * ([hub], ERTH), else token -> ERTH -> token through each token's pool.
+     * [pools] maps a token denom to its pool's reserves. Null when a pool is
+     * missing or the output rounds to nothing (the chain refuses both).
+     *
+     * The node's pool query leaves out LP rewards not yet compounded into the
+     * ERTH reserve (settlePoolRewards runs at swap time), so the chain's own
+     * figure can differ by that much: the slippage floor absorbs it.
+     */
+    fun route(
+        pools: Map<String, Reserves>,
+        hub: String,
+        denomIn: String,
+        amountIn: BigInteger,
+        denomOut: String,
+        feePercent: BigDecimal,
+    ): SwapQuote? {
+        if (denomIn == denomOut) return null
+        val q = when {
+            denomIn == hub -> pools[denomOut]?.let { hubForToken(it.erth, it.token, amountIn, feePercent) }
+            denomOut == hub -> pools[denomIn]?.let { tokenForHub(it.erth, it.token, amountIn, feePercent) }
+            else -> {
+                val a = pools[denomIn] ?: return null
+                val b = pools[denomOut] ?: return null
+                val first = tokenForHub(a.erth, a.token, amountIn, feePercent) ?: return null
+                if (first.amountOut.signum() <= 0) return null
+                val second = hubForToken(b.erth, b.token, first.amountOut, feePercent) ?: return null
+                SwapQuote(
+                    amountOut = second.amountOut,
+                    feeErth = first.feeErth + second.feeErth,
+                    priceImpact = 1 - (1 - first.priceImpact) * (1 - second.priceImpact),
+                )
+            }
+        } ?: return null
+        return q.takeIf { it.amountOut.signum() > 0 }
+    }
+
+    /**
+     * The floor a swap accepts at a tolerance of [bps] basis points.
+     * Truncating, so rounding only ever moves the floor down.
+     */
+    fun withSlippage(amountOut: BigInteger, bps: Int): BigInteger =
+        amountOut * BigInteger.valueOf((10_000 - bps).toLong()) / BigInteger.valueOf(10_000)
 
     /**
      * How much worse the trade's average price is than the pool's marginal one.

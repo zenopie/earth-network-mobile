@@ -10,6 +10,10 @@ import network.erth.earth.proto.assembly.MsgProposeRemoval
 import network.erth.earth.proto.assembly.MsgVoteProposal
 import network.erth.earth.proto.assembly.MsgVoteRemoval
 import network.erth.earth.proto.assembly.VoteOption
+import network.erth.earth.proto.dex.MsgAddLiquidityShielded
+import network.erth.earth.proto.dex.MsgBuyAnml
+import network.erth.earth.proto.dex.MsgNoteSwap
+import network.erth.earth.proto.dex.MsgRemoveLiquidity
 import network.erth.earth.proto.personhood.Membership
 import network.erth.earth.proto.personhood.MsgBindReferrer
 import network.erth.earth.proto.personhood.MsgClaimAnml
@@ -114,6 +118,22 @@ class PrivateMsgsTest {
                 .setPc(fb(161)).setCiphertext(bs("x")).setSignature(sig).build(),
             "position_vote" to MsgPositionVote.newBuilder().setTransfer(transfer(170, 2000, 0, "")).setPositionId(9)
                 .setProposalId(5).addAllOptions(opts()).setSignature(sig).build(),
+            "note_swap" to MsgNoteSwap.newBuilder().setTransfer(transfer(180, 2000, 300000, "uanml")).setDenomOut("uerth")
+                .setMinAmountOut(123456).setPc(fb(181)).build(),
+            "note_swap_fee_from_output" to MsgNoteSwap.newBuilder().setTransfer(transfer(190, 0, 300000, "uanml")).setDenomOut("uerth")
+                .setMinAmountOut(123456).setPc(fb(191)).setCiphertext(bs("s")).setFeeFromOutput(3000).build(),
+            "note_swap_to_anml" to MsgNoteSwap.newBuilder().setTransfer(transfer(200, 2000, 300000, "uerth")).setDenomOut("uanml")
+                .setMinAmountOut(1).setPc(fb(201)).build(),
+            "add_liquidity_shielded" to MsgAddLiquidityShielded.newBuilder().setTransfer(transfer(210, 0, 700000, "uanml"))
+                .setErthTransfer(transfer(220, 2500, 900000, "uerth")).setPoolId(1).setProvider(addr(30)).setMinShares("777")
+                .setRefundPc(fb(211)).build(),
+            "add_liquidity_shielded_no_min" to MsgAddLiquidityShielded.newBuilder().setTransfer(transfer(230, 2500, 700000, "uanml"))
+                .setErthTransfer(transfer(240, 0, 900000, "uerth")).setPoolId(1).setProvider(addr(50))
+                .setRefundPc(fb(231)).setRefundCiphertext(bs("r")).build(),
+            "remove_liquidity_pc" to MsgRemoveLiquidity.newBuilder().setCreator(addr(30)).setPoolId(1)
+                .setShares(Coin.newBuilder().setDenom("dexlp/1").setAmount("4242")).setPc(fb(250)).build(),
+            "buy_anml" to MsgBuyAnml.newBuilder().setCreator(addr(30))
+                .setTokenIn(Coin.newBuilder().setDenom("uerth").setAmount("5000000")).setMinAmountOut("99").setPc(fb(260)).build(),
         )
     }
 
@@ -124,11 +144,17 @@ class PrivateMsgsTest {
         for ((name, m) in msgs) {
             val v = want.getJSONObject(name)
             assertEquals("$name proto", v.getString("proto"), hex(m.toByteArray()))
-            if (name != "shield") {
+            if (v.has("signal")) {
                 assertEquals("$name type", v.getString("type_url"), PrivateMsgs.typeUrl(m))
                 assertEquals("$name signal", v.getString("signal"), PrivateMsgs.signal(m, chainId).toHex())
             }
         }
+    }
+
+    @Test
+    fun totalFeesMatchTheChain() {
+        val want = json.getJSONObject("total_fees")
+        for (name in want.keys()) assertEquals(name, want.getString(name).toLong(), PrivateMsgs.totalFee(msgs.getValue(name)))
     }
 
     @Test

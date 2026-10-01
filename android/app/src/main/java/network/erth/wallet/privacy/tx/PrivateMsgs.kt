@@ -7,6 +7,8 @@ import network.erth.earth.proto.allocation.AllocationWeight
 import network.erth.earth.proto.assembly.MsgProposeRemoval
 import network.erth.earth.proto.assembly.MsgVoteProposal
 import network.erth.earth.proto.assembly.MsgVoteRemoval
+import network.erth.earth.proto.dex.MsgAddLiquidityShielded
+import network.erth.earth.proto.dex.MsgNoteSwap
 import network.erth.earth.proto.personhood.MsgBindReferrer
 import network.erth.earth.proto.personhood.MsgClaimAnml
 import network.erth.earth.proto.personhood.MsgRegister
@@ -56,10 +58,8 @@ object PrivateMsgs {
     const val UPDATE_POSITION = "/earth.shieldedstaking.v1.MsgUpdatePosition"
     const val UNLOCK_POSITION = "/earth.shieldedstaking.v1.MsgUnlockPosition"
     const val POSITION_VOTE = "/earth.shieldedstaking.v1.MsgPositionVote"
-
-    // TODO(phase 5): x/dex note swaps (MsgNoteSwap, MsgAddLiquidityShielded)
-    // land here once the chain's msgs settle: type URLs, signals
-    // (x/dex/types/msgs_private.go) and fee-from-output on a swap into uerth.
+    const val NOTE_SWAP = "/earth.dex.v1.MsgNoteSwap"
+    const val ADD_LIQUIDITY_SHIELDED = "/earth.dex.v1.MsgAddLiquidityShielded"
 
     private fun f(b: ByteString): Fr = Fr.fromBytes(b.toByteArray())
     private fun bytes(b: ByteString): Fr = Privacy.bytes(b.toByteArray())
@@ -168,10 +168,8 @@ object PrivateMsgs {
             CLAIM_UNBONDING, chainId, msg.transfer,
             listOf(bytes(msg.validator), u(msg.epoch), f(msg.pc), bytes(msg.ciphertext), u(msg.feeFromOutput)),
         )
-        is MsgStakeVote -> Privacy.multiSpendSignal(
-            STAKE_VOTE, chainId,
-            listOf(ciphertexts(msg.transfer), ciphertexts(msg.feeTransfer)),
-            listOf(nullifiers(msg.transfer), nullifiers(msg.feeTransfer)),
+        is MsgStakeVote -> multi(
+            STAKE_VOTE, chainId, transfers(msg),
             listOf(
                 u(msg.proposalId), bytes(msg.validator), Privacy.bytes(optionsBytes(msg.optionsList)),
                 f(msg.pc), bytes(msg.ciphertext),
@@ -193,7 +191,52 @@ object PrivateMsgs {
             POSITION_VOTE, chainId, msg.transfer,
             listOf(u(msg.positionId), u(msg.proposalId), Privacy.bytes(optionsBytes(msg.optionsList)), bytes(msg.signature)),
         )
+        is MsgNoteSwap -> spend(
+            NOTE_SWAP, chainId, msg.transfer,
+            listOf(bytes(msg.denomOut), u(msg.minAmountOut), f(msg.pc), bytes(msg.ciphertext), u(msg.feeFromOutput)),
+        )
+        is MsgAddLiquidityShielded -> multi(
+            ADD_LIQUIDITY_SHIELDED, chainId, transfers(msg),
+            listOf(
+                u(msg.poolId), Privacy.bytes(addressBytes(msg.provider)), bytes(msg.minShares),
+                f(msg.refundPc), bytes(msg.refundCiphertext),
+            ),
+        )
         else -> throw IllegalArgumentException("not a private msg: ${msg.javaClass.simpleName}")
+    }
+
+    private fun multi(type: String, chainId: String, ts: List<Transfer>, extra: List<Fr>): Fr =
+        Privacy.multiSpendSignal(type, chainId, ts.map(::ciphertexts), ts.map(::nullifiers), extra)
+
+    /** Every transfer [msg] spends, the primary first (MultiTransferMsg.PrivateTransfers). */
+    fun transfers(msg: MessageLite): List<Transfer> = when (msg) {
+        is MsgTransfer -> listOf(msg.transfer)
+        is MsgRegister -> listOf(msg.fee)
+        is MsgClaimAnml -> listOf(msg.fee)
+        is MsgSetCaretaker -> listOf(msg.fee)
+        is MsgBindReferrer -> listOf(msg.fee)
+        is MsgVoteProposal -> listOf(msg.fee)
+        is MsgProposeRemoval -> listOf(msg.fee)
+        is MsgVoteRemoval -> listOf(msg.fee)
+        is MsgDelegate -> listOf(msg.transfer)
+        is MsgUndelegate -> listOf(msg.transfer)
+        is MsgClaimUnbonding -> listOf(msg.transfer)
+        is MsgStakeVote -> listOf(msg.transfer, msg.feeTransfer)
+        is MsgLockPosition -> listOf(msg.transfer)
+        is MsgUpdatePosition -> listOf(msg.transfer)
+        is MsgUnlockPosition -> listOf(msg.transfer)
+        is MsgPositionVote -> listOf(msg.transfer)
+        is MsgNoteSwap -> listOf(msg.transfer)
+        is MsgAddLiquidityShielded -> listOf(msg.transfer, msg.erthTransfer)
+        else -> throw IllegalArgumentException("not a private msg: ${msg.javaClass.simpleName}")
+    }
+
+    /** fee_from_output, for the msgs that may pay their fee out of the ERTH they produce. */
+    fun feeFromOutput(msg: MessageLite): Long = when (msg) {
+        is MsgTransfer -> msg.feeFromOutput
+        is MsgClaimUnbonding -> msg.feeFromOutput
+        is MsgNoteSwap -> msg.feeFromOutput
+        else -> 0
     }
 
     fun typeUrl(msg: MessageLite): String = when (msg) {
@@ -213,29 +256,13 @@ object PrivateMsgs {
         is MsgUpdatePosition -> UPDATE_POSITION
         is MsgUnlockPosition -> UNLOCK_POSITION
         is MsgPositionVote -> POSITION_VOTE
+        is MsgNoteSwap -> NOTE_SWAP
+        is MsgAddLiquidityShielded -> ADD_LIQUIDITY_SHIELDED
         else -> throw IllegalArgumentException("not a private msg: ${msg.javaClass.simpleName}")
     }
 
     /** The whole fee the tx declares: every transfer's fee plus fee_from_output (types.TotalFee). */
-    fun totalFee(msg: MessageLite): Long = when (msg) {
-        is MsgTransfer -> msg.transfer.fee + msg.feeFromOutput
-        is MsgClaimUnbonding -> msg.transfer.fee + msg.feeFromOutput
-        is MsgStakeVote -> msg.transfer.fee + msg.feeTransfer.fee
-        is MsgRegister -> msg.fee.fee
-        is MsgClaimAnml -> msg.fee.fee
-        is MsgSetCaretaker -> msg.fee.fee
-        is MsgBindReferrer -> msg.fee.fee
-        is MsgVoteProposal -> msg.fee.fee
-        is MsgProposeRemoval -> msg.fee.fee
-        is MsgVoteRemoval -> msg.fee.fee
-        is MsgDelegate -> msg.transfer.fee
-        is MsgUndelegate -> msg.transfer.fee
-        is MsgLockPosition -> msg.transfer.fee
-        is MsgUpdatePosition -> msg.transfer.fee
-        is MsgUnlockPosition -> msg.transfer.fee
-        is MsgPositionVote -> msg.transfer.fee
-        else -> throw IllegalArgumentException("not a private msg: ${msg.javaClass.simpleName}")
-    }
+    fun totalFee(msg: MessageLite): Long = transfers(msg).sumOf { it.fee } + feeFromOutput(msg)
 
     /** A passport public signal (decimal) as a canonical field element (personhood ParseSignal). */
     fun decimalField(s: String): Fr {

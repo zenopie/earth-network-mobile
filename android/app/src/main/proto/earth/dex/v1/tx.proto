@@ -5,6 +5,7 @@ option java_package = "network.erth.earth.proto.dex";
 option java_multiple_files = true;
 
 import "cosmos/base/v1beta1/coin.proto";
+import "earth/shielded/v1/tx.proto";
 
 // Clean proto3 mirrors of the earth chain's x/dex messages (wire-compatible).
 
@@ -28,8 +29,52 @@ message MsgAddLiquidity {
   cosmos.base.v1beta1.Coin amount_b = 4;
 }
 
+// pc receives the token leg as a note, for a pool whose token is
+// shielded-only (ANML, pool 1): required there, refused elsewhere. The
+// ERTH leg is paid to creator.
 message MsgRemoveLiquidity {
   string creator = 1;
   uint64 pool_id = 2;
   cosmos.base.v1beta1.Coin shares = 3;
+  bytes pc = 4;
+  bytes ciphertext = 5;
+}
+
+// Private (unsigned): spends transfer.value_out of transfer.denom_out into
+// the dex, swaps it for denom_out, mints the output (less fee_from_output)
+// to pc. signal = SpendSignal("/earth.dex.v1.MsgNoteSwap", chain_id,
+// ciphertexts, Bytes(denom_out), min_amount_out, pc, Bytes(ciphertext),
+// fee_from_output).
+message MsgNoteSwap {
+  earth.shielded.v1.Transfer transfer = 1;
+  string denom_out = 2;
+  uint64 min_amount_out = 3;
+  bytes pc = 4;
+  bytes ciphertext = 5;
+  uint64 fee_from_output = 6;
+}
+
+// Signed: creator's token_in (ERTH, or a token via ERTH) for an ANML note.
+message MsgBuyAnml {
+  string creator = 1;
+  cosmos.base.v1beta1.Coin token_in = 2;
+  string min_amount_out = 3;
+  bytes pc = 4;
+  bytes ciphertext = 5;
+}
+
+// Private (unsigned, two transfers): transfer releases the pool's token,
+// erth_transfer ERTH; shares to provider; what the ratio does not take is
+// minted back to refund_pc. signal = MultiSpendSignal(
+// "/earth.dex.v1.MsgAddLiquidityShielded", chain_id, both transfers'
+// ciphertexts and nullifiers, pool_id, Bytes(provider bytes),
+// Bytes(min_shares), refund_pc, Bytes(refund_ciphertext)).
+message MsgAddLiquidityShielded {
+  earth.shielded.v1.Transfer transfer = 1;
+  earth.shielded.v1.Transfer erth_transfer = 2;
+  uint64 pool_id = 3;
+  string provider = 4;
+  string min_shares = 5;
+  bytes refund_pc = 6;
+  bytes refund_ciphertext = 7;
 }
