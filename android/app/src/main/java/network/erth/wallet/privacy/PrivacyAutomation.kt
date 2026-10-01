@@ -18,7 +18,16 @@ import java.security.SecureRandom
  *    so a claim's timing says nothing about who made it;
  *  - refreshes the caretaker split before it lapses (it counts for R after
  *    each cast);
+ *  - refreshes the referrer binding the same way;
  *  - claims unbonding notes once their epoch's undelegation has matured.
+ *
+ * Maturity is worked out from chain-wide timing alone (the current epoch,
+ * epoch length, x/staking's unbonding time), never by asking the node about
+ * a (validator, epoch) record: a query for the records this wallet holds,
+ * repeated every pass, would tell the node which unbond notes are whose
+ * long before any claim. If the record is not matured after all (its epoch's
+ * undelegation was deferred), the claim fails before anything is spent and
+ * waits [RETRY_S].
  *
  * [decide] is the pure part, unit-tested; [loop] runs it.
  */
@@ -31,6 +40,7 @@ object PrivacyAutomation {
     sealed interface Action {
         data class ClaimAnml(val day: Long) : Action
         data object RefreshCaretaker : Action
+        data object RefreshReferrer : Action
         data class ClaimUnbonding(val note: OwnedNote) : Action
     }
 
@@ -42,6 +52,7 @@ object PrivacyAutomation {
         /** Seconds after UTC midnight today's claim waits for. */
         val claimOffset: Long,
         val caretakerDue: Boolean,
+        val referrerDue: Boolean = false,
         val hasFeeErth: Boolean,
         val maturedUnbonds: List<OwnedNote>,
     )
@@ -53,9 +64,43 @@ object PrivacyAutomation {
             i.now - day * PrivacyWallet.SECONDS_PER_DAY >= i.claimOffset
         ) out.add(Action.ClaimAnml(day))
         if (i.identityLive && i.hasFeeErth && i.caretakerDue) out.add(Action.RefreshCaretaker)
+        if (i.identityLive && i.hasFeeErth && i.referrerDue) out.add(Action.RefreshReferrer)
         // Fee from output: needs no fee note.
         i.maturedUnbonds.forEach { out.add(Action.ClaimUnbonding(it)) }
         return out
+    }
+
+    /** Slack past the computed completion for the block that completes it. */
+    const val MATURITY_MARGIN_S = 15 * 60L
+    /** How long a claim the chain refused waits before trying again. */
+    const val RETRY_S = 6 * 3600L
+
+    /**
+     * The latest moment epoch [e]'s undelegation can complete. Epoch e ends
+     * in the block that starts e+1, and each epoch lasts at least
+     * [epochSeconds], so end(e) <= start(current) - (current - 1 - e) x
+     * epochSeconds; the SDK entry completes unbondingSeconds after that.
+     * Null while e has not ended.
+     */
+    fun maturesBy(e: Long, current: Long, currentStart: Long, epochSeconds: Long, unbondingSeconds: Long): Long? {
+        if (e >= current) return null
+        return currentStart - (current - 1 - e) * epochSeconds + unbondingSeconds + MATURITY_MARGIN_S
+    }
+
+    /** The unbond notes to claim now: matured by [maturesBy], and not waiting out a refused claim. */
+    fun matured(
+        notes: List<OwnedNote>,
+        now: Long,
+        current: Long,
+        currentStart: Long,
+        epochSeconds: Long,
+        unbondingSeconds: Long,
+        retryAt: Map<String, Long>,
+    ): List<OwnedNote> = notes.filter { n ->
+        if (!n.unspent || n.pendingAt != null || !n.note.denom.startsWith("unbond/")) return@filter false
+        val (_, e) = PrivacyWallet.parseUnbond(n.note.denom)
+        val by = maturesBy(e, current, currentStart, epochSeconds, unbondingSeconds) ?: return@filter false
+        now >= by && now >= (retryAt[n.note.denom] ?: 0L)
     }
 
     private val rng = SecureRandom()
@@ -75,12 +120,11 @@ object PrivacyAutomation {
         val w = PrivacySession.wallet(context)
         w.sync()
         val now = System.currentTimeMillis() / 1000
-        val matured = w.notes.filter { it.unspent && it.pendingAt == null && it.note.denom.startsWith("unbond/") }.filter { n ->
-            val (v, e) = PrivacyWallet.parseUnbond(n.note.denom)
-            // Asks about a (validator, epoch) record that every unstaker of
-            // that epoch shares; it names no note.
-            runCatching { PrivacyQueries.unbondRecord(v, e).status == "UNBOND_STATUS_MATURED" }.getOrDefault(false)
-        }
+        // Global reads only: the same for every wallet.
+        val epoch = PrivacyQueries.epoch()
+        val timing = PrivacyQueries.stakingTiming()
+        val matured = matured(w.notes, now, epoch.number, epoch.startTime, timing.epochSeconds, timing.unbondingSeconds,
+            w.store.state.unbondRetryAt)
         val inputs = Inputs(
             now = now,
             identityLive = w.identityStatus() == WalletSync.IdentityStatus.LIVE,
@@ -88,6 +132,7 @@ object PrivacyAutomation {
             claimedToday = w.claimedToday(),
             claimOffset = claimOffset(now),
             caretakerDue = runCatching { w.caretakerDue() }.getOrDefault(false),
+            referrerDue = runCatching { w.referrerDue() }.getOrDefault(false),
             hasFeeErth = (w.balances()["uerth"] ?: 0L) > 0,
             maturedUnbonds = matured,
         )
@@ -96,9 +141,16 @@ object PrivacyAutomation {
                 when (a) {
                     is Action.ClaimAnml -> w.claimAnml(a.day)
                     Action.RefreshCaretaker -> w.setCaretaker(w.store.state.caretakerSplit)
+                    Action.RefreshReferrer -> w.bindReferrer(w.store.state.referrerAddress)
                     is Action.ClaimUnbonding -> w.claimUnbonding(a.note)
                 }
-            }.onFailure { Log.w(TAG, "automation $a failed", it) }
+            }.onFailure {
+                Log.w(TAG, "automation $a failed", it)
+                if (a is Action.ClaimUnbonding) {
+                    w.store.state.unbondRetryAt[a.note.note.denom] = now + RETRY_S
+                    w.store.save()
+                }
+            }
         }
     }
 

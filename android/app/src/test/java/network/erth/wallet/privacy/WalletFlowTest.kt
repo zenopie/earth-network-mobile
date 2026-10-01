@@ -7,10 +7,13 @@ import network.erth.wallet.privacy.sync.PrivacyStore
 import network.erth.wallet.privacy.sync.WalletSync
 import network.erth.wallet.privacy.zk.Fr
 import network.erth.wallet.privacy.zk.Privacy
+import network.erth.wallet.chain.math.SwapMath
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import java.math.BigInteger
 
 /**
  * A wallet driven end to end against [FakeChain]: gas grant, registration,
@@ -23,13 +26,20 @@ class WalletFlowTest {
     private val bob = "legal winner thank year wave sausage worth useful legal winner thank yellow"
     private val validator = "earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
 
-    private fun reads(chain: FakeChain, snapshotSize: () -> Long = { chain.noteTree.size }) = object : PrivacyChainReads {
+    /** A proposal's snapshot, fixed once taken (null: the tree as it stands). */
+    private var snapshot: Long? = null
+
+    private fun reads(chain: FakeChain, snapshotSize: () -> Long = { snapshot ?: chain.noteTree.size }) = object : PrivacyChainReads {
         override fun personhoodParams() = PrivacyChainReads.PersonhoodParams(30L * 86_400, 3_600)
-        override fun ballotInputs(proposalId: Long, optionId: Long) =
+        override fun ballotInputs(proposalId: Long, optionId: Long) = if (proposalId != 0L) {
             PrivacyChainReads.BallotInputs(Privacy.proposalScope(proposalId, 0), Fr.ZERO, Fr.ZERO, chain.now - 3600, 0, 0)
+        } else {
+            val id = chain.removalBallots.getValue(optionId)
+            PrivacyChainReads.BallotInputs(Privacy.removalScope(id), Fr.ZERO, Fr.ZERO, chain.now - 3600, 0, id)
+        }
         override fun epochNumber() = 4L
         override fun snapshot(proposalId: Long) = snapshotSize().let { PrivacyChainReads.Snapshot(chain.noteTree.rootAt(it), it) }
-        override fun positions() = emptyList<PrivacyChainReads.Position>()
+        override fun positions() = chain.positionReads()
     }
 
     private fun wallet(chain: FakeChain, words: String, reads: PrivacyChainReads = reads(chain)) = PrivacyWallet(
@@ -113,6 +123,159 @@ class WalletFlowTest {
         assertTrue(chain.simulated > 0)
 
         dump(chain)
+    }
+
+    /** A registered wallet holding ANML from its registration and two claims, and its reward ERTH. */
+    private fun registered(chain: FakeChain, words: String): PrivacyWallet {
+        val a = wallet(chain, words)
+        a.sync()
+        val prep = a.prepareRegistration(null)
+        chain.shield("uerth", 100_000, prep.gas.pc)
+        a.sync()
+        val signals = listOf("261001", prep.binding.toBigInteger().toString(), "123456789", Fr.of(77).toBigInteger().toString())
+        a.register(prep, ByteArray(14_656), signals, "lean_poa", ByteArray(10))
+        chain.now += 2 * 86_400
+        a.sync()
+        a.claimAnml()
+        a.sync()
+        return a
+    }
+
+    private fun bal(w: PrivacyWallet, d: String) = w.balances()[d] ?: 0L
+
+    /**
+     * The dex, positions and personhood paths with two wallets: note swaps
+     * both ways (fee from output into ERTH), a refused slippage bound that
+     * spends nothing, shielded pool-1 liquidity with its refunds, Groundworks
+     * positions (lock, update, vote, unlock), stake votes, the referrer
+     * binding, removal ballots, note merges, an unbonding claimed by the
+     * automation's maturity rule, and both wallets restored from their
+     * mnemonics finding every self-mint again.
+     */
+    @Test
+    fun dexPositionsAndPersonhood() {
+        val chain = FakeChain()
+        val a = registered(chain, alice)
+        val b = wallet(chain, bob)
+        b.sync()
+        assertEquals(2_000_000L, bal(a, "uanml"))
+        val pool = { mapOf("uanml" to SwapMath.Reserves(chain.poolErth, chain.poolAnml)) }
+
+        // ANML -> ERTH: the quote is the chain's, the fee comes out of the output.
+        val erth0 = bal(a, "uerth")
+        val q = SwapMath.route(pool(), "uerth", "uanml", BigInteger.valueOf(600_000), "uerth", chain.swapFee)!!
+        val min = SwapMath.withSlippage(q.amountOut, 100).toLong()
+        a.noteSwap("uanml", 600_000, "uerth", min)
+        a.sync()
+        assertEquals(1_400_000L, bal(a, "uanml"))
+        val fee = q.amountOut.toLong() - (bal(a, "uerth") - erth0)
+        assertTrue("fee from output: $fee", fee in 1000..10_000)
+
+        // ERTH -> ANML, fee from an ERTH note, by bob after he is sent ERTH:
+        // two notes, as the fee is paid from a note of its own.
+        a.send(b.address, "uerth", 1_950_000)
+        a.sync()
+        a.send(b.address, "uerth", 50_000)
+        a.sync(); b.sync()
+        val bq = SwapMath.route(pool(), "uerth", "uerth", BigInteger.valueOf(1_000_000), "uanml", chain.swapFee)!!
+        b.noteSwap("uerth", 1_000_000, "uanml", SwapMath.withSlippage(bq.amountOut, 50).toLong())
+        b.sync()
+        assertEquals(bq.amountOut.toLong(), bal(b, "uanml"))
+        assertTrue(bal(b, "uerth") in 900_000 until 1_000_000)
+
+        // A bound the pool cannot meet fails before anything is spent.
+        val before = a.balances()
+        assertThrows(Exception::class.java) { a.noteSwap("uanml", 100_000, "uerth", 10_000_000) }
+        a.sync()
+        assertEquals(before, a.balances())
+
+        // Pool-1 liquidity from notes: more ERTH than the ratio takes comes back.
+        val provider = "earth1qqqsyqcyq5rqwzqfpg9scrgwpugpzysncc2uls"
+        val erthBefore = bal(a, "uerth")
+        a.addLiquidityShielded(1, "uanml", 400_000, 2_000_000, provider, "1")
+        a.sync()
+        assertTrue(chain.lpShares.getValue(provider).signum() > 0)
+        // The ANML leg's rounding comes back too.
+        val anmlAfterLp = bal(a, "uanml")
+        assertTrue(anmlAfterLp in 1_000_000L..1_000_010L)
+        val spent = erthBefore - bal(a, "uerth")
+        assertTrue("the unused ERTH is refunded: spent $spent", spent in 800_000..810_000)
+
+        // Groundworks: stake, lock a position, re-split it, vote with it, unlock.
+        val derth = PrivacyWallet.derthDenom(validator)
+        a.delegate(validator, 2_000_000)
+        a.sync()
+        assertEquals(1_800_000L, bal(a, derth))
+        a.lockPosition(validator, 1_000_000, mapOf(2L to 60L, 5L to 40L))
+        a.sync()
+        assertEquals(800_000L, bal(a, derth))
+        val (pos, key) = a.positions().single()
+        assertEquals(mapOf(2L to 60L, 5L to 40L), pos.splits)
+        a.updatePosition(pos, key, mapOf(2L to 100L))
+        assertEquals(mapOf(2L to 100L), chain.positions.getValue(pos.id).splits)
+        val yes = listOf(WeightedVoteOption.newBuilder().setOption(GovVoteOption.VOTE_OPTION_YES).setWeight("1").build())
+        a.positionVote(a.positions().single().first, key, 9, yes)
+        assertEquals(9L, chain.positionVotes.single().second)
+        a.unlockPosition(a.positions().single().first, key)
+        a.sync()
+        assertTrue(a.positions().isEmpty())
+        assertEquals(1_800_000L, bal(a, derth))
+
+        // Stake votes: every derth note from before the snapshot, each once.
+        a.sync()
+        snapshot = chain.noteTree.size
+        val voted = a.stakeVoteAll(11, yes)
+        snapshot = null
+        assertEquals(2, voted.size)
+        a.sync()
+        assertEquals(1_800_000L, bal(a, derth))
+
+        // Referrer binding (lapses after R; refreshed past R/2).
+        chain.now += 31 * 86_400
+        a.sync()
+        a.bindReferrer(provider)
+        assertEquals(provider, chain.referrers.values.single())
+        assertTrue(!a.referrerDue())
+        chain.now += 16 * 86_400
+        assertTrue(a.referrerDue())
+
+        // Removal ballot: open one, vote in it.
+        a.proposeRemoval(3)
+        a.voteRemoval(3, yes = true)
+        assertEquals(3L, chain.removalVotes.single().first)
+
+        // Small notes merge two at a time.
+        a.sync()
+        repeat(3) { val o = a.shieldOutput("uanml", 1_000L + it); chain.shield("uanml", o.value, o.pc, o.ciphertext) }
+        a.sync()
+        val n0 = a.mergeable()["uanml"]!!
+        a.merge("uanml")
+        a.sync()
+        assertEquals(n0 - 1, a.mergeable()["uanml"])
+        assertEquals(anmlAfterLp + 3_003L, bal(a, "uanml"))
+
+        // Unstake; the automation claims once epoch 4 (the fake's) has matured,
+        // by timing alone.
+        a.undelegate(validator, 500_000)
+        a.sync()
+        val unbond = PrivacyWallet.unbondDenom(validator, 4)
+        assertEquals(500_000L, bal(a, unbond))
+        val start = chain.now
+        val notYet = PrivacyAutomation.matured(a.notes, start, 5, start, 86_400, 21 * 86_400, emptyMap())
+        assertTrue(notYet.isEmpty())
+        val ready = PrivacyAutomation.matured(a.notes, start + 21 * 86_400 + 3600, 5, start, 86_400, 21 * 86_400, emptyMap())
+        val erthPre = bal(a, "uerth")
+        a.claimUnbonding(ready.single())
+        a.sync()
+        assertEquals(0L, bal(a, unbond))
+        assertTrue(bal(a, "uerth") - erthPre in 490_000 until 500_000)
+
+        // Both wallets, restored from their mnemonics, find everything again.
+        for ((w, words) in listOf(a to alice, b to bob)) {
+            val restored = wallet(chain, words)
+            restored.sync()
+            assertEquals(w.balances(), restored.balances())
+        }
     }
 
     /**

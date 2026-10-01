@@ -41,4 +41,32 @@ class AutomationTest {
         assertEquals(a, PrivacyAutomation.claimOffset(day * 86_400 + 80_000))
         assertTrue(a in 0 until PrivacyAutomation.CLAIM_WINDOW_S)
     }
+
+    @Test
+    fun maturityComesFromEpochTimingAlone() {
+        val day = 86_400L
+        val unbonding = 21 * day
+        // Epoch 10 began at t; epoch 9 ended exactly then, epoch 7 at least two epochs earlier.
+        val t = 1_800_000_000L
+        assertEquals(t + unbonding + PrivacyAutomation.MATURITY_MARGIN_S, PrivacyAutomation.maturesBy(9, 10, t, day, unbonding))
+        assertEquals(t - 2 * day + unbonding + PrivacyAutomation.MATURITY_MARGIN_S, PrivacyAutomation.maturesBy(7, 10, t, day, unbonding))
+        // The epoch in progress has not been undelegated yet.
+        assertEquals(null, PrivacyAutomation.maturesBy(10, 10, t, day, unbonding))
+
+        val n9 = OwnedNote(1, 1, NotePlaintext("unbond/v/9", 5, Fr.ONE, Fr.ONE), Fr.ONE, Fr.ONE)
+        val n10 = OwnedNote(2, 1, NotePlaintext("unbond/v/10", 5, Fr.ONE, Fr.ONE), Fr.ONE, Fr.ONE)
+        val by9 = PrivacyAutomation.maturesBy(9, 10, t, day, unbonding)!!
+        assertTrue(PrivacyAutomation.matured(listOf(n9, n10), by9 - 1, 10, t, day, unbonding, emptyMap()).isEmpty())
+        assertEquals(listOf(n9), PrivacyAutomation.matured(listOf(n9, n10), by9, 10, t, day, unbonding, emptyMap()))
+        // A claim the chain refused waits out its retry.
+        assertTrue(PrivacyAutomation.matured(listOf(n9), by9, 10, t, day, unbonding, mapOf("unbond/v/9" to by9 + 1)).isEmpty())
+        // Spent or pending notes are never claimed twice.
+        assertTrue(PrivacyAutomation.matured(listOf(n9.copy(pendingAt = 1)), by9, 10, t, day, unbonding, emptyMap()).isEmpty())
+    }
+
+    @Test
+    fun refreshesTheReferrerBinding() {
+        assertEquals(listOf<Action>(Action.RefreshReferrer), PrivacyAutomation.decide(base.copy(claimedToday = true, referrerDue = true)))
+        assertTrue(PrivacyAutomation.decide(base.copy(claimedToday = true, referrerDue = true, hasFeeErth = false)).isEmpty())
+    }
 }

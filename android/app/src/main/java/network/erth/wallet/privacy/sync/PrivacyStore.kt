@@ -44,6 +44,11 @@ class PrivacyState {
     /** When the caretaker split was last cast (unix seconds), and the split (option -> percent). */
     var caretakerCastAt: Long = 0
     var caretakerSplit: Map<Long, Long> = emptyMap()
+    /** The transparent address bound as this person's referrer ("" for none), and when (unix seconds). */
+    var referrerAddress: String = ""
+    var referrerBoundAt: Long = 0
+    /** Unbond denoms whose claim the chain refused as not yet matured, to when the automation next tries. */
+    val unbondRetryAt: MutableMap<String, Long> = sortedMapOf()
     /** Next unused position-key index. */
     var nextPositionKey: Int = 0
     /** Next unused self-mint counter (PrivacyKeys.mintSecrets). */
@@ -63,6 +68,8 @@ class PrivacyState {
         put("claimed_days", JSONArray(claimedDays.toList()))
         put("caretaker_cast_at", caretakerCastAt)
         put("caretaker_split", JSONObject().apply { caretakerSplit.forEach { (k, v) -> put(k.toString(), v) } })
+        put("referrer_address", referrerAddress); put("referrer_bound_at", referrerBoundAt)
+        put("unbond_retry_at", JSONObject().apply { unbondRetryAt.forEach { (k, v) -> put(k, v) } })
         put("next_position_key", nextPositionKey)
         put("next_mint_counter", nextMintCounter)
         put("denoms", JSONArray(denoms.toList()))
@@ -81,6 +88,8 @@ class PrivacyState {
             j.optJSONArray("claimed_days")?.let { a -> for (i in 0 until a.length()) claimedDays.add(a.getLong(i)) }
             caretakerCastAt = j.optLong("caretaker_cast_at")
             caretakerSplit = j.optJSONObject("caretaker_split")?.let { o -> o.keys().asSequence().associate { it.toLong() to o.getLong(it) } } ?: emptyMap()
+            referrerAddress = j.optString("referrer_address"); referrerBoundAt = j.optLong("referrer_bound_at")
+            j.optJSONObject("unbond_retry_at")?.let { o -> o.keys().forEach { unbondRetryAt[it] = o.getLong(it) } }
             nextPositionKey = j.optInt("next_position_key")
             nextMintCounter = j.optInt("next_mint_counter")
             j.optJSONArray("denoms")?.let { a -> for (i in 0 until a.length()) denoms.add(a.getString(i)) }
@@ -133,7 +142,11 @@ class PrivacyStore private constructor(private val dir: File?) {
         tmp.renameTo(File(d, STATE))
     }
 
-    /** Forgets everything but the position-key counter: a fresh chain, or an inconsistent sync. */
+    /**
+     * Forgets the synced data, keeping the key counters, the registration's
+     * leaf and what the wallet itself cast (claims, caretaker split, referrer): a fresh chain, or an
+     * inconsistent sync.
+     */
     @Synchronized
     fun reset(chainId: String?) {
         noteTree.clear()
@@ -143,6 +156,13 @@ class PrivacyStore private constructor(private val dir: File?) {
             this.chainId = chainId
             nextPositionKey = old.nextPositionKey
             nextMintCounter = old.nextMintCounter
+            if (old.chainId == chainId) {
+                // The leaf index cannot be found again without the registration tx.
+                identity = old.identity
+                claimedDays.addAll(old.claimedDays)
+                caretakerCastAt = old.caretakerCastAt; caretakerSplit = old.caretakerSplit
+                referrerAddress = old.referrerAddress; referrerBoundAt = old.referrerBoundAt
+            }
         }
         save()
     }

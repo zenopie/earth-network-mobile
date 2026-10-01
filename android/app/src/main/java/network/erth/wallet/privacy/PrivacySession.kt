@@ -70,7 +70,7 @@ object PrivacySession {
         }
 
         override fun positions() = PrivacyQueries.positions().map {
-            PrivacyChainReads.Position(it.id, it.validator, it.derth, it.pubkey, it.nonce)
+            PrivacyChainReads.Position(it.id, it.validator, it.derth, it.pubkey, it.nonce, it.splits, it.createdHeight)
         }
     }
 }

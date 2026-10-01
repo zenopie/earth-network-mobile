@@ -7,6 +7,8 @@ import network.erth.earth.proto.assembly.MsgProposeRemoval
 import network.erth.earth.proto.assembly.MsgVoteProposal
 import network.erth.earth.proto.assembly.MsgVoteRemoval
 import network.erth.earth.proto.assembly.VoteOption
+import network.erth.earth.proto.dex.MsgAddLiquidityShielded
+import network.erth.earth.proto.dex.MsgNoteSwap
 import network.erth.earth.proto.personhood.MsgBindReferrer
 import network.erth.earth.proto.personhood.MsgClaimAnml
 import network.erth.earth.proto.personhood.MsgRegister
@@ -48,7 +50,15 @@ interface PrivacyChainReads {
     data class PersonhoodParams(val caretakerVoteSeconds: Long, val identityRootWindowSeconds: Long)
     data class BallotInputs(val scope: Fr, val excludedDsc: Fr, val excludedCountry: Fr, val maxActivation: Long, val round: Long, val ballotId: Long)
     data class Snapshot(val root: Fr, val treeSize: Long)
-    data class Position(val id: Long, val validator: String, val derth: Long, val pubkey: ByteArray, val nonce: Long)
+    data class Position(
+        val id: Long,
+        val validator: String,
+        val derth: Long,
+        val pubkey: ByteArray,
+        val nonce: Long,
+        val splits: Map<Long, Long> = emptyMap(),
+        val createdHeight: Long = 0,
+    )
 
     fun personhoodParams(): PersonhoodParams
     fun ballotInputs(proposalId: Long = 0, optionId: Long = 0): BallotInputs
@@ -131,7 +141,16 @@ class PrivacyWallet(
     private fun spendWithFee(denom: String, amount: Long, fee: Long, outputs: List<NoteOut>, vPubOut: Long): TransferPlan {
         val notes = store.state.notes
         val feeNote = NoteSelection.feeNote(notes, fee)
-        val inputs = NoteSelection.inputs(notes, denom, amount, setOf(feeNote.position))
+        val inputs = try {
+            NoteSelection.inputs(notes, denom, amount, setOf(feeNote.position))
+        } catch (e: NoteSelection.Insufficient) {
+            // The circuit pays the fee only from its ERTH slot, never from the
+            // asset slots, so an ERTH spend needs a second ERTH note to pay it.
+            if (denom == "uerth" && NoteSelection.spendable(notes, "uerth").sumOf { it.note.value } >= amount + fee) {
+                throw NoteSelection.Insufficient("an ERTH payment needs a separate ERTH note for its fee; all your shielded ERTH is in one note")
+            }
+            throw e
+        }
         return TransferPlan.build(keys, store.noteTree, denom, inputs, outputs, vPubOut, feeNote, fee)
     }
 
@@ -194,14 +213,25 @@ class PrivacyWallet(
         }
     }
 
-    /** Merges the two largest [denom] notes into one (a transfer has only two input slots for its asset). */
+    /**
+     * Consolidates [denom]: the two smallest spendable notes become one (a
+     * transfer has two input slots for its asset, so a payment larger than
+     * any two notes cannot be made until small ones are merged). For ERTH the
+     * fee note is kept out of the pair. Repeat while [mergeable] says so.
+     */
     fun merge(denom: String): TxResult = run { fee ->
         val feeNote = NoteSelection.feeNote(store.state.notes, fee)
-        val two = NoteSelection.spendable(store.state.notes, denom, setOf(feeNote.position)).sortedByDescending { it.note.value }.take(2)
+        val two = NoteSelection.spendable(store.state.notes, denom, setOf(feeNote.position)).sortedBy { it.note.value }.take(2)
         require(two.size == 2) { "nothing to merge" }
         val plan = TransferPlan.build(keys, store.noteTree, denom, two, emptyList(), 0, feeNote, fee)
         Assembled(listOf(plan), null) { ts, _ -> MsgTransfer.newBuilder().setTransfer(ts[0]).build() }
     }
+
+    /** Spendable note counts per denom with more than one note (ERTH needs a third: one stays the fee note). */
+    fun mergeable(): Map<String, Int> =
+        store.state.notes.filter { it.unspent && it.pendingAt == null && it.note.value > 0 }
+            .groupBy { it.note.denom }.mapValues { it.value.size }
+            .filter { (d, n) -> n >= if (d == "uerth") 3 else 2 }
 
     /** A note to self for MsgShield (transparent coins into the pool; signed, so built by the caller's key). */
     fun shieldOutput(denom: String, amount: Long): NoteOut = NoteOut.toSelf(keys, denom, amount)
@@ -338,15 +368,28 @@ class PrivacyWallet(
         return now() - store.state.caretakerCastAt > r / 2
     }
 
-    /** Binds (or, empty, clears) the address referral rewards are paid to. */
+    /**
+     * Binds (or, empty, clears) the transparent address this person's
+     * referral rewards are paid to. The binding is public (the address is),
+     * the person behind it is not; it lapses after R unless refreshed.
+     */
     fun bindReferrer(address: String): TxResult {
         val maxAct = leaseBound()
         val m = membership(Privacy.referrerScope(), Fr.ZERO, Fr.ZERO, maxAct)
-        return run { fee ->
+        val r = run { fee ->
             Assembled(listOf(feeOnly(fee)), m) { ts, mem ->
                 MsgBindReferrer.newBuilder().setFee(ts[0]).setMembership(mem).setAddress(address).setMaxActivation(maxAct).build()
             }
         }
+        store.state.referrerAddress = address; store.state.referrerBoundAt = if (address.isEmpty()) 0 else now(); store.save()
+        return r
+    }
+
+    /** Whether the referrer binding needs refreshing to stay live: past half of R. */
+    fun referrerDue(): Boolean {
+        if (store.state.referrerAddress.isEmpty()) return false
+        val r = reads.personhoodParams().caretakerVoteSeconds
+        return now() - store.state.referrerBoundAt > r / 2
     }
 
     // ---- assembly -----------------------------------------------------------
@@ -452,6 +495,89 @@ class PrivacyWallet(
             }
         }
     }
+
+    /**
+     * The derth notes that can stake-vote on [proposalId]: unspent, and in
+     * the tree at the proposal's snapshot.
+     */
+    fun stakeVoteNotes(proposalId: Long): List<OwnedNote> {
+        val snap = reads.snapshot(proposalId)
+        return store.state.notes.filter {
+            it.unspent && it.pendingAt == null && it.note.denom.startsWith("derth/") && it.note.value > 0 && it.position < snap.treeSize
+        }
+    }
+
+    /**
+     * Votes every eligible derth note on [proposalId] (one tx per note: a
+     * stake vote spends its note whole). Final: the spent nullifier and the
+     * re-minted note's absence from the snapshot root stop a second vote.
+     */
+    fun stakeVoteAll(proposalId: Long, options: List<WeightedVoteOption>): List<TxResult> {
+        val ns = stakeVoteNotes(proposalId)
+        require(ns.isNotEmpty()) { "no stake from before this proposal's snapshot" }
+        return ns.map { stakeVote(proposalId, it, options) }
+    }
+
+    // ---- dex ----------------------------------------------------------------
+
+    /**
+     * Swaps [amountIn] [denomIn] from notes for at least [minOut] [denomOut]
+     * (any pools, through the ERTH hub), the output minted back to us. Its
+     * value is the pool's to decide, so the output is a self-mint found by
+     * its public amount. A swap into ERTH pays its fee out of the output
+     * (fee_from_output; the chain needs min_out above the fee); any other
+     * pays from an ERTH note.
+     */
+    fun noteSwap(denomIn: String, amountIn: Long, denomOut: String, minOut: Long): TxResult {
+        require(denomIn != denomOut && amountIn > 0 && minOut > 0)
+        val out = mint(denomOut)
+        return run { fee ->
+            if (denomOut == "uerth") {
+                require(minOut > fee) { "the minimum received must exceed the ${fee}uerth fee paid from it" }
+                val plan = TransferPlan.build(keys, store.noteTree, denomIn, NoteSelection.inputs(store.state.notes, denomIn, amountIn),
+                    emptyList(), amountIn, null, 0)
+                Assembled(listOf(plan), null) { ts, _ -> swapMsg(ts[0], denomOut, minOut, out, fee) }
+            } else {
+                val plan = spendWithFee(denomIn, amountIn, fee, emptyList(), amountIn)
+                Assembled(listOf(plan), null) { ts, _ -> swapMsg(ts[0], denomOut, minOut, out, 0) }
+            }
+        }
+    }
+
+    private fun swapMsg(t: network.erth.earth.proto.shielded.Transfer, denomOut: String, minOut: Long, out: NoteOut, feeFromOutput: Long) =
+        MsgNoteSwap.newBuilder().setTransfer(t).setDenomOut(denomOut).setMinAmountOut(minOut)
+            .setPc(ByteString.copyFrom(out.pc.toBytes())).setCiphertext(ByteString.copyFrom(out.ciphertext))
+            .setFeeFromOutput(feeFromOutput).build()
+
+    /**
+     * Deposits [tokenAmount] [token] and [erthAmount] uerth from notes into
+     * [poolId] (pool 1: ANML/ERTH), the LP shares to [provider] (a
+     * transparent address: providing liquidity is public). The ERTH leg pays
+     * the fee from its own fee note. Whatever the pool ratio does not take is
+     * minted back to one self-mint pc (a note per asset).
+     */
+    fun addLiquidityShielded(poolId: Long, token: String, tokenAmount: Long, erthAmount: Long, provider: String, minShares: String): TxResult {
+        require(tokenAmount > 0 && erthAmount > 0)
+        val refund = mint(token)
+        return run { fee ->
+            val tokenPlan = TransferPlan.build(keys, store.noteTree, token,
+                NoteSelection.inputs(store.state.notes, token, tokenAmount), emptyList(), tokenAmount, null, 0)
+            val erthPlan = spendWithFee("uerth", erthAmount, fee, emptyList(), erthAmount)
+            Assembled(listOf(tokenPlan, erthPlan), null) { ts, _ ->
+                MsgAddLiquidityShielded.newBuilder().setTransfer(ts[0]).setErthTransfer(ts[1]).setPoolId(poolId)
+                    .setProvider(provider).setMinShares(minShares)
+                    .setRefundPc(ByteString.copyFrom(refund.pc.toBytes()))
+                    .setRefundCiphertext(ByteString.copyFrom(refund.ciphertext)).build()
+            }
+        }
+    }
+
+    /**
+     * The pc a pool-1 MsgRemoveLiquidity names for its ANML leg (signed by
+     * the provider's transparent key): a self-mint, since the payout is
+     * priced when the withdrawal matures.
+     */
+    fun withdrawalPc(): ByteArray = mint("uanml").pc.toBytes()
 
     /** This wallet's Groundworks positions: the public positions whose key is one of ours. */
     fun positions(): List<Pair<PrivacyChainReads.Position, Int>> {
