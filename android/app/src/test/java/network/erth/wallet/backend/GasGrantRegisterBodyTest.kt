@@ -1,6 +1,7 @@
 package network.erth.wallet.backend
 
-import network.erth.wallet.chain.Personhood
+import com.google.protobuf.ByteString
+import network.erth.earth.proto.personhood.MsgRegister
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -19,9 +20,14 @@ class GasGrantRegisterBodyTest {
     // Leading zeros and a value past Long: passed through, never parsed.
     private val signals = listOf("260929", "0012", "21888242871839275222246405745257275088548364400416034343698204186575808495617", "0")
 
-    private val body = GasGrant.registerBody(
-        Personhood.registerMsg("earth1creator", proof, signals, "rsa_2048_sha256", "earth1referrer", dscDer),
-    )
+    private fun msg(affiliate: String) = MsgRegister.newBuilder()
+        .setProof(ByteString.copyFrom(proof)).addAllPublicSignals(signals).setSignatureAlgorithm("rsa_2048_sha256")
+        .setDscDer(ByteString.copyFrom(dscDer)).setIdc(ByteString.copyFrom(ByteArray(32) { 1 }))
+        .setPcAnml(ByteString.copyFrom(ByteArray(32) { 2 })).setPcErth(ByteString.copyFrom(ByteArray(32) { 3 }))
+        .setAffiliate(affiliate).build()
+
+    private val pcGas = ByteArray(32) { 4 }
+    private val body = GasGrant.registerBody(msg("earth1referrer"), pcGas)
 
     @Test
     fun bytesAreStandardBase64WithoutWrapping() {
@@ -41,16 +47,17 @@ class GasGrantRegisterBodyTest {
 
     @Test
     fun remainingFields() {
-        assertEquals("earth1creator", body.getString("address"))
+        assertEquals(false, body.has("address"))
+        assertEquals("AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=", body.getString("idc"))
+        assertEquals("BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=", body.getString("pc_gas"))
+        assertEquals("", body.getString("ciphertext_gas"))
         assertEquals("rsa_2048_sha256", body.getString("signature_algorithm"))
         assertEquals("earth1referrer", body.getString("affiliate"))
     }
 
     @Test
     fun noReferrerIsEmptyString() {
-        val unreferred = GasGrant.registerBody(
-            Personhood.registerMsg("earth1creator", proof, signals, "rsa_2048_sha256", null, dscDer),
-        )
+        val unreferred = GasGrant.registerBody(msg(""), pcGas)
         assertEquals("", unreferred.getString("affiliate"))
     }
 }

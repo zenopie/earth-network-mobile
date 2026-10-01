@@ -13,35 +13,30 @@ import org.json.JSONObject
 import java.io.IOException
 
 /**
- * Free gas for an account that cannot pay its own fee.
+ * Free gas for a first registration.
  *
- * A new human has no ERTH, and an address the chain has never seen cannot sign
- * anything at all, so the backend sends a little from its gas wallet. What
- * keeps that wallet from being drained is the chain's own personhood, not
- * anything about the device:
- *
- * - Registering: the backend is shown the MsgRegister about to be broadcast
- *   and runs the chain's checks on it — the proof, its binding to the address,
- *   the DSC chain, the rate caps. It pays only if the chain would accept the
- *   message, and at most once per passport per month.
- * - Everything else: the address must already be a registered human, and is
- *   paid at most once a day.
+ * A new human has no ERTH, and a registration is an unsigned private tx that
+ * pays its fee from a shielded note, so the backend shields a little ERTH to a
+ * note the app names (pc_gas). What keeps that from being drained is the
+ * chain's own personhood: the backend is shown the MsgRegister about to be
+ * broadcast and runs the chain's checks on it (the proof, its binding to the
+ * notes, the DSC chain, the rate caps), and pays only if the chain would
+ * accept it, at most once per passport per month. The backend learns that a
+ * passport, public in the registration anyway, got a gas note; the note's
+ * spend is unlinkable to it. Every later fee comes from the registration
+ * reward, so there is no other grant.
  *
  * This returns when the backend has *sent* the grant, not when it has landed:
- * the send still has to make it into a block, so callers poll the balance.
+ * callers sync until the note appears.
  */
 object GasGrant {
     private const val TAG = "GasGrant"
 
     sealed interface Result {
-        /** The grant was broadcast. Poll for it. */
+        /** The grant was broadcast. Sync for the note. */
         data object Sent : Result
 
-        /**
-         * The backend broadcast but could not confirm the outcome. Polled
-         * exactly like [Sent]: if the send landed, the balance shows it, and
-         * if it did not, the poll gives up and the button comes back.
-         */
+        /** Broadcast but unconfirmed: handled exactly like [Sent]. */
         data object Pending : Result
 
         /** Nothing was sent; [message] is for the person, as-is. */
@@ -49,45 +44,32 @@ object GasGrant {
     }
 
     /**
-     * Gas for [msg], the registration about to be broadcast.
-     *
-     * The same message is broadcast once the gas lands — no second proof. A
-     * refusal carries the chain's own reason (an expired passport, say), which
-     * is worth more to the person than anything written here.
+     * Gas for [msg], the registration about to be broadcast (without its fee
+     * transfer), to the note [pcGas]. A refusal carries the chain's own
+     * reason (an expired passport, say).
      */
-    suspend fun forRegistration(msg: MsgRegister): Result =
-        post("/gas/register", registerBody(msg), onRefused = { it })
-
-    /** Gas for any other transaction, for an address that is a registered human. */
-    suspend fun forHuman(address: String): Result =
-        post(
-            "/gas/human",
-            JSONObject().put("address", address),
-            // The backend's wording is for someone who knows what a
-            // registered human is; this says what to do about it.
-            onRefused = { message ->
-                if (message.contains("not a registered human", ignoreCase = true)) {
-                    "Register to get free gas."
-                } else {
-                    message
-                }
-            },
-        )
+    suspend fun forRegistration(msg: MsgRegister, pcGas: ByteArray, ciphertextGas: ByteArray = ByteArray(0)): Result =
+        post("/gas/register", registerBody(msg, pcGas, ciphertextGas), onRefused = { it })
 
     /**
-     * MsgRegister as the backend takes it: field for field, bytes as standard
-     * base64 (not URL-safe, no line breaks), public signals passed through
-     * untouched. The backend rebuilds the message from this and checks it as
-     * the chain would, so anything reformatted here — a signal normalised, a
-     * byte re-encoded — is a message the chain never sees.
+     * MsgRegister's fields as the backend takes them: bytes as standard base64
+     * (not URL-safe, no line breaks), public signals passed through untouched.
+     * The backend rebuilds the message from this and checks it as the chain
+     * would, so anything reformatted here is a message the chain never sees.
      */
-    internal fun registerBody(msg: MsgRegister): JSONObject = JSONObject()
-        .put("address", msg.creator)
+    internal fun registerBody(msg: MsgRegister, pcGas: ByteArray, ciphertextGas: ByteArray = ByteArray(0)): JSONObject = JSONObject()
         .put("proof", msg.proof.toByteArray().toByteString().base64())
         .put("public_signals", JSONArray(msg.publicSignalsList))
         .put("signature_algorithm", msg.signatureAlgorithm)
         .put("dsc_der", msg.dscDer.toByteArray().toByteString().base64())
+        .put("idc", msg.idc.toByteArray().toByteString().base64())
+        .put("pc_anml", msg.pcAnml.toByteArray().toByteString().base64())
+        .put("pc_erth", msg.pcErth.toByteArray().toByteString().base64())
+        .put("ciphertext_anml", msg.ciphertextAnml.toByteArray().toByteString().base64())
+        .put("ciphertext_erth", msg.ciphertextErth.toByteArray().toByteString().base64())
         .put("affiliate", msg.affiliate)
+        .put("pc_gas", pcGas.toByteString().base64())
+        .put("ciphertext_gas", ciphertextGas.toByteString().base64())
 
     private suspend fun post(
         path: String,

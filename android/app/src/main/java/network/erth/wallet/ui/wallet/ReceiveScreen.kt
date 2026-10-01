@@ -50,6 +50,12 @@ import network.erth.wallet.ui.theme.EarthTheme
 data class ReceiveUiState(
     val address: String,
     val label: String = "Earth address",
+    /**
+     * The shielded address (erthz1...). Shown first, and in the QR code: ERTH
+     * and ANML held privately are received here, and ANML exists only
+     * shielded. The transparent address stays for exchanges and IBC.
+     */
+    val shieldedAddress: String = "",
 )
 
 @Composable
@@ -80,10 +86,11 @@ fun ReceiveScreen(
         // Cosmos wallet can read a bare bech32 string; a scheme only some
         // understand turns a scannable code into an unreadable one for the
         // rest, and buys nothing when there is no amount to encode.
-        if (state.address.isNotEmpty()) {
+        val qrAddress = state.shieldedAddress.ifEmpty { state.address }
+        if (qrAddress.isNotEmpty()) {
             EarthQr(
                 state = QrState(
-                    qrData = state.address,
+                    qrData = qrAddress,
                     contentDescription = stringRes("Your Earth address as a QR code"),
                     // The mark in the middle says which network this belongs
                     // to before the code is scanned — useful precisely because
@@ -95,8 +102,16 @@ fun ReceiveScreen(
             Spacer(Modifier.height(dimens.space16))
         }
 
+        if (state.shieldedAddress.isNotEmpty()) {
+            AddressPanel(
+                label = "Shielded address",
+                address = state.shieldedAddress,
+                onClick = { clipboard.setText(AnnotatedString(state.shieldedAddress)) },
+            )
+            Spacer(Modifier.height(dimens.space12))
+        }
         AddressPanel(
-            label = state.label,
+            label = if (state.shieldedAddress.isNotEmpty()) "Transparent address (public)" else state.label,
             address = state.address,
             onClick = { clipboard.setText(AnnotatedString(state.address)) },
         )

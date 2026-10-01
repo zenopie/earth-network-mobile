@@ -21,6 +21,14 @@ data class WalletUiState(
      * stays right without the state being refreshed every second.
      */
     val anmlClaimableAt: Long? = null,
+    /** Shielded ERTH: what private fees are paid from. */
+    val shieldedErthUerth: Long = 0,
+    /** Shielded holdings per denom (uerth, uanml, derth/<valoper>, unbond/...). */
+    val shielded: Map<String, Long> = emptyMap(),
+    /** This wallet's shielded address (erthz1...), for receiving. */
+    val shieldedAddress: String = "",
+    /** Why the last privacy sync failed, if it did. */
+    val privacySyncError: String? = null,
 ) {
     companion object {
         /**

@@ -14,10 +14,13 @@ import network.erth.earth.proto.allocation.StreamId
 import network.erth.wallet.Constants
 import network.erth.wallet.R
 import network.erth.wallet.chain.Assembly
+import network.erth.wallet.privacy.PrivacySession
+import network.erth.wallet.privacy.tx.PrivateMsgs
 import network.erth.wallet.chain.Dex
 import network.erth.wallet.chain.Gov
 import network.erth.wallet.chain.Personhood
 import network.erth.wallet.ui.components.formatUerth
+import network.erth.wallet.ui.earn.DelegationRow
 import network.erth.wallet.ui.earn.EarnScreen
 import network.erth.wallet.ui.earn.EarnUiState
 import network.erth.wallet.ui.earn.EarnViewModel
@@ -52,6 +55,7 @@ import network.erth.wallet.ui.tx.TxController
 import network.erth.wallet.ui.wallet.ActivityRow
 import network.erth.wallet.ui.wallet.ActivityScreen
 import network.erth.wallet.ui.wallet.ReceiveScreen
+import network.erth.wallet.ui.wallet.Holding
 import network.erth.wallet.ui.wallet.ReceiveUiState
 import network.erth.wallet.ui.wallet.SendFlow
 import network.erth.wallet.ui.wallet.TransactionDetailScreen
@@ -118,7 +122,9 @@ internal fun EarthContent(
 
     when (route) {
         EarthRoute.Wallet -> HomeScreen(
-            erthBalance = state?.let { formatUerth(it.balanceUerth) },
+            // Transparent and shielded ERTH together: both are the owner's.
+            // Fees for private actions come from the shielded part only.
+            erthBalance = state?.let { formatUerth(it.balanceUerth + it.shieldedErthUerth) },
             anmlBalance = state?.let { it.anmlBalance ?: "0" },
             balancesVisible = balancesVisible,
             activity = activity,
@@ -131,7 +137,17 @@ internal fun EarthContent(
             stakedUerth = state?.stakedUerth ?: 0L,
             rewardsUerth = state?.rewardsUerth ?: 0L,
             unbondingUerth = earnState?.unbonding?.sumOf { it.amountUerth } ?: 0L,
-            holdings = state?.holdings.orEmpty(),
+            // Private stake (derth) and unbonding claims are notes, not bank
+            // balances, so they join the portfolio here.
+            holdings = state?.holdings.orEmpty() + state?.shielded.orEmpty()
+                .filterKeys { it.startsWith("derth/") || it.startsWith("unbond/") }
+                .map { (denom, amount) ->
+                    Holding(
+                        denom = denom,
+                        symbol = if (denom.startsWith("derth/")) "Staked (private)" else "Unbonding (private)",
+                        amount = amount,
+                    )
+                },
             onSeeAllActivity = { nav.push(EarthRoute.Activity) },
             modifier = inset,
             contentPadding = padding,
@@ -230,7 +246,7 @@ internal fun EarthContent(
         }
 
         EarthRoute.Receive -> ReceiveScreen(
-            state = ReceiveUiState(address = loaded.address),
+            state = ReceiveUiState(address = loaded.address, shieldedAddress = loaded.shieldedAddress),
             modifier = inset,
         )
 
@@ -392,19 +408,21 @@ internal fun EarthContent(
                 null
             },
             onAssemblyVote = { proposal, vote ->
-                tx.request(
+                // Private: a membership proof in this ballot's scope; who voted
+                // is never known, and a second vote replaces the first.
+                tx.requestPrivate(
                     details = TxConfirmDetails(
                         // Says which house, because the stake vote on the same
                         // proposal produces an otherwise identical confirmation
                         // and the two are genuinely different actions.
                         action = "Vote ${vote.label} as a person on #${proposal.id}",
                         msgTypeUrl = Assembly.MSG_VOTE_PROPOSAL_TYPE_URL,
-                        balanceUerth = loaded.balanceUerth,
+                        balanceUerth = 0L,
                     ),
-                    gasLimit = Assembly.VOTE_GAS_LIMIT,
+                    shieldedErth = loaded.shieldedErthUerth,
                     onSuccess = onRefresh,
-                    build = { ctx ->
-                        listOf(Assembly.msgVoteProposal(walletAddress(ctx), proposal.id, vote))
+                    run = { ctx ->
+                        PrivacySession.wallet(ctx).voteProposal(proposal.id, vote == Assembly.Vote.Yes).hash
                     },
                 )
             },
@@ -418,22 +436,30 @@ internal fun EarthContent(
         )
     }
 
+    // Staking is private: ERTH is spent from shielded notes into the pool's
+    // delegation to a validator and comes back as derth/<validator> notes
+    // (worth more ERTH each epoch as rewards compound). Unstaking turns derth
+    // into an unbonding claim, paid out automatically once it matures. Only a
+    // validator's own self-bond is a transparent delegation now.
     staking?.let { intent ->
         val stake = intent == StakeIntent.Stake
+        val derthRows = loaded.shielded.filterKeys { it.startsWith("derth/") }.map { (denom, amount) ->
+            val op = denom.removePrefix("derth/")
+            DelegationRow(
+                validatorOperator = op,
+                moniker = earnState?.validators?.firstOrNull { it.validatorOperator == op }?.moniker ?: op,
+                amountUerth = amount,
+                commission = earnState?.validators?.firstOrNull { it.validatorOperator == op }?.commission ?: 0.0,
+            )
+        }
         StakeSheet(
-            title = if (stake) "Stake ERTH" else "Unstake ERTH",
-            choices = if (stake) {
-                earnState?.validators.orEmpty()
-            } else {
-                earnState?.delegations.orEmpty()
-            },
-            // Staking is capped by what is spendable less the fee; unstaking by
-            // what is already with that validator.
+            title = if (stake) "Stake ERTH privately" else "Unstake",
+            choices = if (stake) earnState?.validators.orEmpty() else derthRows,
             capFor = { v ->
                 if (stake) {
                     // A reserve, not one fee: staking everything-but-the-fee
-                    // leaves an account that cannot afford to claim or unstake.
-                    (loaded.balanceUerth - TxController.GAS_RESERVE_UERTH).coerceAtLeast(0)
+                    // leaves no shielded ERTH to pay for unstaking.
+                    (loaded.shieldedErthUerth - TxController.GAS_RESERVE_UERTH).coerceAtLeast(0)
                 } else {
                     v.amountUerth
                 }
@@ -442,25 +468,21 @@ internal fun EarthContent(
             onDismiss = { staking = null },
             onConfirm = { validator, amount ->
                 staking = null
-                tx.request(
+                tx.requestPrivate(
                     details = TxConfirmDetails(
-                        action = if (stake) "Stake ERTH" else "Unstake ERTH",
-                        msgTypeUrl = if (stake) {
-                            "/cosmos.staking.v1beta1.MsgDelegate"
-                        } else {
-                            "/cosmos.staking.v1beta1.MsgUndelegate"
-                        },
-                        balanceUerth = loaded.balanceUerth,
+                        action = if (stake) "Stake ERTH" else "Unstake",
+                        msgTypeUrl = if (stake) PrivateMsgs.DELEGATE else PrivateMsgs.UNDELEGATE,
+                        balanceUerth = 0L,
                         amountLabel = "Amount",
-                        amountValue = "${formatUerth(amount)} ERTH",
+                        amountValue = if (stake) "${formatUerth(amount)} ERTH" else "${formatUerth(amount)} derth",
                         recipient = validator,
                         recipientLabel = if (stake) "Validator" else "From validator",
                     ),
+                    shieldedErth = loaded.shieldedErthUerth,
                     onSuccess = onRefresh,
-                    build = if (stake) {
-                        earn.delegate(validator, amount)
-                    } else {
-                        earn.undelegate(validator, amount)
+                    run = { ctx ->
+                        val w = PrivacySession.wallet(ctx)
+                        (if (stake) w.delegate(validator, amount) else w.undelegate(validator, amount)).hash
                     },
                 )
             },
@@ -551,6 +573,22 @@ internal fun EarthContent(
                 onDismiss = { editing = null },
                 onConfirm = { weights ->
                     editing = null
+                    if (stream == StreamId.STREAM_ID_CARETAKER) {
+                        // Private: a membership proof in the caretaker scope.
+                        // The split is public, who cast it is not, and it
+                        // lapses after R unless refreshed (the automation does).
+                        tx.requestPrivate(
+                            details = TxConfirmDetails(
+                                action = "Set caretaker split",
+                                msgTypeUrl = PrivateMsgs.SET_CARETAKER,
+                                balanceUerth = 0L,
+                            ),
+                            shieldedErth = loaded.shieldedErthUerth,
+                            onSuccess = onRefresh,
+                            run = { ctx -> PrivacySession.wallet(ctx).setCaretaker(weights.filterValues { it > 0 }).hash },
+                        )
+                        return@AllocationEditSheet
+                    }
                     tx.request(
                         details = TxConfirmDetails(
                             action = "Set allocation",

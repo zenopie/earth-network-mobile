@@ -8,6 +8,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import network.erth.wallet.Constants
 import network.erth.wallet.chain.Bank
+import network.erth.wallet.privacy.PrivacySession
+import network.erth.wallet.privacy.keys.ShieldedAddress
+import network.erth.wallet.privacy.tx.PrivateMsgs
 import network.erth.wallet.ui.components.asAmountInput
 import network.erth.wallet.ui.components.rememberAddressScanner
 import network.erth.wallet.ui.components.toUerthOrNull
@@ -38,15 +41,29 @@ fun SendFlow(
 
     // ERTH holdings sort first, so it is the default without a special case.
     // A wallet with no balances at all still needs something to render.
-    val holdings = state.holdings.ifEmpty {
+    // Transparent holdings, plus what is held only shielded (ANML, derth),
+    // so a private send can name any of it.
+    val holdings = (
+        state.holdings + state.shielded.keys
+            .filter { d -> state.holdings.none { it.denom == d } && !d.startsWith("asset/") }
+            .map { d -> Holding(denom = d, symbol = if (d == "uanml") "ANML" else d, amount = 0) }
+        ).ifEmpty {
         listOf(Holding(denom = Constants.UERTH_DENOM, symbol = "ERTH", amount = 0))
     }
     var selectedDenom by remember { mutableStateOf(holdings.first().denom) }
     val selected = holdings.firstOrNull { it.denom == selectedDenom } ?: holdings.first()
 
+    // A shielded recipient (erthz1...) is paid privately from shielded notes;
+    // a transparent one by a bank send, as before.
+    val shieldedTo = recipient.startsWith(ShieldedAddress.HRP + "1")
+    val shieldedBalance = state.shielded[selected.denom] ?: 0L
+
     val recipientError = when {
         recipient.isEmpty() -> null
-        !recipient.startsWith("earth1") -> "An Earth address starts with earth1."
+        shieldedTo && !ShieldedAddress.isShielded(recipient) -> "That shielded address is not valid."
+        shieldedTo && recipient == state.shieldedAddress -> "That is this wallet's own shielded address."
+        shieldedTo -> null
+        !recipient.startsWith("earth1") -> "An Earth address starts with earth1, or erthz1 to send privately."
         recipient.length < 39 -> "That address is too short."
         recipient == state.address -> "That is this wallet's own address."
         else -> null
@@ -60,6 +77,9 @@ fun SendFlow(
         amount.isEmpty() -> null
         amountUerth == null -> "Enter an amount, for example 1.5."
         amountUerth <= 0 -> "Enter more than zero."
+        shieldedTo && amountUerth > shieldedBalance -> "That is more than your shielded ${selected.symbol}."
+        shieldedTo && state.shieldedErthUerth <= 0 -> "You need shielded ERTH to pay the fee."
+        shieldedTo -> null
         amountUerth > selected.amount -> "That is more than your ${selected.symbol}."
         // The fee is always paid in ERTH. Sending ERTH, it has to come out of
         // what is left after the amount; sending anything else, it only has to
@@ -90,6 +110,27 @@ fun SendFlow(
         modifier = modifier,
         onSend = {
             if (!valid || amountUerth == null) return@SendScreen
+            if (shieldedTo) {
+                val to = ShieldedAddress.decode(recipient)
+                tx.requestPrivate(
+                    details = TxConfirmDetails(
+                        action = "Send ${selected.symbol} privately",
+                        msgTypeUrl = PrivateMsgs.TRANSFER,
+                        balanceUerth = 0L,
+                        amountLabel = "Amount",
+                        amountValue = "$amount ${selected.symbol}",
+                        recipient = recipient,
+                    ),
+                    shieldedErth = state.shieldedErthUerth,
+                    onSuccess = {
+                        recipient = ""
+                        amount = ""
+                        onSent()
+                    },
+                    run = { ctx -> PrivacySession.wallet(ctx).send(to, selected.denom, amountUerth).hash },
+                )
+                return@SendScreen
+            }
             tx.request(
                 details = TxConfirmDetails(
                     action = "Send ${selected.symbol}",

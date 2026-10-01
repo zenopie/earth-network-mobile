@@ -38,6 +38,8 @@ data class TxConfirmDetails(
      */
     val feeUerth: Long = 0,
     val balanceUerth: Long,
+    /** Paid from a shielded note: the fee is an estimate and the balance is shielded ERTH. */
+    val shielded: Boolean = false,
     /** Optional, e.g. the amount being staked. */
     val amountLabel: String? = null,
     val amountValue: String? = null,
@@ -119,8 +121,8 @@ fun TxConfirmSheet(
             )
             Box(Modifier.padding(vertical = dimens.space8)) { EarthCodeBlock(details.recipient) }
         }
-        EarthDetailRow("Network fee", formatErth(details.feeUerth))
-        EarthDetailRow("Balance", formatErth(details.balanceUerth))
+        EarthDetailRow(if (details.shielded) "Network fee (about)" else "Network fee", formatErth(details.feeUerth))
+        EarthDetailRow(if (details.shielded) "Shielded balance" else "Balance", formatErth(details.balanceUerth))
 
         if (!funded) {
             Column(

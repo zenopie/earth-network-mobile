@@ -6,9 +6,8 @@ import android.nfc.tech.IsoDep
 import android.util.Log
 import net.sf.scuba.smartcards.CardService
 import network.erth.earth.proto.personhood.MsgRegister
-import network.erth.wallet.chain.Personhood
-import network.erth.wallet.crypto.EarthWallet
-import network.erth.wallet.wallet.SecureWalletManager
+import network.erth.wallet.privacy.PrivacySession
+import network.erth.wallet.privacy.PrivacyWallet
 import org.jmrtd.AccessDeniedException
 import org.jmrtd.BACKey
 import org.jmrtd.BACKeySpec
@@ -60,6 +59,8 @@ object PassportSession {
         /** The on-device proof, ready to broadcast. */
         val proof: PassportProver.Result,
         val dscDer: ByteArray,
+        /** The notes and identity the proof is bound to (its `address` input). */
+        val prep: PrivacyWallet.RegistrationPrep,
     )
 
     sealed interface Failure {
@@ -75,10 +76,11 @@ object PassportSession {
         /**
          * No wallet to bind the proof to.
          *
-         * The circuit takes the registrant's address as a public input, so a
-         * proof cannot be produced before a wallet exists -- there is nothing to
-         * prove it *for*. Reachable only if the passport flow is entered before
-         * setup, which the UI does not offer.
+         * The circuit's `address` input carries the registration binding (the
+         * wallet's identity commitment and the notes the registration pays),
+         * so a proof cannot be produced before a wallet exists. Reachable only
+         * if the passport flow is entered before setup, which the UI does not
+         * offer.
          */
         data object NoWallet : Failure
 
@@ -95,7 +97,7 @@ object PassportSession {
      * registration is granted on: the backend checks this proof, so there is
      * nothing to ask for until it exists.
      */
-    fun read(context: Context, tag: Tag, mrz: Mrz): Result<Scan> {
+    fun read(context: Context, tag: Tag, mrz: Mrz, prep: PrivacyWallet.RegistrationPrep): Result<Scan> {
         if (!mrz.isComplete) return Result.failure(FailureException(Failure.WrongMrz))
 
         val isoDep = IsoDep.get(tag)
@@ -141,14 +143,12 @@ object PassportSession {
             // verifies it against the CSCA trust store and binds it to the
             // proof's dsc_key output. No pre-submission and no registry wait.
             val dsc = PassportInputs.scannedDsc(sodBytes)
-            // The proof is bound to the wallet that will broadcast it: the
-            // circuit takes the address as a public input, and the chain refuses
-            // a proof whose address is not the transaction signer. Read from
-            // SecureWalletManager, the same source register() derives its key
-            // from, so the two cannot drift apart.
-            val address = SecureWalletManager.getWalletAddress(context)
-                ?: return Result.failure(FailureException(Failure.NoWallet))
-            val proof = PassportProver.prove(context, dg1Bytes, sodBytes, todayYymmddUtc(), address)
+            // The proof is bound to the registration it will be broadcast in:
+            // its `address` input is RegistrationBinding(idc, pc_anml,
+            // pc_erth, affiliate), which the chain recomputes from MsgRegister,
+            // so a proof read out of a block cannot register anyone else's
+            // identity or pay anyone else's notes.
+            val proof = PassportProver.prove(context, dg1Bytes, sodBytes, todayYymmddUtc(), prep.binding.toNoir())
 
             Result.success(
                 Scan(
@@ -159,6 +159,7 @@ object PassportSession {
                     sod = sodBytes,
                     proof = proof,
                     dscDer = dsc.certificateDer,
+                    prep = prep,
                 ),
             )
         } catch (e: AccessDeniedException) {
@@ -186,42 +187,29 @@ object PassportSession {
         }
     }
 
-    /** Sign and broadcast MsgRegister from a completed scan. Returns the tx hash. */
     /**
-     * Broadcasts MsgRegister. [affiliate] is the optional referrer address: the
-     * chain splits the registration reward with them, and requires them to be a
-     * distinct, currently-registered human. Blank is passed as null, which is
-     * the unreferred case — the referrer's half then stays in the reward pool
-     * rather than being paid out.
+     * The notes a registration will pay and the binding its proof carries.
+     * [affiliate] is the optional referrer address (blank for none): it is
+     * bound into the proof, so it is fixed before the passport is read.
      */
-    fun register(context: Context, scan: Scan, affiliate: String? = null): Result<String> = runCatching {
-        SecureWalletManager.executeWithMnemonic(context) { mnemonic ->
-            val key = EarthWallet.deriveKey(mnemonic)
-            Personhood.register(
-                key,
-                scan.proof.proof,
-                scan.proof.publicSignals,
-                scan.proof.signatureAlgorithm,
-                normalizeAffiliate(affiliate),
-                scan.dscDer,
-            )
-        }
-    }
+    fun prepare(context: Context, affiliate: String?): PrivacyWallet.RegistrationPrep =
+        PrivacySession.wallet(context).prepareRegistration(normalizeAffiliate(affiliate))
+
+    /** MsgRegister without its fee transfer: what the registration gas grant is asked on. */
+    fun registerMsg(context: Context, scan: Scan): MsgRegister =
+        PrivacySession.wallet(context).registerMsg(
+            scan.prep, scan.proof.proof, scan.proof.publicSignals, scan.proof.signatureAlgorithm, scan.dscDer,
+        )
 
     /**
-     * The message [register] will broadcast for [address], unsigned. What the
-     * registration gas grant sends the backend, so it must be built from the
-     * same scan and the same affiliate rule as the broadcast.
+     * Broadcasts MsgRegister, unsigned, its fee paid from a shielded ERTH note
+     * (the gas grant's, on a first registration). Returns the tx hash.
      */
-    fun registerMsg(address: String, scan: Scan, affiliate: String? = null): MsgRegister =
-        Personhood.registerMsg(
-            address,
-            scan.proof.proof,
-            scan.proof.publicSignals,
-            scan.proof.signatureAlgorithm,
-            normalizeAffiliate(affiliate),
-            scan.dscDer,
-        )
+    fun register(context: Context, scan: Scan): Result<String> = runCatching {
+        PrivacySession.wallet(context).register(
+            scan.prep, scan.proof.proof, scan.proof.publicSignals, scan.proof.signatureAlgorithm, scan.dscDer,
+        ).hash
+    }
 
     private fun normalizeAffiliate(affiliate: String?): String? =
         affiliate?.trim()?.takeIf { it.isNotEmpty() }

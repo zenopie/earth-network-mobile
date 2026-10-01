@@ -1,6 +1,5 @@
 package network.erth.wallet.passport
 
-import network.erth.wallet.crypto.Bech32
 import org.bouncycastle.asn1.ASN1Integer
 import org.bouncycastle.asn1.ASN1ObjectIdentifier
 import org.bouncycastle.asn1.ASN1Sequence
@@ -174,11 +173,12 @@ object PassportInputs {
         }
 
         map["current_date"] = scalarInput(currentDateYymmdd)
-        // The account this proof is for. It is a public input, so the proof only
-        // verifies for this address and cannot be lifted out of a block and
-        // replayed from another wallet -- which is what lets the chain treat a
-        // re-registration as MOVING a registration rather than refusing it.
-        map["address"] = addressInput(address)
+        // The registration this proof is for: RegistrationBinding(idc,
+        // pc_anml, pc_erth, affiliate), a field element the caller computed.
+        // It is a public input the chain recomputes from MsgRegister, so the
+        // proof cannot be lifted out of a block into another registration.
+        require(address.startsWith("0x")) { "address input is a 0x field element" }
+        map["address"] = address
         return Inputs(algorithm, map)
     }
 
@@ -203,14 +203,6 @@ object PassportInputs {
      * a hard reject, so every scalar has to go through here.
      */
     private fun scalarInput(v: Int): String = "0x%x".format(v)
-
-    /** The twenty address bytes big-endian as one field element — the same
-     *  encoding the chain compares against in verifyRegistrationProof. */
-    private fun addressInput(bech32: String): String {
-        val bytes = Bech32.decode(bech32)
-        require(bytes.size == 20) { "expected a 20-byte account address, got ${bytes.size}" }
-        return "0x" + BigInteger(1, bytes).toString(16)
-    }
 
     private val LIMB_MASK = BigInteger.ONE.shiftLeft(120).subtract(BigInteger.ONE)
 

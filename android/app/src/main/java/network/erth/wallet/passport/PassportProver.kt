@@ -28,8 +28,9 @@ object PassportProver {
     /** Public-input positions in the lean_poa circuit. */
     // Public signals are [current_date, address, nullifier, dsc_key]:
     // current_date and address are the declared public inputs, and bb appends
-    // the circuit's return values after them. address binds the proof to the
-    // wallet it was made for -- see circuits/lean_poa/SECURITY.md finding #9.
+    // the circuit's return values after them. On the privacy chain `address`
+    // carries zk/privacy.RegistrationBinding(idc, pc_anml, pc_erth, affiliate),
+    // which binds the proof to the registration it is broadcast in.
     private const val CURRENT_DATE_INDEX = 0
     private const val ADDRESS_INDEX = 1
     private const val NULLIFIER_INDEX = 2
@@ -63,6 +64,7 @@ object PassportProver {
         dg1: ByteArray,
         sodBytes: ByteArray,
         currentDateYymmdd: Int,
+        /** The `address` input: the registration binding as a "0x" field. */
         address: String,
     ): Result {
         // Build inputs + select the circuit matching the passport's DSC algorithm

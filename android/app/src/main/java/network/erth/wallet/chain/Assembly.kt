@@ -1,7 +1,5 @@
 package network.erth.wallet.chain
 
-import com.google.protobuf.Any as ProtoAny
-import network.erth.earth.proto.assembly.MsgVoteProposal
 import network.erth.earth.proto.assembly.VoteOption
 import org.json.JSONObject
 
@@ -25,9 +23,6 @@ import org.json.JSONObject
 object Assembly {
 
     const val MSG_VOTE_PROPOSAL_TYPE_URL = "/earth.assembly.v1.MsgVoteProposal"
-
-    /** One record, no coins — the same shape of work as a stake vote. */
-    const val VOTE_GAS_LIMIT = 150_000L
 
     /** Yes or no. See the class note on why there is no abstain. */
     enum class Vote(val proto: VoteOption, val label: String) {
@@ -79,20 +74,6 @@ object Assembly {
         )
     }
 
-    /**
-     * A human vote on [proposalId], ready for [EarthTx.broadcast].
-     *
-     * Deliberately not [Gov.msgVote]: the chain takes both, on the same
-     * proposal id, into two separate tallies. Sending this one does not cast
-     * the other.
-     */
-    fun msgVoteProposal(voter: String, proposalId: Long, vote: Vote): ProtoAny =
-        EarthTx.anyOf(
-            MSG_VOTE_PROPOSAL_TYPE_URL,
-            MsgVoteProposal.newBuilder()
-                .setVoter(voter)
-                .setProposalId(proposalId)
-                .setOption(vote.proto)
-                .build(),
-        )
+    // Casting a vote is private (PrivacyWallet.voteProposal): a membership
+    // proof in the ballot's scope, its fee paid from a shielded note.
 }

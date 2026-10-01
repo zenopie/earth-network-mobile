@@ -13,6 +13,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import network.erth.earth.proto.allocation.StreamId
 import network.erth.wallet.chain.Allocation
+import network.erth.wallet.privacy.PrivacySession
 import network.erth.wallet.chain.Assembly
 import network.erth.wallet.chain.Gov
 import network.erth.wallet.wallet.SecureWalletManager
@@ -132,7 +133,12 @@ class AllocationViewModel(app: Application) : AndroidViewModel(app) {
             _state.value = withContext(Dispatchers.IO) {
                 val proposals = runCatching { Gov.proposals() }.getOrDefault(emptyList())
                 AllocationUiState(
-                    human = load(StreamId.STREAM_ID_CARETAKER, address),
+                    // The caretaker split is cast anonymously, so the chain
+                    // cannot say which one is ours: the wallet remembers it.
+                    human = StreamUiState(
+                        options = runCatching { Allocation.stream(StreamId.STREAM_ID_CARETAKER).options }.getOrDefault(emptyList()),
+                        mine = runCatching { PrivacySession.wallet(ctx).store.state.caretakerSplit }.getOrDefault(emptyMap()),
+                    ),
                     capital = load(StreamId.STREAM_ID_GROUNDWORKS, address),
                     proposals = proposals,
                     assemblyTallies = assemblyTallies(proposals),

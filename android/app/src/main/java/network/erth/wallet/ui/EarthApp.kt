@@ -35,7 +35,9 @@ import kotlinx.coroutines.withContext
 import network.erth.wallet.Constants
 import network.erth.wallet.R
 import network.erth.wallet.chain.Bank
-import network.erth.wallet.chain.Personhood
+import network.erth.wallet.privacy.PrivacyAutomation
+import network.erth.wallet.privacy.PrivacySession
+import network.erth.wallet.privacy.tx.PrivateMsgs
 import network.erth.wallet.ui.designsystem.component.BlankBgScaffold
 import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
 import network.erth.wallet.ui.earn.EarnViewModel
@@ -104,6 +106,14 @@ fun EarthApp(
     val walletsState by wallets.state.collectAsStateWithLifecycle()
     val draftMnemonic by wallets.draftMnemonic.collectAsStateWithLifecycle()
     val walletsError by wallets.error.collectAsStateWithLifecycle()
+
+    // The private automations (daily claim, caretaker refresh, matured
+    // unbonding claims) need the keys, so they live exactly as long as this
+    // unlocked shell does, and restart on a wallet switch.
+    LaunchedEffect(walletEpoch) {
+        PrivacySession.clear()
+        withContext(Dispatchers.IO) { PrivacyAutomation.loop(context.applicationContext) }
+    }
 
     // Each tab loads when it is first shown rather than all at once on start.
     // Five tabs' worth of queries against one node on launch is a slow launch,
@@ -198,15 +208,18 @@ fun EarthApp(
         Unit
     }
 
+    // Private: a membership proof for today's claim scope, the ANML minted
+    // to a note, the fee paid from shielded ERTH. Nothing names this wallet.
     val claimAnml = {
-        tx.request(
+        tx.requestPrivate(
             details = TxConfirmDetails(
                 action = "Claim ANML",
-                msgTypeUrl = "/earth.personhood.v1.MsgClaimAnml",
-                balanceUerth = state?.balanceUerth ?: 0L,
+                msgTypeUrl = PrivateMsgs.CLAIM_ANML,
+                balanceUerth = 0L,
             ),
+            shieldedErth = state?.shieldedErthUerth ?: 0L,
             onSuccess = refreshAll,
-            build = { ctx -> listOf(Personhood.msgClaimAnml(walletAddress(ctx))) },
+            run = { ctx -> PrivacySession.wallet(ctx).claimAnml().hash },
         )
     }
 

@@ -13,7 +13,8 @@ import kotlinx.coroutines.withContext
 import network.erth.wallet.Constants
 import network.erth.wallet.chain.Bank
 import network.erth.wallet.chain.Explorer
-import network.erth.wallet.chain.Personhood
+import network.erth.wallet.privacy.PrivacySession
+import network.erth.wallet.privacy.sync.WalletSync
 import network.erth.wallet.chain.Staking
 import network.erth.wallet.ui.components.formatUerth
 import network.erth.wallet.wallet.SecureWalletManager
@@ -100,12 +101,11 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
                         Staking.delegations(address).sumOf { it.amount.toLongOrNull() ?: 0L }
                     }.getOrDefault(0L)
 
-                    // registrationStatus rather than isRegistered: the same
-                    // request also carries the last claim time, and the claim
-                    // button needs both.
-                    val status = runCatching {
-                        Personhood.registrationStatus(address)
-                    }.getOrNull()
+                    // The private side: notes and registration, from a full
+                    // sync of the indexer's streams (nothing asked about us).
+                    val privacy = runCatching { PrivacySession.wallet(ctx) }.getOrNull()
+                    val syncError = privacy?.let { w -> runCatching { w.sync() }.exceptionOrNull()?.message }
+                    val shielded = privacy?.balances().orEmpty()
 
                     val rewards = runCatching {
                         Staking.totalRewards(address).toLongOrNull() ?: 0L
@@ -117,23 +117,18 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
                         }.getOrDefault(""),
                         address = address,
                         balanceUerth = erth,
-                        anmlBalance = if (anml > 0) formatUerth(anml) else null,
+                        anmlBalance = (anml + (shielded["uanml"] ?: 0L)).takeIf { it > 0 }?.let(::formatUerth),
                         stakedUerth = staked,
                         rewardsUerth = rewards,
                         holdings = holdings,
-                        registered = status?.registered == true,
-                        // Null when there is nothing to claim against at all.
-                        // Folding "not registered" into "claimable now" made
-                        // the button fire a claim the chain rejects.
-                        anmlClaimableAt = when {
-                            status == null || !status.registered -> null
-                            Personhood.isAnmlClaimable(status) -> 0L
-                            // Next UTC midnight, not 24 hours from the claim.
-                            // Deriving it from the last claim time was only
-                            // ever right because the chain stored a truncated
-                            // midnight there.
-                            else -> Personhood.nextClaimOpensAt()
-                        },
+                        registered = privacy?.let { runCatching { it.identityStatus() }.getOrNull() } == WalletSync.IdentityStatus.LIVE,
+                        // Null without a live registration; otherwise now, or
+                        // the next UTC midnight the chain will take a claim.
+                        anmlClaimableAt = privacy?.let { runCatching { it.claimOpensAt() }.getOrNull() },
+                        shieldedErthUerth = shielded["uerth"] ?: 0L,
+                        shielded = shielded,
+                        shieldedAddress = privacy?.address?.encode().orEmpty(),
+                        privacySyncError = syncError,
                     )
                 }
                 _state.value = loaded

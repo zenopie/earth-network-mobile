@@ -9,10 +9,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.protobuf.Any as ProtoAny
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import network.erth.wallet.backend.GasGrant
 import network.erth.wallet.chain.EarthTx
 import network.erth.wallet.chain.Fees
 import network.erth.wallet.chain.TxUnconfirmedException
@@ -63,6 +61,7 @@ class TxController : ViewModel() {
         private set
 
     private var build: ((Context) -> List<ProtoAny>)? = null
+    private var private: ((Context) -> String)? = null
     private var gasLimit: Long = DEFAULT_GAS_LIMIT
     private var feeUerth: Long = DEFAULT_FEE_UERTH
     private var onDone: (() -> Unit)? = null
@@ -95,15 +94,41 @@ class TxController : ViewModel() {
         val fee = feeFor(gasLimit)
 
         this.build = build
+        this.private = null
         this.gasLimit = gasLimit
         this.feeUerth = fee
         this.onDone = onSuccess
         pending = details.copy(feeUerth = fee)
     }
 
+    /**
+     * Ask for a private transaction: unsigned, proven on the phone, its fee
+     * paid from a shielded ERTH note. [run] proves and broadcasts (a
+     * PrivacyWallet action) and returns the tx hash; it runs off the main
+     * thread once confirmed. [estimatedFee] is what the sheet shows: the
+     * chain's exact fee is only known after simulating, which [run] does.
+     * [shieldedErth] is the balance the fee comes from, so the sheet's
+     * funding check is against the right pool.
+     */
+    fun requestPrivate(
+        details: TxConfirmDetails,
+        estimatedFee: Long = feeFor(PRIVATE_GAS_ESTIMATE),
+        shieldedErth: Long,
+        onSuccess: (() -> Unit)? = null,
+        run: (Context) -> String,
+    ) {
+        this.build = null
+        this.private = run
+        this.feeUerth = estimatedFee
+        this.onDone = onSuccess
+        pending = details.copy(feeUerth = estimatedFee, balanceUerth = shieldedErth, shielded = true)
+    }
+
     fun confirm(context: Context) {
         val details = pending ?: return
-        val builder = build ?: return
+        val builder = build
+        val privateRun = private
+        if (builder == null && privateRun == null) return
         pending = null
         lastAction = details.action
         submitting = true
@@ -111,9 +136,13 @@ class TxController : ViewModel() {
         viewModelScope.launch {
             outcome = try {
                 val hash = withContext(Dispatchers.IO) {
-                    SecureWalletManager.executeWithMnemonic(context) { mnemonic ->
-                        val key = EarthWallet.deriveKey(mnemonic)
-                        EarthTx.broadcast(key, builder(context), gasLimit, feeUerth.toString())
+                    if (privateRun != null) {
+                        privateRun(context)
+                    } else {
+                        SecureWalletManager.executeWithMnemonic(context) { mnemonic ->
+                            val key = EarthWallet.deriveKey(mnemonic)
+                            EarthTx.broadcast(key, builder!!(context), gasLimit, feeUerth.toString())
+                        }
                     }
                 }
                 onDone?.invoke()
@@ -133,69 +162,23 @@ class TxController : ViewModel() {
     }
 
     /**
-     * Asks the backend for free gas for [address], then waits for it to land.
-     *
-     * The registered-human grant: every transaction but registration, which
-     * asks on its passport proof instead (RegistrationActivity).
-     *
-     * [fetchBalance] reads the chain directly rather than going through
-     * WalletViewModel.refresh(), which is fire-and-forget: it returns before
-     * the new balance exists, so a poll built on it would race itself.
+     * Free gas exists only for a first registration (RegistrationActivity),
+     * paid as a shielded note. Every later fee comes from the registration
+     * reward, so there is nothing to ask for here: this says so.
      */
+    @Suppress("UNUSED_PARAMETER")
     fun requestGas(
         address: String,
         fetchBalance: suspend () -> Long,
         onFunded: () -> Unit = {},
     ) {
-        if (requestingGas || awaitingGas) return
-        gasError = null
-        requestingGas = true
-        viewModelScope.launch {
-            val result = try {
-                GasGrant.forHuman(address)
-            } finally {
-                requestingGas = false
-            }
-            when (result) {
-                is GasGrant.Result.Refused -> gasError = result.message
-                GasGrant.Result.Sent, GasGrant.Result.Pending -> awaitGas(fetchBalance, onFunded)
-            }
-        }
-    }
-
-    /**
-     * Waits for a sent grant to arrive, then lets the sheet notice.
-     *
-     * The backend answers when it has *broadcast* the send from its gas wallet,
-     * not when the gas lands: that send has to be included in a block. So a
-     * single balance read straight after the grant always runs too early. This
-     * path used to do exactly that — one refresh, no retry — so the grant
-     * arrived, the sheet never saw it, and the confirm button stayed disabled
-     * with no indication anything was happening. Registration had the poll;
-     * every other transaction did not.
-     */
-    private fun awaitGas(fetchBalance: suspend () -> Long, onFunded: () -> Unit) {
-        val needed = pending?.feeUerth ?: return
-        awaitingGas = true
-        viewModelScope.launch {
-            try {
-                repeat(GAS_POLL_ATTEMPTS) {
-                    delay(GAS_POLL_INTERVAL_MS)
-                    val now = runCatching { fetchBalance() }.getOrNull() ?: 0L
-                    if (now >= needed) {
-                        onFunded()
-                        return@launch
-                    }
-                }
-            } finally {
-                awaitingGas = false
-            }
-        }
+        gasError = "Free gas is granted once, with your registration. Fees are paid from your shielded ERTH."
     }
 
     fun cancel() {
         pending = null
         build = null
+        private = null
         awaitingGas = false
         gasError = null
     }
@@ -207,10 +190,12 @@ class TxController : ViewModel() {
     companion object {
         const val DEFAULT_GAS_LIMIT = 400_000L
 
-        // The grant is a bank send, so it lands in a block. Roughly a minute of
-        // patience against a ~6s block time, matching the registration flow.
-        private const val GAS_POLL_ATTEMPTS = 20
-        private const val GAS_POLL_INTERVAL_MS = 3_000L
+        /**
+         * A private tx's gas for the confirm sheet's estimate: two proofs at
+         * x/shielded's default 2M each plus note writes and size. The chain's
+         * exact figure comes from simulating at confirm time.
+         */
+        const val PRIVATE_GAS_ESTIMATE = 5_000_000L
 
         /**
          * The fee for [DEFAULT_GAS_LIMIT]. Derived rather than flat: a screen
@@ -261,7 +246,7 @@ fun TxSheets(
 ) {
     controller.pending?.let { details ->
         TxConfirmSheet(
-            details = details.copy(balanceUerth = balanceUerth),
+            details = if (details.shielded) details else details.copy(balanceUerth = balanceUerth),
             onConfirm = { controller.confirm(context) },
             onDismiss = controller::cancel,
             onGetGas = onGetGas,

@@ -108,6 +108,8 @@ object SessionManager {
     @Synchronized
     fun endSession() {
         clearSession()
+        // The privacy keys are derived from the mnemonic; they go with it.
+        network.erth.wallet.privacy.PrivacySession.clear()
     }
 
     /**

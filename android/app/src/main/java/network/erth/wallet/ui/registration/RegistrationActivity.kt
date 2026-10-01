@@ -29,9 +29,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import network.erth.wallet.Constants
 import network.erth.wallet.backend.GasGrant
-import network.erth.wallet.chain.Bank
 import network.erth.wallet.chain.Fees
-import network.erth.wallet.chain.Personhood
+import network.erth.wallet.privacy.PrivacySession
+import network.erth.wallet.privacy.PrivacyWallet
 import network.erth.wallet.chain.TxUnconfirmedException
 import network.erth.wallet.referral.Referral
 import network.erth.wallet.ui.designsystem.component.BlankBgScaffold
@@ -42,7 +42,6 @@ import network.erth.wallet.ui.tx.TxConfirmSheet
 import network.erth.wallet.ui.tx.TxOutcome
 import network.erth.wallet.ui.tx.TxPendingSheet
 import network.erth.wallet.ui.tx.TxResultSheet
-import network.erth.wallet.wallet.SecureWalletManager
 import network.erth.wallet.wallet.SessionManager
 import network.erth.wallet.passport.PassportSession
 
@@ -117,19 +116,17 @@ class RegistrationActivity : ComponentActivity() {
                 // own sheets, so it has to raise the same state itself.
                 var submitting: Boolean by remember { mutableStateOf(false) }
 
-                val address = remember {
-                    runCatching {
-                        SecureWalletManager.getWalletAddress(this@RegistrationActivity)
-                    }.getOrNull().orEmpty()
-                }
+                val ctx = this@RegistrationActivity
 
-                // A wallet that has never received anything has no account on
-                // chain, so this reads 0 rather than failing — which is the
-                // state a new human is in, and exactly what free gas is for.
+                // The fee is paid from shielded ERTH, so the balance that
+                // matters is the synced pool's, not the transparent account's.
+                // A new human has none: that is what the gas grant is for.
                 suspend fun refreshBalance() {
                     balanceUerth = withContext(Dispatchers.IO) {
                         runCatching {
-                            Bank.balance(address, Constants.UERTH_DENOM).toLong()
+                            val w = PrivacySession.wallet(ctx)
+                            w.sync()
+                            w.balances()[Constants.UERTH_DENOM] ?: 0L
                         }.getOrDefault(0L)
                     }
                 }
@@ -156,7 +153,13 @@ class RegistrationActivity : ComponentActivity() {
                     stage = NfcStage.Reading
                     lifecycleScope.launch {
                         val result = withContext(Dispatchers.IO) {
-                            PassportSession.read(this@RegistrationActivity, tag, fields)
+                            // The referrer is bound into the proof, so it is
+                            // final from here on.
+                            runCatching { PassportSession.prepare(ctx, referrer) }
+                                .fold(
+                                    { prep -> PassportSession.read(ctx, tag, fields, prep) },
+                                    { Result.failure(PassportSession.FailureException(PassportSession.Failure.Error(it))) },
+                                )
                         }
                         result
                             .onSuccess { read ->
@@ -200,6 +203,7 @@ class RegistrationActivity : ComponentActivity() {
                             msgTypeUrl = "/earth.personhood.v1.MsgRegister",
                             feeUerth = REGISTER_FEE,
                             balanceUerth = balanceUerth,
+                            shielded = true,
                         ),
                         awaitingGas = awaitingGas,
                         requestingGas = requestingGas,
@@ -209,11 +213,7 @@ class RegistrationActivity : ComponentActivity() {
                             submitting = true
                             lifecycleScope.launch {
                                 val hash = withContext(Dispatchers.IO) {
-                                    PassportSession.register(
-                                        this@RegistrationActivity,
-                                        ready,
-                                        referrer,
-                                    )
+                                    PassportSession.register(ctx, ready)
                                 }
                                 submitting = false
                                 hash.onSuccess {
@@ -240,7 +240,7 @@ class RegistrationActivity : ComponentActivity() {
                             )
                         },
                         onGetGas = getGas@{
-                            if (requestingGas || awaitingGas || address.isEmpty()) return@getGas
+                            if (requestingGas || awaitingGas) return@getGas
                             gasError = null
                             requestingGas = true
                             lifecycleScope.launch {
@@ -249,9 +249,11 @@ class RegistrationActivity : ComponentActivity() {
                                     // grant is asked for on it: the backend
                                     // checks this exact message, and it is
                                     // what gets broadcast once the gas lands.
-                                    GasGrant.forRegistration(
-                                        PassportSession.registerMsg(address, ready, referrer),
-                                    )
+                                    // The gas is shielded to a note of our own
+                                    // (a self-mint pc, found by its public
+                                    // amount), never to an address.
+                                    val msg = withContext(Dispatchers.IO) { PassportSession.registerMsg(ctx, ready) }
+                                    GasGrant.forRegistration(msg, ready.prep.gas.pc.toBytes())
                                 } finally {
                                     requestingGas = false
                                 }
@@ -262,9 +264,8 @@ class RegistrationActivity : ComponentActivity() {
                                 awaitingGas = true
                                 try {
                                     // The backend answers once it has broadcast
-                                    // the send from its gas wallet, not once the
-                                    // gas lands. So the chain is polled rather
-                                    // than trusted to be ready.
+                                    // the shield, not once the note lands. So
+                                    // the pool is synced until it appears.
                                     repeat(GAS_POLL_ATTEMPTS) {
                                         delay(GAS_POLL_INTERVAL_MS)
                                         refreshBalance()
@@ -418,9 +419,9 @@ class RegistrationActivity : ComponentActivity() {
          * has arrived to pay for the transaction. It was a flat 2,000 while the
          * transaction actually needed 15,000.
          */
-        private val REGISTER_FEE: Long get() = Fees.forGas(Personhood.REGISTER_GAS_LIMIT)
+        private val REGISTER_FEE: Long get() = Fees.forGas(PrivacyWallet.REGISTER_GAS_ESTIMATE)
 
-        // The grant is a bank send, so it lands in a block. Roughly a minute of
+        // The grant is a shield, so it lands in a block. Roughly a minute of
         // patience, which is generous for a five-second block time and cheap
         // because the sheet stays usable throughout.
         private const val GAS_POLL_ATTEMPTS = 20
