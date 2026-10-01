@@ -522,15 +522,15 @@ class PrivacyWallet(
 
     /**
      * Swaps [amountIn] [denomIn] from notes for at least [minOut] [denomOut]
-     * (any pools, through the ERTH hub), the output minted back to us. Its
-     * value is the pool's to decide, so the output is a self-mint found by
-     * its public amount. A swap into ERTH pays its fee out of the output
+     * (any pools, through the ERTH hub), the output minted to us or to [to].
+     * Its value is the pool's to decide: to us a self-mint found by its public
+     * amount, to anyone else a value-blind (v2) ciphertext. A swap into ERTH pays its fee out of the output
      * (fee_from_output; the chain needs min_out above the fee); any other
      * pays from an ERTH note.
      */
-    fun noteSwap(denomIn: String, amountIn: Long, denomOut: String, minOut: Long): TxResult {
+    fun noteSwap(denomIn: String, amountIn: Long, denomOut: String, minOut: Long, to: ShieldedAddress? = null): TxResult {
         require(denomIn != denomOut && amountIn > 0 && minOut > 0)
-        val out = mint(denomOut)
+        val out = payout(denomOut, to)
         return run { fee ->
             if (denomOut == "uerth") {
                 require(minOut > fee) { "the minimum received must exceed the ${fee}uerth fee paid from it" }
@@ -577,7 +577,16 @@ class PrivacyWallet(
      * the provider's transparent key): a self-mint, since the payout is
      * priced when the withdrawal matures.
      */
-    fun withdrawalPc(): ByteArray = mint("uanml").pc.toBytes()
+    fun withdrawalPc(): ByteArray = payout("uanml", null).pc.toBytes()
+
+    /**
+     * Where a chain-priced payment goes (a swap's or a MsgBuyAnml's output,
+     * a withdrawal's token leg): to us, a self-mint pc; to [to], [to]'s pc
+     * with a value-blind (v2) ciphertext it can open once the chain
+     * publishes the amount.
+     */
+    fun payout(denom: String, to: ShieldedAddress?): NoteOut =
+        if (to == null || to.ownerPk == keys.ownerPk) mint(denom) else NoteOut.blindTo(to, denom)
 
     /** This wallet's Groundworks positions: the public positions whose key is one of ours. */
     fun positions(): List<Pair<PrivacyChainReads.Position, Int>> {

@@ -114,13 +114,19 @@ class WalletSync(
      * the chain minted at a value we could not know when we named its pc has
      * no ciphertext; it is ours if its public amount and one of our self-mint
      * pcs (PrivacyKeys.mintSecrets, the next [MINT_GAP] past the last used)
-     * reproduce its cm. Both paths need nothing but the mnemonic.
+     * reproduce its cm. A value-blind (v2, 177-byte) ciphertext opens to the
+     * note's secrets, and is ours if they reproduce its cm with the asset and
+     * value the chain published. Every path needs nothing but the mnemonic.
      */
     internal fun open(r: NoteRow): OwnedNote? {
         val s = store.state
         val amount = publicAmount(r.amount)
         amount?.let { s.denoms.add(it.second) }
-        val note: NotePlaintext = if (r.ciphertext.isNotEmpty()) {
+        val note: NotePlaintext = if (r.ciphertext.size == NoteCipher.BLIND_CIPHERTEXT_BYTES) {
+            // v2: the secrets only; the asset and value are the ones the chain published.
+            val (v, denom) = amount ?: return null
+            NoteCipher.tryDecryptBlind(r.ciphertext, r.cm, denom, v, keys) ?: return null
+        } else if (r.ciphertext.isNotEmpty()) {
             NoteCipher.tryDecrypt(r.ciphertext, r.cm, keys, AssetDenoms(s.denoms)) ?: return null
         } else {
             val (v, denom) = amount ?: return null

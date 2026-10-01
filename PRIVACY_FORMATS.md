@@ -75,15 +75,39 @@ above:
 
 (cm = 05e80ddba92b607efc03967707d42b7cbc814f5767040a9066902fb53b3ff5a3)
 
-**Mints of unknown value carry no ciphertext.** Because `info` binds cm and
-cm binds the value, a note whose value the chain decides (MsgRegister's
-pc_erth, MsgDelegate/MsgUndelegate/MsgClaimUnbonding pcs, the /gas/register
-pc_gas) cannot be encrypted by the wallet in advance. The wallet names a
-self-mint pc (§1) and leaves the ciphertext empty; sync recognises the note
-by its public mint amount (`<value><denom>` on the indexer's note row) and
-the self-mint pcs counter 0 … last+20. Recovery needs only the mnemonic.
-Notes of known value (claims, sends, change, stake-vote re-mints, position
-unlocks, the registration's ANML) carry the canonical ciphertext.
+**Value-blind ciphertext (v2, canonical; chain zk/privacy notecipher.go).**
+For a note whose asset and value the chain decides when the msg runs (a
+swap's output, an LP withdrawal priced at maturity), paid to *another*
+address:
+
+    ct  = epk (32) || ChaCha20-Poly1305(key, nonce 0^12, aad empty, pt)      177 bytes
+    key = HKDF-SHA256(ikm = X25519(esk, ek_pub), salt "earth.note.v2", info = epk)
+    pt  = 0x02 || rho (32) || rcm (32) || memo (64, zero padded)            129 bytes
+
+The length tells v1 (217) from v2 (177). info cannot bind cm, so the
+binding is the recipient's check: it opens ct and accepts only if
+`CM(AssetID(denom), value, PC(owner_pk, rho, rcm)) == cm` with the denom and
+value the chain published for that position (the `shielded_mint` event's
+`amount`, which the indexer serves on the note row; every MintNote emits
+it, EndBlock payouts included). Golden (chain formats_test.go goldenKeys:
+ek = 01..20, esk = 40..5f, owner_pk = OwnerPK(7), rho 11, rcm 13, memo
+"golden memo"), pinned in `BlindNoteTest`:
+
+    79a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a8b8d4fe44e9fcb771cba93975cb4507ff1d20e44
+    6a6a4cd8336f9a50186a7de58a5b4570c62bfd9cd347f5921103700103da6af3ce492bbd1f936a4310b3b01a1d583847125f76
+    32547dfb2ea23c438f21cd4a419f9ef66d92660af42686e93c890bc37f68cf282f46ca2550ab2df0ce7191a11e7721ce736e0d
+    1bdd62af8be221017ee455ab79e7b2ea0e756a86c39910
+
+**Self-mints carry no ciphertext.** A chain-decided note the wallet pays
+to itself (MsgRegister's pc_erth, MsgDelegate/MsgUndelegate/
+MsgClaimUnbonding pcs, the /gas/register pc_gas, a note swap's output, a
+shielded deposit's refunds, a pool-1 withdrawal's ANML leg) names a
+self-mint pc (§1) and leaves the ciphertext empty; sync recognises it by
+its public mint amount and the self-mint pcs counter 0 … last+20. A
+shielded deposit's ERTH and token refunds share one self-mint pc (two
+notes, different assets). Recovery needs only the mnemonic. Notes of known
+value (claims, sends, change, stake-vote re-mints, position unlocks, the
+registration's ANML) carry the v1 ciphertext.
 
 ## 4. Private tx assembly (follows x/shielded/ante)
 

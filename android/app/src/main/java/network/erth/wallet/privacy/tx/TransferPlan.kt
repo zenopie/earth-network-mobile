@@ -37,6 +37,17 @@ class NoteOut private constructor(val value: Long, val pc: Fr, val ciphertext: B
             return NoteOut(0, n.pc(keys.ownerPk), ByteArray(0), n)
         }
 
+        /**
+         * A note the chain will mint to [to] at a value and asset it decides
+         * (a swap's output, an LP withdrawal): [to]'s pc with a value-blind
+         * (v2) ciphertext, which [to] opens against the amount the chain
+         * publishes. For ourselves, [mintToSelf] needs no ciphertext.
+         */
+        fun blindTo(to: ShieldedAddress, denom: String, memo: ByteArray = ByteArray(0)): NoteOut {
+            val n = NotePlaintext.fresh(denom, 0, memo)
+            return NoteOut(0, n.pc(to.ownerPk), NoteCipher.encryptBlind(n, to), null)
+        }
+
         /** A value-0 output nobody can open: same shape as any other. */
         fun dummy(): NoteOut = NoteOut(0, NotePlaintext.randomField(), NoteCipher.dummy(), null)
     }

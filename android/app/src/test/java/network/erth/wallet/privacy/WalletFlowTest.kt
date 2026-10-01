@@ -183,6 +183,20 @@ class WalletFlowTest {
         assertEquals(bq.amountOut.toLong(), bal(b, "uanml"))
         assertTrue(bal(b, "uerth") in 900_000 until 1_000_000)
 
+        // A swap paid to someone else: bob opens its value-blind (v2)
+        // ciphertext against the amount the chain publishes.
+        val bAnml = bal(b, "uanml")
+        val bErth = bal(b, "uerth")
+        val gq = SwapMath.route(pool(), "uerth", "uanml", BigInteger.valueOf(100_000), "uerth", chain.swapFee)!!
+        a.noteSwap("uanml", 100_000, "uerth", SwapMath.withSlippage(gq.amountOut, 100).toLong(), to = b.address)
+        a.sync(); b.sync()
+        assertEquals(bAnml, bal(b, "uanml"))
+        val paid = chain.notes.last()
+        assertEquals(177, paid.ciphertext.size)
+        assertEquals("${bal(b, "uerth") - bErth}uerth", paid.amount)
+        assertTrue(bal(b, "uerth") > bErth)
+        assertEquals(1_300_000L, bal(a, "uanml"))
+
         // A bound the pool cannot meet fails before anything is spent.
         val before = a.balances()
         assertThrows(Exception::class.java) { a.noteSwap("uanml", 100_000, "uerth", 10_000_000) }
@@ -197,7 +211,7 @@ class WalletFlowTest {
         assertTrue(chain.lpShares.getValue(provider).signum() > 0)
         // The ANML leg's rounding comes back too.
         val anmlAfterLp = bal(a, "uanml")
-        assertTrue(anmlAfterLp in 1_000_000L..1_000_010L)
+        assertTrue(anmlAfterLp in 900_000L..900_010L)
         val spent = erthBefore - bal(a, "uerth")
         assertTrue("the unused ERTH is refunded: spent $spent", spent in 800_000..810_000)
 
