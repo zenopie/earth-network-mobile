@@ -37,10 +37,15 @@ data class TransferOutput(val value: Long, val pc: Fr) {
 
 /**
  * The transfer circuit's witness (circuits/transfer): slots 0-1 one hidden
- * asset A, slot 2 ERTH for the fee.
+ * asset A, slot 2 ERTH for the fee. For A != ERTH two balances:
  *
  *     in0 + in1 == out0 + out1 + v_pub_out    (asset A)
  *     in2       == out2 + fee                 (ERTH)
+ *
+ * For A == ERTH every slot is ERTH and the circuit enforces one combined
+ * balance, so a single ERTH note can pay both a spend and its fee:
+ *
+ *     in0 + in1 + in2 == out0 + out1 + out2 + v_pub_out + fee
  *
  * Public inputs, in the chain's order (types.Transfer.PublicInputs): root,
  * nf[3], cm_out[3], fee, v_pub_out, asset_pub, signal. asset_pub is A when
@@ -59,8 +64,12 @@ data class TransferWitness(
     init {
         require(inputs.size == 3 && outputs.size == 3)
         require(fee >= 0 && vPubOut >= 0)
-        require(inputs[0].value + inputs[1].value == outputs[0].value + outputs[1].value + vPubOut) { "asset A unbalanced" }
-        require(inputs[2].value == outputs[2].value + fee) { "fee slot unbalanced" }
+        if (asset == Privacy.ASSET_ERTH) {
+            require(inputs.sumOf { it.value } == outputs.sumOf { it.value } + vPubOut + fee) { "ERTH unbalanced" }
+        } else {
+            require(inputs[0].value + inputs[1].value == outputs[0].value + outputs[1].value + vPubOut) { "asset A unbalanced" }
+            require(inputs[2].value == outputs[2].value + fee) { "fee slot unbalanced" }
+        }
     }
 
     val assets: List<Fr> get() = listOf(asset, asset, Privacy.ASSET_ERTH)

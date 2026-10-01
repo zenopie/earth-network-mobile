@@ -57,8 +57,10 @@ class NoteOut private constructor(val value: Long, val pc: Fr, val ciphertext: B
  * Everything a transfer proof needs except the signal: which notes fill the
  * three input slots (dummies where empty), the three outputs, the anchor and
  * the public values. Slots 0-1 carry asset [denom]; slot 2 is ERTH and pays
- * [fee]. Built once per fee: its nullifiers, commitments and ciphertexts are
- * final, so the msg's signal can be computed before anything is proven.
+ * [fee] (for an ERTH transfer all three slots share one balance, so any
+ * input pays it). Built once per fee: its nullifiers, commitments and
+ * ciphertexts are final, so the msg's signal can be computed before
+ * anything is proven.
  */
 class TransferPlan(
     val denom: String,
@@ -103,9 +105,15 @@ class TransferPlan(
 
         /**
          * Lays a transfer out. [aInputs] (0-2 notes of [denom]) fund [aOutputs]
-         * (0-2) plus [vPubOut]; any surplus returns to [keys] as change in the
-         * first free A output. [feeNote] (ERTH) pays [fee] with its change to
-         * [keys] in slot 2; without one, [fee] must be 0.
+         * (0-2) plus [vPubOut]; any surplus returns to [keys] as change.
+         *
+         * [denom] other than ERTH: [feeNote] (ERTH) pays [fee] with its
+         * change to [keys] in slot 2; without one, [fee] must be 0. The A
+         * change takes the first free A output.
+         *
+         * ERTH: the circuit balances all three slots together, so [feeNote]
+         * is just a third input (or none) and [fee] may come from any input;
+         * the one change note goes to slot 2.
          */
         fun build(
             keys: PrivacyKeys,
@@ -122,7 +130,9 @@ class TransferPlan(
             require(aInputs.size <= 2 && aOutputs.size <= 2)
             require(aInputs.all { it.note.denom == denom }) { "inputs must all be $denom" }
             require(feeNote == null || feeNote.note.denom == "uerth") { "the fee note must be ERTH" }
-            require(feeNote == null || aInputs.none { it.position == feeNote.position }) { "a note fills one slot" }
+            val spends = aInputs + listOfNotNull(feeNote)
+            require(spends.map { it.position }.toSet().size == spends.size) { "a note fills one slot" }
+            if (denom == "uerth") return buildErth(keys, tree, aInputs, aOutputs, vPubOut, feeNote, fee, root, paths)
             val inSum = aInputs.sumOf { it.note.value }
             val outSum = aOutputs.sumOf { it.value } + vPubOut
             require(inSum >= outSum) { "insufficient $denom: have $inSum, need $outSum" }
@@ -150,10 +160,54 @@ class TransferPlan(
             return TransferPlan(
                 denom = denom,
                 inputs = ins + slot2In,
-                spends = aInputs + listOfNotNull(feeNote),
+                spends = spends,
                 outputs = outs + slot2Out,
                 root = root, fee = fee, vPubOut = vPubOut, nk = keys.nk,
             )
+        }
+
+        /** [build] for ERTH: one balance over every slot, change in slot 2. */
+        private fun buildErth(
+            keys: PrivacyKeys,
+            tree: MerkleTree,
+            aInputs: List<OwnedNote>,
+            aOutputs: List<NoteOut>,
+            vPubOut: Long,
+            third: OwnedNote?,
+            fee: Long,
+            root: Fr,
+            paths: Map<Long, List<Fr>>,
+        ): TransferPlan {
+            val spends = aInputs + listOfNotNull(third)
+            val inSum = spends.sumOf { it.note.value }
+            val outSum = aOutputs.sumOf { it.value } + vPubOut + fee
+            require(inSum >= outSum) { "insufficient uerth: have $inSum, need $outSum" }
+            val outs = aOutputs.toMutableList()
+            while (outs.size < 2) outs.add(NoteOut.dummy())
+            outs.add(if (inSum > outSum) NoteOut.toSelf(keys, "uerth", inSum - outSum) else NoteOut.dummy())
+            val ins = aInputs.map { input(it, tree, paths[it.position]) }.toMutableList()
+            while (ins.size < 2) ins.add(TransferInput.dummy())
+            ins.add(third?.let { input(it, tree, paths[it.position]) } ?: TransferInput.dummy())
+            return TransferPlan(
+                denom = "uerth", inputs = ins, spends = spends, outputs = outs,
+                root = root, fee = fee, vPubOut = vPubOut, nk = keys.nk,
+            )
+        }
+
+        /**
+         * An ERTH transfer from [notes] (1-3, as [NoteSelection.inputs] picks
+         * them for amount + fee): the first two fill slots 0-1, a third slot 2.
+         */
+        fun erth(
+            keys: PrivacyKeys,
+            tree: MerkleTree,
+            notes: List<OwnedNote>,
+            outputs: List<NoteOut>,
+            vPubOut: Long,
+            fee: Long,
+        ): TransferPlan {
+            require(notes.size in 1..3)
+            return build(keys, tree, "uerth", notes.take(2), outputs, vPubOut, notes.getOrNull(2), fee)
         }
 
         /** A transfer that only pays [fee] from [feeNote]: the fee proof of a private action. */
@@ -162,7 +216,10 @@ class TransferPlan(
     }
 }
 
-/** Picks notes to spend. A transfer has two slots for its asset and one ERTH slot for the fee. */
+/**
+ * Picks notes to spend. A transfer has two slots for its asset and one ERTH
+ * slot for the fee; an ERTH transfer may use all three for one balance.
+ */
 object NoteSelection {
     class Insufficient(message: String) : Exception(message)
 
@@ -175,16 +232,25 @@ object NoteSelection {
             ?: throw Insufficient("no shielded ERTH note covers the ${fee}uerth fee")
 
     /**
-     * One or two notes of [denom] covering [amount]: the smallest single note
-     * that does, else the pair with the smallest sufficient sum.
+     * Up to [maxNotes] notes of [denom] covering [amount]: the smallest single
+     * note that does, else the pair, else (maxNotes 3, an ERTH transfer) the
+     * triple with the smallest sufficient sum.
      */
-    fun inputs(notes: List<OwnedNote>, denom: String, amount: Long, exclude: Set<Long> = emptySet()): List<OwnedNote> {
+    fun inputs(notes: List<OwnedNote>, denom: String, amount: Long, exclude: Set<Long> = emptySet(), maxNotes: Int = 2): List<OwnedNote> {
+        require(maxNotes in 1..3)
         val c = spendable(notes, denom, exclude).sortedBy { it.note.value }
         c.firstOrNull { it.note.value >= amount }?.let { return listOf(it) }
         var best: List<OwnedNote>? = null
-        for (i in c.indices) for (j in i + 1 until c.size) {
-            val s = c[i].note.value + c[j].note.value
-            if (s >= amount && (best == null || s < best.sumOf { it.note.value })) best = listOf(c[i], c[j])
+        var bestSum = Long.MAX_VALUE
+        fun consider(ns: List<OwnedNote>) {
+            val s = ns.sumOf { it.note.value }
+            if (s >= amount && s < bestSum) { best = ns; bestSum = s }
+        }
+        if (maxNotes >= 2) for (i in c.indices) for (j in i + 1 until c.size) consider(listOf(c[i], c[j]))
+        if (best == null && maxNotes >= 3) {
+            // Among the largest notes only: bounded work for a wallet of many small ones.
+            val t = c.takeLast(64)
+            for (i in t.indices) for (j in i + 1 until t.size) for (k in j + 1 until t.size) consider(listOf(t[i], t[j], t[k]))
         }
         return best ?: throw Insufficient(
             if (c.sumOf { it.note.value } >= amount) "$denom is spread over too many notes; merge them first"

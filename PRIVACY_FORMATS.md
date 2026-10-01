@@ -120,17 +120,31 @@ registration's ANML) carry the v1 ciphertext.
   placeholder proofs (the ante charges proof gas but skips verification in
   simulate mode); the tx is re-laid at the final fee (the fee note's change
   changes), then the signal is computed and the proofs made over it.
-- Transfer layout: slots 0–1 the hidden asset (dummies of value 0 with a fresh
-  rho where unused), slot 2 ERTH paying the fee (dummy when the msg pays fee
-  from output or the transfer pays none). Change goes to the first free
-  slot. Fee note = the smallest ERTH note covering the fee; inputs = the
-  smallest single note covering the amount, else the smallest sufficient
-  pair.
+- Transfer layout, asset A other than ERTH: slots 0–1 the hidden asset
+  (dummies of value 0 with a fresh rho where unused), slot 2 ERTH paying the
+  fee (dummy when the msg pays fee from output or the transfer pays none).
+  The circuit balances the two groups separately (in0 + in1 = out0 + out1 +
+  v_pub_out; in2 = out2 + fee), so A change goes to the first free A slot.
+  Fee note = the smallest ERTH note covering the fee; inputs = the smallest
+  single note covering the amount, else the smallest sufficient pair.
+- Transfer layout, A = ERTH: every slot is ERTH and the circuit enforces
+  one combined balance (in0 + in1 + in2 = out0 + out1 + out2 + v_pub_out +
+  fee), so the fee comes out of the same notes as the amount. Inputs = the
+  smallest single ERTH note covering amount + fee, else the smallest
+  sufficient pair, else the smallest sufficient triple (among the 64 largest
+  notes); the first two fill slots 0–1, a third slot 2. Recipient outputs
+  take slots 0–1 and the one change note slot 2. A fee-only transfer is this
+  layout with no recipient outputs. A wallet whose ERTH is one note can
+  therefore send, unshield, stake, swap and add liquidity with it; an ERTH
+  unshield pays its fee from notes rather than fee_from_output. Merging ERTH
+  joins the up-to-three smallest notes, paying the fee from them.
 
 ## 5. Off-device parity
 
 `WalletFlowTest` drives the wallet against an in-memory chain; with
 `PRIVACY_TOML_OUT=<dir>` it writes every witness as a nargo Prover.toml.
-`nargo execute` on the real circuits accepts all of them, and
+(`<test>_transfer_<i>.toml`, `<test>_membership_<i>.toml`; `singleErthNote`
+covers the combined ERTH balance). `nargo execute` on the real circuits
+accepts all of them, and
 `bb prove`/`bb verify -t noir-recursive` against the chain's verifying keys
 (zk/ultrahonk/testdata) succeed.

@@ -134,23 +134,19 @@ class PrivacyWallet(
         TransferPlan.feeOnly(keys, store.noteTree, NoteSelection.feeNote(store.state.notes, fee, exclude), fee)
 
     /**
-     * A transfer of [denom] whose fee is paid by a separate ERTH note: the fee
-     * note is chosen first (the smallest that covers it), the inputs from the
-     * rest.
+     * A transfer of [amount] [denom] ([outputs] + [vPubOut]) paying [fee].
+     * ERTH: one balance over all three slots, so 1-3 notes covering amount +
+     * fee (a single note pays both). Any other asset: the fee note is chosen
+     * first (the smallest ERTH note that covers it), the inputs from the rest.
      */
     private fun spendWithFee(denom: String, amount: Long, fee: Long, outputs: List<NoteOut>, vPubOut: Long): TransferPlan {
         val notes = store.state.notes
-        val feeNote = NoteSelection.feeNote(notes, fee)
-        val inputs = try {
-            NoteSelection.inputs(notes, denom, amount, setOf(feeNote.position))
-        } catch (e: NoteSelection.Insufficient) {
-            // The circuit pays the fee only from its ERTH slot, never from the
-            // asset slots, so an ERTH spend needs a second ERTH note to pay it.
-            if (denom == "uerth" && NoteSelection.spendable(notes, "uerth").sumOf { it.note.value } >= amount + fee) {
-                throw NoteSelection.Insufficient("an ERTH payment needs a separate ERTH note for its fee; all your shielded ERTH is in one note")
-            }
-            throw e
+        if (denom == "uerth") {
+            val ins = NoteSelection.inputs(notes, "uerth", amount + fee, maxNotes = 3)
+            return TransferPlan.erth(keys, store.noteTree, ins, outputs, vPubOut, fee)
         }
+        val feeNote = NoteSelection.feeNote(notes, fee)
+        val inputs = NoteSelection.inputs(notes, denom, amount, setOf(feeNote.position))
         return TransferPlan.build(keys, store.noteTree, denom, inputs, outputs, vPubOut, feeNote, fee)
     }
 
@@ -191,47 +187,42 @@ class PrivacyWallet(
     }
 
     /**
-     * Unshields so that [receiver] gets exactly [amount] [denom]. Its fee
-     * comes from an ERTH note when there is one; an ERTH unshield with no
-     * spare note pays it out of the unshield (fee_from_output).
+     * Unshields so that [receiver] gets exactly [amount] [denom]. The fee
+     * comes from ERTH notes: for ERTH the same notes as the amount (one
+     * balance), for any other asset a separate ERTH note.
      */
     fun unshield(receiver: String, denom: String, amount: Long): TxResult = run { fee ->
-        val notes = store.state.notes
-        val feeNote = runCatching { NoteSelection.feeNote(notes, fee) }.getOrNull()
-            ?.takeIf { fn -> denom != "uerth" || runCatching { NoteSelection.inputs(notes, denom, amount, setOf(fn.position)) }.isSuccess }
-        if (feeNote != null) {
-            val inputs = NoteSelection.inputs(notes, denom, amount, setOf(feeNote.position))
-            val plan = TransferPlan.build(keys, store.noteTree, denom, inputs, emptyList(), amount, feeNote, fee)
-            Assembled(listOf(plan), null) { ts, _ -> MsgTransfer.newBuilder().setTransfer(ts[0]).setReceiver(receiver).build() }
-        } else {
-            require(denom == "uerth") { "no ERTH note to pay the fee of a $denom unshield" }
-            val out = amount + fee
-            val plan = TransferPlan.build(keys, store.noteTree, denom, NoteSelection.inputs(notes, denom, out), emptyList(), out, null, 0)
-            Assembled(listOf(plan), null) { ts, _ ->
-                MsgTransfer.newBuilder().setTransfer(ts[0]).setReceiver(receiver).setFeeFromOutput(fee).build()
-            }
-        }
+        val plan = spendWithFee(denom, amount, fee, emptyList(), amount)
+        Assembled(listOf(plan), null) { ts, _ -> MsgTransfer.newBuilder().setTransfer(ts[0]).setReceiver(receiver).build() }
     }
 
     /**
-     * Consolidates [denom]: the two smallest spendable notes become one (a
-     * transfer has two input slots for its asset, so a payment larger than
-     * any two notes cannot be made until small ones are merged). For ERTH the
-     * fee note is kept out of the pair. Repeat while [mergeable] says so.
+     * Consolidates [denom] (a transfer has two input slots for its asset, so
+     * a payment larger than any two notes cannot be made until small ones are
+     * merged). Any other asset: its two smallest spendable notes become one,
+     * the fee paid by a separate ERTH note. ERTH: its up to three smallest
+     * notes become one, the fee paid from them. Repeat while [mergeable] says so.
      */
     fun merge(denom: String): TxResult = run { fee ->
-        val feeNote = NoteSelection.feeNote(store.state.notes, fee)
-        val two = NoteSelection.spendable(store.state.notes, denom, setOf(feeNote.position)).sortedBy { it.note.value }.take(2)
-        require(two.size == 2) { "nothing to merge" }
-        val plan = TransferPlan.build(keys, store.noteTree, denom, two, emptyList(), 0, feeNote, fee)
+        val plan = if (denom == "uerth") {
+            val ns = NoteSelection.spendable(store.state.notes, "uerth").sortedBy { it.note.value }.take(3)
+            require(ns.size >= 2) { "nothing to merge" }
+            require(ns.sumOf { it.note.value } > fee) { "these notes do not cover the ${fee}uerth fee" }
+            TransferPlan.erth(keys, store.noteTree, ns, emptyList(), 0, fee)
+        } else {
+            val feeNote = NoteSelection.feeNote(store.state.notes, fee)
+            val two = NoteSelection.spendable(store.state.notes, denom, setOf(feeNote.position)).sortedBy { it.note.value }.take(2)
+            require(two.size == 2) { "nothing to merge" }
+            TransferPlan.build(keys, store.noteTree, denom, two, emptyList(), 0, feeNote, fee)
+        }
         Assembled(listOf(plan), null) { ts, _ -> MsgTransfer.newBuilder().setTransfer(ts[0]).build() }
     }
 
-    /** Spendable note counts per denom with more than one note (ERTH needs a third: one stays the fee note). */
+    /** Spendable note counts per denom with more than one note. */
     fun mergeable(): Map<String, Int> =
         store.state.notes.filter { it.unspent && it.pendingAt == null && it.note.value > 0 }
             .groupBy { it.note.denom }.mapValues { it.value.size }
-            .filter { (d, n) -> n >= if (d == "uerth") 3 else 2 }
+            .filter { (_, n) -> n >= 2 }
 
     /** A note to self for MsgShield (transparent coins into the pool; signed, so built by the caller's key). */
     fun shieldOutput(denom: String, amount: Long): NoteOut = NoteOut.toSelf(keys, denom, amount)
@@ -526,7 +517,7 @@ class PrivacyWallet(
      * Its value is the pool's to decide: to us a self-mint found by its public
      * amount, to anyone else a value-blind (v2) ciphertext. A swap into ERTH pays its fee out of the output
      * (fee_from_output; the chain needs min_out above the fee); any other
-     * pays from an ERTH note.
+     * pays from ERTH notes (an ERTH swap from the same notes it spends).
      */
     fun noteSwap(denomIn: String, amountIn: Long, denomOut: String, minOut: Long, to: ShieldedAddress? = null): TxResult {
         require(denomIn != denomOut && amountIn > 0 && minOut > 0)
@@ -553,7 +544,7 @@ class PrivacyWallet(
      * Deposits [tokenAmount] [token] and [erthAmount] uerth from notes into
      * [poolId] (pool 1: ANML/ERTH), the LP shares to [provider] (a
      * transparent address: providing liquidity is public). The ERTH leg pays
-     * the fee from its own fee note. Whatever the pool ratio does not take is
+     * the fee from the same ERTH notes it spends. Whatever the pool ratio does not take is
      * minted back to one self-mint pc (a note per asset).
      */
     fun addLiquidityShielded(poolId: Long, token: String, tokenAmount: Long, erthAmount: Long, provider: String, minShares: String): TxResult {

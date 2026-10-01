@@ -214,7 +214,7 @@ fun RemovalBallotsScreen(
  * Shielded notes, per asset. A private payment can spend at most two notes of
  * its asset (the circuit has two slots), so many small notes can leave a
  * balance that is there but cannot be sent in one go. Merging joins the two
- * smallest; ERTH keeps one note aside to pay fees.
+ * smallest (ERTH: up to three, the fee paid from them).
  */
 @Composable
 fun NotesScreen(
@@ -225,7 +225,8 @@ fun NotesScreen(
 ) = Page(modifier) {
     val dimens = EarthTheme.dimens
     Note(
-        "A private payment spends at most two notes of an asset, plus one ERTH note for its fee. " +
+        "A private payment spends at most two notes of an asset, plus one ERTH note for its fee " +
+            "(an ERTH payment up to three ERTH notes, fee included). " +
             "Merge small notes so your whole balance stays spendable.",
     )
     Spacer(Modifier.height(dimens.space16))

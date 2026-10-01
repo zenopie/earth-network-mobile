@@ -7,6 +7,7 @@ import network.erth.wallet.privacy.sync.PrivacyStore
 import network.erth.wallet.privacy.sync.WalletSync
 import network.erth.wallet.privacy.zk.Fr
 import network.erth.wallet.privacy.zk.Privacy
+import network.erth.wallet.privacy.tx.NoteSelection
 import network.erth.wallet.chain.math.SwapMath
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -122,7 +123,7 @@ class WalletFlowTest {
         assertEquals(fresh.balances(), restored.balances())
         assertTrue(chain.simulated > 0)
 
-        dump(chain)
+        dump(chain, "endToEnd")
     }
 
     /** A registered wallet holding ANML from its registration and two claims, and its reward ERTH. */
@@ -171,12 +172,12 @@ class WalletFlowTest {
         val fee = q.amountOut.toLong() - (bal(a, "uerth") - erth0)
         assertTrue("fee from output: $fee", fee in 1000..10_000)
 
-        // ERTH -> ANML, fee from an ERTH note, by bob after he is sent ERTH:
-        // two notes, as the fee is paid from a note of its own.
-        a.send(b.address, "uerth", 1_950_000)
-        a.sync()
-        a.send(b.address, "uerth", 50_000)
+        // ERTH -> ANML by bob after he is sent ERTH as one note: an ERTH
+        // transfer balances all three slots together, so that note pays the
+        // swap and its fee.
+        a.send(b.address, "uerth", 2_000_000)
         a.sync(); b.sync()
+        assertEquals(1, b.notes.count { it.note.denom == "uerth" && it.unspent })
         val bq = SwapMath.route(pool(), "uerth", "uerth", BigInteger.valueOf(1_000_000), "uanml", chain.swapFee)!!
         b.noteSwap("uerth", 1_000_000, "uanml", SwapMath.withSlippage(bq.amountOut, 50).toLong())
         b.sync()
@@ -290,15 +291,75 @@ class WalletFlowTest {
             restored.sync()
             assertEquals(w.balances(), restored.balances())
         }
+        dump(chain, "dex")
+    }
+
+    /**
+     * A wallet whose shielded ERTH is one note sends, unshields, stakes and
+     * merges ERTH with the fee paid from the same notes (the transfer
+     * circuit's combined ERTH balance), while a non-ERTH spend still needs an
+     * ERTH note for its fee.
+     */
+    @Test
+    fun singleErthNote() {
+        val chain = FakeChain()
+        val c = wallet(chain, alice)
+        val b = wallet(chain, bob)
+        c.sync(); b.sync()
+        val o = c.shieldOutput("uerth", 3_000_000)
+        chain.shield("uerth", o.value, o.pc, o.ciphertext)
+        c.sync()
+        val erthNotes = { c.notes.filter { it.note.denom == "uerth" && it.unspent && it.note.value > 0 } }
+        assertEquals(1, erthNotes().size)
+
+        c.send(b.address, "uerth", 1_000_000)
+        c.sync(); b.sync()
+        assertEquals(1_000_000L, bal(b, "uerth"))
+        val afterSend = bal(c, "uerth")
+        val sendFee = 2_000_000 - afterSend
+        assertTrue("fee $sendFee", sendFee > 0)
+        assertEquals(1, erthNotes().size)
+
+        val receiver = "earth1qqqsyqcyq5rqwzqfpg9scrgwpugpzysncc2uls"
+        c.unshield(receiver, "uerth", 500_000)
+        c.sync()
+        assertEquals(500_000L, chain.unshielded[receiver])
+        assertEquals(1, erthNotes().size)
+        assertTrue(bal(c, "uerth") < afterSend - 500_000)
+
+        c.delegate(validator, 400_000)
+        c.sync()
+        assertEquals(1, erthNotes().size)
+        assertTrue(bal(c, PrivacyWallet.derthDenom(validator)) > 0)
+
+        // ERTH merges three notes into one, the fee paid from them.
+        repeat(2) { val n = c.shieldOutput("uerth", 10_000L + it); chain.shield("uerth", n.value, n.pc, n.ciphertext) }
+        c.sync()
+        assertEquals(3, erthNotes().size)
+        assertEquals(3, c.mergeable()["uerth"])
+        val pre = bal(c, "uerth")
+        c.merge("uerth")
+        c.sync()
+        assertEquals(1, erthNotes().size)
+        assertTrue(bal(c, "uerth") < pre)
+
+        // ANML with no ERTH note at all: its fee cannot come out of ANML.
+        val d = wallet(chain, "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong")
+        d.sync()
+        val an = d.shieldOutput("uanml", 1_000_000)
+        chain.shield("uanml", an.value, an.pc, an.ciphertext)
+        d.sync()
+        assertThrows(NoteSelection.Insufficient::class.java) { d.send(b.address, "uanml", 100_000) }
+        dump(chain, "singleErthNote")
     }
 
     /**
      * With PRIVACY_TOML_OUT set, writes every witness the wallet proved as a
      * nargo Prover.toml, for `nargo execute` against the real circuits.
      */
-    private fun dump(chain: FakeChain) {
+    private fun dump(chain: FakeChain, test: String) {
         val out = System.getenv("PRIVACY_TOML_OUT") ?: return
-        chain.prover.allTransfers.forEachIndexed { i, w -> File(out, "transfer_$i.toml").apply { parentFile.mkdirs() }.writeText(w.proverToml()) }
-        chain.prover.allMemberships.forEachIndexed { i, w -> File(out, "membership_$i.toml").writeText(w.proverToml()) }
+        chain.prover.allTransfers.forEachIndexed { i, w -> File(out, "${test}_transfer_$i.toml").apply { parentFile.mkdirs() }.writeText(w.proverToml()) }
+        chain.prover.allMemberships.forEachIndexed { i, w -> File(out, "${test}_membership_$i.toml").apply { parentFile.mkdirs() }.writeText(w.proverToml()) }
     }
 }
