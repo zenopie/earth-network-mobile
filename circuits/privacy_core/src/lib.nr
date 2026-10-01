@@ -1,5 +1,5 @@
 //! privacy_core — shared hashes, derivations and Merkle path logic for the
-//! privacy circuits (membership, transfer, later note-vote).
+//! privacy circuits (membership, transfer).
 //!
 //! Must match earth-network-chain zk/privacy and zk/merkle bit for bit.
 //!
@@ -20,7 +20,7 @@ pub global TAG_SN: Field = 0x65617274682e736e; // "earth.sn"
 pub global TAG_PC: Field = 0x65617274682e7063; // "earth.pc"
 pub global TAG_CM: Field = 0x65617274682e636d; // "earth.cm"
 pub global TAG_NF: Field = 0x65617274682e6e66; // "earth.nf"
-pub global TAG_VOTE: Field = 0x65617274682e766f7465; // "earth.vote"
+pub global TAG_VOTE: Field = 0x65617274682e766f7465; // "earth.vote": retired (note_vote), never reuse
 pub global TAG_REG: Field = 0x65617274682e726567; // "earth.reg"
 pub global TAG_ASSET: Field = 0x65617274682e6173736574; // "earth.asset"
 
@@ -89,13 +89,6 @@ pub fn note_cm(asset: Field, value: u64, pc: Field) -> Field {
 /// different nullifier (a double spend).
 pub fn note_nf(nk: Field, rho: Field, position: u32) -> Field {
     h4(TAG_NF, nk, rho, position as Field)
-}
-
-/// Per-proposal vote nullifier = H(TAG_VOTE, nk, rho, position, proposal_id).
-/// One per note per proposal, and unlinkable to the note's spend nullifier
-/// without nk. `position` is a u32 for the same reason as in note_nf.
-pub fn vote_nullifier(nk: Field, rho: Field, position: u32, proposal_id: u64) -> Field {
-    h5(TAG_VOTE, nk, rho, position as Field, proposal_id as Field)
 }
 
 /// Root of the depth-32 tree from a leaf, its index and siblings (leaf level
