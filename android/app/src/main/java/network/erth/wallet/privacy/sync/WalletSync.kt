@@ -1,0 +1,209 @@
+package network.erth.wallet.privacy.sync
+
+import network.erth.wallet.privacy.keys.PrivacyKeys
+import network.erth.wallet.privacy.note.NoteCipher
+import network.erth.wallet.privacy.note.AssetDenoms
+import network.erth.wallet.privacy.note.NotePlaintext
+import network.erth.wallet.privacy.note.OwnedNote
+import network.erth.wallet.privacy.zk.Fr
+import network.erth.wallet.privacy.zk.Privacy
+
+/**
+ * Brings a wallet's [PrivacyStore] up to the indexer's tip:
+ *
+ *  1. every note commitment, appended to the local note tree, every
+ *     ciphertext trial-decrypted with this wallet's ek;
+ *  2. every nullifier, up to the height the notes reached, matched against
+ *     this wallet's notes to mark them spent;
+ *  3. every identity leaf, and every zeroing since the last sync, into the
+ *     local identity tree;
+ *  4. the local roots checked against the indexer's latest recorded roots.
+ *
+ * Nothing is ever requested about one note or one leaf: the trees, and with
+ * them this wallet's Merkle paths, are built here from the full streams.
+ */
+class WalletSync(
+    private val indexer: PrivacyIndexer,
+    private val store: PrivacyStore,
+    private val keys: PrivacyKeys,
+    private val chainId: String,
+) {
+    class Inconsistent(message: String) : Exception(message)
+
+    data class Result(
+        val syncedHeight: Long,
+        val newNotes: List<OwnedNote>,
+        val spent: List<OwnedNote>,
+        val noteRoot: Fr,
+        val identityRoot: Fr,
+        val identityStatus: IdentityStatus,
+    )
+
+    enum class IdentityStatus { NONE, LIVE, ZEROED }
+
+    companion object {
+        const val PENDING_TIMEOUT_S = 15 * 60L
+
+        /** Self-mint counters tried past the last one found (abandoned txs leave gaps). */
+        const val MINT_GAP = 20
+    }
+
+    /** Syncs; on any inconsistency with the indexer, starts over once from an empty store. */
+    fun sync(pageLimit: Int? = null): Result = try {
+        syncOnce(pageLimit)
+    } catch (e: Inconsistent) {
+        store.reset(chainId)
+        syncOnce(pageLimit)
+    }
+
+    private fun syncOnce(pageLimit: Int?): Result {
+        val st = store.state
+        val status = indexer.status()
+        if (status.chainId != null && status.chainId != chainId) {
+            throw IllegalStateException("the privacy indexer follows ${status.chainId}, not $chainId")
+        }
+        if (st.chainId != chainId) {
+            // A fresh genesis (or a first sync): nothing from another chain carries over.
+            store.reset(chainId)
+        }
+        val s = store.state
+        val newNotes = syncNotes(s, pageLimit)
+        val spent = syncNullifiers(s, pageLimit)
+        releaseStalePending(s)
+        syncIdentity(s, pageLimit)
+        val roots = indexer.rootsLatest()
+        roots.note?.let { r ->
+            if (r.treeSize == store.noteTree.size && r.root != store.noteTree.root()) {
+                throw Inconsistent("note tree root differs from the indexer's at ${r.treeSize} notes")
+            }
+        }
+        roots.identity?.let { r ->
+            if (r.treeSize == store.identityTree.size && r.root != store.identityTree.root()) {
+                throw Inconsistent("identity tree root differs from the indexer's at ${r.treeSize} leaves")
+            }
+        }
+        store.save()
+        return Result(s.notesHeight, newNotes, spent, store.noteTree.root(), store.identityTree.root(), identityStatus())
+    }
+
+    private fun syncNotes(s: PrivacyState, limit: Int?): List<OwnedNote> {
+        val found = ArrayList<OwnedNote>()
+        while (true) {
+            val page = indexer.notes(s.notesNext, limit)
+            if (page.rows.isNotEmpty()) {
+                page.rows.forEachIndexed { i, r ->
+                    if (r.position != s.notesNext + i) throw Inconsistent("note at position ${r.position}, expected ${s.notesNext + i}")
+                }
+                store.noteTree.appendAll(page.rows.map { it.cm })
+                for (r in page.rows) open(r)?.let { found.add(it); s.notes.add(it) }
+                s.notesNext += page.rows.size
+            }
+            s.notesHeight = maxOf(s.notesHeight, page.syncedHeight)
+            if (!page.complete) break
+        }
+        return found
+    }
+
+    private val mintPcs = HashMap<Int, Fr>()
+
+    private fun mintPc(c: Int): Fr = mintPcs.getOrPut(c) { keys.mintPc(c) }
+
+    /**
+     * A note row is ours if its ciphertext opens with our ek for its cm and
+     * the opening reproduces the cm under our owner key (NoteCipher). A note
+     * the chain minted at a value we could not know when we named its pc has
+     * no ciphertext; it is ours if its public amount and one of our self-mint
+     * pcs (PrivacyKeys.mintSecrets, the next [MINT_GAP] past the last used)
+     * reproduce its cm. Both paths need nothing but the mnemonic.
+     */
+    internal fun open(r: NoteRow): OwnedNote? {
+        val s = store.state
+        val amount = publicAmount(r.amount)
+        amount?.let { s.denoms.add(it.second) }
+        val note: NotePlaintext = if (r.ciphertext.isNotEmpty()) {
+            NoteCipher.tryDecrypt(r.ciphertext, r.cm, keys, AssetDenoms(s.denoms)) ?: return null
+        } else {
+            val (v, denom) = amount ?: return null
+            val asset = Privacy.assetId(denom)
+            val c = (0 until s.nextMintCounter + MINT_GAP).firstOrNull { Privacy.cm(asset, v, mintPc(it)) == r.cm } ?: return null
+            s.nextMintCounter = maxOf(s.nextMintCounter, c + 1)
+            val (rho, rcm) = keys.mintSecrets(c)
+            NotePlaintext(denom, v, rho, rcm)
+        }
+        if (note.value == 0L) return null
+        return OwnedNote(r.position, r.height, note, r.cm, Privacy.nf(keys.nk, note.rho, r.position))
+    }
+
+    private fun publicAmount(amount: String?): Pair<Long, String>? {
+        if (amount == null) return null
+        val digits = amount.takeWhile { it.isDigit() }
+        val denom = amount.substring(digits.length)
+        if (digits.isEmpty() || denom.isEmpty()) return null
+        return (digits.toLongOrNull() ?: return null) to denom
+    }
+
+    private fun syncNullifiers(s: PrivacyState, limit: Int?): List<OwnedNote> {
+        val mine = s.notes.withIndex().filter { it.value.unspent }.associate { it.value.nf to it.index }
+        val spent = ArrayList<OwnedNote>()
+        // Only up to the height the note stream reached: a note found next
+        // time could otherwise have been spent in a block this pass skipped.
+        val ceiling = s.notesHeight
+        while (s.nullifiersNext <= ceiling) {
+            val page = indexer.nullifiers(s.nullifiersNext, limit)
+            for ((h, nfs) in page.blocks) {
+                if (h > ceiling) break
+                for (nf in nfs) mine[nf]?.let { i ->
+                    val n = s.notes[i].copy(spentHeight = h)
+                    s.notes[i] = n
+                    spent.add(n)
+                }
+            }
+            s.nullifiersNext = minOf(page.nextHeight, ceiling + 1)
+            if (!page.complete) break
+        }
+        return spent
+    }
+
+    /**
+     * A note marked pending by a broadcast whose nullifier has not appeared
+     * after [PENDING_TIMEOUT_S] is released: the tx did not land (an
+     * unconfirmed broadcast that dropped), and the note is spendable again.
+     */
+    private fun releaseStalePending(s: PrivacyState) {
+        val now = System.currentTimeMillis() / 1000
+        for (i in s.notes.indices) {
+            val n = s.notes[i]
+            if (n.unspent && n.pendingAt != null && now - n.pendingAt > PENDING_TIMEOUT_S) s.notes[i] = n.copy(pendingAt = null)
+        }
+    }
+
+    private fun syncIdentity(s: PrivacyState, limit: Int?) {
+        // Zeroings of leaves already held, first: a leaf appended below
+        // carries its own zeroed_height.
+        while (true) {
+            val page = indexer.identityZeroed(s.zeroedNext, limit)
+            val updates = HashMap<Long, Fr>()
+            for ((_, idxs) in page.blocks) for (i in idxs) if (i < store.identityTree.size) updates[i] = Fr.ZERO
+            store.identityTree.updateAll(updates)
+            s.zeroedNext = page.nextHeight
+            if (!page.complete) break
+        }
+        while (true) {
+            val page = indexer.identity(s.identityNext, limit)
+            if (page.rows.isEmpty()) break
+            page.rows.forEachIndexed { i, r ->
+                if (r.index != s.identityNext + i) throw Inconsistent("identity leaf ${r.index}, expected ${s.identityNext + i}")
+            }
+            store.identityTree.appendAll(page.rows.map { if (it.zeroedHeight != null) Fr.ZERO else it.leaf })
+            s.identityNext += page.rows.size
+            if (s.identityNext >= page.size) break
+        }
+    }
+
+    fun identityStatus(): IdentityStatus {
+        val id = store.state.identity ?: return IdentityStatus.NONE
+        if (id.leafIndex >= store.identityTree.size) return IdentityStatus.NONE
+        val want = Privacy.identityLeaf(keys.idc, id.dscKey, id.country, id.activatedAt)
+        return if (store.identityTree.leaf(id.leafIndex) == want) IdentityStatus.LIVE else IdentityStatus.ZEROED
+    }
+}
