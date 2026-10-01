@@ -30,5 +30,14 @@ let package = Package(
         // Command Line Tools install ships no XCTest platform — `swift test`
         // cannot run here at all. Same pattern as ProverGateCore's corecheck.
         .executableTarget(name: "corecheck", dependencies: ["EarthCore"]),
+        // The privacy core against the same golden vectors Android tests
+        // (copied from android/app/src/test/resources/privacy, generated from
+        // the chain's own Go by tools/privacyvectors), plus an end-to-end
+        // wallet flow against an in-memory chain. Needs full Xcode (XCTest).
+        .testTarget(
+            name: "EarthCoreTests",
+            dependencies: ["EarthCore"],
+            resources: [.copy("Resources/privacy")]
+        ),
     ]
 )
