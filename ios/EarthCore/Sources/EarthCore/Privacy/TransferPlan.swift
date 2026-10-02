@@ -198,6 +198,13 @@ public enum NoteSelection {
         return n
     }
 
+    /// The most of `denom` one transfer can spend: its `maxNotes` largest
+    /// spendable notes. Less than the balance when it is spread over more
+    /// notes than that, which merging fixes.
+    public static func maxSpendable(_ notes: [OwnedNote], denom: String, maxNotes: Int = 2) -> UInt64 {
+        spendable(notes, denom: denom).map(\.note.value).sorted(by: >).prefix(maxNotes).reduce(0, +)
+    }
+
     /// Up to `maxNotes` notes of `denom` covering `amount`: the smallest single
     /// note that does, else the pair, else (maxNotes 3, an ERTH transfer) the
     /// triple with the smallest sufficient sum.

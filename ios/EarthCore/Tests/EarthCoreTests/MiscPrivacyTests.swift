@@ -292,3 +292,30 @@ final class StakeValueTests: XCTestCase {
         XCTAssertEqual(2, PrivacyWallet.votingPositions([pos(1, 99), pos(2, 100)], snapshot: .init(root: .zero, treeSize: 0)).count)
     }
 }
+
+/// The wallet home's Shield / Unshield limits.
+final class ShieldMoveTests: XCTestCase {
+    func note(_ value: UInt64, _ pos: UInt64, denom: String = "uerth", spent: Bool = false, pending: Bool = false) -> OwnedNote {
+        OwnedNote(position: pos, height: 1, note: NotePlaintext(denom: denom, value: value, rho: .one, rcm: .one), cm: .one, nf: .one,
+                  spentHeight: spent ? 2 : nil, pendingAt: pending ? 1 : nil)
+    }
+
+    func testMaxSpendableTakesTheLargestSpendableNotes() {
+        let notes = [note(5, 1), note(40, 2), note(30, 3), note(20, 4), note(99, 5, spent: true), note(98, 6, pending: true), note(97, 7, denom: "uanml")]
+        XCTAssertEqual(90, NoteSelection.maxSpendable(notes, denom: "uerth", maxNotes: 3))
+        XCTAssertEqual(70, NoteSelection.maxSpendable(notes, denom: "uerth"))
+        XCTAssertEqual(97, NoteSelection.maxSpendable(notes, denom: "uanml"))
+        XCTAssertEqual(0, NoteSelection.maxSpendable([], denom: "uerth"))
+    }
+
+    func testMaxUnshieldLeavesTheFee() {
+        XCTAssertEqual(80, ShieldMove.maxUnshield([note(50, 1), note(40, 2)], fee: 10))
+        XCTAssertEqual(0, ShieldMove.maxUnshield([note(10, 1)], fee: 10))
+        XCTAssertEqual(0, ShieldMove.maxUnshield([], fee: 10))
+    }
+
+    func testMaxShieldLeavesTheFee() {
+        XCTAssertEqual(BigInt(90), ShieldMove.maxShield(public: 100, fee: 10))
+        XCTAssertEqual(BigInt(0), ShieldMove.maxShield(public: 5, fee: 10))
+    }
+}

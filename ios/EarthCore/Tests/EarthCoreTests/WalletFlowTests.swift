@@ -333,6 +333,29 @@ final class WalletFlowTests: XCTestCase {
         dump(chain, "singleErthNote")
     }
 
+    /// The wallet home's Shield and Unshield: Max on each moves the most one
+    /// transaction can, and the unshield lands at the wallet's own account.
+    /// Four ERTH notes: an unshield spends three, so Max stops at those.
+    func testMaxUnshieldToOwnAccount() async throws {
+        let chain = FakeChain()
+        let c = try wallet(chain, alice)
+        try await c.sync()
+        for v: UInt64 in [400_000, 1_000_000, 2_000_000, 3_000_000] {
+            let o = try c.shieldOutput(denom: "uerth", amount: v)
+            chain.shield("uerth", o.value, o.pc, o.ciphertext)
+        }
+        try await c.sync()
+        let estimate = PrivateTxEngine.feeFor(price: chain.price, gas: PrivacyWallet.privateGasEstimate)
+        let max = ShieldMove.maxUnshield(c.notes, fee: estimate)
+        XCTAssertEqual(6_000_000 - estimate, max)
+        _ = try await c.unshield(receiver: receiver, denom: "uerth", amount: max)
+        try await c.sync()
+        XCTAssertEqual(max, chain.unshielded[receiver])
+        // The simulated fee is under the estimate, so its change comes back as a note.
+        XCTAssertGreaterThan(bal(c, "uerth"), 400_000)
+        dump(chain, "maxUnshield")
+    }
+
     /// With PRIVACY_TOML_OUT set, writes every witness the wallet proved as a
     /// nargo Prover.toml, for `nargo execute` against the real circuits.
     func dump(_ chain: FakeChain, _ test: String) {
