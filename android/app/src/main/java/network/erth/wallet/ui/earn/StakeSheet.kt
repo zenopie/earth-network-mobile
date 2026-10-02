@@ -54,6 +54,8 @@ fun StakeSheet(
     /** Cap in uerth: spendable balance to stake, the delegation to unstake. */
     capFor: (DelegationRow) -> Long,
     confirmLabel: String,
+    /** A line under the amount (staked ERTH is owner-locked: it can only be unstaked). */
+    note: String? = null,
     onConfirm: (validator: String, amountUerth: Long) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -144,6 +146,10 @@ fun StakeSheet(
             color = EarthColors.Text.textTertiary,
             modifier = Modifier.clickable { amount = cap.asDecimal() },
         )
+        note?.let {
+            Spacer(Modifier.height(dimens.space8))
+            Text(text = it, style = EarthTypography.textSm, color = EarthColors.Text.textTertiary)
+        }
 
         Spacer(Modifier.height(dimens.space16))
         EarthButton(

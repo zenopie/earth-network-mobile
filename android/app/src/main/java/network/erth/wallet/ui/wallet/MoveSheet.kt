@@ -53,7 +53,7 @@ fun MoveSheet(
     initial: MoveDirection,
     publicUerth: Long,
     privateUerth: Long,
-    /** The three largest ERTH notes: what one unshield can spend, fee included. */
+    /** What one unshield can spend (its largest max_actions_per_bundle ERTH notes), fee included. */
     unshieldableUerth: Long,
     /** The signed MsgShield's fee. */
     shieldFee: Long,
@@ -71,7 +71,7 @@ fun MoveSheet(
     val cap = if (shielding) {
         ShieldMove.maxShield(publicUerth, shieldFee)
     } else {
-        ShieldMove.maxUnshield(unshieldableUerth, unshieldFee)
+        unshieldableUerth
     }
     val amountUerth = amount.toUerthOrNull()
     val error = when {
@@ -156,10 +156,10 @@ fun MoveSheet(
             )
         }
         if (!shielding && unshieldableUerth < privateUerth) {
-            // One unshield spends at most three notes.
+            // Only when ERTH is spread over more notes than one bundle carries.
             Spacer(Modifier.height(dimens.space4))
             Text(
-                text = "Your private ERTH is spread over many notes. Merge them in Settings → Shielded notes to move more at once.",
+                text = "Your private ERTH is spread over more notes than one transaction can carry. Merge them in Settings → Shielded notes to move it all at once.",
                 style = EarthTypography.textSm,
                 color = EarthColors.Text.textTertiary,
             )

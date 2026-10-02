@@ -48,7 +48,7 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
                 positions = w?.let { runCatching { it.positions() }.getOrNull() }.orEmpty().map { (p, k) -> PositionRow(p, k) },
                 groundworksOptions = runCatching { Allocation.stream(StreamId.STREAM_ID_GROUNDWORKS).options }.getOrDefault(emptyList()),
                 ballots = runCatching { PrivacyQueries.removalBallots() }.getOrDefault(emptyList()),
-                mergeable = w?.mergeable().orEmpty(),
+                mergeable = w?.let { it.mergeable() + it.stakeMergeable() }.orEmpty(),
                 referrerAddress = w?.store?.state?.referrerAddress.orEmpty(),
                 referrerBoundAt = w?.store?.state?.referrerBoundAt ?: 0L,
                 referrerLapseSeconds = runCatching { PrivacyQueries.personhoodParams().caretakerVoteSeconds }.getOrDefault(30L * 86_400),

@@ -6,7 +6,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlin.coroutines.coroutineContext
 import network.erth.wallet.privacy.chain.PrivacyQueries
-import network.erth.wallet.privacy.note.OwnedNote
+import network.erth.wallet.privacy.note.OwnedStakeNote
 import network.erth.wallet.privacy.sync.WalletSync
 import java.security.SecureRandom
 
@@ -19,7 +19,8 @@ import java.security.SecureRandom
  *  - refreshes the caretaker split before it lapses (it counts for R after
  *    each cast);
  *  - refreshes the referrer binding the same way;
- *  - claims unbonding notes once their epoch's undelegation has matured.
+ *  - claims unbonding claims (stake notes) once their epoch's undelegation
+ *    has matured.
  *
  * Maturity is worked out from chain-wide timing alone (the current epoch,
  * epoch length, x/staking's unbonding time), never by asking the node about
@@ -41,7 +42,7 @@ object PrivacyAutomation {
         data class ClaimAnml(val day: Long) : Action
         data object RefreshCaretaker : Action
         data object RefreshReferrer : Action
-        data class ClaimUnbonding(val note: OwnedNote) : Action
+        data class ClaimUnbonding(val denom: String) : Action
     }
 
     data class Inputs(
@@ -54,7 +55,8 @@ object PrivacyAutomation {
         val caretakerDue: Boolean,
         val referrerDue: Boolean = false,
         val hasFeeErth: Boolean,
-        val maturedUnbonds: List<OwnedNote>,
+        /** unbond/<valoper>/<epoch> denoms whose claims have matured. */
+        val maturedUnbonds: List<String>,
     )
 
     fun decide(i: Inputs): List<Action> {
@@ -87,21 +89,21 @@ object PrivacyAutomation {
         return currentStart - (current - 1 - e) * epochSeconds + unbondingSeconds + MATURITY_MARGIN_S
     }
 
-    /** The unbond notes to claim now: matured by [maturesBy], and not waiting out a refused claim. */
+    /** The unbond denoms to claim now: matured by [maturesBy], and not waiting out a refused claim. */
     fun matured(
-        notes: List<OwnedNote>,
+        notes: List<OwnedStakeNote>,
         now: Long,
         current: Long,
         currentStart: Long,
         epochSeconds: Long,
         unbondingSeconds: Long,
         retryAt: Map<String, Long>,
-    ): List<OwnedNote> = notes.filter { n ->
-        if (!n.unspent || n.pendingAt != null || !n.note.denom.startsWith("unbond/")) return@filter false
-        val (_, e) = PrivacyWallet.parseUnbond(n.note.denom)
+    ): List<String> = notes.filter { n ->
+        if (!n.spendable || !n.denom.startsWith(PrivacyWallet.UNBOND_PREFIX)) return@filter false
+        val (_, e) = PrivacyWallet.parseUnbond(n.denom)
         val by = maturesBy(e, current, currentStart, epochSeconds, unbondingSeconds) ?: return@filter false
-        now >= by && now >= (retryAt[n.note.denom] ?: 0L)
-    }
+        now >= by && now >= (retryAt[n.denom] ?: 0L)
+    }.map { it.denom }.distinct()
 
     private val rng = SecureRandom()
     private var offsetDay = -1L
@@ -123,7 +125,7 @@ object PrivacyAutomation {
         // Global reads only: the same for every wallet.
         val epoch = PrivacyQueries.epoch()
         val timing = PrivacyQueries.stakingTiming()
-        val matured = matured(w.notes, now, epoch.number, epoch.startTime, timing.epochSeconds, timing.unbondingSeconds,
+        val matured = matured(w.stakeNotes, now, epoch.number, epoch.startTime, timing.epochSeconds, timing.unbondingSeconds,
             w.store.state.unbondRetryAt)
         val inputs = Inputs(
             now = now,
@@ -133,7 +135,7 @@ object PrivacyAutomation {
             claimOffset = claimOffset(now),
             caretakerDue = runCatching { w.caretakerDue() }.getOrDefault(false),
             referrerDue = runCatching { w.referrerDue() }.getOrDefault(false),
-            hasFeeErth = (w.balances()["uerth"] ?: 0L) > 0,
+            hasFeeErth = (w.poolBalances()["uerth"] ?: 0L) > 0,
             maturedUnbonds = matured,
         )
         for (a in decide(inputs)) {
@@ -142,12 +144,12 @@ object PrivacyAutomation {
                     is Action.ClaimAnml -> w.claimAnml(a.day)
                     Action.RefreshCaretaker -> w.setCaretaker(w.store.state.caretakerSplit)
                     Action.RefreshReferrer -> w.bindReferrer(w.store.state.referrerAddress)
-                    is Action.ClaimUnbonding -> w.claimUnbonding(a.note)
+                    is Action.ClaimUnbonding -> w.claimUnbonding(a.denom)
                 }
             }.onFailure {
                 Log.w(TAG, "automation $a failed", it)
                 if (a is Action.ClaimUnbonding) {
-                    w.store.state.unbondRetryAt[a.note.note.denom] = now + RETRY_S
+                    w.store.state.unbondRetryAt[a.denom] = now + RETRY_S
                     w.store.save()
                 }
             }

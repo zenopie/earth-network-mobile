@@ -30,8 +30,9 @@ data class WalletUiState(
     /** Why the last privacy sync failed, if it did. */
     val privacySyncError: String? = null,
     /**
-     * The most shielded ERTH one unshield can spend, fee included: its three
-     * largest notes. Under [shieldedErthUerth] when the notes need merging.
+     * The most shielded ERTH one unshield can spend, fee included: its
+     * largest max_actions_per_bundle notes. Under [shieldedErthUerth] only
+     * when the notes are spread over more than that.
      */
     val unshieldableErthUerth: Long = 0,
 ) {

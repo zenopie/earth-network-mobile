@@ -9,39 +9,43 @@ import network.erth.earth.proto.assembly.MsgVoteProposal
 import network.erth.earth.proto.assembly.MsgVoteRemoval
 import network.erth.earth.proto.dex.MsgAddLiquidityShielded
 import network.erth.earth.proto.dex.MsgNoteSwap
+import network.erth.earth.proto.dex.MsgRemoveLiquidityShielded
 import network.erth.earth.proto.personhood.MsgBindReferrer
 import network.erth.earth.proto.personhood.MsgClaimAnml
 import network.erth.earth.proto.personhood.MsgRegister
 import network.erth.earth.proto.personhood.MsgSetCaretaker
-import network.erth.earth.proto.shielded.MsgTransfer
-import network.erth.earth.proto.shielded.Transfer
+import network.erth.earth.proto.shielded.Bundle
+import network.erth.earth.proto.shielded.MsgSend
 import network.erth.earth.proto.shieldedstaking.MsgClaimUnbonding
 import network.erth.earth.proto.shieldedstaking.MsgDelegate
 import network.erth.earth.proto.shieldedstaking.MsgLockPosition
 import network.erth.earth.proto.shieldedstaking.MsgPositionVote
+import network.erth.earth.proto.shieldedstaking.MsgRestake
 import network.erth.earth.proto.shieldedstaking.MsgStakeVote
 import network.erth.earth.proto.shieldedstaking.MsgUndelegate
 import network.erth.earth.proto.shieldedstaking.MsgUnlockPosition
 import network.erth.earth.proto.shieldedstaking.MsgUpdatePosition
+import network.erth.earth.proto.shieldedstaking.StakeProof
 import network.erth.wallet.crypto.Bech32
 import network.erth.wallet.privacy.zk.Fr
+import network.erth.wallet.privacy.zk.Grumpkin
 import network.erth.wallet.privacy.zk.Privacy
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.nio.ByteBuffer
 
 /**
- * The chain's private msgs: their type URLs, and the signal each one's proofs
- * bind, ported field for field from the msg's Go `Signal` (x/shielded,
- * x/personhood, x/assembly and x/shieldedstaking types/msgs.go).
- * PrivateMsgsTest pins every signal and every encoding to the chain's output.
+ * The chain's private msgs: their type URLs, their bundles, and the sighash
+ * every proof and binding signature of one binds, ported field for field from
+ * each msg's Go `SighashFields` (x/shielded, x/personhood, x/assembly,
+ * x/shieldedstaking, x/dex types) and zk/orchard.Sighash. PrivateMsgsTest
+ * pins every sighash and every encoding to the chain's output.
  *
- * Fields the chain parses as field elements (pcs, idc, nullifiers) must be
- * canonical 32-byte values; Fr.fromBytes refuses anything else, as the chain
- * does.
+ * Fields the chain parses as field elements (pcs, idc) must be canonical
+ * 32-byte values; Fr.fromBytes refuses anything else, as the chain does.
  */
 object PrivateMsgs {
-    const val TRANSFER = "/earth.shielded.v1.MsgTransfer"
+    const val SEND = "/earth.shielded.v1.MsgSend"
     const val SHIELD = "/earth.shielded.v1.MsgShield"
     const val REGISTER = "/earth.personhood.v1.MsgRegister"
     const val CLAIM_ANML = "/earth.personhood.v1.MsgClaimAnml"
@@ -51,6 +55,7 @@ object PrivateMsgs {
     const val PROPOSE_REMOVAL = "/earth.assembly.v1.MsgProposeRemoval"
     const val VOTE_REMOVAL = "/earth.assembly.v1.MsgVoteRemoval"
     const val DELEGATE = "/earth.shieldedstaking.v1.MsgDelegate"
+    const val RESTAKE = "/earth.shieldedstaking.v1.MsgRestake"
     const val UNDELEGATE = "/earth.shieldedstaking.v1.MsgUndelegate"
     const val CLAIM_UNBONDING = "/earth.shieldedstaking.v1.MsgClaimUnbonding"
     const val STAKE_VOTE = "/earth.shieldedstaking.v1.MsgStakeVote"
@@ -60,27 +65,16 @@ object PrivateMsgs {
     const val POSITION_VOTE = "/earth.shieldedstaking.v1.MsgPositionVote"
     const val NOTE_SWAP = "/earth.dex.v1.MsgNoteSwap"
     const val ADD_LIQUIDITY_SHIELDED = "/earth.dex.v1.MsgAddLiquidityShielded"
+    const val REMOVE_LIQUIDITY_SHIELDED = "/earth.dex.v1.MsgRemoveLiquidityShielded"
+
+    /** zk/orchard.TagBundle. */
+    val TAG_BUNDLE: Fr = Fr.of(BigInteger(1, "earth.bundle".toByteArray(Charsets.US_ASCII)))
 
     private fun f(b: ByteString): Fr = Fr.fromBytes(b.toByteArray())
+    private fun fieldOrZero(b: ByteString?): Fr = if (b == null || b.isEmpty) Fr.ZERO else Fr.fromBytes(b.toByteArray())
     private fun bytes(b: ByteString): Fr = Privacy.bytes(b.toByteArray())
     private fun bytes(s: String): Fr = Privacy.bytes(s.toByteArray())
     private fun u(v: Long): Fr = Privacy.u64(v)
-
-    fun ciphertexts(t: Transfer): List<ByteArray> {
-        require(t.ciphertextsCount == 3) { "a transfer carries three ciphertexts" }
-        return t.ciphertextsList.map { it.toByteArray() }
-    }
-
-    fun nullifiers(t: Transfer): List<Fr> {
-        require(t.nullifiersCount == 3) { "a transfer carries three nullifiers" }
-        return t.nullifiersList.map(::f)
-    }
-
-    private fun action(type: String, chainId: String, fee: Transfer, extra: List<Fr>): Fr =
-        Privacy.actionSignal(type, chainId, ciphertexts(fee), nullifiers(fee), extra)
-
-    private fun spend(type: String, chainId: String, t: Transfer, extra: List<Fr>): Fr =
-        Privacy.spendSignal(type, chainId, ciphertexts(t), extra)
 
     /** A bech32 address's raw bytes, as the chain's address codec gives them. */
     fun addressBytes(bech32: String): ByteArray = Bech32.decode(bech32)
@@ -117,100 +111,42 @@ object PrivateMsgs {
         return out.toByteArray()
     }
 
+    // ---- bundles --------------------------------------------------------------
+
     /**
-     * PositionSignBytes: what a position key signs (secp256k1 over its sha256,
-     * low-S, 64-byte r||s):
-     * "earth.shieldedstaking.position" 0 action 0 chain_id 0 id(u64 BE) nonce(u64 BE) payload.
+     * zk/orchard Bundle.Digest:
+     * H(TAG_BUNDLE, N, [anchor_i, nf_i, cm_i, cvx_i, cvy_i, Bytes(ct_i)]..., M, [AssetID(denom_j), amount_j]...).
      */
-    fun positionSignBytes(chainId: String, action: String, positionId: Long, nonce: Long, payload: ByteArray): ByteArray {
-        val out = java.io.ByteArrayOutputStream()
-        out.write("earth.shieldedstaking.position".toByteArray()); out.write(0)
-        out.write(action.toByteArray()); out.write(0)
-        out.write(chainId.toByteArray()); out.write(0)
-        out.write(ByteBuffer.allocate(16).putLong(positionId).putLong(nonce).array())
-        out.write(payload)
-        return out.toByteArray()
+    fun digest(b: Bundle): Fr {
+        val xs = ArrayList<Fr>(3 + 6 * b.actionsCount + 2 * b.balancesCount)
+        xs.add(TAG_BUNDLE); xs.add(u(b.actionsCount.toLong()))
+        for (a in b.actionsList) {
+            val cv = a.cv.toByteArray()
+            require(cv.size == 64) { "cv is 64 bytes" }
+            xs.add(f(a.anchor)); xs.add(f(a.nullifier)); xs.add(f(a.commitment))
+            xs.add(Fr.fromBytes(cv.copyOfRange(0, 32))); xs.add(Fr.fromBytes(cv.copyOfRange(32, 64)))
+            xs.add(bytes(a.ciphertext))
+        }
+        xs.add(u(b.balancesCount.toLong()))
+        for (bal in b.balancesList) { xs.add(Privacy.assetId(bal.denom)); xs.add(u(bal.amount)) }
+        return network.erth.wallet.privacy.zk.Poseidon2.hash(xs)
     }
 
-    fun positionVotePayload(proposalId: Long, opts: List<WeightedVoteOption>): ByteArray =
-        ByteBuffer.allocate(8).putLong(proposalId).array() + optionsBytes(opts)
-
-    /** The signal [msg]'s proofs bind on [chainId] (the msg's Go Signal). */
-    fun signal(msg: MessageLite, chainId: String): Fr = when (msg) {
-        is MsgTransfer -> Privacy.transferSignal(
-            chainId,
-            if (msg.receiver.isEmpty()) null else addressBytes(msg.receiver),
-            ciphertexts(msg.transfer),
-            msg.feeFromOutput,
-        )
-        is MsgRegister -> action(
-            REGISTER, chainId, msg.fee,
-            listOf(
-                f(msg.idc), f(msg.pcAnml), bytes(msg.ciphertextAnml), f(msg.pcErth), bytes(msg.ciphertextErth),
-                affiliateField(msg.affiliate), bytes(msg.signatureAlgorithm),
-            ) + msg.publicSignalsList.map { decimalField(it) },
-        )
-        is MsgClaimAnml -> action(CLAIM_ANML, chainId, msg.fee, listOf(u(msg.day), f(msg.pc), bytes(msg.ciphertext)))
-        is MsgSetCaretaker -> action(
-            SET_CARETAKER, chainId, msg.fee,
-            msg.percentagesList.flatMap { listOf(u(it.optionId), u(it.percent)) },
-        )
-        is MsgBindReferrer -> action(
-            BIND_REFERRER, chainId, msg.fee,
-            listOf(Privacy.bytes(if (msg.address.isEmpty()) ByteArray(0) else addressBytes(msg.address))),
-        )
-        is MsgVoteProposal -> action(VOTE_PROPOSAL, chainId, msg.fee, listOf(u(msg.proposalId), u(msg.optionValue.toLong())))
-        is MsgProposeRemoval -> action(PROPOSE_REMOVAL, chainId, msg.fee, listOf(u(msg.optionId)))
-        is MsgVoteRemoval -> action(VOTE_REMOVAL, chainId, msg.fee, listOf(u(msg.optionId), u(msg.optionValue.toLong())))
-        is MsgDelegate -> spend(DELEGATE, chainId, msg.transfer, listOf(bytes(msg.validator), f(msg.pc), bytes(msg.ciphertext)))
-        is MsgUndelegate -> spend(UNDELEGATE, chainId, msg.transfer, listOf(bytes(msg.validator), f(msg.pc), bytes(msg.ciphertext)))
-        is MsgClaimUnbonding -> spend(
-            CLAIM_UNBONDING, chainId, msg.transfer,
-            listOf(bytes(msg.validator), u(msg.epoch), f(msg.pc), bytes(msg.ciphertext), u(msg.feeFromOutput)),
-        )
-        is MsgStakeVote -> multi(
-            STAKE_VOTE, chainId, transfers(msg),
-            listOf(
-                u(msg.proposalId), bytes(msg.validator), Privacy.bytes(optionsBytes(msg.optionsList)),
-                f(msg.pc), bytes(msg.ciphertext),
-            ),
-        )
-        is MsgLockPosition -> spend(
-            LOCK_POSITION, chainId, msg.transfer,
-            listOf(bytes(msg.validator), bytes(msg.pubkey), Privacy.bytes(splitsBytes(msg.splitsList))),
-        )
-        is MsgUpdatePosition -> spend(
-            UPDATE_POSITION, chainId, msg.transfer,
-            listOf(u(msg.positionId), Privacy.bytes(splitsBytes(msg.splitsList)), bytes(msg.signature)),
-        )
-        is MsgUnlockPosition -> spend(
-            UNLOCK_POSITION, chainId, msg.transfer,
-            listOf(u(msg.positionId), f(msg.pc), bytes(msg.ciphertext), bytes(msg.signature)),
-        )
-        is MsgPositionVote -> spend(
-            POSITION_VOTE, chainId, msg.transfer,
-            listOf(u(msg.positionId), u(msg.proposalId), Privacy.bytes(optionsBytes(msg.optionsList)), bytes(msg.signature)),
-        )
-        is MsgNoteSwap -> spend(
-            NOTE_SWAP, chainId, msg.transfer,
-            listOf(bytes(msg.denomOut), u(msg.minAmountOut), f(msg.pc), bytes(msg.ciphertext), u(msg.feeFromOutput)),
-        )
-        is MsgAddLiquidityShielded -> multi(
-            ADD_LIQUIDITY_SHIELDED, chainId, transfers(msg),
-            listOf(
-                u(msg.poolId), Privacy.bytes(addressBytes(msg.provider)), bytes(msg.minShares),
-                f(msg.refundPc), bytes(msg.refundCiphertext),
-            ),
-        )
-        else -> throw IllegalArgumentException("not a private msg: ${msg.javaClass.simpleName}")
+    /** bvk = sum cv_i - sum value_a * G_a: what [b]'s binding signature verifies under. */
+    fun bindingKey(b: Bundle): Grumpkin.Point {
+        var bvk = Grumpkin.Point.INFINITY
+        for (a in b.actionsList) bvk += Grumpkin.Point.fromBytes(a.cv.toByteArray())
+        for (bal in b.balancesList) bvk -= Grumpkin.valueBase(Privacy.assetId(bal.denom)) * Grumpkin.u64(bal.amount)
+        return bvk
     }
 
-    private fun multi(type: String, chainId: String, ts: List<Transfer>, extra: List<Fr>): Fr =
-        Privacy.multiSpendSignal(type, chainId, ts.map(::ciphertexts), ts.map(::nullifiers), extra)
+    /** Whether [b]'s binding signature holds over [sighash] (the chain's CheckBalance). */
+    fun checkBalance(b: Bundle, sighash: Fr): Boolean =
+        Grumpkin.verifyBinding(bindingKey(b), sighash, b.bindingSig.toByteArray())
 
-    /** Every transfer [msg] spends, the primary first (MultiTransferMsg.PrivateTransfers). */
-    fun transfers(msg: MessageLite): List<Transfer> = when (msg) {
-        is MsgTransfer -> listOf(msg.transfer)
+    /** Every bundle [msg] spends, in sighash order (PrivateMsg.PrivateBundles). */
+    fun bundles(msg: MessageLite): List<Bundle> = when (msg) {
+        is MsgSend -> listOf(msg.bundle)
         is MsgRegister -> listOf(msg.fee)
         is MsgClaimAnml -> listOf(msg.fee)
         is MsgSetCaretaker -> listOf(msg.fee)
@@ -218,29 +154,135 @@ object PrivateMsgs {
         is MsgVoteProposal -> listOf(msg.fee)
         is MsgProposeRemoval -> listOf(msg.fee)
         is MsgVoteRemoval -> listOf(msg.fee)
-        is MsgDelegate -> listOf(msg.transfer)
-        is MsgUndelegate -> listOf(msg.transfer)
-        is MsgClaimUnbonding -> listOf(msg.transfer)
-        is MsgStakeVote -> listOf(msg.transfer, msg.feeTransfer)
-        is MsgLockPosition -> listOf(msg.transfer)
-        is MsgUpdatePosition -> listOf(msg.transfer)
-        is MsgUnlockPosition -> listOf(msg.transfer)
-        is MsgPositionVote -> listOf(msg.transfer)
-        is MsgNoteSwap -> listOf(msg.transfer)
-        is MsgAddLiquidityShielded -> listOf(msg.transfer, msg.erthTransfer)
+        is MsgDelegate -> listOf(msg.bundle)
+        is MsgRestake -> listOf(msg.bundle)
+        is MsgUndelegate -> listOf(msg.bundle)
+        is MsgClaimUnbonding -> if (msg.hasBundle()) listOf(msg.bundle) else emptyList()
+        is MsgStakeVote -> listOf(msg.bundle)
+        is MsgLockPosition -> listOf(msg.bundle)
+        is MsgUpdatePosition -> listOf(msg.bundle)
+        is MsgUnlockPosition -> listOf(msg.bundle)
+        is MsgPositionVote -> listOf(msg.bundle)
+        is MsgNoteSwap -> listOf(msg.bundle)
+        is MsgAddLiquidityShielded -> listOf(msg.bundle)
+        is MsgRemoveLiquidityShielded -> listOf(msg.bundle)
+        else -> throw IllegalArgumentException("not a private msg: ${msg.javaClass.simpleName}")
+    }
+
+    /** The msg's stake proof, if it carries one. */
+    fun stake(msg: MessageLite): StakeProof? = when (msg) {
+        is MsgDelegate -> msg.stake
+        is MsgRestake -> msg.stake
+        is MsgUndelegate -> msg.stake
+        is MsgClaimUnbonding -> msg.stake
+        is MsgStakeVote -> msg.stake
+        is MsgLockPosition -> msg.stake
+        is MsgUpdatePosition -> msg.stake
+        is MsgUnlockPosition -> msg.stake
+        is MsgPositionVote -> msg.stake
+        else -> null
+    }
+
+    /**
+     * StakeFields: anchor, nf_0, nf_1, cm_0, cm_1, Bytes(ct_0), Bytes(ct_1),
+     * spc_mint, owner_tag (an absent ciphertext is Bytes of nothing).
+     */
+    fun stakeFields(p: StakeProof): List<Fr> = listOf(
+        fieldOrZero(p.anchor), fieldOrZero(p.nullifiersList.getOrNull(0)), fieldOrZero(p.nullifiersList.getOrNull(1)),
+        fieldOrZero(p.commitmentsList.getOrNull(0)), fieldOrZero(p.commitmentsList.getOrNull(1)),
+        bytes(p.ciphertextsList.getOrNull(0) ?: ByteString.EMPTY), bytes(p.ciphertextsList.getOrNull(1) ?: ByteString.EMPTY),
+        fieldOrZero(p.spcMint), fieldOrZero(p.ownerTag),
+    )
+
+    /** The fee bundle's uerth balance (shielded FeeBundleFee): a fee-only msg's fee. */
+    private fun feeOf(b: Bundle): Long = b.balancesList.firstOrNull { it.denom == "uerth" }?.amount ?: 0
+
+    /** The uerth the bundles pay to fee_collector (PrivateMsg.PrivateFee). */
+    fun privateFee(msg: MessageLite): Long = when (msg) {
+        is MsgSend -> msg.fee
+        is MsgRegister -> feeOf(msg.fee)
+        is MsgClaimAnml -> feeOf(msg.fee)
+        is MsgSetCaretaker -> feeOf(msg.fee)
+        is MsgBindReferrer -> feeOf(msg.fee)
+        is MsgVoteProposal -> feeOf(msg.fee)
+        is MsgProposeRemoval -> feeOf(msg.fee)
+        is MsgVoteRemoval -> feeOf(msg.fee)
+        is MsgDelegate -> msg.fee
+        is MsgRestake -> msg.fee
+        is MsgUndelegate -> msg.fee
+        is MsgClaimUnbonding -> msg.fee
+        is MsgStakeVote -> msg.fee
+        is MsgLockPosition -> msg.fee
+        is MsgUpdatePosition -> msg.fee
+        is MsgUnlockPosition -> msg.fee
+        is MsgPositionVote -> msg.fee
+        is MsgNoteSwap -> msg.fee
+        is MsgAddLiquidityShielded -> msg.fee
+        is MsgRemoveLiquidityShielded -> msg.fee
         else -> throw IllegalArgumentException("not a private msg: ${msg.javaClass.simpleName}")
     }
 
     /** fee_from_output, for the msgs that may pay their fee out of the ERTH they produce. */
     fun feeFromOutput(msg: MessageLite): Long = when (msg) {
-        is MsgTransfer -> msg.feeFromOutput
         is MsgClaimUnbonding -> msg.feeFromOutput
         is MsgNoteSwap -> msg.feeFromOutput
         else -> 0
     }
 
+    /** The whole fee the tx declares (types.TotalFee). */
+    fun totalFee(msg: MessageLite): Long = privateFee(msg) + feeFromOutput(msg)
+
+    /** The msg's own fields, bound after the bundle digests (each msg's Go SighashFields). */
+    fun sighashFields(msg: MessageLite): List<Fr> = when (msg) {
+        is MsgSend -> listOf(Privacy.bytes(if (msg.receiver.isEmpty()) ByteArray(0) else addressBytes(msg.receiver)), u(msg.fee))
+        is MsgRegister -> listOf(
+            f(msg.idc), f(msg.pcAnml), bytes(msg.ciphertextAnml), f(msg.pcErth), bytes(msg.ciphertextErth),
+            affiliateField(msg.affiliate), bytes(msg.signatureAlgorithm),
+        ) + msg.publicSignalsList.map { decimalField(it) }
+        is MsgClaimAnml -> listOf(u(msg.day), f(msg.pc), bytes(msg.ciphertext))
+        is MsgSetCaretaker -> msg.percentagesList.flatMap { listOf(u(it.optionId), u(it.percent)) }
+        is MsgBindReferrer -> listOf(Privacy.bytes(if (msg.address.isEmpty()) ByteArray(0) else addressBytes(msg.address)))
+        is MsgVoteProposal -> listOf(u(msg.proposalId), u(msg.optionValue.toLong()))
+        is MsgProposeRemoval -> listOf(u(msg.optionId))
+        is MsgVoteRemoval -> listOf(u(msg.optionId), u(msg.optionValue.toLong()))
+        is MsgDelegate -> stakeFields(msg.stake) + listOf(bytes(msg.validator), u(msg.fee))
+        is MsgRestake -> stakeFields(msg.stake) + listOf(bytes(msg.validator), u(msg.fee))
+        is MsgUndelegate -> stakeFields(msg.stake) + listOf(bytes(msg.validator), u(msg.amount), u(msg.fee))
+        is MsgClaimUnbonding -> stakeFields(msg.stake) + listOf(
+            bytes(msg.validator), u(msg.epoch), u(msg.amount), f(msg.pc), bytes(msg.ciphertext), u(msg.feeFromOutput), u(msg.fee),
+        )
+        is MsgStakeVote -> stakeFields(msg.stake) + listOf(
+            u(msg.proposalId), bytes(msg.validator), Privacy.bytes(optionsBytes(msg.optionsList)), u(msg.weight), u(msg.fee),
+        )
+        is MsgLockPosition -> stakeFields(msg.stake) + listOf(
+            bytes(msg.validator), u(msg.amount), Privacy.bytes(splitsBytes(msg.splitsList)), u(msg.fee),
+        )
+        is MsgUpdatePosition -> stakeFields(msg.stake) + listOf(u(msg.positionId), Privacy.bytes(splitsBytes(msg.splitsList)), u(msg.fee))
+        is MsgUnlockPosition -> stakeFields(msg.stake) + listOf(u(msg.positionId), u(msg.fee))
+        is MsgPositionVote -> stakeFields(msg.stake) + listOf(
+            u(msg.positionId), u(msg.proposalId), Privacy.bytes(optionsBytes(msg.optionsList)), u(msg.fee),
+        )
+        is MsgNoteSwap -> listOf(bytes(msg.denomOut), u(msg.minAmountOut), f(msg.pc), bytes(msg.ciphertext), u(msg.feeFromOutput), u(msg.fee))
+        is MsgAddLiquidityShielded -> listOf(
+            u(msg.poolId), bytes(msg.minShares), f(msg.sharePc), bytes(msg.shareCiphertext), f(msg.refundPc), bytes(msg.refundCiphertext), u(msg.fee),
+        )
+        is MsgRemoveLiquidityShielded -> listOf(
+            u(msg.poolId), f(msg.erthPc), bytes(msg.erthCiphertext), f(msg.tokenPc), bytes(msg.tokenCiphertext), u(msg.fee),
+        )
+        else -> throw IllegalArgumentException("not a private msg: ${msg.javaClass.simpleName}")
+    }
+
+    /**
+     * [msg]'s sighash on [chainId] (x/shielded types.Sighash):
+     * Signal(type URL, chain id, K, digest(bundle_0..K-1), fields...).
+     */
+    fun sighash(msg: MessageLite, chainId: String): Fr {
+        val bs = bundles(msg)
+        return Privacy.signal(typeUrl(msg), chainId, listOf(u(bs.size.toLong())) + bs.map(::digest) + sighashFields(msg))
+    }
+
     fun typeUrl(msg: MessageLite): String = when (msg) {
-        is MsgTransfer -> TRANSFER
+        is MsgSend -> SEND
         is MsgRegister -> REGISTER
         is MsgClaimAnml -> CLAIM_ANML
         is MsgSetCaretaker -> SET_CARETAKER
@@ -249,6 +291,7 @@ object PrivateMsgs {
         is MsgProposeRemoval -> PROPOSE_REMOVAL
         is MsgVoteRemoval -> VOTE_REMOVAL
         is MsgDelegate -> DELEGATE
+        is MsgRestake -> RESTAKE
         is MsgUndelegate -> UNDELEGATE
         is MsgClaimUnbonding -> CLAIM_UNBONDING
         is MsgStakeVote -> STAKE_VOTE
@@ -258,11 +301,9 @@ object PrivateMsgs {
         is MsgPositionVote -> POSITION_VOTE
         is MsgNoteSwap -> NOTE_SWAP
         is MsgAddLiquidityShielded -> ADD_LIQUIDITY_SHIELDED
+        is MsgRemoveLiquidityShielded -> REMOVE_LIQUIDITY_SHIELDED
         else -> throw IllegalArgumentException("not a private msg: ${msg.javaClass.simpleName}")
     }
-
-    /** The whole fee the tx declares: every transfer's fee plus fee_from_output (types.TotalFee). */
-    fun totalFee(msg: MessageLite): Long = transfers(msg).sumOf { it.fee } + feeFromOutput(msg)
 
     /** A passport public signal (decimal) as a canonical field element (personhood ParseSignal). */
     fun decimalField(s: String): Fr {

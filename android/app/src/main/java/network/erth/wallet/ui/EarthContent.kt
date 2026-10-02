@@ -19,6 +19,8 @@ import network.erth.wallet.Constants
 import network.erth.wallet.R
 import network.erth.wallet.chain.Assembly
 import network.erth.wallet.privacy.PrivacySession
+import network.erth.wallet.privacy.PrivacyWallet
+import network.erth.wallet.privacy.tx.ShieldMove
 import network.erth.wallet.privacy.tx.PrivateMsgs
 import network.erth.wallet.chain.EarthTx
 import network.erth.earth.proto.shielded.MsgShield
@@ -438,12 +440,16 @@ internal fun EarthContent(
                     tx.requestPrivate(
                         details = TxConfirmDetails(
                             action = "Merge notes",
-                            msgTypeUrl = PrivateMsgs.TRANSFER,
+                            msgTypeUrl = PrivateMsgs.SEND,
                             balanceUerth = 0L,
                         ),
                         shieldedErth = loaded.shieldedErthUerth,
                         onSuccess = { onRefresh(); privacy.refresh() },
-                        run = { ctx -> PrivacySession.wallet(ctx).merge(denom).hash },
+                        run = { ctx ->
+                            val w = PrivacySession.wallet(ctx)
+                            // Stake notes merge by a restake (owner-locked, two per proof).
+                            (if (denom.startsWith(PrivacyWallet.DERTH_PREFIX)) w.mergeStake(denom) else w.merge(denom)).hash
+                        },
                     )
                 },
                 modifier = inset,
@@ -590,7 +596,8 @@ internal fun EarthContent(
                         // refuses the rest, and one refusal ends the loop.
                         val mine = w.positions()
                         val voting = w.stakeVoteWeight(proposal.id, mine.map { it.first }).positionIds
-                        val hashes = notes.map { w.stakeVote(proposal.id, it, opts).hash } +
+                        // Two notes of one validator a vote.
+                        val hashes = notes.groupBy { it.denom }.values.flatMap { it.chunked(2) }.map { w.stakeVote(proposal.id, it, opts).hash } +
                             mine.filter { it.first.id in voting }.map { (p, k) -> w.positionVote(p, k, proposal.id, opts).hash }
                         check(hashes.isNotEmpty()) { "no stake from before this proposal's voting opened" }
                         hashes.last()
@@ -666,6 +673,13 @@ internal fun EarthContent(
                 }
             },
             confirmLabel = if (stake) "Stake" else "Unstake",
+            // derth is not a coin: a stake note only its owner can merge,
+            // vote, lock or unstake. Nothing can send or sell it.
+            note = if (stake) {
+                "Staked ERTH stays locked to this wallet: it can't be sent, unshielded or traded, only unstaked."
+            } else {
+                "Unstaking turns it into a claim, also locked to this wallet, paid out as private ERTH when it matures."
+            },
             onDismiss = { staking = null },
             onConfirm = { validator, amount ->
                 staking = null
@@ -687,7 +701,13 @@ internal fun EarthContent(
                     onSuccess = onRefresh,
                     run = { ctx ->
                         val w = PrivacySession.wallet(ctx)
-                        (if (stake) w.delegate(validator, amount) else w.undelegate(validator, amount)).hash
+                        if (stake) {
+                            w.delegate(validator, amount).hash
+                        } else {
+                            // A stake proof spends two notes: merge first if needed.
+                            w.consolidateStake(PrivacyWallet.derthDenom(validator), amount)
+                            w.undelegate(validator, amount).hash
+                        }
                     },
                 )
             },
@@ -733,19 +753,22 @@ internal fun EarthContent(
                         },
                     )
                 } else {
+                    // At Max the fee comes out of the amount: the bundle
+                    // releases exactly what the notes hold.
+                    val feeFromAmount = ShieldMove.feeFromAmount(amount, loaded.unshieldableErthUerth, TxController.feeFor(TxController.PRIVATE_GAS_ESTIMATE))
                     tx.requestPrivate(
                         details = TxConfirmDetails(
                             action = "Unshield ERTH",
-                            msgTypeUrl = PrivateMsgs.TRANSFER,
+                            msgTypeUrl = PrivateMsgs.SEND,
                             balanceUerth = 0L,
                             amountLabel = "Amount",
-                            amountValue = "${formatUerth(amount)} ERTH",
+                            amountValue = "${formatUerth(amount)} ERTH" + if (feeFromAmount) " less the fee" else "",
                             recipient = "your public balance",
                             recipientLabel = "To",
                         ),
                         shieldedErth = loaded.shieldedErthUerth,
                         onSuccess = onRefresh,
-                        run = { ctx -> PrivacySession.wallet(ctx).unshield(walletAddress(ctx), Constants.UERTH_DENOM, amount).hash },
+                        run = { ctx -> PrivacySession.wallet(ctx).unshield(walletAddress(ctx), Constants.UERTH_DENOM, amount, feeFromAmount).hash },
                     )
                 }
             },
@@ -772,7 +795,12 @@ internal fun EarthContent(
             } else {
                 loaded.holdings.firstOrNull { it.denom == pool.tokenDenom }?.amount ?: 0L
             },
-            shareBalance = shares[pool.id] ?: 0L,
+            // Pool 1's shares are private: share notes (dexlp/<id>) in the pool.
+            shareBalance = if (pool.tokenDenom == Dex.SHIELDED_ONLY) {
+                loaded.shielded[Dex.shareDenom(pool.id)] ?: 0L
+            } else {
+                shares[pool.id] ?: 0L
+            },
             unbondingSeconds = marketsState?.lpUnbondingSeconds ?: 0L,
             onDismiss = { liquidity = null },
             onConfirm = { erthIn, tokenIn, sharesOut ->
@@ -786,16 +814,37 @@ internal fun EarthContent(
                             balanceUerth = 0L,
                             amountLabel = "Deposit",
                             amountValue = "${formatUerth(erthIn.toLong())} ERTH + ${formatUerth(tokenIn.toLong())} ANML",
-                            recipient = loaded.address,
+                            recipient = "your private balance",
                             recipientLabel = "LP shares to",
                         ),
                         shieldedErth = loaded.shieldedErthUerth,
                         onSuccess = { onRefresh(); markets.refresh() },
                         run = { ctx ->
                             PrivacySession.wallet(ctx).addLiquidityShielded(
-                                pool.id, pool.tokenDenom, tokenIn.toLong(), erthIn.toLong(), walletAddress(ctx),
+                                pool.id, pool.tokenDenom, tokenIn.toLong(), erthIn.toLong(),
                                 minShares(pool.id, erthIn, tokenIn),
                             ).hash
+                        },
+                    )
+                    return@LiquiditySheet
+                }
+                if (!adding && pool.tokenDenom == Dex.SHIELDED_ONLY) {
+                    // Share notes: a private withdrawal, both legs paid as
+                    // notes when it matures; no account appears anywhere.
+                    tx.requestPrivate(
+                        details = TxConfirmDetails(
+                            action = "Withdraw liquidity",
+                            msgTypeUrl = PrivateMsgs.REMOVE_LIQUIDITY_SHIELDED,
+                            balanceUerth = 0L,
+                            amountLabel = "Shares",
+                            amountValue = formatUerth(sharesOut.toLong()),
+                            recipient = "your private balance",
+                            recipientLabel = "Paid to",
+                        ),
+                        shieldedErth = loaded.shieldedErthUerth,
+                        onSuccess = { onRefresh(); markets.refresh() },
+                        run = { ctx ->
+                            PrivacySession.wallet(ctx).removeLiquidityShielded(pool.id, pool.tokenDenom, sharesOut.toLong()).hash
                         },
                     )
                     return@LiquiditySheet
@@ -936,7 +985,9 @@ internal fun EarthContent(
                         shieldedErth = loaded.shieldedErthUerth,
                         onSuccess = { onRefresh(); privacy.refresh(); allocation.refresh() },
                         run = { ctx ->
-                            PrivacySession.wallet(ctx).lockPosition(validator, amount, weights.filterValues { it > 0 }).hash
+                            val w = PrivacySession.wallet(ctx)
+                            w.consolidateStake(PrivacyWallet.derthDenom(validator), amount)
+                            w.lockPosition(validator, amount, weights.filterValues { it > 0 }).hash
                         },
                     )
                 },

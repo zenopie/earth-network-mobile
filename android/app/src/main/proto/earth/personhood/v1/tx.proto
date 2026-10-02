@@ -12,8 +12,9 @@ import "earth/shielded/v1/tx.proto";
 // cleanly on Android).
 //
 // Every message here is private: unsigned, alone in its tx, its fee paid from
-// the shielded pool by the Transfer it embeds. Nothing names an address of the
-// person acting; the signal (zk/privacy.ActionSignal) binds every field.
+// the shielded pool by the fee Bundle it embeds (whose only balance is the
+// uerth fee). The sighash (zk/orchard.Sighash) binds every field, and any
+// membership proof binds it as its signal.
 
 // Membership is an anonymous proof of holding a live identity-tree leaf. The
 // chain supplies scope, signal, exclusions and max_activation itself.
@@ -25,10 +26,11 @@ message Membership {
 
 // MsgRegister registers a passport. The passport proof's `address` input is
 // zk/privacy.RegistrationBinding(idc, pc_anml, pc_erth, Bytes(affiliate) | 0).
+// sighash fields: idc, pc_anml, Bytes(ciphertext_anml), pc_erth,
+// Bytes(ciphertext_erth), affiliate, Bytes(signature_algorithm), public signals.
 message MsgRegister {
-  earth.shielded.v1.Transfer fee = 1;
+  earth.shielded.v1.Bundle fee = 1;
   bytes proof = 2;
-  // Public inputs as decimal strings: [current_date, address, nullifier, dsc_key] for lean_poa.
   repeated string public_signals = 3;
   string signature_algorithm = 4;
   bytes dsc_der = 5;
@@ -41,26 +43,26 @@ message MsgRegister {
   reserved 11, 12;
 }
 
-// MsgClaimAnml mints 1 ANML to pc, once per person per UTC day.
+// sighash fields: day, pc, Bytes(ciphertext).
 message MsgClaimAnml {
-  earth.shielded.v1.Transfer fee = 1;
+  earth.shielded.v1.Bundle fee = 1;
   Membership membership = 2;
   uint64 day = 3;
   bytes pc = 4;
   bytes ciphertext = 5;
 }
 
-// MsgSetCaretaker casts, replaces or (empty) clears a caretaker split.
+// sighash fields: per entry, option_id then percent.
 message MsgSetCaretaker {
-  earth.shielded.v1.Transfer fee = 1;
+  earth.shielded.v1.Bundle fee = 1;
   Membership membership = 2;
   repeated earth.allocation.v1.AllocationWeight percentages = 3;
   uint64 max_activation = 4;
 }
 
-// MsgBindReferrer binds (or, empty, clears) the prover's referral address.
+// sighash fields: Bytes(address bytes).
 message MsgBindReferrer {
-  earth.shielded.v1.Transfer fee = 1;
+  earth.shielded.v1.Bundle fee = 1;
   Membership membership = 2;
   string address = 3;
   uint64 max_activation = 4;

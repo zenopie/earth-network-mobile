@@ -11,12 +11,16 @@ object ShieldMove {
     fun maxShield(publicUerth: Long, fee: Long): Long = (publicUerth - fee).coerceAtLeast(0)
 
     /**
-     * An ERTH unshield spends at most three notes, the fee paid from the same
-     * notes as the amount (PrivacyWallet.unshield). [fee] is the estimate the
-     * confirm sheet shows; the simulated fee is at most that.
+     * An unshield spends up to max_actions_per_bundle ERTH notes ([maxNotes]),
+     * so its most is their sum: at Max the fee comes out of the amount
+     * (PrivacyWallet.unshield feeFromAmount), the bundle releasing exactly
+     * what the notes hold.
      */
-    fun maxUnshield(notes: List<OwnedNote>, fee: Long): Long = maxUnshield(NoteSelection.maxSpendable(notes, "uerth", 3), fee)
+    fun maxUnshield(notes: List<OwnedNote>, maxNotes: Int): Long = NoteSelection.maxSpendable(notes, "uerth", maxNotes)
 
-    /** The same, from the three-note figure the wallet state already holds. */
-    fun maxUnshield(spendableUerth: Long, fee: Long): Long = (spendableUerth - fee).coerceAtLeast(0)
+    /**
+     * Whether an unshield of [amount] pays its fee from the amount: when the
+     * amount and an estimated [fee] would not both fit [spendable].
+     */
+    fun feeFromAmount(amount: Long, spendable: Long, fee: Long): Boolean = amount + fee > spendable
 }

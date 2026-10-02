@@ -23,6 +23,10 @@ interface PrivacyIndexer {
     fun identityZeroed(fromHeight: Long, limit: Int? = null): HeightPage<Long>
     fun rootsLatest(): LatestRoots
     fun rates(epoch: Long? = null): List<RateRow>
+    /** x/shieldedstaking's stake note tree, by position. */
+    fun stakeNotes(fromPos: Long, limit: Int? = null): StakeNotesPage
+    /** Its spent nullifiers, by height. */
+    fun stakeNullifiers(fromHeight: Long, limit: Int? = null): HeightPage<Fr>
 }
 
 data class IndexerStatus(val chainId: String?, val syncedHeight: Long, val syncedTime: Long?, val notes: Long, val identityLeaves: Long, val halted: String?)
@@ -39,7 +43,24 @@ data class IdentityPage(val rows: List<IdentityRow>, val nextIndex: Long, val si
 
 data class RootRecord(val root: Fr, val treeSize: Long, val height: Long, val time: Long)
 
-data class LatestRoots(val note: RootRecord?, val identity: RootRecord?, val syncedHeight: Long)
+data class LatestRoots(val note: RootRecord?, val identity: RootRecord?, val syncedHeight: Long, val stake: RootRecord? = null)
+
+/**
+ * A stake tree leaf. A note the chain minted carries its public [denom],
+ * [amount] and stake pc [spc] and no ciphertext; a note a stake proof created
+ * carries a ciphertext and none of the three.
+ */
+data class StakeNoteRow(
+    val position: Long,
+    val height: Long,
+    val cm: Fr,
+    val ciphertext: ByteArray,
+    val denom: String?,
+    val amount: Long?,
+    val spc: Fr?,
+)
+
+data class StakeNotesPage(val rows: List<StakeNoteRow>, val nextPos: Long, val complete: Boolean, val syncedHeight: Long)
 
 data class RateRow(val validator: String, val rate: String, val supply: String, val epoch: Long?, val height: Long)
 
@@ -99,7 +120,30 @@ class HttpPrivacyIndexer(private val base: String) : PrivacyIndexer {
         }
     }
 
+    override fun stakeNotes(fromPos: Long, limit: Int?): StakeNotesPage =
+        parseStakeNotes(get("/privacy/stake/notes?from_pos=$fromPos${q("limit", limit)}"))
+
+    override fun stakeNullifiers(fromHeight: Long, limit: Int?): HeightPage<Fr> =
+        parseHeights(get("/privacy/stake/nullifiers?from_height=$fromHeight${q("limit", limit)}")) { Fr.fromHex(it as String) }
+
     companion object {
+        fun parseStakeNotes(j: JSONObject): StakeNotesPage {
+            val a = j.getJSONArray("notes")
+            val rows = (0 until a.length()).map { i ->
+                val r = a.getJSONArray(i)
+                StakeNoteRow(
+                    position = r.getLong(0),
+                    height = r.getLong(1),
+                    cm = Fr.fromHex(r.getString(2)),
+                    ciphertext = if (r.isNull(3)) ByteArray(0) else r.getString(3).decodeBase64()?.toByteArray() ?: ByteArray(0),
+                    denom = if (r.isNull(4)) null else r.getString(4),
+                    amount = if (r.isNull(5)) null else r.get(5).toString().toLong(),
+                    spc = if (r.isNull(6)) null else Fr.fromHex(r.getString(6)),
+                )
+            }
+            return StakeNotesPage(rows, j.getLong("next_pos"), j.getBoolean("complete"), j.getLong("synced_height"))
+        }
+
         fun parseNotes(j: JSONObject): NotesPage {
             val a = j.getJSONArray("notes")
             val rows = (0 until a.length()).map { i ->
@@ -139,7 +183,7 @@ class HttpPrivacyIndexer(private val base: String) : PrivacyIndexer {
         }
 
         fun parseRoots(j: JSONObject): LatestRoots = LatestRoots(
-            root(j.optJSONObject("note")), root(j.optJSONObject("identity")), j.getLong("synced_height"),
+            root(j.optJSONObject("note")), root(j.optJSONObject("identity")), j.getLong("synced_height"), root(j.optJSONObject("stake")),
         )
     }
 }

@@ -8,13 +8,13 @@ import network.erth.wallet.passport.NoirProver
 import network.erth.wallet.privacy.zk.Fr
 
 /**
- * On-device proofs of the two privacy circuits (circuits/membership,
- * circuits/transfer), through the same noir_android build as
+ * On-device proofs of the privacy circuits (circuits/membership,
+ * circuits/action, circuits/stake), through the same noir_android build as
  * [network.erth.wallet.passport.PassportProver] — bb v5.0.0, in lockstep
  * with the chain's verifier; never float that pin.
  *
  * The chain never takes public inputs from the tx: it recomputes them from
- * the msg (x/shielded Transfer.PublicInputs, personhood
+ * the msg (zk/orchard Bundle.PublicInputs, StakeProof.PublicInputs, personhood
  * MembershipPublicInputs) and verifies the proof body against them. So the
  * public inputs noir_android returns ahead of the body are split off and
  * checked against the witness's own, and only the body is sent.
@@ -26,10 +26,11 @@ object PrivacyProver {
     const val PROOF_BYTES = 14_656
 
     private enum class Kind(val file: String, val srsSize: Int, val publicInputs: Int) {
-        // Twice the next power of two above the gate count (5,645 and
-        // 12,238), with the same headroom PassportProver gives lean_poa.
+        // Twice the next power of two above the gate count (5,645, 8,120
+        // and 9,647), with the same headroom PassportProver gives lean_poa.
         MEMBERSHIP("membership", 1 shl 14, 7),
-        TRANSFER("transfer", 1 shl 15, 11),
+        ACTION("action", 1 shl 14, 6),
+        STAKE("stake", 1 shl 15, 11),
     }
 
     private class Loaded(val circuit: Circuit, val vk: String)
@@ -37,7 +38,8 @@ object PrivacyProver {
     private val loaded = HashMap<Kind, Loaded>()
 
     /** Last prove times in ms, for the settings screen and the device test. */
-    @Volatile var lastTransferMs: Long = 0; private set
+    @Volatile var lastActionMs: Long = 0; private set
+    @Volatile var lastStakeMs: Long = 0; private set
     @Volatile var lastMembershipMs: Long = 0; private set
 
     @Synchronized
@@ -48,11 +50,21 @@ object PrivacyProver {
         Loaded(c, c.getVerificationKey())
     }
 
-    fun proveTransfer(context: Context, w: TransferWitness): ByteArray {
+    fun proveAction(context: Context, w: ActionWitness): ByteArray {
+        w.check()
         val t0 = SystemClock.elapsedRealtime()
-        return prove(context, Kind.TRANSFER, w.noirInputs(), w.publicInputs()).also {
-            lastTransferMs = SystemClock.elapsedRealtime() - t0
-            Log.i(TAG, "transfer proved in ${lastTransferMs}ms")
+        return prove(context, Kind.ACTION, w.noirInputs(), w.publicInputs()).also {
+            lastActionMs = SystemClock.elapsedRealtime() - t0
+            Log.i(TAG, "action proved in ${lastActionMs}ms")
+        }
+    }
+
+    fun proveStake(context: Context, w: StakeWitness): ByteArray {
+        w.check()
+        val t0 = SystemClock.elapsedRealtime()
+        return prove(context, Kind.STAKE, w.noirInputs(), w.publicInputs()).also {
+            lastStakeMs = SystemClock.elapsedRealtime() - t0
+            Log.i(TAG, "stake proved in ${lastStakeMs}ms")
         }
     }
 

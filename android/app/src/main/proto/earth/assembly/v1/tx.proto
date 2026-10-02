@@ -26,20 +26,20 @@ enum VoteOption {
 }
 
 message MsgVoteProposal {
-  earth.shielded.v1.Transfer fee = 1;
+  earth.shielded.v1.Bundle fee = 1;
   earth.personhood.v1.Membership membership = 2;
   uint64 proposal_id = 3;
   VoteOption option = 4;
 }
 
 message MsgProposeRemoval {
-  earth.shielded.v1.Transfer fee = 1;
+  earth.shielded.v1.Bundle fee = 1;
   earth.personhood.v1.Membership membership = 2;
   uint64 option_id = 3;
 }
 
 message MsgVoteRemoval {
-  earth.shielded.v1.Transfer fee = 1;
+  earth.shielded.v1.Bundle fee = 1;
   earth.personhood.v1.Membership membership = 2;
   uint64 option_id = 3;
   VoteOption option = 4;

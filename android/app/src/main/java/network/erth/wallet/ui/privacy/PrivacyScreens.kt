@@ -213,10 +213,12 @@ fun RemovalBallotsScreen(
 }
 
 /**
- * Shielded notes, per asset. A private payment can spend at most two notes of
- * its asset (the circuit has two slots), so many small notes can leave a
- * balance that is there but cannot be sent in one go. Merging joins the two
- * smallest (ERTH: up to three, the fee paid from them).
+ * Shielded notes, per asset. A private payment spends any number of notes,
+ * up to max_actions_per_bundle in one transaction, so merging only matters
+ * for a balance spread over more notes than that: it joins the smallest
+ * notes one transaction carries (ERTH pays its fee from them). Stake notes
+ * move two to a proof, so a stake balance spread over many merges by a
+ * restake.
  */
 @Composable
 fun NotesScreen(
@@ -227,9 +229,8 @@ fun NotesScreen(
 ) = Page(modifier) {
     val dimens = EarthTheme.dimens
     Note(
-        "A private payment spends at most two notes of an asset, plus one ERTH note for its fee " +
-            "(an ERTH payment up to three ERTH notes, fee included). " +
-            "Merge small notes so your whole balance stays spendable.",
+        "A private payment can spend many notes at once, of any assets. Merge only when a balance is " +
+            "spread over more notes than one transaction carries, or to tidy staked ERTH into fewer notes.",
     )
     Spacer(Modifier.height(dimens.space16))
     shielded.filterValues { it > 0 }.toSortedMap().forEach { (denom, amount) ->
@@ -241,7 +242,7 @@ fun NotesScreen(
                 EarthDetailRow("Notes", "$count")
                 Spacer(Modifier.height(dimens.space8))
                 EarthButton(
-                    text = "Merge two smallest",
+                    text = "Merge smallest notes",
                     onClick = { onMerge(denom) },
                     modifier = Modifier.fillMaxWidth(),
                     colors = EarthButtonDefaults.secondaryColors(),

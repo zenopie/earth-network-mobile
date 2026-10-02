@@ -7,7 +7,8 @@ import network.erth.wallet.privacy.chain.RestPrivateChain
 import network.erth.wallet.privacy.keys.PrivacyKeys
 import network.erth.wallet.privacy.prove.MembershipWitness
 import network.erth.wallet.privacy.prove.PrivacyProver
-import network.erth.wallet.privacy.prove.TransferWitness
+import network.erth.wallet.privacy.prove.ActionWitness
+import network.erth.wallet.privacy.prove.StakeWitness
 import network.erth.wallet.privacy.sync.HttpPrivacyIndexer
 import network.erth.wallet.privacy.sync.PrivacyStore
 import network.erth.wallet.privacy.tx.Prover
@@ -50,7 +51,8 @@ object PrivacySession {
     fun clear() { current = null }
 
     private class AndroidProver(private val context: Context) : Prover {
-        override fun proveTransfer(w: TransferWitness): ByteArray = PrivacyProver.proveTransfer(context, w)
+        override fun proveAction(w: ActionWitness): ByteArray = PrivacyProver.proveAction(context, w)
+        override fun proveStake(w: StakeWitness): ByteArray = PrivacyProver.proveStake(context, w)
         override fun proveMembership(w: MembershipWitness): ByteArray = PrivacyProver.proveMembership(context, w)
     }
 
@@ -70,7 +72,7 @@ object PrivacySession {
         }
 
         override fun positions() = PrivacyQueries.positions().map {
-            PrivacyChainReads.Position(it.id, it.validator, it.derth, it.pubkey, it.nonce, it.splits, it.createdHeight)
+            PrivacyChainReads.Position(it.id, it.validator, it.derth, it.ownerTag, it.splits, it.createdHeight)
         }
     }
 }

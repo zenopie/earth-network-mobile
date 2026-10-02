@@ -115,7 +115,7 @@ fun SendFlow(
                 tx.requestPrivate(
                     details = TxConfirmDetails(
                         action = "Send ${selected.symbol} privately",
-                        msgTypeUrl = PrivateMsgs.TRANSFER,
+                        msgTypeUrl = PrivateMsgs.SEND,
                         balanceUerth = 0L,
                         amountLabel = "Amount",
                         amountValue = "$amount ${selected.symbol}",

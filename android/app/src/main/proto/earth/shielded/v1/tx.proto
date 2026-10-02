@@ -6,26 +6,37 @@ option java_multiple_files = true;
 
 import "cosmos/base/v1beta1/coin.proto";
 
-// Clean proto3 mirrors of the chain's x/shielded messages (wire-compatible;
+// Clean proto3 mirrors of the chain's x/shielded types (wire-compatible;
 // gogoproto/cosmos_proto annotations omitted so protobuf-javalite generates
-// cleanly). PrivateMsgsEncodingTest checks every one byte for byte against
-// the chain's own gogoproto Marshal.
+// cleanly on Android). The chain's earth/shielded/v1/shielded.proto and
+// tx.proto are canonical.
 
-// Transfer is one 3-in/3-out transfer proof and its public inputs. Public
-// input order: root, nf[3], cm_out[3], fee, v_pub_out, asset_pub, signal; the
-// chain computes asset_pub from denom_out and signal from the enclosing msg.
-message Transfer {
-  bytes proof = 1;
-  bytes root = 2;
-  repeated bytes nullifiers = 3;
-  repeated bytes commitments = 4;
-  repeated bytes ciphertexts = 5;
-  uint64 fee = 6;
-  uint64 value_out = 7;
-  string denom_out = 8;
+// Action is one spend and one output of a bundle (circuits/action). Public
+// inputs: anchor, nullifier, commitment, cv_x, cv_y, sighash.
+message Action {
+  bytes anchor = 1;
+  bytes nullifier = 2;
+  bytes commitment = 3;
+  // cv = v_spend*G(asset_spend) - v_out*G(asset_out) + rcv*R, x || y.
+  bytes cv = 4;
+  bytes ciphertext = 5;
+  bytes proof = 6;
 }
 
-// MsgShield moves amount from sender into the pool as one note to pc. Signed.
+// ValueBalance is value of one denom leaving the pool through a bundle.
+message ValueBalance {
+  string denom = 1;
+  uint64 amount = 2;
+}
+
+// Bundle: >= 2 actions, one positive balance per denom, and the binding
+// signature (Rn.x || Rn.y || s, 96 bytes) over the msg's sighash.
+message Bundle {
+  repeated Action actions = 1;
+  repeated ValueBalance balances = 2;
+  bytes binding_sig = 3;
+}
+
 message MsgShield {
   string sender = 1;
   cosmos.base.v1beta1.Coin amount = 2;
@@ -33,10 +44,11 @@ message MsgShield {
   bytes ciphertext = 4;
 }
 
-// MsgTransfer is a private send, optionally unshielding value_out to
-// receiver. Unsigned; its fee is the transfer's (or fee_from_output).
-message MsgTransfer {
-  Transfer transfer = 1;
+// MsgSend: a private send and optionally an unshield. The bundle's uerth
+// balance pays fee; every other unit of every balance goes to receiver.
+// sighash fields: Bytes(receiver address bytes), fee.
+message MsgSend {
+  Bundle bundle = 1;
   string receiver = 2;
-  uint64 fee_from_output = 3;
+  uint64 fee = 3;
 }

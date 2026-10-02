@@ -5,6 +5,7 @@ import network.erth.wallet.privacy.note.NoteCipher
 import network.erth.wallet.privacy.note.AssetDenoms
 import network.erth.wallet.privacy.note.NotePlaintext
 import network.erth.wallet.privacy.note.OwnedNote
+import network.erth.wallet.privacy.note.OwnedStakeNote
 import network.erth.wallet.privacy.zk.Fr
 import network.erth.wallet.privacy.zk.Privacy
 
@@ -17,7 +18,11 @@ import network.erth.wallet.privacy.zk.Privacy
  *     this wallet's notes to mark them spent;
  *  3. every identity leaf, and every zeroing since the last sync, into the
  *     local identity tree;
- *  4. the local roots checked against the indexer's latest recorded roots.
+ *  4. the stake tree the same way: every stake note (one the chain minted is
+ *     ours if its public stake pc is one of our stake self-mint pcs, one a
+ *     stake proof created if its stake ciphertext opens), every stake
+ *     nullifier;
+ *  5. the local roots checked against the indexer's latest recorded roots.
  *
  * Nothing is ever requested about one note or one leaf: the trees, and with
  * them this wallet's Merkle paths, are built here from the full streams.
@@ -36,6 +41,7 @@ class WalletSync(
         val spent: List<OwnedNote>,
         val noteRoot: Fr,
         val identityRoot: Fr,
+        val newStake: List<OwnedStakeNote> = emptyList(),
         val identityStatus: IdentityStatus,
     )
 
@@ -69,6 +75,8 @@ class WalletSync(
         val s = store.state
         val newNotes = syncNotes(s, pageLimit)
         val spent = syncNullifiers(s, pageLimit)
+        val newStake = syncStakeNotes(s, pageLimit)
+        syncStakeNullifiers(s, pageLimit)
         releaseStalePending(s)
         syncIdentity(s, pageLimit)
         val roots = indexer.rootsLatest()
@@ -82,8 +90,13 @@ class WalletSync(
                 throw Inconsistent("identity tree root differs from the indexer's at ${r.treeSize} leaves")
             }
         }
+        roots.stake?.let { r ->
+            if (r.treeSize == store.stakeTree.size && r.root != store.stakeTree.root()) {
+                throw Inconsistent("stake tree root differs from the indexer's at ${r.treeSize} notes")
+            }
+        }
         store.save()
-        return Result(s.notesHeight, newNotes, spent, store.noteTree.root(), store.identityTree.root(), identityStatus())
+        return Result(s.notesHeight, newNotes, spent, store.noteTree.root(), store.identityTree.root(), newStake, identityStatus())
     }
 
     private fun syncNotes(s: PrivacyState, limit: Int?): List<OwnedNote> {
@@ -180,6 +193,73 @@ class WalletSync(
         for (i in s.notes.indices) {
             val n = s.notes[i]
             if (n.unspent && n.pendingAt != null && now - n.pendingAt > PENDING_TIMEOUT_S) s.notes[i] = n.copy(pendingAt = null)
+        }
+        for (i in s.stakeNotes.indices) {
+            val n = s.stakeNotes[i]
+            if (n.unspent && n.pendingAt != null && now - n.pendingAt > PENDING_TIMEOUT_S) s.stakeNotes[i] = n.copy(pendingAt = null)
+        }
+    }
+
+    private fun syncStakeNotes(s: PrivacyState, limit: Int?): List<OwnedStakeNote> {
+        val found = ArrayList<OwnedStakeNote>()
+        while (true) {
+            val page = indexer.stakeNotes(s.stakeNext, limit)
+            if (page.rows.isNotEmpty()) {
+                page.rows.forEachIndexed { i, r ->
+                    if (r.position != s.stakeNext + i) throw Inconsistent("stake note at position ${r.position}, expected ${s.stakeNext + i}")
+                }
+                store.stakeTree.appendAll(page.rows.map { it.cm })
+                for (r in page.rows) openStake(r)?.let { found.add(it); s.stakeNotes.add(it) }
+                s.stakeNext += page.rows.size
+            }
+            s.stakeHeight = maxOf(s.stakeHeight, page.syncedHeight)
+            if (!page.complete) break
+        }
+        return found
+    }
+
+    private val stakePcs = HashMap<Int, Fr>()
+
+    private fun stakeMintPc(c: Int): Fr = stakePcs.getOrPut(c) { keys.stakeMintPc(c) }
+
+    /**
+     * A stake row is ours if the chain minted it to one of our stake
+     * self-mint pcs (the next [MINT_GAP] past the last used), its public
+     * denom and amount reproducing its cm; or if a stake proof created it
+     * and its stake ciphertext opens with our ek and reproduces its cm.
+     */
+    internal fun openStake(r: StakeNoteRow): OwnedStakeNote? {
+        val s = store.state
+        val (denom, amount, rho, rcm) = if (r.spc != null) {
+            val denom = r.denom ?: return null
+            val amount = r.amount ?: return null
+            s.denoms.add(denom)
+            val c = (0 until s.nextStakeMintCounter + MINT_GAP).firstOrNull { stakeMintPc(it) == r.spc } ?: return null
+            if (Privacy.stakeCm(Privacy.assetId(denom), amount, r.spc) != r.cm) return null
+            s.nextStakeMintCounter = maxOf(s.nextStakeMintCounter, c + 1)
+            val (rho, rcm) = keys.stakeMintSecrets(c)
+            StakeOpen(denom, amount, rho, rcm)
+        } else {
+            val o = NoteCipher.tryDecryptStake(r.ciphertext, r.cm, keys) ?: return null
+            StakeOpen(AssetDenoms(s.denoms).resolve(o.asset), o.amount, o.rho, o.rcm)
+        }
+        if (amount == 0L) return null
+        return OwnedStakeNote(r.position, r.height, denom, amount, rho, rcm, r.cm, Privacy.stakeNf(keys.nk, rho, r.position))
+    }
+
+    private data class StakeOpen(val denom: String, val amount: Long, val rho: Fr, val rcm: Fr)
+
+    private fun syncStakeNullifiers(s: PrivacyState, limit: Int?) {
+        val mine = s.stakeNotes.withIndex().filter { it.value.unspent }.associate { it.value.nf to it.index }
+        val ceiling = s.stakeHeight
+        while (s.stakeNullifiersNext <= ceiling) {
+            val page = indexer.stakeNullifiers(s.stakeNullifiersNext, limit)
+            for ((h, nfs) in page.blocks) {
+                if (h > ceiling) break
+                for (nf in nfs) mine[nf]?.let { i -> s.stakeNotes[i] = s.stakeNotes[i].copy(spentHeight = h) }
+            }
+            s.stakeNullifiersNext = minOf(page.nextHeight, ceiling + 1)
+            if (!page.complete) break
         }
     }
 

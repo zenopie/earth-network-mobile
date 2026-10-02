@@ -22,8 +22,13 @@ object Privacy {
     val TAG_SIGNAL = tag("earth.signal")
     val TAG_BYTES = tag("earth.bytes")
     val TAG_SCOPE = tag("earth.scope")
+    // The stake note tree (x/shieldedstaking, circuits/stake).
+    val TAG_STAKE = tag("earth.stake")
+    val TAG_SPC = tag("earth.spc")
+    val TAG_SNF = tag("earth.snf")
+    val TAG_OTAG = tag("earth.otag")
 
-    /** The transfer circuit's fee asset, privacy_core::ASSET_ERTH. */
+    /** The fee asset, privacy_core::ASSET_ERTH. */
     val ASSET_ERTH: Fr by lazy { assetId("uerth") }
 
     private fun tag(s: String): Fr = Fr.of(BigInteger(1, s.toByteArray(Charsets.US_ASCII)))
@@ -57,6 +62,21 @@ object Privacy {
         return h(TAG_NF, nk, rho, u64(position))
     }
 
+    /** A stake note's hidden owner: H(TAG_SPC, owner_pk, rho, rcm). */
+    fun stakePc(ownerPk: Fr, rho: Fr, rcm: Fr): Fr = h(TAG_SPC, ownerPk, rho, rcm)
+
+    /** A stake note: H(TAG_STAKE, AssetID(stake denom), amount, spc). */
+    fun stakeCm(asset: Fr, amount: Long, spc: Fr): Fr = h(TAG_STAKE, asset, u64(amount), spc)
+
+    /** A stake note's nullifier: H(TAG_SNF, nk, rho, position), position a u32. */
+    fun stakeNf(nk: Fr, rho: Fr, position: Long): Fr {
+        require(position in 0..0xffffffffL) { "position is a u32" }
+        return h(TAG_SNF, nk, rho, u64(position))
+    }
+
+    /** A Groundworks position's owner tag: H(TAG_OTAG, owner_pk, salt). */
+    fun ownerTag(ownerPk: Fr, salt: Fr): Fr = h(TAG_OTAG, ownerPk, salt)
+
     fun assetId(denom: String): Fr {
         val b = denom.toByteArray(Charsets.UTF_8)
         return Poseidon2.hash(listOf(TAG_ASSET, u64(b.size.toLong())) + chunks31(b))
@@ -79,34 +99,6 @@ object Privacy {
     /** H(TAG_SIGNAL, Bytes(msg_type), Bytes(chain_id), fields...). */
     fun signal(msgType: String, chainId: String, fields: List<Fr>): Fr =
         Poseidon2.hash(listOf(TAG_SIGNAL, bytes(msgType.toByteArray()), bytes(chainId.toByteArray())) + fields)
-
-    fun spendSignal(msgType: String, chainId: String, ciphertexts: List<ByteArray>, extra: List<Fr>): Fr {
-        require(ciphertexts.size == 3)
-        return signal(msgType, chainId, ciphertexts.map(::bytes) + extra)
-    }
-
-    const val MSG_TRANSFER_TYPE = "/earth.shielded.v1.MsgTransfer"
-
-    fun transferSignal(chainId: String, receiver: ByteArray?, ciphertexts: List<ByteArray>, feeFromOutput: Long): Fr =
-        spendSignal(MSG_TRANSFER_TYPE, chainId, ciphertexts, listOf(bytes(receiver ?: ByteArray(0)), u64(feeFromOutput)))
-
-    fun multiSpendSignal(
-        msgType: String,
-        chainId: String,
-        ciphertexts: List<List<ByteArray>>,
-        nullifiers: List<List<Fr>>,
-        extra: List<Fr>,
-    ): Fr {
-        val f = ArrayList<Fr>()
-        for (cts in ciphertexts) { require(cts.size == 3); cts.forEach { f.add(bytes(it)) } }
-        for (nfs in nullifiers) { require(nfs.size == 3); f.addAll(nfs) }
-        return signal(msgType, chainId, f + extra)
-    }
-
-    fun actionSignal(msgType: String, chainId: String, ciphertexts: List<ByteArray>, nullifiers: List<Fr>, extra: List<Fr>): Fr {
-        require(nullifiers.size == 3)
-        return spendSignal(msgType, chainId, ciphertexts, nullifiers + extra)
-    }
 
     fun scope(kind: String, vararg args: Fr): Fr =
         Poseidon2.hash(listOf(TAG_SCOPE, bytes(kind.toByteArray())) + args)

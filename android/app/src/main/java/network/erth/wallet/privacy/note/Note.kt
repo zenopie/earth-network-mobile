@@ -80,3 +80,28 @@ class AssetDenoms(known: Collection<String> = emptyList()) {
 
     fun resolve(asset: Fr): String = byId[asset] ?: (NotePlaintext.UNRESOLVED_PREFIX + asset.toHex())
 }
+
+/**
+ * A stake note the wallet owns (x/shieldedstaking's stake tree): delegated
+ * stake (derth/<valoper>) or an unbonding claim (unbond/<valoper>/<epoch>).
+ * Owner-locked: it can be merged, split, undelegated, voted or locked by its
+ * owner, never sent.
+ *
+ *     spc = H(TAG_SPC, owner_pk, rho, rcm)    cm = H(TAG_STAKE, AssetID(denom), amount, spc)
+ *     nf  = H(TAG_SNF, nk, rho, position)
+ */
+data class OwnedStakeNote(
+    val position: Long,
+    val height: Long,
+    val denom: String,
+    val amount: Long,
+    val rho: Fr,
+    val rcm: Fr,
+    val cm: Fr,
+    val nf: Fr,
+    val spentHeight: Long? = null,
+    val pendingAt: Long? = null,
+) {
+    val unspent: Boolean get() = spentHeight == null
+    val spendable: Boolean get() = unspent && pendingAt == null && amount > 0
+}

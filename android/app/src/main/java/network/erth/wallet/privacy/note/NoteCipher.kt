@@ -43,6 +43,18 @@ import java.security.SecureRandom
  * not know it), so the binding is the recipient's check that
  * CM(asset, value, PC(owner_pk, rho, rcm)) is the note's cm, with the asset
  * and value the chain published for that position.
+ *
+ * "earth stake note v1", for a stake note a stake proof creates (a restake's
+ * outputs, an undelegation's or a lock's change). Stake notes are
+ * owner-locked, so it is always encrypted to the wallet's own address, for
+ * its other devices and for recovery from the mnemonic:
+ *
+ *     ct    = epk (32) || ChaCha20-Poly1305(key, nonce = 0^12, aad = empty, pt)      153 bytes
+ *     key   = HKDF-SHA256(ikm = X25519(esk, ek_pub), salt = "earth.stake.v1", info = epk || cm)
+ *     pt    = 0x03 || asset_id (32) || amount (u64 BE) || rho (32) || rcm (32)
+ *
+ * accepted only if StakeCM(asset, amount, StakePC(owner_pk, rho, rcm)) is
+ * the note's cm.
  */
 object NoteCipher {
     const val VERSION: Byte = 1
@@ -54,6 +66,10 @@ object NoteCipher {
     const val BLIND_PLAINTEXT_BYTES = 1 + 32 + 32 + MEMO_BYTES
     const val BLIND_CIPHERTEXT_BYTES = 32 + BLIND_PLAINTEXT_BYTES + 16
     private val BLIND_SALT = "earth.note.v2".toByteArray()
+    const val STAKE_VERSION: Byte = 3
+    const val STAKE_PLAINTEXT_BYTES = 1 + 32 + 8 + 32 + 32
+    const val STAKE_CIPHERTEXT_BYTES = 32 + STAKE_PLAINTEXT_BYTES + 16
+    private val STAKE_SALT = "earth.stake.v1".toByteArray()
     private val rng = SecureRandom()
 
     /** Encrypts [note] to [to]; cm is the note's commitment under to's owner key. */
@@ -153,6 +169,50 @@ object NoteCipher {
             val memo = pt.copyOfRange(65, pt.size)
             val n = NotePlaintext(denom, value, rho, rcm, memo.copyOf(memo.indexOfLast { it.toInt() != 0 } + 1))
             if (n.cm(ownerPk) != cm) null else n
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // ---- stake notes ----
+
+    /** A stake note's opening, as its stake ciphertext carries it. */
+    data class StakeOpening(val asset: Fr, val amount: Long, val rho: Fr, val rcm: Fr)
+
+    /** Encrypts a stake note of [ownerPk] to [ekPub] (the wallet's own). */
+    fun encryptStake(o: StakeOpening, ekPub: ByteArray, cm: Fr): ByteArray =
+        sealStake(X25519PrivateKeyParameters(rng), ekPub, cm, stakePlaintext(o))
+
+    /** Deterministic stake encryption: for golden vectors only. */
+    internal fun encryptStakeWith(esk: ByteArray, o: StakeOpening, ekPub: ByteArray, cm: Fr): ByteArray =
+        sealStake(X25519PrivateKeyParameters(esk, 0), ekPub, cm, stakePlaintext(o))
+
+    private fun sealStake(esk: X25519PrivateKeyParameters, ekPub: ByteArray, cm: Fr, pt: ByteArray): ByteArray {
+        val epk = esk.generatePublicKey().encoded
+        val shared = ByteArray(32)
+        X25519Agreement().apply { init(esk) }.calculateAgreement(X25519PublicKeyParameters(ekPub, 0), shared, 0)
+        return epk + aead(true, hkdf(shared, STAKE_SALT, epk + cm.toBytes()), pt)
+    }
+
+    private fun stakePlaintext(o: StakeOpening): ByteArray = ByteBuffer.allocate(STAKE_PLAINTEXT_BYTES)
+        .put(STAKE_VERSION).put(o.asset.toBytes()).putLong(o.amount).put(o.rho.toBytes()).put(o.rcm.toBytes()).array()
+
+    /** The stake note if [ct] opens with our ek for [cm] and recomputes it under our owner key; else null. */
+    fun tryDecryptStake(ct: ByteArray, cm: Fr, keys: PrivacyKeys): StakeOpening? {
+        if (ct.size != STAKE_CIPHERTEXT_BYTES) return null
+        return try {
+            val epk = ct.copyOf(32)
+            val shared = ByteArray(32)
+            X25519Agreement().apply { init(keys.ek()) }.calculateAgreement(X25519PublicKeyParameters(epk, 0), shared, 0)
+            val pt = aead(false, hkdf(shared, STAKE_SALT, epk + cm.toBytes()), ct.copyOfRange(32, ct.size))
+            if (pt.size != STAKE_PLAINTEXT_BYTES || pt[0] != STAKE_VERSION) return null
+            val b = ByteBuffer.wrap(pt, 1, STAKE_PLAINTEXT_BYTES - 1)
+            val asset = Fr.fromBytes(ByteArray(32).also { b.get(it) })
+            val amount = b.long
+            val rho = Fr.fromBytes(ByteArray(32).also { b.get(it) })
+            val rcm = Fr.fromBytes(ByteArray(32).also { b.get(it) })
+            if (Privacy.stakeCm(asset, amount, Privacy.stakePc(keys.ownerPk, rho, rcm)) != cm) null
+            else StakeOpening(asset, amount, rho, rcm)
         } catch (e: Exception) {
             null
         }

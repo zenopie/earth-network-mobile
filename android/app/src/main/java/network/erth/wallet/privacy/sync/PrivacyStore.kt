@@ -2,6 +2,7 @@ package network.erth.wallet.privacy.sync
 
 import network.erth.wallet.privacy.note.NotePlaintext
 import network.erth.wallet.privacy.note.OwnedNote
+import network.erth.wallet.privacy.note.OwnedStakeNote
 import network.erth.wallet.privacy.zk.FileNodeStore
 import network.erth.wallet.privacy.zk.Fr
 import network.erth.wallet.privacy.zk.MemNodeStore
@@ -49,10 +50,17 @@ class PrivacyState {
     var referrerBoundAt: Long = 0
     /** Unbond denoms whose claim the chain refused as not yet matured, to when the automation next tries. */
     val unbondRetryAt: MutableMap<String, Long> = sortedMapOf()
-    /** Next unused position-key index. */
-    var nextPositionKey: Int = 0
+    /** Next unused Groundworks owner-tag counter (PrivacyKeys.otagSalt). */
+    var nextOtagCounter: Int = 0
     /** Next unused self-mint counter (PrivacyKeys.mintSecrets). */
     var nextMintCounter: Int = 0
+    /** Next unused stake self-mint counter (PrivacyKeys.stakeMintSecrets). */
+    var nextStakeMintCounter: Int = 0
+    /** The stake tree's stream cursors and this wallet's stake notes. */
+    var stakeNext: Long = 0
+    var stakeHeight: Long = 0
+    var stakeNullifiersNext: Long = 0
+    val stakeNotes: MutableList<OwnedStakeNote> = ArrayList()
     /** Every denom seen in a public amount: resolves the asset ids ciphertexts carry. */
     val denoms: MutableSet<String> = sortedSetOf()
 
@@ -70,8 +78,11 @@ class PrivacyState {
         put("caretaker_split", JSONObject().apply { caretakerSplit.forEach { (k, v) -> put(k.toString(), v) } })
         put("referrer_address", referrerAddress); put("referrer_bound_at", referrerBoundAt)
         put("unbond_retry_at", JSONObject().apply { unbondRetryAt.forEach { (k, v) -> put(k, v) } })
-        put("next_position_key", nextPositionKey)
+        put("next_otag_counter", nextOtagCounter)
         put("next_mint_counter", nextMintCounter)
+        put("next_stake_mint_counter", nextStakeMintCounter)
+        put("stake_next", stakeNext); put("stake_height", stakeHeight); put("stake_nullifiers_next", stakeNullifiersNext)
+        put("stake_notes", JSONArray().apply { stakeNotes.forEach { put(stakeJson(it)) } })
         put("denoms", JSONArray(denoms.toList()))
     }
 
@@ -90,10 +101,27 @@ class PrivacyState {
             caretakerSplit = j.optJSONObject("caretaker_split")?.let { o -> o.keys().asSequence().associate { it.toLong() to o.getLong(it) } } ?: emptyMap()
             referrerAddress = j.optString("referrer_address"); referrerBoundAt = j.optLong("referrer_bound_at")
             j.optJSONObject("unbond_retry_at")?.let { o -> o.keys().forEach { unbondRetryAt[it] = o.getLong(it) } }
-            nextPositionKey = j.optInt("next_position_key")
+            nextOtagCounter = j.optInt("next_otag_counter")
             nextMintCounter = j.optInt("next_mint_counter")
+            nextStakeMintCounter = j.optInt("next_stake_mint_counter")
+            stakeNext = j.optLong("stake_next"); stakeHeight = j.optLong("stake_height"); stakeNullifiersNext = j.optLong("stake_nullifiers_next")
+            j.optJSONArray("stake_notes")?.let { a -> for (i in 0 until a.length()) stakeNotes.add(stakeFromJson(a.getJSONObject(i))) }
             j.optJSONArray("denoms")?.let { a -> for (i in 0 until a.length()) denoms.add(a.getString(i)) }
         }
+
+        private fun stakeJson(n: OwnedStakeNote) = JSONObject()
+            .put("position", n.position).put("height", n.height).put("denom", n.denom).put("amount", n.amount)
+            .put("rho", n.rho.toHex()).put("rcm", n.rcm.toHex()).put("cm", n.cm.toHex()).put("nf", n.nf.toHex())
+            .put("spent_height", n.spentHeight ?: JSONObject.NULL)
+            .put("pending_at", n.pendingAt ?: JSONObject.NULL)
+
+        private fun stakeFromJson(o: JSONObject) = OwnedStakeNote(
+            position = o.getLong("position"), height = o.getLong("height"), denom = o.getString("denom"), amount = o.getLong("amount"),
+            rho = Fr.fromHex(o.getString("rho")), rcm = Fr.fromHex(o.getString("rcm")),
+            cm = Fr.fromHex(o.getString("cm")), nf = Fr.fromHex(o.getString("nf")),
+            spentHeight = if (o.isNull("spent_height")) null else o.getLong("spent_height"),
+            pendingAt = if (o.isNull("pending_at")) null else o.getLong("pending_at"),
+        )
 
         private fun noteJson(n: OwnedNote) = JSONObject()
             .put("position", n.position).put("height", n.height).put("cm", n.cm.toHex()).put("nf", n.nf.toHex())
@@ -118,12 +146,14 @@ class PrivacyState {
 
 /**
  * The wallet's privacy data on disk (or in memory, for tests): [state] and the
- * two trees. One directory per wallet, named by a hash of its owner key so
- * wallets in the same app never share notes.
+ * trees. One directory per wallet, named by a hash of its owner key so
+ * wallets in the same app never share notes. Three trees: the pool's notes,
+ * the identity leaves and the stake notes.
  */
 class PrivacyStore private constructor(private val dir: File?) {
     private val noteNodes: NodeStore = dir?.let { FileNodeStore(File(it, "notes")) } ?: MemNodeStore()
     private val identityNodes: NodeStore = dir?.let { FileNodeStore(File(it, "identity")) } ?: MemNodeStore()
+    private val stakeNodes: NodeStore = dir?.let { FileNodeStore(File(it, "stake")) } ?: MemNodeStore()
 
     var state: PrivacyState = dir?.let { File(it, STATE).takeIf(File::exists) }
         ?.let { runCatching { PrivacyState.fromJson(JSONObject(it.readText())) }.getOrNull() } ?: PrivacyState()
@@ -131,11 +161,12 @@ class PrivacyStore private constructor(private val dir: File?) {
 
     val noteTree = MerkleTree(noteNodes, state.notesNext)
     val identityTree = MerkleTree(identityNodes, state.identityNext)
+    val stakeTree = MerkleTree(stakeNodes, state.stakeNext)
 
     /** Persists state after the trees, so a crash between the two leaves state behind (and resyncs) rather than ahead. */
     @Synchronized
     fun save() {
-        noteTree.flush(); identityTree.flush()
+        noteTree.flush(); identityTree.flush(); stakeTree.flush()
         val d = dir ?: return
         val tmp = File(d, "$STATE.tmp")
         tmp.writeText(state.toJson().toString())
@@ -151,11 +182,13 @@ class PrivacyStore private constructor(private val dir: File?) {
     fun reset(chainId: String?) {
         noteTree.clear()
         identityTree.clear()
+        stakeTree.clear()
         val old = state
         state = PrivacyState().apply {
             this.chainId = chainId
-            nextPositionKey = old.nextPositionKey
+            nextOtagCounter = old.nextOtagCounter
             nextMintCounter = old.nextMintCounter
+            nextStakeMintCounter = old.nextStakeMintCounter
             if (old.chainId == chainId) {
                 // The leaf index cannot be found again without the registration tx.
                 identity = old.identity

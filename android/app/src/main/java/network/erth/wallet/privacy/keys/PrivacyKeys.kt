@@ -22,7 +22,6 @@ import javax.crypto.spec.SecretKeySpec
  *     m/2026'/118'/0'/0'   id_secret   (identity: idc = H(TAG_ID, id_secret))
  *     m/2026'/118'/0'/1'   nk          (spending: owner_pk = H(TAG_OWNER, nk))
  *     m/2026'/118'/0'/2'   ek          (x25519 note-encryption key)
- *     m/2026'/118'/1'/i'   position key i (one-time secp256k1, Groundworks)
  *
  * A child's 32-byte private key k becomes a secret by
  * HMAC-SHA512(key = "earth.privacy.v1", label || k): reduced mod p for the
@@ -32,7 +31,6 @@ class PrivacyKeys private constructor(
     val idSecret: Fr,
     val nk: Fr,
     private val ekSecret: ByteArray,
-    private val positionRoot: DeterministicKey,
 ) {
     val idc: Fr = Privacy.idc(idSecret)
     val ownerPk: Fr = Privacy.ownerPk(nk)
@@ -62,11 +60,37 @@ class PrivacyKeys private constructor(
     /** pc of self-mint [counter]. */
     fun mintPc(counter: Int): Fr = mintSecrets(counter).let { (rho, rcm) -> Privacy.pc(ownerPk, rho, rcm) }
 
-    /** Groundworks position key [index]: a 32-byte secp256k1 private key. */
-    fun positionKey(index: Int): org.bitcoinj.core.ECKey =
-        org.bitcoinj.core.ECKey.fromPrivate(
-            HDKeyDerivation.deriveChildKey(positionRoot, ChildNumber(index, true)).privKey,
-        )
+    private fun counted(label: String, nk: Fr, counter: Int): Fr {
+        val c = java.nio.ByteBuffer.allocate(4).putInt(counter).array()
+        return Fr.fromWideBytes(hmac(label.toByteArray() + nk.toBytes() + c))
+    }
+
+    /**
+     * rho and rcm of stake self-mint [counter]: the stake pc a stake proof
+     * names as spc_mint for a stake note the chain mints to us (a
+     * delegation's derth, an undelegation's claim, a stake vote's re-mint, an
+     * unlocked position). The chain publishes the minted note's denom, amount
+     * and spc, so sync finds it by its spc alone:
+     *
+     *     rho = HMAC-SHA512("earth.privacy.v1", "stake-rho" || nk (32) || counter u32 BE) mod p
+     *     rcm = HMAC-SHA512("earth.privacy.v1", "stake-rcm" || nk (32) || counter u32 BE) mod p
+     */
+    fun stakeMintSecrets(counter: Int): Pair<Fr, Fr> = counted("stake-rho", nk, counter) to counted("stake-rcm", nk, counter)
+
+    /** spc of stake self-mint [counter]. */
+    fun stakeMintPc(counter: Int): Fr = stakeMintSecrets(counter).let { (rho, rcm) -> Privacy.stakePc(ownerPk, rho, rcm) }
+
+    /**
+     * Groundworks position [counter]'s owner-tag salt: a position stores
+     * H(TAG_OTAG, owner_pk, salt) and its owner proves it again to update,
+     * unlock or vote it. Found again from the mnemonic by recomputing the
+     * tags of counters 0 ... last+gap against the public positions.
+     *
+     *     salt = HMAC-SHA512("earth.privacy.v1", "otag-salt" || nk (32) || counter u32 BE) mod p
+     */
+    fun otagSalt(counter: Int): Fr = counted("otag-salt", nk, counter)
+
+    fun ownerTag(counter: Int): Fr = Privacy.ownerTag(ownerPk, otagSalt(counter))
 
     companion object {
         const val PURPOSE = 2026
@@ -91,7 +115,6 @@ class PrivacyKeys private constructor(
                 idSecret = Fr.fromWideBytes(secret(0, "id_secret")),
                 nk = Fr.fromWideBytes(secret(1, "nk")),
                 ekSecret = ek,
-                positionRoot = hard(coin, 1),
             )
         }
 

@@ -47,12 +47,20 @@ object PrivacyQueries {
         }
     }
 
-    /** LP share supply of [poolId] (bank supply of dexlp/<id>): the denominator a deposit's shares are priced by. */
+    /**
+     * LP share supply of [poolId] (bank supply of dexlp/<id>): the
+     * denominator a deposit's shares are priced by. Private shares are held
+     * by the shielded pool's module account, so they count here too.
+     */
     fun lpShareSupply(poolId: Long): java.math.BigInteger =
         get("/cosmos/bank/v1beta1/supply/by_denom?denom=dexlp/$poolId").optJSONObject("amount")?.optString("amount")
             ?.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO
 
     fun shieldedMinFee(): Long = get("/earth/shielded/v1/params").getJSONObject("params").optString("min_fee", "1000").toLong()
+
+    /** x/shielded params.max_actions_per_bundle (default 16). */
+    fun maxActionsPerBundle(): Int =
+        get("/earth/shielded/v1/params").getJSONObject("params").optString("max_actions_per_bundle", "16").toIntOrNull()?.takeIf { it >= 2 } ?: 16
 
     data class PersonhoodParams(val caretakerVoteSeconds: Long, val identityRootWindowSeconds: Long, val registrationValiditySeconds: Long)
 
@@ -132,13 +140,12 @@ object PrivacyQueries {
         val id: Long,
         val validator: String,
         val derth: Long,
-        val pubkey: ByteArray,
-        val nonce: Long,
+        val ownerTag: Fr,
         val splits: Map<Long, Long>,
         val createdHeight: Long,
     )
 
-    /** Every Groundworks position (public); the wallet finds its own by pubkey. */
+    /** Every Groundworks position (public); the wallet finds its own by owner tag. */
     fun positions(): List<Position> {
         val out = ArrayList<Position>()
         var key: String? = null
@@ -151,8 +158,7 @@ object PrivacyQueries {
                 out.add(
                     Position(
                         id = p.long("id"), validator = p.optString("validator"), derth = p.long("derth"),
-                        pubkey = p.optString("pubkey").decodeBase64()?.toByteArray() ?: ByteArray(0),
-                        nonce = p.long("nonce"),
+                        ownerTag = field(p.optString("owner_tag")),
                         createdHeight = p.long("created_height"),
                         splits = (0 until (splits?.length() ?: 0)).associate { s ->
                             splits!!.getJSONObject(s).let { it.long("option_id") to it.long("percent") }
@@ -181,6 +187,8 @@ object RestPrivateChain : PrivateChain {
     }
 
     override fun minFee(): Long = PrivacyQueries.shieldedMinFee()
+
+    override fun maxActionsPerBundle(): Int = PrivacyQueries.maxActionsPerBundle()
 
     /** RFC 3339 block time to unix seconds (java.time needs API 26; minSdk is 24). */
     internal fun parseTime(ts: String): Long = runCatching {

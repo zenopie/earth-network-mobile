@@ -1,106 +1,163 @@
 package network.erth.wallet.privacy.prove
 
 import network.erth.wallet.privacy.zk.Fr
+import network.erth.wallet.privacy.zk.Grumpkin
 import network.erth.wallet.privacy.zk.Merkle
 import network.erth.wallet.privacy.zk.Privacy
 
-/** One transfer input: a real note (with its path), or a value-0 dummy. */
-data class TransferInput(
-    val value: Long,
-    val rho: Fr,
-    val rcm: Fr,
-    val position: Long,
-    val path: List<Fr>,
-) {
-    init {
-        require(position in 0..0xffffffffL) { "position is a u32" }
-        require(path.size == Merkle.DEPTH)
-        require(value >= 0)
-    }
-
-    companion object {
-        /**
-         * A dummy: value 0, so the circuit skips its membership, and a fresh
-         * rho, so its nullifier (which is still published and spent) is new.
-         */
-        fun dummy(): TransferInput = TransferInput(
-            0, network.erth.wallet.privacy.note.NotePlaintext.randomField(),
-            network.erth.wallet.privacy.note.NotePlaintext.randomField(), 0, List(Merkle.DEPTH) { Fr.ZERO },
-        )
-    }
-}
-
-/** One transfer output: a value to a pc (the recipient's hidden owner). */
-data class TransferOutput(val value: Long, val pc: Fr) {
-    init { require(value >= 0) }
-}
-
 /**
- * The transfer circuit's witness (circuits/transfer): slots 0-1 one hidden
- * asset A, slot 2 ERTH for the fee. For A != ERTH two balances:
+ * The action circuit's witness (circuits/action): one spend (a real note with
+ * its path, or a value-0 dummy whose path is not checked) and one output,
+ * either of any asset, and the value commitment
  *
- *     in0 + in1 == out0 + out1 + v_pub_out    (asset A)
- *     in2       == out2 + fee                 (ERTH)
+ *     cv = s_value*G(s_asset) - o_value*G(o_asset) + rcv*R
  *
- * For A == ERTH every slot is ERTH and the circuit enforces one combined
- * balance, so a single ERTH note can pay both a spend and its fee:
- *
- *     in0 + in1 + in2 == out0 + out1 + out2 + v_pub_out + fee
- *
- * Public inputs, in the chain's order (types.Transfer.PublicInputs): root,
- * nf[3], cm_out[3], fee, v_pub_out, asset_pub, signal. asset_pub is A when
- * value leaves the pool and 0 otherwise; the chain requires the 0.
+ * Public inputs, in the chain's order (zk/orchard Bundle.PublicInputs):
+ * anchor, nf, cm_out, cv_x, cv_y, sighash.
  */
-data class TransferWitness(
-    val asset: Fr,
+data class ActionWitness(
     val nk: Fr,
-    val inputs: List<TransferInput>,
-    val outputs: List<TransferOutput>,
-    val root: Fr,
-    val fee: Long,
-    val vPubOut: Long,
-    val signal: Fr,
+    val sAsset: Fr,
+    val sValue: Long,
+    val sRho: Fr,
+    val sRcm: Fr,
+    val sPos: Long,
+    val sPath: List<Fr>,
+    val oAsset: Fr,
+    val oValue: Long,
+    val oPc: Fr,
+    val rcv: Fr,
+    val anchor: Fr,
+    val sighash: Fr,
 ) {
     init {
-        require(inputs.size == 3 && outputs.size == 3)
-        require(fee >= 0 && vPubOut >= 0)
-        if (asset == Privacy.ASSET_ERTH) {
-            require(inputs.sumOf { it.value } == outputs.sumOf { it.value } + vPubOut + fee) { "ERTH unbalanced" }
-        } else {
-            require(inputs[0].value + inputs[1].value == outputs[0].value + outputs[1].value + vPubOut) { "asset A unbalanced" }
-            require(inputs[2].value == outputs[2].value + fee) { "fee slot unbalanced" }
+        require(sPos in 0..0xffffffffL) { "position is a u32" }
+        require(sPath.size == Merkle.DEPTH)
+    }
+
+    val nf: Fr by lazy { Privacy.nf(nk, sRho, sPos) }
+    val cmOut: Fr by lazy { Privacy.cm(oAsset, oValue, oPc) }
+    val cv: Grumpkin.Point by lazy { Grumpkin.valueCommit(sAsset, sValue, oAsset, oValue, rcv) }
+
+    /** What the circuit will assert of the spend, checked before spending a second on a proof that cannot verify. */
+    fun check() {
+        if (sValue != 0L) {
+            val cm = Privacy.cm(sAsset, sValue, Privacy.pc(Privacy.ownerPk(nk), sRho, sRcm))
+            require(Merkle.rootFromPath(cm, sPos, sPath) == anchor) { "spend not in the note tree at its anchor" }
         }
     }
 
-    val assets: List<Fr> get() = listOf(asset, asset, Privacy.ASSET_ERTH)
-    val assetPub: Fr get() = if (vPubOut > 0) asset else Fr.ZERO
-    val nullifiers: List<Fr> by lazy { inputs.map { Privacy.nf(nk, it.rho, it.position) } }
-    val commitments: List<Fr> by lazy { outputs.mapIndexed { i, o -> Privacy.cm(assets[i], o.value, o.pc) } }
+    fun publicInputs(): List<Fr> = listOf(anchor, nf, cmOut, cv.x, cv.y, sighash)
 
-    fun publicInputs(): List<Fr> =
-        listOf(root) + nullifiers + commitments + listOf(Privacy.u64(fee), Privacy.u64(vPubOut), assetPub, signal)
-
-    /** noir_android's input map: every scalar a "0x" hex string, arrays as lists. */
     fun noirInputs(): Map<String, Any> = mapOf(
-        "asset" to asset.toNoir(),
         "nk" to nk.toNoir(),
-        "in_value" to inputs.map { hex(it.value) },
-        "in_rho" to inputs.map { it.rho.toNoir() },
-        "in_rcm" to inputs.map { it.rcm.toNoir() },
-        "in_pos" to inputs.map { hex(it.position) },
-        "in_path" to inputs.map { i -> i.path.map { it.toNoir() } },
-        "out_value" to outputs.map { hex(it.value) },
-        "out_pc" to outputs.map { it.pc.toNoir() },
-        "root" to root.toNoir(),
-        "nf" to nullifiers.map { it.toNoir() },
-        "cm_out" to commitments.map { it.toNoir() },
-        "fee" to hex(fee),
-        "v_pub_out" to hex(vPubOut),
-        "asset_pub" to assetPub.toNoir(),
-        "signal" to signal.toNoir(),
+        "s_asset" to sAsset.toNoir(),
+        "s_value" to hex(sValue),
+        "s_rho" to sRho.toNoir(),
+        "s_rcm" to sRcm.toNoir(),
+        "s_pos" to hex(sPos),
+        "s_path" to sPath.map { it.toNoir() },
+        "o_asset" to oAsset.toNoir(),
+        "o_value" to hex(oValue),
+        "o_pc" to oPc.toNoir(),
+        "rcv" to rcv.toNoir(),
+        "anchor" to anchor.toNoir(),
+        "nf" to nf.toNoir(),
+        "cm_out" to cmOut.toNoir(),
+        "cv_x" to cv.x.toNoir(),
+        "cv_y" to cv.y.toNoir(),
+        "sighash" to sighash.toNoir(),
     )
 
-    /** The same witness as a nargo Prover.toml, for checking against the circuit off-device. */
+    fun proverToml(): String = toml(noirInputs())
+}
+
+/**
+ * The stake circuit's witness (circuits/stake): up to two stake notes of one
+ * owner spent under [anchor] (amount 0 = none: nf 0, no path), up to two
+ * created (amount 0 = none: cm 0), all of [asset], with
+ *
+ *     in_0 + in_1 + v_in == out_0 + out_1 + v_out
+ *
+ * and spc_mint, otag of the same owner. Public inputs, in the chain's order
+ * (x/shieldedstaking StakeProof.PublicInputs): anchor, asset, nf_0, nf_1,
+ * cm_out_0, cm_out_1, v_in, v_out, spc_mint, otag, sighash.
+ */
+data class StakeWitness(
+    val nk: Fr,
+    val inAmount: List<Long>,
+    val inRho: List<Fr>,
+    val inRcm: List<Fr>,
+    val inPos: List<Long>,
+    val inPath: List<List<Fr>>,
+    val outAmount: List<Long>,
+    val outRho: List<Fr>,
+    val outRcm: List<Fr>,
+    val mintRho: Fr,
+    val mintRcm: Fr,
+    val tagSalt: Fr,
+    val anchor: Fr,
+    val asset: Fr,
+    val vIn: Long,
+    val vOut: Long,
+    val sighash: Fr,
+) {
+    init {
+        require(listOf(inAmount, inRho, inRcm, inPos, inPath, outAmount, outRho, outRcm).all { it.size == 2 })
+        require(inPath.all { it.size == Merkle.DEPTH })
+        require(inPos.all { it in 0..0xffffffffL }) { "position is a u32" }
+    }
+
+    private val opk: Fr by lazy { Privacy.ownerPk(nk) }
+
+    val nullifiers: List<Fr> by lazy {
+        (0..1).map { if (inAmount[it] == 0L) Fr.ZERO else Privacy.stakeNf(nk, inRho[it], inPos[it]) }
+    }
+    val commitments: List<Fr> by lazy {
+        (0..1).map { if (outAmount[it] == 0L) Fr.ZERO else Privacy.stakeCm(asset, outAmount[it], Privacy.stakePc(opk, outRho[it], outRcm[it])) }
+    }
+    val spcMint: Fr by lazy { Privacy.stakePc(opk, mintRho, mintRcm) }
+    val otag: Fr by lazy { Privacy.ownerTag(opk, tagSalt) }
+
+    fun check() {
+        for (i in 0..1) if (inAmount[i] != 0L) {
+            val cm = Privacy.stakeCm(asset, inAmount[i], Privacy.stakePc(opk, inRho[i], inRcm[i]))
+            require(Merkle.rootFromPath(cm, inPos[i], inPath[i]) == anchor) { "stake input $i not in the stake tree at its anchor" }
+        }
+        val ins = inAmount.sumOf { java.math.BigInteger.valueOf(it) }.add(java.math.BigInteger.valueOf(vIn))
+        val outs = outAmount.sumOf { java.math.BigInteger.valueOf(it) }.add(java.math.BigInteger.valueOf(vOut))
+        require(ins == outs) { "stake amounts do not balance" }
+    }
+
+    fun publicInputs(): List<Fr> = listOf(anchor, asset) + nullifiers + commitments +
+        listOf(Privacy.u64(vIn), Privacy.u64(vOut), spcMint, otag, sighash)
+
+    fun noirInputs(): Map<String, Any> = mapOf(
+        "nk" to nk.toNoir(),
+        "in_amount" to inAmount.map { hex(it) },
+        "in_rho" to inRho.map { it.toNoir() },
+        "in_rcm" to inRcm.map { it.toNoir() },
+        "in_pos" to inPos.map { hex(it) },
+        "in_path" to inPath.map { p -> p.map { it.toNoir() } },
+        "out_amount" to outAmount.map { hex(it) },
+        "out_rho" to outRho.map { it.toNoir() },
+        "out_rcm" to outRcm.map { it.toNoir() },
+        "mint_rho" to mintRho.toNoir(),
+        "mint_rcm" to mintRcm.toNoir(),
+        "tag_salt" to tagSalt.toNoir(),
+        "anchor" to anchor.toNoir(),
+        "asset" to asset.toNoir(),
+        "nf_0" to nullifiers[0].toNoir(),
+        "nf_1" to nullifiers[1].toNoir(),
+        "cm_out_0" to commitments[0].toNoir(),
+        "cm_out_1" to commitments[1].toNoir(),
+        "v_in" to hex(vIn),
+        "v_out" to hex(vOut),
+        "spc_mint" to spcMint.toNoir(),
+        "otag" to otag.toNoir(),
+        "sighash" to sighash.toNoir(),
+    )
+
     fun proverToml(): String = toml(noirInputs())
 }
 
