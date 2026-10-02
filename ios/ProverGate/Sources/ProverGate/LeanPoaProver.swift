@@ -86,6 +86,7 @@ public enum LeanPoaProver {
         let swoir = Swoir(Swoirenberg.self)
         let circuit = try swoir.createCircuit(manifest: manifest, size: size)
         try circuit.setupSrs(srs_path: srsPath)
+        SRS.markProvisioned()
         return circuit
     }
 

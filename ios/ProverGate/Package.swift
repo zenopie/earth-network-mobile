@@ -47,6 +47,9 @@ let package = Package(
             dependencies: ["ProverGate"]),
         .testTarget(
             name: "ProverGateTests",
-            dependencies: ["ProverGate"]),
+            dependencies: [
+                "ProverGate",
+                .product(name: "ProverGateCore", package: "ProverGateCore"),
+            ]),
     ]
 )

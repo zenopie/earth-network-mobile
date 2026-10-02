@@ -1,4 +1,5 @@
 import XCTest
+import ProverGateCore
 @testable import ProverGate
 
 /// XCTest front end for the Phase 1 gate, for running it inside Xcode. The
