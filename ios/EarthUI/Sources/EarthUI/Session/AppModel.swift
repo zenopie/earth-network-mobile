@@ -13,9 +13,13 @@ import SwiftUI
 @MainActor
 public final class AppModel {
 
-    public enum Phase {
+    public enum Phase: Equatable {
         /// Deciding whether there is a wallet at all.
         case launching
+        /// The wallet cannot be stored here, and why: the device has no
+        /// passcode, so the Keychain refuses the phrase. Shown instead of
+        /// waiting on a vault that will never open.
+        case unavailable(String)
         /// There is no wallet yet.
         case setup
         /// There is one, and it has not been unlocked this session.
@@ -183,8 +187,17 @@ public final class AppModel {
         // Simulator-only and compiled out of every device build.
         if let phrase = UserDefaults.standard.string(forKey: "demoWallet"),
            BIP39.isValid(mnemonic: phrase) {
-            // A fixed PIN, since nothing can type one either.
-            Task { try? await adopt(mnemonic: phrase, name: "Wallet 1", method: .pin, pin: "0000") }
+            // A fixed PIN, since nothing can type one either. A simulator
+            // with no passcode set refuses the vault (the Keychain item needs
+            // one), so the failure is shown rather than leaving the launch
+            // spinner up forever.
+            Task {
+                do {
+                    try await adopt(mnemonic: phrase, name: "Wallet 1", method: .pin, pin: "0000")
+                } catch {
+                    phase = .unavailable(unavailableReason(error))
+                }
+            }
             return
         }
         #endif
@@ -800,6 +813,19 @@ public final class AppModel {
         lpOptionShare = lp / total
     }
 
+    /// What the unavailable screen says.
+    func unavailableReason(_ error: Swift.Error) -> String {
+        if case WalletStore.Error.noDeviceLock = error {
+            return "Set a device passcode to use Earth Wallet. Your recovery phrase is stored behind it, and without one there is nothing to protect it with."
+        }
+        return describe(error)
+    }
+
+    /// Back to the start, for the unavailable screen's retry.
+    public func retryLaunch() {
+        phase = .launching
+    }
+
     func describe(_ error: Swift.Error) -> String {
         switch error {
         case WalletStore.Error.authenticationFailed: "Authentication failed."
@@ -814,6 +840,11 @@ public final class AppModel {
             "\(WalletStore.biometryName) changed since this wallet was set up — a face or fingerprint was added or removed — so it can no longer open it. Restore the wallet from its recovery phrase."
         case WalletStore.Error.wrongPin: "Incorrect PIN."
         case WalletStore.Error.corrupt: "The stored wallet could not be read."
+        // errSecMissingEntitlement: a build without Keychain access (an
+        // unsigned simulator build) cannot hold a vault at all.
+        case WalletStore.Error.keychain(-34018):
+            "This build has no Keychain access, so it cannot store a wallet. Install a signed build."
+        case let WalletStore.Error.keychain(status): "The Keychain refused to store the wallet (status \(status))."
         case let EarthClient.Error.rejected(code, log): "Rejected (code \(code)): \(log)"
         case let EarthClient.Error.executionFailed(code, log): "Failed (code \(code)): \(log)"
         case let e as LocalizedError where e.errorDescription != nil: e.errorDescription!

@@ -19,6 +19,8 @@ public struct RootView: View {
             switch model.phase {
             case .launching:
                 ProgressView().task { model.start() }
+            case let .unavailable(reason):
+                UnavailableScreen(reason: reason) { model.retryLaunch() }
             case .setup:
                 SetupFlow()
             case .locked:
@@ -343,5 +345,34 @@ struct ErrorBanner: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(theme.space.x12)
         .background(theme.colors.warnTint, in: .rect(cornerRadius: theme.space.radiusMd))
+    }
+}
+
+/// Shown when the wallet cannot be kept on this device at all — no passcode,
+/// so the Keychain refuses the phrase. A dead end with a reason beats a
+/// spinner that never stops.
+struct UnavailableScreen: View {
+    @Environment(\.earth) private var theme
+    let reason: String
+    let retry: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: theme.space.x16) {
+            Spacer()
+            Image(systemName: "lock.trianglebadge.exclamationmark")
+                .font(.system(size: 40))
+                .foregroundStyle(theme.colors.accentInk)
+            Text("Earth Wallet can't start")
+                .font(EarthType.headline)
+                .foregroundStyle(theme.colors.textPrimary)
+            Text(reason)
+                .font(EarthType.body)
+                .foregroundStyle(theme.colors.textSecondary)
+            Spacer()
+            EarthButton(title: "Try again", action: retry)
+        }
+        .padding(theme.space.gutter)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .background(theme.colors.bgPrimary)
     }
 }
