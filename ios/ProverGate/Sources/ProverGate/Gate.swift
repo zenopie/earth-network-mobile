@@ -33,8 +33,8 @@ public enum Gate {
         let manifest = try Data(contentsOf: paths.circuit)
         let witness = try NoirWitness.decode(Data(contentsOf: paths.witness))
 
-        report.record("witness shape", witness.count == 15 ? .passed : .failed,
-                      "\(witness.count) named inputs (Android feeds bb 15)")
+        report.record("witness shape", witness.count == 13 ? .passed : .failed,
+                      "\(witness.count) named inputs (lean_poa takes 13)")
 
         let circuit = try LeanPoaProver.loadCircuit(manifest: manifest)
         let started = Date()
