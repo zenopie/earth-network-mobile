@@ -11,6 +11,8 @@
 
 use poseidon::poseidon2::Poseidon2;
 
+pub mod value;
+
 pub global DEPTH: u32 = 32;
 
 pub global TAG_ID: Field = 0x65617274682e6964; // "earth.id"
@@ -141,10 +143,22 @@ fn test_country_code() {
 
 #[test]
 fn test_tags_distinct() {
-    let t =
-        [TAG_ID, TAG_OWNER, TAG_LEAF, TAG_SN, TAG_PC, TAG_CM, TAG_NF, TAG_VOTE, TAG_REG, TAG_ASSET];
-    for i in 0..10 {
-        for j in 0..10 {
+    let t = [
+        TAG_ID,
+        TAG_OWNER,
+        TAG_LEAF,
+        TAG_SN,
+        TAG_PC,
+        TAG_CM,
+        TAG_NF,
+        TAG_VOTE,
+        TAG_REG,
+        TAG_ASSET,
+        value::TAG_GEN,
+        value::TAG_CV_R,
+    ];
+    for i in 0..12 {
+        for j in 0..12 {
             if i != j {
                 assert(t[i] != t[j]);
             }
