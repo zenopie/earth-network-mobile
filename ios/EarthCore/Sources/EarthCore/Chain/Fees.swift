@@ -66,6 +66,13 @@ public enum Fees {
         BigInt(forGas(gas)) ?? BigInt(0)
     }
 
+    /// The price per gas the node takes, priming the cache first: what a
+    /// private tx's fee is held to in CheckTx (x/shielded/ante).
+    public static func price(rest: EarthRest = EarthRest()) async -> Decimal {
+        await prime(rest: rest)
+        return readCache() ?? fallbackPrice
+    }
+
     /// Reads `minimum-gas-prices` from the node and caches it for the process.
     ///
     /// Safe to call repeatedly and cheap once primed: the value cannot change
