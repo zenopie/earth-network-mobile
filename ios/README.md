@@ -173,9 +173,9 @@ What it costs is compile-time checking, so the encoding is verified instead:
 `txcheck` decodes the Swift-built transaction with the cosmos-sdk types the
 chain runs, rebuilds the SignDoc the way the ante handler does, and verifies
 the secp256k1 signature against the public key the transaction itself carries.
-It also walks `MsgRegister` field by field with `protowire` — that message has
-the awkward shapes (raw bytes, a repeated string) and the earth protos are not
-in that module's graph.
+It also round-trips both messages (a bank send and a gov vote) through the
+SDK's own marshallers. Registration is no longer a signed msg — on the privacy
+chain it is an unsigned private tx, checked by the golden tests instead.
 
 The trap the writer exists to avoid: **proto3 elides default values**. A zero,
 an empty string, or empty bytes is *absent* on the wire. Emitting one changes

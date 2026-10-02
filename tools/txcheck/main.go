@@ -27,7 +27,7 @@ import (
 	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
 	signingtypes "github.com/cosmos/cosmos-sdk/types/tx/signing"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
-	"google.golang.org/protobuf/encoding/protowire"
+	govv1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 )
 
 type fixture struct {
@@ -45,13 +45,7 @@ type fixture struct {
 	TxBytesB64    string `json:"tx_bytes_base64"`
 	SignDocB64    string `json:"sign_doc_base64"`
 	SignatureHex  string `json:"signature_hex"`
-	Register      struct {
-		ProofHex           string   `json:"proof_hex"`
-		PublicSignals      []string `json:"public_signals"`
-		Affiliate          string   `json:"affiliate"`
-		SignatureAlgorithm string   `json:"signature_algorithm"`
-		DscDerHex          string   `json:"dsc_der_hex"`
-	} `json:"register"`
+	VoteProposal  uint64 `json:"vote_proposal_id"`
 }
 
 var failures int
@@ -190,8 +184,18 @@ func main() {
 		check("MsgSend unmarshals", false)
 	}
 
-	equal("second message", body.Messages[1].TypeUrl, "/earth.personhood.v1.MsgRegister")
-	checkRegister(body.Messages[1].Value, f)
+	equal("second message", body.Messages[1].TypeUrl, "/cosmos.gov.v1.MsgVote")
+	var vote govv1.MsgVote
+	if vote.Unmarshal(body.Messages[1].Value) == nil {
+		equal("MsgVote proposal", vote.ProposalId, f.VoteProposal)
+		equal("MsgVote voter", vote.Voter, f.Address)
+		equal("MsgVote option", vote.Option, govv1.OptionNo)
+		reencoded, _ := vote.Marshal()
+		check("MsgVote re-encodes identically",
+			bytes.Equal(reencoded, body.Messages[1].Value))
+	} else {
+		check("MsgVote unmarshals", false)
+	}
 
 	fmt.Println()
 	if failures > 0 {
@@ -199,63 +203,4 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Println("\033[32mACCEPTED — the chain's own codec agrees with the Swift-built transaction\033[0m")
-}
-
-// checkRegister walks MsgRegister off the wire without its generated type.
-//
-// The earth protos are not in this module's dependency graph, and pulling the
-// whole chain in for one message is not worth it — but the field numbers and
-// wire types are exactly what has to be verified, and protowire reads those
-// straight from the bytes.
-func checkRegister(value []byte, f fixture) {
-	fields := map[protowire.Number][][]byte{}
-	rest := value
-	for len(rest) > 0 {
-		num, typ, n := protowire.ConsumeTag(rest)
-		if n < 0 {
-			check("MsgRegister parses as protobuf", false, protowire.ParseError(n))
-			return
-		}
-		rest = rest[n:]
-		if typ != protowire.BytesType {
-			check(fmt.Sprintf("MsgRegister field %d is length-delimited", num), false, typ)
-			return
-		}
-		v, n := protowire.ConsumeBytes(rest)
-		if n < 0 {
-			check("MsgRegister field parses", false, protowire.ParseError(n))
-			return
-		}
-		rest = rest[n:]
-		fields[num] = append(fields[num], v)
-	}
-
-	str := func(num protowire.Number) string {
-		if len(fields[num]) == 0 {
-			return ""
-		}
-		return string(fields[num][0])
-	}
-
-	equal("MsgRegister creator (field 1)", str(1), f.Address)
-	if len(fields[2]) == 1 {
-		equal("MsgRegister proof (field 2)", hex.EncodeToString(fields[2][0]), f.Register.ProofHex)
-	} else {
-		check("MsgRegister has one proof field", false, len(fields[2]))
-	}
-	// The repeated string is the one a naive encoder gets wrong, by packing it
-	// or by dropping an empty element.
-	equal("MsgRegister public signal count (field 3)", len(fields[3]), len(f.Register.PublicSignals))
-	for i, signal := range f.Register.PublicSignals {
-		if i < len(fields[3]) {
-			equal(fmt.Sprintf("MsgRegister public signal %d", i), string(fields[3][i]), signal)
-		}
-	}
-	equal("MsgRegister affiliate (field 4)", str(4), f.Register.Affiliate)
-	equal("MsgRegister signature algorithm (field 5)", str(5), f.Register.SignatureAlgorithm)
-	if len(fields[6]) == 1 {
-		equal("MsgRegister dsc_der (field 6)", hex.EncodeToString(fields[6][0]), f.Register.DscDerHex)
-	} else {
-		check("MsgRegister has one dsc_der field", false, len(fields[6]))
-	}
 }

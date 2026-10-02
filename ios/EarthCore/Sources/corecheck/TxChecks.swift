@@ -60,24 +60,18 @@ func checkTransactions(writingTo artifacts: URL) {
         amount: [Coin(denom: Constants.gasDenom, amount: "1000")]
     ).asAny(typeURL: Msg.Send.typeURL)
 
-    // A registration too: it is the message with the awkward fields — raw
-    // bytes and a repeated string — and the one the whole project is for.
-    let register = Msg.Register(
-        creator: key.address,
-        proof: Data((0 ..< 64).map { UInt8($0) }),
-        publicSignals: ["20260819", "12345678901234567890", "98765432109876543210"],
-        affiliate: recipient,
-        signatureAlgorithm: "rsa_sha256_pkcs_2048",
-        dscDer: Data([0x30, 0x82, 0x01, 0x0a])
-    ).asAny(typeURL: Msg.Register.typeURL)
+    // A second message with an enum and a varint beside the strings, so the
+    // body carries more than one Any. x/personhood and x/assembly take no
+    // signed msgs on the privacy chain, so the gov vote is the one here.
+    let govVote = Msg.Vote(proposalID: 7, voter: key.address, option: .no).asAny(typeURL: Msg.Vote.typeURL)
 
     let signed = try! TransactionSigner.sign(
-        messages: [send, register],
+        messages: [send, govVote],
         key: key,
         accountNumber: 7,
         sequence: 3,
-        gasLimit: Personhood.registerGasLimit,
-        feeUerth: Personhood.registerFeeUerth,
+        gasLimit: TransactionSigner.defaultGasLimit,
+        feeUerth: TransactionSigner.defaultFeeUerth,
         memo: "phase 2"
     )
 
@@ -93,8 +87,8 @@ func checkTransactions(writingTo artifacts: URL) {
     Check.equal(
         "signing is deterministic",
         try! TransactionSigner.sign(
-            messages: [send, register], key: key, accountNumber: 7, sequence: 3,
-            gasLimit: Personhood.registerGasLimit, feeUerth: Personhood.registerFeeUerth,
+            messages: [send, govVote], key: key, accountNumber: 7, sequence: 3,
+            gasLimit: TransactionSigner.defaultGasLimit, feeUerth: TransactionSigner.defaultFeeUerth,
             memo: "phase 2"
         ).txBytes.hexString,
         signed.txBytes.hexString
@@ -107,21 +101,15 @@ func checkTransactions(writingTo artifacts: URL) {
         "chain_id": Constants.chainID,
         "account_number": 7,
         "sequence": 3,
-        "gas_limit": Personhood.registerGasLimit,
-        "fee_uerth": Personhood.registerFeeUerth,
+        "gas_limit": TransactionSigner.defaultGasLimit,
+        "fee_uerth": TransactionSigner.defaultFeeUerth,
         "memo": "phase 2",
         "recipient": recipient,
         "send_amount": "1000",
         "tx_bytes_base64": signed.txBytes.base64EncodedString(),
         "sign_doc_base64": signed.signDoc.encoded().base64EncodedString(),
         "signature_hex": signed.signature.hexString,
-        "register": [
-            "proof_hex": Data((0 ..< 64).map { UInt8($0) }).hexString,
-            "public_signals": ["20260819", "12345678901234567890", "98765432109876543210"],
-            "affiliate": recipient,
-            "signature_algorithm": "rsa_sha256_pkcs_2048",
-            "dsc_der_hex": "3082010a",
-        ],
+        "vote_proposal_id": 7,
     ]
 
     try? FileManager.default.createDirectory(at: artifacts, withIntermediateDirectories: true)

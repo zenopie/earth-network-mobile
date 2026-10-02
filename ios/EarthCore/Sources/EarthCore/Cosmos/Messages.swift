@@ -143,31 +143,9 @@ public enum Msg {
         }
     }
 
-    // --- earth/assembly ---
-
-    /// A human vote on an x/gov proposal.
-    ///
-    /// Not `Msg.Vote`, which is the same proposal's other house. Both are cast
-    /// on the same proposal id into two separate tallies, and sending one does
-    /// nothing to the other.
-    public struct VoteProposal: ProtoMessage {
-        public static let typeURL = "/earth.assembly.v1.MsgVoteProposal"
-        public let voter: String, proposalID: UInt64, option: Assembly.Vote
-
-        public init(voter: String, proposalID: UInt64, option: Assembly.Vote) {
-            self.voter = voter; self.proposalID = proposalID; self.option = option
-        }
-
-        public func encoded() -> Data {
-            var w = ProtoWriter()
-            w.string(1, voter)
-            w.uint64(2, proposalID)
-            // Never `.unspecified`, which is zero and would be elided — the
-            // chain then reads a vote naming no side and rejects it.
-            w.enumValue(3, option.proto)
-            return w.data
-        }
-    }
+    // x/personhood and x/assembly take no signed msgs on the privacy chain:
+    // registration, the ANML claim and the human vote are private
+    // (Privacy/PrivateMsgs.swift), so there is nothing transparent to build.
 
     // --- earth/dex ---
 
@@ -232,64 +210,6 @@ public enum Msg {
             return w.data
         }
     }
-
-    // --- earth/personhood ---
-
-    /// The registration message. `proof` and `dscDer` are raw bytes; the LCD
-    /// renders them base64 on the way back out, but on the wire they are bytes.
-    public struct Register: ProtoMessage {
-        public static let typeURL = Constants.msgRegisterTypeURL
-        public let creator: String
-        public let proof: Data
-        public let publicSignals: [String]
-        public let affiliate: String
-        public let signatureAlgorithm: String
-        public let dscDer: Data
-
-        public init(
-            creator: String,
-            proof: Data,
-            publicSignals: [String],
-            affiliate: String = "",
-            signatureAlgorithm: String,
-            dscDer: Data
-        ) {
-            self.creator = creator
-            self.proof = proof
-            self.publicSignals = publicSignals
-            self.affiliate = affiliate
-            self.signatureAlgorithm = signatureAlgorithm
-            self.dscDer = dscDer
-        }
-
-        public func encoded() -> Data {
-            var w = ProtoWriter()
-            w.string(1, creator)
-            w.bytes(2, proof)
-            w.repeatedString(3, publicSignals)
-            w.string(4, affiliate)
-            w.string(5, signatureAlgorithm)
-            w.bytes(6, dscDer)
-            return w.data
-        }
-    }
-
-    public struct ClaimAnml: ProtoMessage {
-        public static let typeURL = "/earth.personhood.v1.MsgClaimAnml"
-        public let creator: String
-
-        public init(creator: String) { self.creator = creator }
-
-        public func encoded() -> Data {
-            var w = ProtoWriter()
-            w.string(1, creator)
-            return w.data
-        }
-    }
-
-    // MsgUnregister is deliberately absent. The chain still decodes the ones in
-    // its history, but the handler rejects every new one, so there is nothing
-    // for a client to build.
 
     // --- earth/allocation ---
 

@@ -6,7 +6,7 @@ import Foundation
 /// A Cosmos node rejects a transaction whose fee is below
 /// `ceil(gas_limit * minimum-gas-prices)`, which makes the fee a function of
 /// the gas limit rather than a flat amount. Both apps had it as a flat "2000" —
-/// the fee for the 400,000-gas default — while `Personhood.registerGasLimit`
+/// the fee for the 400,000-gas default — while the registration's gas limit
 /// had been raised to 3,000,000 for headroom. Every registration was rejected
 /// before it ran:
 ///

@@ -24,8 +24,6 @@ public enum Constants {
     /// Both denominations are 6dp.
     public static let denomExponent = 6
 
-    public static let msgRegisterTypeURL = "/earth.personhood.v1.MsgRegister"
-
     /// BIP-44 path the Android wallet derives at, and therefore the only path
     /// that reproduces an existing user's address.
     public static let derivationPath = "m/44'/118'/0'/0/0"

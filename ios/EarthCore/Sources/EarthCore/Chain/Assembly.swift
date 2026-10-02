@@ -72,27 +72,6 @@ public extension EarthClient {
         )
     }
 
-    // --- messages ---
-
-    /// A human vote on `proposalID`.
-    ///
-    /// Weighted by personhood alone. An address without a live registration can
-    /// broadcast this and have it rejected, so the screen checks first rather
-    /// than spending the gas to find out.
-    func msgVoteProposal(voter: String, proposalID: UInt64, option: Assembly.Vote) -> ProtoAny {
-        Msg.VoteProposal(voter: voter, proposalID: proposalID, option: option)
-            .asAny(typeURL: Msg.VoteProposal.typeURL)
-    }
-
-    @discardableResult
-    func voteAsPerson(
-        key: EarthKey,
-        proposalID: UInt64,
-        option: Assembly.Vote
-    ) async throws -> String {
-        try await broadcast(
-            [msgVoteProposal(voter: key.address, proposalID: proposalID, option: option)],
-            key: key
-        )
-    }
+    // Casting a vote is private (PrivacyWallet.voteProposal): a membership
+    // proof in the ballot's scope, its fee paid from a shielded note.
 }
