@@ -4,6 +4,7 @@ members = [
   "privacy_core",
   "membership",
   "action",
+  "stake",
   "lean_poa",
   "lean_poa_rsa2048",
   "lean_poa_rsa4096",

@@ -25,6 +25,11 @@ pub global TAG_NF: Field = 0x65617274682e6e66; // "earth.nf"
 pub global TAG_VOTE: Field = 0x65617274682e766f7465; // "earth.vote": retired (note_vote), never reuse
 pub global TAG_REG: Field = 0x65617274682e726567; // "earth.reg"
 pub global TAG_ASSET: Field = 0x65617274682e6173736574; // "earth.asset"
+// Stake note tree (circuits/stake; chain x/shieldedstaking).
+pub global TAG_STAKE: Field = 0x65617274682e7374616b65; // "earth.stake"
+pub global TAG_SPC: Field = 0x65617274682e737063; // "earth.spc"
+pub global TAG_SNF: Field = 0x65617274682e736e66; // "earth.snf"
+pub global TAG_OTAG: Field = 0x65617274682e6f746167; // "earth.otag"
 
 /// Asset id of `uerth` = H(TAG_ASSET, 5, 0x7565727468) (zk/privacy.AssetID).
 pub global ASSET_ERTH: Field = 0xad44a14c7205c61e39db2c64b79005ffb14a2a927977e8cda2208be2e3fe54c;
@@ -93,6 +98,33 @@ pub fn note_nf(nk: Field, rho: Field, position: u32) -> Field {
     h4(TAG_NF, nk, rho, position as Field)
 }
 
+/// Stake pc = H(TAG_SPC, owner_pk, rho, rcm): a stake note's hidden owner.
+/// The stake tree's notes are owner-locked: the stake circuit only ever
+/// outputs (or lets the chain mint to) a stake pc of the spender's own
+/// owner_pk.
+pub fn stake_pc(owner_pk: Field, rho: Field, rcm: Field) -> Field {
+    h4(TAG_SPC, owner_pk, rho, rcm)
+}
+
+/// Stake note commitment = H(TAG_STAKE, asset, amount, spc). asset is the
+/// stake asset's id: zk/privacy.AssetID("derth/<valoper>") for delegated
+/// stake, AssetID("unbond/<valoper>/<epoch>") for an unbonding claim.
+pub fn stake_cm(asset: Field, amount: u64, spc: Field) -> Field {
+    h4(TAG_STAKE, asset, amount as Field, spc)
+}
+
+/// Stake nullifier = H(TAG_SNF, nk, rho, position) (the stake tree's own
+/// nullifier set; position u32 as for note_nf).
+pub fn stake_nf(nk: Field, rho: Field, position: u32) -> Field {
+    h4(TAG_SNF, nk, rho, position as Field)
+}
+
+/// Owner tag = H(TAG_OTAG, owner_pk, salt): a commitment to an owner that the
+/// chain stores (a Groundworks position) and the owner later proves again.
+pub fn owner_tag(owner_pk: Field, salt: Field) -> Field {
+    h3(TAG_OTAG, owner_pk, salt)
+}
+
 /// Root of the depth-32 tree from a leaf, its index and siblings (leaf level
 /// first). node = Poseidon2([left, right]); bit i of index set => the running
 /// node is the right child at level i.
@@ -156,9 +188,13 @@ fn test_tags_distinct() {
         TAG_ASSET,
         value::TAG_GEN,
         value::TAG_CV_R,
+        TAG_STAKE,
+        TAG_SPC,
+        TAG_SNF,
+        TAG_OTAG,
     ];
-    for i in 0..12 {
-        for j in 0..12 {
+    for i in 0..16 {
+        for j in 0..16 {
             if i != j {
                 assert(t[i] != t[j]);
             }
