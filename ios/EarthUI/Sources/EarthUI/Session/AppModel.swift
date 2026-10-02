@@ -733,7 +733,9 @@ public final class AppModel {
         identityStatus = snap.identityStatus
         claimOpensAt = w.claimOpensAt()
         mergeable = snap.mergeable
-        PrivacyProving.registrationMayFollow = snap.identityStatus != .live
+        // A registered wallet still may register in this launch if it can
+        // switch to another wallet, which may not be.
+        PrivacyProving.registrationMayFollow = snap.identityStatus != .live || wallets.count > 1
     }
 
     /// A full sync of the indexer's streams (nothing asked about this

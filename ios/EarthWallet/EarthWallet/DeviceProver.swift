@@ -18,7 +18,7 @@ import ProverGate
 enum DeviceProver {
 
     static func install() {
-        PassportProving.install(prove)
+        PassportProving.install(prove, ready: { passportFits })
         PrivacyProving.install(PrivacyDeviceProver())
     }
 
@@ -34,7 +34,7 @@ enum DeviceProver {
                 // `Certificate.swift`'s table have drifted apart.
                 return "This build has no \(name) circuit, so this passport's signature algorithm cannot be proved."
             case .srsTooSmall:
-                return "Close and reopen the app, then register again: a private action already ran in this session and the prover cannot grow for a passport now."
+                return PassportProving.relaunchToRegister
             }
         }
     }
@@ -45,6 +45,15 @@ enum DeviceProver {
     /// carry a `noir_version` that has to match the prover's Noir, which makes
     /// a silent divergence expensive.
     private static let circuitDirectory = "circuits"
+
+    /// Whether this process's SRS can still hold a passport circuit: nothing
+    /// has sized it yet, or the privacy prover reserved it for the largest
+    /// passport circuit, or a passport proof sized it.
+    static var passportFits: Bool {
+        !SRS.isProvisioned || PrivacyDeviceProver.reservedForPassport || passportSized
+    }
+
+    nonisolated(unsafe) private static var passportSized = false
 
     /// barretenberg sizes its SRS once per process: if a private action
     /// proved earlier in this launch sized it for itself, the passport circuit
@@ -77,6 +86,7 @@ enum DeviceProver {
         // bytecode cannot be wrong.
         let provisioned = SRS.isProvisioned
         let circuit = try loadOrExplain(manifest, provisioned: provisioned)
+        if !provisioned { passportSized = true }
         let result = try LeanPoaProver.prove(circuit: circuit, inputs: inputs.witness)
 
         return PassportRegistration.Proof(
@@ -101,6 +111,9 @@ struct PrivacyDeviceProver: PrivacyProver {
     /// registration that may still follow in this launch provisions for it.
     private static let largestPassportCircuit = "lean_poa_brainpool512"
 
+    /// Set once the SRS reservation is the largest passport circuit's.
+    nonisolated(unsafe) static var reservedForPassport = false
+
     private static func manifest(_ name: String) -> Data? {
         Bundle.main.url(forResource: name, withExtension: "json", subdirectory: "circuits").flatMap { try? Data(contentsOf: $0) }
     }
@@ -109,7 +122,11 @@ struct PrivacyDeviceProver: PrivacyProver {
         var manifests: [PrivacyCircuitProver.Kind: Data] = [:]
         for k in PrivacyCircuitProver.Kind.allCases { manifests[k] = manifest(k.rawValue) }
         return PrivacyCircuitProver(manifests: manifests) {
-            PrivacyProving.registrationMayFollow ? manifest(largestPassportCircuit) : nil
+            // Asked only while nothing is provisioned, just before reserving
+            // with what it returns.
+            let big = PrivacyProving.registrationMayFollow ? manifest(largestPassportCircuit) : nil
+            reservedForPassport = big != nil
+            return big
         }
     }()
 

@@ -15,14 +15,29 @@ import Foundation
 /// `corecheck` drives it with a stub. This just carries that as far as the app.
 public enum PassportProving {
     nonisolated(unsafe) private static var prover: PassportRegistration.Prover?
+    nonisolated(unsafe) private static var ready: () -> Bool = { true }
 
     /// Installed by the app shell at launch. Without one, the chip step says so
     /// rather than reading a passport it cannot do anything with.
-    public static func install(_ prover: @escaping PassportRegistration.Prover) {
+    ///
+    /// `ready` says whether a passport can still be proved in this launch:
+    /// Barretenberg sizes its SRS once per process, and a private action
+    /// proved first may have sized it below every passport circuit.
+    public static func install(_ prover: @escaping PassportRegistration.Prover, ready: @escaping () -> Bool = { true }) {
         Self.prover = prover
+        Self.ready = ready
     }
 
     public static var isAvailable: Bool { prover != nil }
+
+    /// False when this launch's prover can no longer fit a passport circuit;
+    /// a relaunch fixes it. Asked before the chip is read, so nobody holds a
+    /// passport to the phone for a proof that cannot be made.
+    public static var canProveThisLaunch: Bool { ready() }
+
+    /// What to tell someone when `canProveThisLaunch` is false.
+    public static let relaunchToRegister =
+        "Earth Wallet needs a fresh start to register. A private action already ran since it opened, and the prover sized itself for that and cannot grow for a passport now. Close the app completely (swipe it away in the app switcher), open it again, and register before doing anything else."
 
     enum Failure: Error {
         case unavailable

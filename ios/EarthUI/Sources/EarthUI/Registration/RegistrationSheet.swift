@@ -119,6 +119,8 @@ struct RegistrationSheet: View {
                 unsupported("This device cannot read passport chips. Registration needs an iPhone 7 or later.")
             } else if !PassportProving.isAvailable {
                 unsupported("This build has no prover, so a chip read would have nothing to prove with.")
+            } else if !PassportProving.canProveThisLaunch {
+                unsupported(PassportProving.relaunchToRegister)
             } else {
                 EarthButton(title: "Start") { step = .scan }
             }
