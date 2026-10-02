@@ -8,6 +8,8 @@ import network.erth.wallet.privacy.sync.WalletSync
 import network.erth.wallet.privacy.zk.Fr
 import network.erth.wallet.privacy.zk.Privacy
 import network.erth.wallet.privacy.tx.NoteSelection
+import network.erth.wallet.privacy.tx.PrivateTxEngine
+import network.erth.wallet.privacy.tx.ShieldMove
 import network.erth.wallet.chain.math.SwapMath
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -354,6 +356,33 @@ class WalletFlowTest {
         d.sync()
         assertThrows(NoteSelection.Insufficient::class.java) { d.send(b.address, "uanml", 100_000) }
         dump(chain, "singleErthNote")
+    }
+
+    /**
+     * The wallet home's Shield and Unshield: Max on each moves the most one
+     * transaction can, and the unshield lands at the wallet's own account.
+     * Four ERTH notes: an unshield spends three, so Max stops at those.
+     */
+    @Test
+    fun maxUnshieldToOwnAccount() {
+        val chain = FakeChain()
+        val c = wallet(chain, alice)
+        c.sync()
+        for (v in listOf(400_000L, 1_000_000L, 2_000_000L, 3_000_000L)) {
+            val o = c.shieldOutput("uerth", v)
+            chain.shield("uerth", o.value, o.pc, o.ciphertext)
+        }
+        c.sync()
+        val estimate = PrivateTxEngine.feeFor(chain.price, 5_000_000L)
+        val max = ShieldMove.maxUnshield(c.notes, estimate)
+        assertEquals(6_000_000L - estimate, max)
+        val receiver = "earth1qqqsyqcyq5rqwzqfpg9scrgwpugpzysncc2uls"
+        c.unshield(receiver, "uerth", max)
+        c.sync()
+        assertEquals(max, chain.unshielded[receiver])
+        // The simulated fee is under the estimate, so its change comes back as a note.
+        assertTrue(bal(c, "uerth") > 400_000L)
+        dump(chain, "maxUnshield")
     }
 
     /**

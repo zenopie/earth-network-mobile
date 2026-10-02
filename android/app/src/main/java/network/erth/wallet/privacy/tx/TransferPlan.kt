@@ -232,6 +232,14 @@ object NoteSelection {
             ?: throw Insufficient("no shielded ERTH note covers the ${fee}uerth fee")
 
     /**
+     * The most of [denom] one transfer can spend: its [maxNotes] largest
+     * spendable notes. Less than the balance when it is spread over more notes
+     * than that, which merging fixes.
+     */
+    fun maxSpendable(notes: List<OwnedNote>, denom: String, maxNotes: Int = 2): Long =
+        spendable(notes, denom).map { it.note.value }.sortedDescending().take(maxNotes).sum()
+
+    /**
      * Up to [maxNotes] notes of [denom] covering [amount]: the smallest single
      * note that does, else the pair, else (maxNotes 3, an ERTH transfer) the
      * triple with the smallest sufficient sum.
