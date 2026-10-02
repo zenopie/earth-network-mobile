@@ -32,14 +32,14 @@ public enum PassportProving {
     /// `PassportRegistration.prove`, which also checks that the proof came back
     /// from the circuit the certificate selected.
     ///
-    /// - Parameter address: the account that will sign MsgRegister. The chain
-    ///   takes it as a public input, so a proof built for one account cannot be
-    ///   broadcast from another.
+    /// - Parameter binding: the registration binding from
+    ///   `PrivacyWallet.prepareRegistration` — the proof's `address` input, so
+    ///   it registers only the identity commitment and notes it names.
     static func prove(
         scan: PassportRegistration.Scan,
-        address: String
+        binding: Fr
     ) async throws -> PassportRegistration.Proof {
         guard let prover else { throw Failure.unavailable }
-        return try await PassportRegistration.prove(scan: scan, address: address, using: prover)
+        return try await PassportRegistration.prove(scan: scan, binding: binding, using: prover)
     }
 }

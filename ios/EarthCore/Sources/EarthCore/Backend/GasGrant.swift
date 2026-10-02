@@ -74,6 +74,8 @@ public enum GasGrant {
     public struct Refused: Swift.Error, Sendable {
         public let status: Int
         public let message: String
+
+        public init(status: Int, message: String) { self.status = status; self.message = message }
     }
 
     public enum Outcome: Sendable, Equatable {

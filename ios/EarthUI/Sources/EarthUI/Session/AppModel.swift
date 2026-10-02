@@ -38,7 +38,33 @@ public final class AppModel {
 
     /// Balances by denom, in base units.
     public private(set) var balances: [String: BigInt] = [:]
-    public private(set) var registration: Personhood.RegistrationStatus = .none
+    /// This wallet's private side: notes, registration, private actions.
+    /// Built from the selected wallet's mnemonic when it is unlocked or
+    /// switched to, and dropped on lock. Nil while locked.
+    public private(set) var privacy: PrivacyWallet?
+    /// Shielded balances by denom (uerth, uanml, derth/<valoper>, unbond/<valoper>/<epoch>), spendable notes only.
+    public private(set) var shielded: [String: UInt64] = [:]
+    public private(set) var shieldedAddress: String = ""
+    public private(set) var identityStatus: WalletSync.IdentityStatus = .none
+    /// When ANML can next be claimed: 0 for now, nil without a live registration.
+    public private(set) var claimOpensAt: Int64?
+    /// Why the last privacy sync failed, if it did.
+    public private(set) var privacySyncError: String?
+    /// Spendable note counts per denom with more than one note.
+    public private(set) var mergeable: [String: Int] = [:]
+    /// This wallet's Groundworks positions (public positions whose key is ours).
+    public private(set) var positions: [OwnedPosition] = []
+    /// x/assembly's open removal ballots.
+    public private(set) var removalBallots: [PrivacyReads.RemovalBallot] = []
+    /// R: how long a caretaker split or referrer binding counts after it is cast.
+    public private(set) var leaseSeconds: Int64 = 30 * 86_400
+    private var automation: Task<Void, Never>?
+
+    public struct OwnedPosition: Identifiable, Sendable {
+        public let position: PrivacyReads.Position
+        public let keyIndex: UInt32
+        public var id: UInt64 { position.id }
+    }
     /// Recent transactions, nil until the first load lands.
     ///
     /// The distinction matters: a zero that is really "not loaded yet" is the
@@ -189,6 +215,7 @@ public final class AppModel {
             address = wallets[selected].address
             walletName = wallets[selected].name
             lastError = nil
+            openPrivacy()
             phase = .ready
             await refresh()
             return true
@@ -311,6 +338,7 @@ public final class AppModel {
             address = wallets[selected].address
             walletName = wallets[selected].name
             lastError = nil
+            openPrivacy()
             phase = .ready
             await refresh()
             return true
@@ -395,6 +423,7 @@ public final class AppModel {
         UserDefaults.standard.set(name, forKey: "walletName")
         UserDefaults.standard.set(0, forKey: "selectedWallet")
         address = try EarthKey(mnemonic: mnemonic).address
+        openPrivacy()
         phase = .ready
         await refresh()
     }
@@ -407,7 +436,7 @@ public final class AppModel {
         address = ""
         balances = [:]
         activity = nil
-        registration = .none
+        closePrivacy()
         phase = .setup
     }
 
@@ -458,7 +487,8 @@ public final class AppModel {
 
         balances = [:]
         activity = nil
-        registration = .none
+        closePrivacy()
+        openPrivacy()
         delegations = []
         unbondings = []
         rewards = 0
@@ -478,6 +508,7 @@ public final class AppModel {
     }
 
     public func lock() {
+        closePrivacy()
         sessionPin = nil
         wallets = []
         lastError = nil
@@ -525,7 +556,7 @@ public final class AppModel {
         async let reachable: Void = probe()
 
         async let balances = client.balances(address)
-        async let registration = client.registrationStatus(address)
+        async let privacySync: Void = syncPrivacy()
         async let pools = client.pools()
         async let fee = client.swapFeePercent()
         async let lpUnbonding = client.lpUnbondingSeconds()
@@ -538,7 +569,6 @@ public final class AppModel {
         async let transactions = client.transactions(for: address)
 
         self.balances = await balances.compactMapValues { BigInt($0) }
-        self.registration = await registration
         self.pools = await pools
         self.swapFeePercent = Decimal(string: await fee) ?? self.swapFeePercent
         self.lpUnbondingSeconds = await lpUnbonding
@@ -551,6 +581,7 @@ public final class AppModel {
         let signer = address
         self.activity = await transactions.compactMap { ActivityRow(tx: $0, self: signer) }
         await reachable
+        await privacySync
     }
 
     private func probe() async {
@@ -596,9 +627,101 @@ public final class AppModel {
         }
     }
 
-    public var isRegistered: Bool { registration.registered }
+    /// A live registration in the identity tree (private: nothing on chain
+    /// names this wallet's registration).
+    public var isRegistered: Bool { identityStatus == .live }
 
-    public var canClaimAnml: Bool { Personhood.isAnmlClaimable(registration) }
+    public var canClaimAnml: Bool { claimOpensAt == 0 }
+
+    /// Shielded ERTH: what every private action's fee is paid from.
+    public var shieldedErth: UInt64 { shielded["uerth"] ?? 0 }
+
+    /// Private stake (derth notes) per validator.
+    public var privateStake: [String: UInt64] {
+        shielded.filter { $0.key.hasPrefix("derth/") }
+    }
+
+    /// Private stake, positions included.
+    public var privateStakeTotal: UInt64 {
+        privateStake.values.reduce(0, +) + positions.reduce(0) { $0 + $1.position.derth }
+    }
+
+    /// Unbonding claims (unbond/<valoper>/<epoch> notes), paid out by the
+    /// automation once their epoch matures.
+    public var privateUnbonding: [String: UInt64] {
+        shielded.filter { $0.key.hasPrefix("unbond/") }
+    }
+
+    // MARK: - privacy
+
+    /// Builds the selected wallet's private side from its mnemonic and starts
+    /// the automations (daily claim, caretaker and referrer refresh, unbond
+    /// claims), which run only while unlocked: they need the keys.
+    private func openPrivacy() {
+        guard privacy == nil, wallets.indices.contains(selected) || !wallets.isEmpty else { return }
+        let entry = wallets.indices.contains(selected) ? wallets[selected] : wallets[0]
+        do {
+            let w = try PrivacySession.open(mnemonic: entry.mnemonic, client: client)
+            privacy = w
+            shieldedAddress = w.address.encode()
+            publishPrivacy()
+            let queries = PrivacyQueries(rest: client.rest)
+            automation = Task.detached(priority: .utility) { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(20))
+                    if Task.isCancelled { break }
+                    try? await PrivacyAutomation.runOnce(wallet: w, queries: queries)
+                    await self?.publishPrivacy()
+                    try? await Task.sleep(for: PrivacyAutomation.interval)
+                }
+            }
+        } catch {
+            privacySyncError = describe(error)
+        }
+    }
+
+    private func closePrivacy() {
+        automation?.cancel()
+        automation = nil
+        privacy = nil
+        shielded = [:]
+        shieldedAddress = ""
+        identityStatus = .none
+        claimOpensAt = nil
+        mergeable = [:]
+        positions = []
+        PrivacyProving.registrationMayFollow = true
+    }
+
+    /// Copies the wallet's snapshot into what the screens read.
+    func publishPrivacy() {
+        guard let w = privacy else { return }
+        let snap = w.snapshot
+        shielded = snap.balances
+        identityStatus = snap.identityStatus
+        claimOpensAt = w.claimOpensAt()
+        mergeable = snap.mergeable
+        PrivacyProving.registrationMayFollow = snap.identityStatus != .live
+    }
+
+    /// A full sync of the indexer's streams (nothing asked about this
+    /// wallet), then the public reads the private screens show.
+    func syncPrivacy() async {
+        guard let w = privacy else { return }
+        do {
+            try await w.sync()
+            privacySyncError = nil
+        } catch {
+            privacySyncError = describe(error)
+        }
+        publishPrivacy()
+        let queries = PrivacyQueries(rest: client.rest)
+        if let mine = try? await w.positions() {
+            positions = mine.map { OwnedPosition(position: $0.position, keyIndex: $0.keyIndex) }
+        }
+        if let ballots = try? await queries.removalBallots() { removalBallots = ballots }
+        if let p = try? await queries.personhoodParams() { leaseSeconds = p.caretakerVoteSeconds }
+    }
 
     /// Gas the account can actually pay with. A new human has none of it, which
     /// is what the gas gate exists for.
@@ -649,6 +772,7 @@ public final class AppModel {
         case WalletStore.Error.corrupt: "The stored wallet could not be read."
         case let EarthClient.Error.rejected(code, log): "Rejected (code \(code)): \(log)"
         case let EarthClient.Error.executionFailed(code, log): "Failed (code \(code)): \(log)"
+        case let e as LocalizedError where e.errorDescription != nil: e.errorDescription!
         default: String(describing: error)
         }
     }

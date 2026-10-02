@@ -34,21 +34,35 @@ public final class TxController {
         /// The sheet then reported the account funded when it was not.
         public var feeUerth: String { Fees.forGas(gasLimit) }
 
-        /// Set only for registration, whose free gas is paid against the
-        /// registration itself: the backend checks this exact message the way
-        /// the chain will, so it is the one later broadcast, not a copy.
-        public var registration: Msg.Register?
+        /// A private tx: unsigned, proven on the phone, its fee paid from a
+        /// shielded ERTH note. The fee shown is an estimate (the exact figure
+        /// comes from simulating at confirm time), and the balance it is
+        /// checked against is shielded ERTH, not the account's.
+        public var shielded = false
+
+        /// Set only for registration, whose free gas is a shielded note paid
+        /// against the registration itself: the backend checks this exact
+        /// message the way the chain will, and shields the gas to `pcGas`.
+        public var registration: (msg: MsgRegisterPrivate, pcGas: Data)?
 
         public init(
             action: String,
             rows: [(String, String)],
             gasLimit: UInt64 = TransactionSigner.defaultGasLimit,
-            registration: Msg.Register? = nil
+            shielded: Bool = false,
+            registration: (msg: MsgRegisterPrivate, pcGas: Data)? = nil
         ) {
             self.action = action
             self.rows = rows
             self.gasLimit = gasLimit
+            self.shielded = shielded
             self.registration = registration
+        }
+
+        /// A private action's sheet: its fee estimated from the private gas estimate.
+        public static func `private`(action: String, rows: [(String, String)], gas: UInt64 = PrivacyWallet.privateGasEstimate,
+                                     registration: (msg: MsgRegisterPrivate, pcGas: Data)? = nil) -> Details {
+            Details(action: action, rows: rows, gasLimit: gas, shielded: true, registration: registration)
         }
     }
 
@@ -124,6 +138,7 @@ public final class TxController {
     public private(set) var lastAction: String?
 
     private var build: ((EarthKey) throws -> [ProtoAny])?
+    private var runPrivate: ((PrivacyWallet) async throws -> TxResult)?
     private var onSuccess: (() async -> Void)?
 
     public init() {}
@@ -140,14 +155,34 @@ public final class TxController {
         build: @escaping (EarthKey) throws -> [ProtoAny]
     ) {
         self.build = build
+        self.runPrivate = nil
         self.onSuccess = onSuccess
         self.host = host
         pending = details
     }
 
+    /// Ask for a private transaction: unsigned, proven on the phone, its fee
+    /// paid from a shielded ERTH note. `run` proves and broadcasts (a
+    /// PrivacyWallet action) once confirmed.
+    public func requestPrivate(
+        _ details: Details,
+        host: Host = .root,
+        onSuccess: (() async -> Void)? = nil,
+        run: @escaping (PrivacyWallet) async throws -> TxResult
+    ) {
+        var d = details
+        d.shielded = true
+        self.build = nil
+        self.runPrivate = run
+        self.onSuccess = onSuccess
+        self.host = host
+        pending = d
+    }
+
     public func cancel() {
         pending = nil
         build = nil
+        runPrivate = nil
         onSuccess = nil
         host = .root
         awaitingGas = false
@@ -156,69 +191,67 @@ public final class TxController {
 
     /// Asks the backend for free gas, then waits for it to land.
     ///
-    /// Registration asks against its own message, every other transaction as
-    /// a registered human. A 202 is treated like a 200: either way the send
-    /// exists or is about to, and the chain is the only authority on when it
-    /// arrives.
+    /// Two grants exist. A registration's is a shielded note, paid against
+    /// the registration itself (the backend checks it as the chain will) to a
+    /// pc of our own, so its spend is unlinkable. Transparent ERTH, for a
+    /// signed tx, goes to a registered human once a month against a
+    /// membership proof — the backend never learns which human. A 202 is
+    /// treated like a 200: the chain is the only authority on arrival.
     public func requestGas(in model: AppModel) async {
-        guard !requestingGas, !awaitingGas, !model.address.isEmpty else { return }
-        let request: GasGrant.Request = pending?.registration.map { .register($0) }
-            ?? .human(address: model.address)
+        guard !requestingGas, !awaitingGas, !model.address.isEmpty, let details = pending else { return }
         requestingGas = true
         gasError = nil
         do {
-            _ = try await GasGrant.request(request)
+            if let reg = details.registration {
+                _ = try await GasGrant.request(.register(reg.msg, pcGas: reg.pcGas, ciphertextGas: Data()))
+            } else if details.shielded {
+                throw GasGrant.Refused(status: 0, message: "Fees for private actions are paid from shielded ERTH: your registration reward, or ERTH sent to your shielded address.")
+            } else {
+                guard model.isRegistered, let w = model.privacy else {
+                    throw GasGrant.Refused(status: 403, message: "Register to get free gas.")
+                }
+                let req = try await GasTransparent.request(wallet: w, address: model.address, prove: { try await PrivacyProving.prover.proveMembership($0) })
+                _ = try await GasGrant.request(.transparent(req))
+            }
         } catch {
             requestingGas = false
-            gasError = Self.describeGasFailure(error, for: request)
+            gasError = Self.describeGasFailure(error)
             return
         }
         requestingGas = false
         await awaitGas(in: model)
     }
 
-    private static func describeGasFailure(_ error: Error, for request: GasGrant.Request) -> String {
-        if let refused = error as? GasGrant.Refused {
-            // The one refusal with something to do about it. The backend's
-            // wording ("this address is not a registered human") is accurate
-            // but reads as a verdict rather than a next step.
-            if case .human = request, refused.status == 403 {
-                return "Register to get free gas."
-            }
-            return refused.message
-        }
+    private static func describeGasFailure(_ error: Error) -> String {
+        if let refused = error as? GasGrant.Refused { return refused.message }
         if let url = error as? URLError {
             return url.code == .timedOut
                 ? "The gas service took too long to answer. Try again."
                 : "Couldn't reach the gas service. Check your connection and try again."
         }
+        if let l = error as? LocalizedError, let d = l.errorDescription { return d }
         return "Couldn't get free gas right now. Try again shortly."
     }
 
-    /// Waits for a gas grant to arrive, then lets the sheet notice.
-    ///
-    /// The backend answering is not the gas landing: it sends from its hot
-    /// wallet, and that send has to be included in a block. So a single
-    /// balance read straight after the grant always runs too early — which is
-    /// exactly how this failed on Android, where the grant arrived, the sheet
-    /// never looked again, and the confirm button stayed behind the gas button
-    /// with nothing to say why.
-    ///
-    /// Reads the chain directly rather than going through the app model's
-    /// refresh, so the check cannot race a refresh that has not landed yet.
+    /// Waits for a gas grant to arrive, then lets the sheet notice: the
+    /// backend answering is not the gas landing. A shielded grant is found by
+    /// syncing the note streams; a transparent one by the account balance.
     public func awaitGas(in model: AppModel) async {
-        guard let needed = BigInt(pending?.feeUerth ?? ""), !model.address.isEmpty else { return }
+        guard let details = pending, let needed = UInt64(details.feeUerth), !model.address.isEmpty else { return }
         awaitingGas = true
         defer { awaitingGas = false }
 
         for _ in 0 ..< Self.gasPollAttempts {
             try? await Task.sleep(nanoseconds: Self.gasPollIntervalNanos)
-            let raw = await model.client.balance(model.address, denom: Constants.gasDenom)
-            if let now = BigInt(raw), now >= needed {
-                // Bring the rest of the UI in line; the sheet reads its balance
-                // from the model.
-                await model.refresh()
-                return
+            if details.shielded {
+                await model.syncPrivacy()
+                if model.shieldedErth >= needed { return }
+            } else {
+                let raw = await model.client.balance(model.address, denom: Constants.gasDenom)
+                if let now = BigInt(raw), now >= BigInt(needed) {
+                    await model.refresh()
+                    return
+                }
             }
         }
     }
@@ -229,14 +262,23 @@ public final class TxController {
     private static let gasPollIntervalNanos: UInt64 = 3_000_000_000
 
     public func confirm(in model: AppModel) async {
-        guard let details = pending, let build else { return }
+        guard let details = pending, build != nil || runPrivate != nil else { return }
+        let build = self.build
+        let runPrivate = self.runPrivate
         pending = nil
         lastAction = details.action
         submitting = true
         defer { submitting = false }
 
         do {
-            let hash = try await broadcast(details: details, build: build, model: model)
+            let hash: String
+            if let runPrivate {
+                guard let w = model.privacy else { throw WalletStore.Error.notFound }
+                hash = try await runPrivate(w).hash
+                model.publishPrivacy()
+            } else {
+                hash = try await broadcast(details: details, build: build!, model: model)
+            }
             outcome = .succeeded(action: details.action, hash: hash)
             await onSuccess?()
             await model.refresh()
@@ -249,6 +291,7 @@ public final class TxController {
             outcome = .failed(action: details.action, reason: model.describe(error))
         }
         self.build = nil
+        self.runPrivate = nil
         onSuccess = nil
     }
 

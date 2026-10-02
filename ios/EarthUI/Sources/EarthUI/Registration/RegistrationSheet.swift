@@ -29,6 +29,9 @@ struct RegistrationSheet: View {
     /// What the chip gave up, held only until the proof is built from it.
     @State private var scan: PassportRegistration.Scan?
     @State private var proof: PassportRegistration.Proof?
+    /// The notes the registration pays and the binding its proof carries,
+    /// fixed before the chip is read (the referrer is bound into it).
+    @State private var prep: PrivacyWallet.RegistrationPrep?
     @State private var failure: String?
 
     /// The chip step's own progress. Not an enum on `Step` because the step
@@ -160,7 +163,7 @@ struct RegistrationSheet: View {
                         RoundedRectangle(cornerRadius: theme.space.radiusMd)
                             .strokeBorder(theme.colors.strokePrimary, lineWidth: theme.space.stroke)
                     }
-                Text("The chain splits the registration reward with a referrer. They must be a different, already-registered human.")
+                Text("The chain splits the registration reward with a referrer: a registered person who has bound this address as theirs. It is part of the proof, so it is fixed once the chip is read.")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
                 if !referrer.isEmpty, !EarthKey.isValidAddress(referrer) {
@@ -289,13 +292,20 @@ struct RegistrationSheet: View {
         failure = nil
         phase = .reading
         let key = key
-        // Read once, here, rather than inside the task. The proof is bound to
-        // this address, and reading it after the chip does would let a wallet
-        // switched mid-scan bind the proof to an account other than the one
-        // [register] then broadcasts from — which the chain rejects.
-        let address = model.address
+        // Read once, here, rather than inside the task: the proof is bound to
+        // this wallet's notes and identity commitment, and a wallet switched
+        // mid-scan must not change which.
+        guard let wallet = model.privacy else {
+            failure = "This wallet's private side is not open."
+            phase = .failed
+            return
+        }
+        let referrer = referrer
         Task {
             do {
+                let affiliate = try PassportRegistration.normalizeReferrer(referrer)
+                let prep = try await wallet.prepareRegistration(affiliate: affiliate)
+                self.prep = prep
                 let scan = try await PassportChip.read(key: key)
                 self.scan = scan
                 phase = .proving
@@ -303,7 +313,7 @@ struct RegistrationSheet: View {
                 // peaks a few hundred megabytes, and the screen has a spinner
                 // on it that has to keep turning.
                 let proof = try await Task.detached(priority: .userInitiated) {
-                    try await PassportProving.prove(scan: scan, address: address)
+                    try await PassportProving.prove(scan: scan, binding: prep.binding)
                 }.value
                 self.proof = proof
                 phase = .idle
@@ -322,45 +332,39 @@ struct RegistrationSheet: View {
     }
 
     private func register() {
-        guard let scan, let proof else { return }
-        let affiliate = referrer.trimmingCharacters(in: .whitespacesAndNewlines)
-        let address = model.address
-
-        // Built once, here, so a message the chain would reject for a bad
-        // referrer fails on this screen rather than at broadcast — after the
-        // confirmation, after the gas grant.
-        let message: Msg.Register
+        guard let scan, let proof, let prep, let wallet = model.privacy else { return }
+        let dsc: Data
         do {
-            message = try PassportRegistration.register(
-                scan: scan,
-                proof: proof,
-                creator: address,
-                referrer: affiliate
-            )
+            dsc = try PassportRegistration.dscDER(scan: scan)
         } catch {
             failure = describe(error)
             return
         }
+        // MsgRegister without its fee transfer: what the gas grant is asked
+        // on. The registration itself is unsigned and pays its fee from a
+        // shielded ERTH note — the grant's, on a first registration.
+        let message = wallet.registerMsg(prep, proof: proof.proof, publicSignals: proof.publicSignals,
+                                         signatureAlgorithm: proof.signatureAlgorithm, dscDer: dsc)
 
-        tx.request(
-            .init(
+        tx.requestPrivate(
+            .private(
                 action: "Register",
                 rows: [
                     ("Nullifier", proof.nullifier.map { String($0.prefix(12)) + "…" } ?? "—"),
                     ("Circuit", proof.signatureAlgorithm),
-                    ("Referrer", affiliate.isEmpty ? "None" : affiliate),
-                    ("Fee", "\(Token.erth.format(Personhood.registerFeeUerth)) ERTH"),
+                    ("Referrer", prep.affiliate.isEmpty ? "None" : prep.affiliate),
+                    ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.registerGasEstimate))) ERTH, shielded"),
                 ],
-                // Registration verifies a proof on chain, which costs far more
-                // than a transfer. The default limit is nowhere near enough.
-                gasLimit: Personhood.registerGasLimit,
-                // Free gas for a registration is paid against this message,
-                // and the same one is broadcast once it lands — the proof is
-                // made once.
-                registration: message
-            )
-        ) { _ in
-            [message.asAny(typeURL: Msg.Register.typeURL)]
+                gas: PrivacyWallet.registerGasEstimate,
+                // Free gas for a registration is a note shielded to pc_gas,
+                // paid against this message; the same proof is broadcast once
+                // it lands.
+                registration: (msg: message, pcGas: prep.gas.pc.bytes)
+            ),
+            onSuccess: { await model.refresh() }
+        ) { w in
+            try await w.register(prep, proof: proof.proof, publicSignals: proof.publicSignals,
+                                 signatureAlgorithm: proof.signatureAlgorithm, dscDer: dsc)
         }
         // Out of the way, so the confirmation card at the root is not drawn
         // behind this sheet. Same reason Send does it.
@@ -377,7 +381,6 @@ struct RegistrationSheet: View {
         }
         if let registration = error as? PassportRegistration.Error {
             switch registration {
-            case .referrerIsSelf: return "You cannot refer yourself."
             case let .malformedReferrer(address): return "\(address) is not a valid earth address."
             case let .algorithmMismatch(expected, got):
                 return "The proof came from \(got) but the certificate selects \(expected)."

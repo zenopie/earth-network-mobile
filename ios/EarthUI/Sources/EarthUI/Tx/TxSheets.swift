@@ -78,7 +78,8 @@ struct TxConfirmSheet: View {
                 // The gas gate's place. A new human has no ERTH and no account
                 // on chain, so the fee cannot be paid — and this is the moment
                 // that becomes true rather than a surprise at broadcast.
-                GasWarning(awaitingGas: tx.awaitingGas, error: tx.gasError)
+                GasWarning(awaitingGas: tx.awaitingGas, error: tx.gasError, shielded: details.shielded,
+                           canGrant: details.registration != nil || (!details.shielded && model.isRegistered))
             }
 
             HStack(spacing: theme.space.x12) {
@@ -87,7 +88,7 @@ struct TxConfirmSheet: View {
                     // `confirm` clears `pending` itself, which is what takes
                     // this card away — there is no dismissal to coordinate.
                     EarthButton(title: "Confirm") { Task { await tx.confirm(in: model) } }
-                } else {
+                } else if details.registration != nil || (!details.shielded && model.isRegistered) {
                     EarthButton(
                         title: tx.awaitingGas ? "Waiting for gas…" : "Get free gas",
                         busy: tx.requestingGas || tx.awaitingGas
@@ -108,6 +109,8 @@ struct TxConfirmSheet: View {
     /// broadcast.
     private var funded: Bool {
         guard let needed = BigInt(details.feeUerth) else { return true }
+        // A private action pays from shielded ERTH, not the account.
+        if details.shielded { return BigInt(model.shieldedErth) >= needed }
         return model.balance(.erth) >= needed
     }
 }
@@ -122,12 +125,26 @@ struct GasWarning: View {
     /// button stays a retry rather than a mystery.
     var error: String? = nil
 
+    /// The fee comes from shielded ERTH (a private action).
+    var shielded = false
+
+    /// Whether a grant can be asked for here at all.
+    var canGrant = true
+
+    private var prompt: String {
+        if shielded && !canGrant {
+            return "Not enough shielded ERTH for the fee. Private actions pay from your shielded balance: your registration reward, or ERTH sent to your shielded address."
+        }
+        if !canGrant { return "Not enough ERTH for the fee. Register to get free gas, or shield nothing and send ERTH here." }
+        return "Not enough ERTH for the fee. Tap to get free gas for this transaction."
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: theme.space.x8) {
             Image(systemName: "fuelpump.fill").foregroundStyle(theme.colors.warnInk)
             Text(awaitingGas
                 ? "The gas hasn't arrived yet. Give it a moment."
-                : error ?? "Not enough ERTH for the fee. Tap to get free gas for this transaction.")
+                : error ?? prompt)
                 .font(EarthType.bodySmall)
                 .foregroundStyle(theme.colors.textSecondary)
         }
