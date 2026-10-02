@@ -40,8 +40,9 @@ public struct PassportRegistration {
     public struct Proof {
         public let proof: Data
         /// `[current_date, address, nullifier, dsc_key]` as decimal strings.
-        /// address is the account the proof is bound to; the chain requires it
-        /// to equal the transaction signer.
+        /// address is the registration binding the proof was made for
+        /// (H(TAG_REG, idc, pc_anml, pc_erth, affiliate)); the chain requires it
+        /// to match the msg's fields.
         public let publicSignals: [String]
         /// The circuit variant that produced it — the chain uses it to pick a
         /// verifying key, so it must be the one `PassportInputs` selected.
@@ -53,7 +54,7 @@ public struct PassportRegistration {
             self.signatureAlgorithm = signatureAlgorithm
         }
 
-        /// The account the proof is bound to, as a decimal field element.
+        /// The registration binding the proof carries, as a decimal field element.
         public var address: String? {
             publicSignals.count > 1 ? publicSignals[1] : nil
         }
@@ -80,7 +81,6 @@ public struct PassportRegistration {
         /// certificate selects, so the chain would look up the wrong verifying
         /// key. Only reachable if a prover ignores the inputs it was given.
         case algorithmMismatch(expected: String, got: String)
-        case referrerIsSelf
         case malformedReferrer(String)
     }
 
@@ -98,16 +98,16 @@ public struct PassportRegistration {
 
     /// Prove personhood from a scan, without broadcasting anything.
     ///
-    /// Split from `message(...)` on purpose. Broadcasting needs a signature and
-    /// a fee and can wait until the passport is back in a pocket — and a new
+    /// Broadcasting waits until the passport is back in a pocket — and a new
     /// human's fee is itself paid against this proof (`GasGrant`), so the
     /// proof has to exist before there is any gas to ask for.
-    /// - Parameter address: the account that will sign MsgRegister. The proof is
-    ///   bound to it as a public input, so proving for one account and
-    ///   broadcasting from another produces a proof the chain refuses.
+    /// - Parameter binding: the registration binding from
+    ///   `PrivacyWallet.prepareRegistration`. The circuit takes it as its
+    ///   `address` public input, so the proof registers only the identity
+    ///   commitment and notes it names.
     public static func prove(
         scan: Scan,
-        address: String,
+        binding: Fr,
         now: Date = Date(),
         using prover: Prover
     ) async throws -> Proof {
@@ -115,7 +115,7 @@ public struct PassportRegistration {
             dg1: scan.dg1,
             efSOD: scan.efSOD,
             currentDateYYMMDD: todayYYMMDD(now: now),
-            address: address
+            binding: binding
         )
         let proof = try await prover(inputs)
         guard proof.signatureAlgorithm == inputs.algorithm else {
@@ -124,54 +124,21 @@ public struct PassportRegistration {
         return proof
     }
 
-    /// The registration message for a completed proof.
-    ///
-    /// `referrer` is the optional affiliate address: the chain splits the
-    /// registration reward with them, and requires a distinct, currently
-    /// registered human. Empty is passed through as unreferred, which leaves
-    /// the referrer's half in the reward pool rather than paying it out.
-    public static func message(
-        scan: Scan,
-        proof: Proof,
-        creator: String,
-        referrer: String? = nil
-    ) throws -> ProtoAny {
-        try register(scan: scan, proof: proof, creator: creator, referrer: referrer)
-            .asAny(typeURL: Msg.Register.typeURL)
-    }
-
-    /// The same message, unwrapped — what `GasGrant.Request.register` sends,
-    /// so the backend judges exactly the fields that will be broadcast.
-    public static func register(
-        scan: Scan,
-        proof: Proof,
-        creator: String,
-        referrer: String? = nil
-    ) throws -> Msg.Register {
-        let affiliate = try validate(referrer: referrer, creator: creator)
-        let dsc = try PassportInputs.scannedDSC(efSOD: scan.efSOD)
-        return Msg.Register(
-            creator: creator,
-            proof: proof.proof,
-            publicSignals: proof.publicSignals,
-            affiliate: affiliate,
-            signatureAlgorithm: proof.signatureAlgorithm,
-            // The Document Signer travels with the registration: the chain
-            // checks it against the CSCA trust store and binds it to the
-            // proof's dsc_key output. No pre-submission, no registry wait.
-            dscDer: dsc.certificateDER
-        )
-    }
-
-    /// Refuse a referrer the chain would refuse, before spending a fee finding
-    /// out. Self-referral and a malformed address are both rejected on chain,
-    /// and both are cheap to catch here.
-    static func validate(referrer: String?, creator: String) throws -> String {
+    /// The optional referrer, as the registration binding takes it: a valid
+    /// earth address, or "" for none. Refused here rather than on chain, where
+    /// a malformed one costs the gas grant that paid for the attempt. (The
+    /// registration names no account of its own, so self-referral is the
+    /// chain's to judge: it requires a live referrer binding for the address.)
+    public static func normalizeReferrer(_ referrer: String?) throws -> String {
         guard let referrer = referrer?.trimmingCharacters(in: .whitespacesAndNewlines),
               !referrer.isEmpty
         else { return "" }
         guard EarthKey.isValidAddress(referrer) else { throw Error.malformedReferrer(referrer) }
-        guard referrer != creator else { throw Error.referrerIsSelf }
         return referrer
+    }
+
+    /// The Document Signer certificate the registration carries.
+    public static func dscDER(scan: Scan) throws -> Data {
+        try PassportInputs.scannedDSC(efSOD: scan.efSOD).certificateDER
     }
 }

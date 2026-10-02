@@ -42,22 +42,26 @@ private func checkRegistration() {
     Check.equal("and rolls at UTC midnight",
                 PassportRegistration.todayYYMMDD(now: newYear.addingTimeInterval(1)), 260101)
 
-    let key = try! EarthKey(mnemonic:
+    let keys = try! PrivacyKeys.fromMnemonic(
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
+    let binding = PrivacyHash.registrationBinding(idc: keys.idc, pcAnml: keys.mintPC(0), pcErth: keys.mintPC(1), affiliate: .zero)
 
     var seenAlgorithm: String?
+    var seenAddress: String?
     let prover: PassportRegistration.Prover = { inputs in
         seenAlgorithm = inputs.algorithm
+        seenAddress = inputs.witness["address"] as? String
         return PassportRegistration.Proof(
             proof: Data(repeating: 0xab, count: 14_656),
             // [current_date, address, nullifier, dsc_key]
-            publicSignals: ["260819", "999", "12345", "67890"],
+            publicSignals: ["260819", binding.bigUInt.description, "12345", "67890"],
             signatureAlgorithm: inputs.algorithm
         )
     }
 
-    let proof = runBlocking { try await PassportRegistration.prove(scan: scan, address: key.address, using: prover) }
+    let proof = runBlocking { try await PassportRegistration.prove(scan: scan, binding: binding, using: prover) }
     Check.equal("the prover is handed the circuit the certificate selects", seenAlgorithm, "lean_poa")
+    Check.equal("the circuit's address input is the registration binding", seenAddress, binding.noir)
     Check.equal("nullifier is the third public signal", proof?.nullifier, "12345")
 
     // A prover that answered with a different circuit would have the chain
@@ -67,47 +71,36 @@ private func checkRegistration() {
                                    signatureAlgorithm: "lean_poa_rsa2048")
     }
     Check.that("a proof from the wrong circuit is refused",
-               runBlocking { try await PassportRegistration.prove(scan: scan, address: key.address, using: wrongProver) } == nil)
+               runBlocking { try await PassportRegistration.prove(scan: scan, binding: binding, using: wrongProver) } == nil)
 
-    let message = try! PassportRegistration.message(
-        scan: scan, proof: proof!, creator: key.address)
-    Check.equal("message type url", message.typeURL, Constants.msgRegisterTypeURL)
-    Check.that("it carries the Document Signer on to the chain",
-               message.value.range(of: try! PassportInputs.scannedDSC(efSOD: passport.efSOD).certificateDER) != nil)
-
-    // The free-gas request carries the message that will be broadcast, in the
-    // encodings the backend decodes it with: standard base64 for bytes (it
-    // has to rebuild the same MsgRegister), signals as the same strings.
-    let msg = try! PassportRegistration.register(
-        scan: scan, proof: proof!, creator: key.address, referrer: "")
-    let body = GasGrant.Request.register(msg).body
-    Check.equal("gas grant goes to /gas/register", GasGrant.Request.register(msg).path, "/gas/register")
-    Check.equal("gas body address is the creator", body["address"] as? String, key.address)
+    // The free-gas request carries the message that will be broadcast (less
+    // its fee transfer), in the encodings the backend decodes it with:
+    // standard base64 for bytes, signals as the same strings, and the note
+    // the gas is shielded to.
+    let dsc = try! PassportRegistration.dscDER(scan: scan)
+    let msg = MsgRegisterPrivate(fee: nil, proof: proof!.proof, publicSignals: proof!.publicSignals,
+                                 signatureAlgorithm: proof!.signatureAlgorithm, dscDer: dsc, idc: keys.idc.bytes,
+                                 pcAnml: keys.mintPC(0).bytes, ciphertextAnml: Data(), pcErth: keys.mintPC(1).bytes,
+                                 ciphertextErth: Data(), affiliate: "")
+    let request = GasGrant.Request.register(msg, pcGas: keys.mintPC(2).bytes, ciphertextGas: Data())
+    let body = request.body
+    Check.equal("gas grant goes to /gas/register", request.path, "/gas/register")
+    Check.equal("gas body pc_gas is standard base64", body["pc_gas"] as? String, keys.mintPC(2).bytes.base64EncodedString())
     Check.equal("gas body proof is standard base64",
                 body["proof"] as? String, proof!.proof.base64EncodedString())
     Check.equal("gas body dsc_der is standard base64",
-                (body["dsc_der"] as? String).flatMap { Data(base64Encoded: $0) },
-                try! PassportInputs.scannedDSC(efSOD: passport.efSOD).certificateDER)
+                (body["dsc_der"] as? String).flatMap { Data(base64Encoded: $0) }, dsc)
     Check.equal("gas body public_signals pass through unchanged",
                 body["public_signals"] as? [String], proof!.publicSignals)
     Check.equal("gas body signature_algorithm", body["signature_algorithm"] as? String, proof!.signatureAlgorithm)
     Check.equal("gas body affiliate empty when unreferred", body["affiliate"] as? String, "")
     Check.that("gas body is valid JSON", JSONSerialization.isValidJSONObject(body))
-    Check.equal("the wrapped message is the same bytes", message.value, msg.encoded())
+    Check.equal("the binding matches the msg's fields", try? msg.binding(), binding)
 
-    // The chain rejects both of these; catching them here saves a fee and,
-    // for a new human, the gas grant that paid for it.
-    Check.throwsError("refuses self-referral") {
-        _ = try PassportRegistration.message(scan: scan, proof: proof!,
-                                             creator: key.address, referrer: key.address)
-    }
     Check.throwsError("refuses a malformed referrer") {
-        _ = try PassportRegistration.message(scan: scan, proof: proof!,
-                                             creator: key.address, referrer: "earth1notanaddress")
+        _ = try PassportRegistration.normalizeReferrer("earth1notanaddress")
     }
-    Check.that("an empty referrer is simply unreferred",
-               (try? PassportRegistration.message(scan: scan, proof: proof!,
-                                                  creator: key.address, referrer: "  ")) != nil)
+    Check.equal("an empty referrer is simply unreferred", try? PassportRegistration.normalizeReferrer("  "), "")
 }
 
 /// Runs an async call to completion on a synchronous check harness, returning

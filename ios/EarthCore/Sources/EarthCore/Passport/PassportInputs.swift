@@ -77,6 +77,29 @@ public enum PassportInputs {
         currentDateYYMMDD: Int,
         address: String
     ) throws -> Inputs {
+        try build(dg1: dg1, efSOD: efSOD, currentDateYYMMDD: currentDateYYMMDD, addressField: try addressField(address))
+    }
+
+    /// The privacy chain's form: the circuit's `address` input carries the
+    /// registration binding H(TAG_REG, idc, pc_anml, pc_erth, affiliate)
+    /// (PrivacyWallet.prepareRegistration), which the chain checks against
+    /// the msg's fields. The proof is then good only for those notes and that
+    /// identity commitment, and names no account at all.
+    public static func build(
+        dg1: Data,
+        efSOD: Data,
+        currentDateYYMMDD: Int,
+        binding: Fr
+    ) throws -> Inputs {
+        try build(dg1: dg1, efSOD: efSOD, currentDateYYMMDD: currentDateYYMMDD, addressField: binding.noir)
+    }
+
+    static func build(
+        dg1: Data,
+        efSOD: Data,
+        currentDateYYMMDD: Int,
+        addressField: String
+    ) throws -> Inputs {
         guard dg1.count <= dg1Max else { throw Error.dg1TooLong(dg1.count) }
 
         let sod = try SOD(efSOD: efSOD)
@@ -109,7 +132,7 @@ public enum PassportInputs {
             "signed_attrs_len": scalar(signedAttributes.count),
             "econtent_hash_offset": scalar(eContentHashOffset),
             "current_date": scalar(currentDateYYMMDD),
-            "address": try addressField(address),
+            "address": addressField,
         ]
 
         switch sod.certificate.publicKey {

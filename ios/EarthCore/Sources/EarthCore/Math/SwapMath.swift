@@ -63,6 +63,65 @@ public enum SwapMath {
         )
     }
 
+    /// One pool's reserves, ERTH and its token.
+    public struct Reserves: Equatable, Sendable {
+        public let erth: BigInt
+        public let token: BigInt
+        public init(erth: BigInt, token: BigInt) { self.erth = erth; self.token = token }
+    }
+
+    /// What swapping `amountIn` of `denomIn` for `denomOut` pays, routed the
+    /// way x/dex swapExactIn routes it: one hop when either side is the hub
+    /// (`hub`, ERTH), else token -> ERTH -> token through each token's pool.
+    /// `pools` maps a token denom to its pool's reserves. Nil when a pool is
+    /// missing or the output rounds to nothing (the chain refuses both).
+    ///
+    /// The node's pool query leaves out LP rewards not yet compounded into the
+    /// ERTH reserve (settlePoolRewards runs at swap time), so the chain's own
+    /// figure can differ by that much: callers prefer the chain's
+    /// SimulateSwapExactIn (`withChain`) and use this when it is unavailable.
+    public static func route(
+        pools: [String: Reserves],
+        hub: String,
+        denomIn: String,
+        amountIn: BigInt,
+        denomOut: String,
+        feePercent: Decimal
+    ) -> SwapQuote? {
+        guard denomIn != denomOut else { return nil }
+        let q: SwapQuote?
+        if denomIn == hub {
+            q = pools[denomOut].flatMap { hubForToken(reserveErth: $0.erth, reserveToken: $0.token, amountIn: amountIn, feePercent: feePercent) }
+        } else if denomOut == hub {
+            q = pools[denomIn].flatMap { tokenForHub(reserveErth: $0.erth, reserveToken: $0.token, amountIn: amountIn, feePercent: feePercent) }
+        } else {
+            guard let a = pools[denomIn], let b = pools[denomOut],
+                  let first = tokenForHub(reserveErth: a.erth, reserveToken: a.token, amountIn: amountIn, feePercent: feePercent),
+                  first.amountOut > 0,
+                  let second = hubForToken(reserveErth: b.erth, reserveToken: b.token, amountIn: first.amountOut, feePercent: feePercent)
+            else { return nil }
+            q = SwapQuote(amountOut: second.amountOut, feeErth: first.feeErth + second.feeErth,
+                          priceImpact: 1 - (1 - first.priceImpact) * (1 - second.priceImpact))
+        }
+        guard let q, q.amountOut > 0 else { return nil }
+        return q
+    }
+
+    /// `local` with the chain's own figures for amountOut and feeErth (x/dex
+    /// SimulateSwapExactIn, which settles pending LP rewards first) when the
+    /// node gave them; the price impact stays the local estimate. Without a
+    /// chain figure, `local` as it is.
+    public static func withChain(_ local: SwapQuote?, chainOut: BigInt?, chainFee: BigInt?) -> SwapQuote? {
+        guard let chainOut, let chainFee, chainOut > 0 else { return local }
+        return SwapQuote(amountOut: chainOut, feeErth: chainFee, priceImpact: local?.priceImpact ?? 0)
+    }
+
+    /// The floor a swap accepts at a tolerance of `bps` basis points.
+    /// Truncating, so rounding only ever moves the floor down.
+    public static func withSlippage(_ amountOut: BigInt, bps: Int) -> BigInt {
+        amountOut * BigInt(10_000 - bps) / 10_000
+    }
+
     /// The chain's `feeOf`: a percent of the amount, truncated.
     ///
     /// Done in integers via the percent's own scale rather than in `Decimal`,

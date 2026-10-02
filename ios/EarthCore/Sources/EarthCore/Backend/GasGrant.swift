@@ -17,16 +17,22 @@ public enum GasGrant {
 
     /// Which grant to ask for.
     public enum Request {
-        /// Gas for this registration. Carries the message itself: the backend
-        /// judges the proof that will actually be broadcast, not a second one.
-        case register(Msg.Register)
-        /// Gas for anything else, to an address that is already a human.
-        case human(address: String)
+        /// Gas for this registration, as a shielded note to `pcGas`. Carries
+        /// the message itself (without its fee transfer): the backend judges
+        /// the proof that will actually be broadcast, not a second one, and
+        /// pays only if the chain would accept it, once per passport per
+        /// month. It learns that a passport, public in the registration
+        /// anyway, got a gas note; the note's spend is unlinkable to it.
+        case register(MsgRegisterPrivate, pcGas: Data, ciphertextGas: Data)
+        /// ERTH in a transparent account, for a registered human, proved by
+        /// a membership proof (GasTransparent): once a month per person, and
+        /// the backend never learns which person.
+        case transparent(GasTransparent.Request)
 
         public var path: String {
             switch self {
             case .register: "/gas/register"
-            case .human: "/gas/human"
+            case .transparent: "/gas/transparent"
             }
         }
 
@@ -39,17 +45,23 @@ public enum GasGrant {
         /// decimal strings, untouched — they are what the proof was made over.
         public var body: [String: Any] {
             switch self {
-            case let .register(msg):
+            case let .register(msg, pcGas, ciphertextGas):
                 [
-                    "address": msg.creator,
                     "proof": msg.proof.base64EncodedString(),
                     "public_signals": msg.publicSignals,
                     "signature_algorithm": msg.signatureAlgorithm,
                     "dsc_der": msg.dscDer.base64EncodedString(),
+                    "idc": msg.idc.base64EncodedString(),
+                    "pc_anml": msg.pcAnml.base64EncodedString(),
+                    "pc_erth": msg.pcErth.base64EncodedString(),
+                    "ciphertext_anml": msg.ciphertextAnml.base64EncodedString(),
+                    "ciphertext_erth": msg.ciphertextErth.base64EncodedString(),
                     "affiliate": msg.affiliate,
+                    "pc_gas": pcGas.base64EncodedString(),
+                    "ciphertext_gas": ciphertextGas.base64EncodedString(),
                 ]
-            case let .human(address):
-                ["address": address]
+            case let .transparent(r):
+                GasTransparent.body(r)
             }
         }
     }

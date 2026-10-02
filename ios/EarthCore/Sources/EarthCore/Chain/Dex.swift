@@ -1,3 +1,4 @@
+import BigInt
 import Foundation
 
 /// x/dex — the hub-and-spoke AMM. Every pool pairs ERTH with one token.
@@ -44,6 +45,23 @@ public enum Dex {
             self.volumeErth = volumeErth
             self.lastTradedDay = lastTradedDay
         }
+    }
+
+    /// The chain's own price for a swap: what it pays, and its uerth fee over every hop.
+    public struct Simulated: Sendable, Equatable {
+        public let amountOut: BigInt
+        public let feeErth: BigInt
+    }
+
+    /// The token only shields hold: its pool's legs are note paths
+    /// (MsgNoteSwap, MsgAddLiquidityShielded).
+    public static let shieldedOnly = "uanml"
+
+    /// The REST response body of SimulateSwapExactIn, or nil if it is not one.
+    public static func parseSimulated(_ j: JSON) -> Simulated? {
+        guard let out = j.token_out.amount.string.flatMap({ BigInt($0) }),
+              let fee = j.fee.amount.string.flatMap({ BigInt($0) }), out > 0 else { return nil }
+        return Simulated(amountOut: out, feeErth: fee)
     }
 
     /// A withdrawal waiting out its escrow.
@@ -136,16 +154,32 @@ public extension EarthClient {
         ).asAny(typeURL: Msg.AddLiquidity.typeURL)
     }
 
+    /// x/dex SimulateSwapExactIn: the swap itself run at the current state
+    /// (pending LP rewards settled into the reserves first) and discarded.
+    /// Nil when the node does not serve it or refuses the swap; callers fall
+    /// back to SwapMath over the pool reserves.
+    func simulateSwapExactIn(offerDenom: String, offerAmount: BigInt, askDenom: String) async -> Dex.Simulated? {
+        func enc(_ s: String) -> String { s.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? s }
+        guard let j = try? await rest.get(
+            "/earth/dex/v1/simulate_swap_exact_in?offer_denom=\(enc(offerDenom))&offer_amount=\(offerAmount)&ask_denom=\(enc(askDenom))"
+        ) else { return nil }
+        return Dex.parseSimulated(j)
+    }
+
+    /// `pc` (pool 1 only): the note the ANML leg is minted to at maturity
+    /// (PrivacyWallet.withdrawalPC).
     func msgRemoveLiquidity(
         creator: String,
         poolID: UInt64,
         sharesDenom: String,
-        sharesAmount: String
+        sharesAmount: String,
+        pc: Data = Data()
     ) -> ProtoAny {
         Msg.RemoveLiquidity(
             creator: creator,
             poolID: poolID,
-            shares: Coin(denom: sharesDenom, amount: sharesAmount)
+            shares: Coin(denom: sharesDenom, amount: sharesAmount),
+            pc: pc
         ).asAny(typeURL: Msg.RemoveLiquidity.typeURL)
     }
 }
