@@ -72,6 +72,8 @@ fun EarnScreen(
     onUnstake: () -> Unit,
     onClaim: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Private stake (derth notes and positions) at its validators' live rates, in uerth. */
+    privateStakedUerth: Long = 0L,
     // --- the liquidity half ---
     pools: List<Dex.Pool>? = null,
     swapFeePercent: String? = null,
@@ -123,7 +125,7 @@ fun EarnScreen(
                 .padding(dimens.space16),
         ) {
             EarthLabel("Staked")
-            AmountOrShimmer(state?.stakedUerth, shimmer, EarthColors.Text.textPrimary)
+            AmountOrShimmer(state?.let { it.stakedUerth + privateStakedUerth }, shimmer, EarthColors.Text.textPrimary)
             Spacer(Modifier.height(dimens.space12))
             EarthLabel("Claimable rewards")
             AmountOrShimmer(state?.rewardsUerth, shimmer, EarthAccent.ink)

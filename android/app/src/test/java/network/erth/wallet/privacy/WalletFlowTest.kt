@@ -239,6 +239,9 @@ class WalletFlowTest {
         // Stake votes: every derth note from before the snapshot, each once.
         a.sync()
         snapshot = chain.noteTree.size
+        val weight = a.stakeVoteWeight(11, emptyList())
+        assertEquals(2, weight.notes)
+        assertEquals("two derth notes at the fake's rate of 1", 1_800_000L, weight.uerth)
         val voted = a.stakeVoteAll(11, yes)
         snapshot = null
         assertEquals(2, voted.size)
@@ -361,5 +364,23 @@ class WalletFlowTest {
         val out = System.getenv("PRIVACY_TOML_OUT") ?: return
         chain.prover.allTransfers.forEachIndexed { i, w -> File(out, "${test}_transfer_$i.toml").apply { parentFile.mkdirs() }.writeText(w.proverToml()) }
         chain.prover.allMemberships.forEachIndexed { i, w -> File(out, "${test}_membership_$i.toml").apply { parentFile.mkdirs() }.writeText(w.proverToml()) }
+    }
+}
+
+/** derth is valued at rate_v, floored as the chain floors it; a vote weighs what the snapshot admits. */
+class StakeValueTest {
+    @org.junit.Test
+    fun derthValueFloorsAtTheRate() {
+        assertEquals(1_050_000L, PrivacyWallet.derthValue(1_000_000, java.math.BigDecimal("1.05")))
+        assertEquals(1L, PrivacyWallet.derthValue(3, java.math.BigDecimal("0.5")))
+        assertEquals(999_999L, PrivacyWallet.derthValue(999_999, java.math.BigDecimal("1.000001000001000001")))
+    }
+
+    @org.junit.Test
+    fun positionsFromBeforeTheSnapshotVote() {
+        fun pos(id: Long, h: Long) = PrivacyChainReads.Position(id, "v", 1, ByteArray(0), 0, emptyMap(), h)
+        val snap = PrivacyChainReads.Snapshot(Fr.ZERO, 0, height = 100)
+        assertEquals(listOf(1L), PrivacyWallet.votingPositions(listOf(pos(1, 99), pos(2, 100), pos(3, 101)), snap).map { it.id })
+        assertEquals(2, PrivacyWallet.votingPositions(listOf(pos(1, 99), pos(2, 100)), PrivacyChainReads.Snapshot(Fr.ZERO, 0)).size)
     }
 }

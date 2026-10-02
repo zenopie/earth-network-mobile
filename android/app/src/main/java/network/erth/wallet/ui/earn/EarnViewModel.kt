@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import network.erth.wallet.chain.Staking
+import network.erth.wallet.privacy.chain.PrivacyQueries
 import network.erth.wallet.ui.components.shortAddress
 import network.erth.wallet.wallet.SecureWalletManager
 
@@ -44,7 +45,17 @@ data class EarnUiState(
      * this single figure is what the rate moves on.
      */
     val totalBondedUerth: Long,
-)
+    /**
+     * Live rate_v (ERTH per derth) of every bonded validator: what private
+     * stake (derth/<validator> notes, positions) is worth. Read for all of
+     * them so the reads do not name which ones this wallet holds.
+     */
+    val derthRates: Map<String, java.math.BigDecimal> = emptyMap(),
+) {
+    /** floor(derth x rate_v) in uerth; face value until the rate is read. */
+    fun derthValue(derth: Long, validator: String): Long =
+        network.erth.wallet.privacy.PrivacyWallet.derthValue(derth, derthRates[validator] ?: java.math.BigDecimal.ONE)
+}
 
 /**
  * Staking, read from the chain.
@@ -102,7 +113,12 @@ class EarnViewModel(app: Application) : AndroidViewModel(app) {
                         )
                     }
 
+                val rates = validators.mapNotNull { v ->
+                    runCatching { PrivacyQueries.validator(v.operator).rate }.getOrNull()?.let { v.operator to it }
+                }.toMap()
+
                 EarnUiState(
+                    derthRates = rates,
                     totalBondedUerth = runCatching {
                         Staking.totalBonded().toLongOrNull() ?: 0L
                     }.getOrDefault(0L),

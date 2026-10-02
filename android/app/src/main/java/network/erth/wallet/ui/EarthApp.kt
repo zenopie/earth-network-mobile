@@ -123,7 +123,9 @@ fun EarthApp(
     // and four of them are for screens nobody may open.
     LaunchedEffect(nav.currentTab, walletEpoch) {
         when (nav.currentTab) {
-            EarthRoute.Wallet -> wallet.refresh()
+            // The portfolio values private stake at the live rates and lists
+            // unbonding, both from the earn read.
+            EarthRoute.Wallet -> { wallet.refresh(); earn.refresh() }
             // Earn shows pools now, so it needs the market data too.
             EarthRoute.Earn -> { earn.refresh(); markets.refresh() }
             EarthRoute.Swap -> markets.refresh()

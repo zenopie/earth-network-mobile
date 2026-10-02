@@ -462,7 +462,7 @@ private fun LazyListScope.portfolio(
         }
     }
     items(others) { holding ->
-        PositionRow(holding.symbol, holding.denom, holding.display)
+        PositionRow(holding.symbol, holding.detail ?: holding.denom, holding.display)
     }
 }
 

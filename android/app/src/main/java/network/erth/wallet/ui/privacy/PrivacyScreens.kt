@@ -87,6 +87,8 @@ fun PositionsScreen(
     onEditSplit: (PositionRow) -> Unit,
     onUnlock: (PositionRow) -> Unit,
     modifier: Modifier = Modifier,
+    /** derth at a validator, in uerth at its live rate. */
+    valueOf: (derth: Long, validator: String) -> Long = { d, _ -> d },
 ) = Page(modifier) {
     val dimens = EarthTheme.dimens
     Note(
@@ -106,12 +108,12 @@ fun PositionsScreen(
         val p = row.position
         Card {
             Text(
-                text = "${formatUerth(p.derth)} staked ERTH",
+                text = "${formatUerth(valueOf(p.derth, p.validator))} ERTH",
                 style = EarthTypography.textMd,
                 fontWeight = FontWeight.SemiBold,
                 color = EarthColors.Text.textPrimary,
             )
-            Text(text = p.validator, style = EarthTypography.textXs, color = EarthColors.Text.textTertiary)
+            Text(text = "${formatUerth(p.derth)} derth · ${p.validator}", style = EarthTypography.textXs, color = EarthColors.Text.textTertiary)
             Spacer(Modifier.height(dimens.space8))
             p.splits.entries.sortedByDescending { it.value }.forEach { (id, pct) ->
                 EarthDetailRow(optionName(state.groundworksOptions, id), "$pct%")

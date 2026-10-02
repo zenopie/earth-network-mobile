@@ -18,6 +18,8 @@ data class Holding(
     /** Base units, as the chain returns them. */
     val amount: Long,
     val icon: Int = R.drawable.ic_token_default,
+    /** A line under the symbol in place of the denom, where the denom says nothing useful. */
+    val detail: String? = null,
 ) {
     /** The amount as a person reads it. */
     val display: String get() = formatUerth(amount)

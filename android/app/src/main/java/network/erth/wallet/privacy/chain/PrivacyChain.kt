@@ -94,10 +94,24 @@ object PrivacyQueries {
         return ValidatorBook(valoper, BigDecimal(j.optString("rate", "1")), j.long("supply"))
     }
 
-    data class Snapshot(val proposalId: Long, val root: Fr, val treeSize: Long, val votingEnd: Long)
+    data class Snapshot(
+        val proposalId: Long,
+        val root: Fr,
+        val treeSize: Long,
+        val votingEnd: Long,
+        val height: Long = 0,
+        /** rate_v (ERTH per derth) per validator at the snapshot. */
+        val rates: Map<String, BigDecimal> = emptyMap(),
+    )
 
     fun snapshot(proposalId: Long): Snapshot = get("/earth/shieldedstaking/v1/snapshots/$proposalId").getJSONObject("snapshot").let {
-        Snapshot(proposalId, field(it.getString("root")), it.long("tree_size"), it.long("voting_end"))
+        val vs = it.optJSONArray("validators")
+        val rates = HashMap<String, BigDecimal>()
+        for (i in 0 until (vs?.length() ?: 0)) {
+            val v = vs!!.getJSONObject(i)
+            v.optString("rate").toBigDecimalOrNull()?.let { r -> rates[v.optString("validator")] = r }
+        }
+        Snapshot(proposalId, field(it.getString("root")), it.long("tree_size"), it.long("voting_end"), it.long("height"), rates)
     }
 
     /** shieldedstaking params.epoch_seconds and x/staking params.unbonding_time, in seconds. */

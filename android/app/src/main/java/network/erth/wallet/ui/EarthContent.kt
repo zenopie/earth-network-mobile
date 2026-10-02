@@ -7,6 +7,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -128,6 +132,7 @@ internal fun EarthContent(
     var resplitting by remember { mutableStateOf<PositionRow?>(null) }
 
     val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
     val onShare = { text: String ->
         val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
             .putExtra(android.content.Intent.EXTRA_TEXT, text)
@@ -137,6 +142,12 @@ internal fun EarthContent(
     // Private stake: derth notes per validator.
     val derthHeld = loaded.shielded.filterKeys { it.startsWith("derth/") }
     val privateStake = derthHeld.values.sum() + (privacyState?.positions?.sumOf { it.position.derth } ?: 0L)
+    // The same stake in ERTH: derth is a claim at rate_v, so face value
+    // under-reports it once rewards have compounded.
+    fun derthValue(derth: Long, validator: String): Long =
+        earnState?.derthValue(derth, validator) ?: derth
+    val privateStakeValue = derthHeld.entries.sumOf { (denom, amount) -> derthValue(amount, denom.removePrefix("derth/")) } +
+        (privacyState?.positions?.sumOf { derthValue(it.position.derth, it.position.validator) } ?: 0L)
 
     // LP shares arrive in the same balances call as everything else — they are
     // ordinary coins, denominated dexlp/<pool>.
@@ -165,13 +176,27 @@ internal fun EarthContent(
             unbondingUerth = earnState?.unbonding?.sumOf { it.amountUerth } ?: 0L,
             // Private stake (derth) and unbonding claims are notes, not bank
             // balances, so they join the portfolio here.
+            // Private stake shows its ERTH value, the derth amount beneath.
             holdings = state?.holdings.orEmpty() + state?.shielded.orEmpty()
                 .filterKeys { it.startsWith("derth/") || it.startsWith("unbond/") }
                 .map { (denom, amount) ->
+                    if (denom.startsWith("derth/")) {
+                        val op = denom.removePrefix("derth/")
+                        Holding(
+                            denom = denom,
+                            symbol = "Staked (private)",
+                            amount = derthValue(amount, op),
+                            detail = "${formatUerth(amount)} derth · $op",
+                        )
+                    } else {
+                        Holding(denom = denom, symbol = "Unbonding (private)", amount = amount)
+                    }
+                } + privacyState?.positions.orEmpty().map { row ->
                     Holding(
-                        denom = denom,
-                        symbol = if (denom.startsWith("derth/")) "Staked (private)" else "Unbonding (private)",
-                        amount = amount,
+                        denom = "position/${row.position.id}",
+                        symbol = "Groundworks position",
+                        amount = derthValue(row.position.derth, row.position.validator),
+                        detail = "${formatUerth(row.position.derth)} derth · ${row.position.validator}",
                     )
                 },
             onSeeAllActivity = { nav.push(EarthRoute.Activity) },
@@ -190,6 +215,7 @@ internal fun EarthContent(
             onRemoveLiquidity = { liquidity = LiquidityAction.Remove to it },
             onStake = { staking = StakeIntent.Stake },
             onUnstake = { staking = StakeIntent.Unstake },
+            privateStakedUerth = privateStakeValue,
             onClaim = {
                 val validators = earnState?.delegations?.map { it.validatorOperator }.orEmpty()
                 // One withdraw per validator, so the gas scales with how many
@@ -335,6 +361,7 @@ internal fun EarthContent(
             LaunchedEffect(Unit) { privacy.refresh() }
             PositionsScreen(
                 state = privacyState,
+                valueOf = ::derthValue,
                 lockable = derthHeld,
                 onLock = { locking = true },
                 onEditSplit = { resplitting = it },
@@ -345,7 +372,8 @@ internal fun EarthContent(
                             msgTypeUrl = PrivateMsgs.UNLOCK_POSITION,
                             balanceUerth = 0L,
                             amountLabel = "Returns",
-                            amountValue = "${formatUerth(row.position.derth)} staked ERTH",
+                            amountValue = "${formatUerth(row.position.derth)} derth " +
+                                "(${formatUerth(derthValue(row.position.derth, row.position.validator))} ERTH)",
                         ),
                         shieldedErth = loaded.shieldedErthUerth,
                         onSuccess = { onRefresh(); privacy.refresh() },
@@ -516,12 +544,29 @@ internal fun EarthContent(
                 null
             },
             stakeVoteFinal = true,
-            onVote = { proposal, vote ->
+            onVote = { proposal, vote -> scope.launch {
+                // The weight the confirmation shows: each eligible derth note
+                // and position at the snapshot's rate. Read first, so the
+                // sheet says what the vote is worth rather than describing it.
+                val weight = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val w = PrivacySession.wallet(context)
+                        w.stakeVoteWeight(proposal.id, w.positions().map { it.first })
+                    }.getOrNull()
+                }
                 tx.requestPrivate(
                     details = TxConfirmDetails(
                         action = "Vote ${vote.label} with stake on #${proposal.id} (final)",
                         msgTypeUrl = PrivateMsgs.STAKE_VOTE,
                         balanceUerth = 0L,
+                        amountLabel = "Weight",
+                        amountValue = weight?.let { wt ->
+                            val parts = listOfNotNull(
+                                wt.notes.takeIf { it > 0 }?.let { "$it note${if (it == 1) "" else "s"}" },
+                                wt.positionIds.size.takeIf { it > 0 }?.let { "$it position${if (it == 1) "" else "s"}" },
+                            )
+                            "${formatUerth(wt.uerth)} ERTH" + if (parts.isEmpty()) "" else " (${parts.joinToString()})"
+                        } ?: "Private stake from before voting opened",
                     ),
                     shieldedErth = loaded.shieldedErthUerth,
                     onSuccess = onRefresh,
@@ -529,13 +574,17 @@ internal fun EarthContent(
                         val w = PrivacySession.wallet(ctx)
                         val opts = listOf(WeightedVoteOption.newBuilder().setOption(vote.proto).setWeight("1").build())
                         val notes = runCatching { w.stakeVoteNotes(proposal.id) }.getOrDefault(emptyList())
+                        // Only positions from before voting opened: the chain
+                        // refuses the rest, and one refusal ends the loop.
+                        val mine = w.positions()
+                        val voting = w.stakeVoteWeight(proposal.id, mine.map { it.first }).positionIds
                         val hashes = notes.map { w.stakeVote(proposal.id, it, opts).hash } +
-                            w.positions().map { (p, k) -> w.positionVote(p, k, proposal.id, opts).hash }
+                            mine.filter { it.first.id in voting }.map { (p, k) -> w.positionVote(p, k, proposal.id, opts).hash }
                         check(hashes.isNotEmpty()) { "no stake from before this proposal's voting opened" }
                         hashes.last()
                     },
                 )
-            },
+            } },
             // Absent on a chain without an assembly, which hides the whole
             // second house rather than explaining one that is not there yet.
             assembly = allocationState?.assemblyTallies?.get(route.id),
@@ -556,6 +605,8 @@ internal fun EarthContent(
                         action = "Vote ${vote.label} as a person on #${proposal.id}",
                         msgTypeUrl = Assembly.MSG_VOTE_PROPOSAL_TYPE_URL,
                         balanceUerth = 0L,
+                        amountLabel = "Weight",
+                        amountValue = "1 person",
                     ),
                     shieldedErth = loaded.shieldedErthUerth,
                     onSuccess = onRefresh,
@@ -612,7 +663,11 @@ internal fun EarthContent(
                         msgTypeUrl = if (stake) PrivateMsgs.DELEGATE else PrivateMsgs.UNDELEGATE,
                         balanceUerth = 0L,
                         amountLabel = "Amount",
-                        amountValue = if (stake) "${formatUerth(amount)} ERTH" else "${formatUerth(amount)} derth",
+                        amountValue = if (stake) {
+                            "${formatUerth(amount)} ERTH"
+                        } else {
+                            "${formatUerth(amount)} derth (${formatUerth(derthValue(amount, validator))} ERTH)"
+                        },
                         recipient = validator,
                         recipientLabel = if (stake) "Validator" else "From validator",
                     ),
@@ -804,7 +859,7 @@ internal fun EarthContent(
                             msgTypeUrl = PrivateMsgs.LOCK_POSITION,
                             balanceUerth = 0L,
                             amountLabel = "Locks",
-                            amountValue = "${formatUerth(amount)} staked ERTH",
+                            amountValue = "${formatUerth(amount)} derth (${formatUerth(derthValue(amount, validator))} ERTH)",
                             recipient = validator,
                             recipientLabel = "Validator",
                         ),

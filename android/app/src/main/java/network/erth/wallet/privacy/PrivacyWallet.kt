@@ -49,7 +49,17 @@ import org.bitcoinj.core.Sha256Hash
 interface PrivacyChainReads {
     data class PersonhoodParams(val caretakerVoteSeconds: Long, val identityRootWindowSeconds: Long)
     data class BallotInputs(val scope: Fr, val excludedDsc: Fr, val excludedCountry: Fr, val maxActivation: Long, val round: Long, val ballotId: Long)
-    data class Snapshot(val root: Fr, val treeSize: Long)
+    /**
+     * A proposal's stake-vote snapshot: the note-tree anchor, the block it
+     * entered voting at (0 when unknown) and rate_v (ERTH per derth) per
+     * validator then, what a stake vote's derth weighs.
+     */
+    data class Snapshot(
+        val root: Fr,
+        val treeSize: Long,
+        val height: Long = 0,
+        val rates: Map<String, java.math.BigDecimal> = emptyMap(),
+    )
     data class Position(
         val id: Long,
         val validator: String,
@@ -487,6 +497,25 @@ class PrivacyWallet(
         }
     }
 
+    /** What a stake vote on a proposal weighs: notes, positions that can vote, uerth. */
+    data class StakeWeight(val notes: Int, val positionIds: Set<Long>, val uerth: Long)
+
+    /**
+     * This wallet's weight on [proposalId]: every derth note that can
+     * stake-vote and every position created before the snapshot's block (the
+     * chain refuses later ones), each at its validator's rate at the snapshot.
+     */
+    fun stakeVoteWeight(proposalId: Long, positions: List<PrivacyChainReads.Position>): StakeWeight {
+        val snap = reads.snapshot(proposalId)
+        val notes = store.state.notes.filter {
+            it.unspent && it.pendingAt == null && it.note.denom.startsWith("derth/") && it.note.value > 0 && it.position < snap.treeSize
+        }
+        val ps = votingPositions(positions, snap)
+        val total = notes.sumOf { derthValue(it.note.value, snap.rates[it.note.denom.removePrefix("derth/")] ?: java.math.BigDecimal.ONE) } +
+            ps.sumOf { derthValue(it.derth, snap.rates[it.validator] ?: java.math.BigDecimal.ONE) }
+        return StakeWeight(notes.size, ps.map { it.id }.toSet(), total)
+    }
+
     /**
      * The derth notes that can stake-vote on [proposalId]: unspent, and in
      * the tree at the proposal's snapshot.
@@ -648,6 +677,14 @@ class PrivacyWallet(
         splits.entries.sortedBy { it.key }.map { AllocationWeight.newBuilder().setOptionId(it.key).setPercent(it.value).build() }
 
     companion object {
+        /** floor(derth x rate) in uerth, the chain's conversion of derth to ERTH. */
+        fun derthValue(derth: Long, rate: java.math.BigDecimal): Long =
+            java.math.BigDecimal.valueOf(derth).multiply(rate).setScale(0, java.math.RoundingMode.DOWN).toLong()
+
+        /** Positions created before the block the proposal entered voting at (all, when unknown). */
+        fun votingPositions(positions: List<PrivacyChainReads.Position>, snap: PrivacyChainReads.Snapshot) =
+            positions.filter { snap.height == 0L || it.createdHeight < snap.height }
+
         const val SECONDS_PER_DAY = 86_400L
         const val ANML_PER_CLAIM = 1_000_000L
         /**

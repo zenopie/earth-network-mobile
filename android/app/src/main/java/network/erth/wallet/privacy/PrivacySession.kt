@@ -66,7 +66,7 @@ object PrivacySession {
         override fun epochNumber(): Long = PrivacyQueries.epoch().number
 
         override fun snapshot(proposalId: Long) = PrivacyQueries.snapshot(proposalId).let {
-            PrivacyChainReads.Snapshot(it.root, it.treeSize)
+            PrivacyChainReads.Snapshot(it.root, it.treeSize, it.height, it.rates)
         }
 
         override fun positions() = PrivacyQueries.positions().map {
