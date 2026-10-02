@@ -56,6 +56,9 @@ public final class AppModel {
     public private(set) var privacySyncError: String?
     /// Spendable note counts per denom with more than one note.
     public private(set) var mergeable: [String: Int] = [:]
+    /// The most shielded ERTH one unshield can spend, fee included: its three
+    /// largest notes. Under `shieldedErth` when the notes need merging.
+    public private(set) var unshieldableErth: UInt64 = 0
     /// This wallet's Groundworks positions (public positions whose key is ours).
     public private(set) var positions: [OwnedPosition] = []
     /// x/assembly's open removal ballots.
@@ -720,6 +723,7 @@ public final class AppModel {
         identityStatus = .none
         claimOpensAt = nil
         mergeable = [:]
+        unshieldableErth = 0
         positions = []
         derthRates = [:]
         PrivacyProving.registrationMayFollow = true
@@ -733,6 +737,7 @@ public final class AppModel {
         identityStatus = snap.identityStatus
         claimOpensAt = w.claimOpensAt()
         mergeable = snap.mergeable
+        unshieldableErth = NoteSelection.maxSpendable(snap.notes, denom: Constants.gasDenom, maxNotes: 3)
         // A registered wallet still may register in this launch if it can
         // switch to another wallet, which may not be.
         PrivacyProving.registrationMayFollow = snap.identityStatus != .live || wallets.count > 1
