@@ -121,10 +121,6 @@ fun HomeScreen(
         BalanceWidget(
             erth = erthBalance,
             anml = anmlBalance,
-            publicUerth = publicErthUerth,
-            privateUerth = privateErthUerth,
-            privateStakeUerth = privateStakeUerth,
-            onMove = onMove,
             visible = balancesVisible,
         )
         Spacer(Modifier.height(16.dp))
@@ -149,6 +145,16 @@ fun HomeScreen(
             rewardsUerth = rewardsUerth,
             unbondingUerth = unbondingUerth,
             holdings = holdings,
+            split = {
+                BalanceSplit(
+                    anml = anmlBalance,
+                    publicUerth = publicErthUerth,
+                    privateUerth = privateErthUerth,
+                    privateStakeUerth = privateStakeUerth,
+                    onMove = onMove,
+                    visible = balancesVisible,
+                )
+            },
             onSeeAll = onSeeAllActivity,
             contentPadding = contentPadding,
         )
@@ -156,34 +162,23 @@ fun HomeScreen(
 }
 
 /**
- * The balance: total ERTH large, then where it is.
+ * The balance: ERTH large, ANML beneath it.
  *
  * The fractional part is set smaller than the whole — their StyledBalance
  * trick. It keeps a six-decimal micro-denomination from dominating a glance
  * without truncating it away, which matters when the fee is measured in the
  * digits being shrunk.
  *
- * Under the total, the split that decides what the ERTH can do: private
- * (shielded notes, invisible on chain, what private fees come from) and public
- * (the account, what Keplr, exchanges and validator actions see). One summed
- * figure hid that there were two, and with it any way to move between them —
- * so Shield and Unshield sit directly under the two lines they move between.
- * Not a fifth card in the action row: four already fill it at their fixed
- * proportion. ANML is always private; private stake is held, not spendable.
+ * ANML sits under ERTH rather than beside it because they are not peers: ERTH
+ * is what the wallet spends and what the fee comes out of, ANML is what
+ * personhood accrues. Two equal-sized numbers side by side would invite adding
+ * them together.
  *
- * While a figure is null the shimmer stands in, as theirs does. A zero that is
+ * While either is null the shimmer stands in, as theirs does. A zero that is
  * really "not loaded yet" is the one wrong answer a wallet must never give.
  */
 @Composable
-private fun BalanceWidget(
-    erth: String?,
-    anml: String?,
-    publicUerth: Long?,
-    privateUerth: Long?,
-    privateStakeUerth: Long,
-    onMove: (MoveDirection) -> Unit,
-    visible: Boolean,
-) {
+private fun BalanceWidget(erth: String?, anml: String?, visible: Boolean) {
     val shimmer = rememberEarthShimmer()
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -207,30 +202,75 @@ private fun BalanceWidget(
             }
         }
 
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(6.dp))
 
-        Column(
-            Modifier
-                .padding(horizontal = 24.dp)
-                .fillMaxWidth()
-                .background(EarthColors.Surfaces.bgSecondary, RoundedCornerShape(16.dp))
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Image(
+                modifier = Modifier.size(16.dp),
+                painter = painterResource(R.drawable.anml),
+                contentDescription = null,
+            )
+            Spacer(Modifier.width(4.dp))
+            when {
+                !visible -> Text(
+                    text = "---",
+                    style = EarthTypography.textMd,
+                    color = EarthColors.Text.textTertiary,
+                )
+                anml == null -> Box(Modifier.shimmer(shimmer)) {
+                    ShimmerRectangle(width = 56.dp, height = 16.dp)
+                }
+                else -> Text(
+                    text = "$anml ANML",
+                    style = EarthTypography.textMd,
+                    color = EarthColors.Text.textTertiary,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Where the ERTH is, and the way across: private (shielded notes, invisible on
+ * chain, what private fees come from) and public (the account, what Keplr,
+ * exchanges and validator actions see).
+ *
+ * In Portfolio rather than under the balance: the headline stays the one
+ * total, and the split sits with the rest of what is held. Shield and Unshield
+ * sit directly under the two lines they move between. ANML is always private;
+ * private stake is held, not spendable, and valued at its validators' live
+ * rates.
+ */
+@Composable
+private fun BalanceSplit(
+    anml: String?,
+    publicUerth: Long?,
+    privateUerth: Long?,
+    privateStakeUerth: Long,
+    onMove: (MoveDirection) -> Unit,
+    visible: Boolean,
+) {
+    Column(
+        Modifier
+            .padding(start = 24.dp, end = 24.dp, bottom = 8.dp)
+            .fillMaxWidth()
+            .background(EarthColors.Surfaces.bgSecondary, RoundedCornerShape(16.dp))
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        BalanceLine("Private", locked = true, value = privateUerth?.let { "${formatUerth(it)} ERTH" }, visible = visible)
+        BalanceLine("Public", locked = false, value = publicUerth?.let { "${formatUerth(it)} ERTH" }, visible = visible)
+        if (privateStakeUerth > 0) {
+            BalanceLine("Staked (private)", locked = true, value = "${formatUerth(privateStakeUerth)} ERTH", visible = visible)
+        }
+        // ANML exists only shielded.
+        BalanceLine("ANML", locked = true, value = anml?.let { "$it ANML" }, visible = visible)
+        Row(
+            Modifier.fillMaxWidth().padding(top = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            BalanceLine("Private", locked = true, value = privateUerth?.let { "${formatUerth(it)} ERTH" }, visible = visible)
-            BalanceLine("Public", locked = false, value = publicUerth?.let { "${formatUerth(it)} ERTH" }, visible = visible)
-            if (privateStakeUerth > 0) {
-                BalanceLine("Staked (private)", locked = true, value = "${formatUerth(privateStakeUerth)} ERTH", visible = visible)
-            }
-            // ANML exists only shielded.
-            BalanceLine("ANML", locked = true, value = anml?.let { "$it ANML" }, visible = visible)
-            Row(
-                Modifier.fillMaxWidth().padding(top = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                MoveButton("Shield", Modifier.weight(1f)) { onMove(MoveDirection.Shield) }
-                MoveButton("Unshield", Modifier.weight(1f)) { onMove(MoveDirection.Unshield) }
-            }
+            MoveButton("Shield", Modifier.weight(1f)) { onMove(MoveDirection.Shield) }
+            MoveButton("Unshield", Modifier.weight(1f)) { onMove(MoveDirection.Unshield) }
         }
     }
 }
@@ -403,6 +443,8 @@ private fun HomeListPanel(
     rewardsUerth: Long,
     unbondingUerth: Long,
     holdings: List<Holding>,
+    /** The private/public split and Shield / Unshield, at the top of Portfolio. */
+    split: @Composable () -> Unit,
     onSeeAll: () -> Unit,
     contentPadding: PaddingValues,
 ) {
@@ -447,6 +489,7 @@ private fun HomeListPanel(
                 }
             }
             if (panel == HomePanel.Portfolio) {
+                item { split() }
                 portfolio(stakedUerth, rewardsUerth, unbondingUerth, holdings)
                 return@LazyColumn
             }
@@ -491,8 +534,9 @@ private fun HomeListPanel(
 /**
  * What is held beyond the spendable balance.
  *
- * ERTH and ANML are the widget at the top of this screen, so repeating them
- * would say the same thing twice — but *staked* ERTH is not that balance. It is
+ * ERTH and ANML are the widget at the top of this screen, and their
+ * private/public split is [BalanceSplit] just above this, so neither is
+ * repeated as a row — but *staked* ERTH is not that balance. It is
  * held and not spendable, which is exactly the distinction the balance above
  * cannot make, and a wallet showing only the spendable figure looks to its
  * owner like it lost the rest.
