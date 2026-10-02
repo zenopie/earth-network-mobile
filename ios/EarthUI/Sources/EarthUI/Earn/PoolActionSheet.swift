@@ -165,10 +165,19 @@ struct PoolActionSheet: View {
     /// itself a transaction that has to remain payable.
     private var erthAvailable: BigInt {
         let reserve = BigInt(TransactionSigner.gasReserveUerth) ?? 0
-        return max(0, model.balance(.erth) - reserve)
+        // Pool 1's token is ANML, which only notes hold: both legs come from
+        // shielded balances there, the fee from the same ERTH notes.
+        let held = shieldedPool ? BigInt(model.shieldedErth) : model.balance(.erth)
+        return max(0, held - reserve)
     }
 
-    private var tokenAvailable: BigInt { model.balance(token) }
+    private var tokenAvailable: BigInt {
+        shieldedPool ? BigInt(model.shielded[pool.tokenDenom] ?? 0) : model.balance(token)
+    }
+
+    /// ANML's pool: its legs are note paths (MsgAddLiquidityShielded, and a
+    /// withdrawal whose ANML leg is minted to a note).
+    private var shieldedPool: Bool { pool.tokenDenom == Dex.shieldedOnly }
     private var shareBalance: BigInt { model.lpShares(poolID: pool.id) }
 
     private var erthUnits: BigInt { Token.erth.parse(erthText) ?? 0 }
@@ -215,6 +224,7 @@ struct PoolActionSheet: View {
     // MARK: - intents
 
     private func reviewAdd() {
+        if shieldedPool { return reviewAddShielded() }
         let erthIn = erthUnits
         let tokenIn = tokenUnits
         let poolID = pool.id
@@ -238,7 +248,57 @@ struct PoolActionSheet: View {
         dismiss()
     }
 
+    /// Pool 1 from notes: the shares go to this wallet's transparent address
+    /// (providing liquidity is public), whatever the ratio does not take comes
+    /// back as notes.
+    private func reviewAddShielded() {
+        guard let erthIn = UInt64(erthUnits.description), let tokenIn = UInt64(tokenUnits.description) else { return }
+        let poolID = pool.id
+        let tokenDenom = pool.tokenDenom
+        let provider = model.address
+        let rest = model.client.rest
+        let re = erthReserve, rt = tokenReserve
+        tx.requestPrivate(.private(
+            action: "Add liquidity",
+            rows: [
+                ("Deposit", "\(Figures.balance(erthUnits)) ERTH + \(Figures.balance(tokenUnits, token)) from shielded"),
+                ("LP shares to", provider),
+                ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
+            ]
+        ), onSuccess: { await model.refresh() }) { w in
+            let minShares = await Self.minShares(rest: rest, poolID: poolID, erthIn: BigInt(erthIn), tokenIn: BigInt(tokenIn),
+                                                  erthReserve: re, tokenReserve: rt)
+            return try await w.addLiquidityShielded(poolID: poolID, token: tokenDenom, tokenAmount: tokenIn, erthAmount: erthIn,
+                                                    provider: provider, minShares: minShares)
+        }
+        dismiss()
+    }
+
+    /// The fewest LP shares a shielded deposit accepts: the shares the pool
+    /// would mint now over its reserves and share supply, less 1% for trades
+    /// landing first. "" (no bound) for an empty pool.
+    static func minShares(rest: EarthRest, poolID: UInt64, erthIn: BigInt, tokenIn: BigInt, erthReserve: BigInt, tokenReserve: BigInt) async -> String {
+        guard let raw = try? await PrivacyQueries(rest: rest).lpShareSupply(poolID: poolID), let supply = BigInt(raw),
+              supply > 0, erthReserve > 0, tokenReserve > 0 else { return "" }
+        let shares = min(erthIn * supply / erthReserve, tokenIn * supply / tokenReserve)
+        return SwapMath.withSlippage(shares, bps: 100).description
+    }
+
     private func reviewWithdraw() {
+        if shieldedPool, let w = model.privacy {
+            // The ANML leg is paid as a note to us: a self-mint pc, since it is
+            // priced when the withdrawal matures. Fetched before the request:
+            // the message builder runs synchronously at confirm.
+            Task {
+                guard let pc = try? await w.withdrawalPC() else { return }
+                requestWithdraw(pc: pc)
+            }
+            return
+        }
+        requestWithdraw(pc: Data())
+    }
+
+    private func requestWithdraw(pc: Data) {
         let shares = sharesUnits
         let poolID = pool.id
         let symbol = token.symbol
@@ -255,7 +315,8 @@ struct PoolActionSheet: View {
                 creator: key.address,
                 poolID: poolID,
                 sharesDenom: Dex.shareDenom(poolID: poolID),
-                sharesAmount: String(shares)
+                sharesAmount: String(shares),
+                pc: pc
             )]
         }
         dismiss()

@@ -24,11 +24,13 @@ struct GovernScreen: View {
     enum Route: Hashable, Identifiable {
         case stream(caretaker: Bool)
         case proposals
+        case removals
 
         var id: String {
             switch self {
             case let .stream(caretaker): "stream-\(caretaker)"
             case .proposals: "proposals"
+            case .removals: "removals"
             }
         }
     }
@@ -55,13 +57,21 @@ struct GovernScreen: View {
                 Spacer().frame(height: theme.space.x8)
                 GovernRow(
                     title: "Groundworks Fund",
-                    detail: "Weighted by the ERTH you have staked.",
+                    detail: "Directed by positions: locked private stake.",
                     status: streams.groundworks.status(
-                        eligible: model.totalStaked > 0,
-                        blocked: "Stake ERTH to take part"
+                        eligible: model.privateStakeTotal > 0,
+                        blocked: "Stake ERTH privately to take part"
                     ),
                     loading: !streams.loaded
                 ) { route = .stream(caretaker: false) }
+
+                Spacer().frame(height: theme.space.x8)
+                GovernRow(
+                    title: "Removal ballots",
+                    detail: "People can remove a Groundworks option by ballot.",
+                    status: model.removalBallots.isEmpty ? "None open" : Figures.count(model.removalBallots.count, "open ballot"),
+                    loading: !streams.loaded
+                ) { route = .removals }
 
                 Spacer().frame(height: theme.space.x24)
                 EarthLabel("Chain governance")
@@ -88,17 +98,19 @@ struct GovernScreen: View {
                     title: caretaker ? "Caretaker Fund" : "Groundworks Fund",
                     detail: caretaker
                         ? "One verified human, one vote."
-                        : "Weighted by the ERTH you have staked.",
+                        : "Directed by positions: private stake locked under a one-time key. The split and amount are public; the owner is not.",
                     stream: caretaker ? .caretaker : .groundworks,
                     state: caretaker ? streams.caretaker : streams.groundworks,
                     eligibility: caretaker
                         ? (model.isRegistered ? nil : "Register with your passport to vote here.")
-                        : (model.totalStaked > 0 ? nil : "Stake ERTH to vote here."),
+                        : (model.privateStakeTotal > 0 ? nil : "Stake ERTH privately, then lock it in a position, to take part."),
                     onChanged: { Task { await streams.load(model: model) } }
                 )
                 .earthThemed()
             case .proposals:
                 ProposalsScreen(proposals: streams.proposals).earthThemed()
+            case .removals:
+                RemovalBallotsView(groundworks: streams.groundworks.stream).earthThemed()
             }
         }
     }
@@ -193,13 +205,18 @@ final class StreamsModel {
 
     func load(model: AppModel) async {
         async let caretakerStream = model.client.stream(.caretaker)
-        async let caretakerVote = model.client.voterAllocations(.caretaker, address: model.address)
         async let groundworksStream = model.client.stream(.groundworks)
-        async let groundworksVote = model.client.voterAllocations(.groundworks, address: model.address)
         async let proposals = model.client.proposals(limit: 20)
 
-        caretaker = State(stream: await caretakerStream, mine: await caretakerVote)
-        groundworks = State(stream: await groundworksStream, mine: await groundworksVote)
+        // Neither vote is filed under an address any more: the caretaker
+        // split is cast anonymously (kept locally by the wallet), and
+        // Groundworks is the stake-weighted blend of this wallet's positions.
+        let caretakerSplit = model.privacy?.snapshot.caretakerSplit ?? [:]
+        let mineCaretaker = caretakerSplit.sorted { $0.key < $1.key }.map { Allocation.Weight(optionID: $0.key, percent: $0.value) }
+        let mineGroundworks = positionSplit(model.positions.map(\.position))
+            .sorted { $0.key < $1.key }.map { Allocation.Weight(optionID: $0.key, percent: $0.value) }
+        caretaker = State(stream: await caretakerStream, mine: mineCaretaker)
+        groundworks = State(stream: await groundworksStream, mine: mineGroundworks)
         self.proposals = await proposals
         loaded = true
     }

@@ -2,7 +2,13 @@ import BigInt
 import EarthCore
 import SwiftUI
 
-/// Stake to a validator, or take stake back from one.
+/// Stake to a validator, or take stake back from one — privately.
+///
+/// Staking spends shielded ERTH into the pool's delegation to a validator and
+/// comes back as derth/<validator> notes, worth more ERTH each epoch as
+/// rewards compound; unstaking turns derth into an unbonding note, which the
+/// wallet claims on its own once its epoch's undelegation matures. Only a
+/// validator's own self-bond is a transparent delegation now.
 ///
 /// One sheet for both directions because the fields are the same and the
 /// difference is a word — two screens would drift apart on the amount rules,
@@ -15,7 +21,7 @@ struct StakeSheet: View {
 
     let unstaking: Bool
 
-    @State private var validator: Staking.Validator?
+    @State private var validator: String?
     @State private var amount = ""
 
     var body: some View {
@@ -24,10 +30,15 @@ struct StakeSheet: View {
                 VStack(alignment: .leading, spacing: theme.space.x16) {
                     EarthLabel(unstaking ? "Take back from" : "Stake with")
                     VStack(spacing: 0) {
-                        ForEach(choices) { option in
+                        if choices.isEmpty {
+                            Text(unstaking ? "No private stake yet." : "No validators to stake with.")
+                                .font(EarthType.bodySmall)
+                                .foregroundStyle(theme.colors.textTertiary)
+                        }
+                        ForEach(choices, id: \.self) { option in
                             EarthListRow(
-                                initial: String(option.moniker.prefix(1)).uppercased(),
-                                name: option.moniker.isEmpty ? option.operatorAddress : option.moniker,
+                                initial: String(moniker(option).prefix(1)).uppercased(),
+                                name: moniker(option),
                                 subtitle: subtitle(option),
                                 value: validator == option ? "✓" : nil,
                                 badgeBackground: theme.colors.accentTint,
@@ -49,14 +60,16 @@ struct StakeSheet: View {
                                 .onChange(of: amount) { previous, new in
                                     amount = Amounts.filterAmountInput(new, previous: previous)
                                 }
-                            Text("ERTH")
+                            Text(unstaking ? "derth" : "ERTH")
                                 .font(EarthType.body)
                                 .foregroundStyle(theme.colors.textTertiary)
                             Button("Max") { amount = Amounts.fromBaseUnits(available) }
                                 .font(EarthType.bodySmall)
                                 .foregroundStyle(theme.colors.accentInk)
                         }
-                        Text("Available \(Figures.balance(available)) ERTH")
+                        Text(unstaking
+                             ? "Staked \(Figures.balance(available)) derth"
+                             : "Available \(Figures.balance(available)) shielded ERTH")
                             .font(EarthType.bodySmall)
                             .foregroundStyle(theme.colors.textTertiary)
 
@@ -65,7 +78,7 @@ struct StakeSheet: View {
                             // the stake stops earning immediately and arrives
                             // weeks later, with nothing on screen in between
                             // but the unbonding row.
-                            Text("Unstaked ERTH is locked for the chain's unbonding period and earns nothing while it waits.")
+                            Text("Unstaking becomes an unbonding claim at this epoch's rate. It earns nothing while the chain's unbonding period runs, and the wallet claims it on its own once it matures.")
                                 .font(EarthType.bodySmall)
                                 .foregroundStyle(theme.colors.textTertiary)
                         }
@@ -84,25 +97,26 @@ struct StakeSheet: View {
         }
     }
 
-    /// Unstaking can only come from somewhere stake already is.
-    private var choices: [Staking.Validator] {
-        guard unstaking else { return model.validators }
-        let mine = Set(model.delegations.map(\.validator))
-        return model.validators.filter { mine.contains($0.operatorAddress) }
+    /// Unstaking can only come from somewhere private stake already is.
+    private var choices: [String] {
+        guard unstaking else { return model.validators.map(\.operatorAddress) }
+        return model.privateStake.keys.map { String($0.dropFirst("derth/".count)) }.sorted()
     }
 
-    private var staked: BigInt {
-        guard let validator else { return 0 }
-        return model.delegations.first { $0.validator == validator.operatorAddress }
-            .flatMap { BigInt($0.amount) } ?? 0
+    private func moniker(_ op: String) -> String {
+        let m = model.validators.first { $0.operatorAddress == op }?.moniker ?? ""
+        return m.isEmpty ? op : m
     }
 
     private var available: BigInt {
-        if unstaking { return staked }
+        if unstaking {
+            guard let validator else { return 0 }
+            return BigInt(model.privateStake[PrivacyWallet.derthDenom(validator)] ?? 0)
+        }
         // Leave a reserve, not one fee: staking everything-but-the-fee leaves
-        // an account that cannot afford to claim rewards or unstake again.
+        // no shielded ERTH to pay for unstaking.
         let reserve = BigInt(TransactionSigner.gasReserveUerth) ?? 0
-        return max(0, model.balance(.erth) - reserve)
+        return max(0, BigInt(model.shieldedErth) - reserve)
     }
 
     private var parsed: BigInt? {
@@ -112,29 +126,27 @@ struct StakeSheet: View {
         return value
     }
 
-    private func subtitle(_ option: Staking.Validator) -> String {
-        let percent = String(format: "%.0f%%", option.commission * 100)
+    private func subtitle(_ option: String) -> String {
         if unstaking {
-            let mine = model.delegations.first { $0.validator == option.operatorAddress }?.amount ?? "0"
-            return "\(Figures.whole(mine)) ERTH staked"
+            return "\(Figures.whole(BigInt(model.privateStake[PrivacyWallet.derthDenom(option)] ?? 0))) derth staked"
         }
-        return "\(percent) commission"
+        let c = model.validators.first { $0.operatorAddress == option }?.commission ?? 0
+        return String(format: "%.0f%% commission", c * 100)
     }
 
     private func review() {
-        guard let value = parsed, let validator else { return }
-        let target = validator.operatorAddress
+        guard let value = parsed, let validator, let amount = UInt64(value.description) else { return }
         let taking = unstaking
-        tx.request(.init(
-            action: taking ? "Unstake" : "Stake",
+        tx.requestPrivate(.private(
+            action: taking ? "Unstake" : "Stake privately",
             rows: [
-                ("Amount", "\(Figures.balance(value)) ERTH"),
-                ("Validator", validator.moniker.isEmpty ? target : validator.moniker),
+                ("Amount", "\(Figures.balance(value)) \(taking ? "derth" : "ERTH")"),
+                (taking ? "From validator" : "Validator", moniker(validator)),
+                ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
             ]
-        )) { key in
-            [taking
-                ? model.client.msgUndelegate(delegator: key.address, validator: target, amountUerth: String(value))
-                : model.client.msgDelegate(delegator: key.address, validator: target, amountUerth: String(value))]
+        ), onSuccess: { await model.refresh() }) { w in
+            taking ? try await w.undelegate(validator: validator, amount: amount)
+                   : try await w.delegate(validator: validator, amount: amount)
         }
         dismiss()
     }

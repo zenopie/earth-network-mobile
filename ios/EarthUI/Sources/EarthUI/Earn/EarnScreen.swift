@@ -68,13 +68,53 @@ struct EarnScreen: View {
                 figures
                 Spacer().frame(height: theme.space.x16)
 
-                EarthButton(title: "Claim rewards") { claimAll() }
-                    .disabled(model.rewards <= 0)
-                Spacer().frame(height: theme.space.x8)
+                // Transparent delegations remain only for a validator's own
+                // self-bond; private stake compounds into its rate instead.
+                if !model.delegations.isEmpty {
+                    EarthButton(title: "Claim rewards") { claimAll() }
+                        .disabled(model.rewards <= 0)
+                    Spacer().frame(height: theme.space.x8)
+                }
                 HStack(spacing: theme.space.x12) {
                     EarthButton(title: "Stake", role: .secondary) { staking = .stake }
                     EarthButton(title: "Unstake", role: .secondary) { staking = .unstake }
-                        .disabled(model.delegations.isEmpty)
+                        .disabled(model.privateStake.isEmpty)
+                }
+                Text("Staking is private: shielded ERTH becomes staked ERTH (derth) whose value rises each epoch as rewards compound. Nothing links it to you.")
+                    .font(EarthType.caption)
+                    .foregroundStyle(theme.colors.textTertiary)
+                    .padding(.top, theme.space.x8)
+
+                if !model.privateStake.isEmpty {
+                    Spacer().frame(height: theme.space.x24)
+                    EarthLabel("Your private stake")
+                    ForEach(model.privateStake.sorted { $0.key < $1.key }, id: \.key) { denom, amount in
+                        let op = String(denom.dropFirst("derth/".count))
+                        EarthListRow(
+                            initial: String(moniker(op).prefix(1)).uppercased(),
+                            name: moniker(op),
+                            subtitle: subtitle(commission: commission(op)),
+                            value: "\(Figures.balance(BigInt(amount))) derth",
+                            badgeBackground: theme.colors.accentTint,
+                            badgeForeground: theme.colors.accentInk
+                        )
+                    }
+                }
+
+                if !model.privateUnbonding.isEmpty {
+                    Spacer().frame(height: theme.space.x24)
+                    EarthLabel("Unbonding (private)")
+                    ForEach(model.privateUnbonding.sorted { $0.key < $1.key }, id: \.key) { denom, amount in
+                        let parsed = try? PrivacyWallet.parseUnbond(denom)
+                        EarthListRow(
+                            initial: String(moniker(parsed?.validator ?? "").prefix(1)).uppercased(),
+                            name: moniker(parsed?.validator ?? denom),
+                            subtitle: "Epoch \(parsed?.epoch ?? 0) · claimed automatically when mature",
+                            value: Figures.balance(BigInt(amount)),
+                            badgeBackground: theme.colors.bgSecondary,
+                            badgeForeground: theme.colors.textTertiary
+                        )
+                    }
                 }
 
                 if !model.delegations.isEmpty {
@@ -128,7 +168,7 @@ struct EarnScreen: View {
             // overflows the panel. `minimumScaleFactor` is the backstop for the
             // figure that is long anyway — a shrunk number is readable, a
             // truncated one is wrong.
-            Text("\(Figures.display(model.totalStaked)) ERTH")
+            Text("\(Figures.display(model.totalStaked + BigInt(model.privateStakeTotal))) ERTH")
                 .font(EarthType.headline)
                 .foregroundStyle(theme.colors.textPrimary)
                 .lineLimit(1)

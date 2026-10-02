@@ -11,6 +11,7 @@ import SwiftUI
 /// changed anything.
 struct StreamDetailScreen: View {
     @Environment(\.earth) private var theme
+    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
 
     let title: String
@@ -62,7 +63,21 @@ struct StreamDetailScreen: View {
                     // tally — a vote button there would sit under a chart it
                     // cannot change, and read as editing everyone's split
                     // rather than your own.
-                    if lens == .preferred, eligibility == nil {
+                    if stream == .groundworks {
+                        // Groundworks is directed by positions, not by a
+                        // per-account split: locked private stake under a
+                        // one-time key, its split public, its owner not.
+                        Spacer().frame(height: theme.space.x24)
+                        NavigationLink(value: "positions") {
+                            Text(model.positions.isEmpty ? "Lock stake in a position" : "Your positions")
+                                .font(EarthType.body).fontWeight(.semibold)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, theme.space.x12)
+                                .foregroundStyle(theme.colors.brandButtonFg)
+                                .background(theme.colors.brandButtonBg, in: .capsule)
+                        }
+                        .buttonStyle(.plain)
+                    } else if lens == .preferred, eligibility == nil {
                         Spacer().frame(height: theme.space.x24)
                         EarthButton(title: state.slices.isEmpty ? "Allocate" : "Change allocation") {
                             editing = true
@@ -74,6 +89,9 @@ struct StreamDetailScreen: View {
             }
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(for: String.self) { _ in
+                PositionsView(groundworks: state, onChanged: onChanged)
+            }
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
             .background(theme.colors.bgPrimary)
             .scrollContentBackground(.hidden)
@@ -138,6 +156,11 @@ struct AllocationEditSheet: View {
     let stream: Msg.StreamID
     let state: StreamsModel.State
     let onChanged: () -> Void
+    /// A position's split instead of the caretaker vote: the sheet hands the
+    /// weights back rather than raising the transaction itself.
+    var initial: [UInt64: UInt64]? = nil
+    var title = "Your allocation"
+    var onSubmit: (([UInt64: UInt64]) -> Void)? = nil
 
     @State private var weights: [UInt64: Double] = [:]
 
@@ -185,13 +208,17 @@ struct AllocationEditSheet: View {
                 }
                 .padding(theme.space.gutter)
             }
-            .navigationTitle("Your allocation")
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
             .background(theme.colors.bgPrimary)
             .scrollContentBackground(.hidden)
             .task {
-                for weight in state.mine { weights[weight.optionID] = Double(weight.percent) }
+                if let initial {
+                    for (k, v) in initial { weights[k] = Double(v) }
+                } else {
+                    for weight in state.mine { weights[weight.optionID] = Double(weight.percent) }
+                }
             }
         }
     }
@@ -201,23 +228,27 @@ struct AllocationEditSheet: View {
     private func review() {
         // Zero-weight options are dropped rather than sent: the chain stores
         // the record verbatim, and a list of zeroes is noise in it.
-        let chosen = weights
-            .filter { $0.value > 0 }
-            .map { Allocation.Weight(optionID: $0.key, percent: UInt64($0.value)) }
-            .sorted { $0.optionID < $1.optionID }
-        let target = stream
-
-        tx.request(
-            .init(
-                action: "Set allocation",
-                rows: chosen.map { (label($0.optionID), "\($0.percent)%") }
+        var split: [UInt64: UInt64] = [:]
+        for (k, v) in weights where v > 0 { split[k] = UInt64(v) }
+        if let onSubmit {
+            dismiss()
+            onSubmit(split)
+            return
+        }
+        // The caretaker split is private: a membership proof in the
+        // caretaker scope. The split is public, who cast it is not, and it
+        // lapses after R unless refreshed (the wallet does that on its own).
+        tx.requestPrivate(
+            .private(
+                action: "Set caretaker split",
+                rows: split.sorted { $0.key < $1.key }.map { (label($0.key), "\($0.value)%") }
             ),
             // Drawn by the stream sheet this editor sits on, not by the root:
             // a root overlay cannot appear over a sheet that is still up.
             host: .allocation,
             onSuccess: { onChanged() }
-        ) { key in
-            [model.client.msgSetAllocations(creator: key.address, stream: target, weights: chosen)]
+        ) { w in
+            try await w.setCaretaker(split: split)
         }
         dismiss()
     }
@@ -465,17 +496,17 @@ struct ProposalDetailScreen: View {
             // Stake decides this half, not personhood. An address with nothing
             // delegated can broadcast a vote that succeeds and moves the tally
             // by nothing, which would otherwise look like a vote that failed.
-            if model.totalStaked <= 0 {
+            if model.privateStakeTotal == 0 {
                 EarthCard {
-                    Text("You have no ERTH staked")
+                    Text("You have no private stake")
                         .font(EarthType.body)
                         .foregroundStyle(theme.colors.textPrimary)
-                    Text("This house is weighted by bonded stake alone. A vote from here would be accepted and count for nothing. Stake first, from Earn.")
+                    Text("Stake ERTH privately to vote here. Only stake held before voting opened counts.")
                         .font(EarthType.bodySmall)
                         .foregroundStyle(theme.colors.textSecondary)
                 }
             } else {
-                Text("Voting with \(Figures.display(model.totalStaked)) ERTH of stake.")
+                Text("Every staked-ERTH note held before voting opened votes once, and each of your positions votes with its key. A stake vote is final.")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
             }
@@ -485,7 +516,7 @@ struct ProposalDetailScreen: View {
                     title: option.label,
                     role: option == .yes ? .primary : .secondary
                 ) { cast(option) }
-                .disabled(model.totalStaked <= 0)
+                .disabled(model.privateStakeTotal == 0)
             }
 
             // The human house. A separate vote on the same proposal, not a
@@ -542,27 +573,41 @@ struct ProposalDetailScreen: View {
         String(proposal.votingEndTime.prefix(10))
     }
 
+    /// Spend-to-vote: every derth note in the tree when voting opened is spent
+    /// against that snapshot and minted straight back, its weight counted;
+    /// each position votes with its key. Final: a note votes once.
     private func cast(_ option: Gov.Vote) {
         let id = proposal.id
         let title = proposal.title
-        tx.request(.init(
-            action: "Vote",
+        let positions = model.positions
+        tx.requestPrivate(.private(
+            action: "Vote \(option.label) with stake (final)",
             rows: [
                 ("Proposal", "#\(id) \(title)"),
                 ("Vote", option.label),
-                ("Weight", "\(Figures.display(model.totalStaked)) ERTH staked"),
-                ("Fee", "\(Token.erth.format(TransactionSigner.defaultFeeUerth)) ERTH"),
+                ("Weight", "Private stake from before voting opened"),
             ]
-        )) { key in
-            [model.client.msgVote(voter: key.address, proposalID: id, option: option)]
+        ), onSuccess: { await model.refresh() }) { w in
+            let opts = [WeightedVoteOption(option: option.proto, weight: "1")]
+            var last: TxResult?
+            for note in (try? await w.stakeVoteNotes(proposalID: id)) ?? [] {
+                last = try await w.stakeVote(proposalID: id, note: note, options: opts)
+            }
+            for p in positions {
+                last = try await w.positionVote(p.position, keyIndex: p.keyIndex, proposalID: id, options: opts)
+            }
+            guard let last else { throw PrivacyError("No stake from before this proposal's voting opened.") }
+            return last
         }
         onVoted()
     }
 
+    /// Private: a membership proof in this ballot's scope; who voted is never
+    /// known, and a second vote replaces the first.
     private func castAsPerson(_ option: Assembly.Vote) {
         let id = proposal.id
         let title = proposal.title
-        tx.request(.init(
+        tx.requestPrivate(.private(
             // Says which house: the stake vote on the same proposal produces an
             // otherwise identical confirmation, and the two are different acts.
             action: "Vote as a person",
@@ -570,10 +615,9 @@ struct ProposalDetailScreen: View {
                 ("Proposal", "#\(id) \(title)"),
                 ("Vote", option.label),
                 ("Weight", "One person, one vote"),
-                ("Fee", "\(Token.erth.format(TransactionSigner.defaultFeeUerth)) ERTH"),
             ]
-        )) { key in
-            [model.client.msgVoteProposal(voter: key.address, proposalID: id, option: option)]
+        )) { w in
+            try await w.voteProposal(proposalID: id, yes: option == .yes)
         }
         onVoted()
     }
