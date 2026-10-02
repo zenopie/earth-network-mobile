@@ -153,7 +153,9 @@ fun EarthApp(
                 add(wallet.refresh())
                 when (nav.currentTab) {
                     EarthRoute.Earn -> { add(earn.refresh()); add(markets.refresh()) }
-                    EarthRoute.Govern -> add(allocation.refresh())
+                    // Removal ballots are opened and voted by other people at
+                    // any time, so a pull re-reads them with the streams.
+                    EarthRoute.Govern -> { add(allocation.refresh()); add(privacy.refresh()) }
                     EarthRoute.Swap -> add(markets.refresh())
                     else -> Unit
                 }
