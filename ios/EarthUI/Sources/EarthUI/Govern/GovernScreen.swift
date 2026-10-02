@@ -87,10 +87,21 @@ struct GovernScreen: View {
             }
             .padding(.horizontal, theme.space.gutter)
         }
-        .refreshable { await streams.load(model: model) }
+        // Removal ballots with the streams: opened and closed by other people
+        // at any time, so the row's count is re-read on every appearance and
+        // pull rather than only when the sheet opens.
+        .refreshable {
+            async let ballots: Void = model.refreshRemovalBallots()
+            await streams.load(model: model)
+            await ballots
+        }
         .background(theme.colors.bgPrimary)
         .scrollContentBackground(.hidden)
-        .task { await streams.load(model: model) }
+        .task {
+            async let ballots: Void = model.refreshRemovalBallots()
+            await streams.load(model: model)
+            await ballots
+        }
         .sheet(item: $route) { route in
             switch route {
             case let .stream(caretaker):

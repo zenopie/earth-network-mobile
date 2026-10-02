@@ -74,7 +74,11 @@ struct RemovalBallotsView: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
             .background(theme.colors.bgPrimary)
             .scrollContentBackground(.hidden)
-            .task { await model.syncPrivacy() }
+            .refreshable { await model.refreshRemovalBallots() }
+            .task {
+                await model.refreshRemovalBallots()
+                await model.syncPrivacy()
+            }
         }
     }
 
