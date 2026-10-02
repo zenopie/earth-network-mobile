@@ -20,6 +20,10 @@ import network.erth.wallet.R
 import network.erth.wallet.chain.Assembly
 import network.erth.wallet.privacy.PrivacySession
 import network.erth.wallet.privacy.tx.PrivateMsgs
+import network.erth.wallet.chain.EarthTx
+import network.erth.earth.proto.shielded.MsgShield
+import cosmos.base.v1beta1.CoinOuterClass
+import com.google.protobuf.ByteString
 import network.erth.wallet.chain.Dex
 import network.erth.wallet.chain.Gov
 import network.erth.wallet.chain.Personhood
@@ -71,6 +75,8 @@ import network.erth.wallet.ui.wallet.ReceiveScreen
 import network.erth.wallet.ui.wallet.Holding
 import network.erth.wallet.ui.wallet.ReceiveUiState
 import network.erth.wallet.ui.wallet.SendFlow
+import network.erth.wallet.ui.wallet.MoveDirection
+import network.erth.wallet.ui.wallet.MoveSheet
 import network.erth.wallet.ui.wallet.TransactionDetailScreen
 import network.erth.wallet.ui.wallet.WalletUiState
 import network.erth.wallet.ui.wallet.WalletsScreen
@@ -130,6 +136,8 @@ internal fun EarthContent(
     var locking by remember { mutableStateOf(false) }
     var lockDraft by remember { mutableStateOf<Pair<String, Long>?>(null) }
     var resplitting by remember { mutableStateOf<PositionRow?>(null) }
+    // Shield / Unshield from the wallet home.
+    var moving by remember { mutableStateOf<MoveDirection?>(null) }
 
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
@@ -163,6 +171,10 @@ internal fun EarthContent(
             // Fees for private actions come from the shielded part only.
             erthBalance = state?.let { formatUerth(it.balanceUerth + it.shieldedErthUerth) },
             anmlBalance = state?.let { it.anmlBalance ?: "0" },
+            publicErthUerth = state?.balanceUerth,
+            privateErthUerth = state?.shieldedErthUerth,
+            privateStakeUerth = privateStakeValue,
+            onMove = { moving = it },
             balancesVisible = balancesVisible,
             activity = activity,
             onReceive = { nav.push(EarthRoute.Receive) },
@@ -678,6 +690,64 @@ internal fun EarthContent(
                         (if (stake) w.delegate(validator, amount) else w.undelegate(validator, amount)).hash
                     },
                 )
+            },
+        )
+    }
+
+    // ERTH between the public account and this wallet's own notes. Shield is
+    // MsgShield, signed by the account (the coins are its), its note to our
+    // own shielded address; unshield a private transfer to our own account,
+    // its fee from the same notes.
+    moving?.let { initial ->
+        MoveSheet(
+            initial = initial,
+            publicUerth = loaded.balanceUerth,
+            privateUerth = loaded.shieldedErthUerth,
+            unshieldableUerth = loaded.unshieldableErthUerth,
+            shieldFee = TxController.DEFAULT_FEE_UERTH,
+            unshieldFee = TxController.feeFor(TxController.PRIVATE_GAS_ESTIMATE),
+            onDismiss = { moving = null },
+            onConfirm = { direction, amount ->
+                moving = null
+                if (direction == MoveDirection.Shield) {
+                    tx.request(
+                        details = TxConfirmDetails(
+                            action = "Shield ERTH",
+                            msgTypeUrl = PrivateMsgs.SHIELD,
+                            balanceUerth = loaded.balanceUerth,
+                            amountLabel = "Amount",
+                            amountValue = "${formatUerth(amount)} ERTH",
+                            recipient = "your private balance",
+                            recipientLabel = "To",
+                        ),
+                        onSuccess = onRefresh,
+                        build = { ctx ->
+                            val out = PrivacySession.wallet(ctx).shieldOutput(Constants.UERTH_DENOM, amount)
+                            val msg = MsgShield.newBuilder()
+                                .setSender(walletAddress(ctx))
+                                .setAmount(CoinOuterClass.Coin.newBuilder().setDenom(Constants.UERTH_DENOM).setAmount(amount.toString()))
+                                .setPc(ByteString.copyFrom(out.pc.toBytes()))
+                                .setCiphertext(ByteString.copyFrom(out.ciphertext))
+                                .build()
+                            listOf(EarthTx.anyOf(PrivateMsgs.SHIELD, msg))
+                        },
+                    )
+                } else {
+                    tx.requestPrivate(
+                        details = TxConfirmDetails(
+                            action = "Unshield ERTH",
+                            msgTypeUrl = PrivateMsgs.TRANSFER,
+                            balanceUerth = 0L,
+                            amountLabel = "Amount",
+                            amountValue = "${formatUerth(amount)} ERTH",
+                            recipient = "your public balance",
+                            recipientLabel = "To",
+                        ),
+                        shieldedErth = loaded.shieldedErthUerth,
+                        onSuccess = onRefresh,
+                        run = { ctx -> PrivacySession.wallet(ctx).unshield(walletAddress(ctx), Constants.UERTH_DENOM, amount).hash },
+                    )
+                }
             },
         )
     }

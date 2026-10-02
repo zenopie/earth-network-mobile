@@ -29,6 +29,11 @@ data class WalletUiState(
     val shieldedAddress: String = "",
     /** Why the last privacy sync failed, if it did. */
     val privacySyncError: String? = null,
+    /**
+     * The most shielded ERTH one unshield can spend, fee included: its three
+     * largest notes. Under [shieldedErthUerth] when the notes need merging.
+     */
+    val unshieldableErthUerth: Long = 0,
 ) {
     companion object {
         /**

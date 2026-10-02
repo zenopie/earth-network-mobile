@@ -15,6 +15,7 @@ import network.erth.wallet.chain.Bank
 import network.erth.wallet.chain.Explorer
 import network.erth.wallet.privacy.PrivacySession
 import network.erth.wallet.privacy.sync.WalletSync
+import network.erth.wallet.privacy.tx.NoteSelection
 import network.erth.wallet.chain.Staking
 import network.erth.wallet.ui.components.formatUerth
 import network.erth.wallet.wallet.SecureWalletManager
@@ -129,6 +130,7 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
                         shielded = shielded,
                         shieldedAddress = privacy?.address?.encode().orEmpty(),
                         privacySyncError = syncError,
+                        unshieldableErthUerth = privacy?.let { NoteSelection.maxSpendable(it.notes, Constants.UERTH_DENOM, 3) } ?: 0L,
                     )
                 }
                 _state.value = loaded

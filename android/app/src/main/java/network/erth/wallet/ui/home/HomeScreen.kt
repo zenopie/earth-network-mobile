@@ -33,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
@@ -57,6 +58,7 @@ import network.erth.wallet.ui.theme.EarthAccent
 import network.erth.wallet.ui.wallet.ActivityItem
 import network.erth.wallet.ui.wallet.ActivityRow
 import network.erth.wallet.ui.wallet.Holding
+import network.erth.wallet.ui.wallet.MoveDirection
 
 /**
  * Home.
@@ -80,6 +82,13 @@ fun HomeScreen(
     /** Null while the balance is still being read; their shimmer stands in. */
     erthBalance: String?,
     anmlBalance: String?,
+    /** The account's ERTH (public) and the notes' (private); null while loading. */
+    publicErthUerth: Long?,
+    privateErthUerth: Long?,
+    /** Private stake in ERTH at its validators' live rates; hidden at zero. */
+    privateStakeUerth: Long,
+    /** Opens the Shield / Unshield sheet. */
+    onMove: (MoveDirection) -> Unit,
     balancesVisible: Boolean,
     activity: List<ActivityRow>?,
     onReceive: () -> Unit,
@@ -112,6 +121,10 @@ fun HomeScreen(
         BalanceWidget(
             erth = erthBalance,
             anml = anmlBalance,
+            publicUerth = publicErthUerth,
+            privateUerth = privateErthUerth,
+            privateStakeUerth = privateStakeUerth,
+            onMove = onMove,
             visible = balancesVisible,
         )
         Spacer(Modifier.height(16.dp))
@@ -143,23 +156,34 @@ fun HomeScreen(
 }
 
 /**
- * The balance: ERTH large, ANML beneath it.
+ * The balance: total ERTH large, then where it is.
  *
  * The fractional part is set smaller than the whole — their StyledBalance
  * trick. It keeps a six-decimal micro-denomination from dominating a glance
  * without truncating it away, which matters when the fee is measured in the
  * digits being shrunk.
  *
- * ANML sits under ERTH rather than beside it because they are not peers: ERTH
- * is what the wallet spends and what the fee comes out of, ANML is what
- * personhood accrues. Two equal-sized numbers side by side would invite adding
- * them together.
+ * Under the total, the split that decides what the ERTH can do: private
+ * (shielded notes, invisible on chain, what private fees come from) and public
+ * (the account, what Keplr, exchanges and validator actions see). One summed
+ * figure hid that there were two, and with it any way to move between them —
+ * so Shield and Unshield sit directly under the two lines they move between.
+ * Not a fifth card in the action row: four already fill it at their fixed
+ * proportion. ANML is always private; private stake is held, not spendable.
  *
- * While either is null the shimmer stands in, as theirs does. A zero that is
+ * While a figure is null the shimmer stands in, as theirs does. A zero that is
  * really "not loaded yet" is the one wrong answer a wallet must never give.
  */
 @Composable
-private fun BalanceWidget(erth: String?, anml: String?, visible: Boolean) {
+private fun BalanceWidget(
+    erth: String?,
+    anml: String?,
+    publicUerth: Long?,
+    privateUerth: Long?,
+    privateStakeUerth: Long,
+    onMove: (MoveDirection) -> Unit,
+    visible: Boolean,
+) {
     val shimmer = rememberEarthShimmer()
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -183,31 +207,84 @@ private fun BalanceWidget(erth: String?, anml: String?, visible: Boolean) {
             }
         }
 
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(10.dp))
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Image(
-                modifier = Modifier.size(16.dp),
-                painter = painterResource(R.drawable.anml),
-                contentDescription = null,
-            )
-            Spacer(Modifier.width(4.dp))
-            when {
-                !visible -> Text(
-                    text = "---",
-                    style = EarthTypography.textMd,
-                    color = EarthColors.Text.textTertiary,
-                )
-                anml == null -> Box(Modifier.shimmer(shimmer)) {
-                    ShimmerRectangle(width = 56.dp, height = 16.dp)
-                }
-                else -> Text(
-                    text = "$anml ANML",
-                    style = EarthTypography.textMd,
-                    color = EarthColors.Text.textTertiary,
+        Column(
+            Modifier
+                .padding(horizontal = 24.dp)
+                .fillMaxWidth()
+                .background(EarthColors.Surfaces.bgSecondary, RoundedCornerShape(16.dp))
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            BalanceLine("Private", locked = true, value = privateUerth?.let { "${formatUerth(it)} ERTH" }, visible = visible)
+            BalanceLine("Public", locked = false, value = publicUerth?.let { "${formatUerth(it)} ERTH" }, visible = visible)
+            if (privateStakeUerth > 0) {
+                BalanceLine("Staked (private)", locked = true, value = "${formatUerth(privateStakeUerth)} ERTH", visible = visible)
+            }
+            // ANML exists only shielded.
+            BalanceLine("ANML", locked = true, value = anml?.let { "$it ANML" }, visible = visible)
+            Row(
+                Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                MoveButton("Shield", Modifier.weight(1f)) { onMove(MoveDirection.Shield) }
+                MoveButton("Unshield", Modifier.weight(1f)) { onMove(MoveDirection.Unshield) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BalanceLine(label: String, locked: Boolean, value: String?, visible: Boolean) {
+    val shimmer = rememberEarthShimmer()
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(14.dp), contentAlignment = Alignment.Center) {
+            if (locked) {
+                Image(
+                    modifier = Modifier.size(12.dp),
+                    painter = painterResource(R.drawable.ic_lock),
+                    contentDescription = "private",
+                    colorFilter = ColorFilter.tint(EarthAccent.ink),
                 )
             }
         }
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = label,
+            style = EarthTypography.textSm,
+            color = EarthColors.Text.textSecondary,
+            modifier = Modifier.weight(1f),
+        )
+        when {
+            !visible -> Text("••••", style = EarthTypography.textSm, color = EarthColors.Text.textPrimary)
+            value == null -> Box(Modifier.shimmer(shimmer)) { ShimmerRectangle(width = 72.dp, height = 14.dp) }
+            else -> Text(
+                text = value,
+                style = EarthTypography.textSm,
+                color = EarthColors.Text.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun MoveButton(text: String, modifier: Modifier, onClick: () -> Unit) {
+    Box(
+        modifier
+            .height(36.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(EarthColors.Btns.Secondary.btnSecondaryBg)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            style = EarthTypography.textSm.copy(fontWeight = FontWeight.SemiBold),
+            color = EarthColors.Btns.Secondary.btnSecondaryFg,
+        )
     }
 }
 
