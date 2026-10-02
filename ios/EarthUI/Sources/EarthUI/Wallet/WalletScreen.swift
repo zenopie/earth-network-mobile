@@ -27,10 +27,7 @@ struct WalletScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             Spacer().frame(height: 8)
-            BalanceWidget { direction in
-                moveDirection = direction
-                moving = true
-            }
+            BalanceWidget()
             Spacer().frame(height: 16)
             HomeActions(
                 panel: $panel,
@@ -42,7 +39,10 @@ struct WalletScreen: View {
             .offset(y: 8)
             .zIndex(1)
             Spacer().frame(height: 2)
-            HomePanel(panel: panel)
+            HomePanel(panel: panel) { direction in
+                moveDirection = direction
+                moving = true
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(theme.colors.bgPrimary)
@@ -53,24 +53,19 @@ struct WalletScreen: View {
     }
 }
 
-/// The balance: total ERTH large, then where it is.
+/// The balance: ERTH large, ANML beneath it.
 ///
 /// The fractional part is set smaller than the whole. It keeps a six-decimal
 /// micro-denomination from dominating a glance without truncating it away,
 /// which matters when the fee is measured in the digits being shrunk.
 ///
-/// Under the total, the split that decides what the ERTH can do: private
-/// (shielded notes, invisible on chain, what private fees come from) and
-/// public (the account, what Keplr, exchanges and validator actions see).
-/// One summed figure hid that there were two, and with it any way to move
-/// between them — so Shield and Unshield sit directly under the two lines
-/// they move between. ANML is always private; private stake is held, not
-/// spendable, and is valued at its validator's live rate.
+/// ANML sits under ERTH rather than beside it because they are not peers: ERTH
+/// is what the wallet spends and what the fee comes out of, ANML is what
+/// personhood accrues. Two equal-sized numbers side by side would invite
+/// adding them together.
 struct BalanceWidget: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
-
-    let onMove: (MoveSheet.Direction) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -79,6 +74,8 @@ struct BalanceWidget: View {
                     .resizable().scaledToFit()
                     .frame(width: 28, height: 28)
                 if model.balancesVisible {
+                    // Transparent and shielded ERTH together: both are the
+                    // owner's. Private actions pay their fees from the shielded part.
                     SplitAmount(amount: Figures.plain(model.balance(.erth) + BigInt(model.shieldedErth)))
                 } else {
                     Text("-----")
@@ -87,28 +84,59 @@ struct BalanceWidget: View {
                 }
             }
 
-            Spacer().frame(height: 10)
+            Spacer().frame(height: 6)
 
-            VStack(spacing: 6) {
-                line("Private", locked: true, Figures.balance(BigInt(model.shieldedErth)) + " ERTH")
-                line("Public", locked: false, Figures.balance(model.balance(.erth)) + " ERTH")
-                if model.privateStakeValue > 0 {
-                    line("Staked (private)", locked: true, Figures.balance(BigInt(model.privateStakeValue)) + " ERTH")
-                }
-                // ANML exists only shielded.
-                line("ANML", locked: true, Figures.balance(model.balance(.anml) + BigInt(model.shielded["uanml"] ?? 0)) + " ANML")
-
-                HStack(spacing: 8) {
-                    moveButton("Shield", "lock.fill", .shield)
-                    moveButton("Unshield", "lock.open.fill", .unshield)
-                }
-                .padding(.top, 4)
+            HStack(alignment: .center, spacing: 4) {
+                EarthAsset.anml?
+                    .resizable().scaledToFit()
+                    .frame(width: 16, height: 16)
+                Text(model.balancesVisible
+                     // ANML exists only shielded.
+                     ? "\(Figures.plain(model.balance(.anml) + BigInt(model.shielded["uanml"] ?? 0))) ANML"
+                     : "---")
+                    .font(EarthType.body)
+                    .foregroundStyle(theme.colors.textTertiary)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(theme.colors.bgSecondary, in: .rect(cornerRadius: theme.space.radiusLg))
-            .padding(.horizontal, 24)
         }
+    }
+}
+
+/// Where the ERTH is, and the way across: private (shielded notes,
+/// invisible on chain, what private fees come from) and public (the account,
+/// what Keplr, exchanges and validator actions see).
+///
+/// In Portfolio rather than under the balance: the headline stays the one
+/// total, and the split is here with the rest of what is held. Shield and
+/// Unshield sit directly under the two lines they move between. ANML is
+/// always private; private stake is held, not spendable, and is valued at its
+/// validator's live rate.
+struct BalanceSplit: View {
+    @Environment(\.earth) private var theme
+    @Environment(AppModel.self) private var model
+
+    let onMove: (MoveSheet.Direction) -> Void
+
+    var body: some View {
+        VStack(spacing: 6) {
+            line("Private", locked: true, Figures.balance(BigInt(model.shieldedErth)) + " ERTH")
+            line("Public", locked: false, Figures.balance(model.balance(.erth)) + " ERTH")
+            if model.privateStakeValue > 0 {
+                line("Staked (private)", locked: true, Figures.balance(BigInt(model.privateStakeValue)) + " ERTH")
+            }
+            // ANML exists only shielded.
+            line("ANML", locked: true, Figures.balance(model.balance(.anml) + BigInt(model.shielded["uanml"] ?? 0)) + " ANML")
+
+            HStack(spacing: 8) {
+                moveButton("Shield", "lock.fill", .shield)
+                moveButton("Unshield", "lock.open.fill", .unshield)
+            }
+            .padding(.top, 4)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(theme.colors.bgSecondary, in: .rect(cornerRadius: theme.space.radiusLg))
+        .padding(.horizontal, 24)
+        .padding(.bottom, 8)
     }
 
     private func line(_ label: String, locked: Bool, _ value: String) -> some View {
@@ -322,6 +350,7 @@ struct HomePanel: View {
     @Environment(AppModel.self) private var model
 
     let panel: WalletScreen.Panel
+    let onMove: (MoveSheet.Direction) -> Void
 
     var body: some View {
         ScrollView {
@@ -336,6 +365,7 @@ struct HomePanel: View {
                 .padding(.vertical, 8)
 
                 if panel == .portfolio {
+                    BalanceSplit(onMove: onMove)
                     portfolio
                 } else if let activity = model.activity {
                     if activity.isEmpty {
@@ -365,9 +395,9 @@ struct HomePanel: View {
 
     /// What is held beyond the spendable balance.
     ///
-    /// ERTH and ANML are the widget directly above, so repeating them would
-    /// say the same thing twice on one screen — but *staked* ERTH is not that
-    /// balance. It is held and not spendable, which is exactly the distinction
+    /// ERTH and ANML are the widget directly above, and their private/public
+    /// split is BalanceSplit just over this, so neither is repeated as a row —
+    /// but *staked* ERTH is not that balance. It is held and not spendable, which is exactly the distinction
     /// the balance above cannot make, and a wallet that shows only the
     /// spendable figure looks to its owner like it lost the rest.
     @ViewBuilder
