@@ -63,10 +63,10 @@ struct PositionsView: View {
                 }
                 ForEach(model.positions) { row in
                     EarthCard {
-                        Text("\(Figures.balance(BigInt(row.position.derth))) staked ERTH")
+                        Text("\(Figures.balance(BigInt(model.derthValue(row.position.derth, validator: row.position.validator)))) ERTH")
                             .font(EarthType.body).fontWeight(.semibold)
                             .foregroundStyle(theme.colors.textPrimary)
-                        Text(moniker(row.position.validator))
+                        Text("\(Figures.balance(BigInt(row.position.derth))) derth · \(moniker(row.position.validator))")
                             .font(EarthType.caption)
                             .foregroundStyle(theme.colors.textTertiary)
                         ForEach(row.position.splits.sorted { $0.value > $1.value }, id: \.key) { id, pct in
@@ -135,7 +135,7 @@ struct PositionsView: View {
         tx.requestPrivate(.private(
             action: "Lock position",
             rows: [
-                ("Locks", "\(Figures.balance(BigInt(draft.amount))) staked ERTH"),
+                ("Locks", "\(Figures.balance(BigInt(draft.amount))) derth (\(Figures.balance(BigInt(model.derthValue(draft.amount, validator: draft.validator)))) ERTH)"),
                 ("Validator", moniker(draft.validator)),
             ] + split.sorted { $0.key < $1.key }.map { (optionName($0.key), "\($0.value)%") }
         ), host: .allocation, onSuccess: { await done() }) { w in
@@ -155,7 +155,7 @@ struct PositionsView: View {
     private func unlock(_ row: AppModel.OwnedPosition) {
         tx.requestPrivate(.private(
             action: "Unlock position",
-            rows: [("Returns", "\(Figures.balance(BigInt(row.position.derth))) staked ERTH")]
+            rows: [("Returns", "\(Figures.balance(BigInt(row.position.derth))) derth (\(Figures.balance(BigInt(model.derthValue(row.position.derth, validator: row.position.validator)))) ERTH)")]
         ), host: .allocation, onSuccess: { await done() }) { w in
             try await w.unlockPosition(row.position, keyIndex: row.keyIndex)
         }
@@ -184,7 +184,7 @@ struct LockStakeSheet: View {
                             EarthListRow(
                                 initial: String(moniker(op).prefix(1)).uppercased(),
                                 name: moniker(op),
-                                subtitle: "\(Figures.balance(BigInt(held))) derth",
+                                subtitle: "\(Figures.balance(BigInt(model.derthValue(held, validator: op)))) ERTH · \(Figures.balance(BigInt(held))) derth",
                                 value: validator == op ? "✓" : nil,
                                 badgeBackground: theme.colors.accentTint,
                                 badgeForeground: theme.colors.accentInk,

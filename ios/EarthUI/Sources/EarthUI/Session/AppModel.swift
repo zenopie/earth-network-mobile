@@ -56,6 +56,9 @@ public final class AppModel {
     public private(set) var positions: [OwnedPosition] = []
     /// x/assembly's open removal ballots.
     public private(set) var removalBallots: [PrivacyReads.RemovalBallot] = []
+    /// Live rate_v (ERTH per derth) for every validator this wallet holds
+    /// derth or a position with. Missing until the first read lands.
+    public private(set) var derthRates: [String: Decimal] = [:]
     /// R: how long a caretaker split or referrer binding counts after it is cast.
     public private(set) var leaseSeconds: Int64 = 30 * 86_400
     private var automation: Task<Void, Never>?
@@ -641,9 +644,24 @@ public final class AppModel {
         shielded.filter { $0.key.hasPrefix("derth/") }
     }
 
-    /// Private stake, positions included.
+    /// Private stake in derth, positions included. A count of notes' units,
+    /// not ERTH: what decides whether the wallet can stake-vote at all.
     public var privateStakeTotal: UInt64 {
         privateStake.values.reduce(0, +) + positions.reduce(0) { $0 + $1.position.derth }
+    }
+
+    /// What `derth` derth/`validator` is worth in uerth at the live rate:
+    /// floor(derth x rate_v), as the chain converts it. At face value until
+    /// the rate has been read (it starts at 1 and only rewards move it).
+    public func derthValue(_ derth: UInt64, validator: String) -> UInt64 {
+        PrivacyWallet.derthValue(derth, rate: derthRates[validator] ?? 1)
+    }
+
+    /// Private stake in ERTH (uerth): every derth note and position at its
+    /// validator's live rate.
+    public var privateStakeValue: UInt64 {
+        privateStake.reduce(0) { $0 + derthValue($1.value, validator: String($1.key.dropFirst("derth/".count))) } +
+            positions.reduce(0) { $0 + derthValue($1.position.derth, validator: $1.position.validator) }
     }
 
     /// Unbonding claims (unbond/<valoper>/<epoch> notes), paid out by the
@@ -690,6 +708,7 @@ public final class AppModel {
         claimOpensAt = nil
         mergeable = [:]
         positions = []
+        derthRates = [:]
         PrivacyProving.registrationMayFollow = true
     }
 
@@ -719,8 +738,33 @@ public final class AppModel {
         if let mine = try? await w.positions() {
             positions = mine.map { OwnedPosition(position: $0.position, keyIndex: $0.keyIndex) }
         }
-        if let ballots = try? await queries.removalBallots() { removalBallots = ballots }
+        await refreshRemovalBallots()
+        await refreshDerthRates()
         if let p = try? await queries.personhoodParams() { leaseSeconds = p.caretakerVoteSeconds }
+    }
+
+    /// x/assembly's open removal ballots, on their own: public and cheap, so
+    /// the Govern tab re-reads them on every appearance and pull rather than
+    /// waiting on a full privacy sync.
+    func refreshRemovalBallots() async {
+        if let ballots = try? await PrivacyQueries(rest: client.rest).removalBallots() { removalBallots = ballots }
+    }
+
+    /// The live rate of every bonded validator, and of any other this wallet
+    /// holds stake with. Every bonded one rather than only those held, so the
+    /// reads do not name which validators this wallet's stake sits with.
+    func refreshDerthRates() async {
+        let held = Set(privateStake.keys.map { String($0.dropFirst("derth/".count)) } + positions.map(\.position.validator))
+        guard !held.isEmpty else { return }
+        let all = held.union(validators.map(\.operatorAddress))
+        let queries = PrivacyQueries(rest: client.rest)
+        let read = await withTaskGroup(of: (String, Decimal)?.self) { group in
+            for v in all { group.addTask { (try? await queries.validator(v)).map { (v, $0.rate) } } }
+            var out: [String: Decimal] = [:]
+            for await r in group { if let r { out[r.0] = r.1 } }
+            return out
+        }
+        derthRates.merge(read) { $1 }
     }
 
     /// Gas the account can actually pay with. A new human has none of it, which

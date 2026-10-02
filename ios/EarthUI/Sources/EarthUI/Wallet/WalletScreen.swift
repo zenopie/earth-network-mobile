@@ -344,12 +344,14 @@ struct HomePanel: View {
             // Private stake: derth notes, worth more ERTH each epoch as rewards
             // compound into the validator's rate, and positions locked from them.
             ForEach(model.privateStake.sorted(by: { $0.key < $1.key }), id: \.key) { denom, amount in
-                positionRow("Staked (private)", String(denom.dropFirst("derth/".count)), "shield.lefthalf.filled",
-                            Figures.balance(BigInt(amount)) + " derth")
+                let op = String(denom.dropFirst("derth/".count))
+                positionRow("Staked (private)", Figures.balance(BigInt(amount)) + " derth · " + op, "shield.lefthalf.filled",
+                            Figures.balance(BigInt(model.derthValue(amount, validator: op))) + " ERTH")
             }
             ForEach(model.positions) { p in
-                positionRow("Groundworks position", p.position.validator, "square.stack.3d.up.fill",
-                            Figures.balance(BigInt(p.position.derth)) + " derth")
+                positionRow("Groundworks position", Figures.balance(BigInt(p.position.derth)) + " derth · " + p.position.validator,
+                            "square.stack.3d.up.fill",
+                            Figures.balance(BigInt(model.derthValue(p.position.derth, validator: p.position.validator))) + " ERTH")
             }
             ForEach(model.privateUnbonding.sorted(by: { $0.key < $1.key }), id: \.key) { denom, amount in
                 positionRow("Unbonding (private)", "Claimed automatically once matured", "clock.arrow.circlepath",

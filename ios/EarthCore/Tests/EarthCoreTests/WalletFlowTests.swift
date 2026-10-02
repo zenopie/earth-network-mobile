@@ -204,6 +204,9 @@ final class WalletFlowTests: XCTestCase {
         // Stake votes: every derth note from before the snapshot, each once.
         try await a.sync()
         snapshot = chain.noteTree.size
+        let weight = try await a.stakeVoteWeight(proposalID: 11, positions: [])
+        XCTAssertEqual(2, weight.notes)
+        XCTAssertEqual(1_800_000, weight.uerth, "two derth notes at the fake's rate of 1")
         let voted = try await a.stakeVoteAll(proposalID: 11, options: yes())
         snapshot = nil
         XCTAssertEqual(2, voted.count)

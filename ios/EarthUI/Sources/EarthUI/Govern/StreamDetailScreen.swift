@@ -390,6 +390,9 @@ struct ProposalDetailScreen: View {
     /// empty — before the upgrade there genuinely is only one, and explaining a
     /// house that does not exist yet would be worse than saying nothing.
     @State private var assembly: Assembly.Tally?
+    /// This wallet's stake-vote weight on the proposal, at the snapshot's
+    /// rates. Nil until read (or when the proposal is not open).
+    @State private var weight: PrivacyWallet.StakeWeight?
 
     var body: some View {
         ScrollView {
@@ -451,7 +454,27 @@ struct ProposalDetailScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .background(theme.colors.bgPrimary)
         .scrollContentBackground(.hidden)
-        .task { assembly = await model.client.assemblyTally(proposalID: proposal.id) }
+        .task {
+            async let tally = model.client.assemblyTally(proposalID: proposal.id)
+            await loadWeight()
+            assembly = await tally
+        }
+    }
+
+    private func loadWeight() async {
+        guard proposal.isLive, let w = model.privacy else { return }
+        weight = try? await w.stakeVoteWeight(proposalID: proposal.id, positions: model.positions.map(\.position))
+    }
+
+    /// The stake weight as the confirmation shows it: ERTH at the snapshot's
+    /// rates, and what it is made of.
+    private var weightText: String {
+        guard let weight else { return "Private stake from before voting opened" }
+        var parts: [String] = []
+        if weight.notes > 0 { parts.append(Figures.count(weight.notes, "note")) }
+        if !weight.positionIDs.isEmpty { parts.append(Figures.count(weight.positionIDs.count, "position")) }
+        let made = parts.isEmpty ? "" : " (" + parts.joined(separator: ", ") + ")"
+        return "\(Figures.balance(BigInt(weight.uerth))) ERTH" + made
     }
 
     /// The human house.
@@ -505,7 +528,17 @@ struct ProposalDetailScreen: View {
                         .font(EarthType.bodySmall)
                         .foregroundStyle(theme.colors.textSecondary)
                 }
+            } else if let weight, weight.uerth == 0 {
+                EarthCard {
+                    Text("No stake left to vote with")
+                        .font(EarthType.body)
+                        .foregroundStyle(theme.colors.textPrimary)
+                    Text("Only stake held when this proposal entered voting counts, and a note that has voted cannot vote again.")
+                        .font(EarthType.bodySmall)
+                        .foregroundStyle(theme.colors.textSecondary)
+                }
             } else {
+                if weight != nil { EarthDetailRow(label: "Your weight", value: weightText) }
                 Text("Every staked-ERTH note held before voting opened votes once, and each of your positions votes with its key. A stake vote is final.")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
@@ -516,7 +549,7 @@ struct ProposalDetailScreen: View {
                     title: option.label,
                     role: option == .yes ? .primary : .secondary
                 ) { cast(option) }
-                .disabled(model.privateStakeTotal == 0)
+                .disabled(model.privateStakeTotal == 0 || weight?.uerth == 0)
             }
 
             // The human house. A separate vote on the same proposal, not a
@@ -585,15 +618,18 @@ struct ProposalDetailScreen: View {
             rows: [
                 ("Proposal", "#\(id) \(title)"),
                 ("Vote", option.label),
-                ("Weight", "Private stake from before voting opened"),
+                ("Weight", weightText),
             ]
-        ), onSuccess: { await model.refresh() }) { w in
+        ), onSuccess: { await model.refresh(); await loadWeight() }) { w in
             let opts = [WeightedVoteOption(option: option.proto, weight: "1")]
             var last: TxResult?
             for note in (try? await w.stakeVoteNotes(proposalID: id)) ?? [] {
                 last = try await w.stakeVote(proposalID: id, note: note, options: opts)
             }
-            for p in positions {
+            // Only positions from before voting opened: the chain refuses
+            // the rest, and one refusal would end the loop.
+            let voting = try await w.stakeVoteWeight(proposalID: id, positions: positions.map(\.position)).positionIDs
+            for p in positions where voting.contains(p.position.id) {
                 last = try await w.positionVote(p.position, keyIndex: p.keyIndex, proposalID: id, options: opts)
             }
             guard let last else { throw PrivacyError("No stake from before this proposal's voting opened.") }
@@ -614,7 +650,7 @@ struct ProposalDetailScreen: View {
             rows: [
                 ("Proposal", "#\(id) \(title)"),
                 ("Vote", option.label),
-                ("Weight", "One person, one vote"),
+                ("Weight", "1 person"),
             ]
         )) { w in
             try await w.voteProposal(proposalID: id, yes: option == .yes)

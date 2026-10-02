@@ -578,6 +578,47 @@ public final class PrivacyWallet: @unchecked Sendable {
         }
     }
 
+    /// The positions that can vote on `proposalID`: created before the block
+    /// it entered voting at (the chain refuses later ones, whose derth could
+    /// still vote as a note from the snapshot root).
+    public static func votingPositions(_ positions: [PrivacyReads.Position], snapshot: PrivacyReads.Snapshot) -> [PrivacyReads.Position] {
+        positions.filter { snapshot.height == 0 || Int64($0.createdHeight) < snapshot.height }
+    }
+
+    /// What a stake vote on a proposal weighs, in uerth.
+    public struct StakeWeight: Sendable, Equatable {
+        public let notes: Int
+        /// The ids of the positions that can vote.
+        public let positionIDs: Set<UInt64>
+        public let uerth: UInt64
+    }
+
+    /// floor(derth x rate), the chain's conversion.
+    public static func derthValue(_ derth: UInt64, rate: Decimal) -> UInt64 {
+        var product = Decimal(derth) * rate
+        var floored = Decimal()
+        NSDecimalRound(&floored, &product, 0, .down)
+        return UInt64(truncating: floored as NSNumber)
+    }
+
+    /// This wallet's weight on `proposalID`: every derth note that can
+    /// stake-vote and every position that can, each at its validator's rate
+    /// at the snapshot (1 where the snapshot names none).
+    public func stakeVoteWeight(proposalID: UInt64, positions: [PrivacyReads.Position]) async throws -> StakeWeight {
+        let snap = try await reads.snapshot(proposalID: proposalID)
+        let notes = snapshot.notes.filter {
+            $0.unspent && $0.pendingAt == nil && $0.note.denom.hasPrefix("derth/") && $0.note.value > 0 && $0.position < snap.treeSize
+        }
+        let ps = Self.votingPositions(positions, snapshot: snap)
+        var total: UInt64 = 0
+        for n in notes {
+            let v = String(n.note.denom.dropFirst("derth/".count))
+            total += Self.derthValue(n.note.value, rate: snap.rates[v] ?? 1)
+        }
+        for p in ps { total += Self.derthValue(p.derth, rate: snap.rates[p.validator] ?? 1) }
+        return StakeWeight(notes: notes.count, positionIDs: Set(ps.map(\.id)), uerth: total)
+    }
+
     /// Votes every eligible derth note on `proposalID` (one tx per note: a
     /// stake vote spends its note whole). Final: the spent nullifier and the
     /// re-minted note's absence from the snapshot root stop a second vote.

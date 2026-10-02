@@ -38,7 +38,15 @@ public enum PrivacyReads {
     public struct Snapshot: Sendable {
         public let root: Fr
         public let treeSize: UInt64
-        public init(root: Fr, treeSize: UInt64) { self.root = root; self.treeSize = treeSize }
+        /// The block the proposal entered voting at; a position created at
+        /// or after it cannot vote. 0 when unknown.
+        public let height: Int64
+        /// rate_v (ERTH per derth) per validator at the snapshot: what a
+        /// stake vote's derth weighs.
+        public let rates: [String: Decimal]
+        public init(root: Fr, treeSize: UInt64, height: Int64 = 0, rates: [String: Decimal] = [:]) {
+            self.root = root; self.treeSize = treeSize; self.height = height; self.rates = rates
+        }
     }
 
     /// A Groundworks position (public); the wallet finds its own by pubkey.
@@ -144,7 +152,12 @@ public struct PrivacyQueries: PrivacyChainReads {
 
     public func snapshot(proposalID: UInt64) async throws -> PrivacyReads.Snapshot {
         let s = try await rest.get("/earth/shieldedstaking/v1/snapshots/\(proposalID)").snapshot
-        return PrivacyReads.Snapshot(root: try field(s.root), treeSize: s.tree_size.uint64(default: 0))
+        var rates: [String: Decimal] = [:]
+        for v in s.validators.array {
+            if let r = Decimal(string: v.rate.string(default: "")) { rates[v.validator.string(default: "")] = r }
+        }
+        return PrivacyReads.Snapshot(root: try field(s.root), treeSize: s.tree_size.uint64(default: 0),
+                                     height: s.height.int64(default: 0), rates: rates)
     }
 
     /// Chain-wide timing, the same answer for everyone: with the epoch it says

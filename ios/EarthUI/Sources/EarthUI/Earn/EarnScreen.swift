@@ -93,8 +93,8 @@ struct EarnScreen: View {
                         EarthListRow(
                             initial: String(moniker(op).prefix(1)).uppercased(),
                             name: moniker(op),
-                            subtitle: subtitle(commission: commission(op)),
-                            value: "\(Figures.balance(BigInt(amount))) derth",
+                            subtitle: "\(Figures.balance(BigInt(amount))) derth · " + subtitle(commission: commission(op)),
+                            value: "\(Figures.balance(BigInt(model.derthValue(amount, validator: op)))) ERTH",
                             badgeBackground: theme.colors.accentTint,
                             badgeForeground: theme.colors.accentInk
                         )
@@ -168,7 +168,9 @@ struct EarnScreen: View {
             // overflows the panel. `minimumScaleFactor` is the backstop for the
             // figure that is long anyway — a shrunk number is readable, a
             // truncated one is wrong.
-            Text("\(Figures.display(model.totalStaked + BigInt(model.privateStakeTotal))) ERTH")
+            // Private stake at its validators' live rates: derth is a claim on
+            // ERTH that grows each epoch, so its face value under-reports it.
+            Text("\(Figures.display(model.totalStaked + BigInt(model.privateStakeValue))) ERTH")
                 .font(EarthType.headline)
                 .foregroundStyle(theme.colors.textPrimary)
                 .lineLimit(1)

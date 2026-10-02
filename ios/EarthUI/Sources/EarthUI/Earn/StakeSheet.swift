@@ -68,7 +68,7 @@ struct StakeSheet: View {
                                 .foregroundStyle(theme.colors.accentInk)
                         }
                         Text(unstaking
-                             ? "Staked \(Figures.balance(available)) derth"
+                             ? "Staked \(Figures.balance(available)) derth, worth \(Figures.balance(BigInt(model.derthValue(UInt64(available.description) ?? 0, validator: validator ?? "")))) ERTH"
                              : "Available \(Figures.balance(available)) shielded ERTH")
                             .font(EarthType.bodySmall)
                             .foregroundStyle(theme.colors.textTertiary)
@@ -128,7 +128,8 @@ struct StakeSheet: View {
 
     private func subtitle(_ option: String) -> String {
         if unstaking {
-            return "\(Figures.whole(BigInt(model.privateStake[PrivacyWallet.derthDenom(option)] ?? 0))) derth staked"
+            let held = model.privateStake[PrivacyWallet.derthDenom(option)] ?? 0
+            return "\(Figures.whole(BigInt(model.derthValue(held, validator: option)))) ERTH staked · \(Figures.whole(BigInt(held))) derth"
         }
         let c = model.validators.first { $0.operatorAddress == option }?.commission ?? 0
         return String(format: "%.0f%% commission", c * 100)
@@ -140,7 +141,9 @@ struct StakeSheet: View {
         tx.requestPrivate(.private(
             action: taking ? "Unstake" : "Stake privately",
             rows: [
-                ("Amount", "\(Figures.balance(value)) \(taking ? "derth" : "ERTH")"),
+                ("Amount", taking
+                    ? "\(Figures.balance(value)) derth (\(Figures.balance(BigInt(model.derthValue(amount, validator: validator)))) ERTH)"
+                    : "\(Figures.balance(value)) ERTH"),
                 (taking ? "From validator" : "Validator", moniker(validator)),
                 ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
             ]

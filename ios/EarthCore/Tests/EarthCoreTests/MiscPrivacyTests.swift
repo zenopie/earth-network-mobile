@@ -270,3 +270,25 @@ final class SwapMathTests: XCTestCase {
         XCTAssertNil(SwapMath.withChain(nil, chainOut: nil, chainFee: nil))
     }
 }
+
+/// derth is valued at rate_v (ERTH per derth), floored as the chain floors it,
+/// and a stake vote weighs only what the snapshot admits.
+final class StakeValueTests: XCTestCase {
+    func testDerthValueFloorsAtTheRate() {
+        XCTAssertEqual(1_050_000, PrivacyWallet.derthValue(1_000_000, rate: Decimal(string: "1.05")!))
+        XCTAssertEqual(1, PrivacyWallet.derthValue(3, rate: Decimal(string: "0.5")!))
+        XCTAssertEqual(1_234_567, PrivacyWallet.derthValue(1_234_567, rate: 1))
+        // 999,999.999999999999999999: floored, not rounded up by the 18-place rate.
+        XCTAssertEqual(999_999, PrivacyWallet.derthValue(999_999, rate: Decimal(string: "1.000001000001000001")!))
+    }
+
+    func testPositionsFromBeforeTheSnapshotVote() {
+        func pos(_ id: UInt64, _ h: UInt64) -> PrivacyReads.Position {
+            .init(id: id, validator: "v", derth: 1, pubkey: Data(), nonce: 0, createdHeight: h)
+        }
+        let snap = PrivacyReads.Snapshot(root: .zero, treeSize: 0, height: 100)
+        XCTAssertEqual([1], PrivacyWallet.votingPositions([pos(1, 99), pos(2, 100), pos(3, 101)], snapshot: snap).map(\.id))
+        // A snapshot without a height (unknown) admits every position.
+        XCTAssertEqual(2, PrivacyWallet.votingPositions([pos(1, 99), pos(2, 100)], snapshot: .init(root: .zero, treeSize: 0)).count)
+    }
+}
