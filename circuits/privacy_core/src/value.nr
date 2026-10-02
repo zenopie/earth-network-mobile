@@ -125,6 +125,23 @@ unconstrained fn sqrt(t: Field) -> Field {
     r
 }
 
+/// The canonical y at one counter, if x = H(tag, input, ctr) lands on the
+/// curve there. Wallet and test helper (a non-least counter); the circuit
+/// never needs it.
+pub unconstrained fn point_hint_at(tag: Field, input: Field, ctr: u32) -> (bool, Field) {
+    let x = h3(tag, input, ctr as Field);
+    let t = x * x * x - 17;
+    if is_square(t) {
+        let mut y = sqrt(t);
+        if std::field::bn254::lt(HALF, y) {
+            y = -y;
+        }
+        (true, y)
+    } else {
+        (false, 0)
+    }
+}
+
 pub unconstrained fn hash_to_point_hint(tag: Field, input: Field) -> (u32, Field) {
     let mut ctr: u32 = 0;
     let mut out: (u32, Field) = (0, 0);

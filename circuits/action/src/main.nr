@@ -1,10 +1,10 @@
 //! action — one spend and one output of an Orchard-style shielded bundle
-//! (earth-network-chain ORCHARD_DESIGN.md). A bundle is N of these, each
+//! (earth-network-chain ORCHARD_DESIGN.md). A bundle is N >= 2 of these, each
 //! proven on its own, plus a public value balance per asset and a binding
 //! signature the chain checks against the actions' value commitments.
 //!
 //! Spend (dummy when s_value == 0: the Merkle path is not enforced, the
-//! nullifier is still published):
+//! nullifier is still published and spent):
 //!   owner_pk = H(TAG_OWNER, nk); pc = H(TAG_PC, owner_pk, rho, rcm)
 //!   cm = H(TAG_CM, s_asset, s_value, pc) in the note tree at s_pos under anchor
 //!   nf = H(TAG_NF, nk, rho, s_pos)
@@ -12,11 +12,27 @@
 //!   cm_out = H(TAG_CM, o_asset, o_value, o_pc)
 //! Net value commitment, each asset under its own canonical base:
 //!   cv = s_value*G(s_asset) - o_value*G(o_asset) + rcv*R
+//! Binding: sighash, the chain's hash of the whole msg (every action's anchor,
+//! nf, cm_out, cv and ciphertext, the balances, the msg's own fields), so a
+//! proof cannot be lifted into another tx.
 //!
 //! The spend and the output may be different assets. The chain sums every
 //! action's cv, subtracts each public balance times its base and verifies the
 //! binding signature under the result; it balances only if, per asset, spends
-//! = outputs + public balance (see value.nr for why the bases must be canonical).
+//! = outputs + public balance.
+//!
+//! Soundness hinges on BOTH value bases having the canonical y (value.nr
+//! point_at): (x, -y) = -G is the one base with a known relation to G, and
+//! v under G plus v under -G balances to nothing. The chain cannot detect a
+//! violation; only this circuit refuses it (test_negated_*_base_rejected).
+//!
+//! Dummies need no flag: a value-0 spend or output adds nothing to cv. The
+//! wallet gives a dummy spend a fresh rho (unique nf, recorded like any
+//! other) and any anchor in the chain's window; a dummy output a random pc.
+//!
+//! Size (bb v5.0.0 gates, noir-recursive): 8,120, 72 below the 2^13 = 8,192
+//! dyadic size. Any added constraint risks 2^14 and doubles prove time:
+//! re-run `bb gates` after every change (scripts/orchard-bundles.sh prints it).
 //!
 //! Public input order: anchor, nf, cm_out, cv_x, cv_y, sighash
 
@@ -108,7 +124,7 @@ fn action(
 // ---------------------------------------------------------------- tests
 
 use privacy_core::ASSET_ERTH;
-use privacy_core::value::{R, value_base};
+use privacy_core::value::{point_hint_at, R, value_base};
 use std::embedded_curve_ops::{EmbeddedCurvePoint, EmbeddedCurveScalar, multi_scalar_mul};
 
 global ASSET_A: Field = 0xa55e7;
@@ -501,4 +517,134 @@ unconstrained fn on_curve_at(asset: Field, ctr: u32) -> bool {
         }
     }
     r == 1
+}
+
+#[test]
+fn test_non_minimal_counter_accepted() {
+    // A non-least counter with the canonical y is a valid base for the
+    // circuit (documented, sound: see test_non_minimal_counter_is_a_different_point).
+    let (c0, _) = hint(ASSET_A);
+    let mut ctr: u32 = 0;
+    let mut y: Field = 0;
+    for c in 1..16 {
+        if ctr == 0 {
+            // Safety: test
+            let (ok, yy) = unsafe { point_hint_at(TAG_GEN, ASSET_A, c0 + c) };
+            if ok {
+                ctr = c0 + c;
+                y = yy;
+            }
+        }
+    }
+    assert(ctr != 0);
+    let mut f = fixture(ASSET_A, 100, ASSET_A, 60);
+    f.s_hint = (ctr, y);
+    let g = point_at(TAG_GEN, ASSET_A, ctr, y);
+    let cv = mul(g, 100) - mul(value_base(ASSET_A), 60) + mul(R, f.rcv);
+    f.cv_x = cv.x;
+    f.cv_y = cv.y;
+    run(f);
+}
+
+#[test(should_fail_with = "bad value commitment")]
+fn test_cv_negated_rejected() {
+    // -cv turns a spend into an output in the balance: refused.
+    let mut f = fixture(ASSET_A, 100, ASSET_A, 60);
+    let cv = expected_cv(ASSET_A, 100, ASSET_A, 60, f.rcv);
+    let neg = -cv;
+    f.cv_x = neg.x;
+    f.cv_y = neg.y;
+    run_main(f);
+}
+
+#[test(should_fail_with = "bad value commitment")]
+fn test_cv_infinity_claimed() {
+    // A nonzero action claiming cv = infinity (0, 0).
+    let mut f = fixture(ASSET_A, 100, ASSET_A, 60);
+    f.cv_x = 0;
+    f.cv_y = 0;
+    run_main(f);
+}
+
+#[test(should_fail_with = "bad value commitment")]
+fn test_cv_assets_swapped() {
+    // Mixed action, cv computed with the spend and output assets swapped.
+    let mut f = fixture(ASSET_ERTH, 100, ASSET_A, 7);
+    let cv = expected_cv(ASSET_A, 100, ASSET_ERTH, 7, f.rcv);
+    f.cv_x = cv.x;
+    f.cv_y = cv.y;
+    run_main(f);
+}
+
+#[test(should_fail_with = "bad value commitment")]
+fn test_cv_without_rcv() {
+    // The value terms alone (rcv dropped): the blinding must be rcv*R.
+    let mut f = fixture(ASSET_A, 100, ASSET_A, 60);
+    let cv = expected_cv(ASSET_A, 100, ASSET_A, 60, 0);
+    f.cv_x = cv.x;
+    f.cv_y = cv.y;
+    run_main(f);
+}
+
+#[test(should_fail_with = "bad output commitment")]
+fn test_cm_out_value_mismatch() {
+    // cv and o_value say 61, cm_out commits 60.
+    let mut f = fixture(ASSET_A, 100, ASSET_A, 60);
+    f.o_value = 61;
+    let cv = expected_cv(ASSET_A, 100, ASSET_A, 61, f.rcv);
+    f.cv_x = cv.x;
+    f.cv_y = cv.y;
+    run_main(f);
+}
+
+#[test(should_fail_with = "spend not in note tree")]
+fn test_wrong_position() {
+    // The same note claimed at another leaf (a second nullifier for one note).
+    let mut f = fixture(ASSET_A, 100, ASSET_A, 60);
+    f.s_pos = 6;
+    f.nf = note_nf(f.nk, f.s_rho, f.s_pos);
+    run_main(f);
+}
+
+#[test(should_fail_with = "spend not in note tree")]
+fn test_wrong_rcm() {
+    let mut f = fixture(ASSET_A, 100, ASSET_A, 60);
+    f.s_rcm = f.s_rcm + 1;
+    run_main(f);
+}
+
+#[test(should_fail)]
+fn test_spend_value_overflow() {
+    let mut f = fixture(ASSET_A, 100, ASSET_A, 60);
+    f.s_value = 0xffffffffffffffff + 1;
+    run_main(f);
+}
+
+#[test(should_fail)]
+fn test_position_overflow() {
+    // u32 positions: pos + 2^32 would walk the same path with another nf.
+    let mut f = fixture(ASSET_A, 100, ASSET_A, 60);
+    f.s_pos = 0xffffffff + 6;
+    run_main(f);
+}
+
+#[test(should_fail_with = "non-canonical value base")]
+fn test_negated_base_on_both_sides_rejected() {
+    // Spend and output both under -G (a "consistent" negated action) is still
+    // refused: the check is per base.
+    let mut f = fixture(ASSET_A, 100, ASSET_A, 100);
+    let (cs, ys) = f.s_hint;
+    let (co, yo) = f.o_hint;
+    f.s_hint = (cs, -ys);
+    f.o_hint = (co, -yo);
+    run(f);
+}
+
+#[test(should_fail_with = "value base off the curve")]
+fn test_wrong_counter_rejected() {
+    // The right y, another counter: x changes, so y is off the curve there.
+    let mut f = fixture(ASSET_A, 100, ASSET_A, 60);
+    let (c, y) = f.s_hint;
+    f.s_hint = (c + 1, y);
+    run(f);
 }
