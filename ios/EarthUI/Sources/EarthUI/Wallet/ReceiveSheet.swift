@@ -7,36 +7,58 @@ struct ReceiveSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var copied = false
+    /// Shielded by default: holding is private, and a payment to the shielded
+    /// address arrives as a note nobody else can see. The transparent address
+    /// is for exchanges, LP and anything signed.
+    @State private var shielded = true
+
+    private var shown: String { shielded && !model.shieldedAddress.isEmpty ? model.shieldedAddress : model.address }
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: theme.space.x20) {
-                if let qr = QRCode.image(for: model.address) {
-                    Image(uiImage: qr)
-                        .interpolation(.none)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: 260)
-                        .padding(theme.space.x16)
-                        .background(Palette.Base.bone, in: .rect(cornerRadius: theme.space.radiusLg))
-                }
-
-                Text(model.address)
-                    .font(EarthType.mono)
-                    .foregroundStyle(theme.colors.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .textSelection(.enabled)
+            ScrollView {
+                VStack(spacing: theme.space.x20) {
+                    Picker("Address", selection: $shielded) {
+                        Text("Shielded").tag(true)
+                        Text("Transparent").tag(false)
+                    }
+                    .pickerStyle(.segmented)
                     .padding(.horizontal, theme.space.gutter)
+                    .onChange(of: shielded) { _, _ in copied = false }
 
-                EarthButton(title: copied ? "Copied" : "Copy address", role: .secondary) {
-                    UIPasteboard.general.string = model.address
-                    copied = true
+                    if let qr = QRCode.image(for: shown) {
+                        Image(uiImage: qr)
+                            .interpolation(.none)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: 260)
+                            .padding(theme.space.x16)
+                            .background(Palette.Base.bone, in: .rect(cornerRadius: theme.space.radiusLg))
+                    }
+
+                    Text(shown)
+                        .font(EarthType.mono)
+                        .foregroundStyle(theme.colors.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, theme.space.gutter)
+
+                    Text(shielded
+                         ? "Payments here arrive as private notes: the sender, the amount and that it is yours stay off the public record."
+                         : "Payments here are public, like any account. Use it for exchanges, liquidity and transparent fees.")
+                        .font(EarthType.bodySmall)
+                        .foregroundStyle(theme.colors.textTertiary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, theme.space.gutter)
+
+                    EarthButton(title: copied ? "Copied" : "Copy address", role: .secondary) {
+                        UIPasteboard.general.string = shown
+                        copied = true
+                    }
+                    .padding(.horizontal, theme.space.gutter)
                 }
-                .padding(.horizontal, theme.space.gutter)
-
-                Spacer()
+                .padding(.top, theme.space.x24)
             }
-            .padding(.top, theme.space.x24)
             .navigationTitle("Receive")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }

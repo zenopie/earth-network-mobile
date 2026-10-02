@@ -108,6 +108,8 @@ public final class TxController {
         /// the root's copy draws behind both, the same way it does under the
         /// stream editor.
         case identity
+        /// The shielded-notes screen, another sheet over the settings sheet.
+        case notes
     }
 
     public private(set) var host: Host = .root

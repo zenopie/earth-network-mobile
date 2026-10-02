@@ -19,10 +19,12 @@ enum DeviceProver {
 
     static func install() {
         PassportProving.install(prove)
+        PrivacyProving.install(PrivacyDeviceProver())
     }
 
     enum Failure: Error, LocalizedError {
         case circuitMissing(String)
+        case srsTooSmall
 
         var errorDescription: String? {
             switch self {
@@ -31,6 +33,8 @@ enum DeviceProver {
                 // does not carry, which means the folder reference and
                 // `Certificate.swift`'s table have drifted apart.
                 return "This build has no \(name) circuit, so this passport's signature algorithm cannot be proved."
+            case .srsTooSmall:
+                return "Close and reopen the app, then register again: a private action already ran in this session and the prover cannot grow for a passport now."
             }
         }
     }
@@ -41,6 +45,17 @@ enum DeviceProver {
     /// carry a `noir_version` that has to match the prover's Noir, which makes
     /// a silent divergence expensive.
     private static let circuitDirectory = "circuits"
+
+    /// barretenberg sizes its SRS once per process: if a private action
+    /// proved earlier in this launch sized it for itself, the passport circuit
+    /// cannot be set up now, and the honest instruction is to relaunch.
+    private static func loadOrExplain(_ manifest: Data, provisioned: Bool) throws -> LeanPoaProver.LoadedCircuit {
+        do {
+            return try LeanPoaProver.loadCircuit(manifest: manifest, size: nil)
+        } catch where provisioned && String(describing: error).contains("SRS") {
+            throw Failure.srsTooSmall
+        }
+    }
 
     private static func prove(
         _ inputs: PassportInputs.Inputs
@@ -60,7 +75,8 @@ enum DeviceProver {
         // so a hardcoded hint that turns out to be too small for the circuit a
         // passport selects cannot be corrected afterwards. Reading it off the
         // bytecode cannot be wrong.
-        let circuit = try LeanPoaProver.loadCircuit(manifest: manifest, size: nil)
+        let provisioned = SRS.isProvisioned
+        let circuit = try loadOrExplain(manifest, provisioned: provisioned)
         let result = try LeanPoaProver.prove(circuit: circuit, inputs: inputs.witness)
 
         return PassportRegistration.Proof(
@@ -72,5 +88,41 @@ enum DeviceProver {
             // chain with nothing in the app to explain it.
             signatureAlgorithm: inputs.algorithm
         )
+    }
+}
+
+/// The privacy circuits (membership, transfer) on the phone, installed into
+/// EarthUI's `PrivacyProving` seam. Their compiled circuits are in the same
+/// bundled folder as the passport's (the Android assets, referenced), so one
+/// recompile cannot leave the platforms apart.
+struct PrivacyDeviceProver: PrivacyProver {
+    /// The largest passport circuit (brainpool512, ~425k gates). Barretenberg
+    /// sizes its SRS once per process, so a private action proved before a
+    /// registration that may still follow in this launch provisions for it.
+    private static let largestPassportCircuit = "lean_poa_brainpool512"
+
+    private static func manifest(_ name: String) -> Data? {
+        Bundle.main.url(forResource: name, withExtension: "json", subdirectory: "circuits").flatMap { try? Data(contentsOf: $0) }
+    }
+
+    private static let prover: PrivacyCircuitProver = {
+        var manifests: [PrivacyCircuitProver.Kind: Data] = [:]
+        for k in PrivacyCircuitProver.Kind.allCases { manifests[k] = manifest(k.rawValue) }
+        return PrivacyCircuitProver(manifests: manifests) {
+            PrivacyProving.registrationMayFollow ? manifest(largestPassportCircuit) : nil
+        }
+    }()
+
+    func proveTransfer(_ w: TransferWitness) async throws -> Data {
+        try await Task.detached(priority: .userInitiated) {
+            try Self.prover.prove(.transfer, inputs: w.noirInputs(), expected: w.publicInputs().map(\.hex))
+        }.value
+    }
+
+    func proveMembership(_ w: MembershipWitness) async throws -> Data {
+        try w.check()
+        return try await Task.detached(priority: .userInitiated) {
+            try Self.prover.prove(.membership, inputs: w.noirInputs(), expected: w.publicInputs().map(\.hex))
+        }.value
     }
 }

@@ -12,6 +12,11 @@ import SwiftUI
 /// Only ERTH/ANML. It is the one pool, and pairing arbitrary spokes would need
 /// a two-hop quote through the hub that this screen has no way to let you
 /// choose yet.
+///
+/// A note swap: ANML exists only as notes and the dex refuses it on every
+/// transparent leg, so both sides are shielded balances (MsgNoteSwap, proven
+/// on the phone). The quote is the chain's own (SimulateSwapExactIn, which
+/// settles pending LP rewards first), the pool maths the fallback.
 struct SwapScreen: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
@@ -20,6 +25,8 @@ struct SwapScreen: View {
     @State private var erthIn = true
     @State private var amount = ""
     @State private var slippageBps = SwapScreen.defaultSlippageBps
+    /// The chain's figure for the current amount and direction, when it has one.
+    @State private var simulated: (key: String, value: Dex.Simulated)?
 
     /// The reverse button's diameter, needed to centre it on the seam.
     private static let reverseSize: CGFloat = 48
@@ -28,7 +35,7 @@ struct SwapScreen: View {
     /// is subtracted from the spendable balance, so a stale value lets the user
     /// spend past what the fee needs.
     private static var feeUerth: BigInt {
-        BigInt(TransactionSigner.defaultFeeUerth) ?? 0
+        BigInt(Fees.forGas(PrivacyWallet.privateGasEstimate)) ?? 0
     }
     /// Tolerances offered, in basis points.
     ///
@@ -57,6 +64,16 @@ struct SwapScreen: View {
             .padding(.horizontal, theme.space.gutter)
         }
         .refreshable { await model.refresh() }
+        .task(id: simulationKey) {
+            // Debounced: the chain is asked once the typing stops.
+            guard let input = Token.erth.parse(amount), input > 0 else { return }
+            try? await Task.sleep(for: .milliseconds(400))
+            if Task.isCancelled { return }
+            let key = simulationKey
+            if let sim = await model.client.simulateSwapExactIn(offerDenom: fromToken.denom, offerAmount: input, askDenom: toToken.denom) {
+                simulated = (key, sim)
+            }
+        }
         .background(theme.colors.bgPrimary)
         .scrollContentBackground(.hidden)
         .scrollDismissesKeyboard(.interactively)
@@ -171,8 +188,11 @@ struct SwapScreen: View {
 
     private var fromToken: Token { erthIn ? .erth : .anml }
     private var toToken: Token { erthIn ? .anml : .erth }
-    private var fromUnits: BigInt { model.balance(fromToken) }
-    private var toUnits: BigInt { model.balance(toToken) }
+    // Shielded balances: both legs of a note swap are notes.
+    private var fromUnits: BigInt { BigInt(model.shielded[fromToken.denom] ?? 0) }
+    private var toUnits: BigInt { BigInt(model.shielded[toToken.denom] ?? 0) }
+
+    private var simulationKey: String { "\(erthIn)/\(amount)" }
 
     /// What can actually be swapped.
     ///
@@ -193,11 +213,13 @@ struct SwapScreen: View {
               let token = BigInt(pool.tokenReserve)
         else { return nil }
 
-        return erthIn
+        let local = erthIn
             ? SwapMath.hubForToken(reserveErth: erth, reserveToken: token,
                                    amountIn: input, feePercent: model.swapFeePercent)
             : SwapMath.tokenForHub(reserveErth: erth, reserveToken: token,
                                    amountIn: input, feePercent: model.swapFeePercent)
+        let chain = simulated?.key == simulationKey ? simulated?.value : nil
+        return SwapMath.withChain(local, chainOut: chain?.amountOut, chainFee: chain?.feeErth)
     }
 
     /// The floor the swap will accept, given a tolerance in basis points.
@@ -221,22 +243,20 @@ struct SwapScreen: View {
         let floor = minimumOut
         let paying = "\(Figures.balance(input)) \(fromToken.symbol)"
 
-        tx.request(.init(
+        // Into ERTH the network fee comes out of the output (fee_from_output),
+        // so the chain needs the minimum to exceed it; otherwise it is paid
+        // from an ERTH note (for ERTH in, the same notes being spent).
+        tx.requestPrivate(.private(
             action: "Swap",
             rows: [
                 ("You pay", paying),
                 ("You receive", "\(Amounts.fromBaseUnits(quote.amountOut)) \(toToken.symbol)"),
-                ("Minimum", "\(Amounts.fromBaseUnits(floor)) \(toToken.symbol)"),
-                ("Fee", "\(Amounts.fromBaseUnits(quote.feeErth)) ERTH"),
+                ("Minimum", "\(Amounts.fromBaseUnits(floor)) \(toToken.symbol)" + (outDenom == Constants.gasDenom ? " (network fee paid from it)" : "")),
+                ("Pool fee", "\(Amounts.fromBaseUnits(quote.feeErth)) ERTH"),
+                ("Network fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
             ]
-        ), onSuccess: { amount = "" }) { key in
-            [model.client.msgSwap(
-                creator: key.address,
-                tokenInDenom: inDenom,
-                tokenInAmount: String(input),
-                denomOut: outDenom,
-                minAmountOut: String(floor)
-            )]
+        ), onSuccess: { amount = ""; await model.refresh() }) { w in
+            try await w.noteSwap(denomIn: inDenom, amountIn: UInt64(input), denomOut: outDenom, minOut: UInt64(floor))
         }
     }
 }

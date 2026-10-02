@@ -41,6 +41,9 @@ public enum LeanPoaProver {
     /// the flavor the chain verifier is built for.
     public static let proofType = "ultra_honk"
 
+    /// Swoir's circuit, named here so the app can hold one without importing Swoir.
+    public typealias LoadedCircuit = Circuit
+
     public struct Result {
         public let proof: Data
         public let publicSignals: [String]

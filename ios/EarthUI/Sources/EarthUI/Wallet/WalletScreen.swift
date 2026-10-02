@@ -68,7 +68,9 @@ struct BalanceWidget: View {
                     .resizable().scaledToFit()
                     .frame(width: 28, height: 28)
                 if model.balancesVisible {
-                    SplitAmount(amount: Figures.plain(model.balance(.erth)))
+                    // Transparent and shielded ERTH together: both are the
+                    // owner's. Private actions pay their fees from the shielded part.
+                    SplitAmount(amount: Figures.plain(model.balance(.erth) + BigInt(model.shieldedErth)))
                 } else {
                     Text("-----")
                         .font(EarthType.header2).fontWeight(.semibold)
@@ -83,7 +85,8 @@ struct BalanceWidget: View {
                     .resizable().scaledToFit()
                     .frame(width: 16, height: 16)
                 Text(model.balancesVisible
-                     ? "\(Figures.plain(model.balance(.anml))) ANML"
+                     // ANML exists only shielded.
+                     ? "\(Figures.plain(model.balance(.anml) + BigInt(model.shielded["uanml"] ?? 0))) ANML"
                      : "---")
                     .font(EarthType.body)
                     .foregroundStyle(theme.colors.textTertiary)
@@ -180,7 +183,8 @@ struct HomeActions: View {
     private var claimLabel: String {
         if notRegistered { return "Verify" }
         if model.canClaimAnml { return "Claim" }
-        let seconds = Int64(Personhood.nextClaimOpensAt()) - Int64(now.timeIntervalSince1970)
+        let opens = model.claimOpensAt ?? Personhood.nextClaimOpensAt()
+        let seconds = opens - Int64(now.timeIntervalSince1970)
         return countdown(max(0, seconds))
     }
 
@@ -194,9 +198,14 @@ struct HomeActions: View {
         return "\(seconds)s"
     }
 
+    /// Private: a membership proof in the day's claim scope, its fee paid
+    /// from a shielded ERTH note, the ANML minted as a note. Nothing links it
+    /// to the registration or to any other claim. The wallet also claims on
+    /// its own each day while unlocked, at a random time.
     private func claim() {
-        tx.request(.init(action: "Claim", rows: [("Token", "ANML"), ("Amount", "1 ANML")])) { key in
-            [model.client.msgClaimAnml(creator: key.address)]
+        tx.requestPrivate(.private(action: "Claim", rows: [("Token", "ANML"), ("Amount", "1 ANML"), ("Paid as", "a private note")]),
+                          onSuccess: { await model.syncPrivacy() }) { w in
+            try await w.claimAnml()
         }
     }
 }
@@ -317,7 +326,8 @@ struct HomePanel: View {
     @ViewBuilder
     private var portfolio: some View {
         let others = model.holdings.filter { $0.token != .erth && $0.token != .anml && $0.amount > 0 }
-        let hasPosition = model.totalStaked > 0 || model.rewards > 0 || model.unbondingTotal > 0
+        let hasPosition = model.totalStaked > 0 || model.rewards > 0 || model.unbondingTotal > 0 ||
+            model.privateStakeTotal > 0 || !model.privateUnbonding.isEmpty
 
         if others.isEmpty, !hasPosition {
             Text("Nothing else yet. Staked ERTH, rewards, and any token other than ERTH and ANML appear here — including your share of a pool you provide liquidity to.")
@@ -330,6 +340,20 @@ struct HomePanel: View {
             if model.totalStaked > 0 {
                 positionRow("Staked", "Delegated · earning", "shield.fill",
                             Figures.whole(model.totalStaked) + " ERTH")
+            }
+            // Private stake: derth notes, worth more ERTH each epoch as rewards
+            // compound into the validator's rate, and positions locked from them.
+            ForEach(model.privateStake.sorted(by: { $0.key < $1.key }), id: \.key) { denom, amount in
+                positionRow("Staked (private)", String(denom.dropFirst("derth/".count)), "shield.lefthalf.filled",
+                            Figures.balance(BigInt(amount)) + " derth")
+            }
+            ForEach(model.positions) { p in
+                positionRow("Groundworks position", p.position.validator, "square.stack.3d.up.fill",
+                            Figures.balance(BigInt(p.position.derth)) + " derth")
+            }
+            ForEach(model.privateUnbonding.sorted(by: { $0.key < $1.key }), id: \.key) { denom, amount in
+                positionRow("Unbonding (private)", "Claimed automatically once matured", "clock.arrow.circlepath",
+                            Figures.balance(BigInt(amount)) + " ERTH")
             }
             if model.rewards > 0 {
                 positionRow("Rewards", "Claimable", "sparkles",

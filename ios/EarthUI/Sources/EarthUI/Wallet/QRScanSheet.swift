@@ -104,6 +104,17 @@ extension QRScanner: AVCaptureMetadataOutputObjectsDelegate {
 func earthAddress(in scanned: String) -> String {
     let trimmed = scanned.trimmingCharacters(in: .whitespacesAndNewlines)
     let characters = Array(trimmed.lowercased())
+
+    // A shielded address first: its hrp "erthz" is not "earth", so the scan
+    // below would not find it, and it is the one a private payment needs.
+    let zprefix = Array(ShieldedAddress.hrp + "1")
+    for start in characters.indices where Array(characters[start...].prefix(zprefix.count)) == zprefix {
+        var end = start
+        while end < characters.count, characters[end].isNumber || characters[end].isLetter { end += 1 }
+        let candidate = String(characters[start ..< end])
+        if ShieldedAddress.isShielded(candidate) { return candidate }
+    }
+
     let prefix = Array("earth1")
 
     for start in characters.indices where Array(characters[start...].prefix(6)) == prefix {

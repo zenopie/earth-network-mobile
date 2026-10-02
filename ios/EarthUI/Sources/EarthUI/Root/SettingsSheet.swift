@@ -14,7 +14,7 @@ struct SettingsSheet: View {
     @State private var route: Route?
 
     enum Route: String, Identifiable {
-        case identity, wallets, security, explorer, activity, about
+        case identity, notes, wallets, security, explorer, activity, about
         var id: String { rawValue }
     }
 
@@ -30,6 +30,8 @@ struct SettingsSheet: View {
                             // read about yet.
                             subtitle: model.isRegistered ? "Verified human" : "Not registered",
                             route: .identity)
+                        divider
+                        row("Shielded notes", "lock.shield", subtitle: "Shield, merge small notes", route: .notes)
                         divider
                         row("Wallets", "wallet.bifold", subtitle: model.walletName, route: .wallets)
                         divider
@@ -64,6 +66,7 @@ struct SettingsSheet: View {
             .sheet(item: $route) { destination in
                 switch destination {
                 case .identity: IdentityScreen().earthThemed()
+                case .notes: NotesScreen().earthThemed()
                 case .wallets: WalletsScreen().earthThemed()
                 case .security: SecurityScreen().earthThemed()
                 case .explorer: ExploreScreen().earthThemed()
@@ -118,6 +121,11 @@ struct SettingsSheet: View {
 
 /// Whether *this wallet* is a verified human — a different question from how
 /// many the network has, which is on the explorer.
+///
+/// Private: the registration's link to this wallet exists only here. The
+/// chain holds an identity leaf nobody can attribute, and every claim, vote,
+/// caretaker split and referrer binding proves membership without saying
+/// which leaf.
 struct IdentityScreen: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
@@ -132,32 +140,21 @@ struct IdentityScreen: View {
                     EarthListRow(
                         initial: model.isRegistered ? "✓" : "?",
                         name: model.isRegistered ? "Verified human" : "Not registered",
-                        subtitle: model.isRegistered
-                            ? "Your passport proof is on chain."
-                            : "Prove you are a unique human to claim ANML and vote.",
+                        subtitle: subtitle,
                         badgeBackground: model.isRegistered ? theme.colors.accentTint : theme.colors.bgSecondary,
                         badgeForeground: model.isRegistered ? theme.colors.accentInk : theme.colors.textTertiary
                     )
 
-                    Text("The proof shows a government signed your document and that you have not registered before. It does not carry your name, your photo, or your document number, and nothing about the passport leaves this phone.")
+                    Text("The proof shows a government signed your document and that you have not registered before. It does not carry your name, your photo, or your document number, and nothing about the passport leaves this phone. Your registration is not linked to this wallet on chain: claims and votes prove you are a registered person without saying which.")
                         .font(EarthType.bodySmall)
                         .foregroundStyle(theme.colors.textTertiary)
 
                     if model.isRegistered {
-                        // There is no way to leave from here any more. The
-                        // chain removed MsgUnregister: retiring a registration
-                        // freed its nullifier, and Register pays the
-                        // registration reward to any nullifier that is not
-                        // already live, so leaving and returning was a way to
-                        // draw the reward pool repeatedly.
-                        //
-                        // Moving a registration still works, and is the thing
-                        // people actually wanted this for — but it starts from
-                        // the wallet being moved to, so it is described rather
-                        // than offered.
-                        Text("Your registration stays with this wallet until it expires. To move it to another wallet, register there with the same passport — the proof moves the registration across rather than making a second one, and pays nothing the second time.")
+                        Text("Your registration stays with this wallet until it expires. Registering the same passport from another wallet moves it there, and this one stops counting.")
                             .font(EarthType.bodySmall)
                             .foregroundStyle(theme.colors.textTertiary)
+                        ReferrerSection()
+                        TransparentGasSection()
                     } else {
                         EarthButton(title: "Register with your passport") { registering = true }
                     }
@@ -173,6 +170,98 @@ struct IdentityScreen: View {
             // A sheet over the settings sheet, so the root's confirmation
             // would draw behind both. See TxController.Host.
             .overlay { TxOverlay(host: .identity) }
+        }
+    }
+
+    private var subtitle: String {
+        switch model.identityStatus {
+        case .live: "Your registration is in the identity tree."
+        case .zeroed: "Your registration expired, or moved to another wallet. Register again to take part."
+        case .none: "Prove you are a unique human to claim ANML and vote."
+        }
+    }
+}
+
+/// Referrals. This person's referral rewards are paid, in transparent ERTH,
+/// to an address they bind with a membership proof: the binding is public
+/// (the address is), who bound it is not. It lapses after the caretaker
+/// period unless refreshed, which the wallet does while unlocked.
+struct ReferrerSection: View {
+    @Environment(\.earth) private var theme
+    @Environment(AppModel.self) private var model
+    @Environment(TxController.self) private var tx
+    @State private var shared = false
+
+    var body: some View {
+        let snap = model.privacy?.snapshot
+        let bound = snap?.referrerAddress ?? ""
+        let at = snap?.referrerBoundAt ?? 0
+        let live = bound == model.address && at > 0
+        VStack(alignment: .leading, spacing: theme.space.x8) {
+            EarthLabel("Referrals")
+            Text("When someone registers naming your address, half of their registration reward is paid to it. Binding the address proves you are a registered person without saying which one.")
+                .font(EarthType.bodySmall)
+                .foregroundStyle(theme.colors.textTertiary)
+            EarthDetailRow(label: "Your address", value: model.address)
+            EarthDetailRow(label: "Status", value: live
+                ? "Bound, refreshed until \(Date(timeIntervalSince1970: TimeInterval(at + model.leaseSeconds)).formatted(date: .abbreviated, time: .omitted))"
+                : bound.isEmpty ? "Not bound" : "Bound to another address")
+            HStack(spacing: theme.space.x8) {
+                EarthButton(title: live ? "Rebind" : "Bind address") {
+                    let address = model.address
+                    tx.requestPrivate(.private(action: "Bind referrer address", rows: [("Rewards to", address)]),
+                                      host: .identity, onSuccess: { await model.syncPrivacy() }) { w in
+                        try await w.bindReferrer(address: address)
+                    }
+                }
+                EarthButton(title: shared ? "Copied" : "Copy link", role: .secondary) {
+                    UIPasteboard.general.string = "https://erth.network/ref/\(model.address)"
+                    shared = true
+                }
+            }
+        }
+    }
+}
+
+/// "Get ERTH for transparent fees": a registered human proves membership with
+/// this month's gas scope and the backend sends a little transparent ERTH to
+/// this wallet's account. Once a month; the backend learns the address, never
+/// which human asked.
+struct TransparentGasSection: View {
+    @Environment(\.earth) private var theme
+    @Environment(AppModel.self) private var model
+    @State private var busy = false
+    @State private var status: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: theme.space.x8) {
+            EarthLabel("Transparent fees")
+            Text("Signed transactions (liquidity, exchanges) pay their fee from the account, not from notes. Once a month, a registered person can have a little ERTH sent here.")
+                .font(EarthType.bodySmall)
+                .foregroundStyle(theme.colors.textTertiary)
+            EarthButton(title: "Get ERTH for transparent fees", busy: busy) {
+                guard let w = model.privacy else { return }
+                busy = true
+                status = nil
+                let address = model.address
+                Task {
+                    do {
+                        let req = try await GasTransparent.request(wallet: w, address: address, prove: { try await PrivacyProving.prover.proveMembership($0) })
+                        _ = try await GasGrant.request(.transparent(req))
+                        status = "ERTH is on its way to \(address)."
+                    } catch let refused as GasGrant.Refused {
+                        status = refused.message
+                    } catch {
+                        status = model.describe(error)
+                    }
+                    busy = false
+                }
+            }
+            if let status {
+                Text(status)
+                    .font(EarthType.bodySmall)
+                    .foregroundStyle(theme.colors.textSecondary)
+            }
         }
     }
 }
