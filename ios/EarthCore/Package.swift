@@ -36,7 +36,11 @@ let package = Package(
         // wallet flow against an in-memory chain. Needs full Xcode (XCTest).
         .testTarget(
             name: "EarthCoreTests",
-            dependencies: ["EarthCore"],
+            dependencies: [
+                "EarthCore",
+                .product(name: "secp256k1", package: "swift-secp256k1"),
+                .product(name: "BigInt", package: "BigInt"),
+            ],
             resources: [.copy("Resources/privacy")]
         ),
     ]
