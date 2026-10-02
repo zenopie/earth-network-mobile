@@ -3,7 +3,6 @@ members = [
   "poa_core",
   "privacy_core",
   "membership",
-  "transfer",
   "action",
   "lean_poa",
   "lean_poa_rsa2048",
