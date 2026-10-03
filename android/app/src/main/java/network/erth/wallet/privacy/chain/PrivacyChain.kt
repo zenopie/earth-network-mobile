@@ -330,10 +330,33 @@ object LcdChainRoots : network.erth.wallet.privacy.sync.ChainRoots {
         network.erth.wallet.privacy.sync.ChainIdentity(net, genesis)
     }.getOrNull()
 
-    override fun latestHeight(): Long? = runCatching {
+    override fun latestHeight(): Long? = latestBlock()?.height
+
+    override fun latestBlock(): network.erth.wallet.privacy.sync.ChainTip? = runCatching {
         val (code, body) = EarthRest.get("/cosmos/base/tendermint/v1beta1/blocks/latest")
-        if (code !in 200..299) null
-        else JSONObject(body).optJSONObject("block")?.optJSONObject("header")?.optString("height")?.toLongOrNull()
+        if (code !in 200..299) return@runCatching null
+        val header = JSONObject(body).optJSONObject("block")?.optJSONObject("header") ?: return@runCatching null
+        val height = header.optString("height").toLongOrNull()?.takeIf { it >= 0 } ?: return@runCatching null
+        network.erth.wallet.privacy.sync.ChainTip(height, RestPrivateChain.parseTime(header.optString("time")).takeIf { it > 0 })
+    }.getOrNull()
+
+    /** x/shielded Query/Tree at [height] (pinned when the node echoes it). */
+    override fun noteTree(height: Long?): network.erth.wallet.privacy.sync.TreeState? = runCatching {
+        val j = at("/earth/shielded/v1/tree", height)
+        val size = network.erth.wallet.privacy.Amounts.parseU64(j.optString("tree_size").ifEmpty { return@runCatching null }) ?: return@runCatching null
+        network.erth.wallet.privacy.sync.TreeState(size, null, !j.has("_latest"))
+    }.getOrNull()
+
+    /** A tx this wallet broadcast, by hash: 404 missing, a non-zero code failed (audit 4). */
+    override fun txStatus(hash: String): network.erth.wallet.privacy.sync.TxStatus? = runCatching {
+        val (code, body) = EarthRest.get("/cosmos/tx/v1beta1/txs/$hash")
+        when {
+            code == 404 -> network.erth.wallet.privacy.sync.TxStatus.MISSING
+            code !in 200..299 -> null
+            else -> JSONObject(body).optJSONObject("tx_response")?.let {
+                if (it.optInt("code", 0) == 0) network.erth.wallet.privacy.sync.TxStatus.COMMITTED else network.erth.wallet.privacy.sync.TxStatus.FAILED
+            }
+        }
     }.getOrNull()
 
     override fun noteRoot(root: Fr): network.erth.wallet.privacy.sync.NoteRootRecord? {
@@ -343,7 +366,8 @@ object LcdChainRoots : network.erth.wallet.privacy.sync.ChainRoots {
         val rec = j.optJSONObject("record") ?: return null
         if (b64Field(rec.optString("root")) != root) return null
         val size = network.erth.wallet.privacy.Amounts.parseU64(rec.optString("tree_size", "0")) ?: throw IOException("$path: tree_size")
-        return network.erth.wallet.privacy.sync.NoteRootRecord(j.optBoolean("valid"), size)
+        val height = rec.optString("height").toLongOrNull()
+        return network.erth.wallet.privacy.sync.NoteRootRecord(j.optBoolean("valid"), size, height)
     }
 
     override fun identityTree(height: Long?): network.erth.wallet.privacy.sync.TreeState {
