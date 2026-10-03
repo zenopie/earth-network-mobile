@@ -10,44 +10,45 @@ import org.junit.Test
 
 class AutomationTest {
     private val day = 20_000L
-    private val base = Inputs(
-        now = day * 86_400 + 5 * 3600, identityLive = true, claimOpensAt = 0, claimedToday = false,
-        claimOffset = 4 * 3600, caretakerDue = false, hasFeeErth = true, maturedUnbonds = emptyList(),
-    )
+    private val now = day * 86_400 + 5 * 3600
 
+    /**
+     * Round 5 (user decision): nothing that spends a fee is automatic. The
+     * day's claim, the caretaker vote and the handle are reminders; the one
+     * automatic action is the end of an undelegation the user started.
+     */
     @Test
-    fun claimsOnceTheDaysOffsetHasPassed() {
-        assertEquals(listOf(Action.ClaimAnml(day)), PrivacyAutomation.decide(base))
-        assertTrue(PrivacyAutomation.decide(base.copy(claimOffset = 6 * 3600)).isEmpty())
-        assertTrue(PrivacyAutomation.decide(base.copy(claimedToday = true)).isEmpty())
-        assertTrue(PrivacyAutomation.decide(base.copy(claimOpensAt = 123)).isEmpty())
-        assertTrue(PrivacyAutomation.decide(base.copy(identityLive = false)).isEmpty())
-        assertTrue(PrivacyAutomation.decide(base.copy(hasFeeErth = false)).isEmpty())
-    }
-
-    @Test
-    fun refreshesCaretakerAndClaimsUnbonding() {
+    fun onlyMaturedUnbondingClaimsAreAutomatic() {
+        assertTrue(PrivacyAutomation.decide(Inputs(now, emptyList())).isEmpty())
         val n = stake(3, "unbond/v/1")
-        val acts = PrivacyAutomation.decide(base.copy(claimedToday = true, caretakerDue = true, hasFeeErth = false, maturedUnbonds = listOf(n.denom)))
-        // No fee note: the caretaker refresh waits, the unbonding claim pays from its output.
-        assertEquals(listOf<Action>(Action.ClaimUnbonding(n.denom)), acts)
-        assertEquals(listOf<Action>(Action.RefreshCaretaker), PrivacyAutomation.decide(base.copy(claimedToday = true, caretakerDue = true)))
+        assertEquals(listOf<Action>(Action.ClaimUnbonding(n.denom)), PrivacyAutomation.decide(Inputs(now, listOf(n.denom))))
+        // The only action kind there is (a sealed interface the JVM lists).
+        assertEquals(listOf("ClaimUnbonding"), Action::class.java.permittedSubclasses.map { it.simpleName })
     }
 
     @Test
-    fun offsetIsWithinTheWindowAndStableForADay() {
-        val st = network.erth.wallet.privacy.sync.PrivacyState()
-        val a = PrivacyAutomation.claimOffset(st, day * 86_400 + 10)
-        assertEquals(a, PrivacyAutomation.claimOffset(st, day * 86_400 + 80_000))
-        assertTrue(a in 0 until PrivacyAutomation.CLAIM_WINDOW_S)
-        // Audit 4: persisted with the wallet, so a restart (the state read back) keeps the day's draw.
-        val back = network.erth.wallet.privacy.sync.PrivacyState.fromJson(st.toJson())
-        var saved = 0
-        assertEquals(a, PrivacyAutomation.claimOffset(back, day * 86_400 + 50_000) { saved++ })
-        assertEquals(0, saved)
-        PrivacyAutomation.claimOffset(back, (day + 1) * 86_400 + 5) { saved++ }
-        assertEquals(1, saved)
-        assertEquals(day + 1, back.claimOffsetDay)
+    fun remindersInsteadOfActions() {
+        val base = Reminders.Inputs(now, identityLive = true, claimOpensAt = 0, claimedToday = false, caretakerExpiresAt = 0, handle = "", handleEntry = null)
+        assertEquals(listOf<Reminders.Reminder>(Reminders.Reminder.AnmlReady), Reminders.due(base))
+        assertTrue(Reminders.due(base.copy(claimedToday = true)).isEmpty())
+        assertTrue(Reminders.due(base.copy(claimOpensAt = now + 100)).isEmpty())
+        assertTrue(Reminders.due(base.copy(identityLive = false)).isEmpty())
+        // The caretaker vote: from 30 days before it lapses, and for 30 days after.
+        val q = base.copy(claimedToday = true)
+        assertTrue(Reminders.due(q.copy(caretakerExpiresAt = now + Reminders.LEAD_SECONDS + 1)).isEmpty())
+        assertEquals(listOf<Reminders.Reminder>(Reminders.Reminder.CaretakerExpiring(now + 86_400, false)), Reminders.due(q.copy(caretakerExpiresAt = now + 86_400)))
+        assertEquals(listOf<Reminders.Reminder>(Reminders.Reminder.CaretakerExpiring(now - 86_400, true)), Reminders.due(q.copy(caretakerExpiresAt = now - 86_400)))
+        assertTrue(Reminders.due(q.copy(caretakerExpiresAt = now - Reminders.LAPSED_SECONDS - 1)).isEmpty())
+        // The handle: from 30 days before expiry, through the renewal period.
+        val e = network.erth.wallet.privacy.handles.HandleEntry("alice", "erthz1x", "live", now + 10 * 86_400, now + 40 * 86_400)
+        assertEquals(listOf<Reminders.Reminder>(Reminders.Reminder.HandleExpiring("alice", e.expiresAt, e.renewalUntil, false)), Reminders.due(q.copy(handle = "alice", handleEntry = e)))
+        val r = e.copy(status = "renewal", expiresAt = now - 86_400, renewalUntil = now + 29 * 86_400)
+        assertEquals(listOf<Reminders.Reminder>(Reminders.Reminder.HandleExpiring("alice", r.expiresAt, r.renewalUntil, true)), Reminders.due(q.copy(handle = "alice", handleEntry = r)))
+        assertTrue(Reminders.due(q.copy(handle = "alice", handleEntry = e.copy(expiresAt = now + 200 * 86_400, renewalUntil = now + 230 * 86_400))).isEmpty())
+        assertTrue(Reminders.due(q.copy(handle = "alice", handleEntry = r.copy(status = "free", renewalUntil = now - 1))).isEmpty())
+        // A served "live" whose expiry passed by our clock is in its renewal period.
+        assertEquals(true, (Reminders.due(q.copy(handle = "alice", handleEntry = e.copy(expiresAt = now - 5))).single() as Reminders.Reminder.HandleExpiring).inRenewal)
+        assertTrue(Reminders.text(Reminders.Reminder.AnmlReady, now).contains("ANML"))
     }
 
     @Test
@@ -70,12 +71,6 @@ class AutomationTest {
         assertTrue(PrivacyAutomation.matured(listOf(n9), by9, 10, t, day, unbonding, mapOf("unbond/v/9" to by9 + 1)).isEmpty())
         // Spent or pending notes are never claimed twice.
         assertTrue(PrivacyAutomation.matured(listOf(n9.copy(pendingAt = 1)), by9, 10, t, day, unbonding, emptyMap()).isEmpty())
-    }
-
-    @Test
-    fun refreshesTheReferrerBinding() {
-        assertEquals(listOf<Action>(Action.RefreshReferrer), PrivacyAutomation.decide(base.copy(claimedToday = true, referrerDue = true)))
-        assertTrue(PrivacyAutomation.decide(base.copy(claimedToday = true, referrerDue = true, hasFeeErth = false)).isEmpty())
     }
 
     private fun stake(pos: Long, denom: String) = OwnedStakeNote(pos, 1, denom, 5, Fr.ONE, Fr.ONE, Fr.ONE, Fr.ONE)

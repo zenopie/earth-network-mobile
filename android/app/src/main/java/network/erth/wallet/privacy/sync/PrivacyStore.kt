@@ -433,6 +433,12 @@ class PrivacyStore private constructor(private val dir: File?) {
                 handle = old.handle; handleMovedOut = old.handleMovedOut
                 stakeVoteRun = old.stakeVoteRun
                 stakeVotes.addAll(old.stakeVotes)
+            } else if (old.chainId == null) {
+                // Never synced: what a switch moved to this identity was
+                // recorded for the chain the app follows (PrivacySession.adoptMovedInto).
+                caretakerCastAt = old.caretakerCastAt; caretakerSplit = old.caretakerSplit
+                caretakerExpiresAt = old.caretakerExpiresAt
+                handle = old.handle
             }
         }
         save()

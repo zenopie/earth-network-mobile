@@ -35,10 +35,10 @@ class WalletFlowTest {
     private fun reads(chain: FakeChain) = object : PrivacyChainReads {
         override fun personhoodParams() = PrivacyChainReads.PersonhoodParams(30L * 86_400, 3_600)
         override fun ballotInputs(proposalId: Long, optionId: Long) = if (proposalId != 0L) {
-            PrivacyChainReads.BallotInputs(Privacy.proposalScope(proposalId, 0), Fr.ZERO, Fr.ZERO, chain.now - 3600, 0, 0)
+            PrivacyChainReads.BallotInputs(Privacy.proposalScope(proposalId, 0), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, 0, 0, chain.ballotMaxPredecessor())
         } else {
             val id = chain.removalBallots.getValue(optionId)
-            PrivacyChainReads.BallotInputs(Privacy.removalScope(id), Fr.ZERO, Fr.ZERO, chain.now - 3600, 0, id)
+            PrivacyChainReads.BallotInputs(Privacy.removalScope(id), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, 0, id, chain.ballotMaxPredecessor())
         }
         override fun epochNumber() = chain.epoch
         override fun snapshot(proposalId: Long) = chain.snapshotRead(proposalId)
@@ -286,19 +286,12 @@ class WalletFlowTest {
         assertEquals(1_800_000L, bal(a, derth))
         assertEquals(notes.sumOf { PrivacyWallet.voteWeight(it.amount) }, chain.stakeVotes.sumOf { it.third })
 
-        // Referrer binding (lapses after R; refreshed past R/2).
+        // A handle: claimed by a fresh registrant at once, naming this wallet's shielded address.
         chain.now += 31 * 86_400
         a.sync()
-        // Wave 3 (L6): the bound address is one this wallet controls; its key consents.
-        val key = network.erth.wallet.crypto.EarthWallet.deriveKey(alice)
-        val own = network.erth.wallet.crypto.EarthWallet.address(key)
-        org.junit.Assert.assertThrows(IllegalStateException::class.java) { a.bindReferrer(own) }
-        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) { a.bindReferrer(receiver) { m -> network.erth.wallet.crypto.WalletCrypto.signConsent(key, m) } }
-        a.bindReferrer(own) { m -> network.erth.wallet.crypto.WalletCrypto.signConsent(key, m) }
-        assertEquals(own, chain.referrers.values.single())
-        assertTrue(!a.referrerDue())
-        chain.now += 16 * 86_400
-        assertTrue(a.referrerDue())
+        a.bindHandle("alice")
+        assertEquals(a.address.encode(), chain.handles.getValue("alice").address)
+        assertEquals("alice", a.store.state.handle)
         a.setCaretaker(mapOf(1L to 100L))
         assertEquals(mapOf(1L to 100L), chain.caretakerVotes.values.single())
 

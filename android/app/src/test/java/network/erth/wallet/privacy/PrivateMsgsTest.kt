@@ -16,7 +16,9 @@ import network.erth.earth.proto.dex.MsgNoteSwap
 import network.erth.earth.proto.dex.MsgRemoveLiquidity
 import network.erth.earth.proto.dex.MsgRemoveLiquidityShielded
 import network.erth.earth.proto.personhood.Membership
-import network.erth.earth.proto.personhood.MsgBindReferrer
+import network.erth.earth.proto.personhood.MsgBindHandle
+import network.erth.earth.proto.personhood.MsgMoveCaretaker
+import network.erth.earth.proto.personhood.MsgMoveHandle
 import network.erth.earth.proto.personhood.MsgClaimAnml
 import network.erth.earth.proto.personhood.MsgRegister
 import network.erth.earth.proto.personhood.MsgSetCaretaker
@@ -43,6 +45,7 @@ import network.erth.wallet.privacy.tx.PrivateMsgs
 import network.erth.wallet.privacy.tx.UnsignedTx
 import network.erth.wallet.privacy.zk.Grumpkin
 import network.erth.wallet.privacy.zk.Privacy
+import network.erth.wallet.privacy.zk.Fr
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -102,12 +105,16 @@ class PrivateMsgsTest {
     )
     private fun w(o: Long, p: Long) = AllocationWeight.newBuilder().setOptionId(o).setPercent(p).build()
 
-    private fun register(affiliate: String) = MsgRegister.newBuilder()
+    private fun register(handle: String) = MsgRegister.newBuilder()
         .setFee(fee(40, 2000)).setProof(ByteString.copyFrom(byteArrayOf(1, 2, 3)))
         .addAllPublicSignals(listOf("250930", "12345", "678", "9")).setSignatureAlgorithm("lean_poa")
         .setDscDer(ByteString.copyFrom(byteArrayOf(0x30, 0x03, 1, 2, 3))).setIdc(fb(41)).setPcAnml(fb(42))
-        .setCiphertextAnml(bct(42)).setPcErth(fb(43)).setCiphertextErth(bct(43)).setAffiliate(affiliate)
+        .setCiphertextAnml(bct(42)).setPcErth(fb(43)).setCiphertextErth(bct(43))
+        .apply { if (handle.isNotEmpty()) setAffiliateHandle(handle).setAffiliatePc(fb(44)).setAffiliateCiphertext(bct(44)) }
         .build()
+
+    /** The handle vectors' shielded address (owner_pk OwnerPK(7), ek_pub of ek 01..20). */
+    private val zaddr: String by lazy { json.getString("handle_address") }
 
     private val msgs: Map<String, MessageLite> by lazy {
         mapOf(
@@ -118,18 +125,21 @@ class PrivateMsgsTest {
                 .setReceiver(addr(1)).setFee(2000).build(),
             "shield" to MsgShield.newBuilder().setSender(addr(30))
                 .setAmount(Coin.newBuilder().setDenom("uerth").setAmount("100000")).setPc(fb(31)).setCiphertext(bct(31)).build(),
-            "register" to register(addr(50)),
+            "register" to register("alice-01"),
             "register_no_affiliate" to register(""),
             "claim_anml" to MsgClaimAnml.newBuilder().setFee(fee(50, 2000)).setMembership(membership(50))
                 .setDay(20360).setPc(fb(51)).setCiphertext(bct(51)).build(),
             "set_caretaker" to MsgSetCaretaker.newBuilder().setFee(fee(60, 2000)).setMembership(membership(60))
-                .addAllPercentages(listOf(w(1, 60), w(7, 40))).setMaxActivation(1_780_000_000).build(),
-            "bind_referrer" to MsgBindReferrer.newBuilder().setFee(fee(70, 2000)).setMembership(membership(70))
-                .setAddress(addr(50)).setMaxActivation(1_780_000_000)
-                .setReferrerPubKey(com.google.protobuf.ByteString.copyFrom(ByteArray(33) { 2 }))
-                .setReferrerSignature(com.google.protobuf.ByteString.copyFrom(ByteArray(64) { 7 })).build(),
-            "bind_referrer_clear" to MsgBindReferrer.newBuilder().setFee(fee(71, 2000)).setMembership(membership(71))
-                .setMaxActivation(1_780_000_000).build(),
+                .addAllPercentages(listOf(w(1, 60), w(7, 40))).setMaxPredecessor(1_750_000_000).build(),
+            "set_caretaker_no_bound" to MsgSetCaretaker.newBuilder().setFee(fee(61, 2000)).setMembership(membership(61))
+                .addAllPercentages(listOf(w(2, 100))).setMaxPredecessor(Privacy.NO_BOUND).build(),
+            "move_caretaker" to MsgMoveCaretaker.newBuilder().setFee(fee(62, 2000)).setMembership(membership(62)).setNewOwner(fb(63)).build(),
+            "bind_handle" to MsgBindHandle.newBuilder().setFee(fee(70, 2000)).setMembership(membership(70))
+                .setHandle("alice-01").setAddress(zaddr).setMaxPredecessor(1_750_000_000).build(),
+            "bind_handle_release" to MsgBindHandle.newBuilder().setFee(fee(71, 2000)).setMembership(membership(71))
+                .setMaxPredecessor(Privacy.NO_BOUND).build(),
+            "move_handle" to MsgMoveHandle.newBuilder().setFee(fee(72, 2000)).setMembership(membership(72))
+                .setHandle("alice-01").setNewOwner(fb(73)).build(),
             "vote_proposal" to MsgVoteProposal.newBuilder().setFee(fee(80, 2000)).setMembership(membership(80))
                 .setProposalId(5).setOption(VoteOption.VOTE_OPTION_YES).build(),
             "propose_removal" to MsgProposeRemoval.newBuilder().setFee(fee(81, 2000)).setMembership(membership(81))
@@ -207,6 +217,8 @@ class PrivateMsgsTest {
         val b = json.getJSONObject("registration_binding")
         assertEquals(b.getString("with_affiliate"), PrivateMsgs.registrationBinding(msgs["register"] as MsgRegister).toHex())
         assertEquals(b.getString("none"), PrivateMsgs.registrationBinding(msgs["register_no_affiliate"] as MsgRegister).toHex())
+        assertEquals(b.getString("affiliate_field"), Privacy.affiliateField("alice-01", Fr.fromBytes(fb(44).toByteArray()), bct(44).toByteArray()).toHex())
+        assertEquals(b.getString("affiliate_field"), PrivateMsgs.affiliateField(msgs["register"] as MsgRegister).toHex())
         assertEquals(json.getString("options_bytes"), hex(PrivateMsgs.optionsBytes(opts())))
         assertEquals(json.getString("splits_bytes"), hex(PrivateMsgs.splitsBytes(listOf(w(1, 60), w(7, 40)))))
     }
@@ -219,13 +231,33 @@ class PrivateMsgsTest {
         assertEquals(v.getString("tx_raw"), hex(raw))
     }
 
-    /** Chain wave 3 (06ea4d6): the referrer consent bytes, the module accounts, canonical weights. */
+    /** The membership proof's public inputs (4a663d5): max_predecessor after max_activation. */
+    @Test
+    fun membershipPublicInputsMatchTheChain() {
+        val v = json.getJSONObject("membership_public_inputs")
+        val ins = v.getJSONArray("inputs")
+        fun h(k: String) = Fr.fromHex(v.getString(k))
+        val mine = listOf(h("root"), h("scope"), h("nullifier"), h("signal"), h("excluded_dsc"), h("excluded_country"),
+            Privacy.u64(v.getLong("max_activation")), Privacy.u64(v.getLong("max_predecessor")))
+        assertEquals(8, ins.length())
+        assertEquals(Privacy.NO_BOUND, v.getLong("max_activation"))
+        for (i in mine.indices) assertEquals("input $i", ins.getString(i), mine[i].toHex())
+    }
+
+    /** A bind's address must be canonical; a release binds Bytes(""), 0, Bytes(""). */
+    @Test
+    fun bindHandleFields() {
+        val rel = msgs["bind_handle_release"] as MsgBindHandle
+        assertEquals(listOf(Privacy.bytes(ByteArray(0)), Fr.ZERO, Privacy.bytes(ByteArray(0))), PrivateMsgs.bindHandleFields(rel))
+        val bind = msgs["bind_handle"] as MsgBindHandle
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) { PrivateMsgs.bindHandleFields(bind.toBuilder().setAddress(zaddr.uppercase()).build()) }
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) { PrivateMsgs.bindHandleFields(bind.toBuilder().setHandle("Alice").build()) }
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) { PrivateMsgs.bindHandleFields(bind.toBuilder().setAddress("").build()) }
+    }
+
+    /** Chain wave 3 (06ea4d6): the module accounts, canonical weights. */
     @Test
     fun wave3Vectors() {
-        val c = json.getJSONObject("referrer_consent")
-        val bytes = PrivateMsgs.referrerConsentBytes(json.getString("chain_id"), Vectors.unhex(c.getString("nullifier")),
-            network.erth.wallet.crypto.Bech32.decode(c.getString("address")))
-        assertEquals(c.getString("bytes"), hex(bytes))
         val mods = json.getJSONObject("module_accounts")
         assertEquals(PrivateMsgs.MODULE_ACCOUNTS.toSet(), mods.keys().asSequence().toSet())
         for (name in PrivateMsgs.MODULE_ACCOUNTS) {

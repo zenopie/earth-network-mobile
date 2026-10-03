@@ -31,7 +31,7 @@ class ReauditFixesTest {
     private fun reads(chain: FakeChain) = object : PrivacyChainReads {
         override fun personhoodParams() = PrivacyChainReads.PersonhoodParams(30L * 86_400, 3_600)
         override fun ballotInputs(proposalId: Long, optionId: Long) =
-            PrivacyChainReads.BallotInputs(Privacy.proposalScope(proposalId, 0), Fr.ZERO, Fr.ZERO, chain.now - 3600, 0, 0)
+            PrivacyChainReads.BallotInputs(Privacy.proposalScope(proposalId, 0), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, 0, 0, chain.ballotMaxPredecessor())
         override fun epochNumber() = chain.epoch
         override fun snapshot(proposalId: Long) = chain.snapshotRead(proposalId)
         override fun stakeNullifierTree(start: Long, limit: Int) = chain.nfTreeRead(start, limit)
@@ -288,7 +288,7 @@ class ReauditFixesTest {
         assertEquals(1, restored.store.state.regRecords.size)
         assertEquals(WalletSync.IdentityStatus.LIVE, restored.identityStatus())
         // The chain's block time: one country pass for one leaf, nothing like the 3M-hash search per forged record.
-        assertTrue(restored.store.state.regRecords.single().work <= 677)
+        assertTrue(restored.store.state.regRecords.single().work <= 2 * 677)
         assertTrue("restore took $ms ms", ms < 20_000)
         assertEquals(k.nk, a.keys.nk)
     }
@@ -335,7 +335,7 @@ class ReauditFixesTest {
         // Each sync spent at most its budget (plus one step), and none started over.
         works.zipWithNext().forEach { (x, y) -> assertTrue(y - x in 1..budget + 2) }
         assertTrue(works.first() <= budget + 2)
-        assertEquals(chain.identityTree.leaf(store.state.identity!!.leafIndex), Privacy.identityLeaf(keys.idc, store.state.identity!!.dscKey, store.state.identity!!.country, store.state.identity!!.activatedAt))
+        assertEquals(chain.identityTree.leaf(store.state.identity!!.leafIndex), Privacy.identityLeaf(keys.idc, store.state.identity!!.dscKey, store.state.identity!!.country, store.state.identity!!.activatedAt, store.state.identity!!.predecessorAt))
     }
 
     /**

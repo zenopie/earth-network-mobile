@@ -68,7 +68,40 @@ func TestPrivacyVectorsDexAmm(t *testing.T) {
 		h2 := swapHubForToken(outE, outT, h1.amountOut, f)
 		twos = append(twos, two{"0.3", inE.String(), inT.String(), outE.String(), outT.String(), in.String(), h1.amountOut.String(), h2.amountOut.String()})
 	}
-	bz, err := json.MarshalIndent(map[string]any{"hops": hops, "two_hop": twos}, "", " ")
+	// Deposits (audit 4, C2): shares = min(floor(in_e*S/R_e), floor(in_t*S/R_t)),
+	// each leg pulled rounded up, ceil(shares*R/S), with the chain's own maths.
+	type dep struct {
+		ReserveE string `json:"reserve_erth"`
+		ReserveT string `json:"reserve_token"`
+		Supply   string `json:"supply"`
+		InE      string `json:"in_erth"`
+		InT      string `json:"in_token"`
+		Shares   string `json:"shares"`
+		PullE    string `json:"pull_erth"`
+		PullT    string `json:"pull_token"`
+	}
+	var deps []dep
+	for _, r := range [][3]int64{{1_000_000_000_000, 500_000_000_000, 700_000_000_000}, {12_345_678, 98_765_432_109, 3_333}, {7, 3, 1_000_000}, {5_000_000, 5_000_000, 5_000_000}} {
+		re, rt, sup := math.NewInt(r[0]), math.NewInt(r[1]), math.NewInt(r[2])
+		for _, a := range amounts {
+			for _, b := range amounts {
+				ie, it := math.NewInt(a), math.NewInt(b)
+				se, err1 := mulDiv(ie, sup, re)
+				st, err2 := mulDiv(it, sup, rt)
+				if err1 != nil || err2 != nil {
+					t.Fatal(err1, err2)
+				}
+				sh := math.MinInt(se, st)
+				pe, pt := math.ZeroInt(), math.ZeroInt()
+				if sh.IsPositive() {
+					pe, _ = mulDivUp(sh, re, sup)
+					pt, _ = mulDivUp(sh, rt, sup)
+				}
+				deps = append(deps, dep{re.String(), rt.String(), sup.String(), ie.String(), it.String(), sh.String(), pe.String(), pt.String()})
+			}
+		}
+	}
+	bz, err := json.MarshalIndent(map[string]any{"hops": hops, "two_hop": twos, "deposits": deps}, "", " ")
 	if err != nil {
 		t.Fatal(err)
 	}

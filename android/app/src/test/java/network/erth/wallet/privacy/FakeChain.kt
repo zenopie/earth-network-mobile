@@ -10,7 +10,9 @@ import network.erth.earth.proto.dex.MsgAddLiquidityShielded
 import network.erth.earth.proto.dex.MsgNoteSwap
 import network.erth.earth.proto.dex.MsgRemoveLiquidityShielded
 import network.erth.earth.proto.personhood.Membership
-import network.erth.earth.proto.personhood.MsgBindReferrer
+import network.erth.earth.proto.personhood.MsgBindHandle
+import network.erth.earth.proto.personhood.MsgMoveCaretaker
+import network.erth.earth.proto.personhood.MsgMoveHandle
 import network.erth.earth.proto.personhood.MsgClaimAnml
 import network.erth.earth.proto.personhood.MsgRegister
 import network.erth.earth.proto.personhood.MsgSetCaretaker
@@ -138,15 +140,33 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     data class Withdrawal(val shares: BigInteger, val erthPc: Fr, val erthCt: ByteArray, val tokenPc: Fr, val tokenCt: ByteArray)
     val withdrawals = ArrayList<Withdrawal>()
 
-    // x/shieldedstaking positions, x/personhood referrers, x/assembly removal ballots.
+    // x/shieldedstaking positions, x/personhood handles and caretaker splits, x/assembly removal ballots.
     data class Pos(val id: Long, val validator: String, val derth: Long, val ownerTag: Fr, var splits: Map<Long, Long>, val createdHeight: Long)
     val positions = LinkedHashMap<Long, Pos>()
     var nextPositionId = 1L
     val positionVotes = ArrayList<Pair<Long, Long>>()
-    val referrers = HashMap<Fr, String>()
     val removalBallots = HashMap<Long, Long>()
     val removalVotes = ArrayList<Triple<Long, Fr, Int>>()
     val caretakerVotes = HashMap<Fr, Map<Long, Long>>()
+    /** Caretaker leases (nullifier -> expires_at), and nullifiers that moved theirs away (1126). */
+    val caretakerExpiry = HashMap<Fr, Long>()
+    val caretakerMovedOut = HashSet<Fr>()
+    /** caretaker_vote_seconds (R) and handle_lease_seconds / handle_renewal_seconds, as the tests' reads name them. */
+    var caretakerLease = 30L * 86_400
+    var handleLease = 365L * 86_400
+    var handleRenewal = 30L * 86_400
+    /** The handle directory: handle -> (holder's nullifier, address, expires_at). */
+    data class HandleRec(val handle: String, val nullifier: Fr, val address: String, val expiresAt: Long)
+    val handles = java.util.TreeMap<String, HandleRec>()
+    val handleMovedOut = HashSet<Fr>()
+    /** Every Query/Handles (start) and backend /handles (from_index) page asked: never one handle. */
+    val handleAsks = ArrayList<String>()
+    /** Passports ever registered: a re-registration's leaf has a predecessor (x/personhood PassportsSeen). */
+    val passportsSeen = HashSet<String>()
+    /** Each leaf's predecessor_at. */
+    val predecessorOf = HashMap<Long, Long>()
+    /** Referral notes minted (handle, pc). */
+    val referralNotes = ArrayList<Pair<String, Fr>>()
     val claimedUnbonds = ArrayList<String>()
     /** The fake's epoch and derth rate (uerth per derth = 10/9 at delegation: 9/10 minted). */
     val epoch = 4L
@@ -325,7 +345,9 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             PrivateMsgs.UPDATE_POSITION -> MsgUpdatePosition.parseFrom(any.value)
             PrivateMsgs.UNLOCK_POSITION -> MsgUnlockPosition.parseFrom(any.value)
             PrivateMsgs.POSITION_VOTE -> MsgPositionVote.parseFrom(any.value)
-            PrivateMsgs.BIND_REFERRER -> MsgBindReferrer.parseFrom(any.value)
+            PrivateMsgs.BIND_HANDLE -> MsgBindHandle.parseFrom(any.value)
+            PrivateMsgs.MOVE_HANDLE -> MsgMoveHandle.parseFrom(any.value)
+            PrivateMsgs.MOVE_CARETAKER -> MsgMoveCaretaker.parseFrom(any.value)
             PrivateMsgs.SET_CARETAKER -> MsgSetCaretaker.parseFrom(any.value)
             PrivateMsgs.PROPOSE_REMOVAL -> MsgProposeRemoval.parseFrom(any.value)
             PrivateMsgs.VOTE_REMOVAL -> MsgVoteRemoval.parseFrom(any.value)
@@ -386,7 +408,18 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             is MsgRegister -> {
                 only(null)
                 require(m.ciphertextAnml.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES && m.ciphertextErth.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES)
+                // All three of the referral, or none; its note is a 177-byte blind ciphertext.
+                val any = m.affiliateHandle.isNotEmpty() || !m.affiliatePc.isEmpty || !m.affiliateCiphertext.isEmpty
+                if (any) require(network.erth.wallet.privacy.handles.Handles.valid(m.affiliateHandle) && m.affiliatePc.size() == 32 &&
+                    m.affiliateCiphertext.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES) { "affiliate: all three, or none" }
             }
+            is MsgBindHandle -> {
+                only(null)
+                require(m.handle.isEmpty() == m.address.isEmpty()) { "a bind names a handle and an address; a release neither" }
+                if (m.address.isNotEmpty()) require(network.erth.wallet.privacy.keys.ShieldedAddress.decode(m.address).encode() == m.address) { "address not canonical" }
+            }
+            is MsgMoveHandle -> { only(null); require(m.newOwner != m.membership.nullifier) { "new_owner is the prover" } }
+            is MsgMoveCaretaker -> { only(null); require(m.newOwner != m.membership.nullifier) { "new_owner is the prover" } }
             is MsgClaimAnml -> { only(null); require(m.ciphertext.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES) }
             else -> only(null)
         }
@@ -421,15 +454,70 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         if (m is MsgRestake) require(created(p).isNotEmpty())
     }
 
-    /** A membership's expected scope and max_activation, per msg. */
-    private fun membershipStatement(m: MessageLite): Pair<Fr, Long>? = when (m) {
-        is MsgClaimAnml -> Privacy.claimScope(m.day) to (m.day - 1) * 86_400
-        is MsgVoteProposal -> Privacy.proposalScope(m.proposalId, 0) to now - 3600
-        // Wave 3 (L4/L5): a lease's max_activation is at most now - R - 86400 (R = 30 days here).
-        is MsgSetCaretaker -> Privacy.caretakerScope() to m.maxActivation.also { require(it <= now - 31 * 86_400) { "max_activation past now - R - 1d" } }
-        is MsgBindReferrer -> Privacy.referrerScope() to m.maxActivation.also { require(it <= now - 31 * 86_400) { "max_activation past now - R - 1d" } }
-        is MsgProposeRemoval -> Privacy.proposeRemovalScope(m.optionId, now / 86_400) to now / 86_400 * 86_400 - 86_400
-        is MsgVoteRemoval -> Privacy.removalScope(removalBallots.getValue(m.optionId)) to now - 3600
+    /** A ballot's max_predecessor (x/assembly: opened - 86400; the fake opens ballots as it is asked). */
+    fun ballotMaxPredecessor(): Long = now - 86_400
+
+    /** The handle claim bound: now - the longest lease - 86400. */
+    private fun handleClaimBound(): Long = now - handleLease - 86_400
+
+    private fun nf(m: Membership): Fr = Fr.fromBytes(m.nullifier.toByteArray())
+
+    private fun caretakerHolds(n: Fr): Boolean = n in caretakerVotes
+
+    private fun handleOf(n: Fr): HandleRec? = handles.values.firstOrNull { it.nullifier == n }
+
+    /** The chain's refusal of a too-recent predecessor (strictly before the bound). */
+    private fun predecessorBound(maxPredecessor: Long, bound: Long) =
+        require(bound > 0 && maxPredecessor in 0 until bound) { "max_predecessor $maxPredecessor is not before $bound (now - lease length - activation margin)" }
+
+    /**
+     * A membership's statement per msg: scope, max_activation,
+     * max_predecessor (x/personhood and x/assembly at 4a663d5), and the
+     * checks each makes of the prover's standing first.
+     */
+    private fun membershipStatement(m: MessageLite): Triple<Fr, Long, Long>? = when (m) {
+        is MsgClaimAnml -> Triple(Privacy.claimScope(m.day), (m.day - 1) * 86_400, Privacy.NO_BOUND)
+        is MsgVoteProposal -> Triple(Privacy.proposalScope(m.proposalId, 0), Privacy.NO_BOUND, ballotMaxPredecessor())
+        is MsgSetCaretaker -> {
+            val n = nf(m.membership)
+            if (!caretakerHolds(n) && m.percentagesCount > 0) {
+                require(n !in caretakerMovedOut) { "this identity moved its caretaker split away (code 1126)" }
+                predecessorBound(m.maxPredecessor, now - caretakerLease - 86_400)
+            }
+            Triple(Privacy.caretakerScope(), Privacy.NO_BOUND, m.maxPredecessor)
+        }
+        is MsgMoveCaretaker -> {
+            val n = nf(m.membership)
+            val exp = caretakerExpiry[n] ?: error("the prover holds no caretaker split")
+            require(exp > now) { "the prover's caretaker split has lapsed" }
+            val o = f(m.newOwner)
+            require(!caretakerHolds(o)) { "new_owner already holds a caretaker split" }
+            require(o !in caretakerMovedOut) { "this identity moved its caretaker split away (code 1126)" }
+            Triple(Privacy.caretakerScope(), Privacy.NO_BOUND, Privacy.NO_BOUND)
+        }
+        is MsgBindHandle -> {
+            val n = nf(m.membership)
+            val holds = handleOf(n) != null
+            if (m.handle.isNotEmpty()) {
+                require(network.erth.wallet.privacy.handles.Handles.valid(m.handle)) { "not a handle" }
+                handles[m.handle]?.let { h -> require(h.nullifier == n || now >= h.expiresAt + handleRenewal) { "handle is held by another human (code 1122)" } }
+                if (!holds) {
+                    require(n !in handleMovedOut) { "this identity moved its handle away (code 1125)" }
+                    predecessorBound(m.maxPredecessor, handleClaimBound())
+                }
+            } else require(holds) { "the prover holds no handle to release" }
+            Triple(Privacy.handleScope(), Privacy.NO_BOUND, m.maxPredecessor)
+        }
+        is MsgMoveHandle -> {
+            val n = nf(m.membership)
+            require(handles[m.handle]?.nullifier == n) { "the prover does not hold ${m.handle}" }
+            val o = f(m.newOwner)
+            require(handleOf(o) == null) { "new_owner already holds a handle" }
+            require(o !in handleMovedOut) { "this identity moved its handle away (code 1125)" }
+            Triple(Privacy.handleScope(), Privacy.NO_BOUND, Privacy.NO_BOUND)
+        }
+        is MsgProposeRemoval -> Triple(Privacy.proposeRemovalScope(m.optionId, now / 86_400), Privacy.NO_BOUND, now / 86_400 * 86_400 - 86_400)
+        is MsgVoteRemoval -> Triple(Privacy.removalScope(removalBallots.getValue(m.optionId)), Privacy.NO_BOUND, ballotMaxPredecessor())
         else -> null
     }
 
@@ -437,7 +525,9 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         is MsgClaimAnml -> m.membership
         is MsgVoteProposal -> m.membership
         is MsgSetCaretaker -> m.membership
-        is MsgBindReferrer -> m.membership
+        is MsgMoveCaretaker -> m.membership
+        is MsgBindHandle -> m.membership
+        is MsgMoveHandle -> m.membership
         is MsgProposeRemoval -> m.membership
         is MsgVoteRemoval -> m.membership
         else -> null
@@ -475,21 +565,14 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 require((m.proposalId to f(m.voteNullifier)) !in voteNullifiers) { "this stake note already voted on this proposal (code 1119)" }
                 require(snap.nfSize >= 0)
             }
-            // Wave 3 (L6): binding an address needs its owner's consent (cosmos secp256k1 over SHA-256).
-            is MsgBindReferrer -> if (m.address.isEmpty()) {
-                require(m.referrerPubKey.isEmpty && m.referrerSignature.isEmpty) { "clearing a binding carries no consent" }
-            } else {
-                require(m.referrerPubKey.size() == 33 && m.referrerSignature.size() == 64) { "no referrer consent" }
-                val pub = m.referrerPubKey.toByteArray()
-                require(network.erth.wallet.crypto.WalletCrypto.addressOfPubKey(pub) == m.address) { "consent key is not the address's" }
-                val sig = m.referrerSignature.toByteArray()
-                val r = java.math.BigInteger(1, sig.copyOfRange(0, 32)); val sv = java.math.BigInteger(1, sig.copyOfRange(32, 64))
-                require(sv <= org.bitcoinj.core.ECKey.HALF_CURVE_ORDER) { "high-S consent" }
-                val msg = PrivateMsgs.referrerConsentBytes(chainId, m.membership.nullifier.toByteArray(), network.erth.wallet.crypto.Bech32.decode(m.address))
-                require(org.bitcoinj.core.ECKey.verify(org.bitcoinj.core.Sha256Hash.hash(msg), org.bitcoinj.core.ECKey.ECDSASignature(r, sv), pub)) { "bad referrer consent" }
+            is MsgRegister -> if (m.affiliateHandle.isNotEmpty()) {
+                val h = handles[m.affiliateHandle]
+                require(h != null && now < h.expiresAt) { "affiliate_handle is not a live handle (code 1121)" }
             }
-            is MsgRegister -> require(identityRows.none { it.leaf != Fr.ZERO && registeredIdc[it.index] == f(m.idc) }) { "a switch to the live idc is refused" }
             else -> {}
+        }
+        if (m is MsgRegister) {
+            require(identityRows.none { it.leaf != Fr.ZERO && registeredIdc[it.index] == f(m.idc) }) { "a switch to the live idc is refused" }
         }
     }
 
@@ -591,12 +674,13 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         val membership = membershipOf(m)
         if (membership != null) {
             require(Fr.fromBytes(membership.root.toByteArray()) in identityRoots) { "unknown identity anchor" }
+            membershipStatement(m)
             require(membership.proof.size() == PROOF_BYTES) { "a membership proof is exactly $PROOF_BYTES bytes" }
             if (!simulate) {
                 val w = prover.memberships.removeFirstOrNull() ?: error("no membership proof")
-                val (scope, maxAct) = membershipStatement(m)!!
+                val (scope, maxAct, maxPred) = membershipStatement(m)!!
                 val expect = listOf(Fr.fromBytes(membership.root.toByteArray()), scope, Fr.fromBytes(membership.nullifier.toByteArray()),
-                    sighash, Fr.ZERO, Fr.ZERO, Privacy.u64(maxAct))
+                    sighash, Fr.ZERO, Fr.ZERO, Privacy.u64(maxAct), Privacy.u64(maxPred))
                 require(w.publicInputs() == expect) { "membership proof is for other public inputs" }
             }
         }
@@ -629,13 +713,26 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 require(usedBindings.add(binding)) { "binding already used (ErrBindingUsed)" }
                 val dsc = PrivateMsgs.decimalField(m.publicSignalsList[3])
                 // A switch: the holder's old leaf is zeroed, the new one appended.
-                registeredIdc.entries.filter { it.value == f(m.idc) || passportOf[it.key] == m.publicSignalsList[2] }.forEach { zeroLeaf(it.key) }
-                val idx = identityTree.append(Privacy.identityLeaf(f(m.idc), dsc, Privacy.countryField(registrationCountry), now))
+                val live = registeredIdc.entries.filter { it.value == f(m.idc) || passportOf[it.key] == m.publicSignalsList[2] }
+                val switched = live.isNotEmpty()
+                live.forEach { zeroLeaf(it.key) }
+                // predecessor_at: the switch or re-entry that made this leaf, 0 for a passport never seen.
+                val pred = if (switched || m.publicSignalsList[2] in passportsSeen) now else 0L
+                passportsSeen.add(m.publicSignalsList[2])
+                val idx = identityTree.append(Privacy.identityLeaf(f(m.idc), dsc, Privacy.countryField(registrationCountry), now, pred))
+                predecessorOf[idx] = pred
                 identityRows.add(IdentityRow(idx, height, identityTree.leaf(idx), null, now))
                 registeredIdc[idx] = f(m.idc); passportOf[idx] = m.publicSignalsList[2]
                 mint("uanml", 1_000_000, f(m.pcAnml), m.ciphertextAnml.toByteArray())
-                mint("uerth", 5_000_000, f(m.pcErth), m.ciphertextErth.toByteArray())
-                events.add("register" to mapOf("leaf_index" to idx.toString()))
+                if (!switched) {
+                    mint("uerth", 5_000_000, f(m.pcErth), m.ciphertextErth.toByteArray())
+                    // The referrer's half, as a note to the handle's address.
+                    if (m.affiliateHandle.isNotEmpty()) {
+                        mint("uerth", 5_000_000, f(m.affiliatePc), m.affiliateCiphertext.toByteArray())
+                        referralNotes.add(m.affiliateHandle to f(m.affiliatePc))
+                    }
+                }
+                events.add("register" to mapOf("leaf_index" to idx.toString(), "switched" to switched.toString()))
             }
             is MsgClaimAnml -> mint("uanml", 1_000_000, f(m.pc), m.ciphertext.toByteArray())
             is MsgVoteProposal -> votes.add(m.proposalId to m.optionValue)
@@ -683,8 +780,34 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 mintStake(PrivacyWallet.derthDenom(p.validator), p.derth, spcMint!!, stake.spcCiphertext.toByteArray())
             }
             is MsgPositionVote -> positionVotes.add(m.positionId to m.proposalId)
-            is MsgBindReferrer -> referrers[f(m.membership.nullifier)] = m.address
-            is MsgSetCaretaker -> caretakerVotes[f(m.membership.nullifier)] = m.percentagesList.associate { it.optionId to it.percent }
+            is MsgSetCaretaker -> {
+                val n = f(m.membership.nullifier)
+                if (m.percentagesCount == 0) { caretakerVotes.remove(n); caretakerExpiry.remove(n) }
+                else { caretakerVotes[n] = m.percentagesList.associate { it.optionId to it.percent }; caretakerExpiry[n] = now + caretakerLease }
+                events.add("set_caretaker" to mapOf("expires_at" to (caretakerExpiry[n] ?: 0L).toString()))
+            }
+            is MsgMoveCaretaker -> {
+                val n = f(m.membership.nullifier); val o = f(m.newOwner)
+                caretakerVotes[o] = caretakerVotes.remove(n)!!; caretakerExpiry[o] = caretakerExpiry.remove(n)!!
+                caretakerMovedOut.add(n)
+                events.add("move_caretaker" to mapOf("expires_at" to caretakerExpiry.getValue(o).toString()))
+            }
+            is MsgBindHandle -> {
+                val n = f(m.membership.nullifier)
+                val cur = handleOf(n)
+                if (m.handle.isEmpty()) { handles.remove(cur!!.handle) }
+                else {
+                    // A change frees the old handle at once; a renewal (or a claim) leases now + handle_lease_seconds.
+                    if (cur != null && cur.handle != m.handle) handles.remove(cur.handle)
+                    handles[m.handle] = HandleRec(m.handle, n, m.address, now + handleLease)
+                    events.add("handle_bound" to mapOf("handle" to m.handle, "expires_at" to (now + handleLease).toString()))
+                }
+            }
+            is MsgMoveHandle -> {
+                val n = f(m.membership.nullifier)
+                handles[m.handle] = handles.getValue(m.handle).copy(nullifier = f(m.newOwner))
+                handleMovedOut.add(n)
+            }
             is MsgProposeRemoval -> removalBallots[m.optionId] = 100L + m.optionId
             is MsgVoteRemoval -> removalVotes.add(Triple(m.optionId, f(m.membership.nullifier), m.optionValue))
             else -> {}
@@ -848,6 +971,37 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             .map { StakeSnapshotRow(it.height, it.proposalId, it.root, it.treeSize, it.nfRoot, it.nfSize) }
         return StakeSnapshotsPage(rows, maxOf(fromHeight, height), false, height - 1)
     }
+
+    /** A directory entry as Query/Handles serves it now (released ones are gone: swept). */
+    private fun entry(h: HandleRec): network.erth.wallet.privacy.handles.HandleEntry? {
+        val renewalUntil = h.expiresAt + handleRenewal
+        val status = when { now < h.expiresAt -> "live"; now < renewalUntil -> "renewal"; else -> return null }
+        return network.erth.wallet.privacy.handles.HandleEntry(h.handle, h.address, status, h.expiresAt, renewalUntil)
+    }
+
+    private fun directory() = handles.values.mapNotNull(::entry)
+
+    /** Query/Handles: handles after [start], at most [limit]. */
+    fun handlesPage(start: String, limit: Int): network.erth.wallet.privacy.handles.HandleDirectory.Page {
+        handleAsks.add("chain:$start")
+        val page = directory().filter { it.handle > start }.take(minOf(limit, 1000))
+        val more = directory().count { it.handle > start } > page.size
+        return network.erth.wallet.privacy.handles.HandleDirectory.Page(page, if (more) page.last().handle else "")
+    }
+
+    /** Set to make the backend's handle stream lie about an address (the chain check must catch it). */
+    var forgeHandleAddress: String? = null
+
+    override fun handles(fromIndex: Long, limit: Int): network.erth.wallet.privacy.handles.HandleDirectory.StreamPage {
+        val n = aligned("handles", fromIndex, limit)
+        handleAsks.add("indexer:$fromIndex")
+        val all = directory().map { e -> forgeHandleAddress?.let { e.copy(address = it) } ?: e }
+        val rows = all.drop(fromIndex.toInt()).take(n)
+        return network.erth.wallet.privacy.handles.HandleDirectory.StreamPage(rows, height - 1, all.size.toLong(), fromIndex, fromIndex + n >= all.size)
+    }
+
+    /** The app's directory over this chain: the indexer's stream first, the chain's pages to check against. */
+    fun handleDirectory() = network.erth.wallet.privacy.handles.HandleDirectory(::handlesPage, { f, l -> handles(f, l) }, now = { now })
 
     fun positionReads(): List<PrivacyChainReads.Position> =
         positions.values.map { PrivacyChainReads.Position(it.id, it.validator, it.derth, it.ownerTag, it.splits, it.createdHeight) }

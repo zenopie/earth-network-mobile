@@ -54,7 +54,7 @@ class Audit4Test {
                       nfTree: (Long, Int) -> PrivacyChainReads.NfTreePage = chain::nfTreeRead) = object : PrivacyChainReads {
         override fun personhoodParams() = PrivacyChainReads.PersonhoodParams(30L * 86_400, 3_600)
         override fun ballotInputs(proposalId: Long, optionId: Long) =
-            PrivacyChainReads.BallotInputs(Privacy.proposalScope(proposalId, 0), Fr.ZERO, Fr.ZERO, chain.now - 3600, 0, 0)
+            PrivacyChainReads.BallotInputs(Privacy.proposalScope(proposalId, 0), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, 0, 0, chain.ballotMaxPredecessor())
         override fun epochNumber() = chain.epoch
         override fun snapshot(proposalId: Long) = snapshot(proposalId)
         override fun stakeNullifierTree(start: Long, limit: Int) = nfTree(start, limit)
@@ -257,7 +257,7 @@ class Audit4Test {
     private fun forgeIdentity(chain: FakeChain, t: Long): Wrapped {
         val keys = PrivacyKeys.fromMnemonic(alice)
         val forge: (IdentityRow) -> IdentityRow = { r ->
-            IdentityRow(r.index, r.height, Privacy.identityLeaf(keys.idc, Fr.of(77), Fr.ZERO, t), r.zeroedHeight, t)
+            IdentityRow(r.index, r.height, Privacy.identityLeaf(keys.idc, Fr.of(77), Fr.ZERO, t, 0), r.zeroedHeight, t)
         }
         return object : Wrapped(chain) {
             override fun identity(fromIndex: Long, limit: Int?): IdentityPage = inner.identity(fromIndex, limit).let { p -> p.copy(rows = p.rows.map(forge)) }
@@ -553,7 +553,7 @@ class Audit4Test {
     @Test
     fun poc3_errorsStayInsideTheAutomation() = runBlocking {
         val failed = ArrayList<Throwable>()
-        val due = PrivacyAutomation.Inputs(86_400L * 100 + 50_000, true, 0L, false, 0, caretakerDue = false, hasFeeErth = true, maturedUnbonds = emptyList())
+        val due = PrivacyAutomation.Inputs(86_400L * 100 + 50_000, maturedUnbonds = listOf("unbond/v/1"))
         PrivacyAutomation.runPass(sync = {}, inputs = { due }, act = { throw StackOverflowError("org.json recursion") }, pause = {}, onFailure = { _, e -> failed.add(e) })
         assertTrue(failed.single() is StackOverflowError)
     }

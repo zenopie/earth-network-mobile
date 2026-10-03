@@ -64,18 +64,21 @@ class FixtureWitnessTest {
         val dscKey = det("dsc", 0)
         val country = Privacy.countryField("DE")
         val activatedAt = 1_790_000_000L
+        // A switched identity: its leaf commits to the switch's time (4a663d5).
+        val predecessorAt = 1_789_000_000L
         for (i in 0L until 21) {
-            val leaf = if (i == ours) Privacy.identityLeaf(Privacy.idc(idSecret), dscKey, country, activatedAt)
-            else Privacy.identityLeaf(Privacy.idc(det("other", i)), det("dsc", i % 3), Privacy.countryField(listOf("DE", "FR", "")[(i % 3).toInt()]), 1_780_000_000 + i)
+            val leaf = if (i == ours) Privacy.identityLeaf(Privacy.idc(idSecret), dscKey, country, activatedAt, predecessorAt)
+            else Privacy.identityLeaf(Privacy.idc(det("other", i)), det("dsc", i % 3), Privacy.countryField(listOf("DE", "FR", "")[(i % 3).toInt()]), 1_780_000_000 + i, 0)
             t.append(leaf)
         }
         t.update(3, Fr.ZERO)
         val w = MembershipWitness(
-            idSecret = idSecret, dscKey = dscKey, country = country, activatedAt = activatedAt,
+            idSecret = idSecret, dscKey = dscKey, country = country, activatedAt = activatedAt, predecessorAt = predecessorAt,
             leafIndex = ours, siblings = t.path(ours), root = t.root(),
             scope = Privacy.assetId("claim:20360"), signal = det("signal", 0),
             excludedDsc = det("dsc", 99), excludedCountry = Privacy.countryField("FR"),
             maxActivation = activatedAt + 86_400,
+            maxPredecessor = predecessorAt + 3_600,
         )
         w.check()
         assertEquals(publicInputs("fixture_membership"), w.publicInputs().map { it.toHex() })

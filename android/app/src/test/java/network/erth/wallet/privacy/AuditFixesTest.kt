@@ -43,7 +43,7 @@ class AuditFixesTest {
     private fun reads(chain: FakeChain) = object : PrivacyChainReads {
         override fun personhoodParams() = PrivacyChainReads.PersonhoodParams(30L * 86_400, 3_600)
         override fun ballotInputs(proposalId: Long, optionId: Long) =
-            PrivacyChainReads.BallotInputs(Privacy.proposalScope(proposalId, 0), Fr.ZERO, Fr.ZERO, chain.now - 3600, 0, 0)
+            PrivacyChainReads.BallotInputs(Privacy.proposalScope(proposalId, 0), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, 0, 0, chain.ballotMaxPredecessor())
         override fun epochNumber() = chain.epoch
         override fun snapshot(proposalId: Long) = chain.snapshotRead(proposalId)
         override fun stakeNullifierTree(start: Long, limit: Int) = chain.nfTreeRead(start, limit)

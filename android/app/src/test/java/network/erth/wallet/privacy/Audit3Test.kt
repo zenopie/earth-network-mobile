@@ -43,7 +43,7 @@ class Audit3Test {
     private fun reads(chain: FakeChain) = object : PrivacyChainReads {
         override fun personhoodParams() = PrivacyChainReads.PersonhoodParams(30L * 86_400, 3_600)
         override fun ballotInputs(proposalId: Long, optionId: Long) =
-            PrivacyChainReads.BallotInputs(Privacy.proposalScope(proposalId, 0), Fr.ZERO, Fr.ZERO, chain.now - 3600, 0, 0)
+            PrivacyChainReads.BallotInputs(Privacy.proposalScope(proposalId, 0), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, 0, 0, chain.ballotMaxPredecessor())
         override fun epochNumber() = chain.epoch
         override fun snapshot(proposalId: Long) = chain.snapshotRead(proposalId)
         override fun stakeNullifierTree(start: Long, limit: Int) = chain.nfTreeRead(start, limit)
@@ -241,7 +241,8 @@ class Audit3Test {
         chain.blockTimeAsks.clear()
         val r = restoredLive(chain)
         assertTrue(chain.blockTimeAsks.isEmpty())
-        assertTrue(r.store.state.regRecords.single().work <= 677)
+        // Every country, each with predecessor_at 0 or the time itself.
+        assertTrue(r.store.state.regRecords.single().work <= 2 * 677)
     }
 
     /** No time on the rows: the LCD is asked for a uniform cover set holding the block, once. */
@@ -398,18 +399,11 @@ class Audit3Test {
     @Test
     fun automationSpacesActionsWithASyncBetween() = kotlinx.coroutines.runBlocking {
         val events = ArrayList<String>()
-        var claimed = false; var caretaker = true; var fee = true; var landed = false
-        val base = Inputs(now = 20_000L * 86_400 + 5 * 3600, identityLive = true, claimOpensAt = 0, claimedToday = false,
-            claimOffset = 0, caretakerDue = false, hasFeeErth = true, maturedUnbonds = emptyList())
+        val due = mutableListOf("unbond/v/1", "unbond/v/2")
         val taken = PrivacyAutomation.runPass(
-            sync = { events.add("sync"); if (landed) fee = true },
-            inputs = { base.copy(claimedToday = claimed, caretakerDue = caretaker, hasFeeErth = fee) },
-            act = { a ->
-                events.add(PrivacyAutomation.kind(a))
-                // One ERTH note: its change is pending until the tx lands and a sync sees it.
-                fee = false; landed = true
-                if (a is Action.ClaimAnml) claimed = true else caretaker = false
-            },
+            sync = { events.add("sync") },
+            inputs = { Inputs(now = 20_000L * 86_400 + 5 * 3600, maturedUnbonds = due.toList()) },
+            act = { a -> events.add(PrivacyAutomation.kind(a)); due.remove((a as Action.ClaimUnbonding).denom) },
             pause = { ms -> events.add("pause"); assertTrue(ms in PrivacyAutomation.ACTION_PAUSE_MIN_MS..PrivacyAutomation.ACTION_PAUSE_MAX_MS) },
         )
         assertEquals(2, taken.size)
@@ -417,28 +411,24 @@ class Audit3Test {
     }
 
     @Test
-    fun automationWaitsForChangeThatHasNotLanded() = kotlinx.coroutines.runBlocking {
-        var claimed = false; var fee = true
-        val base = Inputs(now = 20_000L * 86_400 + 5 * 3600, identityLive = true, claimOpensAt = 0, claimedToday = false,
-            claimOffset = 0, caretakerDue = true, hasFeeErth = true, maturedUnbonds = listOf("unbond/v/1"))
+    fun automationTriesEachActionOncePerPass() = kotlinx.coroutines.runBlocking {
         var pauses = 0
         val taken = PrivacyAutomation.runPass(
             sync = {},
-            inputs = { base.copy(claimedToday = claimed, hasFeeErth = fee, caretakerDue = !claimed || fee) },
-            act = { a -> if (a !is Action.ClaimUnbonding) { fee = false; claimed = true } },
+            // A claim that keeps failing stays due: tried once this pass.
+            inputs = { Inputs(now = 20_000L * 86_400, maturedUnbonds = listOf("unbond/v/1", "unbond/v/2")) },
+            act = { throw IllegalStateException("not matured after all") },
             pause = { pauses++ },
             random = java.util.Random(1),
         )
-        // Never two actions without a pause; a fee action waits while the only fee note is pending.
+        assertEquals(2, taken.size)
         assertEquals(taken.size - 1, pauses)
-        assertEquals(1, taken.count { it !is Action.ClaimUnbonding })
     }
 
     @Test
     fun automationLogsNameNoDenom() {
         val k = PrivacyAutomation.kind(Action.ClaimUnbonding("unbond/earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq/3"))
         assertEquals("ClaimUnbonding", k)
-        assertEquals("ClaimAnml", PrivacyAutomation.kind(Action.ClaimAnml(5)))
     }
 
     // ---- 8. the stake vote run stops with the session ----

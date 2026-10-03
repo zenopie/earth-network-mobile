@@ -58,7 +58,7 @@ class ZkVectorsTest {
         val mine = mapOf(
             "id" to Privacy.TAG_ID, "owner" to Privacy.TAG_OWNER, "leaf" to Privacy.TAG_LEAF, "sn" to Privacy.TAG_SN,
             "pc" to Privacy.TAG_PC, "cm" to Privacy.TAG_CM, "nf" to Privacy.TAG_NF, "reg" to Privacy.TAG_REG,
-            "asset" to Privacy.TAG_ASSET, "signal" to Privacy.TAG_SIGNAL, "bytes" to Privacy.TAG_BYTES, "scope" to Privacy.TAG_SCOPE,
+            "asset" to Privacy.TAG_ASSET, "signal" to Privacy.TAG_SIGNAL, "bytes" to Privacy.TAG_BYTES, "scope" to Privacy.TAG_SCOPE, "affiliate" to Privacy.TAG_AFFILIATE,
             "stake" to Privacy.TAG_STAKE, "spc" to Privacy.TAG_SPC, "snf" to Privacy.TAG_SNF, "otag" to Privacy.TAG_OTAG,
             "snfl" to Privacy.TAG_SNFL, "vnf" to Privacy.TAG_VNF,
             "gen" to network.erth.wallet.privacy.zk.Grumpkin.TAG_GEN, "cv_r" to network.erth.wallet.privacy.zk.Grumpkin.TAG_CV_R,
@@ -90,7 +90,9 @@ class ZkVectorsTest {
         assertEquals(d.getString("idc"), idc.toHex())
         val opk = Privacy.ownerPk(nk)
         assertEquals(d.getString("owner_pk"), opk.toHex())
-        assertEquals(d.getString("leaf"), Privacy.identityLeaf(idc, fr(d.getString("leaf_dsc")), Privacy.countryField("DE"), 1_790_000_000).toHex())
+        assertEquals(d.getString("leaf"), Privacy.identityLeaf(idc, fr(d.getString("leaf_dsc")), Privacy.countryField("DE"), 1_790_000_000, 0).toHex())
+        // A switched or re-entered identity's leaf commits to predecessor_at.
+        assertEquals(d.getString("leaf_pred"), Privacy.identityLeaf(idc, fr(d.getString("leaf_dsc")), Privacy.countryField("DE"), 1_790_000_000, 1_790_000_000).toHex())
         assertEquals(d.getString("sn"), Privacy.scopeNullifier(idSecret, Privacy.claimScope(20360)).toHex())
         val pc = Privacy.pc(opk, rho, rcm)
         assertEquals(d.getString("pc"), pc.toHex())
@@ -152,7 +154,7 @@ class ZkVectorsTest {
         val s = json.getJSONObject("scopes")
         assertEquals(s.getString("claim_20360"), Privacy.claimScope(20360).toHex())
         assertEquals(s.getString("caretaker"), Privacy.caretakerScope().toHex())
-        assertEquals(s.getString("referrer"), Privacy.referrerScope().toHex())
+        assertEquals(s.getString("handle"), Privacy.handleScope().toHex())
         assertEquals(s.getString("proposal_5_0"), Privacy.proposalScope(5, 0).toHex())
         assertEquals(s.getString("proposal_5_1"), Privacy.proposalScope(5, 1).toHex())
         assertEquals(s.getString("removal_3"), Privacy.removalScope(3).toHex())

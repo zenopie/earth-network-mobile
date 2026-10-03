@@ -74,4 +74,38 @@ class SwapMathTest {
         assertEquals(local, SwapMath.withChain(local, null, null))
         assertNull(SwapMath.withChain(null, null, null))
     }
+
+    /**
+     * Deposits (audit 4, C2): the shares and the legs x/dex pulls, rounded
+     * up, match the chain's own maths; a leg derived with depositLeg never
+     * makes the other side the binding one and is never pulled past.
+     */
+    @Test
+    fun depositsMatchTheChain() {
+        val deps = json.getJSONArray("deposits")
+        assertEquals(144, deps.length())
+        for (i in 0 until deps.length()) {
+            val d = deps.getJSONObject(i)
+            fun b(k: String) = BigInteger(d.getString(k))
+            val got = SwapMath.deposit(b("in_erth"), b("in_token"), b("reserve_erth"), b("reserve_token"), b("supply"))
+            if (b("shares").signum() == 0) assertNull("$d", got)
+            else {
+                assertEquals("$d shares", b("shares"), got!!.first)
+                assertEquals("$d erth", b("pull_erth"), got.second)
+                assertEquals("$d token", b("pull_token"), got.third)
+            }
+            // From the ERTH side: the derived token leg buys at least the ERTH side's shares.
+            val re = b("reserve_erth"); val rt = b("reserve_token"); val s = b("supply")
+            val e = b("in_erth")
+            val t = SwapMath.depositLeg(e, re, rt)
+            val fromErth = e * s / re
+            if (fromErth.signum() > 0) {
+                val p = SwapMath.deposit(e, t, re, rt, s)!!
+                assertEquals("$d from erth", fromErth, p.first)
+                org.junit.Assert.assertTrue(p.second <= e && p.third <= t)
+            }
+        }
+        assertEquals(BigInteger.valueOf(3), SwapMath.depositLeg(BigInteger.valueOf(5), BigInteger.valueOf(2), BigInteger.ONE))
+        assertEquals(BigInteger.ZERO, SwapMath.depositLeg(BigInteger.ONE, BigInteger.ZERO, BigInteger.ONE))
+    }
 }
