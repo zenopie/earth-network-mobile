@@ -38,6 +38,7 @@ final class ZkVectorsTests: XCTestCase {
             "pc": PrivacyHash.tagPC, "cm": PrivacyHash.tagCM, "nf": PrivacyHash.tagNF, "reg": PrivacyHash.tagReg,
             "asset": PrivacyHash.tagAsset, "signal": PrivacyHash.tagSignal, "bytes": PrivacyHash.tagBytes, "scope": PrivacyHash.tagScope,
             "stake": PrivacyHash.tagStake, "spc": PrivacyHash.tagSPC, "snf": PrivacyHash.tagSNF, "otag": PrivacyHash.tagOTag,
+            "snfl": PrivacyHash.tagSNFL, "vnf": PrivacyHash.tagVNF,
             "gen": Grumpkin.tagGen, "cv_r": Grumpkin.tagCvR, "bsig": Grumpkin.tagBsig, "bundle": PrivateMsgs.tagBundle,
         ]
         XCTAssertEqual(tags.count, mine.count)
@@ -83,6 +84,40 @@ final class ZkVectorsTests: XCTestCase {
         XCTAssertEqual(s("stake_nf"), PrivacyHash.stakeNF(nk: nk, rho: rho, position: 4_000_000_000).hex)
         XCTAssertEqual(Vectors.fe(1006), Vectors.fr(s("otag_salt")))
         XCTAssertEqual(s("otag"), PrivacyHash.ownerTag(ownerPK: opk, salt: Vectors.fe(1006)).hex)
+        // Stake votes (ORCHARD_DESIGN 15), and the design's golden values (= Noir test_go_parity).
+        XCTAssertEqual(s("nf_leaf_1_2_3"), PrivacyHash.nfLeaf(value: Fr(UInt64(1)), nextValue: Fr(UInt64(2)), nextIndex: 3).hex)
+        XCTAssertEqual("0cdc3a81748c6389efaa3a6c29b7f4609a8e9f860230b70413e8bef512978276", s("nf_leaf_1_2_3"))
+        XCTAssertEqual(s("nf_leaf"), PrivacyHash.nfLeaf(value: Vectors.fe(1007), nextValue: Vectors.fe(1008), nextIndex: 4_000_000_000).hex)
+        XCTAssertEqual(s("vote_nf"), PrivacyHash.voteNF(nk: nk, rho: rho, position: 4_000_000_000, proposalID: 5).hex)
+        XCTAssertEqual(s("vote_nf_5eed"), PrivacyHash.voteNF(nk: Fr(UInt64(0x5eed)), rho: Fr(UInt64(0xa1)), position: 1, proposalID: 7).hex)
+        XCTAssertEqual("1ada84dad3e6afde3f370e97edf4df2ee4eeb6b1400d5c5f41882552f578ba2f", s("vote_nf_5eed"))
+    }
+
+    /// The stake nullifier indexed tree against zk/indexed: roots by insert count, non-membership witnesses.
+    func testIndexedTree() throws {
+        let ix = Vectors.obj("indexed")
+        XCTAssertEqual(ix["empty_root"] as? String, IndexedTree.emptyRoot.hex)
+        XCTAssertEqual("18f5a2d2d3273f584793e90ac9bf77abf0ff2a05a101cd5943eaf7bbd0bd5b10", ix["empty_root"] as? String)
+        let vs = (ix["values"] as! [String]).map(Vectors.fr)
+        for (k, want) in ix["roots"] as! [String: String] {
+            XCTAssertEqual(want, try IndexedTree(Array(vs.prefix(Int(k)!))).root().hex, k)
+        }
+        let t = try IndexedTree(vs)
+        XCTAssertTrue(vs.allSatisfy { t.contains($0) && t.nonMembership($0) == nil })
+        XCTAssertNil(t.nonMembership(.zero))
+        for w in ix["witnesses"] as! [[String: Any]] {
+            let v = Vectors.fr(w["value"] as! String)
+            let mine = try XCTUnwrap(t.nonMembership(v))
+            XCTAssertEqual(w["low_value"] as? String, mine.lowValue.hex)
+            XCTAssertEqual(w["low_next_value"] as? String, mine.lowNextValue.hex)
+            XCTAssertEqual((w["low_next_index"] as! NSNumber).uint64Value, mine.lowNextIndex)
+            XCTAssertEqual((w["low_index"] as! NSNumber).uint64Value, mine.lowIndex)
+            XCTAssertEqual(w["low_path"] as! [String], mine.lowPath.map(\.hex))
+            XCTAssertTrue(mine.proves(v, root: t.root()))
+        }
+        // The chain refuses what it never inserts.
+        XCTAssertThrowsError(try IndexedTree([vs[0], vs[0]]))
+        XCTAssertThrowsError(try IndexedTree([.zero]))
     }
 
     func testScopes() {

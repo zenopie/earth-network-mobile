@@ -19,12 +19,7 @@ final class WalletFlowTests: XCTestCase {
     let validator = "earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
     let receiver = "earth1qqqsyqcyq5rqwzqfpg9scrgwpugpzysncc2uls"
     var derth: String { PrivacyWallet.derthDenom(validator) }
-    /// A proposal's snapshot (stake tree size), fixed once taken (nil: the tree as it stands).
-    var snapshot: UInt64?
-
-    func reads(_ chain: FakeChain, _ size: (() -> UInt64)? = nil) -> FakeReads {
-        FakeReads(chain: chain, snapshotSize: size ?? { [unowned self] in self.snapshot ?? chain.stakeTree.size })
-    }
+    func reads(_ chain: FakeChain) -> FakeReads { FakeReads(chain: chain) }
 
 
     func wallet(_ chain: FakeChain, _ words: String, reads r: FakeReads? = nil, indexer: PrivacyIndexer? = nil,
@@ -118,10 +113,10 @@ final class WalletFlowTests: XCTestCase {
         await assertThrowsAsync({ try await a.send(to: b.address, denom: self.derth, amount: 1) }) { $0 is PrivacyError }
         await assertThrowsAsync({ try await a.unshield(receiver: self.receiver, denom: self.derth, amount: 1) }) { $0 is PrivacyError }
 
-        // A stake vote against a snapshot taken right after: the note is
-        // spent against the snapshot root and minted straight back.
-        let snap = chain.stakeTree.size
-        let fresh = try wallet(chain, alice, reads: reads(chain) { snap })
+        // A stake vote against a snapshot taken right after: the note proves
+        // itself unspent at the snapshot and is not spent (ORCHARD_DESIGN 15).
+        chain.openProposal(9)
+        let fresh = try wallet(chain, alice)
         try await fresh.sync()
         // A later stake note moves the stake tree past the snapshot.
         _ = try await fresh.delegate(validator: validator, amount: 100_000)
@@ -134,12 +129,13 @@ final class WalletFlowTests: XCTestCase {
         XCTAssertEqual(validator, chain.stakeVotes[0].1)
         XCTAssertEqual(1_800_000, chain.stakeVotes[0].2)
         XCTAssertEqual(1_890_000, bal(fresh, derth))
-        // Final: the re-minted note is not in the snapshot.
+        XCTAssertEqual(2, fresh.stakeNotes.count)
+        // Final: the note voted on 9, the later one is not in its snapshot.
         let left = try await fresh.stakeVoteItems(proposalID: 9)
         XCTAssertTrue(left.isEmpty)
 
         // A wallet restored from the mnemonic alone sees the same balances,
-        // the self-mints (gas, reward, derth, the vote's re-mint) included.
+        // the self-mints (gas, reward, derth) included.
         let restored = try wallet(chain, alice)
         try await restored.sync()
         XCTAssertEqual(fresh.balances(), restored.balances())
@@ -263,22 +259,23 @@ final class WalletFlowTests: XCTestCase {
         XCTAssertTrue(gone.isEmpty)
         XCTAssertEqual(1_800_000, bal(a, derth))
 
-        // Stake votes: every derth note from before the snapshot, two a tx.
+        // Stake votes: every derth note from before the snapshot, one a tx.
         try await a.sync()
-        snapshot = chain.stakeTree.size
+        chain.openProposal(11)
         let weight = try await a.stakeVoteWeight(proposalID: 11, positions: [])
-        XCTAssertEqual(2, weight.notes)
-        XCTAssertEqual(1_800_000, weight.uerth)
+        let held = a.stakeNotes.filter { $0.spendable && $0.denom == derth }
+        let rounded = try held.reduce(UInt64(0)) { $0 + (try PrivacyWallet.voteWeight($1.amount)) }
+        XCTAssertEqual(held.count, weight.notes)
+        XCTAssertEqual(rounded, weight.uerth)
         var voted: [TxResult] = []
         for item in try await a.stakeVoteItems(proposalID: 11) {
             if let r = try await a.castStakeVote(proposalID: 11, item: item, options: yes) { voted.append(r) }
         }
-        snapshot = nil
-        XCTAssertEqual(1, voted.count)
+        XCTAssertEqual(held.count, voted.count)
         try await a.sync()
         XCTAssertEqual(1_800_000, bal(a, derth))
-        XCTAssertEqual(1, chain.stakeVotes.count)
-        XCTAssertEqual(1_800_000, chain.stakeVotes[0].2)
+        XCTAssertEqual(held.count, chain.stakeVotes.count)
+        XCTAssertEqual(rounded, chain.stakeVotes.reduce(UInt64(0)) { $0 + $1.2 })
 
         // Referrer binding (lapses after R; refreshed past R/2).
         chain.now += 31 * 86_400
@@ -398,6 +395,7 @@ final class WalletFlowTests: XCTestCase {
         }
         for (i, w) in chain.prover.allActions.enumerated() { write("action", i, w.proverToml()) }
         for (i, w) in chain.prover.allStakes.enumerated() { write("stake", i, w.proverToml()) }
+        for (i, w) in chain.prover.allVotes.enumerated() { write("vote", i, w.proverToml()) }
         for (i, w) in chain.prover.allMemberships.enumerated() { write("membership", i, w.proverToml()) }
     }
 }

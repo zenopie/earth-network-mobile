@@ -37,7 +37,19 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     var stakeRows: [StakeNoteRow] = []
     let stakeTree = MerkleTree(store: MemNodeStore())
     var stakeNullifiers: [Fr: UInt64] = [:]
+    /// The stake nullifier indexed tree's values in insertion order (leaf i + 1), ORCHARD_DESIGN 15.
+    var stakeNfValues: [Fr] = []
     var stakeRoots: Set<Fr> = []
+    /// Proposal snapshots: note root and size, nullifier tree root and size (sentinel included), block.
+    struct Snap { let proposalID: UInt64, root: Fr, treeSize: UInt64, nfRoot: Fr, nfSize: UInt64, height: UInt64 }
+    var snapshots: [UInt64: Snap] = [:]
+    /// (proposal, vote nullifier) of every stake vote.
+    var voteNullifiers: Set<[Fr]> = []
+    /// Whether the indexer serves the nullifier tree and snapshot streams (false: an older indexer; the wallet uses the LCD).
+    var indexerNfTree = true
+    var indexerSnapshots = true
+    /// Every LCD StakeNullifierTree page asked (start).
+    var nfTreeAsks: [UInt64] = []
     var height: UInt64 = 1
     let minFeeValue: UInt64 = 1000
     var price = Decimal(string: "0.001")!
@@ -119,6 +131,32 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         return pos
     }
 
+    /// The stake nullifier tree's root now (indexed.EmptyRoot before the first insert).
+    func stakeNfRoot() -> Fr { try! IndexedTree(stakeNfValues).root() }
+
+    /// A proposal enters voting: its snapshot is the trees as the last block left them; the block it is taken in ends.
+    @discardableResult
+    func openProposal(_ id: UInt64) -> Snap {
+        let s = Snap(proposalID: id, root: stakeTree.size == 0 ? .zero : stakeTree.root(), treeSize: stakeTree.size, nfRoot: stakeNfRoot(),
+                     nfSize: stakeNfValues.isEmpty ? 0 : UInt64(stakeNfValues.count) + 1, height: height)
+        snapshots[id] = s
+        block()
+        return s
+    }
+
+    /// Query/Snapshot.
+    func snapshotRead(_ id: UInt64) throws -> PrivacyReads.Snapshot {
+        guard let s = snapshots[id] else { throw Refused(why: "no snapshot for proposal \(id)") }
+        return PrivacyReads.Snapshot(root: s.root, treeSize: s.treeSize, height: Int64(s.height), nfRoot: s.nfRoot, nfSize: s.nfSize)
+    }
+
+    /// Query/StakeNullifierTree.
+    func nfTreeRead(start: UInt64, limit: Int) -> PrivacyReads.NfTreePage {
+        nfTreeAsks.append(start)
+        let vs = Array(stakeNfValues.dropFirst(Int(start)).prefix(min(limit, 1000)))
+        return PrivacyReads.NfTreePage(values: vs, size: stakeNfValues.isEmpty ? 0 : UInt64(stakeNfValues.count) + 1)
+    }
+
     /// MsgShield (a gas grant, a shield from a transparent account): its ciphertext is required.
     func shield(_ denom: String, _ value: UInt64, _ pc: Fr, _ ct: Data) { mint(denom, value, pc, ct); block() }
 
@@ -181,7 +219,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         if rejectNext > 0 {
             // The proofs made for it never reach the chain.
             rejectNext -= 1
-            prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll()
+            prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll(); prover.votes.removeAll()
             throw URLError(.networkConnectionLost)
         }
         let hash = "HASH\(height)"
@@ -190,14 +228,14 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             dropNext -= 1
             _ = try check(tx, simulate: true)
             accepted(hash)
-            prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll()
+            prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll(); prover.votes.removeAll()
             throw URLError(.timedOut)
         }
         if failInBlockNext > 0 {
             failInBlockNext -= 1
             _ = try check(tx, simulate: true)
             accepted(hash)
-            prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll()
+            prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll(); prover.votes.removeAll()
             block()
             txs[hash] = TxResult(hash: hash, height: height - 1, time: now, events: [], code: 5, log: "failed in block (test)")
             throw Refused(why: "tx failed (code 5)")
@@ -281,7 +319,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
 
     /// Whether the msg has the chain mint a stake note to spc_mint (its blind stake ciphertext is then required).
     private func mintsStake(_ m: any PrivateMsg) -> Bool {
-        m is MsgShieldedDelegate || m is MsgShieldedUndelegate || m is MsgStakeVote || m is MsgUnlockPosition
+        m is MsgShieldedDelegate || m is MsgShieldedUndelegate || m is MsgUnlockPosition
     }
 
     /// The stake proof's chain-supplied publics: asset, v_out.
@@ -291,7 +329,6 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         case let m as MsgRestake: return (PrivacyWallet.derthDenom(m.validator), 0)
         case let m as MsgShieldedUndelegate: return (PrivacyWallet.derthDenom(m.validator), m.amount)
         case let m as MsgClaimUnbonding: return (PrivacyWallet.unbondDenom(m.validator, epoch: m.epoch), m.amount)
-        case let m as MsgStakeVote: return (PrivacyWallet.derthDenom(m.validator), m.weight)
         case let m as MsgLockPosition: return (PrivacyWallet.derthDenom(m.validator), m.amount)
         default: return (nil, 0)
         }
@@ -307,7 +344,6 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         let (minSpends, creates): (Int, Bool)
         switch m {
         case is MsgShieldedDelegate, is MsgUpdatePosition, is MsgUnlockPosition, is MsgPositionVote: (minSpends, creates) = (0, false)
-        case is MsgStakeVote: (minSpends, creates) = (1, false)
         default: (minSpends, creates) = (1, true)
         }
         let n = try spent(p).count
@@ -354,6 +390,11 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         case let m as MsgStakeVote:
             // Wave 3 (F3): option weights only in their canonical LegacyDec form.
             try need(m.options.allSatisfy { (try? PrivateMsgs.legacyDec($0.weight)) == $0.weight }, "a vote weight is not canonical")
+            try need(snapshots[m.proposalID] != nil, "no open snapshot for proposal \(m.proposalID)")
+            try need(m.weight > 0, "weight must be positive")
+            try need(m.voteNullifier.count == 32 && !(try f(m.voteNullifier)).isZero, "vote_nullifier")
+            try need(!voteNullifiers.contains([PrivacyHash.u64(m.proposalID), try f(m.voteNullifier)]),
+                     "this stake note already voted on this proposal (code 1119)")
         case let m as MsgBindReferrer:
             // Wave 3 (L6): binding an address needs its owner's consent (cosmos secp256k1 over SHA-256).
             if m.address.isEmpty {
@@ -458,6 +499,17 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
                 try need(w.publicInputs() == expect, "stake proof is for other public inputs")
             }
         }
+        if let m = m as? MsgStakeVote {
+            try need(m.proof.count == PrivateTxEngine.proofBytes, "a vote proof is exactly \(PrivateTxEngine.proofBytes) bytes")
+            guard let snap = snapshots[m.proposalID] else { throw Refused(why: "no open snapshot for proposal \(m.proposalID)") }
+            if !simulate {
+                guard !prover.votes.isEmpty else { throw Refused(why: "no vote proof") }
+                let w = prover.votes.removeFirst()
+                let expect = [snap.root, snap.nfRoot, PrivacyHash.assetID(PrivacyWallet.derthDenom(m.validator)), PrivacyHash.u64(m.weight),
+                              PrivacyHash.u64(m.proposalID), try f(m.voteNullifier), sighash]
+                try need(w.publicInputs() == expect, "vote proof is for other public inputs")
+            }
+        }
         if let mm = m as? any MembershipMsg {
             let mem = mm.membership
             try need(identityRoots.contains(try f(mem.root)), "unknown identity anchor")
@@ -483,7 +535,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             }
         }
         if let stake {
-            for nf in try spent(stake) { stakeNullifiers[nf] = height }
+            for nf in try spent(stake) { stakeNullifiers[nf] = height; stakeNfValues.append(nf) }
             for (i, c) in try created(stake) {
                 let pos = stakeTree.append(c)
                 stakeRows.append(StakeNoteRow(position: pos, height: height, cm: c, ciphertext: stake.ciphertexts[i], denom: nil, amount: nil, spc: nil))
@@ -523,8 +575,9 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             claimedUnbonds.append(PrivacyWallet.unbondDenom(m.validator, epoch: m.epoch))
             mint("uerth", m.amount - m.feeFromOutput, try f(m.pc), m.ciphertext)
         case let m as MsgStakeVote:
+            voteNullifiers.insert([PrivacyHash.u64(m.proposalID), try f(m.voteNullifier)])
             stakeVotes.append((m.proposalID, m.validator, m.weight))
-            mintStake(PrivacyWallet.derthDenom(m.validator), m.weight, spcMint!, stake!.spcCiphertext)
+            events.append((type: "shieldedstaking_stake_vote", attributes: ["vote_nullifier": try f(m.voteNullifier).hex]))
         case let m as MsgNoteSwap:
             let (denomIn, amountIn) = rem.first!
             let out = try swapOut(denomIn, amountIn, m.denomOut)
@@ -685,6 +738,23 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
 
     func stakeNullifiers(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<Fr> { heights(stakeNullifiers, fromHeight) }
 
+    func stakeNullifierLeaves(fromIndex: UInt64, limit: Int?) async throws -> StakeNfLeavesPage {
+        guard indexerNfTree else { throw IndexerBaseMoved("no /stake/nullifier-tree (test)") }
+        let n = UInt64(limit ?? 1000)
+        let from = max(fromIndex, 1)
+        let to = min(from + n, UInt64(stakeNfValues.count) + 1)
+        let rows = from < to ? (from ..< to).map { (index: $0, value: stakeNfValues[Int($0 - 1)]) } : []
+        return StakeNfLeavesPage(leaves: rows, nextIndex: rows.last.map { $0.index + 1 } ?? from, complete: UInt64(rows.count) == n,
+                                 size: stakeNfValues.isEmpty ? 0 : UInt64(stakeNfValues.count) + 1, syncedHeight: height - 1)
+    }
+
+    func stakeSnapshots(fromHeight: UInt64, limit: Int?) async throws -> StakeSnapshotsPage {
+        guard indexerSnapshots else { throw IndexerBaseMoved("no /stake/snapshots (test)") }
+        let rows = snapshots.values.filter { $0.height >= fromHeight && $0.height < height }.sorted { $0.height < $1.height }
+            .map { StakeSnapshotRow(height: $0.height, proposalID: $0.proposalID, root: $0.root, treeSize: $0.treeSize, nfRoot: $0.nfRoot, nfSize: $0.nfSize) }
+        return StakeSnapshotsPage(rows: rows, nextHeight: max(fromHeight, height), complete: false, syncedHeight: height - 1)
+    }
+
     func positionReads() -> [PrivacyReads.Position] {
         positionOrder.compactMap { positions[$0] }.map {
             PrivacyReads.Position(id: $0.id, validator: $0.validator, derth: $0.derth, ownerTag: $0.ownerTag, splits: $0.splits,
@@ -702,6 +772,8 @@ final class CheckingProver: PrivacyProver, @unchecked Sendable {
     var actions: [ActionWitness] = []
     var stakes: [StakeWitness] = []
     var memberships: [MembershipWitness] = []
+    var votes: [VoteWitness] = []
+    var allVotes: [VoteWitness] = []
     var allActions: [ActionWitness] = []
     var allStakes: [StakeWitness] = []
     var allMemberships: [MembershipWitness] = []
@@ -725,13 +797,17 @@ final class CheckingProver: PrivacyProver, @unchecked Sendable {
         memberships.append(w); allMemberships.append(w)
         return Data(repeating: 2, count: PrivateTxEngine.proofBytes)
     }
+
+    func proveVote(_ w: VoteWitness) async throws -> Data {
+        try w.check()
+        votes.append(w); allVotes.append(w)
+        return Data(repeating: 4, count: PrivateTxEngine.proofBytes)
+    }
 }
 
-/// PrivacyChainReads over a FakeChain; snapshots are of the stake tree.
+/// PrivacyChainReads over a FakeChain; snapshots are the chain's (FakeChain.openProposal).
 struct FakeReads: PrivacyChainReads, @unchecked Sendable {
     let chain: FakeChain
-    var snapshotSize: () -> UInt64
-    var snapshotHeight: () -> Int64 = { 0 }
 
     func personhoodParams() async throws -> PrivacyReads.PersonhoodParams { .init(caretakerVoteSeconds: 30 * 86_400, identityRootWindowSeconds: 3_600) }
 
@@ -747,10 +823,9 @@ struct FakeReads: PrivacyChainReads, @unchecked Sendable {
 
     func epochNumber() async throws -> UInt64 { chain.epoch }
 
-    func snapshot(proposalID: UInt64) async throws -> PrivacyReads.Snapshot {
-        let s = snapshotSize()
-        return .init(root: chain.stakeTree.rootAt(s), treeSize: s, height: snapshotHeight())
-    }
+    func snapshot(proposalID: UInt64) async throws -> PrivacyReads.Snapshot { try chain.snapshotRead(proposalID) }
+
+    func stakeNullifierTree(start: UInt64, limit: Int) async throws -> PrivacyReads.NfTreePage { chain.nfTreeRead(start: start, limit: limit) }
 
     func positions() async throws -> [PrivacyReads.Position] { chain.positionReads() }
 }

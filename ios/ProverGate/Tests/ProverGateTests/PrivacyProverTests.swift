@@ -100,7 +100,7 @@ final class PrivacyProverTests: XCTestCase {
 
     /// With PRIVACY_TOML_DIR set to EarthCore's dumped wallet witnesses
     /// (WalletFlowTests with PRIVACY_TOML_OUT: <dir>/{action,stake,
-    /// membership}/<test>_<i>/Prover.toml), proves every one (or the first
+    /// membership,vote}/<test>_<i>/Prover.toml), proves every one (or the first
     /// PRIVACY_TOML_LIMIT of each kind) through this prover and verifies it
     /// with the genesis-equal VK. The stake circuit has no chain fixture, so
     /// this is where a stake proof is made and checked.
@@ -113,9 +113,10 @@ final class PrivacyProverTests: XCTestCase {
             .action: ["anchor", "nf", "cm_out", "cv_x", "cv_y", "sighash"],
             .stake: ["anchor", "asset", "nf_0", "nf_1", "cm_out_0", "cm_out_1", "v_in", "v_out", "spc_mint", "otag", "sighash"],
             .membership: ["root", "scope", "nullifier", "signal", "excluded_dsc", "excluded_country", "max_activation"],
+            .vote: ["note_root", "nf_root", "asset", "weight", "proposal_id", "vnf", "sighash"],
         ]
         var proved = 0
-        for kind in [PrivacyCircuitProver.Kind.stake, .action, .membership] {
+        for kind in [PrivacyCircuitProver.Kind.stake, .action, .membership, .vote] {
             let kdir = URL(fileURLWithPath: dir).appendingPathComponent(kind.rawValue)
             let cases = ((try? FileManager.default.contentsOfDirectory(atPath: kdir.path)) ?? []).sorted().prefix(limit)
             for c in cases {

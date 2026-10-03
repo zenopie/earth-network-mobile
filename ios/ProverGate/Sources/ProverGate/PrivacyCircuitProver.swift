@@ -61,7 +61,7 @@ public enum SRS {
 }
 
 /// On-device proofs of the privacy circuits (circuits/membership,
-/// circuits/action, circuits/stake), through the same Swoirenberg build as
+/// circuits/action, circuits/stake, circuits/vote), through the same Swoirenberg build as
 /// `LeanPoaProver` — bb v5.0.0, in lockstep with the chain's verifier; never
 /// float that pin. Ports `privacy/prove/PrivacyProver.kt`.
 ///
@@ -73,18 +73,20 @@ public enum SRS {
 /// own, and only the body is sent.
 public final class PrivacyCircuitProver: @unchecked Sendable {
     public enum Kind: String, CaseIterable, Sendable {
-        case membership, action, stake
+        case membership, action, stake, vote
 
         public var publicInputs: Int {
             switch self {
             case .membership: 7
             case .action: 6
             case .stake: 11
+            case .vote: 7
             }
         }
 
         /// The largest privacy circuit (gates: membership 5,645, action
-        /// 8,120, stake 9,647): its SRS holds the other two.
+        /// 8,120, vote 9,046, stake 9,647): its SRS holds the others (all 2^14
+        /// circuits, under the bundled 2^15 + 1 points).
         public static let largest: Kind = .stake
     }
 
@@ -115,7 +117,7 @@ public final class PrivacyCircuitProver: @unchecked Sendable {
     public private(set) var lastMillis: [Kind: Int] = [:]
 
     /// - Parameters:
-    ///   - manifests: the compiled circuits (the app bundle's circuits/membership.json, action.json, stake.json).
+    ///   - manifests: the compiled circuits (the app bundle's circuits/membership.json, action.json, stake.json, vote.json).
     ///   - reserve: the manifest whose SRS to provision first when nothing has
     ///     been yet — the largest passport circuit while a registration may
     ///     still follow in this launch (with the local transcript prefix

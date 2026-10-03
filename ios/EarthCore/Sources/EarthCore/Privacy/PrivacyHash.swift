@@ -24,6 +24,9 @@ public enum PrivacyHash {
     public static let tagSPC = tag("earth.spc")
     public static let tagSNF = tag("earth.snf")
     public static let tagOTag = tag("earth.otag")
+    // The stake nullifier indexed tree and stake votes (circuits/vote, ORCHARD_DESIGN 15).
+    public static let tagSNFL = tag("earth.snfl")
+    public static let tagVNF = tag("earth.vnf")
     // Wallet-defined (PRIVACY_FORMATS.md 3a, 1): the registration record's and an unlock memo's tags.
     public static let tagRecTag = tag("earth.rectag")
     public static let tagUnlockTag = tag("earth.unlocktag")
@@ -74,6 +77,18 @@ public enum PrivacyHash {
     public static func stakeNF(nk: Fr, rho: Fr, position: UInt64) -> Fr {
         precondition(position <= 0xffff_ffff, "position is a u32")
         return h(tagSNF, nk, rho, u64(position))
+    }
+
+    /// A stake nullifier tree leaf: H(TAG_SNFL, value, next_value, next_index), next_index a u32.
+    public static func nfLeaf(value: Fr, nextValue: Fr, nextIndex: UInt64) -> Fr {
+        precondition(nextIndex <= 0xffff_ffff, "next_index is a u32")
+        return h(tagSNFL, value, nextValue, u64(nextIndex))
+    }
+
+    /// A stake note's vote nullifier on a proposal: H(TAG_VNF, nk, rho, position, proposal_id).
+    public static func voteNF(nk: Fr, rho: Fr, position: UInt64, proposalID: UInt64) -> Fr {
+        precondition(position <= 0xffff_ffff, "position is a u32")
+        return h(tagVNF, nk, rho, u64(position), u64(proposalID))
     }
 
     /// A Groundworks position's owner tag: H(TAG_OTAG, owner_pk, salt).

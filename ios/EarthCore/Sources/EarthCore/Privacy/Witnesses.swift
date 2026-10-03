@@ -263,6 +263,83 @@ public struct MembershipWitness: Sendable {
     public func proverToml() -> String { toml(noirInputs(), order: Self.inputOrder) }
 }
 
+/// The vote circuit's witness (circuits/vote): one derth stake note under the
+/// proposal's snapshot note root, its spend nullifier absent from the
+/// snapshot stake nullifier tree (a low leaf under nf_root), 0 < weight <=
+/// amount, and its vote nullifier on the proposal. Public inputs in the
+/// chain's order (MsgStakeVote.VotePublicInputs): note_root, nf_root, asset,
+/// weight, proposal_id, vnf, sighash.
+public struct VoteWitness: Sendable {
+    public let nk: Fr
+    public let amount: UInt64
+    public let rho: Fr
+    public let rcm: Fr
+    public let pos: UInt64
+    public let path: [Fr]
+    public let low: IndexedTree.Witness
+    public let noteRoot: Fr
+    public let nfRoot: Fr
+    public let asset: Fr
+    public let weight: UInt64
+    public let proposalID: UInt64
+    public let sighash: Fr
+    /// The note's spend nullifier: private, never published by a vote.
+    public let spendNF: Fr
+    public let vnf: Fr
+
+    public init(nk: Fr, amount: UInt64, rho: Fr, rcm: Fr, pos: UInt64, path: [Fr], low: IndexedTree.Witness, noteRoot: Fr, nfRoot: Fr,
+                asset: Fr, weight: UInt64, proposalID: UInt64, sighash: Fr) throws {
+        try require(path.count == Merkle.depth && low.lowPath.count == Merkle.depth, "a path is \(Merkle.depth) siblings")
+        try require(pos <= 0xffff_ffff && low.lowIndex <= 0xffff_ffff && low.lowNextIndex <= 0xffff_ffff, "a u32")
+        self.nk = nk; self.amount = amount; self.rho = rho; self.rcm = rcm; self.pos = pos; self.path = path; self.low = low
+        self.noteRoot = noteRoot; self.nfRoot = nfRoot; self.asset = asset; self.weight = weight; self.proposalID = proposalID
+        self.sighash = sighash
+        spendNF = PrivacyHash.stakeNF(nk: nk, rho: rho, position: pos)
+        vnf = PrivacyHash.voteNF(nk: nk, rho: rho, position: pos, proposalID: proposalID)
+    }
+
+    /// What the circuit asserts, checked before spending seconds on a proof that cannot verify.
+    public func check() throws {
+        let cm = PrivacyHash.stakeCM(asset: asset, amount: amount, spc: PrivacyHash.stakePC(ownerPK: PrivacyHash.ownerPK(nk), rho: rho, rcm: rcm))
+        try require(Merkle.rootFromPath(leaf: cm, index: pos, siblings: path) == noteRoot, "the stake note is not under the snapshot root")
+        try require(low.proves(spendNF, root: nfRoot), "the stake note was spent before the snapshot")
+        try require(weight != 0, "zero vote weight")
+        try require(weight <= amount, "the vote weighs more than the note")
+    }
+
+    public func publicInputs() -> [Fr] {
+        [noteRoot, nfRoot, asset, PrivacyHash.u64(weight), PrivacyHash.u64(proposalID), vnf, sighash]
+    }
+
+    public func noirInputs() -> [String: Any] {
+        [
+            "nk": nk.noir,
+            "amount": noirHex(amount),
+            "rho": rho.noir,
+            "rcm": rcm.noir,
+            "pos": noirHex(pos),
+            "path": path.map(\.noir),
+            "low_value": low.lowValue.noir,
+            "low_next_value": low.lowNextValue.noir,
+            "low_next_index": noirHex(low.lowNextIndex),
+            "low_index": noirHex(low.lowIndex),
+            "low_path": low.lowPath.map(\.noir),
+            "note_root": noteRoot.noir,
+            "nf_root": nfRoot.noir,
+            "asset": asset.noir,
+            "weight": noirHex(weight),
+            "proposal_id": noirHex(proposalID),
+            "vnf": vnf.noir,
+            "sighash": sighash.noir,
+        ]
+    }
+
+    static let inputOrder = ["nk", "amount", "rho", "rcm", "pos", "path", "low_value", "low_next_value", "low_next_index", "low_index",
+                             "low_path", "note_root", "nf_root", "asset", "weight", "proposal_id", "vnf", "sighash"]
+
+    public func proverToml() -> String { toml(noirInputs(), order: Self.inputOrder) }
+}
+
 func noirHex(_ v: UInt64) -> String { "0x" + String(v, radix: 16) }
 
 private func toml(_ m: [String: Any], order: [String]) -> String {

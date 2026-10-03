@@ -9,6 +9,8 @@ public protocol PrivacyChainReads: Sendable {
     func epochNumber() async throws -> UInt64
     func snapshot(proposalID: UInt64) async throws -> PrivacyReads.Snapshot
     func positions() async throws -> [PrivacyReads.Position]
+    /// x/shieldedstaking Query/StakeNullifierTree{start, limit} (at most 1000 a page).
+    func stakeNullifierTree(start: UInt64, limit: Int) async throws -> PrivacyReads.NfTreePage
 }
 
 public enum PrivacyReads {
@@ -44,9 +46,21 @@ public enum PrivacyReads {
         /// rate_v (ERTH per derth) per validator at the snapshot: what a
         /// stake vote's derth weighs.
         public let rates: [String: Decimal]
-        public init(root: Fr, treeSize: UInt64, height: Int64 = 0, rates: [String: Decimal] = [:]) {
-            self.root = root; self.treeSize = treeSize; self.height = height; self.rates = rates
+        /// The stake nullifier tree's root and size (sentinel included) at the
+        /// same moment; nil: a snapshot from before stake votes stopped
+        /// spending, which takes no stake vote.
+        public let nfRoot: Fr?
+        public let nfSize: UInt64
+        public init(root: Fr, treeSize: UInt64, height: Int64 = 0, rates: [String: Decimal] = [:], nfRoot: Fr? = nil, nfSize: UInt64 = 0) {
+            self.root = root; self.treeSize = treeSize; self.height = height; self.rates = rates; self.nfRoot = nfRoot; self.nfSize = nfSize
         }
+    }
+
+    /// Query/StakeNullifierTree: the values at leaf start+1.. in insertion order, and the tree's current size.
+    public struct NfTreePage: Sendable {
+        public let values: [Fr]
+        public let size: UInt64
+        public init(values: [Fr], size: UInt64) { self.values = values; self.size = size }
     }
 
     /// A Groundworks position (public), its owner known only by `ownerTag`.
@@ -179,8 +193,20 @@ public struct PrivacyQueries: PrivacyChainReads {
         for v in s.validators.array {
             if let r = Decimal(string: v.rate.string(default: "")) { rates[v.validator.string(default: "")] = r }
         }
+        let nfRaw = Data(base64Encoded: s.nf_root.string(default: "")) ?? Data()
         return PrivacyReads.Snapshot(root: try field(s.root), treeSize: s.tree_size.uint64(default: 0),
-                                     height: s.height.int64(default: 0), rates: rates)
+                                     height: s.height.int64(default: 0), rates: rates,
+                                     nfRoot: nfRaw.isEmpty ? nil : try Fr(bytes: nfRaw), nfSize: s.nf_size.uint64(default: 0))
+    }
+
+    /// Query/StakeNullifierTree: up to `limit` (at most 1000) values from leaf start+1, in insertion order.
+    public func stakeNullifierTree(start: UInt64, limit: Int) async throws -> PrivacyReads.NfTreePage {
+        let j = try await rest.get("/earth/shieldedstaking/v1/stake_nullifier_tree?start=\(start)&limit=\(min(max(limit, 1), 1000))")
+        let values = try j.values.array.prefix(1000).enumerated().map { i, v -> Fr in
+            guard let raw = Data(base64Encoded: v.string ?? "") else { throw PrivacyError("stake nullifier \(start + 1 + UInt64(i)) is not base64") }
+            return try Fr(bytes: raw)
+        }
+        return PrivacyReads.NfTreePage(values: values, size: j.size.uint64(default: 0))
     }
 
     /// Chain-wide timing, the same answer for everyone: with the epoch it says

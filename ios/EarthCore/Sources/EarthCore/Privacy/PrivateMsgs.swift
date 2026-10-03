@@ -105,7 +105,7 @@ public struct StakeProof: ProtoMessage, Equatable, Sendable {
     public var spcMint: Data
     public var ownerTag: Data
     /// The blind stake ciphertext (177 bytes) of the note minted to spc_mint:
-    /// required on Delegate, Undelegate, StakeVote, UnlockPosition; empty otherwise.
+    /// required on Delegate, Undelegate, UnlockPosition; empty otherwise.
     public var spcCiphertext: Data
 
     public init(proof: Data, anchor: Data, nullifiers: [Data], commitments: [Data], ciphertexts: [Data], spcMint: Data, ownerTag: Data,
@@ -933,20 +933,29 @@ public struct MsgClaimUnbonding: DecodablePrivateMsg, Equatable {
     }
 }
 
-/// sighash fields: StakeFields, proposal_id, Bytes(validator), Bytes(OptionsBytes(options)), weight.
-public struct MsgStakeVote: DecodablePrivateMsg, StakingMsg, Equatable {
+/// A stake note's vote without spending it (ORCHARD_DESIGN 15): `proof` is
+/// circuits/vote against the proposal's snapshot, `voteNullifier` =
+/// H(TAG_VNF, nk, rho, position, proposal_id), refused a second time on the
+/// proposal (code 1119). No stake proof, nothing spent or minted (field 7,
+/// the old stake proof, is reserved). sighash fields: proposal_id,
+/// Bytes(validator), Bytes(OptionsBytes(options)), weight, vote_nullifier.
+public struct MsgStakeVote: DecodablePrivateMsg, Equatable {
     public static let typeURL = "/earth.shieldedstaking.v1.MsgStakeVote"
     public var bundle: ShieldedBundle
     public var proposalID: UInt64
     public var validator: String
     public var options: [WeightedVoteOption]
     public var weight: UInt64
-    public var stake: StakeProof
+    public var proof: Data
+    public var voteNullifier: Data
 
-    public init(bundle: ShieldedBundle, proposalID: UInt64, validator: String, options: [WeightedVoteOption], weight: UInt64, stake: StakeProof) {
+    public init(bundle: ShieldedBundle, proposalID: UInt64, validator: String, options: [WeightedVoteOption], weight: UInt64,
+                proof: Data = Data(), voteNullifier: Data = Data()) {
         self.bundle = bundle; self.proposalID = proposalID; self.validator = validator; self.options = options
-        self.weight = weight; self.stake = stake
+        self.weight = weight; self.proof = proof; self.voteNullifier = voteNullifier
     }
+
+    public var bundles: [ShieldedBundle] { [bundle] }
 
     public func encoded() -> Data {
         var w = ProtoWriter()
@@ -955,7 +964,8 @@ public struct MsgStakeVote: DecodablePrivateMsg, StakingMsg, Equatable {
         w.string(3, validator)
         w.repeatedMessage(4, options)
         w.uint64(5, weight)
-        w.message(7, stake)
+        w.bytes(8, proof)
+        w.bytes(9, voteNullifier)
         return w.data
     }
 
@@ -963,13 +973,13 @@ public struct MsgStakeVote: DecodablePrivateMsg, StakingMsg, Equatable {
         let f = try ProtoFields(d)
         return Self(bundle: try f.message(1, ShieldedBundle.decode), proposalID: f.uint64(2), validator: f.string(3),
                     options: try f.repeatedMessage(4, WeightedVoteOption.decode), weight: f.uint64(5),
-                    stake: try f.message(7, StakeProof.decode))
+                    proof: f.bytes(8), voteNullifier: f.bytes(9))
     }
 
     public func sighashFields() throws -> [Fr] {
-        try PrivateMsgs.stakeFields(stake) + [
+        [
             PrivateMsgs.u(proposalID), PrivateMsgs.bytes(validator), PrivacyHash.bytes(try PrivateMsgs.optionsBytes(options)),
-            PrivateMsgs.u(weight),
+            PrivateMsgs.u(weight), try PrivateMsgs.f(voteNullifier),
         ]
     }
 }

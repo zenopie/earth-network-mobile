@@ -6,6 +6,7 @@ public protocol PrivacyProver: Sendable {
     func proveAction(_ w: ActionWitness) async throws -> Data
     func proveStake(_ w: StakeWitness) async throws -> Data
     func proveMembership(_ w: MembershipWitness) async throws -> Data
+    func proveVote(_ w: VoteWitness) async throws -> Data
 }
 
 /// A committed tx, as much of it as the wallet reads back.
@@ -57,19 +58,34 @@ public struct MembershipWitnessSpec: Sendable {
     public func witness(signal: Fr) throws -> MembershipWitness { try make(signal) }
 }
 
+/// A vote proof's statement, waiting for the sighash; `vnf` is known before (the sighash binds it).
+public struct VoteWitnessSpec: Sendable {
+    public let vnf: Fr
+    let make: @Sendable (Fr) throws -> VoteWitness
+    public init(vnf: Fr, _ make: @escaping @Sendable (Fr) throws -> VoteWitness) { self.vnf = vnf; self.make = make }
+    public func witness(sighash: Fr) throws -> VoteWitness {
+        let w = try make(sighash)
+        guard w.vnf == vnf else { throw PrivacyError("the vote witness is for another vote nullifier") }
+        return w
+    }
+}
+
 /// A private msg in the making: its bundles, stake proof and membership
 /// (everything but proofs, binding signatures and the sighash), and how to
 /// assemble the msg once they exist. `build` gets the bundles (unproven or
-/// proven, in `bundles` order), the stake proof and the membership.
+/// proven, in `bundles` order), the stake proof and the membership. A stake
+/// vote's `vote` proof and vote nullifier are set on the built msg by the
+/// engine.
 public struct Assembled {
     public let bundles: [BundlePlan]
     public let stake: StakePlan?
     public let membership: MembershipWitnessSpec?
+    public let vote: VoteWitnessSpec?
     public let build: ([ShieldedBundle], StakeProof?, Membership?) throws -> any PrivateMsg
 
-    public init(bundles: [BundlePlan], stake: StakePlan? = nil, membership: MembershipWitnessSpec? = nil,
+    public init(bundles: [BundlePlan], stake: StakePlan? = nil, membership: MembershipWitnessSpec? = nil, vote: VoteWitnessSpec? = nil,
                 build: @escaping ([ShieldedBundle], StakeProof?, Membership?) throws -> any PrivateMsg) {
-        self.bundles = bundles; self.stake = stake; self.membership = membership; self.build = build
+        self.bundles = bundles; self.stake = stake; self.membership = membership; self.vote = vote; self.build = build
     }
 
     /// The pool notes the msg spends.
@@ -128,8 +144,11 @@ public struct PrivateTxEngine: Sendable {
     public static let bundleGas: UInt64 = 100_000
     /// One action: its proof (2,000,000) and two note writes (150,000 each).
     public static let actionGas: UInt64 = 2_300_000
-    /// A stake proof: its proof and four note writes.
-    public static let stakeGas: UInt64 = 2_600_000
+    /// A stake proof: its proof, four note writes and, since the stake
+    /// nullifier tree is indexed, two more per nullifier slot (ORCHARD_DESIGN 15).
+    public static let stakeGas: UInt64 = 3_200_000
+    /// A stake vote (fixed): 250,000, its proof and one note write; nothing spent or minted.
+    public static let voteGas: UInt64 = 2_400_000
     /// A membership proof and its nullifier write.
     public static let membershipGas: UInt64 = 2_150_000
     /// MsgRegister: the passport proof (3,000,000), the DSC chain (300,000) and two minted notes.
@@ -162,6 +181,7 @@ public struct PrivateTxEngine: Sendable {
         for b in msg.bundles { g = g &+ bundleGas &+ actionGas &* UInt64(b.actions.count) }
         if msg.stakeProof != nil { g = g &+ stakeGas }
         if a.membership != nil { g = g &+ membershipGas }
+        if a.vote != nil { g = g &+ voteGas }
         if msg is MsgRegisterPrivate { g = g &+ registerGas }
         return g
     }
@@ -227,7 +247,12 @@ public struct PrivateTxEngine: Sendable {
             let w = try spec.witness(signal: sighash)
             membership = Membership(proof: try Self.proofSized(try await prover.proveMembership(w)), root: w.root.bytes, nullifier: w.nullifier.bytes)
         }
-        let msg = try a.build(bundles, stake, membership)
+        var msg = try a.build(bundles, stake, membership)
+        if let v = a.vote {
+            let w = try v.witness(sighash: sighash)
+            try w.check()
+            msg = try Self.withVote(msg, vnf: v.vnf, proof: try Self.proofSized(try await prover.proveVote(w)))
+        }
         guard try msg.sighash(chainID: chainID, tx: tx) == sighash else { throw PrivacyError("the proven msg binds another sighash") }
         guard msg.totalFee == q.fee else { throw PrivacyError("the msg must pay exactly the quoted fee") }
         try Self.checkShape(msg)
@@ -301,7 +326,18 @@ public struct PrivateTxEngine: Sendable {
                 stake = p
             }
         }
-        return try a.build(bundles, stake, try a.membership.map { try placeholderMembership($0, placeholders: placeholders) })
+        let msg = try a.build(bundles, stake, try a.membership.map { try placeholderMembership($0, placeholders: placeholders) })
+        // A quote's vote nullifier is random too: the node learns nothing of the note before the user confirms.
+        guard let v = a.vote else { return msg }
+        return try Self.withVote(msg, vnf: placeholders ? NotePlaintext.randomField() : v.vnf, proof: Self.placeholder)
+    }
+
+    /// A stake vote with its vote nullifier and proof set (the sighash binds the nullifier, not the proof).
+    static func withVote(_ msg: any PrivateMsg, vnf: Fr, proof: Data) throws -> any PrivateMsg {
+        guard var m = msg as? MsgStakeVote else { throw PrivacyError("not a stake vote") }
+        m.voteNullifier = vnf.bytes
+        m.proof = proof
+        return m
     }
 
     /// The membership's real root and nullifier (the chain checks both before any proof), a placeholder proof.

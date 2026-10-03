@@ -637,10 +637,11 @@ struct ProposalDetailScreen: View {
         return "Casting your stake vote: \(p.done) of \(p.total) done."
     }
 
-    /// Spend-to-vote: every derth note in the tree when voting opened is spent
-    /// against that snapshot and minted straight back, its weight counted,
-    /// two notes of one validator a vote; each position votes by its owner
-    /// tag. Final: a note votes once. Cast through the one path (K5): the
+    /// Stake votes without spending: every derth note in the tree and unspent
+    /// when voting opened proves so against that snapshot, untouched (its
+    /// weight rounded down to three significant figures), one note a vote;
+    /// each position votes by its owner tag. Final: a note votes once per
+    /// proposal, and on every open proposal. Cast through the one path (K5): the
     /// first cast is this sheet's result, the rest follow in the background,
     /// shuffled, a sync and a random 20-120 s apart, shown and stoppable.
     private func cast(_ option: Gov.Vote) {

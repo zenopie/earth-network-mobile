@@ -81,7 +81,7 @@ final class PrivateMsgsTests: XCTestCase {
         "claim_unbonding_fee_bundle": MsgClaimUnbonding(bundle: fee(115, 2000), validator: validator, epoch: 17, amount: 400_000, pc: fb(116),
                                                         ciphertext: bct(116), stake: stake(117, 1, 1)),
         "stake_vote": MsgStakeVote(bundle: fee(120, 2000), proposalID: 5, validator: validator, options: opts, weight: 400_000,
-                                   stake: stake(120, 2, 0, mints: true)),
+                                   proof: Data([0x70, 0x7e]), voteNullifier: fb(121)),
         "lock_position": MsgLockPosition(bundle: fee(140, 2000), validator: validator, amount: 400_000, splits: [w(2, 100)], stake: stake(140, 1, 1)),
         "update_position": MsgUpdatePosition(bundle: fee(150, 2000), positionID: 9, splits: [w(2, 100)], stake: stake(150, 0, 0)),
         "unlock_position": MsgUnlockPosition(bundle: fee(160, 2000), positionID: 9, stake: stake(160, 0, 0, mints: true)),

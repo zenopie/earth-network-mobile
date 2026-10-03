@@ -17,11 +17,10 @@ final class AuditFixesTests: XCTestCase {
     let validator2 = "earthvaloper1qyqszqgpqyqszqgpqyqszqgpqyqszqgpjnp7du"
     let receiver = "earth1qqqsyqcyq5rqwzqfpg9scrgwpugpzysncc2uls"
     let yes = [WeightedVoteOption(option: WeightedVoteOption.yes, weight: "1")]
-    var snapshot: UInt64?
 
     func wallet(_ chain: FakeChain, _ words: String? = nil, indexer: PrivacyIndexer? = nil,
                 store: PrivacyStore = .memory()) throws -> PrivacyWallet {
-        let reads = FakeReads(chain: chain, snapshotSize: { [unowned self] in self.snapshot ?? chain.stakeTree.size })
+        let reads = FakeReads(chain: chain)
         return PrivacyWallet(keys: try PrivacyKeys.fromMnemonic(words ?? alice), store: store, indexer: indexer ?? chain, chain: chain,
                              reads: reads, prover: chain.prover, chainID: chain.chainID, roots: chain,
                              now: { [unowned chain] in chain.now })
@@ -373,6 +372,7 @@ final class AuditFixesTests: XCTestCase {
         }
         for (i, w) in chain.prover.allActions.enumerated() { write("action", i, w.proverToml()) }
         for (i, w) in chain.prover.allStakes.enumerated() { write("stake", i, w.proverToml()) }
+        for (i, w) in chain.prover.allVotes.enumerated() { write("vote", i, w.proverToml()) }
         for (i, w) in chain.prover.allMemberships.enumerated() { write("membership", i, w.proverToml()) }
     }
 }
@@ -430,6 +430,15 @@ final class WrappedIndexer: PrivacyIndexer, @unchecked Sendable {
     func stakeNullifiers(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<Fr> {
         if let o = stakeNullifiersFromOverride, let p = o(fromHeight) { return p }
         return try await inner.stakeNullifiers(fromHeight: fromHeight, limit: limit)
+    }
+    /// Rewrites every stake nullifier tree page served.
+    var stakeNfLeavesMap: ((StakeNfLeavesPage) -> StakeNfLeavesPage)?
+    func stakeNullifierLeaves(fromIndex: UInt64, limit: Int?) async throws -> StakeNfLeavesPage {
+        let p = try await inner.stakeNullifierLeaves(fromIndex: fromIndex, limit: limit)
+        return stakeNfLeavesMap?(p) ?? p
+    }
+    func stakeSnapshots(fromHeight: UInt64, limit: Int?) async throws -> StakeSnapshotsPage {
+        try await inner.stakeSnapshots(fromHeight: fromHeight, limit: limit)
     }
 }
 

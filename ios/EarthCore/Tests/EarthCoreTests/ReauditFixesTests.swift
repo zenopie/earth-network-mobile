@@ -14,11 +14,10 @@ final class ReauditFixesTests: XCTestCase {
     let v2 = "earthvaloper1qyqszqgpqyqszqgpqyqszqgpqyqszqgpjnp7du"
     let receiver = "earth1qqqsyqcyq5rqwzqfpg9scrgwpugpzysncc2uls"
     let yes = [WeightedVoteOption(option: WeightedVoteOption.yes, weight: "1")]
-    var snapshotSize: UInt64?
 
     func wallet(_ chain: FakeChain, indexer: PrivacyIndexer? = nil, store: PrivacyStore = .memory(),
                 now: (@Sendable () -> Int64)? = nil) throws -> PrivacyWallet {
-        let reads = FakeReads(chain: chain, snapshotSize: { [unowned self] in self.snapshotSize ?? chain.stakeTree.size })
+        let reads = FakeReads(chain: chain)
         return PrivacyWallet(keys: try PrivacyKeys.fromMnemonic(alice), store: store, indexer: indexer ?? chain, chain: chain,
                              reads: reads, prover: chain.prover, chainID: chain.chainID, roots: chain,
                              now: now ?? { [unowned chain] in chain.now })
@@ -73,6 +72,12 @@ final class ReauditFixesTests: XCTestCase {
         func stakeNotes(fromPos: UInt64, limit: Int?) async throws -> StakeNotesPage { try await chain.stakeNotes(fromPos: fromPos, limit: limit) }
         func stakeNullifiers(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<Fr> {
             try await chain.stakeNullifiers(fromHeight: fromHeight, limit: limit)
+        }
+        func stakeNullifierLeaves(fromIndex: UInt64, limit: Int?) async throws -> StakeNfLeavesPage {
+            try await chain.stakeNullifierLeaves(fromIndex: fromIndex, limit: limit)
+        }
+        func stakeSnapshots(fromHeight: UInt64, limit: Int?) async throws -> StakeSnapshotsPage {
+            try await chain.stakeSnapshots(fromHeight: fromHeight, limit: limit)
         }
     }
 
@@ -396,7 +401,7 @@ final class ReauditFixesTests: XCTestCase {
         _ = try await a.delegate(validator: v1, amount: 1_000_000); try await a.sync()
         _ = try await a.delegate(validator: v2, amount: 1_000_000); try await a.sync()
         _ = try await a.lockPosition(validator: v1, amount: 100_000, splits: [2: 100]); try await a.sync()
-        snapshotSize = chain.stakeTree.size
+        chain.openProposal(12)
         return a
     }
 

@@ -135,6 +135,21 @@ public struct StakeVoteRun: Codable, Equatable, Sendable {
     }
 }
 
+/// A stake vote this wallet cast (ORCHARD_DESIGN 15): its proposal and vote
+/// nullifier, recorded the moment the node accepted the tx (`confirmed`
+/// false, with its hash and timeout_height) and confirmed once committed or
+/// refused as already voted. One note votes once per proposal.
+public struct StakeVoteRecord: Codable, Equatable, Sendable {
+    public let proposalID: UInt64
+    public let vnf: Fr
+    public let txHash: String?
+    public let until: UInt64?
+    public var confirmed: Bool
+    public init(proposalID: UInt64, vnf: Fr, txHash: String?, until: UInt64?, confirmed: Bool) {
+        self.proposalID = proposalID; self.vnf = vnf; self.txHash = txHash; self.until = until; self.confirmed = confirmed
+    }
+}
+
 /// What the wallet keeps between syncs: cursors into each indexer stream, its
 /// own notes, its registration, and the automations' bookkeeping. Small; the
 /// trees live beside it in per-level files. Ports PrivacyState in
@@ -179,6 +194,8 @@ public struct PrivacyState: Codable, Sendable {
     public var closedOtagMax: UInt32?
     /// A stake vote being cast (K5), or nil.
     public var stakeVoteRun: StakeVoteRun?
+    /// Every stake vote cast: (proposal, vote nullifier).
+    public var stakeVotes: [StakeVoteRecord] = []
     /// The stake tree's stream cursors and this wallet's stake notes.
     public var stakeNext: UInt64 = 0
     public var stakeHeight: UInt64 = 0
@@ -193,7 +210,7 @@ public struct PrivacyState: Codable, Sendable {
         case chainID, genesis, notesNext, notesHeight, nullifiersNext, identityNext, zeroedNext, notes, identity, pendingRegistration,
              regRecords, rootsVerified, rootsError, claimedDays, caretakerCastAt, caretakerSplit, referrerAddress, referrerBoundAt,
              unbondRetryAt, nextOtagCounter, stakeNext, stakeHeight, stakeNullifiersNext, stakeNotes, denoms, closedOtagMax, stakeVoteRun,
-             syncGeneration, verifiedGeneration
+             syncGeneration, verifiedGeneration, stakeVotes
     }
 
     /// Tolerates a state file from before the stake tree (missing keys keep their defaults).
@@ -214,6 +231,7 @@ public struct PrivacyState: Codable, Sendable {
         stakeNullifiersNext = try v(.stakeNullifiersNext, 0); stakeNotes = try v(.stakeNotes, []); denoms = try v(.denoms, [])
         closedOtagMax = try c.decodeIfPresent(UInt32.self, forKey: .closedOtagMax)
         stakeVoteRun = try c.decodeIfPresent(StakeVoteRun.self, forKey: .stakeVoteRun)
+        stakeVotes = try v(.stakeVotes, [])
         syncGeneration = try v(.syncGeneration, 0)
         verifiedGeneration = try c.decodeIfPresent(UInt64.self, forKey: .verifiedGeneration)
     }

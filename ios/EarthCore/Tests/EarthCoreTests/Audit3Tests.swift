@@ -12,11 +12,10 @@ final class Audit3Tests: XCTestCase {
     let v1 = "earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
     let v2 = "earthvaloper1qyqszqgpqyqszqgpqyqszqgpqyqszqgpjnp7du"
     let yes = [WeightedVoteOption(option: WeightedVoteOption.yes, weight: "1")]
-    var snapshotSize: UInt64?
 
     func wallet(_ chain: FakeChain, indexer: PrivacyIndexer? = nil, store: PrivacyStore = .memory(), roots: ChainRoots? = nil,
                 words: String? = nil) throws -> PrivacyWallet {
-        let reads = FakeReads(chain: chain, snapshotSize: { [unowned self] in self.snapshotSize ?? chain.stakeTree.size })
+        let reads = FakeReads(chain: chain)
         return PrivacyWallet(keys: try PrivacyKeys.fromMnemonic(words ?? alice), store: store, indexer: indexer ?? chain, chain: chain,
                              reads: reads, prover: chain.prover, chainID: chain.chainID, roots: roots ?? chain,
                              now: { [unowned chain] in chain.now })
@@ -183,11 +182,11 @@ final class Audit3Tests: XCTestCase {
         let m = try StakePlan.selfMint(try PrivacyKeys.fromMnemonic(bob))
         chain.mintStake("derth/\(v1)", 7, PrivacyHash.stakePC(ownerPK: Fr(UInt64(5)), rho: m.rho, rcm: m.rcm), m.ciphertext)
         chain.emptyBlock()
-        snapshotSize = chain.stakeTree.size
+        chain.openProposal(1)
         let n = try XCTUnwrap(w.stakeNotes.first { $0.spendable })
-        await assertThrowsAsync({ try await w.stakeVote(proposalID: 1, notes: [n], options: self.yes) }) { $0 is PrivacyWallet.SyncFirst }
+        await assertThrowsAsync({ try await w.stakeVote(proposalID: 1, note: n, options: self.yes) }) { $0 is PrivacyWallet.SyncFirst }
         try await w.sync()
-        _ = try await w.stakeVote(proposalID: 1, notes: [try XCTUnwrap(w.stakeNotes.first { $0.spendable })], options: yes)
+        _ = try await w.stakeVote(proposalID: 1, note: try XCTUnwrap(w.stakeNotes.first { $0.spendable }), options: yes)
     }
 
     func testChainNumbersNeverTrapOrWrap() {
@@ -410,7 +409,7 @@ final class Audit3Tests: XCTestCase {
         _ = try await a.delegate(validator: v1, amount: 1_000_000); try await a.sync()
         _ = try await a.delegate(validator: v2, amount: 1_000_000); try await a.sync()
         _ = try await a.lockPosition(validator: v1, amount: 100_000, splits: [2: 100]); try await a.sync()
-        snapshotSize = chain.stakeTree.size
+        chain.openProposal(12)
         return a
     }
 

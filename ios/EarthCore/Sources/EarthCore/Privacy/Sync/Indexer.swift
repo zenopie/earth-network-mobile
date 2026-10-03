@@ -22,6 +22,12 @@ public protocol PrivacyIndexer: Sendable {
     func stakeNotes(fromPos: UInt64, limit: Int?) async throws -> StakeNotesPage
     /// Its spent nullifiers, by height.
     func stakeNullifiers(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<Fr>
+    /// The stake nullifier tree's values by leaf index, in insertion order
+    /// (leaf 1 is the first value; leaf 0, the sentinel, is never a row):
+    /// what a stake vote rebuilds the snapshot's nullifier tree from.
+    func stakeNullifierLeaves(fromIndex: UInt64, limit: Int?) async throws -> StakeNfLeavesPage
+    /// Every proposal snapshot (what stake votes prove against), by height.
+    func stakeSnapshots(fromHeight: UInt64, limit: Int?) async throws -> StakeSnapshotsPage
 }
 
 public struct IndexerStatus: Sendable {
@@ -161,6 +167,41 @@ public struct StakeNotesPage: Sendable {
     }
 }
 
+/// `leaves`: (leaf index, value); `size` the tree's leaf count as the chain counts it (sentinel included, 0 when empty).
+public struct StakeNfLeavesPage: Sendable {
+    public let leaves: [(index: UInt64, value: Fr)]
+    public let nextIndex: UInt64
+    public let complete: Bool
+    public let size: UInt64
+    public let syncedHeight: UInt64
+    public init(leaves: [(index: UInt64, value: Fr)], nextIndex: UInt64, complete: Bool, size: UInt64, syncedHeight: UInt64) {
+        self.leaves = leaves; self.nextIndex = nextIndex; self.complete = complete; self.size = size; self.syncedHeight = syncedHeight
+    }
+}
+
+/// A proposal snapshot: the stake note tree's root and size and the stake nullifier tree's (nil roots: none recorded).
+public struct StakeSnapshotRow: Sendable, Equatable {
+    public let height: UInt64
+    public let proposalID: UInt64
+    public let root: Fr?
+    public let treeSize: UInt64
+    public let nfRoot: Fr?
+    public let nfSize: UInt64
+    public init(height: UInt64, proposalID: UInt64, root: Fr?, treeSize: UInt64, nfRoot: Fr?, nfSize: UInt64) {
+        self.height = height; self.proposalID = proposalID; self.root = root; self.treeSize = treeSize; self.nfRoot = nfRoot; self.nfSize = nfSize
+    }
+}
+
+public struct StakeSnapshotsPage: Sendable {
+    public let rows: [StakeSnapshotRow]
+    public let nextHeight: UInt64
+    public let complete: Bool
+    public let syncedHeight: UInt64
+    public init(rows: [StakeSnapshotRow], nextHeight: UInt64, complete: Bool, syncedHeight: UInt64) {
+        self.rows = rows; self.nextHeight = nextHeight; self.complete = complete; self.syncedHeight = syncedHeight
+    }
+}
+
 public struct RateRow: Sendable {
     public let validator: String
     public let rate: String
@@ -292,6 +333,35 @@ public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
 
     public func stakeNullifiers(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<Fr> {
         try Self.parseHeights(await stream("/stake/nullifiers?from_height=\(fromHeight)\(q("limit", limit))")) { try Fr(hex: $0.string ?? "") }
+    }
+
+    public func stakeNullifierLeaves(fromIndex: UInt64, limit: Int?) async throws -> StakeNfLeavesPage {
+        try Self.parseStakeNfLeaves(await stream("/stake/nullifier-tree?from_index=\(fromIndex)\(q("limit", limit))"))
+    }
+
+    public func stakeSnapshots(fromHeight: UInt64, limit: Int?) async throws -> StakeSnapshotsPage {
+        try Self.parseStakeSnapshots(await stream("/stake/snapshots?from_height=\(fromHeight)\(q("limit", limit))"))
+    }
+
+    /// /stake/nullifier-tree: rows [index, nullifier (hex), height].
+    static func parseStakeNfLeaves(_ j: JSON) throws -> StakeNfLeavesPage {
+        let leaves = try j.nullifiers.array.map { r -> (index: UInt64, value: Fr) in
+            guard let i = r[0].uint64 else { throw PrivacyError("a stake nullifier row without its index") }
+            return (i, try Fr(hex: r[1].string ?? ""))
+        }
+        return StakeNfLeavesPage(leaves: leaves, nextIndex: j.next_index.uint64(default: 0), complete: j.complete.bool(default: false),
+                                 size: j.size.uint64(default: 0), syncedHeight: j.synced_height.uint64(default: 0))
+    }
+
+    /// /stake/snapshots: rows [height, proposal_id, root, tree_size, nf_root, nf_size] ("" for a root not recorded).
+    static func parseStakeSnapshots(_ j: JSON) throws -> StakeSnapshotsPage {
+        func opt(_ x: JSON) throws -> Fr? { let h = x.string ?? ""; return h.isEmpty ? nil : try Fr(hex: h) }
+        let rows = try j.snapshots.array.map { r in
+            StakeSnapshotRow(height: r[0].uint64(default: 0), proposalID: r[1].uint64(default: 0), root: try opt(r[2]),
+                             treeSize: r[3].uint64(default: 0), nfRoot: try opt(r[4]), nfSize: r[5].uint64(default: 0))
+        }
+        return StakeSnapshotsPage(rows: rows, nextHeight: j.next_height.uint64(default: 0), complete: j.complete.bool(default: false),
+                                  syncedHeight: j.synced_height.uint64(default: 0))
     }
 
     static func parseStakeNotes(_ j: JSON) throws -> StakeNotesPage {

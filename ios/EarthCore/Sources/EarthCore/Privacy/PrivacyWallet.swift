@@ -247,7 +247,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// Proves and broadcasts. Only on trees the chain itself vouched for at
     /// the last sync (C3): a proof over an indexer's forged tree is refused by
     /// the chain anyway, and its notes may not exist.
-    private func run(memo: String = "", accepted: @escaping @Sendable (String) -> Void = { _ in },
+    private func run(memo: String = "", accepted: @escaping @Sendable (String, UInt64) -> Void = { _, _ in },
                      _ assemble: (UInt64) throws -> Assembled) async throws -> TxResult {
         try requireVerified()
         // The spent notes are marked the moment the node accepts the tx
@@ -256,7 +256,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         // stay pending until the chain is past the tx's timeout_height.
         let (result, _) = try await engine.run(assemble, memo: memo, shownFee: Self.shownFee) { [self] hash, a, timeout in
             markPending(a.spends, a.stakeSpends, timeoutHeight: timeout)
-            accepted(hash)
+            accepted(hash, timeout)
         }
         return result
     }
@@ -491,7 +491,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             let hint = Self.dscCountry(dscDer)
             let record = try NoteOut.to(keys.address, denom: Self.fee, value: 0,
                                         memo: WalletSync.regMemo(nk: keys.nk, dscKey: dscKey, country: hint, builtAt: UInt64(max(0, now()))))
-            let pending: @Sendable (String) -> Void = { [self] hash in
+            let pending: @Sendable (String, UInt64) -> Void = { [self] hash, _ in
                 // K7: by hash, the moment the node accepts it; the leaf comes later.
                 store.mutate {
                     $0.pendingRegistration = PendingRegistration(
@@ -873,42 +873,263 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// Unbonding claim denoms this wallet holds.
     public func unbondDenoms() -> Set<String> { snapshot.unbondDenoms }
 
-    /// Spend-to-vote: `notes` (1-2 derth notes of one validator, in the stake
-    /// tree at the proposal's snapshot) are spent against the snapshot root,
-    /// their sum is the vote's weight, and the chain re-mints it to our stake
-    /// self-mint pc. The fee bundle is against the pool's current roots.
-    public func stakeVote(proposalID: UInt64, notes: [OwnedStakeNote], options: [WeightedVoteOption]) async throws -> TxResult {
+    /// Votes one derth note on `proposalID` without spending it (ORCHARD_DESIGN
+    /// 15): a vote proof that the note is under the proposal's snapshot root,
+    /// that its spend nullifier is absent from the snapshot's stake nullifier
+    /// tree (rebuilt here and checked against nf_root), with weight
+    /// `voteWeight` of its amount, and its per-proposal vote nullifier. The
+    /// note is untouched: it votes on every other open proposal and is spent
+    /// as usual. The fee bundle is against the pool's current roots. The
+    /// (proposal, vote nullifier) is remembered from the moment the node
+    /// accepts the tx, so the note never votes twice on the proposal.
+    public func stakeVote(proposalID: UInt64, note: OwnedStakeNote, options: [WeightedVoteOption]) async throws -> TxResult {
         let mx = await maxActions()
-        return try await locked { try await stakeVoteLocked(proposalID: proposalID, notes: notes, options: options, mx: mx) }
+        let snap = try await snapshot(proposalID: proposalID)
+        return try await locked { try await stakeVoteLocked(proposalID: proposalID, note: note, snap: snap, options: options, mx: mx) }
     }
 
-    private func stakeVoteLocked(proposalID: UInt64, notes: [OwnedStakeNote], options: [WeightedVoteOption], mx: Int) async throws -> TxResult {
-        try require((1 ... 2).contains(notes.count), "a stake vote spends one or two notes")
-        let denom = notes[0].denom
-        try require(notes.allSatisfy { $0.denom == denom }, "one validator per stake vote")
-        let validator = try Self.parseDerth(denom)
-        let snap = try await reads.snapshot(proposalID: proposalID)
+    /// This note already voted on this proposal (the chain's code 1119): votes are final.
+    public struct AlreadyVoted: Swift.Error, LocalizedError {
+        public var errorDescription: String? { "This stake note already voted on this proposal." }
+    }
+
+    /// The note's nullifier is in the proposal's snapshot nullifier tree: it was spent before voting opened.
+    public struct SpentBeforeSnapshot: Swift.Error, LocalizedError {
+        public var errorDescription: String? { "This stake was spent before the proposal's snapshot and cannot vote on it." }
+    }
+
+    private func stakeVoteLocked(proposalID: UInt64, note: OwnedStakeNote, snap: PrivacyReads.Snapshot, options: [WeightedVoteOption],
+                                 mx: Int) async throws -> TxResult {
+        let validator = try Self.parseDerth(note.denom)
+        try require(note.amount > 0, "an empty note has no vote")
         let tree = store.stakeTree
         // Audit 3: a snapshot past the local tree (stake landed since the last
         // sync) cannot be checked here: "sync first", never a trap.
         guard snap.treeSize <= tree.size else { throw SyncFirst() }
-        try require(notes.allSatisfy { $0.position < snap.treeSize }, "this stake arrived after the proposal's snapshot and cannot vote on it")
+        try require(note.position < snap.treeSize, "this stake arrived after the proposal's snapshot and cannot vote on it")
         guard tree.rootAt(snap.treeSize) == snap.root else {
             throw PrivacyError("the local stake tree disagrees with the proposal's snapshot root")
         }
-        let weight = try Self.sum(notes)
-        let stake = try stakePlan(denom, spends: notes, outAmounts: [], vOut: weight, mint: try stakeMint(), anchor: snap.root,
-                                  paths: notes.map { tree.pathAt($0.position, size: snap.treeSize) })
-        return try await run { fee in
-            Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
-                MsgStakeVote(bundle: bs[0], proposalID: proposalID, validator: validator, options: try PrivateMsgs.canonicalOptions(options),
-                             weight: weight, stake: sp!)
+        let vnf = PrivacyHash.voteNF(nk: keys.nk, rho: note.rho, position: note.position, proposalID: proposalID)
+        await resolveVotesLocked()
+        if voted(proposalID, vnf) { throw AlreadyVoted() }
+        guard let nfRoot = snap.nfRoot else { throw PrivacyError("this proposal's snapshot has no stake nullifier root; it takes no stake vote") }
+        guard let low = try await snapshotNullifiers(snap).nonMembership(PrivacyHash.stakeNF(nk: keys.nk, rho: note.rho, position: note.position))
+        else { throw SpentBeforeSnapshot() }
+        let weight = try Self.voteWeight(note.amount)
+        let path = tree.pathAt(note.position, size: snap.treeSize)
+        let asset = PrivacyHash.assetID(note.denom)
+        let nk = keys.nk
+        let vote = VoteWitnessSpec(vnf: vnf) { sighash in
+            try VoteWitness(nk: nk, amount: note.amount, rho: note.rho, rcm: note.rcm, pos: note.position, path: path, low: low,
+                            noteRoot: snap.root, nfRoot: nfRoot, asset: asset, weight: weight, proposalID: proposalID, sighash: sighash)
+        }
+        do {
+            let r = try await run(accepted: { [self] hash, timeout in
+                recordVote(StakeVoteRecord(proposalID: proposalID, vnf: vnf, txHash: hash, until: timeout, confirmed: false))
+            }) { fee in
+                Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], vote: vote) { bs, _, _ in
+                    MsgStakeVote(bundle: bs[0], proposalID: proposalID, validator: validator, options: try PrivateMsgs.canonicalOptions(options),
+                                 weight: weight)
+                }
             }
+            recordVote(StakeVoteRecord(proposalID: proposalID, vnf: vnf, txHash: r.hash, until: nil, confirmed: true))
+            return r
+        } catch {
+            // Already voted (a restored wallet, a vote whose block the wallet missed): final either way.
+            if Self.alreadyVotedError(error) {
+                recordVote(StakeVoteRecord(proposalID: proposalID, vnf: vnf, txHash: nil, until: nil, confirmed: true))
+                throw AlreadyVoted()
+            }
+            throw error
         }
     }
 
-    private static func eligible(_ notes: [OwnedStakeNote], _ snap: PrivacyReads.Snapshot) -> [OwnedStakeNote] {
-        notes.filter { $0.spendable && $0.denom.hasPrefix(derthPrefix) && $0.position < snap.treeSize }
+    /// x/shieldedstaking ErrVoteNullifierUsed.
+    public static let voteNullifierUsed = 1119
+
+    /// Whether `e` is the chain refusing a vote nullifier already used on the proposal.
+    public static func alreadyVotedError(_ e: Swift.Error) -> Bool {
+        let m = "\(e) \(e.localizedDescription)"
+        return m.contains("already voted on this proposal") || m.range(of: "code\\s*\(voteNullifierUsed)\\b", options: .regularExpression) != nil
+    }
+
+    /// A stake vote's public weight for a note of `amount` uderth
+    /// (PRIVACY_FORMATS 4e): the amount rounded down to three significant
+    /// decimal digits (whole below 1000), so the published weight names a
+    /// bucket rather than the note's exact amount (a delegation's minted
+    /// amount is public). Gives up less than 1% of the note's voice.
+    public static func voteWeight(_ amount: UInt64) throws -> UInt64 {
+        try require(amount > 0, "an empty note has no vote")
+        var unit: UInt64 = 1
+        while amount / unit >= 1000 { unit *= 10 }
+        return amount / unit * unit
+    }
+
+    private func voted(_ proposalID: UInt64, _ vnf: Fr) -> Bool {
+        store.state.stakeVotes.contains { $0.proposalID == proposalID && $0.vnf == vnf }
+    }
+
+    private func recordVote(_ v: StakeVoteRecord) {
+        store.mutate { s in
+            s.stakeVotes.removeAll { $0.proposalID == v.proposalID && $0.vnf == v.vnf }
+            s.stakeVotes.append(v)
+        }
+        persistNoThrow()
+    }
+
+    /// Settles the votes still pending: committed (or refused as already
+    /// voted) they are final; failed in their block, or unknown once the
+    /// chain is past their timeout_height, they are forgotten and the note
+    /// may vote again.
+    private func resolveVotesLocked() async {
+        let pending = store.state.stakeVotes.filter { !$0.confirmed }
+        guard !pending.isEmpty else { return }
+        var tip: UInt64??
+        for v in pending {
+            var r: TxResult?
+            if let h = v.txHash { r = (try? await chain.tx(h)) ?? nil }
+            var next: StakeVoteRecord? = v
+            if let r {
+                next = r.code == 0 || r.code == Self.voteNullifierUsed ? StakeVoteRecord(proposalID: v.proposalID, vnf: v.vnf, txHash: v.txHash,
+                                                                                        until: v.until, confirmed: true) : nil
+            } else if v.txHash == nil {
+                next = nil
+            } else {
+                if tip == nil { tip = .some(try? await chain.tipHeight()) }
+                if let until = v.until, let t = tip ?? nil, t > until { next = nil } else { continue }
+            }
+            store.mutate { s in
+                s.stakeVotes.removeAll { $0.proposalID == v.proposalID && $0.vnf == v.vnf }
+                if let next { s.stakeVotes.append(next) }
+            }
+            persistNoThrow()
+        }
+    }
+
+    // The stake nullifier tree's values in insertion order (leaf 1 on), as far
+    // as fetched (a prefix of the chain's), and the last two trees by nf_root.
+    // Used under the wallet's lock only.
+    private var nfValues: [Fr] = []
+    private var nfTrees: [(root: Fr, tree: IndexedTree)] = []
+    /// Stake nullifier leaves asked of the indexer a page, and of the LCD (its maximum).
+    static let nfPage = 5000
+    static let lcdNfPage = 1000
+
+    /// The stake nullifier tree at `snap` (ORCHARD_DESIGN 15, wallet format 3):
+    /// its first nf_size - 1 values in insertion order, from the indexer's
+    /// stream by leaf index (full ranges only: nothing names a note of ours),
+    /// the chain's Query/StakeNullifierTree for whatever the indexer lacks,
+    /// inserted in order; its root must be the snapshot's nf_root. A mismatch
+    /// drops what was fetched and rebuilds from the chain alone once.
+    private func snapshotNullifiers(_ snap: PrivacyReads.Snapshot) async throws -> IndexedTree {
+        guard let nfRoot = snap.nfRoot else { throw PrivacyError("this proposal's snapshot has no stake nullifier root; it takes no stake vote") }
+        if let t = nfTrees.first(where: { $0.root == nfRoot }) { return t.tree }
+        try require(snap.nfSize <= Merkle.capacity && snap.nfSize <= UInt64(Int.max), "nf_size \(snap.nfSize)")
+        let n = Int(snap.nfSize > 0 ? snap.nfSize - 1 : 0)
+        for chainOnly in [false, true] {
+            let values: [Fr]
+            do {
+                values = try await fetchNullifiers(n, chainOnly: chainOnly)
+            } catch {
+                if chainOnly { throw error }
+                nfValues = []
+                continue
+            }
+            if let t = try? IndexedTree(values), t.root() == nfRoot {
+                nfTrees.append((nfRoot, t))
+                if nfTrees.count > 2 { nfTrees.removeFirst() }
+                return t
+            }
+            nfValues = []
+        }
+        throw PrivacyError("the stake nullifiers served do not rebuild the proposal's snapshot nullifier root")
+    }
+
+    /// The first `n` stake nullifiers in insertion order.
+    private func fetchNullifiers(_ n: Int, chainOnly: Bool) async throws -> [Fr] {
+        if !chainOnly {
+            do {
+                while nfValues.count < n {
+                    let page = try await indexer.stakeNullifierLeaves(fromIndex: UInt64(nfValues.count) + 1, limit: min(n - nfValues.count, Self.nfPage))
+                    if page.leaves.isEmpty { break }
+                    for (index, v) in page.leaves {
+                        // Contiguous from where we are, or the page is not the tree's order.
+                        guard index == UInt64(nfValues.count) + 1 else { throw WalletSync.Inconsistent(message: "stake nullifier leaf \(index) out of order") }
+                        nfValues.append(v)
+                    }
+                }
+            } catch is WalletSync.Inconsistent {
+                throw PrivacyError("the indexer's stake nullifiers are out of order")
+            } catch {
+                // An indexer without the stream, or down: the chain serves the rest.
+            }
+        }
+        while nfValues.count < n {
+            let page = try await reads.stakeNullifierTree(start: UInt64(nfValues.count), limit: min(n - nfValues.count, Self.lcdNfPage))
+            if page.values.isEmpty { break }
+            nfValues.append(contentsOf: page.values.prefix(Self.lcdNfPage))
+        }
+        try require(nfValues.count >= n, "only \(nfValues.count) of the snapshot's \(n) stake nullifiers were served")
+        return Array(nfValues.prefix(n))
+    }
+
+    private let snapshotLock = NSLock()
+    private var snapshotRows: [UInt64: StakeSnapshotRow] = [:]
+    private var snapshotsNext: UInt64 = 0
+    private static let maxSnapshotPages = 1000
+
+    private func cachedSnapshotRow(_ id: UInt64) -> (StakeSnapshotRow?, UInt64) {
+        snapshotLock.lock(); defer { snapshotLock.unlock() }
+        return (snapshotRows[id], snapshotsNext)
+    }
+
+    private func cacheSnapshotRows(_ rows: [StakeSnapshotRow], next: UInt64) {
+        snapshotLock.lock(); defer { snapshotLock.unlock() }
+        for r in rows { snapshotRows[r.proposalID] = r }
+        snapshotsNext = max(snapshotsNext, next)
+    }
+
+    /// `proposalID`'s snapshot: from the indexer's full snapshot stream (no
+    /// request names the proposal), else the chain's Query/Snapshot (a
+    /// legacy snapshot without a nullifier root, or one the indexer has not
+    /// reached). Whatever the source, the note root is checked against the
+    /// wallet's verified stake tree and the nullifier root against the tree
+    /// the nullifiers rebuild; the chain proves against its own.
+    public func snapshot(proposalID: UInt64) async throws -> PrivacyReads.Snapshot {
+        var (row, from) = cachedSnapshotRow(proposalID)
+        if row == nil {
+            do {
+                for _ in 0 ..< Self.maxSnapshotPages {
+                    let page = try await indexer.stakeSnapshots(fromHeight: from, limit: nil)
+                    cacheSnapshotRows(page.rows, next: page.nextHeight)
+                    from = max(from, page.nextHeight)
+                    if !page.complete { break }
+                }
+            } catch {}
+            row = cachedSnapshotRow(proposalID).0
+        }
+        if let row, let root = row.root, let nfRoot = row.nfRoot {
+            return PrivacyReads.Snapshot(root: root, treeSize: row.treeSize, height: Int64(clamping: row.height), nfRoot: nfRoot, nfSize: row.nfSize)
+        }
+        return try await reads.snapshot(proposalID: proposalID)
+    }
+
+    /// Derth notes that may vote on `proposalID`: in the stake tree at the
+    /// snapshot, not spent before it as far as sync knows (the cast checks
+    /// the snapshot's nullifier tree itself), and not already voted on it. A
+    /// note spent after the snapshot still votes; its outputs cannot.
+    private func eligible(_ proposalID: UInt64, _ snap: PrivacyReads.Snapshot) async -> [OwnedStakeNote] {
+        guard snap.nfRoot != nil else { return [] }
+        return await locked {
+            await resolveVotesLocked()
+            let nk = keys.nk
+            return store.state.stakeNotes.filter {
+                $0.denom.hasPrefix(Self.derthPrefix) && $0.amount > 0 && $0.position < snap.treeSize &&
+                    ($0.spentHeight == nil || snap.height <= 0 || $0.spentHeight! >= UInt64(snap.height)) &&
+                    !voted(proposalID, PrivacyHash.voteNF(nk: nk, rho: $0.rho, position: $0.position, proposalID: proposalID))
+            }
+        }
     }
 
     /// The positions that can vote on `proposalID`: created before the block
@@ -936,53 +1157,57 @@ public final class PrivacyWallet: @unchecked Sendable {
         return UInt64(truncating: floored as NSNumber)
     }
 
-    /// This wallet's weight on `proposalID`: every derth note that can
-    /// stake-vote and every position created before the snapshot's block,
-    /// each at its validator's rate at the snapshot (1 where it names none).
+    /// This wallet's weight on `proposalID`: every derth note that can still
+    /// stake-vote on it (at its rounded `voteWeight`) and every position
+    /// created before the snapshot's block, each at its validator's rate at
+    /// the snapshot (1 where it names none).
     public func stakeVoteWeight(proposalID: UInt64, positions: [PrivacyReads.Position]) async throws -> StakeWeight {
-        let snap = try await reads.snapshot(proposalID: proposalID)
-        let notes = Self.eligible(snapshot.stakeNotes, snap)
+        let snap = try await snapshot(proposalID: proposalID)
+        let notes = await eligible(proposalID, snap)
         let ps = Self.votingPositions(positions, snapshot: snap)
         var total: UInt64 = 0
-        for n in notes { total = PrivateMsgs.saturatingAdd(total, Self.derthValue(n.amount, rate: snap.rates[(try? Self.parseDerth(n.denom)) ?? ""] ?? 1)) }
+        for n in notes {
+            let w = (try? Self.voteWeight(n.amount)) ?? 0
+            total = PrivateMsgs.saturatingAdd(total, Self.derthValue(w, rate: snap.rates[(try? Self.parseDerth(n.denom)) ?? ""] ?? 1))
+        }
         for p in ps { total = PrivateMsgs.saturatingAdd(total, Self.derthValue(p.derth, rate: snap.rates[p.validator] ?? 1)) }
         return StakeWeight(notes: notes.count, positionIDs: Set(ps.map(\.id)), uerth: total)
     }
 
-    /// One cast of a stake vote: a pair (or one) of derth notes of one validator, or a position.
+    /// One cast of a stake vote: one derth note, or a position.
     public enum StakeVoteItem: Sendable, Equatable {
-        case notes([UInt64])
+        case note(UInt64)
         case position(id: UInt64, counter: UInt32)
     }
 
-    /// Every cast a stake vote on `proposalID` takes (K5): the eligible derth
-    /// notes two of one validator at a time, and every position of ours that
-    /// may vote (created before the snapshot's block). Cast them through
-    /// `StakeVoteController`, the one path the app uses: one at a time, a
-    /// sync and a random pause between.
+    /// Every cast a stake vote on `proposalID` takes (K5): each eligible derth
+    /// note on its own, and every position of ours that may vote (created
+    /// before the snapshot's block). Cast them through `StakeVoteController`,
+    /// the one path the app uses: one at a time, a sync and a random pause
+    /// between.
     public func stakeVoteItems(proposalID: UInt64) async throws -> [StakeVoteItem] {
-        let snap = try await reads.snapshot(proposalID: proposalID)
-        let ns = Self.eligible(snapshot.stakeNotes, snap)
-        var byDenom: [String: [OwnedStakeNote]] = [:]
-        for n in ns { byDenom[n.denom, default: []].append(n) }
-        var out: [StakeVoteItem] = []
-        for d in byDenom.keys.sorted() {
-            let g = byDenom[d]!
-            for i in stride(from: 0, to: g.count, by: 2) { out.append(.notes(g[i ..< min(i + 2, g.count)].map(\.position))) }
-        }
+        let snap = try await snapshot(proposalID: proposalID)
+        var out: [StakeVoteItem] = await eligible(proposalID, snap).map { .note($0.position) }
         let mine = try await positions()
         let voting = Set(Self.votingPositions(mine.map(\.position), snapshot: snap).map(\.id))
         for p in mine where voting.contains(p.position.id) { out.append(.position(id: p.position.id, counter: p.counter)) }
         return out
     }
 
-    /// Casts `item` as the last sync left things; nil when there is nothing left of it to cast.
+    /// Casts `item` as the last sync left things; nil when there is nothing
+    /// left of it to cast (the note already voted on this proposal, or was
+    /// spent before its snapshot).
     public func castStakeVote(proposalID: UInt64, item: StakeVoteItem, options: [WeightedVoteOption]) async throws -> TxResult? {
         switch item {
-        case let .notes(positions):
-            let current = snapshot.stakeNotes
-            let now = positions.compactMap { pos in current.first { $0.position == pos && $0.spendable } }
-            return now.isEmpty ? nil : try await stakeVote(proposalID: proposalID, notes: now, options: options)
+        case let .note(position):
+            guard let n = snapshot.stakeNotes.first(where: { $0.position == position }) else { return nil }
+            do {
+                return try await stakeVote(proposalID: proposalID, note: n, options: options)
+            } catch is AlreadyVoted {
+                return nil
+            } catch is SpentBeforeSnapshot {
+                return nil
+            }
         case let .position(id, counter):
             guard let p = try await positions().first(where: { $0.position.id == id && $0.counter == counter }) else { return nil }
             return try await positionVote(p.position, counter: p.counter, proposalID: proposalID, options: options)
