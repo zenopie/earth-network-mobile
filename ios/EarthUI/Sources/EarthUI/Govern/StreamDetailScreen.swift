@@ -544,12 +544,16 @@ struct ProposalDetailScreen: View {
                     .foregroundStyle(theme.colors.textTertiary)
             }
 
+            if let p = model.stakeVoteProgress, p.proposalID == proposal.id {
+                stakeVoteStatus(p)
+            }
+
             ForEach(Gov.Vote.allCases, id: \.rawValue) { option in
                 EarthButton(
                     title: option.label,
                     role: option == .yes ? .primary : .secondary
                 ) { cast(option) }
-                .disabled(model.privateStakeTotal == 0 || weight?.uerth == 0)
+                .disabled(model.privateStakeTotal == 0 || weight?.uerth == 0 || model.stakeVoteProgress?.running == true)
             }
 
             // The human house. A separate vote on the same proposal, not a
@@ -606,14 +610,42 @@ struct ProposalDetailScreen: View {
         String(proposal.votingEndTime.prefix(10))
     }
 
+    /// A stake vote being cast (K5): how far it got, when the next cast is
+    /// due, and a way to stop it.
+    @ViewBuilder
+    private func stakeVoteStatus(_ p: StakeVoteController.Progress) -> some View {
+        EarthCard {
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                Text(stakeVoteText(p, now: ctx.date))
+                    .font(EarthType.bodySmall)
+                    .foregroundStyle(theme.colors.textSecondary)
+            }
+            if p.running {
+                EarthButton(title: "Stop voting", role: .secondary) { model.stakeVotes?.cancel() }
+            }
+        }
+    }
+
+    private func stakeVoteText(_ p: StakeVoteController.Progress, now: Date) -> String {
+        if p.finished { return "Stake vote cast: \(p.done) of \(p.total)." }
+        if p.cancelled { return "Stake vote stopped after \(p.done) of \(p.total)." }
+        if let e = p.error { return "Stake vote stopped after \(p.done) of \(p.total): \(e)" }
+        if let next = p.nextAt {
+            let s = max(0, Int(next.timeIntervalSince(now)))
+            return "Casting your stake vote: \(p.done) of \(p.total) done, the next in about \(s)s. Votes are spaced out so they cannot be timed together; keep the app open."
+        }
+        return "Casting your stake vote: \(p.done) of \(p.total) done."
+    }
+
     /// Spend-to-vote: every derth note in the tree when voting opened is spent
     /// against that snapshot and minted straight back, its weight counted,
     /// two notes of one validator a vote; each position votes by its owner
-    /// tag. Final: a note votes once.
+    /// tag. Final: a note votes once. Cast through the one path (K5): the
+    /// first cast is this sheet's result, the rest follow in the background,
+    /// shuffled, a sync and a random 20-120 s apart, shown and stoppable.
     private func cast(_ option: Gov.Vote) {
         let id = proposal.id
         let title = proposal.title
-        let positions = model.positions
         tx.requestPrivate(.private(
             action: "Vote \(option.label) with stake (final)",
             rows: [
@@ -621,24 +653,11 @@ struct ProposalDetailScreen: View {
                 ("Vote", option.label),
                 ("Weight", weightText),
             ]
-        ), onSuccess: { await model.refresh(); await loadWeight() }) { w in
+        ), onSuccess: { await model.refresh(); await loadWeight() }) { _ in
             let opts = [WeightedVoteOption(option: option.proto, weight: "1")]
-            var last: TxResult?
-            let notes = (try? await w.stakeVoteNotes(proposalID: id)) ?? []
-            for denom in Array(Set(notes.map(\.denom))).sorted() {
-                let group = notes.filter { $0.denom == denom }
-                for i in stride(from: 0, to: group.count, by: 2) {
-                    last = try await w.stakeVote(proposalID: id, notes: Array(group[i ..< min(i + 2, group.count)]), options: opts)
-                }
-            }
-            // Only positions from before voting opened: the chain refuses
-            // the rest, and one refusal would end the loop.
-            let voting = try await w.stakeVoteWeight(proposalID: id, positions: positions.map(\.position)).positionIDs
-            for p in positions where voting.contains(p.position.id) {
-                last = try await w.positionVote(p.position, counter: p.counter, proposalID: id, options: opts)
-            }
-            guard let last else { throw PrivacyError("No stake from before this proposal's voting opened.") }
-            return last
+            guard let votes = await model.stakeVotes else { throw PrivacyError("The wallet is locked.") }
+            let hash = try await votes.startAndAwaitFirst(proposalID: id, options: opts)
+            return TxResult(hash: hash, height: 0, time: 0, events: [])
         }
         onVoted()
     }

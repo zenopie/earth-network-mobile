@@ -70,6 +70,9 @@ public final class AppModel {
     /// R: how long a caretaker split or referrer binding counts after it is cast.
     public private(set) var leaseSeconds: Int64 = 30 * 86_400
     private var automation: Task<Void, Never>?
+    /// The stake vote being cast (K5): one cast at a time, spaced out, in the background.
+    public private(set) var stakeVoteProgress: StakeVoteController.Progress?
+    private(set) var stakeVotes: StakeVoteController?
 
     public struct OwnedPosition: Identifiable, Sendable {
         public let position: PrivacyReads.Position
@@ -713,6 +716,15 @@ public final class AppModel {
             privacy = w
             shieldedAddress = w.address.encode()
             publishPrivacy()
+            let votes = StakeVoteController(wallet: { w }, onProgress: { [weak self] p in
+                Task { @MainActor in
+                    self?.stakeVoteProgress = p
+                    if p?.running == false { await self?.syncPrivacy() }
+                }
+            })
+            stakeVotes = votes
+            // A stake vote the app lost (killed in the background) goes on.
+            votes.resume()
             let queries = PrivacyQueries(rest: client.rest)
             automation = Task.detached(priority: .utility) { [weak self] in
                 while !Task.isCancelled {
@@ -731,6 +743,9 @@ public final class AppModel {
     private func closePrivacy() {
         automation?.cancel()
         automation = nil
+        stakeVotes?.suspend()
+        stakeVotes = nil
+        stakeVoteProgress = nil
         privacy = nil
         shielded = [:]
         shieldedAddress = ""

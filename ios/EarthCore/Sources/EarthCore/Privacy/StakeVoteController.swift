@@ -36,6 +36,7 @@ public final class StakeVoteController: @unchecked Sendable {
     private let lock = NSLock()
     private var task: Task<Void, Never>?
     private var progressValue: Progress?
+    private var keepRun = false
 
     /// `onProgress` hears every change (on no particular thread); `pause`
     /// waits between casts (milliseconds; tests pass a recorder).
@@ -77,7 +78,14 @@ public final class StakeVoteController: @unchecked Sendable {
 
     /// Stops the run now (between casts, or before the next one starts).
     public func cancel() {
-        lock.lock(); let t = task; lock.unlock()
+        lock.lock(); keepRun = false; let t = task; lock.unlock()
+        t?.cancel()
+    }
+
+    /// Stops the run but keeps it persisted, for `resume` on the next unlock
+    /// (the wallet locks: the keys go, the vote is not abandoned).
+    public func suspend() {
+        lock.lock(); keepRun = true; let t = task; lock.unlock()
         t?.cancel()
     }
 
@@ -127,8 +135,9 @@ public final class StakeVoteController: @unchecked Sendable {
                 set(Progress(proposalID: run.proposalID, done: run.done, total: run.total, error: error.localizedDescription))
                 fail(error)
             }
-            // Finished, cancelled or failed: nothing to resume.
-            await w.clearStakeVoteRun(proposalID: run.proposalID)
+            // Finished, cancelled or failed: nothing to resume (a suspended run is kept).
+            lock.lock(); let keep = keepRun && Task.isCancelled; keepRun = false; lock.unlock()
+            if !keep { await w.clearStakeVoteRun(proposalID: run.proposalID) }
             lock.lock(); task = nil; lock.unlock()
         }
         lock.lock(); task = t; lock.unlock()

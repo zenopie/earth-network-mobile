@@ -39,3 +39,4 @@ format or behavior change.
 - [x] Round 2: engine checkShape; FakeChain canonical re-encode, slots, single-use binding.
 - [x] Info: claimAnml(day: 0) refused.
 - swift test: 88/88 (ReauditFixesTests 19).
+- [x] EarthUI: proposal stake vote goes through AppModel.stakeVotes (StakeVoteController): first cast is the sheet's result, progress + "Stop voting" on the proposal, resume on unlock, suspend (kept for resume) on lock; wallet home shows the private-side notice (unverified/indexer behind). build-ios.sh typechecks; xcodebuild simulator (ARCHS=arm64) BUILD SUCCEEDED. CURRENT_PROJECT_VERSION 13.

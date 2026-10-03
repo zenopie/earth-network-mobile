@@ -97,6 +97,17 @@ struct BalanceWidget: View {
                     .font(EarthType.body)
                     .foregroundStyle(theme.colors.textTertiary)
             }
+
+            // Why the private side (notes, stake, registration) is not
+            // verified against the chain (K9): shown, never hidden.
+            if let notice = model.privacySyncError {
+                Spacer().frame(height: 6)
+                Text("Private balances, stake and registration: \(notice)")
+                    .font(EarthType.bodySmall)
+                    .foregroundStyle(theme.colors.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+            }
         }
     }
 }
