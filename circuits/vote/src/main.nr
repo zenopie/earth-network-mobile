@@ -416,3 +416,19 @@ fn test_wrong_nullifier_root() {
     v.nf_root = v.nf_root + 1;
     prove(v);
 }
+
+// ---- Go parity (earth-network-chain zk/indexed TestNoirParity)
+
+#[test]
+fn test_go_parity() {
+    assert(nf_leaf(1, 2, 3) == 0xcdc3a81748c6389efaa3a6c29b7f4609a8e9f860230b70413e8bef512978276);
+    assert(vote_nf(NK, 0xa1, 1, 7) == 0x1ada84dad3e6afde3f370e97edf4df2ee4eeb6b1400d5c5f41882552f578ba2f);
+    // indexed.EmptyRoot: the sentinel alone.
+    let (empty, _) = tree4([nf_leaf(0, 0, 0), 0, 0, 0]);
+    assert(empty == 0x18f5a2d2d3273f584793e90ac9bf77abf0ff2a05a101cd5943eaf7bbd0bd5b10);
+    // Go's Insert(nf - 1), Insert(nf + 1) [, Insert(nf)] build these trees.
+    let (snap, _, _) = nullifiers(false);
+    let (now, _, _) = nullifiers(true);
+    assert(snap == 0x154276da4092031ee0cc36041772a8ff6f563b14ae80df0d0f46ffe5b474cb6d);
+    assert(now == 0x6a4a58053d288e995f3f876a1702085169ca86c6d739d072b94fc379a327048);
+}
