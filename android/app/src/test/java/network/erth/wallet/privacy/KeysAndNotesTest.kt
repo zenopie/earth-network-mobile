@@ -32,7 +32,16 @@ class KeysAndNotesTest {
         assertEquals(KNOWN_ADDRESS, keys.address.encode())
         assertEquals(Privacy.idc(keys.idSecret), keys.idc)
         assertNotEquals(keys.idSecret, other.idSecret)
-        assertNotEquals(keys.positionKey(0).pubKeyPoint, keys.positionKey(1).pubKeyPoint)
+        // Stake self-mints and owner-tag salts (PRIVACY_FORMATS.md section 1),
+        // cross-checked with an independent Python HMAC derivation.
+        assertEquals("2e169030a56d7e472fc9f342ef18783bc65662f82edf58e00b9fa23b7131fbb3", keys.stakeMintSecrets(0).first.toHex())
+        assertEquals("16443a6dc3a8058eaafa1b6feb6d1804cf71794815a830e782756c2ccf759bab", keys.stakeMintSecrets(0).second.toHex())
+        assertEquals("05708bcf1c37660a1859a735e21a57c9d802f78ab8274364eb9199583b095c32", keys.stakeMintSecrets(1).first.toHex())
+        assertEquals("2e4cb7ef401c2041af61f2e4a7593f5afed0d85ab28cefc6cde17aa9c28b1b22", keys.stakeMintSecrets(1).second.toHex())
+        assertEquals("0685f54037389aaceee42288ed8c8c996a884e297ffee771c73370ca885e1618", keys.otagSalt(0).toHex())
+        assertEquals("2e52e73b7af259664a34df8bcee1c0476009a37e0ab2e52b285bae497845a9ba", keys.otagSalt(1).toHex())
+        assertEquals(Privacy.stakePc(keys.ownerPk, keys.stakeMintSecrets(0).first, keys.stakeMintSecrets(0).second), keys.stakeMintPc(0))
+        assertEquals(Privacy.ownerTag(keys.ownerPk, keys.otagSalt(1)), keys.ownerTag(1))
     }
 
     @Test

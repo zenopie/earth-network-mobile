@@ -2,8 +2,7 @@ package network.erth.wallet.privacy
 
 import network.erth.wallet.privacy.PrivacyAutomation.Action
 import network.erth.wallet.privacy.PrivacyAutomation.Inputs
-import network.erth.wallet.privacy.note.NotePlaintext
-import network.erth.wallet.privacy.note.OwnedNote
+import network.erth.wallet.privacy.note.OwnedStakeNote
 import network.erth.wallet.privacy.zk.Fr
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -28,10 +27,10 @@ class AutomationTest {
 
     @Test
     fun refreshesCaretakerAndClaimsUnbonding() {
-        val n = OwnedNote(3, 1, NotePlaintext("unbond/v/1", 5, Fr.ONE, Fr.ONE), Fr.ONE, Fr.ONE)
-        val acts = PrivacyAutomation.decide(base.copy(claimedToday = true, caretakerDue = true, hasFeeErth = false, maturedUnbonds = listOf(n)))
+        val n = stake(3, "unbond/v/1")
+        val acts = PrivacyAutomation.decide(base.copy(claimedToday = true, caretakerDue = true, hasFeeErth = false, maturedUnbonds = listOf(n.denom)))
         // No fee note: the caretaker refresh waits, the unbonding claim pays from its output.
-        assertEquals(listOf<Action>(Action.ClaimUnbonding(n)), acts)
+        assertEquals(listOf<Action>(Action.ClaimUnbonding(n.denom)), acts)
         assertEquals(listOf<Action>(Action.RefreshCaretaker), PrivacyAutomation.decide(base.copy(claimedToday = true, caretakerDue = true)))
     }
 
@@ -53,11 +52,11 @@ class AutomationTest {
         // The epoch in progress has not been undelegated yet.
         assertEquals(null, PrivacyAutomation.maturesBy(10, 10, t, day, unbonding))
 
-        val n9 = OwnedNote(1, 1, NotePlaintext("unbond/v/9", 5, Fr.ONE, Fr.ONE), Fr.ONE, Fr.ONE)
-        val n10 = OwnedNote(2, 1, NotePlaintext("unbond/v/10", 5, Fr.ONE, Fr.ONE), Fr.ONE, Fr.ONE)
+        val n9 = stake(1, "unbond/v/9")
+        val n10 = stake(2, "unbond/v/10")
         val by9 = PrivacyAutomation.maturesBy(9, 10, t, day, unbonding)!!
         assertTrue(PrivacyAutomation.matured(listOf(n9, n10), by9 - 1, 10, t, day, unbonding, emptyMap()).isEmpty())
-        assertEquals(listOf(n9), PrivacyAutomation.matured(listOf(n9, n10), by9, 10, t, day, unbonding, emptyMap()))
+        assertEquals(listOf(n9.denom), PrivacyAutomation.matured(listOf(n9, n10), by9, 10, t, day, unbonding, emptyMap()))
         // A claim the chain refused waits out its retry.
         assertTrue(PrivacyAutomation.matured(listOf(n9), by9, 10, t, day, unbonding, mapOf("unbond/v/9" to by9 + 1)).isEmpty())
         // Spent or pending notes are never claimed twice.
@@ -69,4 +68,6 @@ class AutomationTest {
         assertEquals(listOf<Action>(Action.RefreshReferrer), PrivacyAutomation.decide(base.copy(claimedToday = true, referrerDue = true)))
         assertTrue(PrivacyAutomation.decide(base.copy(claimedToday = true, referrerDue = true, hasFeeErth = false)).isEmpty())
     }
+
+    private fun stake(pos: Long, denom: String) = OwnedStakeNote(pos, 1, denom, 5, Fr.ONE, Fr.ONE, Fr.ONE, Fr.ONE)
 }

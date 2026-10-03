@@ -56,6 +56,9 @@ class ZkVectorsTest {
             "id" to Privacy.TAG_ID, "owner" to Privacy.TAG_OWNER, "leaf" to Privacy.TAG_LEAF, "sn" to Privacy.TAG_SN,
             "pc" to Privacy.TAG_PC, "cm" to Privacy.TAG_CM, "nf" to Privacy.TAG_NF, "reg" to Privacy.TAG_REG,
             "asset" to Privacy.TAG_ASSET, "signal" to Privacy.TAG_SIGNAL, "bytes" to Privacy.TAG_BYTES, "scope" to Privacy.TAG_SCOPE,
+            "stake" to Privacy.TAG_STAKE, "spc" to Privacy.TAG_SPC, "snf" to Privacy.TAG_SNF, "otag" to Privacy.TAG_OTAG,
+            "gen" to network.erth.wallet.privacy.zk.Grumpkin.TAG_GEN, "cv_r" to network.erth.wallet.privacy.zk.Grumpkin.TAG_CV_R,
+            "bsig" to network.erth.wallet.privacy.zk.Grumpkin.TAG_BSIG, "bundle" to network.erth.wallet.privacy.tx.PrivateMsgs.TAG_BUNDLE,
         )
         assertEquals(tags.length(), mine.size)
         mine.forEach { (k, v) -> assertEquals(k, tags.getString(k), v.toHex()) }
@@ -90,6 +93,13 @@ class ZkVectorsTest {
         assertEquals(d.getString("cm"), Privacy.cm(Privacy.assetId("uanml"), 1_000_000, pc).toHex())
         assertEquals(d.getString("nf"), Privacy.nf(nk, rho, 4_000_000_000).toHex())
         assertEquals(d.getString("reg_none"), Privacy.registrationBinding(idc, fe(1), fe(2), Fr.ZERO).toHex())
+        // The stake tree.
+        val spc = Privacy.stakePc(opk, rho, rcm)
+        assertEquals(d.getString("spc"), spc.toHex())
+        assertEquals(d.getString("stake_cm"), Privacy.stakeCm(Privacy.assetId("derth/earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"), 1_800_000, spc).toHex())
+        assertEquals(d.getString("stake_nf"), Privacy.stakeNf(nk, rho, 4_000_000_000).toHex())
+        assertEquals(fe(1006), fr(d.getString("otag_salt")))
+        assertEquals(d.getString("otag"), Privacy.ownerTag(opk, fe(1006)).toHex())
     }
 
     @Test
@@ -102,25 +112,7 @@ class ZkVectorsTest {
         assertEquals(s.getString("proposal_5_1"), Privacy.proposalScope(5, 1).toHex())
         assertEquals(s.getString("removal_3"), Privacy.removalScope(3).toHex())
         assertEquals(s.getString("propose_removal_2_100"), Privacy.proposeRemovalScope(2, 100).toHex())
-    }
-
-    @Test
-    fun signals() {
-        val s = json.getJSONObject("signals")
-        val cts = listOf("a".toByteArray(), "bb".toByteArray(), ByteArray(0))
-        val recv = ByteArray(20) { (1 + it).toByte() }
-        assertEquals(s.getString("transfer_send"), Privacy.transferSignal("earth-1", null, cts, 0).toHex())
-        assertEquals(s.getString("transfer_unshield"), Privacy.transferSignal("earth-1", recv, cts, 77).toHex())
-        val nfs = listOf(fe(1), fe(2), fe(3))
-        assertEquals(s.getString("action"), Privacy.actionSignal("/x.y.Msg", "earth-1", cts, nfs, listOf(Fr.of(9))).toHex())
-        assertEquals(
-            s.getString("multi"),
-            Privacy.multiSpendSignal(
-                "/x.y.Msg", "earth-1",
-                listOf(cts, listOf("c".toByteArray(), ByteArray(0), ByteArray(0))),
-                listOf(nfs, listOf(fe(4), fe(5), fe(6))), listOf(Fr.of(9)),
-            ).toHex(),
-        )
+        assertEquals(s.getString("gas_202610"), Privacy.gasScope(202610).toHex())
     }
 
     private fun checkTree(t: MerkleTree, appendOneByOne: Boolean) {

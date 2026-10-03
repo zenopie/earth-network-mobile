@@ -1,23 +1,22 @@
 package network.erth.wallet.privacy
 
+import network.erth.wallet.privacy.prove.ActionWitness
 import network.erth.wallet.privacy.prove.MembershipWitness
-import network.erth.wallet.privacy.prove.TransferInput
-import network.erth.wallet.privacy.prove.TransferOutput
-import network.erth.wallet.privacy.prove.TransferWitness
+import network.erth.wallet.privacy.tx.PrivateMsgs
 import network.erth.wallet.privacy.zk.Fr
 import network.erth.wallet.privacy.zk.MemNodeStore
 import network.erth.wallet.privacy.zk.MerkleTree
 import network.erth.wallet.privacy.zk.Privacy
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.math.BigInteger
 
 /**
- * The chain's own witness fixtures (tools/privacyfixtures), rebuilt here from
- * scratch with the wallet's trees and derivations. Their public inputs are
- * byte for byte those of the real proofs in the chain's
- * zk/ultrahonk/testdata/{membership,transfer} (gen.sh checks), so a witness
- * these builders produce is one the chain verifies.
+ * The chain's own witness fixtures (tools/privacyfixtures membership,
+ * tools/orchardfixtures action), rebuilt here with the wallet's trees,
+ * derivations and Grumpkin. nargo execute accepting the chain's tomls is the
+ * Go<->Noir parity check; these tests are the Go<->Kotlin one.
  */
 class FixtureWitnessTest {
 
@@ -83,36 +82,50 @@ class FixtureWitnessTest {
         assertEquals(parseToml(String(Vectors.resource("privacy/fixture_membership/Prover.toml"))), parseToml(w.proverToml()))
     }
 
+    /**
+     * tools/orchardfixtures' 3-action mixed-asset bundle: each action's
+     * witness rebuilt from its private inputs reproduces the chain's public
+     * inputs (cv included) and Prover.toml, and the bundle's digest, sighash
+     * and binding signature check under the wallet's own code.
+     */
     @Test
-    fun transferFixture() {
-        val t = MerkleTree(MemNodeStore())
-        val nk = det("nk", 0)
-        val opk = Privacy.ownerPk(nk)
-        val assetA = Privacy.assetId("uanml")
-        val erth = Privacy.assetId("uerth")
-        val inVal = longArrayOf(700_000, 300_000, 50_000)
-        val outVal = longArrayOf(600_000, 350_000, 40_000)
-        val assets = listOf(assetA, assetA, erth)
-        val positions = longArrayOf(4, 7, 9)
-        val rho = (0L until 3).map { det("rho", it) }
-        val rcm = (0L until 3).map { det("rcm", it) }
-        var next = 0
-        for (p in 0L until 12) {
-            var cm = Privacy.cm(erth, p + 1, det("otherpc", p))
-            if (next < 3 && p == positions[next]) {
-                cm = Privacy.cm(assets[next], inVal[next], Privacy.pc(opk, rho[next], rcm[next])); next++
-            }
-            t.append(cm)
+    fun actionFixture() {
+        val bj = org.json.JSONObject(String(Vectors.resource("privacy/fixture_action/bundle.json")))
+        val acts = bj.getJSONArray("actions")
+        val bundle = network.erth.earth.proto.shielded.Bundle.newBuilder()
+        fun f(x: Any?): Fr = Fr.of(x as BigInteger)
+        for (i in 0 until acts.length()) {
+            val t = parseToml(String(Vectors.resource("privacy/fixture_action/action_$i/Prover.toml")))
+            @Suppress("UNCHECKED_CAST")
+            val w = ActionWitness(
+                nk = f(t["nk"]), sAsset = f(t["s_asset"]), sValue = (t["s_value"] as BigInteger).toLong(),
+                sRho = f(t["s_rho"]), sRcm = f(t["s_rcm"]), sPos = (t["s_pos"] as BigInteger).toLong(),
+                sPath = (t["s_path"] as List<BigInteger>).map { Fr.of(it) },
+                oAsset = f(t["o_asset"]), oValue = (t["o_value"] as BigInteger).toLong(), oPc = f(t["o_pc"]),
+                rcv = f(t["rcv"]), anchor = f(t["anchor"]), sighash = f(t["sighash"]),
+            )
+            w.check()
+            assertEquals("action $i", publicInputs("fixture_action/action_$i"), w.publicInputs().map { it.toHex() })
+            assertEquals("action $i toml", t, parseToml(w.proverToml()))
+            val a = acts.getJSONObject(i)
+            assertEquals(a.getString("cv"), Vectors.hex(w.cv.toBytes()))
+            bundle.addActions(
+                network.erth.earth.proto.shielded.Action.newBuilder()
+                    .setAnchor(bs(w.anchor.toBytes())).setNullifier(bs(w.nf.toBytes())).setCommitment(bs(w.cmOut.toBytes()))
+                    .setCv(bs(w.cv.toBytes())).setCiphertext(bs(Vectors.unhex(a.getString("ct")))),
+            )
         }
-        val w = TransferWitness(
-            asset = assetA, nk = nk,
-            inputs = (0 until 3).map { TransferInput(inVal[it], rho[it], rcm[it], positions[it], t.path(positions[it])) },
-            outputs = (0 until 3).map {
-                TransferOutput(outVal[it], Privacy.pc(Privacy.ownerPk(det("recipient", it.toLong())), det("orho", it.toLong()), det("orcm", it.toLong())))
-            },
-            root = t.root(), fee = 10_000, vPubOut = 50_000, signal = det("signal", 1),
-        )
-        assertEquals(publicInputs("fixture_transfer"), w.publicInputs().map { it.toHex() })
-        assertEquals(parseToml(String(Vectors.resource("privacy/fixture_transfer/Prover.toml"))), parseToml(w.proverToml()))
+        val bal = bj.getJSONArray("balances")
+        for (i in 0 until bal.length()) {
+            val b = bal.getJSONObject(i)
+            bundle.addBalances(network.erth.earth.proto.shielded.ValueBalance.newBuilder().setDenom(b.getString("denom")).setAmount(b.getLong("value")))
+        }
+        bundle.setBindingSig(bs(Vectors.unhex(bj.getString("binding_sig"))))
+        val b = bundle.build()
+        val sighash = Privacy.signal(bj.getString("msg_type"), bj.getString("chain_id"), listOf(Privacy.u64(1), PrivateMsgs.digest(b)))
+        assertEquals(bj.getString("sighash").removePrefix("0x"), sighash.toHex())
+        assertTrue(PrivateMsgs.checkBalance(b, sighash))
     }
+
+    private fun bs(b: ByteArray) = com.google.protobuf.ByteString.copyFrom(b)
 }

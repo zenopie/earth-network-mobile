@@ -1,11 +1,12 @@
 package network.erth.wallet.privacy
 
 import network.erth.wallet.ui.govern.positionSplit
+import network.erth.wallet.privacy.zk.Fr
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class PositionSplitTest {
-    private fun p(derth: Long, splits: Map<Long, Long>) = PrivacyChainReads.Position(1, "v", derth, ByteArray(33), 0, splits)
+    private fun p(derth: Long, splits: Map<Long, Long>) = PrivacyChainReads.Position(1, "v", derth, Fr.ZERO, splits)
 
     @Test
     fun weighsEachPositionByItsStakeAndSumsTo100() {

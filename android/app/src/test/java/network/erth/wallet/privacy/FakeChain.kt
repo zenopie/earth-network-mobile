@@ -1,5 +1,6 @@
 package network.erth.wallet.privacy
 
+import com.google.protobuf.ByteString
 import com.google.protobuf.MessageLite
 import cosmos.tx.v1beta1.Tx
 import network.erth.earth.proto.assembly.MsgProposeRemoval
@@ -7,26 +8,28 @@ import network.erth.earth.proto.assembly.MsgVoteProposal
 import network.erth.earth.proto.assembly.MsgVoteRemoval
 import network.erth.earth.proto.dex.MsgAddLiquidityShielded
 import network.erth.earth.proto.dex.MsgNoteSwap
+import network.erth.earth.proto.dex.MsgRemoveLiquidityShielded
+import network.erth.earth.proto.personhood.Membership
 import network.erth.earth.proto.personhood.MsgBindReferrer
-import network.erth.earth.proto.personhood.MsgSetCaretaker
-import network.erth.earth.proto.shieldedstaking.MsgClaimUnbonding
-import network.erth.earth.proto.shieldedstaking.MsgLockPosition
-import network.erth.earth.proto.shieldedstaking.MsgPositionVote
-import network.erth.earth.proto.shieldedstaking.MsgUnlockPosition
-import network.erth.earth.proto.shieldedstaking.MsgUpdatePosition
-import network.erth.wallet.chain.math.SwapMath
-import org.bitcoinj.core.ECKey
-import org.bitcoinj.core.Sha256Hash
-import java.math.BigInteger
 import network.erth.earth.proto.personhood.MsgClaimAnml
 import network.erth.earth.proto.personhood.MsgRegister
-import network.erth.earth.proto.shielded.MsgTransfer
-import network.erth.earth.proto.shielded.Transfer
+import network.erth.earth.proto.personhood.MsgSetCaretaker
+import network.erth.earth.proto.shielded.Bundle
+import network.erth.earth.proto.shielded.MsgSend
+import network.erth.earth.proto.shieldedstaking.MsgClaimUnbonding
 import network.erth.earth.proto.shieldedstaking.MsgDelegate
+import network.erth.earth.proto.shieldedstaking.MsgLockPosition
+import network.erth.earth.proto.shieldedstaking.MsgPositionVote
+import network.erth.earth.proto.shieldedstaking.MsgRestake
 import network.erth.earth.proto.shieldedstaking.MsgStakeVote
 import network.erth.earth.proto.shieldedstaking.MsgUndelegate
+import network.erth.earth.proto.shieldedstaking.MsgUnlockPosition
+import network.erth.earth.proto.shieldedstaking.MsgUpdatePosition
+import network.erth.earth.proto.shieldedstaking.StakeProof
+import network.erth.wallet.chain.math.SwapMath
+import network.erth.wallet.privacy.prove.ActionWitness
 import network.erth.wallet.privacy.prove.MembershipWitness
-import network.erth.wallet.privacy.prove.TransferWitness
+import network.erth.wallet.privacy.prove.StakeWitness
 import network.erth.wallet.privacy.sync.HeightPage
 import network.erth.wallet.privacy.sync.IdentityPage
 import network.erth.wallet.privacy.sync.IdentityRow
@@ -37,25 +40,29 @@ import network.erth.wallet.privacy.sync.NotesPage
 import network.erth.wallet.privacy.sync.PrivacyIndexer
 import network.erth.wallet.privacy.sync.RateRow
 import network.erth.wallet.privacy.sync.RootRecord
+import network.erth.wallet.privacy.sync.StakeNoteRow
+import network.erth.wallet.privacy.sync.StakeNotesPage
 import network.erth.wallet.privacy.tx.PrivateChain
 import network.erth.wallet.privacy.tx.PrivateMsgs
 import network.erth.wallet.privacy.tx.Prover
 import network.erth.wallet.privacy.tx.TxResult
 import network.erth.wallet.privacy.zk.Fr
+import network.erth.wallet.privacy.zk.Grumpkin
 import network.erth.wallet.privacy.zk.MemNodeStore
-import network.erth.wallet.privacy.zk.Merkle
 import network.erth.wallet.privacy.zk.MerkleTree
 import network.erth.wallet.privacy.zk.Privacy
 import java.math.BigDecimal
+import java.math.BigInteger
 
 /**
  * An in-memory model of the chain's private side, for driving a wallet end
- * to end without a node: the note and identity trees, the nullifier set, the
- * ante's checks a private tx must pass (shape, fee, anchors, nullifiers, the
- * signal and every proof's statement), and the mints each msg makes. Its
- * indexer serves the same streams the backend does. Proofs are not real:
- * [CheckingProver] checks each witness against the circuit's constraints
- * instead, and keeps it so a test can hand it to nargo.
+ * to end without a node: the note, identity and stake trees, both nullifier
+ * sets, the ante's checks a private tx must pass (shape, the fee, anchors,
+ * nullifiers, the release map, every binding signature for real, and every
+ * proof's public inputs), and the mints each msg makes. Its indexer serves
+ * the same streams the backend does. Proofs are not real: [CheckingProver]
+ * checks each witness against its circuit's constraints instead and keeps it,
+ * so the chain can match it to the tx and a test can hand it to nargo.
  */
 class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L) : PrivateChain, PrivacyIndexer {
     val notes = ArrayList<NoteRow>()
@@ -65,35 +72,53 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     val nullifiers = LinkedHashMap<Fr, Long>()
     val noteRoots = HashSet<Fr>().apply { add(noteTree.root()) }
     val identityRoots = HashSet<Fr>().apply { add(identityTree.root()) }
+    // x/shieldedstaking's stake tree.
+    val stakeRows = ArrayList<StakeNoteRow>()
+    val stakeTree = MerkleTree(MemNodeStore())
+    val stakeNullifiers = LinkedHashMap<Fr, Long>()
+    val stakeRoots = HashSet<Fr>()
     var height = 1L
     val minFee = 1000L
     val price = BigDecimal("0.001")
-    val prover = CheckingProver(this)
-    val unshielded = HashMap<String, Long>()
+    var maxActions = 16
+    val prover = CheckingProver()
+    /** receiver -> denom -> amount unshielded. */
+    val unshielded = HashMap<String, HashMap<String, Long>>()
     val votes = ArrayList<Pair<Long, Int>>()
+    /** (proposal, validator, weight) of every stake vote. */
+    val stakeVotes = ArrayList<Triple<Long, String, Long>>()
     var simulated = 0
+    val actionCounts = ArrayList<Int>()
 
     // x/dex pool 1 (uanml/uerth) and its LP shares.
     var poolErth = BigInteger.valueOf(1_000_000_000_000)
     var poolAnml = BigInteger.valueOf(500_000_000_000)
     var lpSupply = BigInteger.valueOf(700_000_000_000)
     val swapFee = BigDecimal("0.3")
-    val lpShares = HashMap<String, BigInteger>()
+    /** Private withdrawals waiting to mature: shares, erth pc, token pc. */
+    val withdrawals = ArrayList<Triple<BigInteger, Fr, Fr>>()
 
     // x/shieldedstaking positions, x/personhood referrers, x/assembly removal ballots.
-    data class Pos(val id: Long, val validator: String, val derth: Long, val pubkey: ByteArray, var nonce: Long, var splits: Map<Long, Long>)
+    data class Pos(val id: Long, val validator: String, val derth: Long, val ownerTag: Fr, var splits: Map<Long, Long>, val createdHeight: Long)
     val positions = LinkedHashMap<Long, Pos>()
+    var nextPositionId = 1L
     val positionVotes = ArrayList<Pair<Long, Long>>()
     val referrers = HashMap<Fr, String>()
     val removalBallots = HashMap<Long, Long>()
     val removalVotes = ArrayList<Triple<Long, Fr, Int>>()
     val caretakerVotes = HashMap<Fr, Map<Long, Long>>()
     val claimedUnbonds = ArrayList<String>()
+    /** The fake's epoch and derth rate (uerth per derth = 10/9 at delegation: 9/10 minted). */
+    val epoch = 4L
 
     // ---- chain ----
 
     /** Ends the block being built: its roots become anchors. Writes land at [height], the block in progress. */
-    private fun block() { noteRoots.add(noteTree.root()); identityRoots.add(identityTree.root()); height++ }
+    private fun block() {
+        noteRoots.add(noteTree.root()); identityRoots.add(identityTree.root())
+        if (stakeTree.size > 0) stakeRoots.add(stakeTree.root())
+        height++
+    }
 
     fun mint(denom: String, value: Long, pc: Fr, ct: ByteArray = ByteArray(0)): Long {
         val cm = Privacy.cm(Privacy.assetId(denom), value, pc)
@@ -102,15 +127,45 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         return pos
     }
 
+    fun mintStake(denom: String, amount: Long, spc: Fr): Long {
+        val cm = Privacy.stakeCm(Privacy.assetId(denom), amount, spc)
+        val pos = stakeTree.append(cm)
+        stakeRows.add(StakeNoteRow(pos, height, cm, ByteArray(0), denom, amount, spc))
+        return pos
+    }
+
     fun shield(denom: String, value: Long, pc: Fr, ct: ByteArray = ByteArray(0)) { mint(denom, value, pc, ct); block() }
+
+    /** Ends a block with no tx in it. */
+    fun emptyBlock() = block()
+
+    /** The LP unbonding period passes: every private withdrawal pays both legs as notes. */
+    fun matureWithdrawals() {
+        for ((sh, ePc, tPc) in withdrawals) {
+            val e = sh * poolErth / lpSupply
+            val t = sh * poolAnml / lpSupply
+            poolErth -= e; poolAnml -= t; lpSupply -= sh
+            mint("uerth", e.toLong(), ePc)
+            mint("uanml", t.toLong(), tPc)
+        }
+        withdrawals.clear()
+        block()
+    }
 
     override fun gasPrice(): BigDecimal = price
     override fun minFee(): Long = minFee
+    override fun maxActionsPerBundle(): Int = maxActions
 
-    override fun simulate(tx: ByteArray): Long { simulated++; check(tx, simulate = true); return 2_100_000 }
+    /** The ante charges per bundle and per action, before anything else: gas is the tx's shape. */
+    override fun simulate(tx: ByteArray): Long {
+        simulated++
+        val m = check(tx, simulate = true).first
+        val actions = PrivateMsgs.bundles(m).sumOf { it.actionsCount }
+        return 200_000L + 100_000L * PrivateMsgs.bundles(m).size + 350_000L * actions + (if (PrivateMsgs.stake(m) != null) 400_000 else 0)
+    }
 
     override fun broadcast(tx: ByteArray): TxResult {
-        val events = check(tx, simulate = false)
+        val (_, events) = check(tx, simulate = false)
         block()
         return TxResult("HASH${height - 1}", height - 1, now, events)
     }
@@ -120,15 +175,17 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         require(body.messagesCount == 1)
         val any = body.getMessages(0)
         return when (any.typeUrl) {
-            PrivateMsgs.TRANSFER -> MsgTransfer.parseFrom(any.value)
+            PrivateMsgs.SEND -> MsgSend.parseFrom(any.value)
             PrivateMsgs.REGISTER -> MsgRegister.parseFrom(any.value)
             PrivateMsgs.CLAIM_ANML -> MsgClaimAnml.parseFrom(any.value)
             PrivateMsgs.VOTE_PROPOSAL -> MsgVoteProposal.parseFrom(any.value)
             PrivateMsgs.DELEGATE -> MsgDelegate.parseFrom(any.value)
+            PrivateMsgs.RESTAKE -> MsgRestake.parseFrom(any.value)
             PrivateMsgs.UNDELEGATE -> MsgUndelegate.parseFrom(any.value)
             PrivateMsgs.STAKE_VOTE -> MsgStakeVote.parseFrom(any.value)
             PrivateMsgs.NOTE_SWAP -> MsgNoteSwap.parseFrom(any.value)
             PrivateMsgs.ADD_LIQUIDITY_SHIELDED -> MsgAddLiquidityShielded.parseFrom(any.value)
+            PrivateMsgs.REMOVE_LIQUIDITY_SHIELDED -> MsgRemoveLiquidityShielded.parseFrom(any.value)
             PrivateMsgs.LOCK_POSITION -> MsgLockPosition.parseFrom(any.value)
             PrivateMsgs.UPDATE_POSITION -> MsgUpdatePosition.parseFrom(any.value)
             PrivateMsgs.UNLOCK_POSITION -> MsgUnlockPosition.parseFrom(any.value)
@@ -142,43 +199,70 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         }
     }
 
-    private fun transfersOf(m: MessageLite): List<Transfer> = PrivateMsgs.transfers(m)
-
     /** What the swap pays, as x/dex prices it (the wallet's SwapMath is pinned to amm.go separately). */
     private fun swapOut(denomIn: String, amountIn: Long, denomOut: String): Long =
         SwapMath.route(mapOf("uanml" to SwapMath.Reserves(poolErth, poolAnml)), "uerth", denomIn, BigInteger.valueOf(amountIn), denomOut, swapFee)
             ?.amountOut?.toLong() ?: error("no route")
 
-    private fun positionSigOk(p: Pos, action: String, payload: ByteArray, sig: ByteArray): Boolean {
-        val hash = Sha256Hash.of(PrivateMsgs.positionSignBytes(chainId, action, p.id, p.nonce, payload))
-        val es = ECKey.ECDSASignature(BigInteger(1, sig.copyOfRange(0, 32)), BigInteger(1, sig.copyOfRange(32, 64)))
-        return es.isCanonical && ECKey.fromPublicOnly(p.pubkey).verify(hash, es)
+    private fun f(b: ByteString): Fr = Fr.fromBytes(b.toByteArray())
+
+    /** types.Remainders: per denom, the bundles' balances less the fee in uerth. */
+    private fun remainders(m: MessageLite): Map<String, Long> {
+        val sum = sortedMapOf<String, Long>()
+        for (b in PrivateMsgs.bundles(m)) for (bal in b.balancesList) sum.merge(bal.denom, bal.amount, Math::addExact)
+        val fee = PrivateMsgs.privateFee(m)
+        require((sum["uerth"] ?: 0) >= fee) { "fee exceeds the uerth balance" }
+        if (fee > 0) sum["uerth"] = sum.getValue("uerth") - fee
+        return sum.filterValues { it > 0 }
     }
 
-    /** The action's own checks, before anything is written (the chain runs these in the ante, atomically with the spend). */
-    private fun precheck(m: MessageLite) {
+    /** The release map each msg allows (the msgs' ValidateBasic). */
+    private fun checkRelease(m: MessageLite, rem: Map<String, Long>) {
+        fun only(denom: String?) = require(if (denom == null) rem.isEmpty() else rem.keys == setOf(denom)) { "release map: $rem" }
         when (m) {
+            is MsgSend -> {
+                require(m.fee > 0)
+                require(rem.isEmpty() == m.receiver.isEmpty()) { "receiver exactly when something is left" }
+                require(rem.keys.none { it.startsWith("dexlp/") }) { "LP shares cannot be unshielded" }
+            }
+            is MsgDelegate -> only("uerth")
             is MsgNoteSwap -> {
-                val out = swapOut(m.transfer.denomOut, m.transfer.valueOut, m.denomOut)
-                require(out >= m.minAmountOut) { "slippage: got $out, want >= ${m.minAmountOut}" }
-                require(m.feeFromOutput == 0L || (m.denomOut == "uerth" && m.minAmountOut > m.feeFromOutput && m.transfer.fee == 0L))
+                require(rem.size == 1 && m.denomOut !in rem)
+                require((m.fee == 0L) != (m.feeFromOutput == 0L))
             }
-            is MsgAddLiquidityShielded -> {
-                require(m.poolId == 1L && m.transfer.denomOut == "uanml" && m.erthTransfer.denomOut == "uerth")
-                if (m.minShares.isNotEmpty()) require(shares(m) >= BigInteger(m.minShares)) { "below min_shares" }
-            }
-            is MsgUpdatePosition -> require(positionSigOk(positions.getValue(m.positionId), "update", PrivateMsgs.splitsBytes(m.splitsList), m.signature.toByteArray()))
-            is MsgUnlockPosition -> require(positionSigOk(positions.getValue(m.positionId), "unlock", m.pc.toByteArray() + m.ciphertext.toByteArray(), m.signature.toByteArray()))
-            is MsgPositionVote -> require(positionSigOk(positions.getValue(m.positionId), "vote",
-                PrivateMsgs.positionVotePayload(m.proposalId, m.optionsList), m.signature.toByteArray()))
-            is MsgVoteRemoval -> require(m.optionId in removalBallots) { "no open ballot" }
-            is MsgProposeRemoval -> require(m.optionId !in removalBallots) { "ballot already open" }
-            else -> {}
+            is MsgAddLiquidityShielded -> require(rem.keys == setOf("uerth", "uanml") && m.poolId == 1L)
+            is MsgRemoveLiquidityShielded -> only("dexlp/${m.poolId}")
+            else -> only(null)
         }
+        require(PrivateMsgs.totalFee(m) > 0)
     }
 
-    private fun shares(m: MsgAddLiquidityShielded): BigInteger =
-        minOf(BigInteger.valueOf(m.erthTransfer.valueOut) * lpSupply / poolErth, BigInteger.valueOf(m.transfer.valueOut) * lpSupply / poolAnml)
+    /** The stake proof's chain-supplied publics: asset, v_out. */
+    private fun stakeStatement(m: MessageLite): Pair<String?, Long> = when (m) {
+        is MsgDelegate -> PrivacyWallet.derthDenom(m.validator) to 0L
+        is MsgRestake -> PrivacyWallet.derthDenom(m.validator) to 0L
+        is MsgUndelegate -> PrivacyWallet.derthDenom(m.validator) to m.amount
+        is MsgClaimUnbonding -> PrivacyWallet.unbondDenom(m.validator, m.epoch) to m.amount
+        is MsgStakeVote -> PrivacyWallet.derthDenom(m.validator) to m.weight
+        is MsgLockPosition -> PrivacyWallet.derthDenom(m.validator) to m.amount
+        else -> null to 0L
+    }
+
+    private fun spent(p: StakeProof) = p.nullifiersList.map(::f).filter { !it.isZero }
+    private fun created(p: StakeProof) = p.commitmentsList.withIndex().filter { !f(it.value).isZero }
+
+    /** Shape per msg: (min spends, may create). */
+    private fun stakeShape(m: MessageLite, p: StakeProof) {
+        val (minSpends, creates) = when (m) {
+            is MsgDelegate, is MsgUpdatePosition, is MsgUnlockPosition, is MsgPositionVote -> 0 to false
+            is MsgStakeVote -> 1 to false
+            else -> 1 to true
+        }
+        val n = spent(p).size
+        require(if (minSpends == 0) n == 0 else n >= minSpends) { "stake proof spends $n" }
+        require(creates || created(p).isEmpty()) { "stake proof creates" }
+        if (m is MsgRestake) require(created(p).isNotEmpty())
+    }
 
     /** A membership's expected scope and max_activation, per msg. */
     private fun membershipStatement(m: MessageLite): Pair<Fr, Long>? = when (m) {
@@ -191,119 +275,193 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         else -> null
     }
 
+    private fun membershipOf(m: MessageLite): Membership? = when (m) {
+        is MsgClaimAnml -> m.membership
+        is MsgVoteProposal -> m.membership
+        is MsgSetCaretaker -> m.membership
+        is MsgBindReferrer -> m.membership
+        is MsgProposeRemoval -> m.membership
+        is MsgVoteRemoval -> m.membership
+        else -> null
+    }
+
+    private fun shares(erth: Long, anml: Long): BigInteger =
+        minOf(BigInteger.valueOf(erth) * lpSupply / poolErth, BigInteger.valueOf(anml) * lpSupply / poolAnml)
+
+    /** The action's own checks, before anything is written (atomic with the spend in the ante). */
+    private fun precheck(m: MessageLite, rem: Map<String, Long>) {
+        when (m) {
+            is MsgNoteSwap -> {
+                val (denomIn, amountIn) = rem.entries.single()
+                val out = swapOut(denomIn, amountIn, m.denomOut)
+                require(out >= m.minAmountOut) { "slippage: got $out, want >= ${m.minAmountOut}" }
+                require(m.feeFromOutput == 0L || (m.denomOut == "uerth" && m.minAmountOut > m.feeFromOutput))
+            }
+            is MsgAddLiquidityShielded -> if (m.minShares.isNotEmpty()) {
+                require(shares(rem.getValue("uerth"), rem.getValue("uanml")) >= BigInteger(m.minShares)) { "below min_shares" }
+            }
+            is MsgUpdatePosition -> require(positions.getValue(m.positionId).ownerTag == f(m.stake.ownerTag)) { "not the position's owner" }
+            is MsgUnlockPosition -> require(positions.getValue(m.positionId).ownerTag == f(m.stake.ownerTag)) { "not the position's owner" }
+            is MsgPositionVote -> require(positions.getValue(m.positionId).ownerTag == f(m.stake.ownerTag)) { "not the position's owner" }
+            is MsgVoteRemoval -> require(m.optionId in removalBallots) { "no open ballot" }
+            is MsgProposeRemoval -> require(m.optionId !in removalBallots) { "ballot already open" }
+            is MsgClaimUnbonding -> require((m.hasBundle()) == (m.feeFromOutput == 0L))
+            else -> {}
+        }
+    }
+
+    private fun checkBundle(i: Int, b: Bundle, sighash: Fr, simulate: Boolean, seen: MutableSet<Fr>) {
+        require(b.actionsCount in 2..maxActions) { "bundle $i: ${b.actionsCount} actions" }
+        require(b.balancesList.all { it.amount > 0 } && b.balancesList.map { it.denom }.toSet().size == b.balancesCount) { "balances" }
+        require(b.balancesCount <= 2 * b.actionsCount)
+        for (a in b.actionsList) {
+            require(f(a.anchor) in noteRoots) { "unknown anchor" }
+            val nf = f(a.nullifier)
+            require(nf !in nullifiers) { "nullifier spent" }
+            require(seen.add(nf)) { "duplicate nullifier" }
+            Grumpkin.Point.fromBytes(a.cv.toByteArray())
+        }
+        require(b.bindingSig.size() == Grumpkin.BINDING_SIG_BYTES)
+        if (simulate) return
+        require(PrivateMsgs.checkBalance(b, sighash)) { "bundle $i: binding signature" }
+        b.actionsList.forEachIndexed { j, a ->
+            val w = prover.actions.removeFirstOrNull() ?: error("no proof for bundle $i action $j")
+            val cv = a.cv.toByteArray()
+            val expect = listOf(f(a.anchor), f(a.nullifier), f(a.commitment),
+                Fr.fromBytes(cv.copyOfRange(0, 32)), Fr.fromBytes(cv.copyOfRange(32, 64)), sighash)
+            require(w.publicInputs() == expect) { "bundle $i action $j proof is for other public inputs" }
+        }
+    }
+
     /** The ante, then the handler. */
-    private fun check(txBytes: ByteArray, simulate: Boolean): List<Pair<String, Map<String, String>>> {
+    private fun check(txBytes: ByteArray, simulate: Boolean): Pair<MessageLite, List<Pair<String, Map<String, String>>>> {
         val raw = Tx.TxRaw.parseFrom(txBytes)
         require(raw.signaturesCount == 0) { "private txs are unsigned" }
         val auth = Tx.AuthInfo.parseFrom(raw.authInfoBytes)
         require(auth.signerInfosCount == 0)
         val m = decode(raw)
-        val ts = transfersOf(m)
         val total = PrivateMsgs.totalFee(m)
         require(auth.fee.amountCount == 1 && auth.fee.getAmount(0).denom == "uerth" && auth.fee.getAmount(0).amount == total.toString()) { "declared fee != msg fee" }
         require(total >= minFee) { "below min fee" }
         if (!simulate) require(BigDecimal(total) >= price.multiply(BigDecimal(auth.fee.gasLimit))) { "below min gas price" }
-        val signal = PrivateMsgs.signal(m, chainId)
-        ts.forEachIndexed { i, t ->
-            val root = Fr.fromBytes(t.root.toByteArray())
-            require(root in noteRoots) { "unknown anchor" }
-            for (nf in t.nullifiersList) require(Fr.fromBytes(nf.toByteArray()) !in nullifiers) { "nullifier spent" }
-            require((t.valueOut == 0L) == (t.denomOut == ""))
+        val bundles = PrivateMsgs.bundles(m)
+        require(bundles.size in (if (PrivateMsgs.feeFromOutput(m) > 0) 0 else 1)..2) { "bundle count" }
+        val rem = remainders(m)
+        checkRelease(m, rem)
+        val sighash = PrivateMsgs.sighash(m, chainId)
+        val seen = HashSet<Fr>()
+        bundles.forEachIndexed { i, b -> checkBundle(i, b, sighash, simulate, seen) }
+
+        val stake = PrivateMsgs.stake(m)
+        if (stake != null) {
+            require(stake.nullifiersCount == 2 && stake.commitmentsCount == 2 && stake.ciphertextsCount <= 2)
+            stakeShape(m, stake)
+            val nfs = spent(stake)
+            require(nfs.none { it in stakeNullifiers }) { "stake nullifier spent" }
+            require(nfs.toSet().size == nfs.size)
+            if (nfs.isNotEmpty()) require(f(stake.anchor) in stakeRoots) { "unknown stake anchor" }
             if (!simulate) {
-                val w = prover.transfers.removeFirstOrNull() ?: error("no proof for transfer $i")
-                val assetPub = if (t.valueOut > 0) Privacy.assetId(t.denomOut) else Fr.ZERO
-                val expect = listOf(root) + t.nullifiersList.map { Fr.fromBytes(it.toByteArray()) } +
-                    t.commitmentsList.map { Fr.fromBytes(it.toByteArray()) } +
-                    listOf(Privacy.u64(t.fee), Privacy.u64(t.valueOut), assetPub, signal)
-                require(w.publicInputs() == expect) { "transfer $i proof is for other public inputs" }
+                val w = prover.stakes.removeFirstOrNull() ?: error("no stake proof")
+                val (denom, vOut) = stakeStatement(m)
+                val expect = listOf(f(stake.anchor), denom?.let(Privacy::assetId) ?: Fr.ZERO) +
+                    stake.nullifiersList.map(::f) + stake.commitmentsList.map(::f) +
+                    listOf(Privacy.u64(0), Privacy.u64(vOut), f(stake.spcMint), f(stake.ownerTag), sighash)
+                require(w.publicInputs() == expect) { "stake proof is for other public inputs" }
             }
         }
-        val membership = when (m) {
-            is MsgClaimAnml -> m.membership
-            is MsgVoteProposal -> m.membership
-            is MsgSetCaretaker -> m.membership
-            is MsgBindReferrer -> m.membership
-            is MsgProposeRemoval -> m.membership
-            is MsgVoteRemoval -> m.membership
-            else -> null
-        }
+        val membership = membershipOf(m)
         if (membership != null) {
             require(Fr.fromBytes(membership.root.toByteArray()) in identityRoots) { "unknown identity anchor" }
             if (!simulate) {
                 val w = prover.memberships.removeFirstOrNull() ?: error("no membership proof")
                 val (scope, maxAct) = membershipStatement(m)!!
                 val expect = listOf(Fr.fromBytes(membership.root.toByteArray()), scope, Fr.fromBytes(membership.nullifier.toByteArray()),
-                    signal, Fr.ZERO, Fr.ZERO, Privacy.u64(maxAct))
+                    sighash, Fr.ZERO, Fr.ZERO, Privacy.u64(maxAct))
                 require(w.publicInputs() == expect) { "membership proof is for other public inputs" }
             }
         }
-        precheck(m)
-        if (simulate) return emptyList()
-        // Execute: spend, append, then the action.
-        for (t in ts) {
-            t.nullifiersList.forEach { nullifiers[Fr.fromBytes(it.toByteArray())] = height }
-            t.commitmentsList.forEachIndexed { i, cm ->
-                val pos = noteTree.append(Fr.fromBytes(cm.toByteArray()))
-                notes.add(NoteRow(pos, height, Fr.fromBytes(cm.toByteArray()), t.getCiphertexts(i).toByteArray(), null))
+        precheck(m, rem)
+        if (simulate) return m to emptyList()
+        actionCounts.add(bundles.sumOf { it.actionsCount })
+        // Execute: spend, append, pay the fee and any unshield, then the action.
+        for (b in bundles) for (a in b.actionsList) {
+            nullifiers[f(a.nullifier)] = height
+            val cm = f(a.commitment)
+            val pos = noteTree.append(cm)
+            notes.add(NoteRow(pos, height, cm, a.ciphertext.toByteArray(), null))
+        }
+        if (stake != null) {
+            spent(stake).forEach { stakeNullifiers[it] = height }
+            for ((i, cm) in created(stake)) {
+                val c = f(cm)
+                val pos = stakeTree.append(c)
+                stakeRows.add(StakeNoteRow(pos, height, c, stake.getCiphertexts(i).toByteArray(), null, null, null))
             }
         }
         val events = ArrayList<Pair<String, Map<String, String>>>()
+        val spcMint = stake?.let { f(it.spcMint) }
         when (m) {
-            is MsgTransfer -> if (m.transfer.valueOut > 0) unshielded.merge(m.receiver, m.transfer.valueOut - m.feeFromOutput, Long::plus)
+            is MsgSend -> if (rem.isNotEmpty()) rem.forEach { (d, v) -> unshielded.getOrPut(m.receiver) { HashMap() }.merge(d, v, Long::plus) }
             is MsgRegister -> {
                 val binding = PrivateMsgs.decimalField(m.publicSignalsList[1])
                 require(binding == PrivateMsgs.registrationBinding(m)) { "binding" }
                 val dsc = PrivateMsgs.decimalField(m.publicSignalsList[3])
-                val idx = identityTree.append(Privacy.identityLeaf(Fr.fromBytes(m.idc.toByteArray()), dsc, Privacy.countryField("DE"), now))
+                val idx = identityTree.append(Privacy.identityLeaf(f(m.idc), dsc, Privacy.countryField("DE"), now))
                 identityRows.add(IdentityRow(idx, height, identityTree.leaf(idx), null))
-                mint("uanml", 1_000_000, Fr.fromBytes(m.pcAnml.toByteArray()), m.ciphertextAnml.toByteArray())
-                mint("uerth", 5_000_000, Fr.fromBytes(m.pcErth.toByteArray()), m.ciphertextErth.toByteArray())
+                mint("uanml", 1_000_000, f(m.pcAnml), m.ciphertextAnml.toByteArray())
+                mint("uerth", 5_000_000, f(m.pcErth), m.ciphertextErth.toByteArray())
                 events.add("register" to mapOf("leaf_index" to idx.toString()))
             }
-            is MsgClaimAnml -> mint("uanml", 1_000_000, Fr.fromBytes(m.pc.toByteArray()), m.ciphertext.toByteArray())
+            is MsgClaimAnml -> mint("uanml", 1_000_000, f(m.pc), m.ciphertext.toByteArray())
             is MsgVoteProposal -> votes.add(m.proposalId to m.optionValue)
-            is MsgDelegate -> mint("derth/${m.validator}", m.transfer.valueOut * 9 / 10, Fr.fromBytes(m.pc.toByteArray()), m.ciphertext.toByteArray())
-            is MsgStakeVote -> { votes.add(m.proposalId to -1); mint(m.transfer.denomOut, m.transfer.valueOut, Fr.fromBytes(m.pc.toByteArray()), m.ciphertext.toByteArray()) }
-            is MsgUndelegate -> mint(PrivacyWallet.unbondDenom(m.validator, 4), m.transfer.valueOut, Fr.fromBytes(m.pc.toByteArray()), m.ciphertext.toByteArray())
+            is MsgDelegate -> mintStake(PrivacyWallet.derthDenom(m.validator), rem.getValue("uerth") * 9 / 10, spcMint!!)
+            is MsgRestake -> {}
+            is MsgUndelegate -> mintStake(PrivacyWallet.unbondDenom(m.validator, epoch), m.amount * 10 / 9, spcMint!!)
             is MsgClaimUnbonding -> {
-                claimedUnbonds.add(m.transfer.denomOut)
-                mint("uerth", m.transfer.valueOut - m.feeFromOutput, Fr.fromBytes(m.pc.toByteArray()), m.ciphertext.toByteArray())
+                claimedUnbonds.add(PrivacyWallet.unbondDenom(m.validator, m.epoch))
+                mint("uerth", m.amount - m.feeFromOutput, f(m.pc), m.ciphertext.toByteArray())
+            }
+            is MsgStakeVote -> {
+                stakeVotes.add(Triple(m.proposalId, m.validator, m.weight))
+                mintStake(PrivacyWallet.derthDenom(m.validator), m.weight, spcMint!!)
             }
             is MsgNoteSwap -> {
-                val inAmt = BigInteger.valueOf(m.transfer.valueOut)
-                val out = swapOut(m.transfer.denomOut, m.transfer.valueOut, m.denomOut)
-                if (m.denomOut == "uerth") { poolAnml += inAmt; poolErth -= BigInteger.valueOf(out) } else { poolErth += inAmt; poolAnml -= BigInteger.valueOf(out) }
-                mint(m.denomOut, out - m.feeFromOutput, Fr.fromBytes(m.pc.toByteArray()), m.ciphertext.toByteArray())
+                val (denomIn, amountIn) = rem.entries.single()
+                val out = swapOut(denomIn, amountIn, m.denomOut)
+                if (m.denomOut == "uerth") { poolAnml += BigInteger.valueOf(amountIn); poolErth -= BigInteger.valueOf(out) }
+                else { poolErth += BigInteger.valueOf(amountIn); poolAnml -= BigInteger.valueOf(out) }
+                mint(m.denomOut, out - m.feeFromOutput, f(m.pc), m.ciphertext.toByteArray())
             }
             is MsgAddLiquidityShielded -> {
-                val sh = shares(m)
+                val e = rem.getValue("uerth"); val t = rem.getValue("uanml")
+                val sh = shares(e, t)
                 val depE = sh * poolErth / lpSupply
                 val depT = sh * poolAnml / lpSupply
                 poolErth += depE; poolAnml += depT; lpSupply += sh
-                lpShares.merge(m.provider, sh, BigInteger::add)
-                val pc = Fr.fromBytes(m.refundPc.toByteArray())
-                val rE = m.erthTransfer.valueOut - depE.toLong()
-                val rT = m.transfer.valueOut - depT.toLong()
-                if (rE > 0) mint("uerth", rE, pc, m.refundCiphertext.toByteArray())
-                if (rT > 0) mint("uanml", rT, pc, m.refundCiphertext.toByteArray())
+                mint("dexlp/1", sh.toLong(), f(m.sharePc), m.shareCiphertext.toByteArray())
+                val rE = e - depE.toLong()
+                val rT = t - depT.toLong()
+                if (rE > 0) mint("uerth", rE, f(m.refundPc), m.refundCiphertext.toByteArray())
+                if (rT > 0) mint("uanml", rT, f(m.refundPc), m.refundCiphertext.toByteArray())
             }
+            is MsgRemoveLiquidityShielded -> withdrawals.add(Triple(BigInteger.valueOf(rem.getValue("dexlp/1")), f(m.erthPc), f(m.tokenPc)))
             is MsgLockPosition -> {
-                val id = positions.size + 1L
-                positions[id] = Pos(id, m.validator, m.transfer.valueOut, m.pubkey.toByteArray(), 0, m.splitsList.associate { it.optionId to it.percent })
+                val id = nextPositionId++
+                positions[id] = Pos(id, m.validator, m.amount, f(m.stake.ownerTag), m.splitsList.associate { it.optionId to it.percent }, height)
             }
-            is MsgUpdatePosition -> positions.getValue(m.positionId).apply { splits = m.splitsList.associate { it.optionId to it.percent }; nonce++ }
+            is MsgUpdatePosition -> positions.getValue(m.positionId).splits = m.splitsList.associate { it.optionId to it.percent }
             is MsgUnlockPosition -> {
                 val p = positions.remove(m.positionId)!!
-                mint(PrivacyWallet.derthDenom(p.validator), p.derth, Fr.fromBytes(m.pc.toByteArray()), m.ciphertext.toByteArray())
+                mintStake(PrivacyWallet.derthDenom(p.validator), p.derth, spcMint!!)
             }
-            is MsgPositionVote -> { positions.getValue(m.positionId).nonce++; positionVotes.add(m.positionId to m.proposalId) }
-            is MsgBindReferrer -> referrers[Fr.fromBytes(m.membership.nullifier.toByteArray())] = m.address
-            is MsgSetCaretaker -> caretakerVotes[Fr.fromBytes(m.membership.nullifier.toByteArray())] = m.percentagesList.associate { it.optionId to it.percent }
+            is MsgPositionVote -> positionVotes.add(m.positionId to m.proposalId)
+            is MsgBindReferrer -> referrers[f(m.membership.nullifier)] = m.address
+            is MsgSetCaretaker -> caretakerVotes[f(m.membership.nullifier)] = m.percentagesList.associate { it.optionId to it.percent }
             is MsgProposeRemoval -> removalBallots[m.optionId] = 100L + m.optionId
-            is MsgVoteRemoval -> removalVotes.add(Triple(m.optionId, Fr.fromBytes(m.membership.nullifier.toByteArray()), m.optionValue))
+            is MsgVoteRemoval -> removalVotes.add(Triple(m.optionId, f(m.membership.nullifier), m.optionValue))
             else -> {}
         }
-        return events
+        return m to events
     }
 
     // ---- indexer ----
@@ -316,8 +474,10 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         return NotesPage(rows, fromPos + rows.size, rows.size == n, height - 1)
     }
 
-    override fun nullifiers(fromHeight: Long, limit: Int?): HeightPage<Fr> {
-        val blocks = nullifiers.entries.filter { it.value >= fromHeight }.groupBy({ it.value }, { it.key }).toSortedMap().map { it.key to it.value }
+    override fun nullifiers(fromHeight: Long, limit: Int?): HeightPage<Fr> = heights(nullifiers, fromHeight)
+
+    private fun heights(set: Map<Fr, Long>, fromHeight: Long): HeightPage<Fr> {
+        val blocks = set.entries.filter { it.value >= fromHeight }.groupBy({ it.value }, { it.key }).toSortedMap().map { it.key to it.value }
         return HeightPage(blocks.filter { it.first < height }, height, false, height - 1)
     }
 
@@ -330,35 +490,50 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
 
     override fun rootsLatest() = LatestRoots(
         RootRecord(noteTree.root(), noteTree.size, height, now), RootRecord(identityTree.root(), identityTree.size, height, now), height - 1,
+        if (stakeTree.size == 0L) null else RootRecord(stakeTree.root(), stakeTree.size, height, now),
     )
 
     override fun rates(epoch: Long?): List<RateRow> = emptyList()
 
+    override fun stakeNotes(fromPos: Long, limit: Int?): StakeNotesPage {
+        val n = limit ?: 1000
+        val rows = stakeRows.drop(fromPos.toInt()).take(n)
+        return StakeNotesPage(rows, fromPos + rows.size, rows.size == n, height - 1)
+    }
+
+    override fun stakeNullifiers(fromHeight: Long, limit: Int?): HeightPage<Fr> = heights(stakeNullifiers, fromHeight)
+
     fun positionReads(): List<PrivacyChainReads.Position> =
-        positions.values.map { PrivacyChainReads.Position(it.id, it.validator, it.derth, it.pubkey, it.nonce, it.splits) }
+        positions.values.map { PrivacyChainReads.Position(it.id, it.validator, it.derth, it.ownerTag, it.splits, it.createdHeight) }
+
+    fun unshieldedTo(receiver: String, denom: String = "uerth"): Long = unshielded[receiver]?.get(denom) ?: 0
 }
 
 /**
- * Checks each witness against the circuits' constraints (the Kotlin twin of
- * circuits/{transfer,membership}/src/main.nr) and keeps it for the chain to
- * match against the tx and for a test to dump as Prover.toml.
+ * Checks each witness against its circuit's constraints (the Kotlin twin of
+ * circuits/{action,stake,membership}/src/main.nr) and keeps it for the chain
+ * to match against the tx and for a test to dump as Prover.toml.
  */
-class CheckingProver(private val chain: FakeChain) : Prover {
-    val transfers = ArrayDeque<TransferWitness>()
+class CheckingProver : Prover {
+    val actions = ArrayDeque<ActionWitness>()
+    val stakes = ArrayDeque<StakeWitness>()
     val memberships = ArrayDeque<MembershipWitness>()
-    val allTransfers = ArrayList<TransferWitness>()
+    val allActions = ArrayList<ActionWitness>()
+    val allStakes = ArrayList<StakeWitness>()
     val allMemberships = ArrayList<MembershipWitness>()
 
-    override fun proveTransfer(w: TransferWitness): ByteArray {
-        val opk = Privacy.ownerPk(w.nk)
-        w.inputs.forEachIndexed { i, inp ->
-            val cm = Privacy.cm(w.assets[i], inp.value, Privacy.pc(opk, inp.rho, inp.rcm))
-            if (inp.value != 0L) require(Merkle.rootFromPath(cm, inp.position, inp.path) == w.root) { "input $i not in note tree" }
-        }
-        require(w.nullifiers.toSet().size == 3) { "duplicate nullifier" }
-        require(w.vPubOut == 0L || w.assetPub == w.asset)
-        transfers.add(w); allTransfers.add(w)
+    override fun proveAction(w: ActionWitness): ByteArray {
+        w.check()
+        // The circuit's base-canonicality: both value bases' y <= (p-1)/2.
+        require(Grumpkin.valueBase(w.sAsset).y.toBigInteger() <= Grumpkin.HALF_P)
+        actions.add(w); allActions.add(w)
         return ByteArray(14_656) { 1 }
+    }
+
+    override fun proveStake(w: StakeWitness): ByteArray {
+        w.check()
+        stakes.add(w); allStakes.add(w)
+        return ByteArray(14_656) { 3 }
     }
 
     override fun proveMembership(w: MembershipWitness): ByteArray {
