@@ -165,8 +165,9 @@ struct PoolActionSheet: View {
     /// itself a transaction that has to remain payable.
     private var erthAvailable: BigInt {
         let reserve = BigInt(TransactionSigner.gasReserveUerth) ?? 0
-        // Pool 1's token is ANML, which only notes hold: both legs come from
-        // shielded balances there, the fee from the same ERTH notes.
+        // Pool 1's token is ANML, which only notes hold: both legs and the
+        // fee come from shielded balances there, in one bundle, and its LP
+        // shares are share notes.
         let held = shieldedPool ? BigInt(model.shieldedErth) : model.balance(.erth)
         return max(0, held - reserve)
     }
@@ -176,9 +177,12 @@ struct PoolActionSheet: View {
     }
 
     /// ANML's pool: its legs are note paths (MsgAddLiquidityShielded, and a
-    /// withdrawal whose ANML leg is minted to a note).
+    /// private withdrawal of share notes, both legs minted to notes).
     private var shieldedPool: Bool { pool.tokenDenom == Dex.shieldedOnly }
-    private var shareBalance: BigInt { model.lpShares(poolID: pool.id) }
+    /// Pool 1's shares are private: share notes (dexlp/<id>) in the pool.
+    private var shareBalance: BigInt {
+        shieldedPool ? model.privateLPShares(poolID: pool.id) : model.publicLPShares(poolID: pool.id)
+    }
 
     private var erthUnits: BigInt { Token.erth.parse(erthText) ?? 0 }
     private var tokenUnits: BigInt { token.parse(tokenText) ?? 0 }
@@ -248,28 +252,27 @@ struct PoolActionSheet: View {
         dismiss()
     }
 
-    /// Pool 1 from notes: the shares go to this wallet's transparent address
-    /// (providing liquidity is public), whatever the ratio does not take comes
-    /// back as notes.
+    /// Pool 1 from notes, in one bundle: the LP shares are private, minted
+    /// as a share note to this wallet, and whatever the ratio does not take
+    /// comes back as notes.
     private func reviewAddShielded() {
         guard let erthIn = UInt64(erthUnits.description), let tokenIn = UInt64(tokenUnits.description) else { return }
         let poolID = pool.id
         let tokenDenom = pool.tokenDenom
-        let provider = model.address
         let rest = model.client.rest
         let re = erthReserve, rt = tokenReserve
         tx.requestPrivate(.private(
             action: "Add liquidity",
             rows: [
                 ("Deposit", "\(Figures.balance(erthUnits)) ERTH + \(Figures.balance(tokenUnits, token)) from shielded"),
-                ("LP shares to", provider),
+                ("LP shares to", "your private balance"),
                 ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
             ]
         ), onSuccess: { await model.refresh() }) { w in
             let minShares = await Self.minShares(rest: rest, poolID: poolID, erthIn: BigInt(erthIn), tokenIn: BigInt(tokenIn),
                                                   erthReserve: re, tokenReserve: rt)
             return try await w.addLiquidityShielded(poolID: poolID, token: tokenDenom, tokenAmount: tokenIn, erthAmount: erthIn,
-                                                    provider: provider, minShares: minShares)
+                                                    minShares: minShares)
         }
         dismiss()
     }
@@ -285,17 +288,29 @@ struct PoolActionSheet: View {
     }
 
     private func reviewWithdraw() {
-        if shieldedPool, let w = model.privacy {
-            // The ANML leg is paid as a note to us: a self-mint pc, since it is
-            // priced when the withdrawal matures. Fetched before the request:
-            // the message builder runs synchronously at confirm.
-            Task {
-                guard let pc = try? await w.withdrawalPC() else { return }
-                requestWithdraw(pc: pc)
-            }
-            return
-        }
+        if shieldedPool { return reviewWithdrawShielded() }
         requestWithdraw(pc: Data())
+    }
+
+    /// Share notes: a private withdrawal, both legs paid as notes when it
+    /// matures; no account appears anywhere.
+    private func reviewWithdrawShielded() {
+        guard let shares = UInt64(sharesUnits.description) else { return }
+        let poolID = pool.id
+        let tokenDenom = pool.tokenDenom
+        tx.requestPrivate(.private(
+            action: "Withdraw liquidity",
+            rows: [
+                ("Shares", Figures.balance(sharesUnits)),
+                ("Pool", "ERTH / \(token.symbol)"),
+                ("Wait", waitDescription),
+                ("Paid to", "your private balance"),
+                ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
+            ]
+        ), onSuccess: { await model.refresh() }) { w in
+            try await w.removeLiquidityShielded(poolID: poolID, token: tokenDenom, shares: shares)
+        }
+        dismiss()
     }
 
     private func requestWithdraw(pc: Data) {

@@ -65,8 +65,8 @@ struct StreamDetailScreen: View {
                     // rather than your own.
                     if stream == .groundworks {
                         // Groundworks is directed by positions, not by a
-                        // per-account split: locked private stake under a
-                        // one-time key, its split public, its owner not.
+                        // per-account split: locked private stake under an
+                        // owner tag, its split public, its owner not.
                         Spacer().frame(height: theme.space.x24)
                         NavigationLink(value: "positions") {
                             Text(model.positions.isEmpty ? "Lock stake in a position" : "Your positions")
@@ -539,7 +539,7 @@ struct ProposalDetailScreen: View {
                 }
             } else {
                 if weight != nil { EarthDetailRow(label: "Your weight", value: weightText) }
-                Text("Every staked-ERTH note held before voting opened votes once, and each of your positions votes with its key. A stake vote is final.")
+                Text("Every staked-ERTH note held before voting opened votes once, two notes to a vote, and each of your positions votes too. A stake vote is final.")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
             }
@@ -607,8 +607,9 @@ struct ProposalDetailScreen: View {
     }
 
     /// Spend-to-vote: every derth note in the tree when voting opened is spent
-    /// against that snapshot and minted straight back, its weight counted;
-    /// each position votes with its key. Final: a note votes once.
+    /// against that snapshot and minted straight back, its weight counted,
+    /// two notes of one validator a vote; each position votes by its owner
+    /// tag. Final: a note votes once.
     private func cast(_ option: Gov.Vote) {
         let id = proposal.id
         let title = proposal.title
@@ -623,14 +624,18 @@ struct ProposalDetailScreen: View {
         ), onSuccess: { await model.refresh(); await loadWeight() }) { w in
             let opts = [WeightedVoteOption(option: option.proto, weight: "1")]
             var last: TxResult?
-            for note in (try? await w.stakeVoteNotes(proposalID: id)) ?? [] {
-                last = try await w.stakeVote(proposalID: id, note: note, options: opts)
+            let notes = (try? await w.stakeVoteNotes(proposalID: id)) ?? []
+            for denom in Array(Set(notes.map(\.denom))).sorted() {
+                let group = notes.filter { $0.denom == denom }
+                for i in stride(from: 0, to: group.count, by: 2) {
+                    last = try await w.stakeVote(proposalID: id, notes: Array(group[i ..< min(i + 2, group.count)]), options: opts)
+                }
             }
             // Only positions from before voting opened: the chain refuses
             // the rest, and one refusal would end the loop.
             let voting = try await w.stakeVoteWeight(proposalID: id, positions: positions.map(\.position)).positionIDs
             for p in positions where voting.contains(p.position.id) {
-                last = try await w.positionVote(p.position, keyIndex: p.keyIndex, proposalID: id, options: opts)
+                last = try await w.positionVote(p.position, counter: p.counter, proposalID: id, options: opts)
             }
             guard let last else { throw PrivacyError("No stake from before this proposal's voting opened.") }
             return last

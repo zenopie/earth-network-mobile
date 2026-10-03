@@ -56,8 +56,9 @@ public final class AppModel {
     public private(set) var privacySyncError: String?
     /// Spendable note counts per denom with more than one note.
     public private(set) var mergeable: [String: Int] = [:]
-    /// The most shielded ERTH one unshield can spend, fee included: its three
-    /// largest notes. Under `shieldedErth` when the notes need merging.
+    /// The most shielded ERTH one unshield can spend, fee included: its
+    /// largest max_actions_per_bundle notes. Under `shieldedErth` only when
+    /// the notes are spread over more than that.
     public private(set) var unshieldableErth: UInt64 = 0
     /// This wallet's Groundworks positions (public positions whose key is ours).
     public private(set) var positions: [OwnedPosition] = []
@@ -72,7 +73,8 @@ public final class AppModel {
 
     public struct OwnedPosition: Identifiable, Sendable {
         public let position: PrivacyReads.Position
-        public let keyIndex: UInt32
+        /// Its owner-tag counter (PrivacyKeys.otagSalt): what proves it ours.
+        public let counter: UInt32
         public var id: UInt64 { position.id }
     }
     /// Recent transactions, nil until the first load lands.
@@ -616,13 +618,19 @@ public final class AppModel {
 
     public func balance(_ token: Token) -> BigInt { balances[token.denom] ?? 0 }
 
-    /// LP shares held in one pool.
+    /// LP shares held in one pool, public and private.
     ///
-    /// Shares are an ordinary bank denom — `dexlp/<id>` — so they arrive with
-    /// every other balance and need no query of their own.
+    /// Public shares are an ordinary bank denom — `dexlp/<id>` — so they
+    /// arrive with every other balance; private ones (a shielded deposit's)
+    /// are share notes of the same denom in the pool. Both are this wallet's.
     public func lpShares(poolID: UInt64) -> BigInt {
-        balances[Dex.shareDenom(poolID: poolID)] ?? 0
+        publicLPShares(poolID: poolID) + privateLPShares(poolID: poolID)
     }
+
+    public func publicLPShares(poolID: UInt64) -> BigInt { balances[Dex.shareDenom(poolID: poolID)] ?? 0 }
+
+    /// Share notes (dexlp/<id>) in the pool: withdrawn privately.
+    public func privateLPShares(poolID: UInt64) -> BigInt { BigInt(shielded[Dex.shareDenom(poolID: poolID)] ?? 0) }
 
     /// Tokens worth listing: the registry, plus anything held that it does not
     /// know about, minus registry entries with no balance beyond the two this
@@ -736,8 +744,8 @@ public final class AppModel {
         shielded = snap.balances
         identityStatus = snap.identityStatus
         claimOpensAt = w.claimOpensAt()
-        mergeable = snap.mergeable
-        unshieldableErth = NoteSelection.maxSpendable(snap.notes, denom: Constants.gasDenom, maxNotes: 3)
+        mergeable = snap.mergeable.merging(snap.stakeMergeable) { a, _ in a }
+        unshieldableErth = snap.unshieldableErth
         // A registered wallet still may register in this launch if it can
         // switch to another wallet, which may not be.
         PrivacyProving.registrationMayFollow = snap.identityStatus != .live || wallets.count > 1
@@ -756,7 +764,7 @@ public final class AppModel {
         publishPrivacy()
         let queries = PrivacyQueries(rest: client.rest)
         if let mine = try? await w.positions() {
-            positions = mine.map { OwnedPosition(position: $0.position, keyIndex: $0.keyIndex) }
+            positions = mine.map { OwnedPosition(position: $0.position, counter: $0.counter) }
         }
         await refreshRemovalBallots()
         await refreshDerthRates()

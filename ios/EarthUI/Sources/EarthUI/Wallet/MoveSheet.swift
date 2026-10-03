@@ -5,8 +5,9 @@ import SwiftUI
 /// Moves ERTH between this wallet's public account and its private notes.
 ///
 /// Shield is MsgShield, signed by the account (the coins are its), the note
-/// to this wallet's own shielded address. Unshield is a private transfer out
-/// of the notes to this wallet's own account, its fee from the same notes.
+/// to this wallet's own shielded address. Unshield is a private send out of
+/// the notes to this wallet's own account, its fee from the same bundle (at
+/// Max, out of the amount).
 /// One sheet for both, because the fields are the same and the difference is
 /// which balance the amount comes out of.
 struct MoveSheet: View {
@@ -64,8 +65,8 @@ struct MoveSheet: View {
                             .font(EarthType.bodySmall)
                             .foregroundStyle(theme.colors.textTertiary)
                         if direction == .unshield, model.unshieldableErth < model.shieldedErth {
-                            // One unshield spends at most three notes.
-                            Text("Your private ERTH is spread over many notes. Merge them in Settings → Shielded notes to move more at once.")
+                            // Only when ERTH is spread over more notes than one bundle carries.
+                            Text("Your private ERTH is spread over more notes than one transaction can carry. Merge them in Settings → Shielded notes to move it all at once.")
                                 .font(EarthType.bodySmall)
                                 .foregroundStyle(theme.colors.textTertiary)
                         }
@@ -91,20 +92,29 @@ struct MoveSheet: View {
     private var shieldFee: BigInt { BigInt(TransactionSigner.defaultFeeUerth) ?? 0 }
     private var unshieldFee: UInt64 { UInt64(Fees.forGas(PrivacyWallet.privateGasEstimate)) ?? 0 }
 
-    /// The most one transaction can move, its fee left behind.
+    /// The most one transaction can move. A shield leaves its fee behind; an
+    /// unshield at Max releases every note one bundle carries and pays its fee
+    /// out of the amount.
     private var maxAmount: BigInt {
         switch direction {
         case .shield:
             return ShieldMove.maxShield(public: model.balance(.erth), fee: shieldFee)
         case .unshield:
-            let spendable = model.unshieldableErth
-            return BigInt(spendable > unshieldFee ? spendable - unshieldFee : 0)
+            return BigInt(model.unshieldableErth)
         }
+    }
+
+    /// Whether this unshield pays its fee from the amount: when the amount and
+    /// the estimated fee would not both fit what one bundle can spend.
+    private func feeFromAmount(_ amount: UInt64) -> Bool {
+        ShieldMove.feeFromAmount(amount: amount, spendable: model.unshieldableErth, fee: unshieldFee)
     }
 
     private var parsed: BigInt? {
         guard let v = Token.erth.parse(amount), v > 0, v <= maxAmount else { return nil }
         if direction == .shield, model.privacy == nil { return nil }
+        // Fee from the amount: the amount must still exceed the fee.
+        if direction == .unshield, let u = UInt64(v.description), feeFromAmount(u), u <= unshieldFee { return nil }
         return v
     }
 
@@ -123,13 +133,14 @@ struct MoveSheet: View {
             }
         case .unshield:
             let to = model.address
+            let fromAmount = feeFromAmount(amount)
             tx.requestPrivate(.private(action: "Unshield ERTH", rows: [
-                ("Amount", display),
+                ("Amount", fromAmount ? display + " less the fee" : display),
                 ("From", "your private balance"),
                 ("To", "your public balance"),
                 ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, private"),
             ]), onSuccess: { await model.syncPrivacy() }) { w in
-                try await w.unshield(receiver: to, denom: Constants.gasDenom, amount: amount)
+                try await w.unshield(receiver: to, denom: Constants.gasDenom, amount: amount, feeFromAmount: fromAmount)
             }
         }
         dismiss()

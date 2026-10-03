@@ -74,7 +74,7 @@ private func checkRegistration() {
                runBlocking { try await PassportRegistration.prove(scan: scan, binding: binding, using: wrongProver) } == nil)
 
     // The free-gas request carries the message that will be broadcast (less
-    // its fee transfer), in the encodings the backend decodes it with:
+    // its fee bundle), in the encodings the backend decodes it with:
     // standard base64 for bytes, signals as the same strings, and the note
     // the gas is shielded to.
     let dsc = try! PassportRegistration.dscDER(scan: scan)

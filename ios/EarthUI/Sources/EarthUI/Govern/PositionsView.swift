@@ -22,9 +22,10 @@ func positionSplit(_ positions: [PrivacyReads.Position]) -> [UInt64: UInt64] {
 
 /// Groundworks positions: the private way to direct the Groundworks Fund.
 ///
-/// A position locks staked ERTH (derth) at a validator under a one-time key
-/// the wallet derives; its split is public and weighted by the stake, its
-/// owner is not. The stake keeps earning while locked, and unlocking returns
+/// A position locks staked ERTH (derth) at a validator under an owner tag (a
+/// commitment to this wallet the stake proof opens again to update, vote or
+/// unlock it); its split is public and weighted by the stake, its owner is
+/// not. The stake keeps earning while locked, and unlocking returns
 /// it as staked ERTH. Ports PositionsScreen (PrivacyScreens.kt).
 ///
 /// Pushed inside the stream sheet, so its confirmations draw on that sheet's
@@ -139,7 +140,9 @@ struct PositionsView: View {
                 ("Validator", moniker(draft.validator)),
             ] + split.sorted { $0.key < $1.key }.map { (optionName($0.key), "\($0.value)%") }
         ), host: .allocation, onSuccess: { await done() }) { w in
-            try await w.lockPosition(validator: draft.validator, amount: draft.amount, splits: split)
+            // A stake proof spends two notes: merge first if needed.
+            _ = try await w.consolidateStake(denom: PrivacyWallet.derthDenom(draft.validator), amount: draft.amount)
+            return try await w.lockPosition(validator: draft.validator, amount: draft.amount, splits: split)
         }
     }
 
@@ -148,7 +151,7 @@ struct PositionsView: View {
             action: "Change position split",
             rows: split.sorted { $0.key < $1.key }.map { (optionName($0.key), "\($0.value)%") }
         ), host: .allocation, onSuccess: { await done() }) { w in
-            try await w.updatePosition(row.position, keyIndex: row.keyIndex, splits: split)
+            try await w.updatePosition(row.position, counter: row.counter, splits: split)
         }
     }
 
@@ -157,7 +160,7 @@ struct PositionsView: View {
             action: "Unlock position",
             rows: [("Returns", "\(Figures.balance(BigInt(row.position.derth))) derth (\(Figures.balance(BigInt(model.derthValue(row.position.derth, validator: row.position.validator)))) ERTH)")]
         ), host: .allocation, onSuccess: { await done() }) { w in
-            try await w.unlockPosition(row.position, keyIndex: row.keyIndex)
+            try await w.unlockPosition(row.position, counter: row.counter)
         }
     }
 }

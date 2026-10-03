@@ -18,7 +18,7 @@ public enum GasGrant {
     /// Which grant to ask for.
     public enum Request {
         /// Gas for this registration, as a shielded note to `pcGas`. Carries
-        /// the message itself (without its fee transfer): the backend judges
+        /// the message itself (without its fee bundle): the backend judges
         /// the proof that will actually be broadcast, not a second one, and
         /// pays only if the chain would accept it, once per passport per
         /// month. It learns that a passport, public in the registration

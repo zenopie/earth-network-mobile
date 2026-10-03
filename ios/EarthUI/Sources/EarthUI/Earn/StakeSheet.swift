@@ -78,7 +78,14 @@ struct StakeSheet: View {
                             // the stake stops earning immediately and arrives
                             // weeks later, with nothing on screen in between
                             // but the unbonding row.
-                            Text("Unstaking becomes an unbonding claim at this epoch's rate. It earns nothing while the chain's unbonding period runs, and the wallet claims it on its own once it matures.")
+                            Text("Unstaking becomes an unbonding claim at this epoch's rate, also locked to this wallet. It earns nothing while the chain's unbonding period runs, and the wallet claims it as private ERTH on its own once it matures.")
+                                .font(EarthType.bodySmall)
+                                .foregroundStyle(theme.colors.textTertiary)
+                        } else {
+                            // derth is not a coin: a stake note only its owner
+                            // can merge, vote, lock or unstake. Nothing can
+                            // send or sell it.
+                            Text("Staked ERTH stays locked to this wallet: it can't be sent, unshielded or traded, only unstaked.")
                                 .font(EarthType.bodySmall)
                                 .foregroundStyle(theme.colors.textTertiary)
                         }
@@ -148,8 +155,12 @@ struct StakeSheet: View {
                 ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
             ]
         ), onSuccess: { await model.refresh() }) { w in
-            taking ? try await w.undelegate(validator: validator, amount: amount)
-                   : try await w.delegate(validator: validator, amount: amount)
+            if taking {
+                // A stake proof spends two notes: merge first if needed.
+                _ = try await w.consolidateStake(denom: PrivacyWallet.derthDenom(validator), amount: amount)
+                return try await w.undelegate(validator: validator, amount: amount)
+            }
+            return try await w.delegate(validator: validator, amount: amount)
         }
         dismiss()
     }

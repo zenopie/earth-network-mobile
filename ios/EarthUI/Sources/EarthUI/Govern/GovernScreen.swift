@@ -109,7 +109,7 @@ struct GovernScreen: View {
                     title: caretaker ? "Caretaker Fund" : "Groundworks Fund",
                     detail: caretaker
                         ? "One verified human, one vote."
-                        : "Directed by positions: private stake locked under a one-time key. The split and amount are public; the owner is not.",
+                        : "Directed by positions: private stake locked to this wallet by an owner tag. The split and amount are public; the owner is not.",
                     stream: caretaker ? .caretaker : .groundworks,
                     state: caretaker ? streams.caretaker : streams.groundworks,
                     eligibility: caretaker

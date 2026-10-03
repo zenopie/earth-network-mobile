@@ -342,7 +342,7 @@ struct RegistrationSheet: View {
             failure = describe(error)
             return
         }
-        // MsgRegister without its fee transfer: what the gas grant is asked
+        // MsgRegister without its fee bundle: what the gas grant is asked
         // on. The registration itself is unsigned and pays its fee from a
         // shielded ERTH note — the grant's, on a first registration.
         let message = wallet.registerMsg(prep, proof: proof.proof, publicSignals: proof.publicSignals,
