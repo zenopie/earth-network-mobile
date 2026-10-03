@@ -8,7 +8,7 @@ import ProverGateCore
 /// barretenberg honours only the **first** SRS initialization of a process: a
 /// later, larger request is silently not met, and a proof that needs it fails.
 /// The passport circuits run to ~425k gates (brainpool512) and the privacy
-/// circuits to ~12k, so whichever proves first decides for the rest of the
+/// circuits to ~10k (stake, the largest of action, stake and membership), so whichever proves first decides for the rest of the
 /// launch. Everything that proves goes through here, so the decision is made
 /// once, knowingly.
 public enum SRS {
@@ -35,20 +35,32 @@ public enum SRS {
     }
 }
 
-/// On-device proofs of the two privacy circuits (circuits/membership,
-/// circuits/transfer), through the same Swoirenberg build as
+/// On-device proofs of the privacy circuits (circuits/membership,
+/// circuits/action, circuits/stake), through the same Swoirenberg build as
 /// `LeanPoaProver` — bb v5.0.0, in lockstep with the chain's verifier; never
 /// float that pin. Ports `privacy/prove/PrivacyProver.kt`.
 ///
 /// The chain never takes public inputs from the tx: it recomputes them from
-/// the msg and verifies the proof body against them. So the public inputs bb
+/// the msg (zk/orchard Bundle.PublicInputs, StakeProof.PublicInputs,
+/// personhood MembershipPublicInputs) and verifies the proof body against
+/// them. So the public inputs bb
 /// returns ahead of the body are split off and checked against the witness's
 /// own, and only the body is sent.
 public final class PrivacyCircuitProver: @unchecked Sendable {
     public enum Kind: String, CaseIterable, Sendable {
-        case membership, transfer
+        case membership, action, stake
 
-        public var publicInputs: Int { self == .membership ? 7 : 11 }
+        public var publicInputs: Int {
+            switch self {
+            case .membership: 7
+            case .action: 6
+            case .stake: 11
+            }
+        }
+
+        /// The largest privacy circuit (gates: membership 5,645, action
+        /// 8,120, stake 9,647): its SRS holds the other two.
+        public static let largest: Kind = .stake
     }
 
     public enum Failure: Error, CustomStringConvertible {
@@ -77,7 +89,7 @@ public final class PrivacyCircuitProver: @unchecked Sendable {
     public private(set) var lastMillis: [Kind: Int] = [:]
 
     /// - Parameters:
-    ///   - manifests: the compiled circuits (the app bundle's circuits/membership.json, transfer.json).
+    ///   - manifests: the compiled circuits (the app bundle's circuits/membership.json, action.json, stake.json).
     ///   - reserve: the manifest whose SRS to provision first when nothing has
     ///     been yet — the largest passport circuit while a registration may
     ///     still follow in this launch, nil when the wallet is registered and
@@ -90,10 +102,11 @@ public final class PrivacyCircuitProver: @unchecked Sendable {
     private func load(_ k: Kind) throws -> (circuit: Circuit, vk: Data) {
         lock.lock(); defer { lock.unlock() }
         if let l = loaded[k] { return l }
-        // At least the transfer circuit's SRS, whichever circuit proves first:
-        // a membership-sized SRS (gas grant, a vote) cannot be grown for a
-        // transfer later in the same process (bb: errorSettingUpSRS).
-        if !SRS.isProvisioned, let big = reserve() ?? manifests[.transfer] { try SRS.reserve(forManifest: big) }
+        // At least the largest privacy circuit's SRS (stake), whichever
+        // circuit proves first: a membership- or action-sized SRS (a gas
+        // grant, a send) cannot be grown for a stake proof later in the same
+        // process (bb: errorSettingUpSRS).
+        if !SRS.isProvisioned, let big = reserve() ?? manifests[Kind.largest] { try SRS.reserve(forManifest: big) }
         guard let manifest = manifests[k] else { throw SwoirError.errorLoadingManifest("no \(k.rawValue) circuit") }
         let circuit = try LeanPoaProver.loadCircuit(manifest: manifest, size: nil)
         let vk = try circuit.getVerificationKey(proof_type: LeanPoaProver.proofType)

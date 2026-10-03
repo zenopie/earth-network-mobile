@@ -101,7 +101,7 @@ enum DeviceProver {
     }
 }
 
-/// The privacy circuits (membership, transfer) on the phone, installed into
+/// The privacy circuits (membership, action, stake) on the phone, installed into
 /// EarthUI's `PrivacyProving` seam. Their compiled circuits are in the same
 /// bundled folder as the passport's (the Android assets, referenced), so one
 /// recompile cannot leave the platforms apart.
@@ -130,9 +130,17 @@ struct PrivacyDeviceProver: PrivacyProver {
         }
     }()
 
-    func proveTransfer(_ w: TransferWitness) async throws -> Data {
-        try await Task.detached(priority: .userInitiated) {
-            try Self.prover.prove(.transfer, inputs: w.noirInputs(), expected: w.publicInputs().map(\.hex))
+    func proveAction(_ w: ActionWitness) async throws -> Data {
+        try w.check()
+        return try await Task.detached(priority: .userInitiated) {
+            try Self.prover.prove(.action, inputs: w.noirInputs(), expected: w.publicInputs().map(\.hex))
+        }.value
+    }
+
+    func proveStake(_ w: StakeWitness) async throws -> Data {
+        try w.check()
+        return try await Task.detached(priority: .userInitiated) {
+            try Self.prover.prove(.stake, inputs: w.noirInputs(), expected: w.publicInputs().map(\.hex))
         }.value
     }
 

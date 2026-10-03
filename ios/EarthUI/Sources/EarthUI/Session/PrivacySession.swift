@@ -1,7 +1,7 @@
 import EarthCore
 import Foundation
 
-/// The seam to the on-device privacy prover (membership and transfer).
+/// The seam to the on-device privacy prover (membership, action and stake).
 ///
 /// Barretenberg lives in the app target, not here, for the reasons given on
 /// `PassportProving`; the app installs a prover at launch. Without one a
@@ -25,7 +25,8 @@ public enum PrivacyProving {
         struct Failure: LocalizedError {
             var errorDescription: String? { "This build has no zero-knowledge prover, so private actions cannot be proved." }
         }
-        func proveTransfer(_ w: TransferWitness) async throws -> Data { throw Failure() }
+        func proveAction(_ w: ActionWitness) async throws -> Data { throw Failure() }
+        func proveStake(_ w: StakeWitness) async throws -> Data { throw Failure() }
         func proveMembership(_ w: MembershipWitness) async throws -> Data { throw Failure() }
     }
 }
