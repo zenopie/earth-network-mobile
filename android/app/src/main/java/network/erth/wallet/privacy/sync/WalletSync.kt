@@ -144,9 +144,8 @@ class WalletSync(
     private fun syncOnce(pageLimit: Int?): Result {
         val status = indexer.status()
         status.halted?.let { throw IndexerHalted(it) }
-        if (status.chainId != null && status.chainId != chainId) {
-            throw IllegalStateException("the privacy indexer follows ${status.chainId}, not $chainId")
-        }
+        if (status.chainId == null) throw IllegalStateException("the privacy indexer names no chain yet")
+        if (status.chainId != chainId) throw IllegalStateException("the privacy indexer follows ${status.chainId}, not $chainId")
         if (store.state.chainId != chainId || store.state.genesis != status.genesis) {
             // A fresh genesis (a relaunch under the same chain id) or a first
             // sync: nothing from another chain carries over.

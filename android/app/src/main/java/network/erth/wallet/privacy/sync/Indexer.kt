@@ -86,12 +86,23 @@ data class StakeNotesPage(val rows: List<StakeNoteRow>, val nextPos: Long, val c
 
 data class RateRow(val validator: String, val rate: String, val supply: String, val epoch: Long?, val height: Long)
 
-/** [PrivacyIndexer] over HTTP. Blocking; call from an IO thread. */
-class HttpPrivacyIndexer(private val host: String) : PrivacyIndexer {
+/**
+ * [PrivacyIndexer] over HTTP. Blocking; call from an IO thread. Only ever
+ * talks to [host]: the status's `base` is accepted only as exactly
+ * `/privacy/<chain_id>/<genesis>` for [chainId] (K10), so a hostile status
+ * cannot point the stream requests anywhere else.
+ */
+class HttpPrivacyIndexer(private val host: String, private val chainId: String = network.erth.wallet.Constants.EARTH_CHAIN_ID) : PrivacyIndexer {
     @Volatile private var base: String? = null
+    private val hostUrl = URL(host.trimEnd('/'))
 
     private fun get(path: String): JSONObject {
-        val c = URL(host.trimEnd('/') + path).openConnection() as HttpURLConnection
+        require(path.startsWith("/") && !path.startsWith("//")) { "indexer path $path" }
+        val url = URL(hostUrl.toString() + path)
+        if (url.protocol != hostUrl.protocol || url.host != hostUrl.host || url.port != hostUrl.port || url.userInfo != null) {
+            throw IOException("indexer path $path leaves ${hostUrl.host}")
+        }
+        val c = url.openConnection() as HttpURLConnection
         c.connectTimeout = 15_000
         c.readTimeout = 60_000
         c.setRequestProperty("Accept-Encoding", "gzip")
@@ -111,7 +122,7 @@ class HttpPrivacyIndexer(private val host: String) : PrivacyIndexer {
     /** A stream path under the current base (from [status], read first when unknown). */
     private fun stream(path: String): JSONObject {
         val b = base ?: status().base ?: throw IOException("the privacy indexer has not met its chain yet")
-        return get(b.trimEnd('/') + path)
+        return get(b + path)
     }
 
     private fun q(name: String, v: Any?): String = if (v == null) "" else "&$name=$v"
@@ -126,7 +137,12 @@ class HttpPrivacyIndexer(private val host: String) : PrivacyIndexer {
             halted = if (j.isNull("halted")) null else j.optString("halted").ifEmpty { null },
             genesis = if (j.isNull("genesis")) null else j.optString("genesis").ifEmpty { null },
             base = if (j.isNull("base")) null else j.optString("base").ifEmpty { null },
-        ).also { base = it.base }
+        ).also { st ->
+            // Refused before it is ever used: a base that is not exactly this
+            // chain's (another chain, a host, a scheme, '..', '@', '?').
+            st.base?.let { b -> if (!validBase(b, chainId, st.chainId, st.genesis)) throw IOException("the privacy indexer named an invalid base ${b.take(80)}") }
+            base = st.base
+        }
     }
 
     override fun notes(fromPos: Long, limit: Int?): NotesPage =
@@ -159,6 +175,21 @@ class HttpPrivacyIndexer(private val host: String) : PrivacyIndexer {
         parseHeights(stream("/stake/nullifiers?from_height=$fromHeight${q("limit", limit)}")) { Fr.fromHex(it as String) }
 
     companion object {
+        private val CHAIN_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+        private val GENESIS = Regex("[0-9a-f]{16}")
+
+        /**
+         * K10: [base] is exactly `/privacy/<chain_id>/<genesis>` for the
+         * chain the wallet follows ([expected]), as the same status names it,
+         * with a chain id of [A-Za-z0-9._-] (at most 64) and a genesis of 16
+         * lowercase hex digits. A null chain id is refused.
+         */
+        fun validBase(base: String, expected: String, chainId: String?, genesis: String?): Boolean {
+            if (chainId == null || genesis == null || chainId != expected) return false
+            if (!CHAIN_ID.matches(chainId) || !GENESIS.matches(genesis)) return false
+            return base == "/privacy/$chainId/$genesis"
+        }
+
         /**
          * The most a response may hold, decompressed: a full 5000-row note
          * page is about 2 MB of JSON. A larger body (a hostile or broken

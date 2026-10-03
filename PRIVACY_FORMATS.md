@@ -331,6 +331,14 @@ while the old leaf is live; the app tells the user).
 1. `GET /privacy/status` → `chain_id`, `genesis` (16 hex), `base`
    (`/privacy/<chain_id>/<genesis>`, null until the indexer met its chain),
    `halted` (non-null: the indexer stopped; the wallet refuses to sync).
+   **Base validation (K10).** A non-null `base` is accepted only if it is
+   byte for byte `/privacy/` + chain_id + `/` + genesis, with chain_id the
+   wallet's own (`[A-Za-z0-9][A-Za-z0-9._-]{0,63}`) and genesis
+   `[0-9a-f]{16}`, both as the same status names them; anything else (a
+   host, `//`, `@`, a scheme, `..`, a query, another chain) is refused before
+   any stream request, and every request URL must keep the indexer's own
+   scheme, host and port. A status whose `chain_id` is null or another
+   chain's is refused (no sync).
 2. The wallet's store records (chain_id, genesis). If either differs from
    the status, the local trees, notes, cursors and pending registration are
    wiped and everything resyncs from zero (the identity record is kept only

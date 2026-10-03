@@ -8,5 +8,7 @@ format or behavior change.
 - [x] K12 amounts: u64 parsed unsigned and bounded to 2^63-1 (Amounts.kt);
       display sums saturate, tx sums checked; AmountsTest.
 
+- [x] K10 indexer base: exactly /privacy/<chain_id>/<genesis> (strict charset), requests pinned to the host, null chain id refused; IndexerBaseTest (local HTTP server, hostile bases).
+
 ## iOS
 (not started)
