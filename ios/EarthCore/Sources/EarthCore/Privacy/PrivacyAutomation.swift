@@ -8,7 +8,8 @@ import Foundation
 ///  - refreshes the caretaker split before it lapses (it counts for R after
 ///    each cast);
 ///  - refreshes the referrer binding the same way;
-///  - claims unbonding notes once their epoch's undelegation has matured.
+///  - claims unbonding claims (stake notes) once their epoch's undelegation
+///    has matured.
 ///
 /// Maturity is worked out from chain-wide timing alone (the current epoch,
 /// epoch length, x/staking's unbonding time), never by asking the node about
@@ -33,7 +34,7 @@ public enum PrivacyAutomation {
         case claimAnml(day: UInt64)
         case refreshCaretaker
         case refreshReferrer
-        case claimUnbonding(OwnedNote)
+        case claimUnbonding(denom: String)
     }
 
     public struct Inputs {
@@ -46,10 +47,11 @@ public enum PrivacyAutomation {
         public var caretakerDue: Bool
         public var referrerDue: Bool = false
         public var hasFeeErth: Bool
-        public var maturedUnbonds: [OwnedNote]
+        /// unbond/<valoper>/<epoch> denoms whose claims have matured.
+        public var maturedUnbonds: [String]
 
         public init(now: Int64, identityLive: Bool, claimOpensAt: Int64?, claimedToday: Bool, claimOffset: Int64,
-                    caretakerDue: Bool, referrerDue: Bool = false, hasFeeErth: Bool, maturedUnbonds: [OwnedNote]) {
+                    caretakerDue: Bool, referrerDue: Bool = false, hasFeeErth: Bool, maturedUnbonds: [String]) {
             self.now = now; self.identityLive = identityLive; self.claimOpensAt = claimOpensAt; self.claimedToday = claimedToday
             self.claimOffset = claimOffset; self.caretakerDue = caretakerDue; self.referrerDue = referrerDue
             self.hasFeeErth = hasFeeErth; self.maturedUnbonds = maturedUnbonds
@@ -66,7 +68,7 @@ public enum PrivacyAutomation {
         if i.identityLive, i.hasFeeErth, i.caretakerDue { out.append(.refreshCaretaker) }
         if i.identityLive, i.hasFeeErth, i.referrerDue { out.append(.refreshReferrer) }
         // Fee from output: needs no fee note.
-        out += i.maturedUnbonds.map { .claimUnbonding($0) }
+        out += i.maturedUnbonds.map { .claimUnbonding(denom: $0) }
         return out
     }
 
@@ -80,16 +82,19 @@ public enum PrivacyAutomation {
         return currentStart - Int64(current - 1 - e) * epochSeconds + unbondingSeconds + maturityMargin
     }
 
-    /// The unbond notes to claim now: matured by `maturesBy`, and not waiting out a refused claim.
-    public static func matured(_ notes: [OwnedNote], now: Int64, current: UInt64, currentStart: Int64, epochSeconds: Int64,
-                               unbondingSeconds: Int64, retryAt: [String: Int64]) -> [OwnedNote] {
-        notes.filter { n in
-            guard n.unspent, n.pendingAt == nil, n.note.denom.hasPrefix("unbond/"),
-                  let (_, e) = try? PrivacyWallet.parseUnbond(n.note.denom),
-                  let by = maturesBy(e, current: current, currentStart: currentStart, epochSeconds: epochSeconds, unbondingSeconds: unbondingSeconds)
-            else { return false }
-            return now >= by && now >= (retryAt[n.note.denom] ?? 0)
+    /// The unbond denoms to claim now: matured by `maturesBy`, and not waiting out a refused claim.
+    public static func matured(_ notes: [OwnedStakeNote], now: Int64, current: UInt64, currentStart: Int64, epochSeconds: Int64,
+                               unbondingSeconds: Int64, retryAt: [String: Int64]) -> [String] {
+        var out: [String] = []
+        for n in notes {
+            guard n.spendable, n.denom.hasPrefix(PrivacyWallet.unbondPrefix),
+                  let (_, e) = try? PrivacyWallet.parseUnbond(n.denom),
+                  let by = maturesBy(e, current: current, currentStart: currentStart, epochSeconds: epochSeconds, unbondingSeconds: unbondingSeconds),
+                  now >= by, now >= (retryAt[n.denom] ?? 0), !out.contains(n.denom)
+            else { continue }
+            out.append(n.denom)
         }
+        return out
     }
 
     private static let lock = NSLock()
@@ -120,7 +125,7 @@ public enum PrivacyAutomation {
         let epoch = try await queries.epoch()
         let timing = try await queries.stakingTiming()
         let snap = wallet.snapshot
-        let mature = matured(snap.notes, now: now, current: epoch.number, currentStart: epoch.startTime,
+        let mature = matured(snap.stakeNotes, now: now, current: epoch.number, currentStart: epoch.startTime,
                              epochSeconds: timing.epochSeconds, unbondingSeconds: timing.unbondingSeconds, retryAt: snap.unbondRetryAt)
         let inputs = Inputs(
             now: now,
@@ -130,7 +135,7 @@ public enum PrivacyAutomation {
             claimOffset: claimOffset(now: now),
             caretakerDue: (try? await wallet.caretakerDue()) ?? false,
             referrerDue: (try? await wallet.referrerDue()) ?? false,
-            hasFeeErth: (snap.balances["uerth"] ?? 0) > 0,
+            hasFeeErth: (snap.poolBalances["uerth"] ?? 0) > 0,
             maturedUnbonds: mature
         )
         for a in decide(inputs) {
@@ -139,11 +144,11 @@ public enum PrivacyAutomation {
                 case let .claimAnml(day): _ = try await wallet.claimAnml(day: day)
                 case .refreshCaretaker: _ = try await wallet.setCaretaker(split: wallet.snapshot.caretakerSplit)
                 case .refreshReferrer: _ = try await wallet.bindReferrer(address: wallet.snapshot.referrerAddress)
-                case let .claimUnbonding(n): _ = try await wallet.claimUnbonding(note: n)
+                case let .claimUnbonding(denom): _ = try await wallet.claimUnbonding(denom: denom)
                 }
             } catch {
                 onFailure(a, error)
-                if case let .claimUnbonding(n) = a { await wallet.deferUnbondClaim(denom: n.note.denom, until: now + retrySeconds) }
+                if case let .claimUnbonding(denom) = a { await wallet.deferUnbondClaim(denom: denom, until: now + retrySeconds) }
             }
         }
     }

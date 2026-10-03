@@ -1,3 +1,4 @@
+import BigInt
 import Foundation
 
 /// Why the wallet refused to lay out or prove something: a precondition the
@@ -13,117 +14,184 @@ func require(_ ok: Bool, _ message: @autoclosure () -> String) throws {
     if !ok { throw PrivacyError(message()) }
 }
 
-/// One transfer input: a real note (with its path), or a value-0 dummy.
-public struct TransferInput: Equatable, Sendable {
-    public let value: UInt64
-    public let rho: Fr
-    public let rcm: Fr
-    public let position: UInt64
-    public let path: [Fr]
-
-    public init(value: UInt64, rho: Fr, rcm: Fr, position: UInt64, path: [Fr]) throws {
-        try require(position <= 0xffff_ffff, "position is a u32")
-        try require(path.count == Merkle.depth, "a path is \(Merkle.depth) siblings")
-        self.value = value; self.rho = rho; self.rcm = rcm; self.position = position; self.path = path
-    }
-
-    /// A dummy: value 0, so the circuit skips its membership, and a fresh
-    /// rho, so its nullifier (which is still published and spent) is new.
-    public static func dummy() -> TransferInput {
-        try! TransferInput(value: 0, rho: NotePlaintext.randomField(), rcm: NotePlaintext.randomField(), position: 0,
-                           path: Array(repeating: .zero, count: Merkle.depth))
-    }
-}
-
-/// One transfer output: a value to a pc (the recipient's hidden owner).
-public struct TransferOutput: Equatable, Sendable {
-    public let value: UInt64
-    public let pc: Fr
-    public init(value: UInt64, pc: Fr) { self.value = value; self.pc = pc }
-}
-
-/// The transfer circuit's witness (circuits/transfer). Ports
-/// `privacy/prove/Witnesses.kt`. Slots 0-1 one hidden asset A, slot 2 ERTH
-/// for the fee. For A != ERTH two balances:
+/// The action circuit's witness (circuits/action). Ports
+/// `privacy/prove/Witnesses.kt`: one spend (a real note with its path, or a
+/// value-0 dummy whose path is not checked) and one output, either of any
+/// asset, and the value commitment
 ///
-///     in0 + in1 == out0 + out1 + v_pub_out    (asset A)
-///     in2       == out2 + fee                 (ERTH)
+///     cv = s_value*G(s_asset) - o_value*G(o_asset) + rcv*R
 ///
-/// For A == ERTH every slot is ERTH and the circuit enforces one combined
-/// balance, so a single ERTH note can pay both a spend and its fee:
-///
-///     in0 + in1 + in2 == out0 + out1 + out2 + v_pub_out + fee
-///
-/// Public inputs, in the chain's order (types.Transfer.PublicInputs): root,
-/// nf[3], cm_out[3], fee, v_pub_out, asset_pub, signal. asset_pub is A when
-/// value leaves the pool and 0 otherwise; the chain requires the 0.
-public struct TransferWitness: Sendable {
-    public let asset: Fr
+/// Public inputs, in the chain's order (zk/orchard Bundle.PublicInputs):
+/// anchor, nf, cm_out, cv_x, cv_y, sighash.
+public struct ActionWitness: Sendable {
     public let nk: Fr
-    public let inputs: [TransferInput]
-    public let outputs: [TransferOutput]
-    public let root: Fr
-    public let fee: UInt64
-    public let vPubOut: UInt64
-    public let signal: Fr
-    public let nullifiers: [Fr]
-    public let commitments: [Fr]
+    public let sAsset: Fr
+    public let sValue: UInt64
+    public let sRho: Fr
+    public let sRcm: Fr
+    public let sPos: UInt64
+    public let sPath: [Fr]
+    public let oAsset: Fr
+    public let oValue: UInt64
+    public let oPc: Fr
+    public let rcv: Fr
+    public let anchor: Fr
+    public let sighash: Fr
+    public let nf: Fr
+    public let cmOut: Fr
+    public let cv: Grumpkin.Point
 
-    public init(asset: Fr, nk: Fr, inputs: [TransferInput], outputs: [TransferOutput], root: Fr, fee: UInt64, vPubOut: UInt64, signal: Fr) throws {
-        try require(inputs.count == 3 && outputs.count == 3, "a transfer has three inputs and three outputs")
-        // Sums in 128 bits: the circuit range-checks each value to 64.
-        func sum(_ xs: [UInt64]) -> (UInt64, Bool) { xs.reduce((0, false)) { acc, x in let r = acc.0.addingReportingOverflow(x); return (r.partialValue, acc.1 || r.overflow) } }
-        if asset == PrivacyHash.assetErth {
-            let (i, io) = sum(inputs.map(\.value))
-            let (o, oo) = sum(outputs.map(\.value) + [vPubOut, fee])
-            try require(!io && !oo && i == o, "ERTH unbalanced")
-        } else {
-            let (i, io) = sum([inputs[0].value, inputs[1].value])
-            let (o, oo) = sum([outputs[0].value, outputs[1].value, vPubOut])
-            try require(!io && !oo && i == o, "asset A unbalanced")
-            let (f, fo) = sum([outputs[2].value, fee])
-            try require(!fo && inputs[2].value == f, "fee slot unbalanced")
+    public init(nk: Fr, sAsset: Fr, sValue: UInt64, sRho: Fr, sRcm: Fr, sPos: UInt64, sPath: [Fr], oAsset: Fr, oValue: UInt64,
+                oPc: Fr, rcv: Fr, anchor: Fr, sighash: Fr, cv: Grumpkin.Point? = nil) throws {
+        try require(sPos <= 0xffff_ffff, "position is a u32")
+        try require(sPath.count == Merkle.depth, "a path is \(Merkle.depth) siblings")
+        self.nk = nk; self.sAsset = sAsset; self.sValue = sValue; self.sRho = sRho; self.sRcm = sRcm; self.sPos = sPos
+        self.sPath = sPath; self.oAsset = oAsset; self.oValue = oValue; self.oPc = oPc; self.rcv = rcv; self.anchor = anchor
+        self.sighash = sighash
+        nf = PrivacyHash.nf(nk: nk, rho: sRho, position: sPos)
+        cmOut = PrivacyHash.cm(asset: oAsset, value: oValue, pc: oPc)
+        self.cv = cv ?? Grumpkin.valueCommit(assetSpend: sAsset, vSpend: sValue, assetOut: oAsset, vOut: oValue, rcv: rcv)
+    }
+
+    /// What the circuit will assert of the spend, checked before spending a second on a proof that cannot verify.
+    public func check() throws {
+        if sValue != 0 {
+            let cm = PrivacyHash.cm(asset: sAsset, value: sValue, pc: PrivacyHash.pc(ownerPK: PrivacyHash.ownerPK(nk), rho: sRho, rcm: sRcm))
+            try require(Merkle.rootFromPath(leaf: cm, index: sPos, siblings: sPath) == anchor, "spend not in the note tree at its anchor")
         }
-        self.asset = asset; self.nk = nk; self.inputs = inputs; self.outputs = outputs
-        self.root = root; self.fee = fee; self.vPubOut = vPubOut; self.signal = signal
-        nullifiers = inputs.map { PrivacyHash.nf(nk: nk, rho: $0.rho, position: $0.position) }
-        let assets = [asset, asset, PrivacyHash.assetErth]
-        commitments = outputs.enumerated().map { PrivacyHash.cm(asset: assets[$0.offset], value: $0.element.value, pc: $0.element.pc) }
     }
 
-    public var assets: [Fr] { [asset, asset, PrivacyHash.assetErth] }
-    public var assetPub: Fr { vPubOut > 0 ? asset : .zero }
+    public func publicInputs() -> [Fr] { [anchor, nf, cmOut, cv.x, cv.y, sighash] }
 
-    public func publicInputs() -> [Fr] {
-        [root] + nullifiers + commitments + [PrivacyHash.u64(fee), PrivacyHash.u64(vPubOut), assetPub, signal]
-    }
-
-    /// The prover's input map: every scalar a "0x" hex string, arrays as lists.
     public func noirInputs() -> [String: Any] {
         [
-            "asset": asset.noir,
             "nk": nk.noir,
-            "in_value": inputs.map { noirHex($0.value) },
-            "in_rho": inputs.map(\.rho.noir),
-            "in_rcm": inputs.map(\.rcm.noir),
-            "in_pos": inputs.map { noirHex($0.position) },
-            "in_path": inputs.map { $0.path.map(\.noir) },
-            "out_value": outputs.map { noirHex($0.value) },
-            "out_pc": outputs.map(\.pc.noir),
-            "root": root.noir,
-            "nf": nullifiers.map(\.noir),
-            "cm_out": commitments.map(\.noir),
-            "fee": noirHex(fee),
-            "v_pub_out": noirHex(vPubOut),
-            "asset_pub": assetPub.noir,
-            "signal": signal.noir,
+            "s_asset": sAsset.noir,
+            "s_value": noirHex(sValue),
+            "s_rho": sRho.noir,
+            "s_rcm": sRcm.noir,
+            "s_pos": noirHex(sPos),
+            "s_path": sPath.map(\.noir),
+            "o_asset": oAsset.noir,
+            "o_value": noirHex(oValue),
+            "o_pc": oPc.noir,
+            "rcv": rcv.noir,
+            "anchor": anchor.noir,
+            "nf": nf.noir,
+            "cm_out": cmOut.noir,
+            "cv_x": cv.x.noir,
+            "cv_y": cv.y.noir,
+            "sighash": sighash.noir,
         ]
     }
 
-    static let inputOrder = ["asset", "nk", "in_value", "in_rho", "in_rcm", "in_pos", "in_path", "out_value", "out_pc",
-                             "root", "nf", "cm_out", "fee", "v_pub_out", "asset_pub", "signal"]
+    static let inputOrder = ["nk", "s_asset", "s_value", "s_rho", "s_rcm", "s_pos", "s_path", "o_asset", "o_value", "o_pc", "rcv",
+                             "anchor", "nf", "cm_out", "cv_x", "cv_y", "sighash"]
 
     /// The same witness as a nargo Prover.toml, for checking against the circuit off-device.
+    public func proverToml() -> String { toml(noirInputs(), order: Self.inputOrder) }
+}
+
+/// The stake circuit's witness (circuits/stake): up to two stake notes of one
+/// owner spent under `anchor` (amount 0 = none: nf 0, no path), up to two
+/// created (amount 0 = none: cm 0), all of `asset`, with
+///
+///     in_0 + in_1 + v_in == out_0 + out_1 + v_out
+///
+/// and spc_mint, otag of the same owner. Public inputs, in the chain's order
+/// (x/shieldedstaking StakeProof.PublicInputs): anchor, asset, nf_0, nf_1,
+/// cm_out_0, cm_out_1, v_in, v_out, spc_mint, otag, sighash.
+public struct StakeWitness: Sendable {
+    public let nk: Fr
+    public let inAmount: [UInt64]
+    public let inRho: [Fr]
+    public let inRcm: [Fr]
+    public let inPos: [UInt64]
+    public let inPath: [[Fr]]
+    public let outAmount: [UInt64]
+    public let outRho: [Fr]
+    public let outRcm: [Fr]
+    public let mintRho: Fr
+    public let mintRcm: Fr
+    public let tagSalt: Fr
+    public let anchor: Fr
+    public let asset: Fr
+    public let vIn: UInt64
+    public let vOut: UInt64
+    public let sighash: Fr
+    public let nullifiers: [Fr]
+    public let commitments: [Fr]
+    public let spcMint: Fr
+    public let otag: Fr
+
+    public init(nk: Fr, inAmount: [UInt64], inRho: [Fr], inRcm: [Fr], inPos: [UInt64], inPath: [[Fr]], outAmount: [UInt64],
+                outRho: [Fr], outRcm: [Fr], mintRho: Fr, mintRcm: Fr, tagSalt: Fr, anchor: Fr, asset: Fr, vIn: UInt64, vOut: UInt64,
+                sighash: Fr) throws {
+        try require([inAmount.count, inRho.count, inRcm.count, inPos.count, inPath.count, outAmount.count, outRho.count, outRcm.count]
+            .allSatisfy { $0 == 2 }, "a stake proof has two input and two output slots")
+        try require(inPath.allSatisfy { $0.count == Merkle.depth }, "a path is \(Merkle.depth) siblings")
+        try require(inPos.allSatisfy { $0 <= 0xffff_ffff }, "position is a u32")
+        self.nk = nk; self.inAmount = inAmount; self.inRho = inRho; self.inRcm = inRcm; self.inPos = inPos; self.inPath = inPath
+        self.outAmount = outAmount; self.outRho = outRho; self.outRcm = outRcm; self.mintRho = mintRho; self.mintRcm = mintRcm
+        self.tagSalt = tagSalt; self.anchor = anchor; self.asset = asset; self.vIn = vIn; self.vOut = vOut; self.sighash = sighash
+        let opk = PrivacyHash.ownerPK(nk)
+        nullifiers = (0 ..< 2).map { inAmount[$0] == 0 ? .zero : PrivacyHash.stakeNF(nk: nk, rho: inRho[$0], position: inPos[$0]) }
+        commitments = (0 ..< 2).map {
+            outAmount[$0] == 0 ? .zero : PrivacyHash.stakeCM(asset: asset, amount: outAmount[$0],
+                                                             spc: PrivacyHash.stakePC(ownerPK: opk, rho: outRho[$0], rcm: outRcm[$0]))
+        }
+        spcMint = PrivacyHash.stakePC(ownerPK: opk, rho: mintRho, rcm: mintRcm)
+        otag = PrivacyHash.ownerTag(ownerPK: opk, salt: tagSalt)
+    }
+
+    public func check() throws {
+        let opk = PrivacyHash.ownerPK(nk)
+        for i in 0 ..< 2 where inAmount[i] != 0 {
+            let cm = PrivacyHash.stakeCM(asset: asset, amount: inAmount[i], spc: PrivacyHash.stakePC(ownerPK: opk, rho: inRho[i], rcm: inRcm[i]))
+            try require(Merkle.rootFromPath(leaf: cm, index: inPos[i], siblings: inPath[i]) == anchor,
+                        "stake input \(i) not in the stake tree at its anchor")
+        }
+        let ins = inAmount.reduce(BigUInt(vIn)) { $0 + BigUInt($1) }
+        let outs = outAmount.reduce(BigUInt(vOut)) { $0 + BigUInt($1) }
+        try require(ins == outs, "stake amounts do not balance")
+    }
+
+    public func publicInputs() -> [Fr] {
+        [anchor, asset] + nullifiers + commitments + [PrivacyHash.u64(vIn), PrivacyHash.u64(vOut), spcMint, otag, sighash]
+    }
+
+    public func noirInputs() -> [String: Any] {
+        [
+            "nk": nk.noir,
+            "in_amount": inAmount.map(noirHex),
+            "in_rho": inRho.map(\.noir),
+            "in_rcm": inRcm.map(\.noir),
+            "in_pos": inPos.map(noirHex),
+            "in_path": inPath.map { $0.map(\.noir) },
+            "out_amount": outAmount.map(noirHex),
+            "out_rho": outRho.map(\.noir),
+            "out_rcm": outRcm.map(\.noir),
+            "mint_rho": mintRho.noir,
+            "mint_rcm": mintRcm.noir,
+            "tag_salt": tagSalt.noir,
+            "anchor": anchor.noir,
+            "asset": asset.noir,
+            "nf_0": nullifiers[0].noir,
+            "nf_1": nullifiers[1].noir,
+            "cm_out_0": commitments[0].noir,
+            "cm_out_1": commitments[1].noir,
+            "v_in": noirHex(vIn),
+            "v_out": noirHex(vOut),
+            "spc_mint": spcMint.noir,
+            "otag": otag.noir,
+            "sighash": sighash.noir,
+        ]
+    }
+
+    static let inputOrder = ["nk", "in_amount", "in_rho", "in_rcm", "in_pos", "in_path", "out_amount", "out_rho", "out_rcm", "mint_rho",
+                             "mint_rcm", "tag_salt", "anchor", "asset", "nf_0", "nf_1", "cm_out_0", "cm_out_1", "v_in", "v_out",
+                             "spc_mint", "otag", "sighash"]
+
     public func proverToml() -> String { toml(noirInputs(), order: Self.inputOrder) }
 }
 

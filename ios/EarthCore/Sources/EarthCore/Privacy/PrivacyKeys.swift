@@ -1,6 +1,5 @@
 import CryptoKit
 import Foundation
-import secp256k1
 
 /// The wallet's privacy keys, all derived from the BIP-39 mnemonic so the
 /// mnemonic stays the only backup. Ports `privacy/keys/PrivacyKeys.kt`; the
@@ -10,7 +9,6 @@ import secp256k1
 ///     m/2026'/118'/0'/0'   id_secret   (identity: idc = H(TAG_ID, id_secret))
 ///     m/2026'/118'/0'/1'   nk          (spending: owner_pk = H(TAG_OWNER, nk))
 ///     m/2026'/118'/0'/2'   ek          (x25519 note-encryption key)
-///     m/2026'/118'/1'/i'   position key i (one-time secp256k1, Groundworks)
 ///
 /// A child's 32-byte private key k becomes a secret by
 /// HMAC-SHA512(key = "earth.privacy.v1", label || k): reduced mod p for the
@@ -23,18 +21,16 @@ public final class PrivacyKeys: @unchecked Sendable {
     public let idSecret: Fr
     public let nk: Fr
     private let ekSecret: Data
-    private let positionRoot: HDKey
 
     public let idc: Fr
     public let ownerPK: Fr
     public let ekPub: Data
     public let address: ShieldedAddress
 
-    private init(idSecret: Fr, nk: Fr, ekSecret: Data, positionRoot: HDKey) throws {
+    private init(idSecret: Fr, nk: Fr, ekSecret: Data) throws {
         self.idSecret = idSecret
         self.nk = nk
         self.ekSecret = ekSecret
-        self.positionRoot = positionRoot
         idc = PrivacyHash.idc(idSecret)
         ownerPK = PrivacyHash.ownerPK(nk)
         ekPub = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: ekSecret).publicKey.rawRepresentation
@@ -55,8 +51,7 @@ public final class PrivacyKeys: @unchecked Sendable {
         return try PrivacyKeys(
             idSecret: Fr.fromWideBytes(secret(0, "id_secret")),
             nk: Fr.fromWideBytes(secret(1, "nk")),
-            ekSecret: Data(try secret(2, "ek").prefix(32)),
-            positionRoot: coin.child(index: 1 | 0x8000_0000)
+            ekSecret: Data(try secret(2, "ek").prefix(32))
         )
     }
 
@@ -75,9 +70,12 @@ public final class PrivacyKeys: @unchecked Sendable {
     ///     rho = HMAC-SHA512("earth.privacy.v1", "mint-rho" || nk (32) || counter u32 BE) mod p
     ///     rcm = HMAC-SHA512("earth.privacy.v1", "mint-rcm" || nk (32) || counter u32 BE) mod p
     public func mintSecrets(_ counter: UInt32) -> (rho: Fr, rcm: Fr) {
+        (counted("mint-rho", counter), counted("mint-rcm", counter))
+    }
+
+    private func counted(_ label: String, _ counter: UInt32) -> Fr {
         let c = Data([UInt8(counter >> 24 & 0xff), UInt8(counter >> 16 & 0xff), UInt8(counter >> 8 & 0xff), UInt8(counter & 0xff)])
-        func d(_ label: String) -> Fr { try! Fr.fromWideBytes(Self.hmac(Data(label.utf8) + nk.bytes + c)) }
-        return (d("mint-rho"), d("mint-rcm"))
+        return try! Fr.fromWideBytes(Self.hmac(Data(label.utf8) + nk.bytes + c))
     }
 
     /// pc of self-mint `counter`.
@@ -86,19 +84,31 @@ public final class PrivacyKeys: @unchecked Sendable {
         return PrivacyHash.pc(ownerPK: ownerPK, rho: rho, rcm: rcm)
     }
 
-    /// Groundworks position key `index`: the child's 32-byte secp256k1 private key.
-    public func positionKey(_ index: UInt32) throws -> Data {
-        try positionRoot.child(index: index | 0x8000_0000).privateKey
+    /// rho and rcm of stake self-mint `counter`: the stake pc a stake proof
+    /// names as spc_mint for a stake note the chain mints to us (a
+    /// delegation's derth, an undelegation's claim, a stake vote's re-mint,
+    /// an unlocked position). The chain publishes the minted note's denom,
+    /// amount and spc, so sync finds it by its spc alone:
+    ///
+    ///     rho = HMAC-SHA512("earth.privacy.v1", "stake-rho" || nk (32) || counter u32 BE) mod p
+    ///     rcm = HMAC-SHA512("earth.privacy.v1", "stake-rcm" || nk (32) || counter u32 BE) mod p
+    public func stakeMintSecrets(_ counter: UInt32) -> (rho: Fr, rcm: Fr) {
+        (counted("stake-rho", counter), counted("stake-rcm", counter))
     }
 
-    /// The position key's 33-byte compressed public key.
-    public func positionPubKey(_ index: UInt32) throws -> Data {
-        try secp256k1.Signing.PrivateKey(dataRepresentation: positionKey(index)).publicKey.dataRepresentation
+    /// spc of stake self-mint `counter`.
+    public func stakeMintPC(_ counter: UInt32) -> Fr {
+        let (rho, rcm) = stakeMintSecrets(counter)
+        return PrivacyHash.stakePC(ownerPK: ownerPK, rho: rho, rcm: rcm)
     }
 
-    /// secp256k1 over sha256(message), low-S, 64-byte r||s (what a position key signs).
-    public func positionSign(_ index: UInt32, message: Data) throws -> Data {
-        let key = try secp256k1.Signing.PrivateKey(dataRepresentation: positionKey(index))
-        return try key.signature(for: message).compactRepresentation
-    }
+    /// Groundworks position `counter`'s owner-tag salt: a position stores
+    /// H(TAG_OTAG, owner_pk, salt) and its owner proves it again to update,
+    /// unlock or vote it. Found again from the mnemonic by recomputing the
+    /// tags of counters 0 ... last+gap against the public positions.
+    ///
+    ///     salt = HMAC-SHA512("earth.privacy.v1", "otag-salt" || nk (32) || counter u32 BE) mod p
+    public func otagSalt(_ counter: UInt32) -> Fr { counted("otag-salt", counter) }
+
+    public func ownerTag(_ counter: UInt32) -> Fr { PrivacyHash.ownerTag(ownerPK: ownerPK, salt: otagSalt(counter)) }
 }

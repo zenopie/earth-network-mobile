@@ -68,6 +68,35 @@ public struct OwnedNote: Hashable, Sendable, Codable {
     public var unspent: Bool { spentHeight == nil }
 }
 
+/// A stake note the wallet owns (x/shieldedstaking's stake tree): delegated
+/// stake (derth/<valoper>) or an unbonding claim (unbond/<valoper>/<epoch>).
+/// Owner-locked: it can be merged, split, undelegated, voted or locked by its
+/// owner, never sent.
+///
+///     spc = H(TAG_SPC, owner_pk, rho, rcm)    cm = H(TAG_STAKE, AssetID(denom), amount, spc)
+///     nf  = H(TAG_SNF, nk, rho, position)
+public struct OwnedStakeNote: Hashable, Sendable, Codable {
+    public let position: UInt64
+    public let height: UInt64
+    public let denom: String
+    public let amount: UInt64
+    public let rho: Fr
+    public let rcm: Fr
+    public let cm: Fr
+    public let nf: Fr
+    public var spentHeight: UInt64?
+    public var pendingAt: Int64?
+
+    public init(position: UInt64, height: UInt64, denom: String, amount: UInt64, rho: Fr, rcm: Fr, cm: Fr, nf: Fr,
+                spentHeight: UInt64? = nil, pendingAt: Int64? = nil) {
+        self.position = position; self.height = height; self.denom = denom; self.amount = amount
+        self.rho = rho; self.rcm = rcm; self.cm = cm; self.nf = nf; self.spentHeight = spentHeight; self.pendingAt = pendingAt
+    }
+
+    public var unspent: Bool { spentHeight == nil }
+    public var spendable: Bool { unspent && pendingAt == nil && amount > 0 }
+}
+
 /// Asset id -> denom, for the ids note ciphertexts carry. Seeded with the fee
 /// and personhood denoms; every public amount the indexer serves (shields and
 /// mints, which name their denom) teaches it more, and the first note of any

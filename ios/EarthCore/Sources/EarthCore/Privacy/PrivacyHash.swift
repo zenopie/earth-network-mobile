@@ -19,8 +19,13 @@ public enum PrivacyHash {
     public static let tagSignal = tag("earth.signal")
     public static let tagBytes = tag("earth.bytes")
     public static let tagScope = tag("earth.scope")
+    // The stake note tree (x/shieldedstaking, circuits/stake).
+    public static let tagStake = tag("earth.stake")
+    public static let tagSPC = tag("earth.spc")
+    public static let tagSNF = tag("earth.snf")
+    public static let tagOTag = tag("earth.otag")
 
-    /// The transfer circuit's fee asset, privacy_core::ASSET_ERTH.
+    /// The fee asset, privacy_core::ASSET_ERTH.
     public static let assetErth: Fr = assetID("uerth")
 
     private static func tag(_ s: String) -> Fr { Fr(BigUInt(Data(s.utf8))) }
@@ -56,6 +61,21 @@ public enum PrivacyHash {
         return h(tagNF, nk, rho, u64(position))
     }
 
+    /// A stake note's hidden owner: H(TAG_SPC, owner_pk, rho, rcm).
+    public static func stakePC(ownerPK: Fr, rho: Fr, rcm: Fr) -> Fr { h(tagSPC, ownerPK, rho, rcm) }
+
+    /// A stake note: H(TAG_STAKE, AssetID(stake denom), amount, spc).
+    public static func stakeCM(asset: Fr, amount: UInt64, spc: Fr) -> Fr { h(tagStake, asset, u64(amount), spc) }
+
+    /// A stake note's nullifier: H(TAG_SNF, nk, rho, position), position a u32.
+    public static func stakeNF(nk: Fr, rho: Fr, position: UInt64) -> Fr {
+        precondition(position <= 0xffff_ffff, "position is a u32")
+        return h(tagSNF, nk, rho, u64(position))
+    }
+
+    /// A Groundworks position's owner tag: H(TAG_OTAG, owner_pk, salt).
+    public static func ownerTag(ownerPK: Fr, salt: Fr) -> Fr { h(tagOTag, ownerPK, salt) }
+
     public static func assetID(_ denom: String) -> Fr {
         let b = Data(denom.utf8)
         return Poseidon2.hash([tagAsset, u64(UInt64(b.count))] + chunks31(b))
@@ -83,32 +103,6 @@ public enum PrivacyHash {
     /// H(TAG_SIGNAL, Bytes(msg_type), Bytes(chain_id), fields...).
     public static func signal(msgType: String, chainID: String, fields: [Fr]) -> Fr {
         Poseidon2.hash([tagSignal, bytes(msgType), bytes(chainID)] + fields)
-    }
-
-    public static func spendSignal(msgType: String, chainID: String, ciphertexts: [Data], extra: [Fr]) -> Fr {
-        precondition(ciphertexts.count == 3)
-        return signal(msgType: msgType, chainID: chainID, fields: ciphertexts.map(bytes) + extra)
-    }
-
-    public static let msgTransferType = "/earth.shielded.v1.MsgTransfer"
-
-    public static func transferSignal(chainID: String, receiver: Data?, ciphertexts: [Data], feeFromOutput: UInt64) -> Fr {
-        spendSignal(msgType: msgTransferType, chainID: chainID, ciphertexts: ciphertexts,
-                    extra: [bytes(receiver ?? Data()), u64(feeFromOutput)])
-    }
-
-    public static func multiSpendSignal(
-        msgType: String, chainID: String, ciphertexts: [[Data]], nullifiers: [[Fr]], extra: [Fr]
-    ) -> Fr {
-        var f: [Fr] = []
-        for cts in ciphertexts { precondition(cts.count == 3); f += cts.map(bytes) }
-        for nfs in nullifiers { precondition(nfs.count == 3); f += nfs }
-        return signal(msgType: msgType, chainID: chainID, fields: f + extra)
-    }
-
-    public static func actionSignal(msgType: String, chainID: String, ciphertexts: [Data], nullifiers: [Fr], extra: [Fr]) -> Fr {
-        precondition(nullifiers.count == 3)
-        return spendSignal(msgType: msgType, chainID: chainID, ciphertexts: ciphertexts, extra: nullifiers + extra)
     }
 
     public static func scope(_ kind: String, _ args: Fr...) -> Fr {

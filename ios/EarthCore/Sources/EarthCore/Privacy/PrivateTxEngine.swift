@@ -1,9 +1,10 @@
 import Foundation
 
-/// Proves the two privacy circuits. On a phone, the Barretenberg prover the
-/// app installs; in tests, a fake that checks the witness instead.
+/// Proves the privacy circuits. On a phone, the Barretenberg prover the app
+/// installs; in tests, a fake that checks the witness instead.
 public protocol PrivacyProver: Sendable {
-    func proveTransfer(_ w: TransferWitness) async throws -> Data
+    func proveAction(_ w: ActionWitness) async throws -> Data
+    func proveStake(_ w: StakeWitness) async throws -> Data
     func proveMembership(_ w: MembershipWitness) async throws -> Data
 }
 
@@ -34,46 +35,57 @@ public protocol PrivateChain: Sendable {
     func gasPrice() async throws -> Decimal
     /// x/shielded params.min_fee: the consensus floor on any private fee.
     func minFee() async throws -> UInt64
+    /// x/shielded params.max_actions_per_bundle.
+    func maxActionsPerBundle() async throws -> Int
 }
 
-/// A membership proof's statement, waiting for the signal.
+/// A membership proof's statement, waiting for the sighash (its signal).
 public struct MembershipWitnessSpec: Sendable {
     let make: @Sendable (Fr) throws -> MembershipWitness
     public init(_ make: @escaping @Sendable (Fr) throws -> MembershipWitness) { self.make = make }
     public func witness(signal: Fr) throws -> MembershipWitness { try make(signal) }
 }
 
-/// A private msg in the making: its transfers and membership (everything but
-/// proofs and the signal), and how to assemble the msg once they exist.
-/// `build` gets the transfers' protos (proofs placeholder or real, in
-/// `transfers` order) and the membership proto, if any.
+/// A private msg in the making: its bundles, stake proof and membership
+/// (everything but proofs, binding signatures and the sighash), and how to
+/// assemble the msg once they exist. `build` gets the bundles (unproven or
+/// proven, in `bundles` order), the stake proof and the membership.
 public struct Assembled {
-    public let transfers: [TransferPlan]
+    public let bundles: [BundlePlan]
+    public let stake: StakePlan?
     public let membership: MembershipWitnessSpec?
-    public let build: ([ShieldedTransfer], Membership?) throws -> any PrivateMsg
+    public let build: ([Bundle], StakeProof?, Membership?) throws -> any PrivateMsg
 
-    public init(transfers: [TransferPlan], membership: MembershipWitnessSpec? = nil,
-                build: @escaping ([ShieldedTransfer], Membership?) throws -> any PrivateMsg) {
-        self.transfers = transfers; self.membership = membership; self.build = build
+    public init(bundles: [BundlePlan], stake: StakePlan? = nil, membership: MembershipWitnessSpec? = nil,
+                build: @escaping ([Bundle], StakeProof?, Membership?) throws -> any PrivateMsg) {
+        self.bundles = bundles; self.stake = stake; self.membership = membership; self.build = build
     }
+
+    /// The pool notes the msg spends.
+    public var spends: [OwnedNote] { bundles.flatMap(\.spends) }
+
+    /// The stake notes the msg spends.
+    public var stakeSpends: [OwnedStakeNote] { stake?.spends ?? [] }
 }
 
 /// Runs a private tx end to end, the way the chain's ante requires. Ports
 /// `privacy/tx/PrivateTxEngine.kt`:
 ///
-///  1. lay the tx out at a guessed fee, with placeholder proofs over its real
-///     roots, nullifiers, commitments and ciphertexts, and simulate it: the
-///     private ante charges every proof's fixed gas in simulate mode and runs
-///     every state check, but verifies nothing;
+///  1. lay the tx out at a fee, with placeholder proofs and binding
+///     signatures over its real anchors, nullifiers, commitments, value
+///     commitments and ciphertexts, and simulate it: the private ante charges
+///     every proof's fixed gas in simulate mode and runs every state check,
+///     but verifies nothing;
 ///  2. fee = max(min_fee, ceil(min gas price x gas limit)), the gas limit the
-///     simulated gas plus headroom; if it differs from the guess, lay the tx
-///     out again at that fee (the fee note's change, and so its ciphertext and
-///     the signal, change with it);
-///  3. compute the msg's signal, prove every transfer and the membership over
-///     it, and broadcast the unsigned tx.
+///     simulated gas plus headroom; lay the tx out again at that fee (its
+///     change, and so the bundle, change with it) until the layout's own gas
+///     is covered (a fee needing one more note adds an action);
+///  3. compute the sighash, prove every action, the stake proof and the
+///     membership over it, sign every bundle's balance, broadcast the
+///     unsigned tx.
 ///
-/// Gas is a function of the tx's size and shape alone (x/shielded/ante), so a
-/// fee computed from the placeholder tx holds for the proven one.
+/// Gas is a function of the tx's shape alone (x/shielded/ante), so a fee
+/// computed from the placeholder tx holds for the proven one.
 public struct PrivateTxEngine: Sendable {
     public let chainID: String
     public let chain: PrivateChain
@@ -92,6 +104,7 @@ public struct PrivateTxEngine: Sendable {
     public static let guessGas: UInt64 = 3_000_000
     /// Covers a fee's varint growing by a byte or two between the simulated and the final tx.
     public static let minHeadroom: UInt64 = 20_000
+    static let maxRelays = 4
 
     public init(chainID: String, chain: PrivateChain, prover: PrivacyProver) {
         self.chainID = chainID; self.chain = chain; self.prover = prover
@@ -111,17 +124,26 @@ public struct PrivateTxEngine: Sendable {
 
     public func run(_ assemble: (UInt64) throws -> Assembled) async throws -> (TxResult, Assembled) {
         let (q, a) = try await price(assemble)
-        let draft = try a.build(a.transfers.map { $0.proto(proof: Self.placeholder) }, try a.membership.map(placeholderMembership))
-        let signal = try draft.signal(chainID: chainID)
-        var proofs: [Data] = []
-        for t in a.transfers { proofs.append(try await prover.proveTransfer(t.witness(signal: signal))) }
+        let sighash = try draft(a).sighash(chainID: chainID)
+        var bundles: [Bundle] = []
+        for (i, plan) in a.bundles.enumerated() {
+            let b = try await plan.prove(sighash: sighash) { try await prover.proveAction($0) }
+            guard PrivateMsgs.checkBalance(b, sighash: sighash) else { throw PrivacyError("bundle \(i) does not balance") }
+            bundles.append(b)
+        }
+        var stake: StakeProof?
+        if let s = a.stake {
+            let w = try s.witness(sighash: sighash)
+            try w.check()
+            stake = try s.proto(proof: try await prover.proveStake(w))
+        }
         var membership: Membership?
         if let spec = a.membership {
-            let w = try spec.witness(signal: signal)
+            let w = try spec.witness(signal: sighash)
             membership = Membership(proof: try await prover.proveMembership(w), root: w.root.bytes, nullifier: w.nullifier.bytes)
         }
-        let msg = try a.build(a.transfers.enumerated().map { $0.element.proto(proof: proofs[$0.offset]) }, membership)
-        guard try msg.signal(chainID: chainID) == signal else { throw PrivacyError("the proven msg binds another signal") }
+        let msg = try a.build(bundles, stake, membership)
+        guard try msg.sighash(chainID: chainID) == sighash else { throw PrivacyError("the proven msg binds another sighash") }
         guard msg.totalFee == q.fee else { throw PrivacyError("the msg must pay exactly the quoted fee") }
         return (try await chain.broadcast(UnsignedTx.build(msg, gasLimit: q.gasLimit)), a)
     }
@@ -129,14 +151,27 @@ public struct PrivateTxEngine: Sendable {
     private func price(_ assemble: (UInt64) throws -> Assembled) async throws -> (Quote, Assembled) {
         let minFee = try await chain.minFee()
         let price = try await chain.gasPrice()
-        let guess = max(minFee, Self.feeFor(price: price, gas: Self.guessGas))
-        var a = try assemble(guess)
-        let draft = try a.build(a.transfers.map { $0.proto(proof: Self.placeholder) }, try a.membership.map(placeholderMembership))
-        let gas = try await chain.simulate(UnsignedTx.build(draft, gasLimit: 0))
-        let limit = gas + max(gas / 10, Self.minHeadroom)
-        let fee = max(minFee, Self.feeFor(price: price, gas: limit))
-        if fee != guess { a = try assemble(fee) }
-        return (Quote(gasLimit: limit, fee: fee), a)
+        var fee = max(minFee, Self.feeFor(price: price, gas: Self.guessGas))
+        var a = try assemble(fee)
+        var first = true
+        for _ in 0 ..< Self.maxRelays {
+            let gas = try await chain.simulate(UnsignedTx.build(try draft(a), gasLimit: 0))
+            let limit = gas + max(gas / 10, Self.minHeadroom)
+            let need = max(minFee, Self.feeFor(price: price, gas: limit))
+            // The guess is re-laid at the fee its layout needs; after that a
+            // layout whose gas the fee covers is final (a fee needing one more
+            // note, or one fewer leaving change, changes the action count, and
+            // so the gas, so the fee may only rise from here).
+            if need == fee || (need < fee && !first) { return (Quote(gasLimit: limit, fee: fee), a) }
+            first = false
+            fee = need
+            a = try assemble(fee)
+        }
+        throw PrivacyError("the fee did not settle")
+    }
+
+    private func draft(_ a: Assembled) throws -> any PrivateMsg {
+        try a.build(a.bundles.map { $0.proto() }, try a.stake?.proto(proof: Self.placeholder), try a.membership.map(placeholderMembership))
     }
 
     /// The membership's real root and nullifier (the chain checks both before any proof), a placeholder proof.

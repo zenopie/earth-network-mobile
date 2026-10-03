@@ -49,18 +49,17 @@ public enum PrivacyReads {
         }
     }
 
-    /// A Groundworks position (public); the wallet finds its own by pubkey.
+    /// A Groundworks position (public), its owner known only by `ownerTag`.
     public struct Position: Sendable, Equatable, Identifiable {
         public let id: UInt64
         public let validator: String
         public let derth: UInt64
-        public let pubkey: Data
-        public let nonce: UInt64
+        public let ownerTag: Fr
         public let splits: [UInt64: UInt64]
         public let createdHeight: UInt64
-        public init(id: UInt64, validator: String, derth: UInt64, pubkey: Data, nonce: UInt64, splits: [UInt64: UInt64] = [:], createdHeight: UInt64 = 0) {
-            self.id = id; self.validator = validator; self.derth = derth; self.pubkey = pubkey
-            self.nonce = nonce; self.splits = splits; self.createdHeight = createdHeight
+        public init(id: UInt64, validator: String, derth: UInt64, ownerTag: Fr, splits: [UInt64: UInt64] = [:], createdHeight: UInt64 = 0) {
+            self.id = id; self.validator = validator; self.derth = derth; self.ownerTag = ownerTag
+            self.splits = splits; self.createdHeight = createdHeight
         }
     }
 
@@ -123,6 +122,12 @@ public struct PrivacyQueries: PrivacyChainReads {
         try await rest.get("/earth/shielded/v1/params").params.min_fee.uint64 ?? 1000
     }
 
+    /// x/shielded params.max_actions_per_bundle (default 16).
+    public func maxActionsPerBundle() async throws -> Int {
+        let v = try await rest.get("/earth/shielded/v1/params").params.max_actions_per_bundle.uint64.map(Int.init) ?? 16
+        return v >= 2 ? v : 16
+    }
+
     public func personhoodParams() async throws -> PrivacyReads.PersonhoodParams {
         let p = try await rest.get("/earth/personhood/v1/params").params
         let r = p.caretaker_vote_seconds.int64(default: 0)
@@ -170,7 +175,7 @@ public struct PrivacyQueries: PrivacyChainReads {
         return PrivacyReads.StakingTiming(epochSeconds: es > 0 ? es : 86_400, unbondingSeconds: seconds)
     }
 
-    /// Every Groundworks position (public); the wallet finds its own by pubkey.
+    /// Every Groundworks position (public); the wallet finds its own by owner tag.
     public func positions() async throws -> [PrivacyReads.Position] {
         var out: [PrivacyReads.Position] = []
         var key: String?
@@ -182,8 +187,8 @@ public struct PrivacyQueries: PrivacyChainReads {
                 var splits: [UInt64: UInt64] = [:]
                 for s in p.splits.array { splits[s.option_id.uint64(default: 0)] = s.percent.uint64(default: 0) }
                 out.append(PrivacyReads.Position(id: p.id.uint64(default: 0), validator: p.validator.string(default: ""),
-                                                 derth: p.derth.uint64(default: 0), pubkey: Data(base64Encoded: p.pubkey.string ?? "") ?? Data(),
-                                                 nonce: p.nonce.uint64(default: 0), splits: splits, createdHeight: p.created_height.uint64(default: 0)))
+                                                 derth: p.derth.uint64(default: 0), ownerTag: try field(p.owner_tag),
+                                                 splits: splits, createdHeight: p.created_height.uint64(default: 0)))
             }
             key = j.pagination.next_key.string.flatMap { $0.isEmpty || $0 == "null" ? nil : $0 }
         } while key != nil
@@ -239,6 +244,8 @@ public struct RESTPrivateChain: PrivateChain {
     public func gasPrice() async throws -> Decimal { await Fees.price(rest: rest) }
 
     public func minFee() async throws -> UInt64 { try await PrivacyQueries(rest: rest).shieldedMinFee() }
+
+    public func maxActionsPerBundle() async throws -> Int { try await PrivacyQueries(rest: rest).maxActionsPerBundle() }
 
     /// RFC 3339 block time to unix seconds.
     static func parseTime(_ ts: String) -> Int64 {

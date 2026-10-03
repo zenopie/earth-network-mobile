@@ -9,7 +9,11 @@ import Foundation
 ///     this wallet's notes to mark them spent;
 ///  3. every identity leaf, and every zeroing since the last sync, into the
 ///     local identity tree;
-///  4. the local roots checked against the indexer's latest recorded roots.
+///  4. the stake tree the same way: every stake note (one the chain minted is
+///     ours if its public stake pc is one of our stake self-mint pcs, one a
+///     stake proof created if its stake ciphertext opens), every stake
+///     nullifier;
+///  5. the local roots checked against the indexer's latest recorded roots.
 ///
 /// Nothing is ever requested about one note or one leaf: the trees, and with
 /// them this wallet's Merkle paths, are built here from the full streams.
@@ -22,6 +26,7 @@ public final class WalletSync {
         public let spent: [OwnedNote]
         public let noteRoot: Fr
         public let identityRoot: Fr
+        public let newStake: [OwnedStakeNote]
         public let identityStatus: IdentityStatus
     }
 
@@ -37,6 +42,7 @@ public final class WalletSync {
     private let chainID: String
     private let now: () -> Int64
     private var mintPCs: [UInt32: Fr] = [:]
+    private var stakePCs: [UInt32: Fr] = [:]
 
     public init(indexer: PrivacyIndexer, store: PrivacyStore, keys: PrivacyKeys, chainID: String,
                 now: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970) }) {
@@ -64,6 +70,8 @@ public final class WalletSync {
         }
         let newNotes = try await syncNotes(limit)
         let spent = try await syncNullifiers(limit)
+        let newStake = try await syncStakeNotes(limit)
+        try await syncStakeNullifiers(limit)
         releaseStalePending()
         try await syncIdentity(limit)
         let roots = try await indexer.rootsLatest()
@@ -73,9 +81,12 @@ public final class WalletSync {
         if let r = roots.identity, r.treeSize == store.identityTree.size, r.root != store.identityTree.root() {
             throw Inconsistent(message: "identity tree root differs from the indexer's at \(r.treeSize) leaves")
         }
+        if let r = roots.stake, r.treeSize == store.stakeTree.size, r.root != store.stakeTree.root() {
+            throw Inconsistent(message: "stake tree root differs from the indexer's at \(r.treeSize) notes")
+        }
         store.save()
         return Result(syncedHeight: store.state.notesHeight, newNotes: newNotes, spent: spent, noteRoot: store.noteTree.root(),
-                      identityRoot: store.identityTree.root(), identityStatus: identityStatus())
+                      identityRoot: store.identityTree.root(), newStake: newStake, identityStatus: identityStatus())
     }
 
     private func syncNotes(_ limit: Int?) async throws -> [OwnedNote] {
@@ -182,6 +193,79 @@ public final class WalletSync {
             for i in s.notes.indices {
                 if s.notes[i].unspent, let p = s.notes[i].pendingAt, t - p > Self.pendingTimeout { s.notes[i].pendingAt = nil }
             }
+            for i in s.stakeNotes.indices {
+                if s.stakeNotes[i].unspent, let p = s.stakeNotes[i].pendingAt, t - p > Self.pendingTimeout { s.stakeNotes[i].pendingAt = nil }
+            }
+        }
+    }
+
+    private func syncStakeNotes(_ limit: Int?) async throws -> [OwnedStakeNote] {
+        var found: [OwnedStakeNote] = []
+        while true {
+            let page = try await indexer.stakeNotes(fromPos: store.state.stakeNext, limit: limit)
+            if !page.rows.isEmpty {
+                let next = store.state.stakeNext
+                for (i, r) in page.rows.enumerated() where r.position != next + UInt64(i) {
+                    throw Inconsistent(message: "stake note at position \(r.position), expected \(next + UInt64(i))")
+                }
+                store.stakeTree.appendAll(page.rows.map(\.cm))
+                for r in page.rows {
+                    if let n = openStake(r) {
+                        found.append(n)
+                        store.mutate { $0.stakeNotes.append(n) }
+                    }
+                }
+                store.mutate { $0.stakeNext += UInt64(page.rows.count) }
+            }
+            store.mutate { $0.stakeHeight = max($0.stakeHeight, page.syncedHeight) }
+            if !page.complete { break }
+        }
+        return found
+    }
+
+    private func stakeMintPC(_ c: UInt32) -> Fr {
+        if let pc = stakePCs[c] { return pc }
+        let pc = keys.stakeMintPC(c)
+        stakePCs[c] = pc
+        return pc
+    }
+
+    /// A stake row is ours if the chain minted it to one of our stake
+    /// self-mint pcs (the next `mintGap` past the last used), its public
+    /// denom and amount reproducing its cm; or if a stake proof created it
+    /// and its stake ciphertext opens with our ek and reproduces its cm.
+    func openStake(_ r: StakeNoteRow) -> OwnedStakeNote? {
+        let denom: String, amount: UInt64, rho: Fr, rcm: Fr
+        if let spc = r.spc {
+            guard let d = r.denom, let a = r.amount else { return nil }
+            store.mutate { _ = $0.denoms.insert(d) }
+            let upTo = store.state.nextStakeMintCounter + Self.mintGap
+            guard let c = (0 ..< upTo).first(where: { stakeMintPC($0) == spc }) else { return nil }
+            guard PrivacyHash.stakeCM(asset: PrivacyHash.assetID(d), amount: a, spc: spc) == r.cm else { return nil }
+            store.mutate { $0.nextStakeMintCounter = max($0.nextStakeMintCounter, c + 1) }
+            (rho, rcm) = keys.stakeMintSecrets(c)
+            denom = d; amount = a
+        } else {
+            guard let o = NoteCipher.tryDecryptStake(r.ciphertext, cm: r.cm, keys: keys) else { return nil }
+            denom = AssetDenoms(store.state.denoms).resolve(o.asset); amount = o.amount; rho = o.rho; rcm = o.rcm
+        }
+        guard amount != 0 else { return nil }
+        return OwnedStakeNote(position: r.position, height: r.height, denom: denom, amount: amount, rho: rho, rcm: rcm, cm: r.cm,
+                              nf: PrivacyHash.stakeNF(nk: keys.nk, rho: rho, position: r.position))
+    }
+
+    private func syncStakeNullifiers(_ limit: Int?) async throws {
+        var mine: [Fr: Int] = [:]
+        for (i, n) in store.state.stakeNotes.enumerated() where n.unspent { mine[n.nf] = i }
+        let ceiling = store.state.stakeHeight
+        while store.state.stakeNullifiersNext <= ceiling {
+            let page = try await indexer.stakeNullifiers(fromHeight: store.state.stakeNullifiersNext, limit: limit)
+            for (h, nfs) in page.blocks {
+                if h > ceiling { break }
+                for nf in nfs { if let i = mine[nf] { store.mutate { $0.stakeNotes[i].spentHeight = h } } }
+            }
+            store.mutate { $0.stakeNullifiersNext = min(page.nextHeight, ceiling + 1) }
+            if !page.complete { break }
         }
     }
 

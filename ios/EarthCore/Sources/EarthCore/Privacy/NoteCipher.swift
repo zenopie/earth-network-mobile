@@ -29,6 +29,18 @@ import Foundation
 /// not know it), so the binding is the recipient's check that
 /// CM(asset, value, PC(owner_pk, rho, rcm)) is the note's cm, with the asset
 /// and value the chain published for that position.
+///
+/// "earth stake note v1" (v3), for a stake note a stake proof creates (a
+/// restake's outputs, an undelegation's or a lock's change). Stake notes are
+/// owner-locked, so it is always encrypted to the wallet's own address, for
+/// its other devices and for recovery from the mnemonic:
+///
+///     ct    = epk (32) || ChaCha20-Poly1305(key, nonce = 0^12, aad = empty, pt)      153 bytes
+///     key   = HKDF-SHA256(ikm = X25519(esk, ek_pub), salt = "earth.stake.v1", info = epk || cm)
+///     pt    = 0x03 || asset_id (32) || amount (u64 BE) || rho (32) || rcm (32)
+///
+/// accepted only if StakeCM(asset, amount, StakePC(owner_pk, rho, rcm)) is
+/// the note's cm.
 public enum NoteCipher {
     public static let version: UInt8 = 1
     public static let memoBytes = 64
@@ -39,6 +51,10 @@ public enum NoteCipher {
     public static let blindPlaintextBytes = 1 + 32 + 32 + memoBytes
     public static let blindCiphertextBytes = 32 + blindPlaintextBytes + 16
     private static let blindSalt = Data("earth.note.v2".utf8)
+    public static let stakeVersion: UInt8 = 3
+    public static let stakePlaintextBytes = 1 + 32 + 8 + 32 + 32
+    public static let stakeCiphertextBytes = 32 + stakePlaintextBytes + 16
+    private static let stakeSalt = Data("earth.stake.v1".utf8)
 
     public enum Error: Swift.Error {
         case lowOrderPoint
@@ -145,6 +161,50 @@ public enum NoteCipher {
         guard let rho = try? Fr(bytes: Data(p[1 ..< 33])), let rcm = try? Fr(bytes: Data(p[33 ..< 65])) else { return nil }
         let n = NotePlaintext(denom: denom, value: value, rho: rho, rcm: rcm, memo: trimMemo(Array(p[65...])))
         return n.cm(ownerPK: ownerPK) == cm ? n : nil
+    }
+
+    // MARK: - stake notes (v3)
+
+    /// A stake note's opening, as its stake ciphertext carries it.
+    public struct StakeOpening: Equatable, Sendable {
+        public let asset: Fr
+        public let amount: UInt64
+        public let rho: Fr
+        public let rcm: Fr
+        public init(asset: Fr, amount: UInt64, rho: Fr, rcm: Fr) { self.asset = asset; self.amount = amount; self.rho = rho; self.rcm = rcm }
+    }
+
+    /// Encrypts a stake note to `ekPub` (the wallet's own); cm is its stake commitment.
+    public static func encryptStake(_ o: StakeOpening, ekPub: Data, cm: Fr) throws -> Data {
+        try seal(esk: SecretKey(), ekPub: ekPub, salt: stakeSalt, info: { $0 + cm.bytes }, pt: stakePlaintext(o))
+    }
+
+    /// Deterministic stake encryption: for golden vectors only.
+    static func encryptStakeWith(esk: Data, _ o: StakeOpening, ekPub: Data, cm: Fr) throws -> Data {
+        try seal(esk: SecretKey(rawRepresentation: esk), ekPub: ekPub, salt: stakeSalt, info: { $0 + cm.bytes }, pt: stakePlaintext(o))
+    }
+
+    static func stakePlaintext(_ o: StakeOpening) -> Data {
+        Data([stakeVersion]) + o.asset.bytes + PrivateMsgs.be64(o.amount) + o.rho.bytes + o.rcm.bytes
+    }
+
+    /// The stake note if `ct` opens with our ek for `cm` and recomputes it under our owner key; else nil.
+    public static func tryDecryptStake(_ ct: Data, cm: Fr, keys: PrivacyKeys) -> StakeOpening? {
+        guard ct.count == stakeCiphertextBytes, let ek = try? keys.ek() else { return nil }
+        let c = Data(ct)
+        let epk = c.prefix(32)
+        guard let key = try? kdf(esk: ek, peer: epk, salt: stakeSalt, info: epk + cm.bytes),
+              let pt = try? open(c.suffix(from: 32), key: key),
+              pt.count == stakePlaintextBytes, pt[pt.startIndex] == stakeVersion
+        else { return nil }
+        let p = [UInt8](pt)
+        guard let asset = try? Fr(bytes: Data(p[1 ..< 33])) else { return nil }
+        var amount: UInt64 = 0
+        for b in p[33 ..< 41] { amount = amount << 8 | UInt64(b) }
+        guard let rho = try? Fr(bytes: Data(p[41 ..< 73])), let rcm = try? Fr(bytes: Data(p[73 ..< 105])) else { return nil }
+        guard PrivacyHash.stakeCM(asset: asset, amount: amount, spc: PrivacyHash.stakePC(ownerPK: keys.ownerPK, rho: rho, rcm: rcm)) == cm
+        else { return nil }
+        return StakeOpening(asset: asset, amount: amount, rho: rho, rcm: rcm)
     }
 
     // MARK: - plaintext

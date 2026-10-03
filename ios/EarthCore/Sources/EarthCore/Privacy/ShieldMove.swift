@@ -9,11 +9,17 @@ public enum ShieldMove {
         max(0, balance - fee)
     }
 
-    /// An ERTH unshield spends at most three notes, the fee paid from the same
-    /// notes as the amount (PrivacyWallet.unshield). `fee` is the estimate the
-    /// confirm sheet shows; the simulated fee is at most that.
-    public static func maxUnshield(_ notes: [OwnedNote], fee: UInt64) -> UInt64 {
-        let spendable = NoteSelection.maxSpendable(notes, denom: "uerth", maxNotes: 3)
-        return spendable > fee ? spendable - fee : 0
+    /// An unshield spends up to max_actions_per_bundle ERTH notes
+    /// (`maxNotes`), so its most is their sum: at Max the fee comes out of
+    /// the amount (PrivacyWallet.unshield feeFromAmount), the bundle
+    /// releasing exactly what the notes hold.
+    public static func maxUnshield(_ notes: [OwnedNote], maxNotes: Int) -> UInt64 {
+        NoteSelection.maxSpendable(notes, denom: "uerth", maxNotes: maxNotes)
+    }
+
+    /// Whether an unshield of `amount` pays its fee from the amount: when the
+    /// amount and an estimated `fee` would not both fit `spendable`.
+    public static func feeFromAmount(amount: UInt64, spendable: UInt64, fee: UInt64) -> Bool {
+        amount.addingReportingOverflow(fee).overflow || amount + fee > spendable
     }
 }

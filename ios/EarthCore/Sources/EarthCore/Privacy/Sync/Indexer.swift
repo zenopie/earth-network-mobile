@@ -13,6 +13,10 @@ public protocol PrivacyIndexer: Sendable {
     func identityZeroed(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<UInt64>
     func rootsLatest() async throws -> LatestRoots
     func rates(epoch: UInt64?) async throws -> [RateRow]
+    /// x/shieldedstaking's stake note tree, by position.
+    func stakeNotes(fromPos: UInt64, limit: Int?) async throws -> StakeNotesPage
+    /// Its spent nullifiers, by height.
+    func stakeNullifiers(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<Fr>
 }
 
 public struct IndexerStatus: Sendable {
@@ -94,8 +98,36 @@ public struct LatestRoots: Sendable {
     public let note: RootRecord?
     public let identity: RootRecord?
     public let syncedHeight: UInt64
-    public init(note: RootRecord?, identity: RootRecord?, syncedHeight: UInt64) {
-        self.note = note; self.identity = identity; self.syncedHeight = syncedHeight
+    public let stake: RootRecord?
+    public init(note: RootRecord?, identity: RootRecord?, syncedHeight: UInt64, stake: RootRecord? = nil) {
+        self.note = note; self.identity = identity; self.syncedHeight = syncedHeight; self.stake = stake
+    }
+}
+
+/// A stake tree leaf. A note the chain minted carries its public `denom`,
+/// `amount` and stake pc `spc` and no ciphertext; a note a stake proof
+/// created carries a ciphertext and none of the three.
+public struct StakeNoteRow: Sendable {
+    public let position: UInt64
+    public let height: UInt64
+    public let cm: Fr
+    public let ciphertext: Data
+    public let denom: String?
+    public let amount: UInt64?
+    public let spc: Fr?
+    public init(position: UInt64, height: UInt64, cm: Fr, ciphertext: Data, denom: String?, amount: UInt64?, spc: Fr?) {
+        self.position = position; self.height = height; self.cm = cm; self.ciphertext = ciphertext
+        self.denom = denom; self.amount = amount; self.spc = spc
+    }
+}
+
+public struct StakeNotesPage: Sendable {
+    public let rows: [StakeNoteRow]
+    public let nextPos: UInt64
+    public let complete: Bool
+    public let syncedHeight: UInt64
+    public init(rows: [StakeNoteRow], nextPos: UInt64, complete: Bool, syncedHeight: UInt64) {
+        self.rows = rows; self.nextPos = nextPos; self.complete = complete; self.syncedHeight = syncedHeight
     }
 }
 
@@ -173,6 +205,24 @@ public struct HTTPPrivacyIndexer: PrivacyIndexer {
         }
     }
 
+    public func stakeNotes(fromPos: UInt64, limit: Int?) async throws -> StakeNotesPage {
+        try Self.parseStakeNotes(await get("/privacy/stake/notes?from_pos=\(fromPos)\(q("limit", limit))"))
+    }
+
+    public func stakeNullifiers(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<Fr> {
+        try Self.parseHeights(await get("/privacy/stake/nullifiers?from_height=\(fromHeight)\(q("limit", limit))")) { try Fr(hex: $0.string ?? "") }
+    }
+
+    static func parseStakeNotes(_ j: JSON) throws -> StakeNotesPage {
+        let rows = try j.notes.array.map { r in
+            StakeNoteRow(position: r[0].uint64(default: 0), height: r[1].uint64(default: 0), cm: try Fr(hex: r[2].string ?? ""),
+                         ciphertext: Data(base64Encoded: r[3].string ?? "") ?? Data(), denom: r[4].string, amount: r[5].uint64,
+                         spc: try r[6].string.map { try Fr(hex: $0) })
+        }
+        return StakeNotesPage(rows: rows, nextPos: j.next_pos.uint64(default: 0), complete: j.complete.bool(default: false),
+                              syncedHeight: j.synced_height.uint64(default: 0))
+    }
+
     static func parseNotes(_ j: JSON) throws -> NotesPage {
         let rows = try j.notes.array.map { r in
             NoteRow(position: r[0].uint64(default: 0), height: r[1].uint64(default: 0), cm: try Fr(hex: r[2].string ?? ""),
@@ -202,6 +252,7 @@ public struct HTTPPrivacyIndexer: PrivacyIndexer {
             return RootRecord(root: try Fr(hex: r.root.string ?? ""), treeSize: r.tree_size.uint64(default: 0),
                               height: r.height.uint64(default: 0), time: r.time.int64(default: 0))
         }
-        return LatestRoots(note: try root(j.note), identity: try root(j.identity), syncedHeight: j.synced_height.uint64(default: 0))
+        return LatestRoots(note: try root(j.note), identity: try root(j.identity), syncedHeight: j.synced_height.uint64(default: 0),
+                           stake: try root(j.stake))
     }
 }
