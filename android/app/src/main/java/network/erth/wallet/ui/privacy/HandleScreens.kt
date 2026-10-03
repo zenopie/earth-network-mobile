@@ -345,7 +345,7 @@ fun SwitchIdentityScreen(
             moved -> " (moved)"
             else -> ""
         }
-        if (holdsHandle || holdsVote || inFlight || handleMoved || voteMoved) {
+        if (holdsHandle || handleInRenewal || holdsVote || inFlight || handleMoved || voteMoved) {
             EarthLabel("Move first")
             if (handleInRenewal && !handleInFlight) {
                 Note("@${state?.handle} is past its expiry (in its renewal period): only a live handle can be moved. Renew it first to move it.")
