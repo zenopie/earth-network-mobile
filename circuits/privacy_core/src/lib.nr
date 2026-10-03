@@ -53,6 +53,10 @@ pub fn h5(a: Field, b: Field, c: Field, d: Field, e: Field) -> Field {
     Poseidon2::hash([a, b, c, d, e], 5)
 }
 
+pub fn h6(a: Field, b: Field, c: Field, d: Field, e: Field, f: Field) -> Field {
+    Poseidon2::hash([a, b, c, d, e, f], 6)
+}
+
 /// idc = H(TAG_ID, id_secret)
 pub fn idc(id_secret: Field) -> Field {
     h2(TAG_ID, id_secret)
@@ -63,12 +67,14 @@ pub fn owner_pk(nk: Field) -> Field {
     h2(TAG_OWNER, nk)
 }
 
-/// leaf = H(TAG_LEAF, idc, dsc_key, country, activated_at)
+/// leaf = H(TAG_LEAF, idc, dsc_key, country, activated_at, predecessor_at)
 ///
 /// `country` is the issuing country as the chain records it (the CSCA's ISO
 /// 3166-1 alpha-2), encoded by country_code; 0 when unknown.
-pub fn identity_leaf(idc: Field, dsc_key: Field, country: Field, activated_at: u64) -> Field {
-    h5(TAG_LEAF, idc, dsc_key, country, activated_at as Field)
+/// `predecessor_at` is the time of the switch or re-entry that created the
+/// leaf (unix seconds), 0 for a passport never registered before.
+pub fn identity_leaf(idc: Field, dsc_key: Field, country: Field, activated_at: u64, predecessor_at: u64) -> Field {
+    h6(TAG_LEAF, idc, dsc_key, country, activated_at as Field, predecessor_at as Field)
 }
 
 /// Field encoding of an ISO 3166-1 alpha-2 code: its two ASCII bytes read
