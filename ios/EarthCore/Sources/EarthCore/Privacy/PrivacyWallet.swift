@@ -70,8 +70,12 @@ public final class PrivacyWallet: @unchecked Sendable {
         public let claimedDays: Set<UInt64>
         public let caretakerSplit: [UInt64: UInt64]
         public let caretakerCastAt: Int64
-        public let referrerAddress: String
-        public let referrerBoundAt: Int64
+        /// The split's expiry as the chain reported it (0: unknown or none).
+        public let caretakerExpiresAt: Int64
+        public let caretakerMovedOut: Bool
+        /// This identity's handle ("" for none), and whether it moved one away.
+        public let handle: String
+        public let handleMovedOut: Bool
         public let unbondRetryAt: [String: Int64]
         public let syncedHeight: UInt64
         /// A committed registration whose leaf is not matched yet (nil: none), and why, if it failed.
@@ -90,7 +94,8 @@ public final class PrivacyWallet: @unchecked Sendable {
             let s = store.state
             notes = s.notes; stakeNotes = s.stakeNotes; identity = s.identity; claimedDays = s.claimedDays
             caretakerSplit = s.caretakerSplit; caretakerCastAt = s.caretakerCastAt
-            referrerAddress = s.referrerAddress; referrerBoundAt = s.referrerBoundAt
+            caretakerExpiresAt = s.caretakerExpiresAt; caretakerMovedOut = s.caretakerMovedOut
+            handle = s.handle; handleMovedOut = s.handleMovedOut
             unbondRetryAt = s.unbondRetryAt; syncedHeight = s.notesHeight
             pendingRegistration = s.pendingRegistration; rootsVerified = s.rootsVerified; rootsError = s.rootsError
             identityStatus = WalletSync.identityStatus(store: store, keys: keys)
@@ -354,11 +359,13 @@ public final class PrivacyWallet: @unchecked Sendable {
         public var errorDescription: String? { "The proposal's stake snapshot is ahead of this wallet; sync first." }
     }
 
-    /// The identity is too recent for this action; it opens `waitSeconds` from now.
+    /// The identity is too recent for this action (or replaced another too recently); it opens `waitSeconds` from now.
     public struct NotYet: Swift.Error, LocalizedError {
         public let waitSeconds: Int64
         public var errorDescription: String? {
-            "This registration is too recent for this action; try again in \(waitSeconds / 3600 + 1)h."
+            waitSeconds > 2 * PrivacyWallet.secondsPerDay
+                ? "This identity replaced another too recently for this action; it opens in \(waitSeconds / PrivacyWallet.secondsPerDay + 1) days."
+                : "This registration is too recent for this action; try again in \(waitSeconds / 3600 + 1)h."
         }
     }
 
@@ -370,17 +377,23 @@ public final class PrivacyWallet: @unchecked Sendable {
         return id
     }
 
-    private func membership(scope: Fr, excludedDsc: Fr, excludedCountry: Fr, maxActivation: UInt64) throws -> MembershipWitnessSpec {
+    /// A membership proof's witness for `scope` under the chain's statement:
+    /// activated_at <= `maxActivation`, predecessor_at <= `maxPredecessor`
+    /// (PrivacyHash.noBound: none).
+    private func membership(scope: Fr, excludedDsc: Fr, excludedCountry: Fr, maxActivation: UInt64, maxPredecessor: UInt64) throws -> MembershipWitnessSpec {
         let id = try identity()
         if id.activatedAt > maxActivation { throw NotYet(waitSeconds: Int64(clamping: id.activatedAt - maxActivation)) }
+        if id.predecessorAt > maxPredecessor { throw NotYet(waitSeconds: Int64(clamping: id.predecessorAt - maxPredecessor)) }
         let tree = store.identityTree
         let path = tree.path(id.leafIndex)
         let root = tree.root()
         let idSecret = keys.idSecret
         return MembershipWitnessSpec { signal in
             try MembershipWitness(idSecret: idSecret, dscKey: id.dscKey, country: id.country, activatedAt: id.activatedAt,
+                                  predecessorAt: id.predecessorAt,
                                   leafIndex: id.leafIndex, siblings: path, root: root, scope: scope, signal: signal,
-                                  excludedDsc: excludedDsc, excludedCountry: excludedCountry, maxActivation: maxActivation)
+                                  excludedDsc: excludedDsc, excludedCountry: excludedCountry, maxActivation: maxActivation,
+                                  maxPredecessor: maxPredecessor)
         }
     }
 
@@ -466,25 +479,46 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// carries a v2 ciphertext of fresh secrets to our own address; the
     /// binding covers those ciphertexts, so they are written here, before the
     /// passport is proven, and sent exactly as they are. `gas` is the
-    /// /gas/register note (its ciphertext is not bound).
+    /// /gas/register note (its ciphertext is not bound). `referral`, when the
+    /// registrant names a referrer, is the referrer's half as a note to the
+    /// handle's shielded address (a blind v2 ciphertext: the chain publishes
+    /// the amount), bound with the handle into the affiliate field.
     public struct RegistrationPrep: Sendable {
         public let anml: NoteOut
         public let erth: NoteOut
         public let gas: NoteOut
-        public let affiliate: String
+        /// The referrer's handle ("" for none) and the referral note.
+        public let referrer: String
+        public let referral: NoteOut?
         public let binding: Fr
         public let idc: Fr
     }
 
-    public func prepareRegistration(affiliate: String?) async throws -> RegistrationPrep {
+    /// A referrer named by handle, resolved from the directory: the handle and the address it names now.
+    public struct Referrer: Sendable, Equatable {
+        public let handle: String
+        public let address: ShieldedAddress
+        public init(handle: String, address: ShieldedAddress) { self.handle = handle; self.address = address }
+    }
+
+    public func prepareRegistration(referrer: Referrer?) async throws -> RegistrationPrep {
         try await locked {
-            let aff = affiliate?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let anml = try mint("uanml")
             let erth = try mint("uerth")
             let gas = try mint("uerth")
+            var referral: NoteOut?
+            var aff = Fr.zero
+            if let r = referrer {
+                try require(Handles.valid(r.handle), "\(r.handle) is not a handle")
+                try require(r.address.ownerPK != keys.ownerPK, "a registration cannot name its own wallet as its referrer")
+                let n = try NoteOut.blindTo(r.address, denom: Self.fee)
+                referral = n
+                aff = PrivacyHash.affiliateField(handle: r.handle, pc: n.pc, ct: n.ciphertext)
+            }
             let binding = PrivacyHash.registrationBinding(idc: keys.idc, pcAnml: anml.pc, ctAnml: anml.ciphertext, pcErth: erth.pc,
-                                                          ctErth: erth.ciphertext, affiliate: try PrivateMsgs.affiliateField(aff))
-            return RegistrationPrep(anml: anml, erth: erth, gas: gas, affiliate: aff, binding: binding, idc: keys.idc)
+                                                          ctErth: erth.ciphertext, affiliate: aff)
+            return RegistrationPrep(anml: anml, erth: erth, gas: gas, referrer: referrer?.handle ?? "", referral: referral,
+                                    binding: binding, idc: keys.idc)
         }
     }
 
@@ -492,7 +526,9 @@ public final class PrivacyWallet: @unchecked Sendable {
     public func registerMsg(_ prep: RegistrationPrep, proof: Data, publicSignals: [String], signatureAlgorithm: String, dscDer: Data) -> MsgRegisterPrivate {
         MsgRegisterPrivate(fee: nil, proof: proof, publicSignals: publicSignals, signatureAlgorithm: signatureAlgorithm, dscDer: dscDer,
                            idc: prep.idc.bytes, pcAnml: prep.anml.pc.bytes, ciphertextAnml: prep.anml.ciphertext,
-                           pcErth: prep.erth.pc.bytes, ciphertextErth: prep.erth.ciphertext, affiliate: prep.affiliate)
+                           pcErth: prep.erth.pc.bytes, ciphertextErth: prep.erth.ciphertext,
+                           affiliateHandle: prep.referral == nil ? "" : prep.referrer,
+                           affiliatePc: prep.referral?.pc.bytes ?? Data(), affiliateCiphertext: prep.referral?.ciphertext ?? Data())
     }
 
     /// Broadcasts the registration, its fee paid by a fee bundle (the gas
@@ -577,8 +613,10 @@ public final class PrivacyWallet: @unchecked Sendable {
             try require(day >= 1, "no claim day before day 1")
             // Chain-minted: a v2 ciphertext, opened against the mint's public amount.
             let anml = try mint("uanml")
+            // Claims bound the activation only (start of yesterday); the predecessor is no bound.
             let m = try membership(scope: PrivacyHash.claimScope(day: day), excludedDsc: .zero, excludedCountry: .zero,
-                                   maxActivation: (day - 1).multipliedReportingOverflow(by: UInt64(Self.secondsPerDay)).partialValue)
+                                   maxActivation: (day - 1).multipliedReportingOverflow(by: UInt64(Self.secondsPerDay)).partialValue,
+                                   maxPredecessor: PrivacyHash.noBound)
             let r = try await run { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], membership: m) { bs, _, mem in
                     MsgClaimAnmlPrivate(fee: bs[0], membership: mem!, day: day, pc: anml.pc.bytes, ciphertext: anml.ciphertext)
@@ -591,17 +629,6 @@ public final class PrivacyWallet: @unchecked Sendable {
     }
 
     public func claimedToday() -> Bool { snapshot.claimedDays.contains(today()) }
-
-    /// Today's claim offset for the automation, persisted with this wallet (audit 4).
-    public func claimOffset(now: Int64) async -> Int64 {
-        var o: Int64 = 0
-        await lockedNoThrow {
-            let (v, changed) = store.mutate { PrivacyAutomation.claimOffset(&$0, now: now) }
-            o = v
-            if changed { persistNoThrow() }
-        }
-        return o
-    }
 
     /// When ANML can next be claimed: 0 for now, nil without a live
     /// registration. A claim for day d needs activated_at <= (d - 1) * 86400,
@@ -624,86 +651,188 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// The day every activation bound keeps from now (wave 3: the largest identity root window).
     public static let activationMargin: Int64 = 86_400
 
-    /// The max_activation a caretaker split or referrer binding names: at most
-    /// now - R - 86400 (the chain's bound since wave 3, L4/L5: the largest
-    /// root window, not the live one), rounded down to the hour so it says
-    /// nothing about when the tx was made, less a margin for clock skew.
-    private func leaseBound() async throws -> UInt64 {
-        let p = try await reads.personhoodParams()
-        let bound = now() - p.caretakerVoteSeconds - Self.activationMargin - Self.clockMargin
+    /// The max_predecessor a new caretaker split or handle claim names: the
+    /// chain needs it strictly below now - `lease` - 86400 (the largest root
+    /// window), so an identity that replaced another waits until anything its
+    /// predecessor could hold there has lapsed. Rounded down to the hour so it
+    /// says nothing about when the tx was made, less a margin for clock skew.
+    /// Every wallet names the same bound (a fresh registrant's predecessor_at
+    /// 0 meets it), so the proof does not tell a fresh identity from an old one.
+    private func predecessorBound(lease: Int64) -> UInt64 {
+        let bound = now() - lease - Self.activationMargin - Self.clockMargin
         return UInt64(max(0, bound / 3600 * 3600))
+    }
+
+    /// The max_predecessor for a msg bounded only when the prover holds
+    /// nothing in its scope: the lease bound when this identity meets it (it
+    /// holds or not, the chain takes it), else no bound when it believes it
+    /// holds something there (a renewal or change, or what was moved to it),
+    /// else NotYet until the bound passes its predecessor_at.
+    private func leaseStatement(lease: Int64, holds: Bool) throws -> UInt64 {
+        let bound = predecessorBound(lease: lease)
+        let id = try identity()
+        if id.predecessorAt <= bound { return bound }
+        if holds { return PrivacyHash.noBound }
+        throw NotYet(waitSeconds: Int64(clamping: id.predecessorAt - bound))
     }
 
     private static func weights(_ split: [UInt64: UInt64]) -> [Msg.AllocationWeight] {
         split.sorted { $0.key < $1.key }.map { Msg.AllocationWeight(optionID: $0.key, percent: $0.value) }
     }
 
-    /// Casts, refreshes or (empty) clears the caretaker split, option id -> percent.
+    /// When the split lapses: the chain's expires_at, or its cast time + R. 0 for none.
+    public func caretakerExpiresAt() async -> Int64 {
+        let snap = snapshot
+        if snap.caretakerSplit.isEmpty { return 0 }
+        if snap.caretakerExpiresAt > 0 { return snap.caretakerExpiresAt }
+        guard let r = try? await reads.personhoodParams().caretakerVoteSeconds else { return 0 }
+        let (v, o) = snap.caretakerCastAt.addingReportingOverflow(r)
+        return o ? 0 : v
+    }
+
+    /// Whether this wallet holds a caretaker split the chain still counts (as far as it knows).
+    public func caretakerLive() async -> Bool {
+        if snapshot.caretakerSplit.isEmpty { return false }
+        return await caretakerExpiresAt() > now()
+    }
+
+    /// Casts, refreshes or (empty) clears the caretaker split, option id ->
+    /// percent. Nothing refreshes it on its own: it lapses at expires_at
+    /// unless its owner casts again (the app reminds them).
     public func setCaretaker(split: [UInt64: UInt64]) async throws -> TxResult {
         let mx = await maxActions()
+        let r0 = try await reads.personhoodParams().caretakerVoteSeconds
+        let holds = await caretakerLive()
         return try await locked {
-            let maxAct = try await leaseBound()
-            let m = try membership(scope: PrivacyHash.caretakerScope(), excludedDsc: .zero, excludedCountry: .zero, maxActivation: maxAct)
+            try require(!store.state.caretakerMovedOut || split.isEmpty, "this identity moved its caretaker vote to another; it cannot cast one again")
+            let maxPred = split.isEmpty ? PrivacyHash.noBound : try leaseStatement(lease: r0, holds: holds)
+            let m = try membership(scope: PrivacyHash.caretakerScope(), excludedDsc: .zero, excludedCountry: .zero,
+                                   maxActivation: PrivacyHash.noBound, maxPredecessor: maxPred)
             let w = Self.weights(split)
             let r = try await run { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], membership: m) { bs, _, mem in
-                    MsgSetCaretaker(fee: bs[0], membership: mem!, percentages: w, maxActivation: maxAct)
+                    MsgSetCaretaker(fee: bs[0], membership: mem!, percentages: w, maxPredecessor: maxPred)
                 }
             }
-            store.mutate { $0.caretakerCastAt = now(); $0.caretakerSplit = split }
+            let exp = r.attr("set_caretaker", "expires_at").flatMap(Int64.init)
+            let at = r.time > 0 ? r.time : now()
+            store.mutate {
+                $0.caretakerCastAt = now(); $0.caretakerSplit = split
+                $0.caretakerExpiresAt = split.isEmpty ? 0 : (exp ?? at.addingReportingOverflow(r0).partialValue)
+            }
             try store.save()
             return r
         }
     }
 
-    /// Whether the split needs refreshing to stay counted: past half of R.
-    public func caretakerDue() async throws -> Bool {
-        let snap = snapshot
-        guard !snap.caretakerSplit.isEmpty else { return false }
-        let r = try await reads.personhoodParams().caretakerVoteSeconds
-        return now() - snap.caretakerCastAt > r / 2
-    }
+    /// The nullifier `other`'s identity proves in `scope`: what a move names
+    /// as new_owner, H(TAG_SN, new_id_secret, scope). Computed from the
+    /// other wallet's keys on this phone; it says nothing about the passport.
+    public static func newOwner(_ other: PrivacyKeys, scope: Fr) -> Fr { PrivacyHash.scopeNullifier(idSecret: other.idSecret, scope: scope) }
 
-    /// Binds (or, empty, clears) the transparent address this person's
-    /// referral rewards are paid to. The binding is public (the address is),
-    /// the person behind it is not; it lapses after R unless refreshed.
-    ///
-    /// Binding an address needs its owner's consent (wave 3, L6): `consent`
-    /// signs (domain, chain id, the membership's nullifier, the address) with
-    /// the key whose address it is, a transparent account of this wallet.
-    /// The nullifier is the scope's, known before proving; not in the sighash.
-    public func bindReferrer(address: String, consent: ((Data) throws -> (publicKey: Data, signature: Data))? = nil) async throws -> TxResult {
+    /// Hands the live caretaker split (and its expiry) to `newOwner`, the
+    /// caretaker-scope nullifier of the identity that is to hold it: how a
+    /// switch of identity keeps its vote. This identity may never cast one
+    /// again (ErrCaretakerMovedOut, 1126).
+    public func moveCaretaker(newOwner: Fr) async throws -> TxResult {
         let mx = await maxActions()
+        let live = await caretakerLive()
         return try await locked {
-            let maxAct = try await leaseBound()
-            let m = try membership(scope: PrivacyHash.referrerScope(), excludedDsc: .zero, excludedCountry: .zero, maxActivation: maxAct)
-            var pub = Data(), sig = Data()
-            if !address.isEmpty {
-                guard let consent else { throw PrivacyError("binding a referrer address needs its owner's signature") }
-                let decoded = try Bech32.decode(address)
-                let c = try consent(try PrivateMsgs.referrerConsentBytes(chainID: chainID, nullifier: try m.witness(signal: .zero).nullifier.bytes,
-                                                                          address: Data(decoded.data)))
-                try require(c.publicKey.count == 33 && c.signature.count == 64, "a referrer consent is a 33-byte key and a 64-byte signature")
-                try require(try EarthKey.address(fromPublicKey: c.publicKey) == address, "\(address) is not an address this wallet controls")
-                pub = c.publicKey; sig = c.signature
-            }
+            try require(live, "this identity holds no live caretaker vote to move")
+            try require(newOwner != PrivacyHash.scopeNullifier(idSecret: keys.idSecret, scope: PrivacyHash.caretakerScope()), "the new owner is this identity")
+            let m = try membership(scope: PrivacyHash.caretakerScope(), excludedDsc: .zero, excludedCountry: .zero,
+                                   maxActivation: PrivacyHash.noBound, maxPredecessor: PrivacyHash.noBound)
             let r = try await run { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], membership: m) { bs, _, mem in
-                    MsgBindReferrer(fee: bs[0], membership: mem!, address: address, maxActivation: maxAct, referrerPubKey: pub, referrerSignature: sig)
+                    MsgMoveCaretaker(fee: bs[0], membership: mem!, newOwner: newOwner.bytes)
                 }
             }
-            store.mutate { $0.referrerAddress = address; $0.referrerBoundAt = address.isEmpty ? 0 : now() }
+            store.mutate { $0.caretakerMovedOut = true; $0.caretakerSplit = [:]; $0.caretakerExpiresAt = 0 }
             try store.save()
             return r
         }
     }
 
-    /// Whether the referrer binding needs refreshing to stay live: past half of R.
-    public func referrerDue() async throws -> Bool {
-        let snap = snapshot
-        guard !snap.referrerAddress.isEmpty else { return false }
-        let r = try await reads.personhoodParams().caretakerVoteSeconds
-        return now() - snap.referrerBoundAt > r / 2
+    // MARK: - handles
+
+    /// Claims `handle` for `address` (default: this wallet's shielded
+    /// address), renews the one held (the same handle: lease now +
+    /// handle_lease_seconds, address updated), or changes to another (the old
+    /// one is freed at once). A claim by an identity holding none bounds its
+    /// predecessor by the longest lease; a renewal or change does not.
+    /// Nothing renews on its own: the app reminds the owner before expiry.
+    public func bindHandle(_ handle: String, address: ShieldedAddress? = nil) async throws -> TxResult {
+        let mx = await maxActions()
+        let lease = try await reads.personhoodParams().handleLeaseSeconds
+        return try await locked {
+            try require(Handles.valid(handle), "\"\(handle)\" is not a handle: 3-32 of a-z, 0-9 and -, no dash at either end")
+            let holds = !store.state.handle.isEmpty
+            try require(holds || !store.state.handleMovedOut, "this identity moved its handle to another; it cannot claim one again")
+            let maxPred = try leaseStatement(lease: lease, holds: holds)
+            let addr = (address ?? keys.address).encode()
+            let m = try membership(scope: PrivacyHash.handleScope(), excludedDsc: .zero, excludedCountry: .zero,
+                                   maxActivation: PrivacyHash.noBound, maxPredecessor: maxPred)
+            let r = try await run { fee in
+                Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], membership: m) { bs, _, mem in
+                    MsgBindHandle(fee: bs[0], membership: mem!, handle: handle, address: addr, maxPredecessor: maxPred)
+                }
+            }
+            store.mutate { $0.handle = handle }
+            try store.save()
+            return r
+        }
+    }
+
+    /// Releases this identity's handle at once (anyone may claim it).
+    public func releaseHandle() async throws -> TxResult {
+        let mx = await maxActions()
+        return try await locked {
+            let m = try membership(scope: PrivacyHash.handleScope(), excludedDsc: .zero, excludedCountry: .zero,
+                                   maxActivation: PrivacyHash.noBound, maxPredecessor: PrivacyHash.noBound)
+            let r = try await run { fee in
+                Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], membership: m) { bs, _, mem in
+                    MsgBindHandle(fee: bs[0], membership: mem!, handle: "", address: "", maxPredecessor: PrivacyHash.noBound)
+                }
+            }
+            store.mutate { $0.handle = "" }
+            try store.save()
+            return r
+        }
+    }
+
+    /// Hands this identity's handle (lease unchanged) to `newOwner`, the
+    /// handle-scope nullifier of the identity that is to hold it. This
+    /// identity may never claim one again (ErrHandleMovedOut, 1125).
+    public func moveHandle(newOwner: Fr) async throws -> TxResult {
+        let mx = await maxActions()
+        return try await locked {
+            let handle = store.state.handle
+            try require(!handle.isEmpty, "this identity holds no handle to move")
+            try require(newOwner != PrivacyHash.scopeNullifier(idSecret: keys.idSecret, scope: PrivacyHash.handleScope()), "the new owner is this identity")
+            let m = try membership(scope: PrivacyHash.handleScope(), excludedDsc: .zero, excludedCountry: .zero,
+                                   maxActivation: PrivacyHash.noBound, maxPredecessor: PrivacyHash.noBound)
+            let r = try await run { fee in
+                Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], membership: m) { bs, _, mem in
+                    MsgMoveHandle(fee: bs[0], membership: mem!, handle: handle, newOwner: newOwner.bytes)
+                }
+            }
+            store.mutate { $0.handle = ""; $0.handleMovedOut = true }
+            try store.save()
+            return r
+        }
+    }
+
+    /// Records what a switch moved to this wallet's identity (the other
+    /// wallet's moves named its nullifiers): the handle, and the split with
+    /// its expiry. Its renewal or refresh then takes no predecessor bound.
+    public func adoptMoved(handle: String?, split: [UInt64: UInt64]?, splitExpiresAt: Int64) async throws {
+        try await locked {
+            store.mutate { st in
+                if let handle { st.handle = handle }
+                if let split, !split.isEmpty { st.caretakerSplit = split; st.caretakerExpiresAt = splitExpiresAt; st.caretakerCastAt = now() }
+            }
+            try store.save()
+        }
     }
 
     // MARK: - assembly
@@ -716,7 +845,9 @@ public final class PrivacyWallet: @unchecked Sendable {
             guard b.scope == PrivacyHash.proposalScope(proposalID: proposalID, round: b.round) else {
                 throw PrivacyError("the node's ballot scope is not this proposal's")
             }
-            let m = try membership(scope: b.scope, excludedDsc: b.excludedDsc, excludedCountry: b.excludedCountry, maxActivation: b.maxActivation)
+            // The chain's statement: max_activation no bound, max_predecessor the ballot's (opened - 86400).
+            let m = try membership(scope: b.scope, excludedDsc: b.excludedDsc, excludedCountry: b.excludedCountry,
+                                   maxActivation: b.maxActivation, maxPredecessor: b.maxPredecessor)
             return try await run { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], membership: m) { bs, _, mem in
                     MsgVoteProposalPrivate(fee: bs[0], membership: mem!, proposalID: proposalID, option: yes ? .yes : .no)
@@ -729,10 +860,10 @@ public final class PrivacyWallet: @unchecked Sendable {
         let mx = await maxActions()
         return try await locked {
             let day = today()
-            // Wave 3 (L4/L5): the start of today (UTC) less a day, whatever the root window.
-            let maxAct = UInt64(max(0, Int64(day) * Self.secondsPerDay - Self.activationMargin))
+            // The predecessor bound: the start of today (UTC) less a day, whatever the root window; no activation bound.
+            let maxPred = UInt64(max(0, Int64(day) * Self.secondsPerDay - Self.activationMargin))
             let m = try membership(scope: PrivacyHash.proposeRemovalScope(optionID: optionID, day: day), excludedDsc: .zero,
-                                   excludedCountry: .zero, maxActivation: maxAct)
+                                   excludedCountry: .zero, maxActivation: PrivacyHash.noBound, maxPredecessor: maxPred)
             return try await run { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], membership: m) { bs, _, mem in
                     MsgProposeRemoval(fee: bs[0], membership: mem!, optionID: optionID)
@@ -748,7 +879,8 @@ public final class PrivacyWallet: @unchecked Sendable {
             guard b.scope == PrivacyHash.removalScope(ballotID: b.ballotID) else {
                 throw PrivacyError("the node's ballot scope is not this ballot's")
             }
-            let m = try membership(scope: b.scope, excludedDsc: b.excludedDsc, excludedCountry: b.excludedCountry, maxActivation: b.maxActivation)
+            let m = try membership(scope: b.scope, excludedDsc: b.excludedDsc, excludedCountry: b.excludedCountry,
+                                   maxActivation: b.maxActivation, maxPredecessor: b.maxPredecessor)
             return try await run { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], membership: m) { bs, _, mem in
                     MsgVoteRemoval(fee: bs[0], membership: mem!, optionID: optionID, option: yes ? .yes : .no)
@@ -1511,6 +1643,11 @@ public final class PrivacyWallet: @unchecked Sendable {
         if let to, to.ownerPK != keys.ownerPK { return try NoteOut.blindTo(to, denom: denom) }
         return try mint(denom)
     }
+
+    /// The note a MsgShield mints to `to` (paying a handle from the public
+    /// balance): a pc of its owner_pk and a blind ciphertext to its ek_pub;
+    /// the shield's amount is public, its recipient is not.
+    public func shieldOutput(denom: String, to: ShieldedAddress) throws -> NoteOut { try payout(denom, to: to) }
 
     /// The output for a MsgBuyAnml (signed by the caller's transparent key).
     public func buyAnmlOutput(to: ShieldedAddress? = nil) async throws -> NoteOut {

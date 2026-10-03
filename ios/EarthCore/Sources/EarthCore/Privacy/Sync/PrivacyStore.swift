@@ -2,7 +2,7 @@ import Foundation
 
 /// This wallet's registration as the identity tree holds it. Everything here
 /// is needed to prove membership; nothing is sent anywhere. The leaf is
-/// H(TAG_LEAF, idc, dsc_key, country, activated_at).
+/// H(TAG_LEAF, idc, dsc_key, country, activated_at, predecessor_at).
 public struct IdentityRecord: Codable, Equatable, Sendable {
     public let leafIndex: UInt64
     public let dscKey: Fr
@@ -14,13 +14,19 @@ public struct IdentityRecord: Codable, Equatable, Sendable {
     /// (audit 4, M5), or resolved from the registration's own committed tx.
     /// A reset keeps only a verified identity; one from before is not.
     public var verified: Bool
+    /// The leaf's predecessor_at: the switch or re-entry that made it (then
+    /// equal to `activatedAt`), 0 for a passport never registered before.
+    /// Found by matching the leaf with either value.
+    public let predecessorAt: UInt64
 
-    public init(leafIndex: UInt64, dscKey: Fr, country: Fr, activatedAt: UInt64, passportNullifier: String, verified: Bool = false) {
+    public init(leafIndex: UInt64, dscKey: Fr, country: Fr, activatedAt: UInt64, passportNullifier: String, verified: Bool = false,
+                predecessorAt: UInt64 = 0) {
         self.leafIndex = leafIndex; self.dscKey = dscKey; self.country = country
         self.activatedAt = activatedAt; self.passportNullifier = passportNullifier; self.verified = verified
+        self.predecessorAt = predecessorAt
     }
 
-    enum CodingKeys: String, CodingKey { case leafIndex, dscKey, country, activatedAt, passportNullifier, verified }
+    enum CodingKeys: String, CodingKey { case leafIndex, dscKey, country, activatedAt, passportNullifier, verified, predecessorAt }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -28,6 +34,7 @@ public struct IdentityRecord: Codable, Equatable, Sendable {
         country = try c.decode(Fr.self, forKey: .country); activatedAt = try c.decode(UInt64.self, forKey: .activatedAt)
         passportNullifier = try c.decode(String.self, forKey: .passportNullifier)
         verified = try c.decodeIfPresent(Bool.self, forKey: .verified) ?? false
+        predecessorAt = try c.decodeIfPresent(UInt64.self, forKey: .predecessorAt) ?? 0
     }
 }
 
@@ -192,14 +199,19 @@ public struct PrivacyState: Codable, Sendable {
     /// checks of that same sync succeeded. Txs need the two equal.
     public var syncGeneration: UInt64 = 0
     public var verifiedGeneration: UInt64?
-    /// UTC days a claim was broadcast for (so the automation does not repeat one).
+    /// UTC days a claim was broadcast for (so a claim is not offered twice).
     public var claimedDays: Set<UInt64> = []
     /// When the caretaker split was last cast (unix seconds), and the split (option -> percent).
     public var caretakerCastAt: Int64 = 0
     public var caretakerSplit: [UInt64: UInt64] = [:]
-    /// The transparent address bound as this person's referrer ("" for none), and when (unix seconds).
-    public var referrerAddress: String = ""
-    public var referrerBoundAt: Int64 = 0
+    /// When the split lapses (the chain's expires_at; 0: unknown, castAt + R).
+    public var caretakerExpiresAt: Int64 = 0
+    /// This identity moved its split away (MsgMoveCaretaker): it may never cast one again.
+    public var caretakerMovedOut: Bool = false
+    /// This identity's handle ("" for none), as last claimed, renewed or moved in.
+    public var handle: String = ""
+    /// This identity moved its handle away (MsgMoveHandle): it may never claim one again.
+    public var handleMovedOut: Bool = false
     /// Unbond denoms whose claim the chain refused as not yet matured, to when the automation next tries.
     public var unbondRetryAt: [String: Int64] = [:]
     /// Next unused Groundworks owner-tag counter (PrivacyKeys.otagSalt).
@@ -220,17 +232,14 @@ public struct PrivacyState: Codable, Sendable {
     /// A uniform sample of identity row heights (registration blocks): a record's LCD cover set is drawn from it (audit 4).
     public var identityHeights: [UInt64] = []
     public var identityRowsSeen: UInt64 = 0
-    /// The UTC day `claimOffset` was drawn for, and the draw: one per day, whatever restarts the app (audit 4).
-    public var claimOffsetDay: Int64 = -1
-    public var claimOffset: Int64 = 0
 
     public init() {}
 
     enum CodingKeys: String, CodingKey {
         case chainID, genesis, notesNext, notesHeight, nullifiersNext, identityNext, zeroedNext, notes, identity, pendingRegistration,
-             regRecords, rootsVerified, rootsError, claimedDays, caretakerCastAt, caretakerSplit, referrerAddress, referrerBoundAt,
+             regRecords, rootsVerified, rootsError, claimedDays, caretakerCastAt, caretakerSplit, caretakerExpiresAt, caretakerMovedOut, handle, handleMovedOut,
              unbondRetryAt, nextOtagCounter, stakeNext, stakeHeight, stakeNullifiersNext, stakeNotes, denoms, closedOtagMax, stakeVoteRun,
-             syncGeneration, verifiedGeneration, stakeVotes, identityHeights, identityRowsSeen, claimOffsetDay, claimOffset
+             syncGeneration, verifiedGeneration, stakeVotes, identityHeights, identityRowsSeen
     }
 
     /// Tolerates a state file from before the stake tree (missing keys keep their defaults).
@@ -246,7 +255,8 @@ public struct PrivacyState: Codable, Sendable {
         identityNext = try v(.identityNext, 0); zeroedNext = try v(.zeroedNext, 0); notes = try v(.notes, [])
         identity = try c.decodeIfPresent(IdentityRecord.self, forKey: .identity)
         claimedDays = try v(.claimedDays, []); caretakerCastAt = try v(.caretakerCastAt, 0); caretakerSplit = try v(.caretakerSplit, [:])
-        referrerAddress = try v(.referrerAddress, ""); referrerBoundAt = try v(.referrerBoundAt, 0); unbondRetryAt = try v(.unbondRetryAt, [:])
+        caretakerExpiresAt = try v(.caretakerExpiresAt, 0); caretakerMovedOut = try v(.caretakerMovedOut, false)
+        handle = try v(.handle, ""); handleMovedOut = try v(.handleMovedOut, false); unbondRetryAt = try v(.unbondRetryAt, [:])
         nextOtagCounter = try v(.nextOtagCounter, 0); stakeNext = try v(.stakeNext, 0); stakeHeight = try v(.stakeHeight, 0)
         stakeNullifiersNext = try v(.stakeNullifiersNext, 0); stakeNotes = try v(.stakeNotes, []); denoms = try v(.denoms, [])
         closedOtagMax = try c.decodeIfPresent(UInt32.self, forKey: .closedOtagMax)
@@ -255,7 +265,6 @@ public struct PrivacyState: Codable, Sendable {
         syncGeneration = try v(.syncGeneration, 0)
         verifiedGeneration = try c.decodeIfPresent(UInt64.self, forKey: .verifiedGeneration)
         identityHeights = try v(.identityHeights, []); identityRowsSeen = try v(.identityRowsSeen, 0)
-        claimOffsetDay = try v(.claimOffsetDay, -1); claimOffset = try v(.claimOffset, 0)
     }
 }
 
@@ -381,8 +390,7 @@ public final class PrivacyStore {
     /// root mismatch) it keeps the owner-tag counter, the registration (its
     /// leaf only when it was matched against a verified tree, audit 4 M5; or
     /// the one pending) and what the wallet itself cast (claims, caretaker
-    /// split, referrer, its stake votes, audit 4 L1, and the day's claim
-    /// offset); a different chain or genesis (a relaunch under the same chain
+    /// split, handle, the moves, its stake votes, audit 4 L1); a different chain or genesis (a relaunch under the same chain
     /// id) keeps only the owner-tag counter.
     public func reset(chainID: String?) throws { try reset(chainID: chainID, genesis: state.genesis) }
 
@@ -401,10 +409,16 @@ public final class PrivacyStore {
             s.identity = old.identity?.verified == true ? old.identity : nil
             s.pendingRegistration = old.pendingRegistration
             s.stakeVotes = old.stakeVotes
-            s.claimOffsetDay = old.claimOffsetDay; s.claimOffset = old.claimOffset
             s.claimedDays = old.claimedDays
             s.caretakerCastAt = old.caretakerCastAt; s.caretakerSplit = old.caretakerSplit
-            s.referrerAddress = old.referrerAddress; s.referrerBoundAt = old.referrerBoundAt
+            s.caretakerExpiresAt = old.caretakerExpiresAt; s.caretakerMovedOut = old.caretakerMovedOut
+            s.handle = old.handle; s.handleMovedOut = old.handleMovedOut
+        } else if old.chainID == nil {
+            // Never synced: what a switch moved to this identity was
+            // recorded for the chain the app follows (adoptMoved).
+            s.caretakerCastAt = old.caretakerCastAt; s.caretakerSplit = old.caretakerSplit
+            s.caretakerExpiresAt = old.caretakerExpiresAt
+            s.handle = old.handle
         }
         state = s
         try save()

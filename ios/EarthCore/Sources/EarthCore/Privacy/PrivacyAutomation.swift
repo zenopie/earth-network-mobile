@@ -1,15 +1,14 @@
 import Foundation
 
-/// What the wallet does on its own while it is unlocked (it needs the keys,
-/// so never in the background). Ports `privacy/PrivacyAutomation.kt`:
+/// The one thing the wallet does on its own while it is unlocked (it needs
+/// the keys, so never in the background). Ports
+/// `privacy/PrivacyAutomation.kt`: it completes an undelegation the user
+/// started, claiming the unbonding claim (stake note) once its epoch's
+/// undelegation has matured. Its fee comes out of what it claims.
 ///
-///  - claims the day's ANML, at a random time of day chosen afresh each day,
-///    so a claim's timing says nothing about who made it;
-///  - refreshes the caretaker split before it lapses (it counts for R after
-///    each cast);
-///  - refreshes the referrer binding the same way;
-///  - claims unbonding claims (stake notes) once their epoch's undelegation
-///    has matured.
+/// Nothing else spends a fee unasked: the day's ANML claim, the caretaker
+/// vote's refresh and the handle's renewal are the user's to make, and
+/// `Reminders` says when each is due.
 ///
 /// Maturity is worked out from chain-wide timing alone (the current epoch,
 /// epoch length, x/staking's unbonding time), never by asking the node about
@@ -19,15 +18,13 @@ import Foundation
 /// undelegation was deferred), the claim fails before anything is spent and
 /// waits `retrySeconds`.
 ///
-/// Actions are never taken in one burst (audit 3): one at a time, chosen at
+/// Claims are never made in one burst (audit 3): one at a time, chosen at
 /// random among those due, with a random pause and a full sync between each
-/// and a fresh decision after it, which also orders actions that share a
-/// single ERTH note. Logs name the kind of action only (`kind`), never a denom.
+/// and a fresh decision after it. Logs name the kind of action only (`kind`),
+/// never a denom.
 ///
 /// `decide` is the pure part, unit-tested; `runPass` runs one pass; `runOnce` runs it on a wallet.
 public enum PrivacyAutomation {
-    /// Claims land within this many seconds after UTC midnight plus the day's draw.
-    public static let claimWindow: Int64 = 12 * 3600
     /// Slack past the computed completion for the block that completes it.
     public static let maturityMargin: Int64 = 15 * 60
     /// How long a claim the chain refused waits before trying again.
@@ -35,47 +32,23 @@ public enum PrivacyAutomation {
     /// How often the app runs a pass while unlocked.
     public static let interval: Duration = .seconds(10 * 60)
 
+    /// The only automatic action: completing an undelegation the user started.
     public enum Action: Equatable {
-        case claimAnml(day: UInt64)
-        case refreshCaretaker
-        case refreshReferrer
         case claimUnbonding(denom: String)
     }
 
     public struct Inputs {
         public var now: Int64
-        public var identityLive: Bool
-        public var claimOpensAt: Int64?
-        public var claimedToday: Bool
-        /// Seconds after UTC midnight today's claim waits for.
-        public var claimOffset: Int64
-        public var caretakerDue: Bool
-        public var referrerDue: Bool = false
-        public var hasFeeErth: Bool
         /// unbond/<valoper>/<epoch> denoms whose claims have matured.
         public var maturedUnbonds: [String]
 
-        public init(now: Int64, identityLive: Bool, claimOpensAt: Int64?, claimedToday: Bool, claimOffset: Int64,
-                    caretakerDue: Bool, referrerDue: Bool = false, hasFeeErth: Bool, maturedUnbonds: [String]) {
-            self.now = now; self.identityLive = identityLive; self.claimOpensAt = claimOpensAt; self.claimedToday = claimedToday
-            self.claimOffset = claimOffset; self.caretakerDue = caretakerDue; self.referrerDue = referrerDue
-            self.hasFeeErth = hasFeeErth; self.maturedUnbonds = maturedUnbonds
+        public init(now: Int64, maturedUnbonds: [String]) {
+            self.now = now; self.maturedUnbonds = maturedUnbonds
         }
     }
 
-    public static func decide(_ i: Inputs) -> [Action] {
-        var out: [Action] = []
-        let day = i.now / PrivacyWallet.secondsPerDay
-        if i.identityLive, i.hasFeeErth, !i.claimedToday, i.claimOpensAt == 0,
-           i.now - day * PrivacyWallet.secondsPerDay >= i.claimOffset {
-            out.append(.claimAnml(day: UInt64(day)))
-        }
-        if i.identityLive, i.hasFeeErth, i.caretakerDue { out.append(.refreshCaretaker) }
-        if i.identityLive, i.hasFeeErth, i.referrerDue { out.append(.refreshReferrer) }
-        // Fee from output: needs no fee note.
-        out += i.maturedUnbonds.map { .claimUnbonding(denom: $0) }
-        return out
-    }
+    // Fee from output: needs no fee note.
+    public static func decide(_ i: Inputs) -> [Action] { i.maturedUnbonds.map { .claimUnbonding(denom: $0) } }
 
     /// The latest moment epoch `e`'s undelegation can complete. Epoch e ends
     /// in the block that starts e+1, and each epoch lasts at least
@@ -108,19 +81,6 @@ public enum PrivacyAutomation {
         return out
     }
 
-    /// Today's random claim offset, drawn once per UTC day and persisted
-    /// with the wallet (audit 4): an app restarted during the day keeps the
-    /// day's draw. A draw per process start would give every restart another
-    /// chance at an early offset, skewing claims towards midnight. Returns
-    /// the offset and whether `state` changed (to be saved).
-    public static func claimOffset(_ state: inout PrivacyState, now: Int64) -> (offset: Int64, changed: Bool) {
-        let day = now / PrivacyWallet.secondsPerDay
-        if state.claimOffsetDay == day { return (state.claimOffset, false) }
-        state.claimOffsetDay = day
-        state.claimOffset = Int64.random(in: 0 ..< claimWindow)
-        return (state.claimOffset, true)
-    }
-
     /// The random pause between two automated actions in one pass, milliseconds.
     public static let actionPauseMinMs: UInt64 = 30_000
     public static let actionPauseMaxMs: UInt64 = 180_000
@@ -128,9 +88,6 @@ public enum PrivacyAutomation {
     /// The kind of `a`, for logs: never its denom (as Android's class names).
     public static func kind(_ a: Action) -> String {
         switch a {
-        case .claimAnml: "ClaimAnml"
-        case .refreshCaretaker: "RefreshCaretaker"
-        case .refreshReferrer: "RefreshReferrer"
         case .claimUnbonding: "ClaimUnbonding"
         }
     }
@@ -187,8 +144,6 @@ public enum PrivacyAutomation {
         queries: PrivacyQueries,
         clock: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970) },
         pause: (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0 * 1_000_000) },
-        /// Signs the referrer refresh's consent (wave 3, L6) with the wallet's transparent key.
-        referrerConsent: ((Data) throws -> (publicKey: Data, signature: Data))? = nil,
         onFailure: (Action, Swift.Error) -> Void = { _, _ in }
     ) async throws {
         // Global reads only: the same for every wallet.
@@ -201,22 +156,12 @@ public enum PrivacyAutomation {
                 let snap = wallet.snapshot
                 return Inputs(
                     now: now,
-                    identityLive: snap.identityStatus == .live,
-                    claimOpensAt: wallet.claimOpensAt(),
-                    claimedToday: wallet.claimedToday(),
-                    claimOffset: await wallet.claimOffset(now: now),
-                    caretakerDue: (try? await wallet.caretakerDue()) ?? false,
-                    referrerDue: (try? await wallet.referrerDue()) ?? false,
-                    hasFeeErth: (snap.poolBalances["uerth"] ?? 0) > 0,
                     maturedUnbonds: matured(snap.stakeNotes, now: now, current: epoch.number, currentStart: epoch.startTime,
                                             epochSeconds: timing.epochSeconds, unbondingSeconds: timing.unbondingSeconds, retryAt: snap.unbondRetryAt)
                 )
             },
             act: { a in
                 switch a {
-                case let .claimAnml(day): _ = try await wallet.claimAnml(day: day)
-                case .refreshCaretaker: _ = try await wallet.setCaretaker(split: wallet.snapshot.caretakerSplit)
-                case .refreshReferrer: _ = try await wallet.bindReferrer(address: wallet.snapshot.referrerAddress, consent: referrerConsent)
                 case let .claimUnbonding(denom): _ = try await wallet.claimUnbonding(denom: denom)
                 }
             },

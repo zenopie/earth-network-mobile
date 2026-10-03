@@ -85,7 +85,7 @@ private func checkRegistration() {
     let msg = MsgRegisterPrivate(fee: nil, proof: proof!.proof, publicSignals: proof!.publicSignals,
                                  signatureAlgorithm: proof!.signatureAlgorithm, dscDer: dsc, idc: keys.idc.bytes,
                                  pcAnml: anml.pc.bytes, ciphertextAnml: anml.ciphertext, pcErth: erth.pc.bytes,
-                                 ciphertextErth: erth.ciphertext, affiliate: "")
+                                 ciphertextErth: erth.ciphertext)
     let request = GasGrant.Request.register(msg, pcGas: gas.pc.bytes, ciphertextGas: gas.ciphertext)
     let body = request.body
     Check.equal("gas grant goes to /gas/register", request.path, "/gas/register")
@@ -100,13 +100,16 @@ private func checkRegistration() {
     Check.equal("gas body public_signals pass through unchanged",
                 body["public_signals"] as? [String], proof!.publicSignals)
     Check.equal("gas body signature_algorithm", body["signature_algorithm"] as? String, proof!.signatureAlgorithm)
-    Check.equal("gas body affiliate empty when unreferred", body["affiliate"] as? String, "")
+    Check.equal("gas body affiliate_handle empty when unreferred", body["affiliate_handle"] as? String, "")
+    Check.equal("gas body affiliate_pc empty when unreferred", body["affiliate_pc"] as? String, "")
+    Check.equal("gas body has no affiliate address", body["affiliate"] == nil, true)
     Check.that("gas body is valid JSON", JSONSerialization.isValidJSONObject(body))
     Check.equal("the binding matches the msg's fields", try? msg.binding(), binding)
 
     Check.throwsError("refuses a malformed referrer") {
-        _ = try PassportRegistration.normalizeReferrer("earth1notanaddress")
+        _ = try PassportRegistration.normalizeReferrer("not a handle!")
     }
+    Check.equal("a referrer is a handle", try? PassportRegistration.normalizeReferrer(" @Alice-01 "), "alice-01")
     Check.equal("an empty referrer is simply unreferred", try? PassportRegistration.normalizeReferrer("  "), "")
 }
 

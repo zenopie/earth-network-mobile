@@ -197,12 +197,15 @@ public struct StakeWitness: Sendable {
 
 /// The membership circuit's witness (circuits/membership). Public inputs in
 /// the chain's order (personhood MembershipPublicInputs): root, scope,
-/// nullifier, signal, excluded_dsc, excluded_country, max_activation.
+/// nullifier, signal, excluded_dsc, excluded_country, max_activation,
+/// max_predecessor. A bound of PrivacyHash.noBound (2^63 - 1) bounds nothing.
 public struct MembershipWitness: Sendable {
     public let idSecret: Fr
     public let dscKey: Fr
     public let country: Fr
     public let activatedAt: UInt64
+    /// The leaf's predecessor_at: its switch or re-entry time, 0 for a passport never registered before.
+    public let predecessorAt: UInt64
     public let leafIndex: UInt64
     public let siblings: [Fr]
     public let root: Fr
@@ -211,20 +214,24 @@ public struct MembershipWitness: Sendable {
     public let excludedDsc: Fr
     public let excludedCountry: Fr
     public let maxActivation: UInt64
+    public let maxPredecessor: UInt64
     public let nullifier: Fr
 
-    public init(idSecret: Fr, dscKey: Fr, country: Fr, activatedAt: UInt64, leafIndex: UInt64, siblings: [Fr], root: Fr,
-                scope: Fr, signal: Fr, excludedDsc: Fr, excludedCountry: Fr, maxActivation: UInt64) throws {
+    public init(idSecret: Fr, dscKey: Fr, country: Fr, activatedAt: UInt64, predecessorAt: UInt64, leafIndex: UInt64, siblings: [Fr], root: Fr,
+                scope: Fr, signal: Fr, excludedDsc: Fr, excludedCountry: Fr, maxActivation: UInt64, maxPredecessor: UInt64) throws {
         try require(siblings.count == Merkle.depth, "a path is \(Merkle.depth) siblings")
         try require(leafIndex <= 0xffff_ffff, "leaf index is a u32")
+        try require([activatedAt, predecessorAt, maxActivation, maxPredecessor].allSatisfy { $0 <= PrivacyHash.noBound }, "a bound is a u64 below 2^63")
         self.idSecret = idSecret; self.dscKey = dscKey; self.country = country; self.activatedAt = activatedAt
+        self.predecessorAt = predecessorAt
         self.leafIndex = leafIndex; self.siblings = siblings; self.root = root; self.scope = scope; self.signal = signal
         self.excludedDsc = excludedDsc; self.excludedCountry = excludedCountry; self.maxActivation = maxActivation
+        self.maxPredecessor = maxPredecessor
         nullifier = PrivacyHash.scopeNullifier(idSecret: idSecret, scope: scope)
     }
 
     public var leaf: Fr {
-        PrivacyHash.identityLeaf(idc: PrivacyHash.idc(idSecret), dscKey: dscKey, country: country, activatedAt: activatedAt)
+        PrivacyHash.identityLeaf(idc: PrivacyHash.idc(idSecret), dscKey: dscKey, country: country, activatedAt: activatedAt, predecessorAt: predecessorAt)
     }
 
     /// What the circuit will assert, checked before spending seconds on a proof that cannot verify.
@@ -233,10 +240,11 @@ public struct MembershipWitness: Sendable {
         try require(dscKey != excludedDsc, "this registration's document signer is excluded from this ballot")
         try require(excludedCountry.isZero || country != excludedCountry, "this registration's country is excluded from this ballot")
         try require(activatedAt <= maxActivation, "this identity was activated too recently for this action")
+        try require(predecessorAt <= maxPredecessor, "this identity replaced another too recently for this action")
     }
 
     public func publicInputs() -> [Fr] {
-        [root, scope, nullifier, signal, excludedDsc, excludedCountry, PrivacyHash.u64(maxActivation)]
+        [root, scope, nullifier, signal, excludedDsc, excludedCountry, PrivacyHash.u64(maxActivation), PrivacyHash.u64(maxPredecessor)]
     }
 
     public func noirInputs() -> [String: Any] {
@@ -245,6 +253,7 @@ public struct MembershipWitness: Sendable {
             "dsc_key": dscKey.noir,
             "country": country.noir,
             "activated_at": noirHex(activatedAt),
+            "predecessor_at": noirHex(predecessorAt),
             "leaf_index": noirHex(leafIndex),
             "siblings": siblings.map(\.noir),
             "root": root.noir,
@@ -254,11 +263,12 @@ public struct MembershipWitness: Sendable {
             "excluded_dsc": excludedDsc.noir,
             "excluded_country": excludedCountry.noir,
             "max_activation": noirHex(maxActivation),
+            "max_predecessor": noirHex(maxPredecessor),
         ]
     }
 
-    static let inputOrder = ["id_secret", "dsc_key", "country", "activated_at", "leaf_index", "siblings", "root", "scope",
-                             "nullifier", "signal", "excluded_dsc", "excluded_country", "max_activation"]
+    static let inputOrder = ["id_secret", "dsc_key", "country", "activated_at", "predecessor_at", "leaf_index", "siblings", "root", "scope",
+                             "nullifier", "signal", "excluded_dsc", "excluded_country", "max_activation", "max_predecessor"]
 
     public func proverToml() -> String { toml(noirInputs(), order: Self.inputOrder) }
 }

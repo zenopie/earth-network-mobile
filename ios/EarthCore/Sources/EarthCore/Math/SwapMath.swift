@@ -116,6 +116,36 @@ public enum SwapMath {
         return SwapQuote(amountOut: chainOut, feeErth: chainFee, priceImpact: local?.priceImpact ?? 0)
     }
 
+    /// A deposit's other leg for `amount` of one side, against reserves
+    /// `from` (that side's) and `to`: ceil(amount x to / from). x/dex prices a
+    /// deposit at shares = min(floor(in_e x S / R_e), floor(in_t x S / R_t))
+    /// and pulls each leg rounded up, ceil(shares x R / S) (audit 4, C2); a
+    /// leg rounded up here never makes the other side the binding one, so the
+    /// shares are all the typed side buys and the pull never exceeds either
+    /// leg (at most one unit comes back as a refund). 0 for an empty pool.
+    public static func depositLeg(_ amount: BigInt, from: BigInt, to: BigInt) -> BigInt {
+        guard amount > 0, from > 0, to >= 0 else { return 0 }
+        let (q, r) = (amount * to).quotientAndRemainder(dividingBy: from)
+        return r == 0 ? q : q + 1
+    }
+
+    /// What x/dex mints and pulls for a deposit of `erthIn` and `tokenIn`
+    /// into reserves `re`, `rt` with `supply` shares out: (shares, erth
+    /// pulled, token pulled), each leg ceil(shares x R / S). Nil when it
+    /// mints nothing (ErrZeroShares) or the pool cannot price it.
+    public static func deposit(erthIn: BigInt, tokenIn: BigInt, re: BigInt, rt: BigInt, supply: BigInt) -> (shares: BigInt, erth: BigInt, token: BigInt)? {
+        guard supply > 0, re > 0, rt > 0 else { return nil }
+        let shares = min(erthIn * supply / re, tokenIn * supply / rt)
+        guard shares > 0 else { return nil }
+        func up(_ r: BigInt) -> BigInt { let (q, m) = (shares * r).quotientAndRemainder(dividingBy: supply); return m == 0 ? q : q + 1 }
+        let e = up(re), t = up(rt)
+        guard e <= erthIn, t <= tokenIn, e > 0, t > 0 else { return nil }
+        return (shares, e, t)
+    }
+
+    /// x/dex ErrPoolCap: a reserve, share supply or input past 2^120 (code 1120, codespace dex).
+    public static let errPoolCap = 1120
+
     /// The floor a swap accepts at a tolerance of `bps` basis points.
     /// Truncating, so rounding only ever moves the floor down.
     public static func withSlippage(_ amountOut: BigInt, bps: Int) -> BigInt {

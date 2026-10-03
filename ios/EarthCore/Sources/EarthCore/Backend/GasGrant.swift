@@ -53,7 +53,11 @@ public enum GasGrant {
                     "pc_erth": msg.pcErth.base64EncodedString(),
                     "ciphertext_anml": msg.ciphertextAnml.base64EncodedString(),
                     "ciphertext_erth": msg.ciphertextErth.base64EncodedString(),
-                    "affiliate": msg.affiliate,
+                    // A referral by handle: the handle, the referral note's pc and
+                    // its 177-byte blind ciphertext; all three "" for none.
+                    "affiliate_handle": msg.affiliateHandle,
+                    "affiliate_pc": msg.affiliatePc.base64EncodedString(),
+                    "affiliate_ciphertext": msg.affiliateCiphertext.base64EncodedString(),
                     "pc_gas": pcGas.base64EncodedString(),
                     "ciphertext_gas": ciphertextGas.base64EncodedString(),
                 ]

@@ -17,8 +17,13 @@ public enum PrivacyReads {
     public struct PersonhoodParams: Sendable, Equatable {
         public let caretakerVoteSeconds: Int64
         public let identityRootWindowSeconds: Int64
-        public init(caretakerVoteSeconds: Int64, identityRootWindowSeconds: Int64) {
+        /// handle_lease_seconds (27) and handle_renewal_seconds (26); zero falls back to the chain's defaults.
+        public let handleLeaseSeconds: Int64
+        public let handleRenewalSeconds: Int64
+        public init(caretakerVoteSeconds: Int64, identityRootWindowSeconds: Int64,
+                    handleLeaseSeconds: Int64 = Handles.defaultLeaseSeconds, handleRenewalSeconds: Int64 = Handles.defaultRenewalSeconds) {
             self.caretakerVoteSeconds = caretakerVoteSeconds; self.identityRootWindowSeconds = identityRootWindowSeconds
+            self.handleLeaseSeconds = handleLeaseSeconds; self.handleRenewalSeconds = handleRenewalSeconds
         }
     }
 
@@ -31,9 +36,12 @@ public enum PrivacyReads {
         public let maxActivation: UInt64
         public let round: UInt64
         public let ballotID: UInt64
-        public init(scope: Fr, excludedDsc: Fr, excludedCountry: Fr, maxActivation: UInt64, round: UInt64, ballotID: UInt64) {
+        /// max_predecessor (7): the double-vote bound; max_activation is no bound for ballots.
+        public let maxPredecessor: UInt64
+        public init(scope: Fr, excludedDsc: Fr, excludedCountry: Fr, maxActivation: UInt64, round: UInt64, ballotID: UInt64,
+                    maxPredecessor: UInt64 = PrivacyHash.noBound) {
             self.scope = scope; self.excludedDsc = excludedDsc; self.excludedCountry = excludedCountry
-            self.maxActivation = maxActivation; self.round = round; self.ballotID = ballotID
+            self.maxActivation = maxActivation; self.round = round; self.ballotID = ballotID; self.maxPredecessor = maxPredecessor
         }
     }
 
@@ -164,7 +172,12 @@ public struct PrivacyQueries: PrivacyChainReads {
         let p = try await rest.get("/earth/personhood/v1/params").params
         let r = p.caretaker_vote_seconds.int64(default: 0)
         let w = p.identity_root_window_seconds.int64(default: 0)
-        return PrivacyReads.PersonhoodParams(caretakerVoteSeconds: r > 0 ? r : 30 * 86_400, identityRootWindowSeconds: w > 0 ? w : 3_600)
+        let l = p.handle_lease_seconds.int64(default: 0)
+        let n = p.handle_renewal_seconds.int64(default: 0)
+        // Zero falls back to the chain's defaults (365 days; 30 days for the renewal period).
+        return PrivacyReads.PersonhoodParams(caretakerVoteSeconds: r > 0 ? r : 365 * 86_400, identityRootWindowSeconds: w > 0 ? w : 3_600,
+                                             handleLeaseSeconds: l > 0 ? l : Handles.defaultLeaseSeconds,
+                                             handleRenewalSeconds: n > 0 ? n : Handles.defaultRenewalSeconds)
     }
 
     public func ballotInputs(proposalID: UInt64, optionID: UInt64) async throws -> PrivacyReads.BallotInputs {
@@ -172,7 +185,23 @@ public struct PrivacyQueries: PrivacyChainReads {
         let j = try await rest.get("/earth/assembly/v1/ballot_inputs?\(q)")
         return PrivacyReads.BallotInputs(scope: try field(j.scope), excludedDsc: try field(j.excluded_dsc),
                                          excludedCountry: try field(j.excluded_country), maxActivation: j.max_activation.uint64(default: 0),
-                                         round: j.round.uint64(default: 0), ballotID: j.ballot_id.uint64(default: 0))
+                                         round: j.round.uint64(default: 0), ballotID: j.ballot_id.uint64(default: 0),
+                                         // Absent from an older node: 0, which only a fresh registrant meets.
+                                         maxPredecessor: j.max_predecessor.uint64(default: 0))
+    }
+
+    /// One page of the handle directory (Query/Handles: handles after
+    /// `start`, in order; next "" when exhausted). Only HandleDirectory
+    /// calls this, from the first page to the last: never a lookup of one handle.
+    public func handlesPage(start: String, limit: Int) async throws -> HandleDirectory.Page {
+        var q = URLComponents()
+        q.queryItems = [URLQueryItem(name: "start", value: start), URLQueryItem(name: "limit", value: String(min(max(limit, 1), 1000)))]
+        let j = try await rest.get("/earth/personhood/v1/handles?" + (q.percentEncodedQuery ?? ""))
+        let hs = j.handles.array.map { h in
+            HandleEntry(handle: h.handle.string(default: ""), address: h.address.string(default: ""), status: h.status.string(default: ""),
+                        expiresAt: h.expires_at.int64(default: 0), renewalUntil: h.renewal_until.int64(default: 0))
+        }
+        return HandleDirectory.Page(handles: hs, next: j.next.string(default: ""))
     }
 
     public func epoch() async throws -> PrivacyReads.Epoch {

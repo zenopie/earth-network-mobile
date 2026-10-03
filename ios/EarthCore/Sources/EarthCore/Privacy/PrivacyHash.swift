@@ -19,6 +19,8 @@ public enum PrivacyHash {
     public static let tagSignal = tag("earth.signal")
     public static let tagBytes = tag("earth.bytes")
     public static let tagScope = tag("earth.scope")
+    /// A registration's referrer: H(TAG_AFFILIATE, Bytes(handle), pc, Bytes(ct)).
+    public static let tagAffiliate = tag("earth.affiliate")
     // The stake note tree (x/shieldedstaking, circuits/stake).
     public static let tagStake = tag("earth.stake")
     public static let tagSPC = tag("earth.spc")
@@ -44,8 +46,11 @@ public enum PrivacyHash {
 
     public static func ownerPK(_ nk: Fr) -> Fr { h(tagOwner, nk) }
 
-    public static func identityLeaf(idc: Fr, dscKey: Fr, country: Fr, activatedAt: UInt64) -> Fr {
-        h(tagLeaf, idc, dscKey, country, u64(activatedAt))
+    /// H(TAG_LEAF, idc, dsc_key, country, activated_at, predecessor_at):
+    /// predecessor_at is the time of the switch or re-entry that made the
+    /// leaf (its activated_at), 0 for a passport never registered before.
+    public static func identityLeaf(idc: Fr, dscKey: Fr, country: Fr, activatedAt: UInt64, predecessorAt: UInt64) -> Fr {
+        h(tagLeaf, idc, dscKey, country, u64(activatedAt), u64(predecessorAt))
     }
 
     /// ISO 3166-1 alpha-2 as two big-endian ASCII bytes; anything else is 0 (unknown).
@@ -129,7 +134,7 @@ public enum PrivacyHash {
 
     public static func claimScope(day: UInt64) -> Fr { scope("claim", u64(day)) }
     public static func caretakerScope() -> Fr { scope("caretaker") }
-    public static func referrerScope() -> Fr { scope("referrer") }
+    public static func handleScope() -> Fr { scope("handle") }
     public static func proposalScope(proposalID: UInt64, round: UInt64) -> Fr { scope("proposal", u64(proposalID), u64(round)) }
     public static func removalScope(ballotID: UInt64) -> Fr { scope("removal", u64(ballotID)) }
     public static func proposeRemovalScope(optionID: UInt64, day: UInt64) -> Fr { scope("propose_removal", u64(optionID), u64(day)) }
@@ -139,4 +144,15 @@ public enum PrivacyHash {
     public static func registrationBinding(idc: Fr, pcAnml: Fr, ctAnml: Data, pcErth: Fr, ctErth: Data, affiliate: Fr) -> Fr {
         h(tagReg, idc, pcAnml, bytes(ctAnml), pcErth, bytes(ctErth), affiliate)
     }
+
+    /// The registration binding's affiliate field for a referrer named by
+    /// handle, with the referral note minted to it:
+    /// H(TAG_AFFILIATE, Bytes(handle), affiliate_pc, Bytes(affiliate_ct)).
+    /// A registration naming no referrer carries 0.
+    public static func affiliateField(handle: String, pc: Fr, ct: Data) -> Fr {
+        h(tagAffiliate, bytes(Data(handle.utf8)), pc, bytes(ct))
+    }
+
+    /// The membership bound that bounds nothing (max_activation / max_predecessor): 2^63 - 1.
+    public static let noBound: UInt64 = UInt64(Int64.max)
 }

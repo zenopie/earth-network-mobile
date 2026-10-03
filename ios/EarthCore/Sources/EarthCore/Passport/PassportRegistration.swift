@@ -124,17 +124,16 @@ public struct PassportRegistration {
         return proof
     }
 
-    /// The optional referrer, as the registration binding takes it: a valid
-    /// earth address, or "" for none. Refused here rather than on chain, where
-    /// a malformed one costs the gas grant that paid for the attempt. (The
-    /// registration names no account of its own, so self-referral is the
-    /// chain's to judge: it requires a live referrer binding for the address.)
+    /// The optional referrer as typed ("@alice", "alice"): its handle, or ""
+    /// for none. Refused here rather than on chain, where a malformed one
+    /// costs the gas grant that paid for the attempt. Whether it is live is
+    /// looked up in the whole handle directory before the passport is read.
     public static func normalizeReferrer(_ referrer: String?) throws -> String {
         guard let referrer = referrer?.trimmingCharacters(in: .whitespacesAndNewlines),
               !referrer.isEmpty
         else { return "" }
-        guard EarthKey.isValidAddress(referrer) else { throw Error.malformedReferrer(referrer) }
-        return referrer
+        guard let h = Handles.parse(referrer) else { throw Error.malformedReferrer(referrer) }
+        return h
     }
 
     /// The Document Signer certificate the registration carries.

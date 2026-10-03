@@ -338,9 +338,14 @@ public enum PrivateMsgs {
     /// Bytes(address bytes), or Bytes of nothing for none.
     static func addressField(_ a: String) throws -> Fr { bytes(a.isEmpty ? Data() : try addressBytes(a)) }
 
-    /// The registration binding's affiliate: Bytes(address bytes), or 0 for none.
-    public static func affiliateField(_ affiliate: String) throws -> Fr {
-        affiliate.isEmpty ? .zero : PrivacyHash.bytes(try addressBytes(affiliate))
+    /// The registration binding's affiliate field (personhood
+    /// MsgRegister.AffiliateField): 0 when the registration names no
+    /// referrer, else H(TAG_AFFILIATE, Bytes(handle), affiliate_pc,
+    /// Bytes(affiliate_ciphertext)). All three set, or none.
+    public static func affiliateField(handle: String, pc: Data, ciphertext: Data) throws -> Fr {
+        if handle.isEmpty, pc.isEmpty, ciphertext.isEmpty { return .zero }
+        guard Handles.valid(handle) else { throw Error.shape("affiliate_handle \(handle) is not a handle") }
+        return PrivacyHash.affiliateField(handle: handle, pc: try f(pc), ct: ciphertext)
     }
 
     /// SplitsBytes: option_id then percent, big-endian u64, per entry.
@@ -377,15 +382,6 @@ public enum PrivateMsgs {
     /// `opts` with every weight in its canonical LegacyDec form ("1" -> "1.000000000000000000"): the only form the chain takes (wave 3, F3).
     public static func canonicalOptions(_ opts: [WeightedVoteOption]) throws -> [WeightedVoteOption] {
         try opts.map { WeightedVoteOption(option: $0.option, weight: try legacyDec($0.weight)) }
-    }
-
-    /// The bytes a referrer address's owner signs (secp256k1 over SHA-256) to consent to a binding (chain x/personhood ReferrerConsentBytes).
-    public static let referrerConsentDomain = "earth.referrer.consent.v1"
-
-    public static func referrerConsentBytes(chainID: String, nullifier: Data, address: Data) throws -> Data {
-        let c = Data(chainID.utf8)
-        guard c.count <= 255 else { throw PrivacyError("chain id too long") }
-        return Data(referrerConsentDomain.utf8) + Data([UInt8(c.count)]) + c + nullifier + address
     }
 
     /// Every module account the chain declares (app_config moduleAccPerms):
@@ -428,7 +424,8 @@ public enum PrivateMsgs {
     /// Decodes a private msg from its Any (the in-memory chain, reading a tx back).
     public static func decode(typeURL: String, value: Data) throws -> any PrivateMsg {
         let types: [any DecodablePrivateMsg.Type] = [
-            MsgSend.self, MsgRegisterPrivate.self, MsgClaimAnmlPrivate.self, MsgSetCaretaker.self, MsgBindReferrer.self,
+            MsgSend.self, MsgRegisterPrivate.self, MsgClaimAnmlPrivate.self, MsgSetCaretaker.self, MsgMoveCaretaker.self,
+            MsgBindHandle.self, MsgMoveHandle.self,
             MsgVoteProposalPrivate.self, MsgProposeRemoval.self, MsgVoteRemoval.self, MsgShieldedDelegate.self, MsgRestake.self,
             MsgShieldedUndelegate.self, MsgClaimUnbonding.self, MsgStakeVote.self, MsgLockPosition.self, MsgUpdatePosition.self,
             MsgUnlockPosition.self, MsgPositionVote.self, MsgNoteSwap.self, MsgAddLiquidityShielded.self, MsgRemoveLiquidityShielded.self,
@@ -520,13 +517,21 @@ public struct MsgRegisterPrivate: DecodablePrivateMsg, FeeBundleMsg, Equatable {
     public var ciphertextAnml: Data
     public var pcErth: Data
     public var ciphertextErth: Data
-    public var affiliate: String
+    /// The referrer's half, as a note to the live handle's shielded address
+    /// (a pc of its owner_pk, a 177-byte blind ciphertext to its ek_pub):
+    /// affiliate_handle (15), affiliate_pc (11), affiliate_ciphertext (12),
+    /// all three or none.
+    public var affiliateHandle: String
+    public var affiliatePc: Data
+    public var affiliateCiphertext: Data
 
     public init(fee: ShieldedBundle?, proof: Data, publicSignals: [String], signatureAlgorithm: String, dscDer: Data,
-                idc: Data, pcAnml: Data, ciphertextAnml: Data, pcErth: Data, ciphertextErth: Data, affiliate: String) {
+                idc: Data, pcAnml: Data, ciphertextAnml: Data, pcErth: Data, ciphertextErth: Data,
+                affiliateHandle: String = "", affiliatePc: Data = Data(), affiliateCiphertext: Data = Data()) {
         self.fee = fee; self.proof = proof; self.publicSignals = publicSignals; self.signatureAlgorithm = signatureAlgorithm
         self.dscDer = dscDer; self.idc = idc; self.pcAnml = pcAnml; self.ciphertextAnml = ciphertextAnml
-        self.pcErth = pcErth; self.ciphertextErth = ciphertextErth; self.affiliate = affiliate
+        self.pcErth = pcErth; self.ciphertextErth = ciphertextErth
+        self.affiliateHandle = affiliateHandle; self.affiliatePc = affiliatePc; self.affiliateCiphertext = affiliateCiphertext
     }
 
     public var feeBundle: ShieldedBundle { fee ?? ShieldedBundle() }
@@ -543,7 +548,9 @@ public struct MsgRegisterPrivate: DecodablePrivateMsg, FeeBundleMsg, Equatable {
         w.bytes(8, ciphertextAnml)
         w.bytes(9, pcErth)
         w.bytes(10, ciphertextErth)
-        w.string(13, affiliate)
+        w.bytes(11, affiliatePc)
+        w.bytes(12, affiliateCiphertext)
+        w.string(15, affiliateHandle)
         return w.data
     }
 
@@ -551,20 +558,26 @@ public struct MsgRegisterPrivate: DecodablePrivateMsg, FeeBundleMsg, Equatable {
         let f = try ProtoFields(d)
         return Self(fee: f.has(1) ? try f.message(1, ShieldedBundle.decode) : nil, proof: f.bytes(2), publicSignals: f.repeatedString(3),
                     signatureAlgorithm: f.string(4), dscDer: f.bytes(5), idc: f.bytes(6), pcAnml: f.bytes(7), ciphertextAnml: f.bytes(8),
-                    pcErth: f.bytes(9), ciphertextErth: f.bytes(10), affiliate: f.string(13))
+                    pcErth: f.bytes(9), ciphertextErth: f.bytes(10),
+                    affiliateHandle: f.string(15), affiliatePc: f.bytes(11), affiliateCiphertext: f.bytes(12))
+    }
+
+    /// The binding's affiliate field: 0, or the handle with the referral note.
+    public func affiliateField() throws -> Fr {
+        try PrivateMsgs.affiliateField(handle: affiliateHandle, pc: affiliatePc, ciphertext: affiliateCiphertext)
     }
 
     /// The passport proof's `address` input this msg must carry.
     public func binding() throws -> Fr {
         PrivacyHash.registrationBinding(idc: try PrivateMsgs.f(idc), pcAnml: try PrivateMsgs.f(pcAnml), ctAnml: ciphertextAnml,
                                         pcErth: try PrivateMsgs.f(pcErth), ctErth: ciphertextErth,
-                                        affiliate: try PrivateMsgs.affiliateField(affiliate))
+                                        affiliate: try affiliateField())
     }
 
     public func sighashFields() throws -> [Fr] {
         [
             try PrivateMsgs.f(idc), try PrivateMsgs.f(pcAnml), PrivateMsgs.bytes(ciphertextAnml), try PrivateMsgs.f(pcErth),
-            PrivateMsgs.bytes(ciphertextErth), try PrivateMsgs.affiliateField(affiliate), PrivateMsgs.bytes(signatureAlgorithm),
+            PrivateMsgs.bytes(ciphertextErth), try affiliateField(), PrivateMsgs.bytes(signatureAlgorithm),
         ] + (try publicSignals.map(PrivateMsgs.decimalField))
     }
 }
@@ -607,10 +620,11 @@ public struct MsgSetCaretaker: DecodablePrivateMsg, FeeBundleMsg, Equatable {
     public var fee: ShieldedBundle
     public var membership: Membership
     public var percentages: [Msg.AllocationWeight]
-    public var maxActivation: UInt64
+    /// The membership proof's max_predecessor (field 5; max_activation 4 is reserved).
+    public var maxPredecessor: UInt64
 
-    public init(fee: ShieldedBundle, membership: Membership, percentages: [Msg.AllocationWeight], maxActivation: UInt64) {
-        self.fee = fee; self.membership = membership; self.percentages = percentages; self.maxActivation = maxActivation
+    public init(fee: ShieldedBundle, membership: Membership, percentages: [Msg.AllocationWeight], maxPredecessor: UInt64) {
+        self.fee = fee; self.membership = membership; self.percentages = percentages; self.maxPredecessor = maxPredecessor
     }
 
     public var feeBundle: ShieldedBundle { fee }
@@ -620,33 +634,29 @@ public struct MsgSetCaretaker: DecodablePrivateMsg, FeeBundleMsg, Equatable {
         w.message(1, fee)
         w.message(2, membership)
         w.repeatedMessage(3, percentages)
-        w.uint64(4, maxActivation)
+        w.uint64(5, maxPredecessor)
         return w.data
     }
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
         return Self(fee: try f.message(1, ShieldedBundle.decode), membership: try f.message(2, Membership.decode),
-                    percentages: try f.repeatedMessage(3, Msg.AllocationWeight.decode), maxActivation: f.uint64(4))
+                    percentages: try f.repeatedMessage(3, Msg.AllocationWeight.decode), maxPredecessor: f.uint64(5))
     }
 
     public func sighashFields() throws -> [Fr] { percentages.flatMap { [PrivateMsgs.u($0.optionID), PrivateMsgs.u($0.percent)] } }
 }
 
-public struct MsgBindReferrer: DecodablePrivateMsg, FeeBundleMsg, Equatable {
-    public static let typeURL = "/earth.personhood.v1.MsgBindReferrer"
+/// Hands the prover's live caretaker split to new_owner, the caretaker-scope
+/// nullifier of the identity that is to hold it. sighash fields: new_owner.
+public struct MsgMoveCaretaker: DecodablePrivateMsg, FeeBundleMsg, Equatable {
+    public static let typeURL = "/earth.personhood.v1.MsgMoveCaretaker"
     public var fee: ShieldedBundle
     public var membership: Membership
-    public var address: String
-    public var maxActivation: UInt64
-    /// The address owner's consent (chain wave 3, L6): empty when clearing. Not sighash fields.
-    public var referrerPubKey: Data
-    public var referrerSignature: Data
+    public var newOwner: Data
 
-    public init(fee: ShieldedBundle, membership: Membership, address: String, maxActivation: UInt64,
-                referrerPubKey: Data = Data(), referrerSignature: Data = Data()) {
-        self.fee = fee; self.membership = membership; self.address = address; self.maxActivation = maxActivation
-        self.referrerPubKey = referrerPubKey; self.referrerSignature = referrerSignature
+    public init(fee: ShieldedBundle, membership: Membership, newOwner: Data) {
+        self.fee = fee; self.membership = membership; self.newOwner = newOwner
     }
 
     public var feeBundle: ShieldedBundle { fee }
@@ -655,20 +665,94 @@ public struct MsgBindReferrer: DecodablePrivateMsg, FeeBundleMsg, Equatable {
         var w = ProtoWriter()
         w.message(1, fee)
         w.message(2, membership)
-        w.string(3, address)
-        w.uint64(4, maxActivation)
-        w.bytes(5, referrerPubKey)
-        w.bytes(6, referrerSignature)
+        w.bytes(3, newOwner)
+        return w.data
+    }
+
+    public static func decodeMsg(_ d: Data) throws -> Self {
+        let f = try ProtoFields(d)
+        return Self(fee: try f.message(1, ShieldedBundle.decode), membership: try f.message(2, Membership.decode), newOwner: f.bytes(3))
+    }
+
+    public func sighashFields() throws -> [Fr] { [try PrivateMsgs.f(newOwner)] }
+}
+
+/// Claims, renews, changes or (both empty) releases the prover's handle.
+/// sighash fields: Bytes(handle), owner_pk, Bytes(ek_pub) of the address
+/// (Bytes of nothing, 0 and Bytes of nothing for a release).
+public struct MsgBindHandle: DecodablePrivateMsg, FeeBundleMsg, Equatable {
+    public static let typeURL = "/earth.personhood.v1.MsgBindHandle"
+    public var fee: ShieldedBundle
+    public var membership: Membership
+    public var handle: String
+    /// The shielded address, canonical lowercase "erthz1...".
+    public var address: String
+    /// The membership proof's max_predecessor (field 6; max_activation 5 is reserved).
+    public var maxPredecessor: UInt64
+
+    public init(fee: ShieldedBundle, membership: Membership, handle: String, address: String, maxPredecessor: UInt64) {
+        self.fee = fee; self.membership = membership; self.handle = handle; self.address = address; self.maxPredecessor = maxPredecessor
+    }
+
+    public var feeBundle: ShieldedBundle { fee }
+
+    public func encoded() -> Data {
+        var w = ProtoWriter()
+        w.message(1, fee)
+        w.message(2, membership)
+        w.string(3, handle)
+        w.string(4, address)
+        w.uint64(6, maxPredecessor)
         return w.data
     }
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
         return Self(fee: try f.message(1, ShieldedBundle.decode), membership: try f.message(2, Membership.decode),
-                    address: f.string(3), maxActivation: f.uint64(4), referrerPubKey: f.bytes(5), referrerSignature: f.bytes(6))
+                    handle: f.string(3), address: f.string(4), maxPredecessor: f.uint64(6))
     }
 
-    public func sighashFields() throws -> [Fr] { [try PrivateMsgs.addressField(address)] }
+    public func sighashFields() throws -> [Fr] {
+        guard handle.isEmpty == address.isEmpty else { throw PrivateMsgs.Error.shape("a bind names a handle and an address; a release neither") }
+        if address.isEmpty { return [PrivateMsgs.bytes(Data()), .zero, PrivateMsgs.bytes(Data())] }
+        guard Handles.valid(handle) else { throw PrivateMsgs.Error.shape("\(handle) is not a handle") }
+        let a = try ShieldedAddress.decode(address)
+        guard a.encode() == address else { throw PrivateMsgs.Error.shape("the address is not in its canonical form") }
+        return [PrivateMsgs.bytes(handle), a.ownerPK, PrivateMsgs.bytes(a.ekPub)]
+    }
+}
+
+/// Hands the prover's handle to new_owner, the handle-scope nullifier of the
+/// identity that is to hold it. sighash fields: Bytes(handle), new_owner.
+public struct MsgMoveHandle: DecodablePrivateMsg, FeeBundleMsg, Equatable {
+    public static let typeURL = "/earth.personhood.v1.MsgMoveHandle"
+    public var fee: ShieldedBundle
+    public var membership: Membership
+    public var handle: String
+    public var newOwner: Data
+
+    public init(fee: ShieldedBundle, membership: Membership, handle: String, newOwner: Data) {
+        self.fee = fee; self.membership = membership; self.handle = handle; self.newOwner = newOwner
+    }
+
+    public var feeBundle: ShieldedBundle { fee }
+
+    public func encoded() -> Data {
+        var w = ProtoWriter()
+        w.message(1, fee)
+        w.message(2, membership)
+        w.string(3, handle)
+        w.bytes(4, newOwner)
+        return w.data
+    }
+
+    public static func decodeMsg(_ d: Data) throws -> Self {
+        let f = try ProtoFields(d)
+        return Self(fee: try f.message(1, ShieldedBundle.decode), membership: try f.message(2, Membership.decode),
+                    handle: f.string(3), newOwner: f.bytes(4))
+    }
+
+    public func sighashFields() throws -> [Fr] { [PrivateMsgs.bytes(handle), try PrivateMsgs.f(newOwner)] }
 }
 
 public struct MsgVoteProposalPrivate: DecodablePrivateMsg, FeeBundleMsg, Equatable {
@@ -768,7 +852,9 @@ public protocol MembershipMsg: PrivateMsg {
 
 extension MsgClaimAnmlPrivate: MembershipMsg {}
 extension MsgSetCaretaker: MembershipMsg {}
-extension MsgBindReferrer: MembershipMsg {}
+extension MsgMoveCaretaker: MembershipMsg {}
+extension MsgBindHandle: MembershipMsg {}
+extension MsgMoveHandle: MembershipMsg {}
 extension MsgVoteProposalPrivate: MembershipMsg {}
 extension MsgProposeRemoval: MembershipMsg {}
 extension MsgVoteRemoval: MembershipMsg {}

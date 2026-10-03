@@ -28,6 +28,16 @@ public protocol PrivacyIndexer: Sendable {
     func stakeNullifierLeaves(fromIndex: UInt64, limit: Int?) async throws -> StakeNfLeavesPage
     /// Every proposal snapshot (what stake votes prove against), by height.
     func stakeSnapshots(fromHeight: UInt64, limit: Int?) async throws -> StakeSnapshotsPage
+    /// The handle directory, whole (there is no endpoint for one handle): a
+    /// snapshot of the chain's Handles query at one height, paged by place
+    /// from `fromIndex` (aligned).
+    func handles(fromIndex: Int64, limit: Int) async throws -> HandleDirectory.StreamPage
+}
+
+public extension PrivacyIndexer {
+    func handles(fromIndex: Int64, limit: Int) async throws -> HandleDirectory.StreamPage {
+        throw PrivacyError("this indexer serves no handle directory")
+    }
 }
 
 public struct IndexerStatus: Sendable {
@@ -379,6 +389,20 @@ public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
 
     public func stakeSnapshots(fromHeight: UInt64, limit: Int?) async throws -> StakeSnapshotsPage {
         try Self.parseStakeSnapshots(await stream("/stake/snapshots?from_height=\(fromHeight)\(try q("limit", limit))"))
+    }
+
+    public func handles(fromIndex: Int64, limit: Int) async throws -> HandleDirectory.StreamPage {
+        Self.parseHandles(try await stream("/handles?from_index=\(fromIndex)\(try q("limit", limit))"))
+    }
+
+    /// /handles: rows [handle, address, status, expires_at, renewal_until], the snapshot's height and size.
+    static func parseHandles(_ j: JSON) -> HandleDirectory.StreamPage {
+        let rows = j.handles.array.map { r in
+            HandleEntry(handle: r[0].string ?? "", address: r[1].string ?? "", status: r[2].string ?? "",
+                        expiresAt: r[3].int64 ?? 0, renewalUntil: r[4].int64 ?? 0)
+        }
+        return HandleDirectory.StreamPage(handles: rows, height: j.height.int64, size: j.size.int64(default: 0),
+                                          fromIndex: j.from_index.int64(default: 0), lastPage: j.last_page.bool(default: false))
     }
 
     /// /stake/nullifier-tree: rows [index, nullifier (hex), height].

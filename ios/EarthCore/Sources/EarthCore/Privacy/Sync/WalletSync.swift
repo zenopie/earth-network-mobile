@@ -266,7 +266,10 @@ public final class WalletSync {
     /// records: bounds how long a sync holds the wallet lock.
     public static let syncSearchBudget: UInt64 = 50_000
     /// Leaf hashes the fallback search may spend on one record before it is given up.
-    public static let recordSearchCap: UInt64 = 4_000_000
+    public static let recordSearchCap: UInt64 = 8_000_000
+
+    /// predecessor_at candidates per (country, time): 0, or the time itself (a switch or re-entry).
+    public static let predecessors: UInt64 = 2
     /// The fallback windows around built_at (seconds before, after): hinted countries, then every other.
     static let narrowBefore: UInt64 = 3_600, narrowAfter: UInt64 = 86_400
     static let wideBefore: UInt64 = 600, wideAfter: UInt64 = 3_600
@@ -959,7 +962,7 @@ public final class WalletSync {
     /// the record's height) is, even after the record was given up (K13).
     private func matchRecords() async {
         var budget = Int64(searchBudget)
-        let perTime = UInt64(Self.allCountries.count)
+        let perTime = Self.predecessors * UInt64(Self.allCountries.count)
         for rec0 in store.state.regRecords.sorted(by: { $0.height > $1.height }) {
             if rec0.status == .matched { return }
             let leaves = rec0.leaves.filter { $0.leaf != .zero }
@@ -971,7 +974,7 @@ public final class WalletSync {
                 rec.tried = []; rec.leavesTried = leaves.count; rec.cursor = 0
                 if rec.status == .exhausted { rec.status = .open }
             }
-            var found: (UInt64, Fr, UInt64)?
+            var found: (UInt64, Fr, UInt64, UInt64)?
             var lcdTime: UInt64?
             // 1. The indexer's block time (bounded by the chain's tip as it streamed, audit 4).
             let rowTime = rec.time.flatMap { timeOK($0) ? $0 : nil }
@@ -1002,7 +1005,7 @@ public final class WalletSync {
             if found != nil { rec.status = .matched }
             let updated = rec
             store.mutate { $0.regRecords[k] = updated }
-            if let (index, country, at) = found {
+            if let (index, country, at, pred) = found {
                 let cur = store.state.identity
                 // At an index at least the identity's: a match there replaces
                 // one made before (audit 4, M5: an identity from an unverified
@@ -1011,7 +1014,7 @@ public final class WalletSync {
                     let nullifier = (cur?.leafIndex == index ? cur?.passportNullifier : nil) ?? ""
                     store.mutate {
                         $0.identity = IdentityRecord(leafIndex: index, dscKey: rec.dscKey, country: country, activatedAt: at, passportNullifier: nullifier,
-                                                     verified: true)
+                                                     verified: true, predecessorAt: pred)
                     }
                 }
                 return
@@ -1020,13 +1023,21 @@ public final class WalletSync {
         }
     }
 
-    /// (index, country, `t`) if a leaf of `rec` is ours at activated_at = `t`.
-    private func tryTime(_ rec: RegRecord, _ leaves: [RegRecord.Leaf], _ t: UInt64) -> (UInt64, Fr, UInt64)? {
+    /// The predecessor_at with which `leaf` is ours at (`dscKey`, `country`,
+    /// activated_at `t`), or nil. The chain sets it to the registration's own
+    /// block time for a switch or re-entry, 0 for a passport never seen
+    /// before, so those are the only two values to try.
+    private func predecessorOf(_ leaf: Fr, dscKey: Fr, country: Fr, t: UInt64) -> UInt64? {
+        (t == 0 ? [0] : [0, t]).first { PrivacyHash.identityLeaf(idc: keys.idc, dscKey: dscKey, country: country, activatedAt: t, predecessorAt: $0) == leaf }
+    }
+
+    /// (index, country, `t`, predecessor_at) if a leaf of `rec` is ours at activated_at = `t`.
+    private func tryTime(_ rec: RegRecord, _ leaves: [RegRecord.Leaf], _ t: UInt64) -> (UInt64, Fr, UInt64, UInt64)? {
         var countries = [Self.countryOrZero(rec.country)]
         for c in Self.allCountries where c != countries[0] { countries.append(c) }
         for l in leaves {
-            for c in countries where PrivacyHash.identityLeaf(idc: keys.idc, dscKey: rec.dscKey, country: c, activatedAt: t) == l.leaf {
-                return (l.index, c, t)
+            for c in countries {
+                if let p = predecessorOf(l.leaf, dscKey: rec.dscKey, country: c, t: t) { return (l.index, c, t, p) }
             }
         }
         return nil
@@ -1071,7 +1082,7 @@ public final class WalletSync {
 
     /// The fallback search for `rec` from its persisted cursor, spending at
     /// most `budget` hashes (and the record's cap).
-    private func search(_ rec: RegRecord, _ leaves: [RegRecord.Leaf], budget: UInt64) -> (found: (UInt64, Fr, UInt64)?, rec: RegRecord) {
+    private func search(_ rec: RegRecord, _ leaves: [RegRecord.Leaf], budget: UInt64) -> (found: (UInt64, Fr, UInt64, UInt64)?, rec: RegRecord) {
         var hinted = [Self.countryOrZero(rec.country)]
         if hinted[0] != .zero { hinted.append(.zero) }
         let hs = Set(hinted)
@@ -1083,7 +1094,7 @@ public final class WalletSync {
         while out.cursor < total {
             let narrow = out.cursor < narrowSteps
             let countries = narrow ? hinted : others
-            let cost = UInt64(countries.count * leaves.count)
+            let cost = Self.predecessors * UInt64(countries.count * leaves.count)
             if spent > 0 && spent + cost > budget { break }
             if out.work + cost > Self.recordSearchCap { out.status = .exhausted; return (nil, out) }
             let off = narrow ? Self.offsetAt(out.cursor, before: Self.narrowBefore, after: Self.narrowAfter)
@@ -1095,9 +1106,11 @@ public final class WalletSync {
             let (t, o) = Int64(clamping: rec.builtAt).addingReportingOverflow(off)
             if o || t < 0 || !timeOK(UInt64(t)) { continue }
             for l in leaves {
-                for c in countries where PrivacyHash.identityLeaf(idc: keys.idc, dscKey: rec.dscKey, country: c, activatedAt: UInt64(t)) == l.leaf {
-                    out.status = .matched
-                    return ((l.index, c, UInt64(t)), out)
+                for c in countries {
+                    if let p = predecessorOf(l.leaf, dscKey: rec.dscKey, country: c, t: UInt64(t)) {
+                        out.status = .matched
+                        return ((l.index, c, UInt64(t), p), out)
+                    }
                 }
             }
         }
@@ -1120,10 +1133,10 @@ public final class WalletSync {
             return
         }
         let leaf = store.identityTree.leaf(index)
-        if let country = countryFor(leaf: leaf, dscKey: p.dscKey, activatedAt: activatedAt, hint: p.countryHint) {
+        if let (country, pred) = countryFor(leaf: leaf, dscKey: p.dscKey, activatedAt: activatedAt, hint: p.countryHint) {
             store.mutate {
                 $0.identity = IdentityRecord(leafIndex: index, dscKey: p.dscKey, country: country, activatedAt: activatedAt,
-                                             passportNullifier: p.passportNullifier, verified: true)
+                                             passportNullifier: p.passportNullifier, verified: true, predecessorAt: pred)
                 $0.pendingRegistration = nil
             }
         } else {
@@ -1132,11 +1145,13 @@ public final class WalletSync {
         }
     }
 
-    func countryFor(leaf: Fr, dscKey: Fr, activatedAt: UInt64, hint: String = "") -> Fr? {
+    /// (country, predecessor_at) with which `leaf` is ours at `activatedAt`, or nil.
+    func countryFor(leaf: Fr, dscKey: Fr, activatedAt: UInt64, hint: String = "") -> (Fr, UInt64)? {
         if leaf == .zero { return nil }
-        return ([Self.countryOrZero(hint)] + Self.allCountries).first {
-            PrivacyHash.identityLeaf(idc: keys.idc, dscKey: dscKey, country: $0, activatedAt: activatedAt) == leaf
+        for c in [Self.countryOrZero(hint)] + Self.allCountries {
+            if let p = predecessorOf(leaf, dscKey: dscKey, country: c, t: activatedAt) { return (c, p) }
         }
+        return nil
     }
 
     public func identityStatus() -> IdentityStatus {
@@ -1145,7 +1160,7 @@ public final class WalletSync {
 
     static func identityStatus(store: PrivacyStore, keys: PrivacyKeys) -> IdentityStatus {
         guard let id = store.state.identity, id.leafIndex < store.identityTree.size else { return .none }
-        let want = PrivacyHash.identityLeaf(idc: keys.idc, dscKey: id.dscKey, country: id.country, activatedAt: id.activatedAt)
+        let want = PrivacyHash.identityLeaf(idc: keys.idc, dscKey: id.dscKey, country: id.country, activatedAt: id.activatedAt, predecessorAt: id.predecessorAt)
         return store.identityTree.leaf(id.leafIndex) == want ? .live : .zeroed
     }
 }
