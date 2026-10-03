@@ -35,17 +35,25 @@ final class FixtureWitnessTests: XCTestCase {
         let idSecret = det("id_secret", 0), dscKey = det("dsc", 0)
         let country = PrivacyHash.countryField("DE")
         let activatedAt: UInt64 = 1_790_000_000
+        // A switched identity: its leaf commits to the switch's time (4a663d5).
+        let predecessorAt: UInt64 = 1_789_000_000
         for i in 0 ..< 21 as Range<UInt64> {
-            let leaf = i == ours
-                ? PrivacyHash.identityLeaf(idc: PrivacyHash.idc(idSecret), dscKey: dscKey, country: country, activatedAt: activatedAt)
-                : PrivacyHash.identityLeaf(idc: PrivacyHash.idc(det("other", i)), dscKey: det("dsc", i % 3),
-                                           country: PrivacyHash.countryField(["DE", "FR", ""][Int(i % 3)]), activatedAt: 1_780_000_000 + i)
+            let leaf: Fr
+            if i == ours {
+                leaf = PrivacyHash.identityLeaf(idc: PrivacyHash.idc(idSecret), dscKey: dscKey, country: country, activatedAt: activatedAt,
+                                                predecessorAt: predecessorAt)
+            } else {
+                let c = PrivacyHash.countryField(["DE", "FR", ""][Int(i % 3)])
+                leaf = PrivacyHash.identityLeaf(idc: PrivacyHash.idc(det("other", i)), dscKey: det("dsc", i % 3), country: c,
+                                                activatedAt: 1_780_000_000 + i, predecessorAt: 0)
+            }
             t.append(leaf)
         }
         t.update(3, .zero)
-        let w = try MembershipWitness(idSecret: idSecret, dscKey: dscKey, country: country, activatedAt: activatedAt, leafIndex: ours,
-                                      siblings: t.path(ours), root: t.root(), scope: PrivacyHash.assetID("claim:20360"), signal: det("signal", 0),
-                                      excludedDsc: det("dsc", 99), excludedCountry: PrivacyHash.countryField("FR"), maxActivation: activatedAt + 86_400)
+        let w = try MembershipWitness(idSecret: idSecret, dscKey: dscKey, country: country, activatedAt: activatedAt, predecessorAt: predecessorAt,
+                                      leafIndex: ours, siblings: t.path(ours), root: t.root(), scope: PrivacyHash.assetID("claim:20360"),
+                                      signal: det("signal", 0), excludedDsc: det("dsc", 99), excludedCountry: PrivacyHash.countryField("FR"),
+                                      maxActivation: activatedAt + 86_400, maxPredecessor: predecessorAt + 3_600)
         try w.check()
         XCTAssertEqual(publicInputs("fixture_membership"), w.publicInputs().map(\.hex))
         XCTAssertEqual(parseToml(String(decoding: Vectors.resource("fixture_membership/Prover.toml"), as: UTF8.self)), parseToml(w.proverToml()))
@@ -92,45 +100,48 @@ final class FixtureWitnessTests: XCTestCase {
 /// Ports AutomationTest.kt.
 final class AutomationTests: XCTestCase {
     let day: Int64 = 20_000
-    var base: PrivacyAutomation.Inputs {
-        .init(now: day * 86_400 + 5 * 3600, identityLive: true, claimOpensAt: 0, claimedToday: false, claimOffset: 4 * 3600,
-              caretakerDue: false, hasFeeErth: true, maturedUnbonds: [])
-    }
+    var now: Int64 { day * 86_400 + 5 * 3600 }
     func note(_ denom: String, _ pos: UInt64 = 3) -> OwnedStakeNote {
         OwnedStakeNote(position: pos, height: 1, denom: denom, amount: 5, rho: .one, rcm: .one, cm: .one, nf: .one)
     }
 
-    func testClaimsOnceTheDaysOffsetHasPassed() {
-        XCTAssertEqual([.claimAnml(day: UInt64(day))], PrivacyAutomation.decide(base))
-        var i = base; i.claimOffset = 6 * 3600; XCTAssertTrue(PrivacyAutomation.decide(i).isEmpty)
-        i = base; i.claimedToday = true; XCTAssertTrue(PrivacyAutomation.decide(i).isEmpty)
-        i = base; i.claimOpensAt = 123; XCTAssertTrue(PrivacyAutomation.decide(i).isEmpty)
-        i = base; i.identityLive = false; XCTAssertTrue(PrivacyAutomation.decide(i).isEmpty)
-        i = base; i.hasFeeErth = false; XCTAssertTrue(PrivacyAutomation.decide(i).isEmpty)
-    }
-
-    func testRefreshesCaretakerAndClaimsUnbonding() {
+    /// Round 5 (user decision): nothing that spends a fee is automatic. The
+    /// day's claim, the caretaker vote and the handle are reminders; the one
+    /// automatic action is the end of an undelegation the user started.
+    func testOnlyMaturedUnbondingClaimsAreAutomatic() {
+        XCTAssertTrue(PrivacyAutomation.decide(.init(now: now, maturedUnbonds: [])).isEmpty)
         let n = note("unbond/v/1")
-        var i = base; i.claimedToday = true; i.caretakerDue = true; i.hasFeeErth = false; i.maturedUnbonds = [n.denom]
-        // No fee note: the caretaker refresh waits, the unbonding claim pays from its output.
-        XCTAssertEqual([.claimUnbonding(denom: n.denom)], PrivacyAutomation.decide(i))
-        i = base; i.claimedToday = true; i.caretakerDue = true
-        XCTAssertEqual([.refreshCaretaker], PrivacyAutomation.decide(i))
+        XCTAssertEqual([.claimUnbonding(denom: n.denom)], PrivacyAutomation.decide(.init(now: now, maturedUnbonds: [n.denom])))
     }
 
-    func testOffsetIsWithinTheWindowAndStableForADay() {
-        var st = PrivacyState()
-        let (a, first) = PrivacyAutomation.claimOffset(&st, now: day * 86_400 + 10)
-        XCTAssertTrue(first)
-        XCTAssertEqual(a, PrivacyAutomation.claimOffset(&st, now: day * 86_400 + 80_000).offset)
-        XCTAssertTrue((0 ..< PrivacyAutomation.claimWindow).contains(a))
-        // Audit 4: persisted with the wallet, so a restart (the state read back) keeps the day's draw.
-        var back = try! JSONDecoder().decode(PrivacyState.self, from: JSONEncoder().encode(st))
-        let again = PrivacyAutomation.claimOffset(&back, now: day * 86_400 + 50_000)
-        XCTAssertEqual(a, again.offset)
-        XCTAssertFalse(again.changed)
-        XCTAssertTrue(PrivacyAutomation.claimOffset(&back, now: (day + 1) * 86_400 + 5).changed)
-        XCTAssertEqual(day + 1, back.claimOffsetDay)
+    func testRemindersInsteadOfActions() {
+        let base = Reminders.Inputs(now: now, identityLive: true, claimOpensAt: 0, claimedToday: false, caretakerExpiresAt: 0, handle: "", handleEntry: nil)
+        XCTAssertEqual([.anmlReady], Reminders.due(base))
+        var i = base; i.claimedToday = true; XCTAssertTrue(Reminders.due(i).isEmpty)
+        i = base; i.claimOpensAt = now + 100; XCTAssertTrue(Reminders.due(i).isEmpty)
+        i = base; i.identityLive = false; XCTAssertTrue(Reminders.due(i).isEmpty)
+        // The caretaker vote: from 30 days before it lapses, and for 30 days after.
+        var q = base; q.claimedToday = true
+        i = q; i.caretakerExpiresAt = now + Reminders.leadSeconds + 1; XCTAssertTrue(Reminders.due(i).isEmpty)
+        i = q; i.caretakerExpiresAt = now + 86_400; XCTAssertEqual([.caretakerExpiring(expiresAt: now + 86_400, lapsed: false)], Reminders.due(i))
+        i = q; i.caretakerExpiresAt = now - 86_400; XCTAssertEqual([.caretakerExpiring(expiresAt: now - 86_400, lapsed: true)], Reminders.due(i))
+        i = q; i.caretakerExpiresAt = now - Reminders.lapsedSeconds - 1; XCTAssertTrue(Reminders.due(i).isEmpty)
+        // The handle: from 30 days before expiry, through the renewal period.
+        let e = HandleEntry(handle: "alice", address: "erthz1x", status: "live", expiresAt: now + 10 * 86_400, renewalUntil: now + 40 * 86_400)
+        q.handle = "alice"
+        i = q; i.handleEntry = e
+        XCTAssertEqual([.handleExpiring(handle: "alice", expiresAt: e.expiresAt, renewalUntil: e.renewalUntil, inRenewal: false)], Reminders.due(i))
+        let r = HandleEntry(handle: "alice", address: "erthz1x", status: "renewal", expiresAt: now - 86_400, renewalUntil: now + 29 * 86_400)
+        i = q; i.handleEntry = r
+        XCTAssertEqual([.handleExpiring(handle: "alice", expiresAt: r.expiresAt, renewalUntil: r.renewalUntil, inRenewal: true)], Reminders.due(i))
+        i = q; i.handleEntry = HandleEntry(handle: "alice", address: "x", status: "live", expiresAt: now + 200 * 86_400, renewalUntil: now + 230 * 86_400)
+        XCTAssertTrue(Reminders.due(i).isEmpty)
+        i = q; i.handleEntry = HandleEntry(handle: "alice", address: "x", status: "free", expiresAt: now - 40 * 86_400, renewalUntil: now - 1)
+        XCTAssertTrue(Reminders.due(i).isEmpty)
+        // A served "live" whose expiry passed by our clock is in its renewal period.
+        i = q; i.handleEntry = HandleEntry(handle: "alice", address: "x", status: "live", expiresAt: now - 5, renewalUntil: now + 86_400)
+        if case let .handleExpiring(_, _, _, inRenewal) = Reminders.due(i).first { XCTAssertTrue(inRenewal) } else { XCTFail("no reminder") }
+        XCTAssertTrue(Reminders.text(.anmlReady, now: now).contains("ANML"))
     }
 
     func testMaturityComesFromEpochTimingAlone() {
@@ -150,12 +161,6 @@ final class AutomationTests: XCTestCase {
         XCTAssertTrue(m([pending], by9).isEmpty)
     }
 
-    func testRefreshesTheReferrerBinding() {
-        var i = base; i.claimedToday = true; i.referrerDue = true
-        XCTAssertEqual([.refreshReferrer], PrivacyAutomation.decide(i))
-        i.hasFeeErth = false
-        XCTAssertTrue(PrivacyAutomation.decide(i).isEmpty)
-    }
 }
 
 /// SwapMath against x/dex/keeper/amm.go's own output (ports SwapMathTest.kt).
@@ -183,6 +188,33 @@ final class SwapMathTests: XCTestCase {
                                    feePercent: Decimal(string: t["fee"] as! String)!)
             if b("amount_out") == 0 { XCTAssertNil(q) } else { XCTAssertEqual(b("amount_out"), q?.amountOut) }
         }
+    }
+
+    /// Deposits (audit 4, C2): the shares and the legs x/dex pulls, rounded
+    /// up, match the chain's own maths; a leg derived with depositLeg never
+    /// makes the other side the binding one and is never pulled past.
+    func testDepositsMatchTheChain() {
+        let deps = json["deposits"] as! [[String: Any]]
+        XCTAssertEqual(144, deps.count)
+        for d in deps {
+            func b(_ k: String) -> BigInt { BigInt(d[k] as! String)! }
+            let got = SwapMath.deposit(erthIn: b("in_erth"), tokenIn: b("in_token"), re: b("reserve_erth"), rt: b("reserve_token"), supply: b("supply"))
+            if b("shares") == 0 { XCTAssertNil(got, "\(d)") } else {
+                XCTAssertEqual(b("shares"), got?.shares, "\(d)")
+                XCTAssertEqual(b("pull_erth"), got?.erth, "\(d)")
+                XCTAssertEqual(b("pull_token"), got?.token, "\(d)")
+            }
+            let re = b("reserve_erth"), rt = b("reserve_token"), s = b("supply"), e = b("in_erth")
+            let t = SwapMath.depositLeg(e, from: re, to: rt)
+            let fromErth = e * s / re
+            if fromErth > 0 {
+                let p = SwapMath.deposit(erthIn: e, tokenIn: t, re: re, rt: rt, supply: s)
+                XCTAssertEqual(fromErth, p?.shares, "\(d) from erth")
+                XCTAssertTrue((p?.erth ?? 0) <= e && (p?.token ?? 0) <= t)
+            }
+        }
+        XCTAssertEqual(3, SwapMath.depositLeg(5, from: 2, to: 1))
+        XCTAssertEqual(0, SwapMath.depositLeg(1, from: 0, to: 1))
     }
 
     func testSlippageFloorTruncates() {

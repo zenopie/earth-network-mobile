@@ -56,8 +56,8 @@ final class AuditFixesTests: XCTestCase {
         chain.registrationCountry = "FR"
         let a = try wallet(chain)
         try await a.sync()
-        for _ in 0 ..< 30 { _ = try await a.prepareRegistration(affiliate: nil) }
-        let prep = try await a.prepareRegistration(affiliate: nil)
+        for _ in 0 ..< 30 { _ = try await a.prepareRegistration(referrer: nil) }
+        let prep = try await a.prepareRegistration(referrer: nil)
         chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
         try await a.sync()
         // The first broadcast of the registration fails after proving; the retry lands.
@@ -165,7 +165,7 @@ final class AuditFixesTests: XCTestCase {
         let idx = WrappedIndexer(chain)
         let a = try wallet(chain, indexer: idx)
         try await a.sync()
-        let prep = try await a.prepareRegistration(affiliate: nil)
+        let prep = try await a.prepareRegistration(referrer: nil)
         chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
         try await a.sync()
         idx.statusOverride = { throw URLError(.notConnectedToInternet) }

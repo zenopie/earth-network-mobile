@@ -49,13 +49,17 @@ final class PrivateMsgsTests: XCTestCase {
                 WeightedVoteOption(option: WeightedVoteOption.no, weight: "0.300000000000000000")]
     func w(_ o: UInt64, _ p: UInt64) -> Msg.AllocationWeight { Msg.AllocationWeight(optionID: o, percent: p) }
 
-    func register(_ affiliate: String) -> MsgRegisterPrivate {
+    func register(_ handle: String) -> MsgRegisterPrivate {
         MsgRegisterPrivate(
             fee: fee(40, 2000), proof: Data([1, 2, 3]), publicSignals: ["250930", "12345", "678", "9"],
             signatureAlgorithm: "lean_poa", dscDer: Data([0x30, 0x03, 1, 2, 3]), idc: fb(41), pcAnml: fb(42),
-            ciphertextAnml: bct(42), pcErth: fb(43), ciphertextErth: bct(43), affiliate: affiliate
+            ciphertextAnml: bct(42), pcErth: fb(43), ciphertextErth: bct(43),
+            affiliateHandle: handle, affiliatePc: handle.isEmpty ? Data() : fb(44), affiliateCiphertext: handle.isEmpty ? Data() : bct(44)
         )
     }
+
+    /// The handle vectors' shielded address (owner_pk OwnerPK(7), ek_pub of ek 01..20).
+    var zaddr: String { Vectors.json["handle_address"] as! String }
 
     lazy var msgs: [String: any ProtoMessage] = [
         "send": MsgSend(bundle: fee(10, 1500), fee: 1500),
@@ -63,13 +67,15 @@ final class PrivateMsgsTests: XCTestCase {
         "send_no_gas": MsgSend(bundle: fee(12, 1500), fee: 1500),
         "unshield": MsgSend(bundle: bundle(20, ("uanml", 5000), ("uerth", 2000)), receiver: addr(1), fee: 2000),
         "shield": MsgShield(sender: addr(30), amount: Coin(denom: "uerth", amount: "100000"), pc: fb(31), ciphertext: bct(31)),
-        "register": register(addr(50)),
+        "register": register("alice-01"),
         "register_no_affiliate": register(""),
         "claim_anml": MsgClaimAnmlPrivate(fee: fee(50, 2000), membership: membership(50), day: 20360, pc: fb(51), ciphertext: bct(51)),
-        "set_caretaker": MsgSetCaretaker(fee: fee(60, 2000), membership: membership(60), percentages: [w(1, 60), w(7, 40)], maxActivation: 1_780_000_000),
-        "bind_referrer": MsgBindReferrer(fee: fee(70, 2000), membership: membership(70), address: addr(50), maxActivation: 1_780_000_000,
-                                         referrerPubKey: Data(repeating: 2, count: 33), referrerSignature: Data(repeating: 7, count: 64)),
-        "bind_referrer_clear": MsgBindReferrer(fee: fee(71, 2000), membership: membership(71), address: "", maxActivation: 1_780_000_000),
+        "set_caretaker": MsgSetCaretaker(fee: fee(60, 2000), membership: membership(60), percentages: [w(1, 60), w(7, 40)], maxPredecessor: 1_750_000_000),
+        "set_caretaker_no_bound": MsgSetCaretaker(fee: fee(61, 2000), membership: membership(61), percentages: [w(2, 100)], maxPredecessor: PrivacyHash.noBound),
+        "move_caretaker": MsgMoveCaretaker(fee: fee(62, 2000), membership: membership(62), newOwner: fb(63)),
+        "bind_handle": MsgBindHandle(fee: fee(70, 2000), membership: membership(70), handle: "alice-01", address: zaddr, maxPredecessor: 1_750_000_000),
+        "bind_handle_release": MsgBindHandle(fee: fee(71, 2000), membership: membership(71), handle: "", address: "", maxPredecessor: PrivacyHash.noBound),
+        "move_handle": MsgMoveHandle(fee: fee(72, 2000), membership: membership(72), handle: "alice-01", newOwner: fb(73)),
         "vote_proposal": MsgVoteProposalPrivate(fee: fee(80, 2000), membership: membership(80), proposalID: 5, option: .yes),
         "propose_removal": MsgProposeRemoval(fee: fee(81, 2000), membership: membership(81), optionID: 3),
         "vote_removal": MsgVoteRemoval(fee: fee(82, 2000), membership: membership(82), optionID: 3, option: .no),
@@ -161,12 +167,34 @@ final class PrivateMsgsTests: XCTestCase {
         XCTAssertEqual("2000", back.feeCoins.first?.amount)
     }
 
-    /// Chain wave 3 (06ea4d6): the referrer consent bytes, the module accounts, canonical weights, calendar dates.
+    /// The membership proof's public inputs (4a663d5): max_predecessor after max_activation.
+    func testMembershipPublicInputsMatchTheChain() throws {
+        let v = Vectors.obj("membership_public_inputs")
+        let ins = v["inputs"] as! [String]
+        func h(_ k: String) -> Fr { Vectors.fr(v[k] as! String) }
+        let maxAct = (v["max_activation"] as! NSNumber).uint64Value, maxPred = (v["max_predecessor"] as! NSNumber).uint64Value
+        let mine = [h("root"), h("scope"), h("nullifier"), h("signal"), h("excluded_dsc"), h("excluded_country"),
+                    PrivacyHash.u64(maxAct), PrivacyHash.u64(maxPred)]
+        XCTAssertEqual(8, ins.count)
+        XCTAssertEqual(PrivacyHash.noBound, maxAct)
+        XCTAssertEqual(ins, mine.map(\.hex))
+    }
+
+    /// A bind's address must be canonical; a release binds Bytes(""), 0, Bytes("").
+    func testBindHandleFields() throws {
+        let rel = MsgBindHandle(fee: fee(71, 2000), membership: membership(71), handle: "", address: "", maxPredecessor: 0)
+        XCTAssertEqual([PrivacyHash.bytes(Data()), .zero, PrivacyHash.bytes(Data())], try rel.sighashFields())
+        XCTAssertThrowsError(try MsgBindHandle(fee: fee(70, 2000), membership: membership(70), handle: "alice-01", address: zaddr.uppercased(), maxPredecessor: 0).sighashFields())
+        XCTAssertThrowsError(try MsgBindHandle(fee: fee(70, 2000), membership: membership(70), handle: "Alice", address: zaddr, maxPredecessor: 0).sighashFields())
+        XCTAssertThrowsError(try MsgBindHandle(fee: fee(70, 2000), membership: membership(70), handle: "alice", address: "", maxPredecessor: 0).sighashFields())
+        let reg = register("alice-01")
+        let b = Vectors.obj("registration_binding")
+        XCTAssertEqual(b["affiliate_field"] as? String, try reg.affiliateField().hex)
+        XCTAssertEqual(b["affiliate_field"] as? String, PrivacyHash.affiliateField(handle: "alice-01", pc: try Fr(bytes: fb(44)), ct: bct(44)).hex)
+    }
+
+    /// Chain wave 3 (06ea4d6): the module accounts, canonical weights, calendar dates.
     func testWave3Vectors() throws {
-        let c = Vectors.json["referrer_consent"] as! [String: String]
-        let bytes = try PrivateMsgs.referrerConsentBytes(chainID: Vectors.json["chain_id"] as! String, nullifier: Vectors.unhex(c["nullifier"]!),
-                                                         address: Data(try Bech32.decode(c["address"]!).data))
-        XCTAssertEqual(c["bytes"], Vectors.hex(bytes))
         let mods = Vectors.json["module_accounts"] as! [String: String]
         XCTAssertEqual(Set(PrivateMsgs.moduleAccounts), Set(mods.keys))
         for name in PrivateMsgs.moduleAccounts {

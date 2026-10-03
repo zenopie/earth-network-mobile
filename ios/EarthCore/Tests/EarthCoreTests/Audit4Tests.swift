@@ -170,7 +170,7 @@ final class Audit4Tests: XCTestCase {
         let chain = FakeChain()
         for i in 0 ..< 20 {
             let o = try wallet(chain, words: try BIP39.generateMnemonic())
-            let prep = try await o.prepareRegistration(affiliate: nil)
+            let prep = try await o.prepareRegistration(referrer: nil)
             chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
             _ = try await o.sync()
             var s = a3.sigs(prep); s[2] = "\(1000 + i)"
@@ -193,7 +193,7 @@ final class Audit4Tests: XCTestCase {
     func forge(_ chain: FakeChain, _ t: UInt64) throws -> WrappedIndexer {
         let keys = try PrivacyKeys.fromMnemonic(a3.alice)
         let forge: (IdentityRow) -> IdentityRow = { r in
-            IdentityRow(index: r.index, height: r.height, leaf: PrivacyHash.identityLeaf(idc: keys.idc, dscKey: Fr(UInt64(77)), country: .zero, activatedAt: t),
+            IdentityRow(index: r.index, height: r.height, leaf: PrivacyHash.identityLeaf(idc: keys.idc, dscKey: Fr(UInt64(77)), country: .zero, activatedAt: t, predecessorAt: 0),
                         zeroedHeight: r.zeroedHeight, time: t)
         }
         let lying = WrappedIndexer(chain)

@@ -33,7 +33,7 @@ final class Audit3Tests: XCTestCase {
     }
 
     func registered(_ chain: FakeChain, _ w: PrivacyWallet) async throws {
-        let prep = try await w.prepareRegistration(affiliate: nil)
+        let prep = try await w.prepareRegistration(referrer: nil)
         chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
         try await w.sync()
         _ = try await w.register(prep, proof: Data(count: 14_656), publicSignals: sigs(prep), signatureAlgorithm: "lean_poa", dscDer: Data(count: 10))
@@ -218,7 +218,7 @@ final class Audit3Tests: XCTestCase {
         chain.blockTimeAsks = []
         let r = try await restoredLive(chain)
         XCTAssertTrue(chain.blockTimeAsks.isEmpty)
-        XCTAssertLessThanOrEqual(r.store.state.regRecords[0].work, 677)
+        XCTAssertLessThanOrEqual(r.store.state.regRecords[0].work, 2 * 677, "every country, each with predecessor_at 0 or the time itself")
     }
 
     func testRestoreWithoutRowTimesAsksACoverSet() async throws {
@@ -360,17 +360,14 @@ final class Audit3Tests: XCTestCase {
     // MARK: 7. automation spacing; 14b. logs
 
     func testAutomationSpacesActionsWithASyncBetween() async throws {
-        final class S: @unchecked Sendable { var events: [String] = []; var claimed = false; var caretaker = true; var fee = true; var landed = false }
+        final class S: @unchecked Sendable { var events: [String] = []; var due = ["unbond/v/1", "unbond/v/2"] }
         let s = S()
-        let base = PrivacyAutomation.Inputs(now: 20_000 * 86_400 + 5 * 3600, identityLive: true, claimOpensAt: 0, claimedToday: false,
-                                            claimOffset: 0, caretakerDue: false, hasFeeErth: true, maturedUnbonds: [])
         let taken = try await PrivacyAutomation.runPass(
-            sync: { s.events.append("sync"); if s.landed { s.fee = true } },
-            inputs: { var i = base; i.claimedToday = s.claimed; i.caretakerDue = s.caretaker; i.hasFeeErth = s.fee; return i },
+            sync: { s.events.append("sync") },
+            inputs: { PrivacyAutomation.Inputs(now: 20_000 * 86_400 + 5 * 3600, maturedUnbonds: s.due) },
             act: { a in
                 s.events.append(PrivacyAutomation.kind(a))
-                s.fee = false; s.landed = true
-                if case .claimAnml = a { s.claimed = true } else { s.caretaker = false }
+                if case let .claimUnbonding(d) = a { s.due.removeAll { $0 == d } }
             },
             pause: { ms in
                 s.events.append("pause")
@@ -380,24 +377,22 @@ final class Audit3Tests: XCTestCase {
         XCTAssertEqual(["sync", PrivacyAutomation.kind(taken[0]), "pause", "sync", PrivacyAutomation.kind(taken[1])], s.events)
     }
 
-    func testAutomationWaitsForChangeThatHasNotLanded() async throws {
-        final class S: @unchecked Sendable { var claimed = false; var fee = true; var pauses = 0 }
+    func testAutomationTriesEachActionOncePerPass() async throws {
+        final class S: @unchecked Sendable { var pauses = 0 }
         let s = S()
-        let base = PrivacyAutomation.Inputs(now: 20_000 * 86_400 + 5 * 3600, identityLive: true, claimOpensAt: 0, claimedToday: false,
-                                            claimOffset: 0, caretakerDue: true, hasFeeErth: true, maturedUnbonds: ["unbond/v/1"])
+        // A claim that keeps failing stays due: tried once this pass.
         let taken = try await PrivacyAutomation.runPass(
             sync: {},
-            inputs: { var i = base; i.claimedToday = s.claimed; i.hasFeeErth = s.fee; i.caretakerDue = !s.claimed || s.fee; return i },
-            act: { a in if case .claimUnbonding = a {} else { s.fee = false; s.claimed = true } },
+            inputs: { PrivacyAutomation.Inputs(now: 20_000 * 86_400, maturedUnbonds: ["unbond/v/1", "unbond/v/2"]) },
+            act: { _ in throw PrivacyError("not matured after all") },
             pause: { _ in s.pauses += 1 },
             pick: { _ in 0 })
+        XCTAssertEqual(2, taken.count)
         XCTAssertEqual(taken.count - 1, s.pauses)
-        XCTAssertEqual(1, taken.filter { if case .claimUnbonding = $0 { return false }; return true }.count)
     }
 
     func testAutomationLogsNameNoDenom() {
         XCTAssertEqual("ClaimUnbonding", PrivacyAutomation.kind(.claimUnbonding(denom: "unbond/\(v1)/3")))
-        XCTAssertEqual("ClaimAnml", PrivacyAutomation.kind(.claimAnml(day: 5)))
     }
 
     // MARK: 8. the stake vote run
@@ -528,7 +523,7 @@ final class Audit3Tests: XCTestCase {
     func testRegistrationNeedsACalendarDate() async throws {
         let chain = FakeChain()
         let w = try wallet(chain)
-        let prep = try await w.prepareRegistration(affiliate: nil)
+        let prep = try await w.prepareRegistration(referrer: nil)
         chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
         try await w.sync()
         var s = sigs(prep)

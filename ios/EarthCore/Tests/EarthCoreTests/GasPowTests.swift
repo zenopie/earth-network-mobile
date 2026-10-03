@@ -51,7 +51,7 @@ final class GasPowTests: XCTestCase {
 
     func msg() -> MsgRegisterPrivate {
         MsgRegisterPrivate(fee: nil, proof: Data(), publicSignals: ["261001", binding, nullifier, "0"], signatureAlgorithm: "", dscDer: Data(),
-                           idc: Data(), pcAnml: Data(), ciphertextAnml: Data(), pcErth: Data(), ciphertextErth: Data(), affiliate: "")
+                           idc: Data(), pcAnml: Data(), ciphertextAnml: Data(), pcErth: Data(), ciphertextErth: Data())
     }
 
     func request(_ s: Server, progress: @escaping @Sendable (Double) -> Void = { _ in }) async throws -> GasGrant.Outcome {

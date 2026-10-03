@@ -36,7 +36,7 @@ final class ZkVectorsTests: XCTestCase {
         let mine: [String: Fr] = [
             "id": PrivacyHash.tagID, "owner": PrivacyHash.tagOwner, "leaf": PrivacyHash.tagLeaf, "sn": PrivacyHash.tagSN,
             "pc": PrivacyHash.tagPC, "cm": PrivacyHash.tagCM, "nf": PrivacyHash.tagNF, "reg": PrivacyHash.tagReg,
-            "asset": PrivacyHash.tagAsset, "signal": PrivacyHash.tagSignal, "bytes": PrivacyHash.tagBytes, "scope": PrivacyHash.tagScope,
+            "asset": PrivacyHash.tagAsset, "signal": PrivacyHash.tagSignal, "bytes": PrivacyHash.tagBytes, "scope": PrivacyHash.tagScope, "affiliate": PrivacyHash.tagAffiliate,
             "stake": PrivacyHash.tagStake, "spc": PrivacyHash.tagSPC, "snf": PrivacyHash.tagSNF, "otag": PrivacyHash.tagOTag,
             "snfl": PrivacyHash.tagSNFL, "vnf": PrivacyHash.tagVNF,
             "gen": Grumpkin.tagGen, "cv_r": Grumpkin.tagCvR, "bsig": Grumpkin.tagBsig, "bundle": PrivateMsgs.tagBundle,
@@ -64,7 +64,11 @@ final class ZkVectorsTests: XCTestCase {
         XCTAssertEqual(s("idc"), idc.hex)
         let opk = PrivacyHash.ownerPK(nk)
         XCTAssertEqual(s("owner_pk"), opk.hex)
-        XCTAssertEqual(s("leaf"), PrivacyHash.identityLeaf(idc: idc, dscKey: Vectors.fr(s("leaf_dsc")), country: PrivacyHash.countryField("DE"), activatedAt: 1_790_000_000).hex)
+        XCTAssertEqual(s("leaf"), PrivacyHash.identityLeaf(idc: idc, dscKey: Vectors.fr(s("leaf_dsc")), country: PrivacyHash.countryField("DE"),
+                                                           activatedAt: 1_790_000_000, predecessorAt: 0).hex)
+        // A switched or re-entered identity's leaf commits to predecessor_at.
+        XCTAssertEqual(s("leaf_pred"), PrivacyHash.identityLeaf(idc: idc, dscKey: Vectors.fr(s("leaf_dsc")), country: PrivacyHash.countryField("DE"),
+                                                                activatedAt: 1_790_000_000, predecessorAt: 1_790_000_000).hex)
         XCTAssertEqual(s("sn"), PrivacyHash.scopeNullifier(idSecret: idSecret, scope: PrivacyHash.claimScope(day: 20360)).hex)
         let pc = PrivacyHash.pc(ownerPK: opk, rho: rho, rcm: rcm)
         XCTAssertEqual(s("pc"), pc.hex)
@@ -124,7 +128,7 @@ final class ZkVectorsTests: XCTestCase {
         let s = Vectors.obj("scopes")
         XCTAssertEqual(s["claim_20360"] as? String, PrivacyHash.claimScope(day: 20360).hex)
         XCTAssertEqual(s["caretaker"] as? String, PrivacyHash.caretakerScope().hex)
-        XCTAssertEqual(s["referrer"] as? String, PrivacyHash.referrerScope().hex)
+        XCTAssertEqual(s["handle"] as? String, PrivacyHash.handleScope().hex)
         XCTAssertEqual(s["proposal_5_0"] as? String, PrivacyHash.proposalScope(proposalID: 5, round: 0).hex)
         XCTAssertEqual(s["proposal_5_1"] as? String, PrivacyHash.proposalScope(proposalID: 5, round: 1).hex)
         XCTAssertEqual(s["removal_3"] as? String, PrivacyHash.removalScope(ballotID: 3).hex)

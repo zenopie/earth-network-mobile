@@ -58,7 +58,7 @@ final class WalletFlowTests: XCTestCase {
         XCTAssertEqual(.none, a.identityStatus())
 
         // Registration: prepare, the backend shields gas to pc_gas, register.
-        let prep = try await a.prepareRegistration(affiliate: nil)
+        let prep = try await a.prepareRegistration(referrer: nil)
         chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
         try await a.sync()
         XCTAssertEqual(100_000, bal(a, "uerth"))
@@ -148,7 +148,7 @@ final class WalletFlowTests: XCTestCase {
     func registered(_ chain: FakeChain, _ words: String) async throws -> PrivacyWallet {
         let a = try wallet(chain, words)
         try await a.sync()
-        let prep = try await a.prepareRegistration(affiliate: nil)
+        let prep = try await a.prepareRegistration(referrer: nil)
         chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
         try await a.sync()
         _ = try await a.register(prep, proof: Data(count: 14_656), publicSignals: signals(prep), signatureAlgorithm: "lean_poa", dscDer: Data(count: 10))
@@ -277,20 +277,12 @@ final class WalletFlowTests: XCTestCase {
         XCTAssertEqual(held.count, chain.stakeVotes.count)
         XCTAssertEqual(rounded, chain.stakeVotes.reduce(UInt64(0)) { $0 + $1.2 })
 
-        // Referrer binding (lapses after R; refreshed past R/2).
+        // A handle: claimed by a fresh registrant at once, naming this wallet's shielded address.
         chain.now += 31 * 86_400
         try await a.sync()
-        // Wave 3 (L6): the bound address is one this wallet controls; its key consents.
-        let key = try EarthKey(mnemonic: alice)
-        await assertThrowsAsync({ try await a.bindReferrer(address: key.address) })
-        await assertThrowsAsync({ try await a.bindReferrer(address: self.receiver) { m in (key.publicKey, try key.sign(m)) } })
-        _ = try await a.bindReferrer(address: key.address) { m in (key.publicKey, try key.sign(m)) }
-        XCTAssertEqual([key.address], Array(chain.referrers.values))
-        let due0 = try await a.referrerDue()
-        XCTAssertFalse(due0)
-        chain.now += 16 * 86_400
-        let due1 = try await a.referrerDue()
-        XCTAssertTrue(due1)
+        _ = try await a.bindHandle("alice")
+        XCTAssertEqual(a.address.encode(), chain.handles["alice"]?.address)
+        XCTAssertEqual("alice", a.snapshot.handle)
         _ = try await a.setCaretaker(split: [1: 100])
         XCTAssertEqual([[1: 100]], Array(chain.caretakerVotes.values))
 

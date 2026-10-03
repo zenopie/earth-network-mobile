@@ -87,10 +87,30 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     var positionOrder: [UInt64] = []
     var nextPositionID: UInt64 = 1
     var positionVotes: [(UInt64, UInt64)] = []
-    var referrers: [Fr: String] = [:]
     var removalBallots: [UInt64: UInt64] = [:]
     var removalVotes: [(UInt64, Fr, Int)] = []
     var caretakerVotes: [Fr: [UInt64: UInt64]] = [:]
+    /// Caretaker leases (nullifier -> expires_at), and nullifiers that moved theirs away (1126).
+    var caretakerExpiry: [Fr: Int64] = [:]
+    var caretakerMovedOut: Set<Fr> = []
+    /// caretaker_vote_seconds (R) and handle_lease_seconds / handle_renewal_seconds, as FakeReads names them.
+    var caretakerLease: Int64 = 30 * 86_400
+    var handleLease: Int64 = 365 * 86_400
+    var handleRenewal: Int64 = 30 * 86_400
+    /// The handle directory: handle -> (holder's nullifier, address, expires_at).
+    struct HandleRec { let handle: String; var nullifier: Fr; let address: String; let expiresAt: Int64 }
+    var handles: [String: HandleRec] = [:]
+    var handleMovedOut: Set<Fr> = []
+    /// Every Query/Handles (start) and backend /handles (from_index) page asked: never one handle.
+    var handleAsks: [String] = []
+    /// Passports ever registered: a re-registration's leaf has a predecessor (x/personhood PassportsSeen).
+    var passportsSeen: Set<String> = []
+    /// Each leaf's predecessor_at.
+    var predecessorOf: [UInt64: Int64] = [:]
+    /// Referral notes minted (handle, pc).
+    var referralNotes: [(String, Fr)] = []
+    /// Set to make the backend's handle stream lie about an address (the chain check must catch it).
+    var forgeHandleAddress: String?
     var claimedUnbonds: [String] = []
     /// The fake's epoch (9/10 derth minted per uerth at delegation).
     let epoch: UInt64 = 4
@@ -314,6 +334,19 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             try only(nil)
             try need(m.ciphertextAnml.count == NoteCipher.blindCiphertextBytes && m.ciphertextErth.count == NoteCipher.blindCiphertextBytes,
                      "registration ciphertexts")
+            // All three of the referral, or none; its note is a 177-byte blind ciphertext.
+            if !m.affiliateHandle.isEmpty || !m.affiliatePc.isEmpty || !m.affiliateCiphertext.isEmpty {
+                try need(Handles.valid(m.affiliateHandle) && m.affiliatePc.count == 32 && m.affiliateCiphertext.count == NoteCipher.blindCiphertextBytes,
+                         "affiliate: all three, or none")
+            }
+        case let m as MsgBindHandle:
+            try only(nil)
+            try need(m.handle.isEmpty == m.address.isEmpty, "a bind names a handle and an address; a release neither")
+            if !m.address.isEmpty { try need((try ShieldedAddress.decode(m.address)).encode() == m.address, "address not canonical") }
+        case let m as MsgMoveHandle:
+            try only(nil); try need(m.newOwner != m.membership.nullifier, "new_owner is the prover")
+        case let m as MsgMoveCaretaker:
+            try only(nil); try need(m.newOwner != m.membership.nullifier, "new_owner is the prover")
         case let m as MsgClaimAnmlPrivate:
             try only(nil)
             try need(m.ciphertext.count == NoteCipher.blindCiphertextBytes, "claim ciphertext")
@@ -357,17 +390,63 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         if m is MsgRestake { try need(!(try created(p)).isEmpty, "restake creates nothing") }
     }
 
-    /// A membership's expected scope and max_activation, per msg.
-    private func membershipStatement(_ m: any PrivateMsg) -> (Fr, UInt64)? {
+    /// A ballot's max_predecessor (x/assembly: opened - 86400; the fake opens ballots as it is asked).
+    func ballotMaxPredecessor() -> UInt64 { UInt64(now - 86_400) }
+
+    private func handleOf(_ n: Fr) -> HandleRec? { handles.values.first { $0.nullifier == n } }
+
+    /// The chain's refusal of a too-recent predecessor (strictly before the bound).
+    private func predecessorBound(_ maxPredecessor: UInt64, _ bound: Int64) throws {
+        try need(bound > 0 && maxPredecessor < UInt64(bound), "max_predecessor \(maxPredecessor) is not before \(bound) (now - lease length - activation margin)")
+    }
+
+    /// A membership's statement per msg: scope, max_activation,
+    /// max_predecessor (x/personhood and x/assembly at 4a663d5), and the
+    /// checks each makes of the prover's standing first.
+    private func membershipStatement(_ m: any PrivateMsg) throws -> (Fr, UInt64, UInt64)? {
         let day = UInt64(now / 86_400)
+        let none = PrivacyHash.noBound
         switch m {
-        case let m as MsgClaimAnmlPrivate: return (PrivacyHash.claimScope(day: m.day), (m.day - 1) * 86_400)
-        case let m as MsgVoteProposalPrivate: return (PrivacyHash.proposalScope(proposalID: m.proposalID, round: 0), UInt64(now - 3600))
-        // Wave 3 (L4/L5): a lease's max_activation is at most now - R - 86400 (R = 30 days here).
-        case let m as MsgSetCaretaker: return (PrivacyHash.caretakerScope(), Int64(m.maxActivation) <= now - 31 * 86_400 ? m.maxActivation : UInt64.max)
-        case let m as MsgBindReferrer: return (PrivacyHash.referrerScope(), Int64(m.maxActivation) <= now - 31 * 86_400 ? m.maxActivation : UInt64.max)
-        case let m as MsgProposeRemoval: return (PrivacyHash.proposeRemovalScope(optionID: m.optionID, day: day), day * 86_400 - 86_400)
-        case let m as MsgVoteRemoval: return (PrivacyHash.removalScope(ballotID: removalBallots[m.optionID] ?? 0), UInt64(now - 3600))
+        case let m as MsgClaimAnmlPrivate: return (PrivacyHash.claimScope(day: m.day), (m.day - 1) * 86_400, none)
+        case let m as MsgVoteProposalPrivate: return (PrivacyHash.proposalScope(proposalID: m.proposalID, round: 0), none, ballotMaxPredecessor())
+        case let m as MsgSetCaretaker:
+            let n = try f(m.membership.nullifier)
+            if caretakerVotes[n] == nil, !m.percentages.isEmpty {
+                try need(!caretakerMovedOut.contains(n), "this identity moved its caretaker split away (code 1126)")
+                try predecessorBound(m.maxPredecessor, now - caretakerLease - 86_400)
+            }
+            return (PrivacyHash.caretakerScope(), none, m.maxPredecessor)
+        case let m as MsgMoveCaretaker:
+            let n = try f(m.membership.nullifier)
+            guard let exp = caretakerExpiry[n] else { throw Refused(why: "the prover holds no caretaker split") }
+            try need(exp > now, "the prover's caretaker split has lapsed")
+            let o = try f(m.newOwner)
+            try need(caretakerVotes[o] == nil, "new_owner already holds a caretaker split")
+            try need(!caretakerMovedOut.contains(o), "this identity moved its caretaker split away (code 1126)")
+            return (PrivacyHash.caretakerScope(), none, none)
+        case let m as MsgBindHandle:
+            let n = try f(m.membership.nullifier)
+            let holds = handleOf(n) != nil
+            if !m.handle.isEmpty {
+                try need(Handles.valid(m.handle), "not a handle")
+                if let h = handles[m.handle] { try need(h.nullifier == n || now >= h.expiresAt + handleRenewal, "handle is held by another human (code 1122)") }
+                if !holds {
+                    try need(!handleMovedOut.contains(n), "this identity moved its handle away (code 1125)")
+                    try predecessorBound(m.maxPredecessor, now - handleLease - 86_400)
+                }
+            } else {
+                try need(holds, "the prover holds no handle to release")
+            }
+            return (PrivacyHash.handleScope(), none, m.maxPredecessor)
+        case let m as MsgMoveHandle:
+            let n = try f(m.membership.nullifier)
+            try need(handles[m.handle]?.nullifier == n, "the prover does not hold \(m.handle)")
+            let o = try f(m.newOwner)
+            try need(handleOf(o) == nil, "new_owner already holds a handle")
+            try need(!handleMovedOut.contains(o), "this identity moved its handle away (code 1125)")
+            return (PrivacyHash.handleScope(), none, none)
+        case let m as MsgProposeRemoval: return (PrivacyHash.proposeRemovalScope(optionID: m.optionID, day: day), none, day * 86_400 - 86_400)
+        case let m as MsgVoteRemoval: return (PrivacyHash.removalScope(ballotID: removalBallots[m.optionID] ?? 0), none, ballotMaxPredecessor())
         default: return nil
         }
     }
@@ -400,24 +479,16 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             try need(m.voteNullifier.count == 32 && !(try f(m.voteNullifier)).isZero, "vote_nullifier")
             try need(!voteNullifiers.contains([PrivacyHash.u64(m.proposalID), try f(m.voteNullifier)]),
                      "this stake note already voted on this proposal (code 1119)")
-        case let m as MsgBindReferrer:
-            // Wave 3 (L6): binding an address needs its owner's consent (cosmos secp256k1 over SHA-256).
-            if m.address.isEmpty {
-                try need(m.referrerPubKey.isEmpty && m.referrerSignature.isEmpty, "clearing a binding carries no consent")
-            } else {
-                try need(m.referrerPubKey.count == 33 && m.referrerSignature.count == 64, "no referrer consent")
-                try need(try EarthKey.address(fromPublicKey: m.referrerPubKey) == m.address, "consent key is not the address's")
-                let msg = try PrivateMsgs.referrerConsentBytes(chainID: chainID, nullifier: m.membership.nullifier, address: Data(try Bech32.decode(m.address).data))
-                let key = try secp256k1.Signing.PublicKey(dataRepresentation: m.referrerPubKey, format: .compressed)
-                let sig = try secp256k1.Signing.ECDSASignature(compactRepresentation: m.referrerSignature)
-                try need(key.isValidSignature(sig, for: msg), "bad referrer consent")
-            }
         case let m as MsgVoteRemoval: try need(removalBallots[m.optionID] != nil, "no open ballot")
         case let m as MsgProposeRemoval: try need(removalBallots[m.optionID] == nil, "ballot already open")
         case let m as MsgClaimUnbonding: try need((m.bundle != nil) == (m.feeFromOutput == 0), "claim fee")
         case let m as MsgRegisterPrivate:
             let idc = try f(m.idc)
             try need(!identityRows.contains { $0.leaf != .zero && registeredIdc[$0.index] == idc }, "a switch to the live idc is refused")
+            if !m.affiliateHandle.isEmpty {
+                let h = handles[m.affiliateHandle]
+                try need(h != nil && now < h!.expiresAt, "affiliate_handle is not a live handle (code 1121)")
+            }
         default: break
         }
     }
@@ -519,11 +590,12 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             let mem = mm.membership
             try need(identityRoots.contains(try f(mem.root)), "unknown identity anchor")
             try need(mem.proof.count == PrivateTxEngine.proofBytes, "a membership proof is exactly \(PrivateTxEngine.proofBytes) bytes")
+            _ = try membershipStatement(m)
             if !simulate {
                 guard !prover.memberships.isEmpty else { throw Refused(why: "no membership proof") }
                 let w = prover.memberships.removeFirst()
-                let (scope, maxAct) = membershipStatement(m)!
-                let expect = [try f(mem.root), scope, try f(mem.nullifier), sighash, .zero, .zero, PrivacyHash.u64(maxAct)]
+                let (scope, maxAct, maxPred) = try membershipStatement(m)!
+                let expect = [try f(mem.root), scope, try f(mem.nullifier), sighash, .zero, .zero, PrivacyHash.u64(maxAct), PrivacyHash.u64(maxPred)]
                 try need(w.publicInputs() == expect, "membership proof is for other public inputs")
             }
         }
@@ -559,14 +631,27 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             let dsc = try PrivateMsgs.decimalField(m.publicSignals[3])
             let idc = try f(m.idc)
             // A switch: the holder's old leaf is zeroed, the new one appended.
-            for (i, c) in registeredIdc where c == idc || passportOf[i] == m.publicSignals[2] { zeroLeaf(i) }
+            let live = registeredIdc.filter { $0.value == idc || passportOf[$0.key] == m.publicSignals[2] }
+            let switched = !live.isEmpty
+            for i in live.keys { zeroLeaf(i) }
+            // predecessor_at: the switch or re-entry that made this leaf, 0 for a passport never seen.
+            let pred: Int64 = switched || passportsSeen.contains(m.publicSignals[2]) ? now : 0
+            passportsSeen.insert(m.publicSignals[2])
             let idx = identityTree.append(PrivacyHash.identityLeaf(idc: idc, dscKey: dsc, country: PrivacyHash.countryField(registrationCountry),
-                                                                   activatedAt: UInt64(now)))
+                                                                   activatedAt: UInt64(now), predecessorAt: UInt64(pred)))
+            predecessorOf[idx] = pred
             identityRows.append(IdentityRow(index: idx, height: height, leaf: identityTree.leaf(idx), zeroedHeight: nil, time: UInt64(now)))
             registeredIdc[idx] = idc; passportOf[idx] = m.publicSignals[2]
             mint("uanml", 1_000_000, try f(m.pcAnml), m.ciphertextAnml)
-            mint("uerth", 5_000_000, try f(m.pcErth), m.ciphertextErth)
-            events.append((type: "register", attributes: ["leaf_index": String(idx)]))
+            if !switched {
+                mint("uerth", 5_000_000, try f(m.pcErth), m.ciphertextErth)
+                // The referrer's half, as a note to the handle's address.
+                if !m.affiliateHandle.isEmpty {
+                    mint("uerth", 5_000_000, try f(m.affiliatePc), m.affiliateCiphertext)
+                    referralNotes.append((m.affiliateHandle, try f(m.affiliatePc)))
+                }
+            }
+            events.append((type: "register", attributes: ["leaf_index": String(idx), "switched": String(switched)]))
         case let m as MsgClaimAnmlPrivate:
             mint("uanml", 1_000_000, try f(m.pc), m.ciphertext)
         case let m as MsgVoteProposalPrivate:
@@ -615,10 +700,30 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             mintStake(PrivacyWallet.derthDenom(p.validator), p.derth, spcMint!, stake!.spcCiphertext)
         case let m as MsgPositionVote:
             positionVotes.append((m.positionID, m.proposalID))
-        case let m as MsgBindReferrer:
-            referrers[try f(m.membership.nullifier)] = m.address
         case let m as MsgSetCaretaker:
-            caretakerVotes[try f(m.membership.nullifier)] = Dictionary(uniqueKeysWithValues: m.percentages.map { ($0.optionID, $0.percent) })
+            let n = try f(m.membership.nullifier)
+            if m.percentages.isEmpty { caretakerVotes[n] = nil; caretakerExpiry[n] = nil } else {
+                caretakerVotes[n] = Dictionary(uniqueKeysWithValues: m.percentages.map { ($0.optionID, $0.percent) })
+                caretakerExpiry[n] = now + caretakerLease
+            }
+            events.append((type: "set_caretaker", attributes: ["expires_at": String(caretakerExpiry[n] ?? 0)]))
+        case let m as MsgMoveCaretaker:
+            let n = try f(m.membership.nullifier), o = try f(m.newOwner)
+            caretakerVotes[o] = caretakerVotes.removeValue(forKey: n); caretakerExpiry[o] = caretakerExpiry.removeValue(forKey: n)
+            caretakerMovedOut.insert(n)
+            events.append((type: "move_caretaker", attributes: ["expires_at": String(caretakerExpiry[o] ?? 0)]))
+        case let m as MsgBindHandle:
+            let n = try f(m.membership.nullifier)
+            let cur = handleOf(n)
+            if m.handle.isEmpty { handles[cur!.handle] = nil } else {
+                // A change frees the old handle at once; a renewal (or a claim) leases now + handle_lease_seconds.
+                if let cur, cur.handle != m.handle { handles[cur.handle] = nil }
+                handles[m.handle] = HandleRec(handle: m.handle, nullifier: n, address: m.address, expiresAt: now + handleLease)
+                events.append((type: "handle_bound", attributes: ["handle": m.handle, "expires_at": String(now + handleLease)]))
+            }
+        case let m as MsgMoveHandle:
+            handles[m.handle]!.nullifier = try f(m.newOwner)
+            handleMovedOut.insert(try f(m.membership.nullifier))
         case let m as MsgProposeRemoval:
             removalBallots[m.optionID] = 100 + m.optionID
         case let m as MsgVoteRemoval:
@@ -791,6 +896,39 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         return StakeSnapshotsPage(rows: rows, nextHeight: max(fromHeight, height), complete: false, syncedHeight: height - 1)
     }
 
+    /// A directory entry as Query/Handles serves it now (released ones are gone: swept).
+    private func entry(_ h: HandleRec) -> HandleEntry? {
+        let until = h.expiresAt + handleRenewal
+        let status: String
+        if now < h.expiresAt { status = HandleEntry.live } else if now < until { status = HandleEntry.renewal } else { return nil }
+        return HandleEntry(handle: h.handle, address: h.address, status: status, expiresAt: h.expiresAt, renewalUntil: until)
+    }
+
+    private func directory() -> [HandleEntry] { handles.keys.sorted().compactMap { entry(handles[$0]!) } }
+
+    /// Query/Handles: handles after `start`, at most `limit`.
+    func handlesPage(start: String, limit: Int) -> HandleDirectory.Page {
+        handleAsks.append("chain:" + start)
+        let after = directory().filter { $0.handle > start }
+        let page = Array(after.prefix(min(limit, 1000)))
+        return HandleDirectory.Page(handles: page, next: after.count > page.count ? page.last!.handle : "")
+    }
+
+    func handles(fromIndex: Int64, limit: Int) async throws -> HandleDirectory.StreamPage {
+        let n = try aligned("handles", UInt64(fromIndex), limit)
+        handleAsks.append("indexer:\(fromIndex)")
+        let all = directory().map { e in forgeHandleAddress.map { HandleEntry(handle: e.handle, address: $0, status: e.status, expiresAt: e.expiresAt, renewalUntil: e.renewalUntil) } ?? e }
+        let rows = Array(all.dropFirst(Int(fromIndex)).prefix(n))
+        return HandleDirectory.StreamPage(handles: rows, height: Int64(height - 1), size: Int64(all.count), fromIndex: fromIndex,
+                                          lastPage: Int(fromIndex) + n >= all.count)
+    }
+
+    /// The app's directory over this chain: the indexer's stream first, the chain's pages to check against.
+    func handleDirectory() -> HandleDirectory {
+        HandleDirectory(fetchChainPage: { [self] s, l in handlesPage(start: s, limit: l) },
+                        fetchStream: { [self] f, l in try await handles(fromIndex: f, limit: l) }, now: { [self] in now })
+    }
+
     func positionReads() -> [PrivacyReads.Position] {
         positionOrder.compactMap { positions[$0] }.map {
             PrivacyReads.Position(id: $0.id, validator: $0.validator, derth: $0.derth, ownerTag: $0.ownerTag, splits: $0.splits,
@@ -845,16 +983,19 @@ final class CheckingProver: PrivacyProver, @unchecked Sendable {
 struct FakeReads: PrivacyChainReads, @unchecked Sendable {
     let chain: FakeChain
 
-    func personhoodParams() async throws -> PrivacyReads.PersonhoodParams { .init(caretakerVoteSeconds: 30 * 86_400, identityRootWindowSeconds: 3_600) }
+    func personhoodParams() async throws -> PrivacyReads.PersonhoodParams {
+        .init(caretakerVoteSeconds: chain.caretakerLease, identityRootWindowSeconds: 3_600, handleLeaseSeconds: chain.handleLease,
+              handleRenewalSeconds: chain.handleRenewal)
+    }
 
     func ballotInputs(proposalID: UInt64, optionID: UInt64) async throws -> PrivacyReads.BallotInputs {
         if proposalID != 0 {
             return .init(scope: PrivacyHash.proposalScope(proposalID: proposalID, round: 0), excludedDsc: .zero, excludedCountry: .zero,
-                         maxActivation: UInt64(chain.now - 3600), round: 0, ballotID: 0)
+                         maxActivation: PrivacyHash.noBound, round: 0, ballotID: 0, maxPredecessor: chain.ballotMaxPredecessor())
         }
         let id = chain.removalBallots[optionID]!
         return .init(scope: PrivacyHash.removalScope(ballotID: id), excludedDsc: .zero, excludedCountry: .zero,
-                     maxActivation: UInt64(chain.now - 3600), round: 0, ballotID: id)
+                     maxActivation: PrivacyHash.noBound, round: 0, ballotID: id, maxPredecessor: chain.ballotMaxPredecessor())
     }
 
     func epochNumber() async throws -> UInt64 { chain.epoch }

@@ -82,7 +82,7 @@ final class ReauditFixesTests: XCTestCase {
     }
 
     func registered(_ chain: FakeChain, _ w: PrivacyWallet, nullifier: String = "555") async throws {
-        let prep = try await w.prepareRegistration(affiliate: nil)
+        let prep = try await w.prepareRegistration(referrer: nil)
         chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
         try await w.sync()
         _ = try await w.register(prep, proof: Data(count: 14_656), publicSignals: sigs(prep, nullifier), signatureAlgorithm: "lean_poa", dscDer: Data(count: 10))
@@ -124,7 +124,7 @@ final class ReauditFixesTests: XCTestCase {
         XCTAssertTrue(r.verified)
         let idx = Frozen(chain)
         let b = try wallet(chain, indexer: idx)
-        let prep = try await b.prepareRegistration(affiliate: nil)
+        let prep = try await b.prepareRegistration(referrer: nil)
         chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
         try await b.sync()
         try await idx.freeze()
@@ -216,7 +216,7 @@ final class ReauditFixesTests: XCTestCase {
         let chain = FakeChain()
         let store = PrivacyStore.memory()
         let a = try wallet(chain, store: store)
-        let prep = try await a.prepareRegistration(affiliate: nil)
+        let prep = try await a.prepareRegistration(referrer: nil)
         chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
         try await a.sync()
         XCTAssertEqual(100_000, bal(a, "uerth"))
@@ -240,7 +240,7 @@ final class ReauditFixesTests: XCTestCase {
     func testRegistrationFailedInBlockIsShown() async throws {
         let chain = FakeChain()
         let a = try wallet(chain)
-        let prep = try await a.prepareRegistration(affiliate: nil)
+        let prep = try await a.prepareRegistration(referrer: nil)
         chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
         try await a.sync()
         chain.failInBlockNext = 1
@@ -297,7 +297,7 @@ final class ReauditFixesTests: XCTestCase {
     func testForgedRecordSpamIsIgnored() async throws {
         let chain = FakeChain()
         let a = try wallet(chain)
-        let prep = try await a.prepareRegistration(affiliate: nil)
+        let prep = try await a.prepareRegistration(referrer: nil)
         chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
         try await a.sync()
         for i in 0 ..< 16 {
@@ -314,7 +314,7 @@ final class ReauditFixesTests: XCTestCase {
         XCTAssertEqual(1, restored.store.state.regRecords.count)
         XCTAssertEqual(.live, restored.identityStatus())
         // The chain's block time: one country pass for one leaf.
-        XCTAssertLessThanOrEqual(restored.store.state.regRecords[0].work, 677)
+        XCTAssertLessThanOrEqual(restored.store.state.regRecords[0].work, 2 * 677)
         XCTAssertLessThan(Date().timeIntervalSince(t0), 20)
     }
 
@@ -326,7 +326,7 @@ final class ReauditFixesTests: XCTestCase {
         let chain = FakeChain()
         chain.registrationCountry = ""
         let skewed = try wallet(chain, now: { [unowned chain] in chain.now - 80_000 })
-        let prep = try await skewed.prepareRegistration(affiliate: nil)
+        let prep = try await skewed.prepareRegistration(referrer: nil)
         chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
         try await skewed.sync()
         _ = try await skewed.register(prep, proof: Data(count: 14_656), publicSignals: sigs(prep, "9"), signatureAlgorithm: "lean_poa", dscDer: Data(count: 10))
@@ -355,7 +355,7 @@ final class ReauditFixesTests: XCTestCase {
         XCTAssertLessThanOrEqual(works[0], budget + 2)
         let id = try XCTUnwrap(store.state.identity)
         XCTAssertEqual(chain.identityTree.leaf(id.leafIndex),
-                       PrivacyHash.identityLeaf(idc: keys.idc, dscKey: id.dscKey, country: id.country, activatedAt: id.activatedAt))
+                       PrivacyHash.identityLeaf(idc: keys.idc, dscKey: id.dscKey, country: id.country, activatedAt: id.activatedAt, predecessorAt: id.predecessorAt))
     }
 
     // MARK: K11
