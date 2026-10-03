@@ -237,7 +237,8 @@ struct AllocationEditSheet: View {
         }
         // The caretaker split is private: a membership proof in the
         // caretaker scope. The split is public, who cast it is not, and it
-        // lapses after R unless refreshed (the wallet does that on its own).
+        // lapses after R (a year) unless its owner casts again: nothing
+        // refreshes it on its own; a reminder comes before it lapses.
         tx.requestPrivate(
             .private(
                 action: "Set caretaker split",

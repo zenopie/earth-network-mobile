@@ -1073,7 +1073,8 @@ internal fun EarthContent(
                     run {
                         // Private: a membership proof in the caretaker scope.
                         // The split is public, who cast it is not, and it
-                        // lapses after R unless refreshed (the automation does).
+                        // lapses after R (a year) unless its owner casts again:
+                        // nothing refreshes it on its own; a reminder comes first.
                         tx.requestPrivate(
                             details = TxConfirmDetails(
                                 action = "Set caretaker split",
