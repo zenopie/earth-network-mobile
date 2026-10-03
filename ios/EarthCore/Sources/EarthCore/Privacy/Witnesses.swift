@@ -21,7 +21,7 @@ func require(_ ok: Bool, _ message: @autoclosure () -> String) throws {
 ///
 ///     cv = s_value*G(s_asset) - o_value*G(o_asset) + rcv*R
 ///
-/// Public inputs, in the chain's order (zk/orchard Bundle.PublicInputs):
+/// Public inputs, in the chain's order (zk/orchard ShieldedBundle.PublicInputs):
 /// anchor, nf, cm_out, cv_x, cv_y, sighash.
 public struct ActionWitness: Sendable {
     public let nk: Fr

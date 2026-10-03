@@ -37,6 +37,8 @@ final class ZkVectorsTests: XCTestCase {
             "id": PrivacyHash.tagID, "owner": PrivacyHash.tagOwner, "leaf": PrivacyHash.tagLeaf, "sn": PrivacyHash.tagSN,
             "pc": PrivacyHash.tagPC, "cm": PrivacyHash.tagCM, "nf": PrivacyHash.tagNF, "reg": PrivacyHash.tagReg,
             "asset": PrivacyHash.tagAsset, "signal": PrivacyHash.tagSignal, "bytes": PrivacyHash.tagBytes, "scope": PrivacyHash.tagScope,
+            "stake": PrivacyHash.tagStake, "spc": PrivacyHash.tagSPC, "snf": PrivacyHash.tagSNF, "otag": PrivacyHash.tagOTag,
+            "gen": Grumpkin.tagGen, "cv_r": Grumpkin.tagCvR, "bsig": Grumpkin.tagBsig, "bundle": PrivateMsgs.tagBundle,
         ]
         XCTAssertEqual(tags.count, mine.count)
         for (k, v) in mine { XCTAssertEqual(tags[k] as? String, v.hex, k) }
@@ -68,6 +70,14 @@ final class ZkVectorsTests: XCTestCase {
         XCTAssertEqual(s("cm"), PrivacyHash.cm(asset: PrivacyHash.assetID("uanml"), value: 1_000_000, pc: pc).hex)
         XCTAssertEqual(s("nf"), PrivacyHash.nf(nk: nk, rho: rho, position: 4_000_000_000).hex)
         XCTAssertEqual(s("reg_none"), PrivacyHash.registrationBinding(idc: idc, pcAnml: Vectors.fe(1), pcErth: Vectors.fe(2), affiliate: .zero).hex)
+        // The stake tree.
+        let spc = PrivacyHash.stakePC(ownerPK: opk, rho: rho, rcm: rcm)
+        XCTAssertEqual(s("spc"), spc.hex)
+        XCTAssertEqual(s("stake_cm"), PrivacyHash.stakeCM(asset: PrivacyHash.assetID("derth/earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"),
+                                                         amount: 1_800_000, spc: spc).hex)
+        XCTAssertEqual(s("stake_nf"), PrivacyHash.stakeNF(nk: nk, rho: rho, position: 4_000_000_000).hex)
+        XCTAssertEqual(Vectors.fe(1006), Vectors.fr(s("otag_salt")))
+        XCTAssertEqual(s("otag"), PrivacyHash.ownerTag(ownerPK: opk, salt: Vectors.fe(1006)).hex)
     }
 
     func testScopes() {
@@ -79,24 +89,7 @@ final class ZkVectorsTests: XCTestCase {
         XCTAssertEqual(s["proposal_5_1"] as? String, PrivacyHash.proposalScope(proposalID: 5, round: 1).hex)
         XCTAssertEqual(s["removal_3"] as? String, PrivacyHash.removalScope(ballotID: 3).hex)
         XCTAssertEqual(s["propose_removal_2_100"] as? String, PrivacyHash.proposeRemovalScope(optionID: 2, day: 100).hex)
-    }
-
-    func testSignals() {
-        let s = Vectors.obj("signals")
-        let cts = [Data("a".utf8), Data("bb".utf8), Data()]
-        let recv = Data((0 ..< 20).map { UInt8(1 + $0) })
-        XCTAssertEqual(s["transfer_send"] as? String, PrivacyHash.transferSignal(chainID: "earth-1", receiver: nil, ciphertexts: cts, feeFromOutput: 0).hex)
-        XCTAssertEqual(s["transfer_unshield"] as? String, PrivacyHash.transferSignal(chainID: "earth-1", receiver: recv, ciphertexts: cts, feeFromOutput: 77).hex)
-        let nfs = [Vectors.fe(1), Vectors.fe(2), Vectors.fe(3)]
-        XCTAssertEqual(s["action"] as? String, PrivacyHash.actionSignal(msgType: "/x.y.Msg", chainID: "earth-1", ciphertexts: cts, nullifiers: nfs, extra: [Fr(UInt64(9))]).hex)
-        XCTAssertEqual(
-            s["multi"] as? String,
-            PrivacyHash.multiSpendSignal(
-                msgType: "/x.y.Msg", chainID: "earth-1",
-                ciphertexts: [cts, [Data("c".utf8), Data(), Data()]],
-                nullifiers: [nfs, [Vectors.fe(4), Vectors.fe(5), Vectors.fe(6)]], extra: [Fr(UInt64(9))]
-            ).hex
-        )
+        XCTAssertEqual(s["gas_202610"] as? String, PrivacyHash.gasScope(yyyymm: 202610).hex)
     }
 
     private func checkTree(_ t: MerkleTree, oneByOne: Bool) {

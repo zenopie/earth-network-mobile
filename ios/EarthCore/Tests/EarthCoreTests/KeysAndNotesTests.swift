@@ -26,8 +26,17 @@ final class KeysAndNotesTests: XCTestCase {
         XCTAssertEqual(Self.knownAddress, keys.address.encode())
         XCTAssertEqual(PrivacyHash.idc(keys.idSecret), keys.idc)
         XCTAssertNotEqual(keys.idSecret, other.idSecret)
-        XCTAssertNotEqual(try keys.positionPubKey(0), try keys.positionPubKey(1))
-        XCTAssertEqual(33, try keys.positionPubKey(0).count)
+        // Stake self-mints and owner-tag salts (PRIVACY_FORMATS.md section 1),
+        // cross-checked with an independent Python HMAC derivation.
+        XCTAssertEqual("2e169030a56d7e472fc9f342ef18783bc65662f82edf58e00b9fa23b7131fbb3", keys.stakeMintSecrets(0).rho.hex)
+        XCTAssertEqual("16443a6dc3a8058eaafa1b6feb6d1804cf71794815a830e782756c2ccf759bab", keys.stakeMintSecrets(0).rcm.hex)
+        XCTAssertEqual("05708bcf1c37660a1859a735e21a57c9d802f78ab8274364eb9199583b095c32", keys.stakeMintSecrets(1).rho.hex)
+        XCTAssertEqual("2e4cb7ef401c2041af61f2e4a7593f5afed0d85ab28cefc6cde17aa9c28b1b22", keys.stakeMintSecrets(1).rcm.hex)
+        XCTAssertEqual("0685f54037389aaceee42288ed8c8c996a884e297ffee771c73370ca885e1618", keys.otagSalt(0).hex)
+        XCTAssertEqual("2e52e73b7af259664a34df8bcee1c0476009a37e0ab2e52b285bae497845a9ba", keys.otagSalt(1).hex)
+        let (r0, c0) = keys.stakeMintSecrets(0)
+        XCTAssertEqual(PrivacyHash.stakePC(ownerPK: keys.ownerPK, rho: r0, rcm: c0), keys.stakeMintPC(0))
+        XCTAssertEqual(PrivacyHash.ownerTag(ownerPK: keys.ownerPK, salt: keys.otagSalt(1)), keys.ownerTag(1))
     }
 
     func testAddressRoundTrip() throws {
@@ -89,5 +98,33 @@ final class KeysAndNotesTests: XCTestCase {
         XCTAssertEqual(PrivacyHash.pc(ownerPK: keys.ownerPK, rho: rho, rcm: rcm), keys.mintPC(0))
         XCTAssertNotEqual(keys.mintPC(0), keys.mintPC(1))
         XCTAssertEqual(keys.mintPC(3), try PrivacyKeys.fromMnemonic(Self.mnemonic).mintPC(3))
+    }
+
+    /// Stake ciphertext v3 (PRIVACY_FORMATS.md section 3) against an
+    /// independent Python (cryptography) encryption: esk = 01..20 to this
+    /// wallet's ek, cm the note golden's (encryption binds it, decryption
+    /// recomputes it).
+    func testStakeCiphertextGoldenAndRoundTrip() throws {
+        let asset = PrivacyHash.assetID("derth/earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq")
+        let o = NoteCipher.StakeOpening(asset: asset, amount: 1_800_000, rho: Fr(UInt64(0x11)), rcm: Fr(UInt64(0x13)))
+        let cm = Vectors.fr("05e80ddba92b607efc03967707d42b7cbc814f5767040a9066902fb53b3ff5a3")
+        let ct = try NoteCipher.encryptStakeWith(esk: Data((1 ... 32).map { UInt8($0) }), o, ekPub: keys.ekPub, cm: cm)
+        XCTAssertEqual(NoteCipher.stakeCiphertextBytes, ct.count)
+        XCTAssertEqual(
+            "07a37cbc142093c8b755dc1b10e86cb426374ad16aa853ed0bdfc0b2b86d1c7cdcf30ca4a0dc1e2eb74b496a798822e18fe8843476dd456581afcd738b87c761" +
+                "00d7d974c63d1b9a2e1aa3b1967d97ef2b947a74ccf6ed19134c3f56f8cf8cac78e97f15145a9447c8f7eb0bef62efd4ef0c5ce5f6543f61cd3cde5d60ca8697" +
+                "368a1b5329eebc27dcb4d3f4763016bb034210a3a91ea7954a",
+            Vectors.hex(ct)
+        )
+        // The golden's cm is not this opening's, so the recipient's check refuses it.
+        XCTAssertNil(NoteCipher.tryDecryptStake(ct, cm: cm, keys: keys))
+        // A real stake note opens for its owner only, and only under its own cm.
+        let realCM = PrivacyHash.stakeCM(asset: asset, amount: o.amount, spc: PrivacyHash.stakePC(ownerPK: keys.ownerPK, rho: o.rho, rcm: o.rcm))
+        let real = try NoteCipher.encryptStake(o, ekPub: keys.ekPub, cm: realCM)
+        XCTAssertEqual(o, NoteCipher.tryDecryptStake(real, cm: realCM, keys: keys))
+        XCTAssertNil(NoteCipher.tryDecryptStake(real, cm: realCM, keys: other))
+        XCTAssertNil(NoteCipher.tryDecryptStake(real, cm: cm, keys: keys))
+        // Neither of the pool's decryptors takes a stake ciphertext.
+        XCTAssertNil(NoteCipher.tryDecrypt(real, cm: realCM, keys: keys))
     }
 }

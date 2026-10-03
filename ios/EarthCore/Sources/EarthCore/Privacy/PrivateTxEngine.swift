@@ -54,10 +54,10 @@ public struct Assembled {
     public let bundles: [BundlePlan]
     public let stake: StakePlan?
     public let membership: MembershipWitnessSpec?
-    public let build: ([Bundle], StakeProof?, Membership?) throws -> any PrivateMsg
+    public let build: ([ShieldedBundle], StakeProof?, Membership?) throws -> any PrivateMsg
 
     public init(bundles: [BundlePlan], stake: StakePlan? = nil, membership: MembershipWitnessSpec? = nil,
-                build: @escaping ([Bundle], StakeProof?, Membership?) throws -> any PrivateMsg) {
+                build: @escaping ([ShieldedBundle], StakeProof?, Membership?) throws -> any PrivateMsg) {
         self.bundles = bundles; self.stake = stake; self.membership = membership; self.build = build
     }
 
@@ -125,7 +125,7 @@ public struct PrivateTxEngine: Sendable {
     public func run(_ assemble: (UInt64) throws -> Assembled) async throws -> (TxResult, Assembled) {
         let (q, a) = try await price(assemble)
         let sighash = try draft(a).sighash(chainID: chainID)
-        var bundles: [Bundle] = []
+        var bundles: [ShieldedBundle] = []
         for (i, plan) in a.bundles.enumerated() {
             let b = try await plan.prove(sighash: sighash) { try await prover.proveAction($0) }
             guard PrivateMsgs.checkBalance(b, sighash: sighash) else { throw PrivacyError("bundle \(i) does not balance") }

@@ -146,18 +146,18 @@ public struct BundlePlan: Sendable {
     public func bindingKey() -> BigUInt { Grumpkin.bindingKey(actions.map(\.rcv)) }
 
     /// The bundle with `proofs` (placeholders before proving) and `bindingSig` (zeros before signing).
-    public func proto(proofs: [Data]? = nil, bindingSig: Data? = nil) -> Bundle {
+    public func proto(proofs: [Data]? = nil, bindingSig: Data? = nil) -> ShieldedBundle {
         let anchorBytes = anchor.bytes
         let acts = actions.indices.map { i in
-            Action(anchor: anchorBytes, nullifier: nullifiers[i].bytes, commitment: commitments[i].bytes, cv: cvs[i].bytes,
+            ShieldedAction(anchor: anchorBytes, nullifier: nullifiers[i].bytes, commitment: commitments[i].bytes, cv: cvs[i].bytes,
                    ciphertext: actions[i].out.ciphertext, proof: proofs?[i] ?? PrivateTxEngine.placeholder)
         }
-        return Bundle(actions: acts, balances: balances.map { ValueBalance(denom: $0.denom, amount: $0.amount) },
+        return ShieldedBundle(actions: acts, balances: balances.map { ValueBalance(denom: $0.denom, amount: $0.amount) },
                       bindingSig: bindingSig ?? Data(count: Grumpkin.bindingSigBytes))
     }
 
     /// Proves every action under `sighash` and signs the balance.
-    public func prove(sighash: Fr, _ prove: (ActionWitness) async throws -> Data) async throws -> Bundle {
+    public func prove(sighash: Fr, _ prove: (ActionWitness) async throws -> Data) async throws -> ShieldedBundle {
         var proofs: [Data] = []
         for i in actions.indices { proofs.append(try await prove(witness(i, sighash: sighash))) }
         return proto(proofs: proofs, bindingSig: Grumpkin.signBinding(bsk: bindingKey(), sighash: sighash, rnd: NotePlaintext.randomBytes(32)))

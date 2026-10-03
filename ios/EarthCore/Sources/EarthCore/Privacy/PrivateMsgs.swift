@@ -16,7 +16,7 @@ import Foundation
 // MARK: - bundles
 
 /// earth.shielded.v1.Action: one spend paired with one output.
-public struct Action: ProtoMessage, Equatable, Sendable {
+public struct ShieldedAction: ProtoMessage, Equatable, Sendable {
     public var anchor: Data
     public var nullifier: Data
     public var commitment: Data
@@ -40,9 +40,9 @@ public struct Action: ProtoMessage, Equatable, Sendable {
         return w.data
     }
 
-    public static func decode(_ d: Data) throws -> Action {
+    public static func decode(_ d: Data) throws -> ShieldedAction {
         let f = try ProtoFields(d)
-        return Action(anchor: f.bytes(1), nullifier: f.bytes(2), commitment: f.bytes(3), cv: f.bytes(4), ciphertext: f.bytes(5), proof: f.bytes(6))
+        return ShieldedAction(anchor: f.bytes(1), nullifier: f.bytes(2), commitment: f.bytes(3), cv: f.bytes(4), ciphertext: f.bytes(5), proof: f.bytes(6))
     }
 }
 
@@ -66,14 +66,14 @@ public struct ValueBalance: ProtoMessage, Equatable, Sendable {
     }
 }
 
-/// earth.shielded.v1.Bundle: actions, the public balance per denom, and the
+/// earth.shielded.v1.ShieldedBundle: actions, the public balance per denom, and the
 /// binding signature over the sighash.
-public struct Bundle: ProtoMessage, Equatable, Sendable {
-    public var actions: [Action]
+public struct ShieldedBundle: ProtoMessage, Equatable, Sendable {
+    public var actions: [ShieldedAction]
     public var balances: [ValueBalance]
     public var bindingSig: Data
 
-    public init(actions: [Action] = [], balances: [ValueBalance] = [], bindingSig: Data = Data()) {
+    public init(actions: [ShieldedAction] = [], balances: [ValueBalance] = [], bindingSig: Data = Data()) {
         self.actions = actions; self.balances = balances; self.bindingSig = bindingSig
     }
 
@@ -87,9 +87,9 @@ public struct Bundle: ProtoMessage, Equatable, Sendable {
         return w.data
     }
 
-    public static func decode(_ d: Data) throws -> Bundle {
+    public static func decode(_ d: Data) throws -> ShieldedBundle {
         let f = try ProtoFields(d)
-        return Bundle(actions: try f.repeatedMessage(1, Action.decode), balances: try f.repeatedMessage(2, ValueBalance.decode),
+        return ShieldedBundle(actions: try f.repeatedMessage(1, ShieldedAction.decode), balances: try f.repeatedMessage(2, ValueBalance.decode),
                       bindingSig: f.bytes(3))
     }
 }
@@ -193,7 +193,7 @@ public enum AssemblyVoteOption: Int, Sendable {
 public protocol PrivateMsg: ProtoMessage {
     static var typeURL: String { get }
     /// Every bundle it spends, in sighash order (PrivateMsg.PrivateBundles).
-    var bundles: [Bundle] { get }
+    var bundles: [ShieldedBundle] { get }
     /// Its stake proof, if it carries one.
     var stakeProof: StakeProof? { get }
     /// The uerth the bundles pay to fee_collector (PrivateMsg.PrivateFee).
@@ -242,9 +242,9 @@ public enum PrivateMsgs {
     static func bytes(_ s: String) -> Fr { PrivacyHash.bytes(s) }
     static func u(_ v: UInt64) -> Fr { PrivacyHash.u64(v) }
 
-    /// zk/orchard Bundle.Digest:
+    /// zk/orchard ShieldedBundle.Digest:
     /// H(TAG_BUNDLE, N, [anchor_i, nf_i, cm_i, cvx_i, cvy_i, Bytes(ct_i)]..., M, [AssetID(denom_j), amount_j]...).
-    public static func digest(_ b: Bundle) throws -> Fr {
+    public static func digest(_ b: ShieldedBundle) throws -> Fr {
         var xs: [Fr] = [tagBundle, u(UInt64(b.actions.count))]
         xs.reserveCapacity(3 + 6 * b.actions.count + 2 * b.balances.count)
         for a in b.actions {
@@ -258,7 +258,7 @@ public enum PrivateMsgs {
     }
 
     /// bvk = sum cv_i - sum value_a * G_a: what `b`'s binding signature verifies under.
-    public static func bindingKey(_ b: Bundle) throws -> Grumpkin.Point {
+    public static func bindingKey(_ b: ShieldedBundle) throws -> Grumpkin.Point {
         var bvk = Grumpkin.Point.infinity
         for a in b.actions { bvk = bvk + (try Grumpkin.Point(bytes: a.cv)) }
         for bal in b.balances { bvk = bvk - Grumpkin.valueBase(PrivacyHash.assetID(bal.denom)) * BigUInt(bal.amount) }
@@ -266,7 +266,7 @@ public enum PrivateMsgs {
     }
 
     /// Whether `b`'s binding signature holds over `sighash` (the chain's CheckBalance).
-    public static func checkBalance(_ b: Bundle, sighash: Fr) -> Bool {
+    public static func checkBalance(_ b: ShieldedBundle, sighash: Fr) -> Bool {
         guard let bvk = try? bindingKey(b) else { return false }
         return Grumpkin.verifyBinding(bvk: bvk, sighash: sighash, sig: b.bindingSig)
     }
@@ -357,15 +357,15 @@ public enum PrivateMsgs {
 /// earth.shielded.v1.MsgSend: a private send, a merge, or an unshield (receiver set).
 public struct MsgSend: DecodablePrivateMsg, Equatable {
     public static let typeURL = "/earth.shielded.v1.MsgSend"
-    public var bundle: Bundle
+    public var bundle: ShieldedBundle
     public var receiver: String
     public var fee: UInt64
 
-    public init(bundle: Bundle, receiver: String = "", fee: UInt64) {
+    public init(bundle: ShieldedBundle, receiver: String = "", fee: UInt64) {
         self.bundle = bundle; self.receiver = receiver; self.fee = fee
     }
 
-    public var bundles: [Bundle] { [bundle] }
+    public var bundles: [ShieldedBundle] { [bundle] }
     public var privateFee: UInt64 { fee }
 
     public func encoded() -> Data {
@@ -378,7 +378,7 @@ public struct MsgSend: DecodablePrivateMsg, Equatable {
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
-        return Self(bundle: try f.message(1, Bundle.decode), receiver: f.string(2), fee: f.uint64(3))
+        return Self(bundle: try f.message(1, ShieldedBundle.decode), receiver: f.string(2), fee: f.uint64(3))
     }
 
     public func sighashFields() throws -> [Fr] { [try PrivateMsgs.addressField(receiver), PrivateMsgs.u(fee)] }
@@ -414,18 +414,18 @@ extension Coin: Equatable {
 
 /// A msg whose fee bundle's only balance is its uerth fee (shielded FeeBundleFee).
 public protocol FeeBundleMsg: PrivateMsg {
-    var feeBundle: Bundle { get }
+    var feeBundle: ShieldedBundle { get }
 }
 
 public extension FeeBundleMsg {
-    var bundles: [Bundle] { [feeBundle] }
+    var bundles: [ShieldedBundle] { [feeBundle] }
     var privateFee: UInt64 { feeBundle.balance("uerth") }
 }
 
 public struct MsgRegisterPrivate: DecodablePrivateMsg, FeeBundleMsg, Equatable {
     public static let typeURL = "/earth.personhood.v1.MsgRegister"
     /// Absent only in the body /gas/register checks, which carries no fee.
-    public var fee: Bundle?
+    public var fee: ShieldedBundle?
     public var proof: Data
     public var publicSignals: [String]
     public var signatureAlgorithm: String
@@ -437,14 +437,14 @@ public struct MsgRegisterPrivate: DecodablePrivateMsg, FeeBundleMsg, Equatable {
     public var ciphertextErth: Data
     public var affiliate: String
 
-    public init(fee: Bundle?, proof: Data, publicSignals: [String], signatureAlgorithm: String, dscDer: Data,
+    public init(fee: ShieldedBundle?, proof: Data, publicSignals: [String], signatureAlgorithm: String, dscDer: Data,
                 idc: Data, pcAnml: Data, ciphertextAnml: Data, pcErth: Data, ciphertextErth: Data, affiliate: String) {
         self.fee = fee; self.proof = proof; self.publicSignals = publicSignals; self.signatureAlgorithm = signatureAlgorithm
         self.dscDer = dscDer; self.idc = idc; self.pcAnml = pcAnml; self.ciphertextAnml = ciphertextAnml
         self.pcErth = pcErth; self.ciphertextErth = ciphertextErth; self.affiliate = affiliate
     }
 
-    public var feeBundle: Bundle { fee ?? Bundle() }
+    public var feeBundle: ShieldedBundle { fee ?? ShieldedBundle() }
 
     public func encoded() -> Data {
         var w = ProtoWriter()
@@ -464,7 +464,7 @@ public struct MsgRegisterPrivate: DecodablePrivateMsg, FeeBundleMsg, Equatable {
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
-        return Self(fee: f.has(1) ? try f.message(1, Bundle.decode) : nil, proof: f.bytes(2), publicSignals: f.repeatedString(3),
+        return Self(fee: f.has(1) ? try f.message(1, ShieldedBundle.decode) : nil, proof: f.bytes(2), publicSignals: f.repeatedString(3),
                     signatureAlgorithm: f.string(4), dscDer: f.bytes(5), idc: f.bytes(6), pcAnml: f.bytes(7), ciphertextAnml: f.bytes(8),
                     pcErth: f.bytes(9), ciphertextErth: f.bytes(10), affiliate: f.string(13))
     }
@@ -485,17 +485,17 @@ public struct MsgRegisterPrivate: DecodablePrivateMsg, FeeBundleMsg, Equatable {
 
 public struct MsgClaimAnmlPrivate: DecodablePrivateMsg, FeeBundleMsg, Equatable {
     public static let typeURL = "/earth.personhood.v1.MsgClaimAnml"
-    public var fee: Bundle
+    public var fee: ShieldedBundle
     public var membership: Membership
     public var day: UInt64
     public var pc: Data
     public var ciphertext: Data
 
-    public init(fee: Bundle, membership: Membership, day: UInt64, pc: Data, ciphertext: Data) {
+    public init(fee: ShieldedBundle, membership: Membership, day: UInt64, pc: Data, ciphertext: Data) {
         self.fee = fee; self.membership = membership; self.day = day; self.pc = pc; self.ciphertext = ciphertext
     }
 
-    public var feeBundle: Bundle { fee }
+    public var feeBundle: ShieldedBundle { fee }
 
     public func encoded() -> Data {
         var w = ProtoWriter()
@@ -509,7 +509,7 @@ public struct MsgClaimAnmlPrivate: DecodablePrivateMsg, FeeBundleMsg, Equatable 
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
-        return Self(fee: try f.message(1, Bundle.decode), membership: try f.message(2, Membership.decode),
+        return Self(fee: try f.message(1, ShieldedBundle.decode), membership: try f.message(2, Membership.decode),
                     day: f.uint64(3), pc: f.bytes(4), ciphertext: f.bytes(5))
     }
 
@@ -518,16 +518,16 @@ public struct MsgClaimAnmlPrivate: DecodablePrivateMsg, FeeBundleMsg, Equatable 
 
 public struct MsgSetCaretaker: DecodablePrivateMsg, FeeBundleMsg, Equatable {
     public static let typeURL = "/earth.personhood.v1.MsgSetCaretaker"
-    public var fee: Bundle
+    public var fee: ShieldedBundle
     public var membership: Membership
     public var percentages: [Msg.AllocationWeight]
     public var maxActivation: UInt64
 
-    public init(fee: Bundle, membership: Membership, percentages: [Msg.AllocationWeight], maxActivation: UInt64) {
+    public init(fee: ShieldedBundle, membership: Membership, percentages: [Msg.AllocationWeight], maxActivation: UInt64) {
         self.fee = fee; self.membership = membership; self.percentages = percentages; self.maxActivation = maxActivation
     }
 
-    public var feeBundle: Bundle { fee }
+    public var feeBundle: ShieldedBundle { fee }
 
     public func encoded() -> Data {
         var w = ProtoWriter()
@@ -540,7 +540,7 @@ public struct MsgSetCaretaker: DecodablePrivateMsg, FeeBundleMsg, Equatable {
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
-        return Self(fee: try f.message(1, Bundle.decode), membership: try f.message(2, Membership.decode),
+        return Self(fee: try f.message(1, ShieldedBundle.decode), membership: try f.message(2, Membership.decode),
                     percentages: try f.repeatedMessage(3, Msg.AllocationWeight.decode), maxActivation: f.uint64(4))
     }
 
@@ -549,16 +549,16 @@ public struct MsgSetCaretaker: DecodablePrivateMsg, FeeBundleMsg, Equatable {
 
 public struct MsgBindReferrer: DecodablePrivateMsg, FeeBundleMsg, Equatable {
     public static let typeURL = "/earth.personhood.v1.MsgBindReferrer"
-    public var fee: Bundle
+    public var fee: ShieldedBundle
     public var membership: Membership
     public var address: String
     public var maxActivation: UInt64
 
-    public init(fee: Bundle, membership: Membership, address: String, maxActivation: UInt64) {
+    public init(fee: ShieldedBundle, membership: Membership, address: String, maxActivation: UInt64) {
         self.fee = fee; self.membership = membership; self.address = address; self.maxActivation = maxActivation
     }
 
-    public var feeBundle: Bundle { fee }
+    public var feeBundle: ShieldedBundle { fee }
 
     public func encoded() -> Data {
         var w = ProtoWriter()
@@ -571,7 +571,7 @@ public struct MsgBindReferrer: DecodablePrivateMsg, FeeBundleMsg, Equatable {
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
-        return Self(fee: try f.message(1, Bundle.decode), membership: try f.message(2, Membership.decode),
+        return Self(fee: try f.message(1, ShieldedBundle.decode), membership: try f.message(2, Membership.decode),
                     address: f.string(3), maxActivation: f.uint64(4))
     }
 
@@ -580,16 +580,16 @@ public struct MsgBindReferrer: DecodablePrivateMsg, FeeBundleMsg, Equatable {
 
 public struct MsgVoteProposalPrivate: DecodablePrivateMsg, FeeBundleMsg, Equatable {
     public static let typeURL = "/earth.assembly.v1.MsgVoteProposal"
-    public var fee: Bundle
+    public var fee: ShieldedBundle
     public var membership: Membership
     public var proposalID: UInt64
     public var option: AssemblyVoteOption
 
-    public init(fee: Bundle, membership: Membership, proposalID: UInt64, option: AssemblyVoteOption) {
+    public init(fee: ShieldedBundle, membership: Membership, proposalID: UInt64, option: AssemblyVoteOption) {
         self.fee = fee; self.membership = membership; self.proposalID = proposalID; self.option = option
     }
 
-    public var feeBundle: Bundle { fee }
+    public var feeBundle: ShieldedBundle { fee }
 
     public func encoded() -> Data {
         var w = ProtoWriter()
@@ -602,7 +602,7 @@ public struct MsgVoteProposalPrivate: DecodablePrivateMsg, FeeBundleMsg, Equatab
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
-        return Self(fee: try f.message(1, Bundle.decode), membership: try f.message(2, Membership.decode),
+        return Self(fee: try f.message(1, ShieldedBundle.decode), membership: try f.message(2, Membership.decode),
                     proposalID: f.uint64(3), option: AssemblyVoteOption(rawValue: Int(f.uint64(4))) ?? .yes)
     }
 
@@ -611,15 +611,15 @@ public struct MsgVoteProposalPrivate: DecodablePrivateMsg, FeeBundleMsg, Equatab
 
 public struct MsgProposeRemoval: DecodablePrivateMsg, FeeBundleMsg, Equatable {
     public static let typeURL = "/earth.assembly.v1.MsgProposeRemoval"
-    public var fee: Bundle
+    public var fee: ShieldedBundle
     public var membership: Membership
     public var optionID: UInt64
 
-    public init(fee: Bundle, membership: Membership, optionID: UInt64) {
+    public init(fee: ShieldedBundle, membership: Membership, optionID: UInt64) {
         self.fee = fee; self.membership = membership; self.optionID = optionID
     }
 
-    public var feeBundle: Bundle { fee }
+    public var feeBundle: ShieldedBundle { fee }
 
     public func encoded() -> Data {
         var w = ProtoWriter()
@@ -631,7 +631,7 @@ public struct MsgProposeRemoval: DecodablePrivateMsg, FeeBundleMsg, Equatable {
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
-        return Self(fee: try f.message(1, Bundle.decode), membership: try f.message(2, Membership.decode), optionID: f.uint64(3))
+        return Self(fee: try f.message(1, ShieldedBundle.decode), membership: try f.message(2, Membership.decode), optionID: f.uint64(3))
     }
 
     public func sighashFields() throws -> [Fr] { [PrivateMsgs.u(optionID)] }
@@ -639,16 +639,16 @@ public struct MsgProposeRemoval: DecodablePrivateMsg, FeeBundleMsg, Equatable {
 
 public struct MsgVoteRemoval: DecodablePrivateMsg, FeeBundleMsg, Equatable {
     public static let typeURL = "/earth.assembly.v1.MsgVoteRemoval"
-    public var fee: Bundle
+    public var fee: ShieldedBundle
     public var membership: Membership
     public var optionID: UInt64
     public var option: AssemblyVoteOption
 
-    public init(fee: Bundle, membership: Membership, optionID: UInt64, option: AssemblyVoteOption) {
+    public init(fee: ShieldedBundle, membership: Membership, optionID: UInt64, option: AssemblyVoteOption) {
         self.fee = fee; self.membership = membership; self.optionID = optionID; self.option = option
     }
 
-    public var feeBundle: Bundle { fee }
+    public var feeBundle: ShieldedBundle { fee }
 
     public func encoded() -> Data {
         var w = ProtoWriter()
@@ -661,7 +661,7 @@ public struct MsgVoteRemoval: DecodablePrivateMsg, FeeBundleMsg, Equatable {
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
-        return Self(fee: try f.message(1, Bundle.decode), membership: try f.message(2, Membership.decode),
+        return Self(fee: try f.message(1, ShieldedBundle.decode), membership: try f.message(2, Membership.decode),
                     optionID: f.uint64(3), option: AssemblyVoteOption(rawValue: Int(f.uint64(4))) ?? .yes)
     }
 
@@ -684,25 +684,25 @@ extension MsgVoteRemoval: MembershipMsg {}
 
 /// A staking msg: a bundle (the fee, or the delegated ERTH and the fee) and a stake proof.
 public protocol StakingMsg: PrivateMsg {
-    var bundle: Bundle { get }
+    var bundle: ShieldedBundle { get }
     var fee: UInt64 { get }
     var stake: StakeProof { get }
 }
 
 public extension StakingMsg {
-    var bundles: [Bundle] { [bundle] }
+    var bundles: [ShieldedBundle] { [bundle] }
     var stakeProof: StakeProof? { stake }
     var privateFee: UInt64 { fee }
 }
 
 public struct MsgShieldedDelegate: DecodablePrivateMsg, StakingMsg, Equatable {
     public static let typeURL = "/earth.shieldedstaking.v1.MsgDelegate"
-    public var bundle: Bundle
+    public var bundle: ShieldedBundle
     public var validator: String
     public var fee: UInt64
     public var stake: StakeProof
 
-    public init(bundle: Bundle, validator: String, fee: UInt64, stake: StakeProof) {
+    public init(bundle: ShieldedBundle, validator: String, fee: UInt64, stake: StakeProof) {
         self.bundle = bundle; self.validator = validator; self.fee = fee; self.stake = stake
     }
 
@@ -717,7 +717,7 @@ public struct MsgShieldedDelegate: DecodablePrivateMsg, StakingMsg, Equatable {
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
-        return Self(bundle: try f.message(1, Bundle.decode), validator: f.string(2), fee: f.uint64(3), stake: try f.message(4, StakeProof.decode))
+        return Self(bundle: try f.message(1, ShieldedBundle.decode), validator: f.string(2), fee: f.uint64(3), stake: try f.message(4, StakeProof.decode))
     }
 
     public func sighashFields() throws -> [Fr] {
@@ -727,12 +727,12 @@ public struct MsgShieldedDelegate: DecodablePrivateMsg, StakingMsg, Equatable {
 
 public struct MsgRestake: DecodablePrivateMsg, StakingMsg, Equatable {
     public static let typeURL = "/earth.shieldedstaking.v1.MsgRestake"
-    public var bundle: Bundle
+    public var bundle: ShieldedBundle
     public var validator: String
     public var fee: UInt64
     public var stake: StakeProof
 
-    public init(bundle: Bundle, validator: String, fee: UInt64, stake: StakeProof) {
+    public init(bundle: ShieldedBundle, validator: String, fee: UInt64, stake: StakeProof) {
         self.bundle = bundle; self.validator = validator; self.fee = fee; self.stake = stake
     }
 
@@ -747,7 +747,7 @@ public struct MsgRestake: DecodablePrivateMsg, StakingMsg, Equatable {
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
-        return Self(bundle: try f.message(1, Bundle.decode), validator: f.string(2), fee: f.uint64(3), stake: try f.message(4, StakeProof.decode))
+        return Self(bundle: try f.message(1, ShieldedBundle.decode), validator: f.string(2), fee: f.uint64(3), stake: try f.message(4, StakeProof.decode))
     }
 
     public func sighashFields() throws -> [Fr] {
@@ -757,13 +757,13 @@ public struct MsgRestake: DecodablePrivateMsg, StakingMsg, Equatable {
 
 public struct MsgShieldedUndelegate: DecodablePrivateMsg, StakingMsg, Equatable {
     public static let typeURL = "/earth.shieldedstaking.v1.MsgUndelegate"
-    public var bundle: Bundle
+    public var bundle: ShieldedBundle
     public var validator: String
     public var amount: UInt64
     public var fee: UInt64
     public var stake: StakeProof
 
-    public init(bundle: Bundle, validator: String, amount: UInt64, fee: UInt64, stake: StakeProof) {
+    public init(bundle: ShieldedBundle, validator: String, amount: UInt64, fee: UInt64, stake: StakeProof) {
         self.bundle = bundle; self.validator = validator; self.amount = amount; self.fee = fee; self.stake = stake
     }
 
@@ -779,7 +779,7 @@ public struct MsgShieldedUndelegate: DecodablePrivateMsg, StakingMsg, Equatable 
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
-        return Self(bundle: try f.message(1, Bundle.decode), validator: f.string(2), amount: f.uint64(3), fee: f.uint64(4),
+        return Self(bundle: try f.message(1, ShieldedBundle.decode), validator: f.string(2), amount: f.uint64(3), fee: f.uint64(4),
                     stake: try f.message(5, StakeProof.decode))
     }
 
@@ -792,7 +792,7 @@ public struct MsgShieldedUndelegate: DecodablePrivateMsg, StakingMsg, Equatable 
 /// out of the ERTH it pays (fee_from_output).
 public struct MsgClaimUnbonding: DecodablePrivateMsg, Equatable {
     public static let typeURL = "/earth.shieldedstaking.v1.MsgClaimUnbonding"
-    public var bundle: Bundle?
+    public var bundle: ShieldedBundle?
     public var validator: String
     public var epoch: UInt64
     public var amount: UInt64
@@ -802,13 +802,13 @@ public struct MsgClaimUnbonding: DecodablePrivateMsg, Equatable {
     public var fee: UInt64
     public var stake: StakeProof
 
-    public init(bundle: Bundle? = nil, validator: String, epoch: UInt64, amount: UInt64, pc: Data, ciphertext: Data = Data(),
+    public init(bundle: ShieldedBundle? = nil, validator: String, epoch: UInt64, amount: UInt64, pc: Data, ciphertext: Data = Data(),
                 feeFromOutput: UInt64 = 0, fee: UInt64 = 0, stake: StakeProof) {
         self.bundle = bundle; self.validator = validator; self.epoch = epoch; self.amount = amount; self.pc = pc
         self.ciphertext = ciphertext; self.feeFromOutput = feeFromOutput; self.fee = fee; self.stake = stake
     }
 
-    public var bundles: [Bundle] { bundle.map { [$0] } ?? [] }
+    public var bundles: [ShieldedBundle] { bundle.map { [$0] } ?? [] }
     public var stakeProof: StakeProof? { stake }
     public var privateFee: UInt64 { fee }
 
@@ -828,7 +828,7 @@ public struct MsgClaimUnbonding: DecodablePrivateMsg, Equatable {
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
-        return Self(bundle: f.has(1) ? try f.message(1, Bundle.decode) : nil, validator: f.string(2), epoch: f.uint64(3),
+        return Self(bundle: f.has(1) ? try f.message(1, ShieldedBundle.decode) : nil, validator: f.string(2), epoch: f.uint64(3),
                     amount: f.uint64(4), pc: f.bytes(5), ciphertext: f.bytes(6), feeFromOutput: f.uint64(7), fee: f.uint64(8),
                     stake: try f.message(9, StakeProof.decode))
     }
@@ -843,7 +843,7 @@ public struct MsgClaimUnbonding: DecodablePrivateMsg, Equatable {
 
 public struct MsgStakeVote: DecodablePrivateMsg, StakingMsg, Equatable {
     public static let typeURL = "/earth.shieldedstaking.v1.MsgStakeVote"
-    public var bundle: Bundle
+    public var bundle: ShieldedBundle
     public var proposalID: UInt64
     public var validator: String
     public var options: [WeightedVoteOption]
@@ -851,7 +851,7 @@ public struct MsgStakeVote: DecodablePrivateMsg, StakingMsg, Equatable {
     public var fee: UInt64
     public var stake: StakeProof
 
-    public init(bundle: Bundle, proposalID: UInt64, validator: String, options: [WeightedVoteOption], weight: UInt64, fee: UInt64, stake: StakeProof) {
+    public init(bundle: ShieldedBundle, proposalID: UInt64, validator: String, options: [WeightedVoteOption], weight: UInt64, fee: UInt64, stake: StakeProof) {
         self.bundle = bundle; self.proposalID = proposalID; self.validator = validator; self.options = options
         self.weight = weight; self.fee = fee; self.stake = stake
     }
@@ -870,7 +870,7 @@ public struct MsgStakeVote: DecodablePrivateMsg, StakingMsg, Equatable {
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
-        return Self(bundle: try f.message(1, Bundle.decode), proposalID: f.uint64(2), validator: f.string(3),
+        return Self(bundle: try f.message(1, ShieldedBundle.decode), proposalID: f.uint64(2), validator: f.string(3),
                     options: try f.repeatedMessage(4, WeightedVoteOption.decode), weight: f.uint64(5), fee: f.uint64(6),
                     stake: try f.message(7, StakeProof.decode))
     }
@@ -885,14 +885,14 @@ public struct MsgStakeVote: DecodablePrivateMsg, StakingMsg, Equatable {
 
 public struct MsgLockPosition: DecodablePrivateMsg, StakingMsg, Equatable {
     public static let typeURL = "/earth.shieldedstaking.v1.MsgLockPosition"
-    public var bundle: Bundle
+    public var bundle: ShieldedBundle
     public var validator: String
     public var amount: UInt64
     public var splits: [Msg.AllocationWeight]
     public var fee: UInt64
     public var stake: StakeProof
 
-    public init(bundle: Bundle, validator: String, amount: UInt64, splits: [Msg.AllocationWeight], fee: UInt64, stake: StakeProof) {
+    public init(bundle: ShieldedBundle, validator: String, amount: UInt64, splits: [Msg.AllocationWeight], fee: UInt64, stake: StakeProof) {
         self.bundle = bundle; self.validator = validator; self.amount = amount; self.splits = splits; self.fee = fee; self.stake = stake
     }
 
@@ -909,7 +909,7 @@ public struct MsgLockPosition: DecodablePrivateMsg, StakingMsg, Equatable {
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
-        return Self(bundle: try f.message(1, Bundle.decode), validator: f.string(2), amount: f.uint64(3),
+        return Self(bundle: try f.message(1, ShieldedBundle.decode), validator: f.string(2), amount: f.uint64(3),
                     splits: try f.repeatedMessage(4, Msg.AllocationWeight.decode), fee: f.uint64(5), stake: try f.message(6, StakeProof.decode))
     }
 
@@ -922,13 +922,13 @@ public struct MsgLockPosition: DecodablePrivateMsg, StakingMsg, Equatable {
 
 public struct MsgUpdatePosition: DecodablePrivateMsg, StakingMsg, Equatable {
     public static let typeURL = "/earth.shieldedstaking.v1.MsgUpdatePosition"
-    public var bundle: Bundle
+    public var bundle: ShieldedBundle
     public var positionID: UInt64
     public var splits: [Msg.AllocationWeight]
     public var fee: UInt64
     public var stake: StakeProof
 
-    public init(bundle: Bundle, positionID: UInt64, splits: [Msg.AllocationWeight], fee: UInt64, stake: StakeProof) {
+    public init(bundle: ShieldedBundle, positionID: UInt64, splits: [Msg.AllocationWeight], fee: UInt64, stake: StakeProof) {
         self.bundle = bundle; self.positionID = positionID; self.splits = splits; self.fee = fee; self.stake = stake
     }
 
@@ -944,7 +944,7 @@ public struct MsgUpdatePosition: DecodablePrivateMsg, StakingMsg, Equatable {
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
-        return Self(bundle: try f.message(1, Bundle.decode), positionID: f.uint64(2),
+        return Self(bundle: try f.message(1, ShieldedBundle.decode), positionID: f.uint64(2),
                     splits: try f.repeatedMessage(3, Msg.AllocationWeight.decode), fee: f.uint64(4), stake: try f.message(5, StakeProof.decode))
     }
 
@@ -955,12 +955,12 @@ public struct MsgUpdatePosition: DecodablePrivateMsg, StakingMsg, Equatable {
 
 public struct MsgUnlockPosition: DecodablePrivateMsg, StakingMsg, Equatable {
     public static let typeURL = "/earth.shieldedstaking.v1.MsgUnlockPosition"
-    public var bundle: Bundle
+    public var bundle: ShieldedBundle
     public var positionID: UInt64
     public var fee: UInt64
     public var stake: StakeProof
 
-    public init(bundle: Bundle, positionID: UInt64, fee: UInt64, stake: StakeProof) {
+    public init(bundle: ShieldedBundle, positionID: UInt64, fee: UInt64, stake: StakeProof) {
         self.bundle = bundle; self.positionID = positionID; self.fee = fee; self.stake = stake
     }
 
@@ -975,7 +975,7 @@ public struct MsgUnlockPosition: DecodablePrivateMsg, StakingMsg, Equatable {
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
-        return Self(bundle: try f.message(1, Bundle.decode), positionID: f.uint64(2), fee: f.uint64(3), stake: try f.message(4, StakeProof.decode))
+        return Self(bundle: try f.message(1, ShieldedBundle.decode), positionID: f.uint64(2), fee: f.uint64(3), stake: try f.message(4, StakeProof.decode))
     }
 
     public func sighashFields() throws -> [Fr] {
@@ -985,14 +985,14 @@ public struct MsgUnlockPosition: DecodablePrivateMsg, StakingMsg, Equatable {
 
 public struct MsgPositionVote: DecodablePrivateMsg, StakingMsg, Equatable {
     public static let typeURL = "/earth.shieldedstaking.v1.MsgPositionVote"
-    public var bundle: Bundle
+    public var bundle: ShieldedBundle
     public var positionID: UInt64
     public var proposalID: UInt64
     public var options: [WeightedVoteOption]
     public var fee: UInt64
     public var stake: StakeProof
 
-    public init(bundle: Bundle, positionID: UInt64, proposalID: UInt64, options: [WeightedVoteOption], fee: UInt64, stake: StakeProof) {
+    public init(bundle: ShieldedBundle, positionID: UInt64, proposalID: UInt64, options: [WeightedVoteOption], fee: UInt64, stake: StakeProof) {
         self.bundle = bundle; self.positionID = positionID; self.proposalID = proposalID; self.options = options
         self.fee = fee; self.stake = stake
     }
@@ -1010,7 +1010,7 @@ public struct MsgPositionVote: DecodablePrivateMsg, StakingMsg, Equatable {
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
-        return Self(bundle: try f.message(1, Bundle.decode), positionID: f.uint64(2), proposalID: f.uint64(3),
+        return Self(bundle: try f.message(1, ShieldedBundle.decode), positionID: f.uint64(2), proposalID: f.uint64(3),
                     options: try f.repeatedMessage(4, WeightedVoteOption.decode), fee: f.uint64(5), stake: try f.message(6, StakeProof.decode))
     }
 
@@ -1028,7 +1028,7 @@ public struct MsgPositionVote: DecodablePrivateMsg, StakingMsg, Equatable {
 /// fee_from_output) to pc.
 public struct MsgNoteSwap: DecodablePrivateMsg, Equatable {
     public static let typeURL = "/earth.dex.v1.MsgNoteSwap"
-    public var bundle: Bundle
+    public var bundle: ShieldedBundle
     public var denomOut: String
     public var minAmountOut: UInt64
     public var pc: Data
@@ -1036,12 +1036,12 @@ public struct MsgNoteSwap: DecodablePrivateMsg, Equatable {
     public var feeFromOutput: UInt64
     public var fee: UInt64
 
-    public init(bundle: Bundle, denomOut: String, minAmountOut: UInt64, pc: Data, ciphertext: Data = Data(), feeFromOutput: UInt64 = 0, fee: UInt64 = 0) {
+    public init(bundle: ShieldedBundle, denomOut: String, minAmountOut: UInt64, pc: Data, ciphertext: Data = Data(), feeFromOutput: UInt64 = 0, fee: UInt64 = 0) {
         self.bundle = bundle; self.denomOut = denomOut; self.minAmountOut = minAmountOut; self.pc = pc
         self.ciphertext = ciphertext; self.feeFromOutput = feeFromOutput; self.fee = fee
     }
 
-    public var bundles: [Bundle] { [bundle] }
+    public var bundles: [ShieldedBundle] { [bundle] }
     public var privateFee: UInt64 { fee }
 
     public func encoded() -> Data {
@@ -1058,7 +1058,7 @@ public struct MsgNoteSwap: DecodablePrivateMsg, Equatable {
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
-        return Self(bundle: try f.message(1, Bundle.decode), denomOut: f.string(2), minAmountOut: f.uint64(3),
+        return Self(bundle: try f.message(1, ShieldedBundle.decode), denomOut: f.string(2), minAmountOut: f.uint64(3),
                     pc: f.bytes(4), ciphertext: f.bytes(5), feeFromOutput: f.uint64(6), fee: f.uint64(7))
     }
 
@@ -1075,7 +1075,7 @@ public struct MsgNoteSwap: DecodablePrivateMsg, Equatable {
 /// share_pc, what the ratio does not take minted back to refund_pc.
 public struct MsgAddLiquidityShielded: DecodablePrivateMsg, Equatable {
     public static let typeURL = "/earth.dex.v1.MsgAddLiquidityShielded"
-    public var bundle: Bundle
+    public var bundle: ShieldedBundle
     public var poolID: UInt64
     public var minShares: String
     public var refundPC: Data
@@ -1084,13 +1084,13 @@ public struct MsgAddLiquidityShielded: DecodablePrivateMsg, Equatable {
     public var sharePC: Data
     public var shareCiphertext: Data
 
-    public init(bundle: Bundle, poolID: UInt64, minShares: String, refundPC: Data, refundCiphertext: Data = Data(), fee: UInt64,
+    public init(bundle: ShieldedBundle, poolID: UInt64, minShares: String, refundPC: Data, refundCiphertext: Data = Data(), fee: UInt64,
                 sharePC: Data, shareCiphertext: Data = Data()) {
         self.bundle = bundle; self.poolID = poolID; self.minShares = minShares; self.refundPC = refundPC
         self.refundCiphertext = refundCiphertext; self.fee = fee; self.sharePC = sharePC; self.shareCiphertext = shareCiphertext
     }
 
-    public var bundles: [Bundle] { [bundle] }
+    public var bundles: [ShieldedBundle] { [bundle] }
     public var privateFee: UInt64 { fee }
 
     public func encoded() -> Data {
@@ -1108,7 +1108,7 @@ public struct MsgAddLiquidityShielded: DecodablePrivateMsg, Equatable {
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
-        return Self(bundle: try f.message(1, Bundle.decode), poolID: f.uint64(3), minShares: f.string(5), refundPC: f.bytes(6),
+        return Self(bundle: try f.message(1, ShieldedBundle.decode), poolID: f.uint64(3), minShares: f.string(5), refundPC: f.bytes(6),
                     refundCiphertext: f.bytes(7), fee: f.uint64(8), sharePC: f.bytes(9), shareCiphertext: f.bytes(10))
     }
 
@@ -1125,7 +1125,7 @@ public struct MsgAddLiquidityShielded: DecodablePrivateMsg, Equatable {
 /// and token_pc.
 public struct MsgRemoveLiquidityShielded: DecodablePrivateMsg, Equatable {
     public static let typeURL = "/earth.dex.v1.MsgRemoveLiquidityShielded"
-    public var bundle: Bundle
+    public var bundle: ShieldedBundle
     public var poolID: UInt64
     public var fee: UInt64
     public var erthPC: Data
@@ -1133,12 +1133,12 @@ public struct MsgRemoveLiquidityShielded: DecodablePrivateMsg, Equatable {
     public var tokenPC: Data
     public var tokenCiphertext: Data
 
-    public init(bundle: Bundle, poolID: UInt64, fee: UInt64, erthPC: Data, erthCiphertext: Data = Data(), tokenPC: Data, tokenCiphertext: Data = Data()) {
+    public init(bundle: ShieldedBundle, poolID: UInt64, fee: UInt64, erthPC: Data, erthCiphertext: Data = Data(), tokenPC: Data, tokenCiphertext: Data = Data()) {
         self.bundle = bundle; self.poolID = poolID; self.fee = fee; self.erthPC = erthPC; self.erthCiphertext = erthCiphertext
         self.tokenPC = tokenPC; self.tokenCiphertext = tokenCiphertext
     }
 
-    public var bundles: [Bundle] { [bundle] }
+    public var bundles: [ShieldedBundle] { [bundle] }
     public var privateFee: UInt64 { fee }
 
     public func encoded() -> Data {
@@ -1155,7 +1155,7 @@ public struct MsgRemoveLiquidityShielded: DecodablePrivateMsg, Equatable {
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
-        return Self(bundle: try f.message(1, Bundle.decode), poolID: f.uint64(2), fee: f.uint64(3), erthPC: f.bytes(4),
+        return Self(bundle: try f.message(1, ShieldedBundle.decode), poolID: f.uint64(2), fee: f.uint64(3), erthPC: f.bytes(4),
                     erthCiphertext: f.bytes(5), tokenPC: f.bytes(6), tokenCiphertext: f.bytes(7))
     }
 

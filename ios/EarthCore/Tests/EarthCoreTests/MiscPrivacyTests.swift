@@ -2,11 +2,11 @@ import BigInt
 import XCTest
 @testable import EarthCore
 
-/// The chain's own witness fixtures (tools/privacyfixtures), rebuilt from
-/// scratch with the wallet's trees and derivations (ports FixtureWitnessTest.kt).
-/// Their public inputs are byte for byte those of the real proofs in the
-/// chain's zk/ultrahonk/testdata, so a witness these builders produce is one
-/// the chain verifies.
+/// The chain's own witness fixtures (tools/privacyfixtures membership,
+/// tools/orchardfixtures action), rebuilt with the wallet's trees,
+/// derivations and Grumpkin (ports FixtureWitnessTest.kt). nargo execute
+/// accepting the chain's tomls is the Go<->Noir parity check; these tests are
+/// the Go<->Swift one.
 final class FixtureWitnessTests: XCTestCase {
     func det(_ label: String, _ i: UInt64) -> Fr { PrivacyHash.h(PrivacyHash.assetID("fixture/\(label)"), PrivacyHash.u64(i)) }
 
@@ -51,64 +51,36 @@ final class FixtureWitnessTests: XCTestCase {
         XCTAssertEqual(parseToml(String(decoding: Vectors.resource("fixture_membership/Prover.toml"), as: UTF8.self)), parseToml(w.proverToml()))
     }
 
-    func testTransferFixture() throws {
-        let t = MerkleTree(store: MemNodeStore())
-        let nk = det("nk", 0)
-        let opk = PrivacyHash.ownerPK(nk)
-        let assetA = PrivacyHash.assetID("uanml"), erth = PrivacyHash.assetID("uerth")
-        let inVal: [UInt64] = [700_000, 300_000, 50_000], outVal: [UInt64] = [600_000, 350_000, 40_000]
-        let assets = [assetA, assetA, erth]
-        let positions: [UInt64] = [4, 7, 9]
-        let rho = (0 ..< 3).map { det("rho", UInt64($0)) }, rcm = (0 ..< 3).map { det("rcm", UInt64($0)) }
-        var next = 0
-        for p in 0 ..< 12 as Range<UInt64> {
-            var cm = PrivacyHash.cm(asset: erth, value: p + 1, pc: det("otherpc", p))
-            if next < 3, p == positions[next] {
-                cm = PrivacyHash.cm(asset: assets[next], value: inVal[next], pc: PrivacyHash.pc(ownerPK: opk, rho: rho[next], rcm: rcm[next])); next += 1
-            }
-            t.append(cm)
+    /// tools/orchardfixtures' 3-action mixed-asset bundle: each action's
+    /// witness rebuilt from its private inputs reproduces the chain's public
+    /// inputs (cv included) and Prover.toml, and the bundle's digest, sighash
+    /// and binding signature check under the wallet's own code.
+    func testActionFixture() throws {
+        let bj = try JSONSerialization.jsonObject(with: Vectors.resource("fixture_action/bundle.json")) as! [String: Any]
+        let acts = bj["actions"] as! [[String: Any]]
+        var actions: [ShieldedAction] = []
+        for (i, a) in acts.enumerated() {
+            let text = String(decoding: Vectors.resource("fixture_action/action_\(i)/Prover.toml"), as: UTF8.self)
+            let t = parseToml(text)
+            func f(_ k: String) -> Fr { Fr(BigUInt(t[k]!, radix: 10)!) }
+            func u(_ k: String) -> UInt64 { UInt64(t[k]!)! }
+            let w = try ActionWitness(nk: f("nk"), sAsset: f("s_asset"), sValue: u("s_value"), sRho: f("s_rho"), sRcm: f("s_rcm"),
+                                      sPos: u("s_pos"), sPath: t["s_path"]!.split(separator: ",").map { Fr(BigUInt(String($0), radix: 10)!) },
+                                      oAsset: f("o_asset"), oValue: u("o_value"), oPc: f("o_pc"), rcv: f("rcv"), anchor: f("anchor"),
+                                      sighash: f("sighash"))
+            try w.check()
+            XCTAssertEqual(publicInputs("fixture_action/action_\(i)"), w.publicInputs().map(\.hex), "action \(i)")
+            XCTAssertEqual(t, parseToml(w.proverToml()), "action \(i) toml")
+            XCTAssertEqual(a["cv"] as? String, Vectors.hex(w.cv.bytes))
+            actions.append(ShieldedAction(anchor: w.anchor.bytes, nullifier: w.nf.bytes, commitment: w.cmOut.bytes, cv: w.cv.bytes,
+                                  ciphertext: Vectors.unhex(a["ct"] as! String), proof: Data()))
         }
-        let w = try TransferWitness(
-            asset: assetA, nk: nk,
-            inputs: (0 ..< 3).map { try TransferInput(value: inVal[$0], rho: rho[$0], rcm: rcm[$0], position: positions[$0], path: t.path(positions[$0])) },
-            outputs: (0 ..< 3).map { i in
-                TransferOutput(value: outVal[i], pc: PrivacyHash.pc(ownerPK: PrivacyHash.ownerPK(det("recipient", UInt64(i))), rho: det("orho", UInt64(i)), rcm: det("orcm", UInt64(i))))
-            },
-            root: t.root(), fee: 10_000, vPubOut: 50_000, signal: det("signal", 1)
-        )
-        XCTAssertEqual(publicInputs("fixture_transfer"), w.publicInputs().map(\.hex))
-        XCTAssertEqual(parseToml(String(decoding: Vectors.resource("fixture_transfer/Prover.toml"), as: UTF8.self)), parseToml(w.proverToml()))
-    }
-}
-
-/// The witness mirrors the transfer circuit's balance rule (ports TransferBalanceTest.kt).
-final class TransferBalanceTests: XCTestCase {
-    func ins(_ v: UInt64...) -> [TransferInput] {
-        v.enumerated().map { try! TransferInput(value: $0.element, rho: Fr(UInt64(10 + $0.offset)), rcm: Fr(UInt64(20 + $0.offset)),
-                                                position: UInt64($0.offset), path: Array(repeating: .zero, count: Merkle.depth)) }
-    }
-    func outs(_ v: UInt64...) -> [TransferOutput] { v.enumerated().map { TransferOutput(value: $0.element, pc: Fr(UInt64(30 + $0.offset))) } }
-    func w(_ asset: Fr, _ i: [TransferInput], _ o: [TransferOutput], _ fee: UInt64, _ vPub: UInt64) throws {
-        _ = try TransferWitness(asset: asset, nk: Fr(UInt64(7)), inputs: i, outputs: o, root: .zero, fee: fee, vPubOut: vPub, signal: .zero)
-    }
-
-    func testErthOneNotePaysSpendAndFee() throws {
-        try w(PrivacyHash.assetErth, ins(100, 0, 0), outs(60, 0, 37), 3, 0)
-        try w(PrivacyHash.assetErth, ins(0, 0, 100), outs(60, 37, 0), 3, 0)
-        try w(PrivacyHash.assetErth, ins(100, 0, 0), outs(0, 0, 10), 5, 85)
-    }
-
-    func testErthCombinedInflationRejected() {
-        XCTAssertThrowsError(try w(PrivacyHash.assetErth, ins(100, 0, 0), outs(60, 0, 38), 3, 0))
-        XCTAssertThrowsError(try w(PrivacyHash.assetErth, ins(100, 0, 0), outs(0, 0, 10), 5, 86))
-    }
-
-    func testOtherAssetKeepsTwoBalances() throws {
-        let a = PrivacyHash.assetID("uanml")
-        try w(a, ins(70, 30, 10), outs(60, 40, 7), 3, 0)
-        XCTAssertThrowsError(try w(a, ins(100, 0, 0), outs(97, 0, 0), 3, 0))
-        XCTAssertThrowsError(try w(a, ins(70, 30, 10), outs(70, 40, 0), 0, 0))
-        XCTAssertThrowsError(try w(a, ins(70, 30, 10), outs(60, 30, 17), 3, 0))
+        let balances = (bj["balances"] as! [[String: Any]]).map { ValueBalance(denom: $0["denom"] as! String, amount: ($0["value"] as! NSNumber).uint64Value) }
+        let b = ShieldedBundle(actions: actions, balances: balances, bindingSig: Vectors.unhex(bj["binding_sig"] as! String))
+        let sighash = PrivacyHash.signal(msgType: bj["msg_type"] as! String, chainID: bj["chain_id"] as! String,
+                                         fields: [PrivacyHash.u64(1), try PrivateMsgs.digest(b)])
+        XCTAssertEqual(String((bj["sighash"] as! String).dropFirst(2)), sighash.hex)
+        XCTAssertTrue(PrivateMsgs.checkBalance(b, sighash: sighash))
     }
 }
 
@@ -119,8 +91,8 @@ final class AutomationTests: XCTestCase {
         .init(now: day * 86_400 + 5 * 3600, identityLive: true, claimOpensAt: 0, claimedToday: false, claimOffset: 4 * 3600,
               caretakerDue: false, hasFeeErth: true, maturedUnbonds: [])
     }
-    func note(_ denom: String, _ pos: UInt64 = 3) -> OwnedNote {
-        OwnedNote(position: pos, height: 1, note: NotePlaintext(denom: denom, value: 5, rho: .one, rcm: .one), cm: .one, nf: .one)
+    func note(_ denom: String, _ pos: UInt64 = 3) -> OwnedStakeNote {
+        OwnedStakeNote(position: pos, height: 1, denom: denom, amount: 5, rho: .one, rcm: .one, cm: .one, nf: .one)
     }
 
     func testClaimsOnceTheDaysOffsetHasPassed() {
@@ -134,9 +106,9 @@ final class AutomationTests: XCTestCase {
 
     func testRefreshesCaretakerAndClaimsUnbonding() {
         let n = note("unbond/v/1")
-        var i = base; i.claimedToday = true; i.caretakerDue = true; i.hasFeeErth = false; i.maturedUnbonds = [n]
+        var i = base; i.claimedToday = true; i.caretakerDue = true; i.hasFeeErth = false; i.maturedUnbonds = [n.denom]
         // No fee note: the caretaker refresh waits, the unbonding claim pays from its output.
-        XCTAssertEqual([.claimUnbonding(n)], PrivacyAutomation.decide(i))
+        XCTAssertEqual([.claimUnbonding(denom: n.denom)], PrivacyAutomation.decide(i))
         i = base; i.claimedToday = true; i.caretakerDue = true
         XCTAssertEqual([.refreshCaretaker], PrivacyAutomation.decide(i))
     }
@@ -154,11 +126,11 @@ final class AutomationTests: XCTestCase {
         XCTAssertNil(PrivacyAutomation.maturesBy(10, current: 10, currentStart: t, epochSeconds: d, unbondingSeconds: unbonding))
         let n9 = note("unbond/v/9", 1), n10 = note("unbond/v/10", 2)
         let by9 = PrivacyAutomation.maturesBy(9, current: 10, currentStart: t, epochSeconds: d, unbondingSeconds: unbonding)!
-        func m(_ ns: [OwnedNote], _ now: Int64, _ retry: [String: Int64] = [:]) -> [OwnedNote] {
+        func m(_ ns: [OwnedStakeNote], _ now: Int64, _ retry: [String: Int64] = [:]) -> [String] {
             PrivacyAutomation.matured(ns, now: now, current: 10, currentStart: t, epochSeconds: d, unbondingSeconds: unbonding, retryAt: retry)
         }
         XCTAssertTrue(m([n9, n10], by9 - 1).isEmpty)
-        XCTAssertEqual([n9], m([n9, n10], by9))
+        XCTAssertEqual([n9.denom], m([n9, n10], by9))
         XCTAssertTrue(m([n9], by9, ["unbond/v/9": by9 + 1]).isEmpty)
         var pending = n9; pending.pendingAt = 1
         XCTAssertTrue(m([pending], by9).isEmpty)
@@ -284,7 +256,7 @@ final class StakeValueTests: XCTestCase {
 
     func testPositionsFromBeforeTheSnapshotVote() {
         func pos(_ id: UInt64, _ h: UInt64) -> PrivacyReads.Position {
-            .init(id: id, validator: "v", derth: 1, pubkey: Data(), nonce: 0, createdHeight: h)
+            .init(id: id, validator: "v", derth: 1, ownerTag: .zero, createdHeight: h)
         }
         let snap = PrivacyReads.Snapshot(root: .zero, treeSize: 0, height: 100)
         XCTAssertEqual([1], PrivacyWallet.votingPositions([pos(1, 99), pos(2, 100), pos(3, 101)], snapshot: snap).map(\.id))
@@ -303,15 +275,20 @@ final class ShieldMoveTests: XCTestCase {
     func testMaxSpendableTakesTheLargestSpendableNotes() {
         let notes = [note(5, 1), note(40, 2), note(30, 3), note(20, 4), note(99, 5, spent: true), note(98, 6, pending: true), note(97, 7, denom: "uanml")]
         XCTAssertEqual(90, NoteSelection.maxSpendable(notes, denom: "uerth", maxNotes: 3))
-        XCTAssertEqual(70, NoteSelection.maxSpendable(notes, denom: "uerth"))
-        XCTAssertEqual(97, NoteSelection.maxSpendable(notes, denom: "uanml"))
-        XCTAssertEqual(0, NoteSelection.maxSpendable([], denom: "uerth"))
+        XCTAssertEqual(95, NoteSelection.maxSpendable(notes, denom: "uerth", maxNotes: 16))
+        XCTAssertEqual(70, NoteSelection.maxSpendable(notes, denom: "uerth", maxNotes: 2))
+        XCTAssertEqual(97, NoteSelection.maxSpendable(notes, denom: "uanml", maxNotes: 16))
+        XCTAssertEqual(0, NoteSelection.maxSpendable([], denom: "uerth", maxNotes: 16))
     }
 
-    func testMaxUnshieldLeavesTheFee() {
-        XCTAssertEqual(80, ShieldMove.maxUnshield([note(50, 1), note(40, 2)], fee: 10))
-        XCTAssertEqual(0, ShieldMove.maxUnshield([note(10, 1)], fee: 10))
-        XCTAssertEqual(0, ShieldMove.maxUnshield([], fee: 10))
+    /// Max is every note one bundle carries; at Max the fee comes out of the amount.
+    func testMaxUnshieldIsEveryNoteABundleCarries() {
+        let ns = (1 ... 20).map { note(10, UInt64($0)) }
+        XCTAssertEqual(160, ShieldMove.maxUnshield(ns, maxNotes: 16))
+        XCTAssertEqual(200, ShieldMove.maxUnshield(ns, maxNotes: 32))
+        XCTAssertEqual(0, ShieldMove.maxUnshield([], maxNotes: 16))
+        XCTAssertTrue(ShieldMove.feeFromAmount(amount: 160, spendable: 160, fee: 3))
+        XCTAssertFalse(ShieldMove.feeFromAmount(amount: 150, spendable: 160, fee: 3))
     }
 
     func testMaxShieldLeavesTheFee() {
