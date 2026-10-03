@@ -67,8 +67,23 @@ public final class AppModel {
     /// Live rate_v (ERTH per derth) for every validator this wallet holds
     /// derth or a position with. Missing until the first read lands.
     public private(set) var derthRates: [String: Decimal] = [:]
-    /// R: how long a caretaker split or referrer binding counts after it is cast.
-    public private(set) var leaseSeconds: Int64 = 30 * 86_400
+    /// R: how long a caretaker split counts after it is cast (default 365 days).
+    public private(set) var leaseSeconds: Int64 = 365 * 86_400
+    /// handle_lease_seconds: a handle's lease from each renewal.
+    public private(set) var handleLeaseSeconds: Int64 = Handles.defaultLeaseSeconds
+    /// This identity's handle ("" for none), its directory entry, and whether it moved one away.
+    public private(set) var handle: String = ""
+    public private(set) var handleEntry: HandleEntry?
+    public private(set) var handleMovedOut = false
+    /// Why the handle directory could not be read, if it could not.
+    public private(set) var handleDirectoryError: String?
+    /// The caretaker split's expiry (0: none) and whether it moved away.
+    public private(set) var caretakerExpiresAt: Int64 = 0
+    public private(set) var caretakerMovedOut = false
+    /// This identity replaced another at this time (0: a fresh passport).
+    public private(set) var predecessorAt: UInt64 = 0
+    /// What is due (a claim, a renewal): reminders, never actions taken unasked.
+    public private(set) var reminders: [Reminders.Reminder] = []
     private var automation: Task<Void, Never>?
     /// The stake vote being cast (K5): one cast at a time, spaced out, in the background.
     public private(set) var stakeVoteProgress: StakeVoteController.Progress?
@@ -700,7 +715,8 @@ public final class AppModel {
     }
 
     /// Unbonding claims (unbond/<valoper>/<epoch> notes), paid out by the
-    /// automation once their epoch matures.
+    /// automation once their epoch matures (the one automatic tx: it
+    /// completes an undelegation the user started).
     public var privateUnbonding: [String: UInt64] {
         shielded.filter { $0.key.hasPrefix("unbond/") }
     }
@@ -708,19 +724,10 @@ public final class AppModel {
     // MARK: - privacy
 
     /// Builds the selected wallet's private side from its mnemonic and starts
-    /// the automations (daily claim, caretaker and referrer refresh, unbond
-    /// claims), which run only while unlocked: they need the keys.
-    /// Signs a referrer consent with the selected wallet's transparent key
-    /// (wave 3, L6): what lets the private side bind that wallet's own
-    /// address. Nil while locked.
-    func referrerConsent() -> ((Data) throws -> (publicKey: Data, signature: Data))? {
-        guard wallets.indices.contains(selected) else { return nil }
-        let mnemonic = wallets[selected].mnemonic
-        return { message in
-            let key = try EarthKey(mnemonic: mnemonic)
-            return (key.publicKey, try key.sign(message))
-        }
-    }
+    /// the one automation (claiming matured unbonding claims, the end of an
+    /// undelegation the user started), which runs only while unlocked: it
+    /// needs the keys. Nothing else spends a fee unasked: the ANML claim, the
+    /// caretaker vote and the handle are reminders (`reminders`).
 
     private func openPrivacy() {
         guard privacy == nil, wallets.indices.contains(selected) || !wallets.isEmpty else { return }
@@ -740,17 +747,11 @@ public final class AppModel {
             // A stake vote the app lost (killed in the background) goes on.
             Task { await votes.resume() }
             let queries = PrivacyQueries(rest: client.rest)
-            // The referrer refresh signs with this wallet's own transparent key (wave 3, L6).
-            let mnemonic = entry.mnemonic
-            let consent: @Sendable (Data) throws -> (publicKey: Data, signature: Data) = { m in
-                let key = try EarthKey(mnemonic: mnemonic)
-                return (key.publicKey, try key.sign(m))
-            }
             automation = Task.detached(priority: .utility) { [weak self] in
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(20))
                     if Task.isCancelled { break }
-                    try? await PrivacyAutomation.runOnce(wallet: w, queries: queries, referrerConsent: consent)
+                    try? await PrivacyAutomation.runOnce(wallet: w, queries: queries)
                     await self?.publishPrivacy()
                     try? await Task.sleep(for: PrivacyAutomation.interval)
                 }
@@ -775,6 +776,8 @@ public final class AppModel {
         unshieldableErth = 0
         positions = []
         derthRates = [:]
+        handle = ""; handleEntry = nil; handleMovedOut = false; handleDirectoryError = nil
+        caretakerExpiresAt = 0; caretakerMovedOut = false; predecessorAt = 0; reminders = []
         PrivacyProving.registrationMayFollow = true
     }
 
@@ -787,6 +790,9 @@ public final class AppModel {
         claimOpensAt = w.claimOpensAt()
         mergeable = snap.mergeable.merging(snap.stakeMergeable) { a, _ in a }
         unshieldableErth = snap.unshieldableErth
+        handle = snap.handle; handleMovedOut = snap.handleMovedOut
+        caretakerMovedOut = snap.caretakerMovedOut
+        predecessorAt = snap.identity?.predecessorAt ?? 0
         // A registered wallet still may register in this launch if it can
         // switch to another wallet, which may not be.
         PrivacyProving.registrationMayFollow = snap.identityStatus != .live || wallets.count > 1
@@ -813,7 +819,54 @@ public final class AppModel {
         }
         await refreshRemovalBallots()
         await refreshDerthRates()
-        if let p = try? await queries.personhoodParams() { leaseSeconds = p.caretakerVoteSeconds }
+        if let p = try? await queries.personhoodParams() { leaseSeconds = p.caretakerVoteSeconds; handleLeaseSeconds = p.handleLeaseSeconds }
+        await refreshPersonal()
+    }
+
+    /// Re-reads this identity's handle (from the whole directory, never a
+    /// query for it alone) and caretaker standing, and the reminders due.
+    func refreshPersonal() async {
+        guard let w = privacy else { return }
+        let snap = w.snapshot
+        handle = snap.handle
+        if !snap.handle.isEmpty {
+            do {
+                handleEntry = try await PrivacySession.handles.lookup(snap.handle)
+                handleDirectoryError = nil
+            } catch {
+                handleDirectoryError = describe(error)
+            }
+        } else { handleEntry = nil }
+        caretakerExpiresAt = await w.caretakerExpiresAt()
+        reminders = Reminders.due(Reminders.Inputs(
+            now: Int64(Date().timeIntervalSince1970), identityLive: snap.identityStatus == .live, claimOpensAt: w.claimOpensAt(),
+            claimedToday: w.claimedToday(), caretakerExpiresAt: caretakerExpiresAt, handle: snap.handle, handleEntry: handleEntry))
+    }
+
+    /// The handle directory's verdict on paying `input` ("@alice", "alice"):
+    /// the whole directory, fresh, and the entry checked against the chain's own.
+    func resolveHandle(_ input: String) async -> HandleDirectory.Resolution {
+        do { return try await PrivacySession.handles.resolveForPayment(input) } catch {
+            return .notPayable("Couldn't load the handle directory: \(describe(error))")
+        }
+    }
+
+    func invalidateHandles() async { await PrivacySession.handles.invalidate() }
+
+    /// The privacy keys of the wallet at `index` (another of this phone's
+    /// wallets): what an identity switch names its moves to.
+    func privacyKeys(ofWallet index: Int) throws -> PrivacyKeys {
+        guard wallets.indices.contains(index) else { throw WalletStore.Error.notFound }
+        return try PrivacyKeys.fromMnemonic(wallets[index].mnemonic)
+    }
+
+    /// Records in the wallet at `index`'s private store what a switch moved
+    /// to its identity (PrivacyWallet.adoptMoved): its own wallet, when it is
+    /// next opened, renews and refreshes them with no predecessor wait.
+    func adoptMoved(intoWallet index: Int, handle: String?, split: [UInt64: UInt64]?, splitExpiresAt: Int64) async throws {
+        guard wallets.indices.contains(index) else { throw WalletStore.Error.notFound }
+        let other = try PrivacySession.open(mnemonic: wallets[index].mnemonic, client: client)
+        try await other.adoptMoved(handle: handle, split: split, splitExpiresAt: splitExpiresAt)
     }
 
     /// x/assembly's open removal ballots, on their own: public and cheap, so
@@ -913,6 +966,7 @@ public final class AppModel {
         case WalletStore.Error.keychain(-34018):
             "This build has no Keychain access, so it cannot store a wallet. Install a signed build."
         case let WalletStore.Error.keychain(status): "The Keychain refused to store the wallet (status \(status))."
+        case _ where ChainErrors.explain(error) != nil: ChainErrors.explain(error)!
         case let EarthClient.Error.rejected(code, log): "Rejected (code \(code)): \(log)"
         case let EarthClient.Error.executionFailed(code, log): "Failed (code \(code)): \(log)"
         case let e as LocalizedError where e.errorDescription != nil: e.errorDescription!

@@ -21,6 +21,7 @@ struct WalletScreen: View {
     @State private var moveDirection = MoveSheet.Direction.shield
     /// Which list is under the cards. The third action toggles it.
     @State private var panel = Panel.activity
+    @State private var handleOpen = false
 
     enum Panel { case activity, portfolio }
 
@@ -28,6 +29,12 @@ struct WalletScreen: View {
         VStack(spacing: 0) {
             Spacer().frame(height: 8)
             BalanceWidget()
+            // What is due, never done unasked: each reminder opens where it is done.
+            ForEach(Array(model.reminders.enumerated()), id: \.offset) { _, r in
+                ReminderBanner(text: Reminders.text(r, now: Int64(Date().timeIntervalSince1970))) { open(r) }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 6)
+            }
             Spacer().frame(height: 16)
             HomeActions(
                 panel: $panel,
@@ -50,6 +57,17 @@ struct WalletScreen: View {
         .sheet(isPresented: $receiving) { ReceiveSheet().earthThemed() }
         .sheet(isPresented: $registering) { RegistrationSheet().earthThemed() }
         .sheet(isPresented: $moving) { MoveSheet(direction: moveDirection).earthThemed() }
+        .sheet(isPresented: $handleOpen) { HandleScreen().earthThemed() }
+    }
+
+    private func open(_ r: Reminders.Reminder) {
+        switch r {
+        case .anmlReady:
+            tx.requestPrivate(.private(action: "Claim", rows: [("Token", "ANML"), ("Amount", "1 ANML"), ("Paid as", "a private note")]),
+                              onSuccess: { await model.syncPrivacy() }) { w in try await w.claimAnml() }
+        case .caretakerExpiring: model.tab = .govern
+        case .handleExpiring: handleOpen = true
+        }
     }
 }
 
@@ -286,8 +304,8 @@ struct HomeActions: View {
 
     /// Private: a membership proof in the day's claim scope, its fee paid
     /// from a shielded ERTH note, the ANML minted as a note. Nothing links it
-    /// to the registration or to any other claim. The wallet also claims on
-    /// its own each day while unlocked, at a random time.
+    /// to the registration or to any other claim. Nothing claims on its own:
+    /// a reminder says when the day's claim is open.
     private func claim() {
         tx.requestPrivate(.private(action: "Claim", rows: [("Token", "ANML"), ("Amount", "1 ANML"), ("Paid as", "a private note")]),
                           onSuccess: { await model.syncPrivacy() }) { w in

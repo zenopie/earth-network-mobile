@@ -14,7 +14,7 @@ struct SettingsSheet: View {
     @State private var route: Route?
 
     enum Route: String, Identifiable {
-        case identity, notes, wallets, security, explorer, activity, about
+        case identity, handle, notes, wallets, security, explorer, activity, about
         var id: String { rawValue }
     }
 
@@ -30,6 +30,8 @@ struct SettingsSheet: View {
                             // read about yet.
                             subtitle: model.isRegistered ? "Verified human" : "Not registered",
                             route: .identity)
+                        divider
+                        row("Handle", "at", subtitle: model.handle.isEmpty ? "Claim a name others can pay" : "@\(model.handle)", route: .handle)
                         divider
                         row("Shielded notes", "lock.shield", subtitle: "Shield, merge small notes", route: .notes)
                         divider
@@ -66,6 +68,7 @@ struct SettingsSheet: View {
             .sheet(item: $route) { destination in
                 switch destination {
                 case .identity: IdentityScreen().earthThemed()
+                case .handle: HandleScreen().earthThemed()
                 case .notes: NotesScreen().earthThemed()
                 case .wallets: WalletsScreen().earthThemed()
                 case .security: SecurityScreen().earthThemed()
@@ -124,9 +127,11 @@ struct SettingsSheet: View {
 ///
 /// Private: the registration's link to this wallet exists only here. The
 /// chain holds an identity leaf nobody can attribute, and every claim, vote,
-/// caretaker split and referrer binding proves membership without saying
+/// caretaker split and handle proves membership without saying
 /// which leaf.
 struct IdentityScreen: View {
+    @State private var handleOpen = false
+    @State private var switching = false
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
     @Environment(TxController.self) private var tx
@@ -150,10 +155,12 @@ struct IdentityScreen: View {
                         .foregroundStyle(theme.colors.textTertiary)
 
                     if model.isRegistered {
-                        Text("Your registration stays with this wallet until it expires. Registering the same passport from another wallet moves it there, and this one stops counting.")
+                        EarthDetailRow(label: "Handle", value: model.handle.isEmpty ? "None" : "@\(model.handle)")
+                        EarthButton(title: model.handle.isEmpty ? "Claim a handle" : "Manage @\(model.handle)", role: .secondary) { handleOpen = true }
+                        Text("Your registration stays with this wallet until it expires. To move it to another wallet, switch identity: your handle and caretaker vote move first, then you register the same passport there. Nothing is paid the second time.")
                             .font(EarthType.bodySmall)
                             .foregroundStyle(theme.colors.textTertiary)
-                        ReferrerSection()
+                        EarthButton(title: "Switch identity", role: .secondary) { switching = true }
                         // Transparent fees (an LP, IBC, a contract call) come
                         // from the public account: unshield ERTH there. The
                         // membership-proved transparent gas grant is gone from
@@ -173,6 +180,8 @@ struct IdentityScreen: View {
             .background(theme.colors.bgPrimary)
             .scrollContentBackground(.hidden)
             .sheet(isPresented: $registering) { RegistrationSheet().earthThemed() }
+            .sheet(isPresented: $handleOpen) { HandleScreen().earthThemed() }
+            .sheet(isPresented: $switching) { SwitchIdentityScreen().earthThemed() }
             // A sheet over the settings sheet, so the root's confirmation
             // would draw behind both. See TxController.Host.
             .overlay { TxOverlay(host: .identity) }
@@ -184,47 +193,6 @@ struct IdentityScreen: View {
         case .live: "Your registration is in the identity tree."
         case .zeroed: "Your registration expired, or moved to another wallet. Register again to take part."
         case .none: "Prove you are a unique human to claim ANML and vote."
-        }
-    }
-}
-
-/// Referrals. This person's referral rewards are paid, in transparent ERTH,
-/// to an address they bind with a membership proof: the binding is public
-/// (the address is), who bound it is not. It lapses after the caretaker
-/// period unless refreshed, which the wallet does while unlocked.
-struct ReferrerSection: View {
-    @Environment(\.earth) private var theme
-    @Environment(AppModel.self) private var model
-    @Environment(TxController.self) private var tx
-    @State private var shared = false
-
-    var body: some View {
-        let snap = model.privacy?.snapshot
-        let bound = snap?.referrerAddress ?? ""
-        let at = snap?.referrerBoundAt ?? 0
-        let live = bound == model.address && at > 0
-        VStack(alignment: .leading, spacing: theme.space.x8) {
-            EarthLabel("Referrals")
-            Text("When someone registers naming your address, half of their registration reward is paid to it. Binding the address proves you are a registered person without saying which one.")
-                .font(EarthType.bodySmall)
-                .foregroundStyle(theme.colors.textTertiary)
-            EarthDetailRow(label: "Your address", value: model.address)
-            EarthDetailRow(label: "Status", value: live
-                ? "Bound, refreshed until \(Date(timeIntervalSince1970: TimeInterval(at + model.leaseSeconds)).formatted(date: .abbreviated, time: .omitted))"
-                : bound.isEmpty ? "Not bound" : "Bound to another address")
-            HStack(spacing: theme.space.x8) {
-                EarthButton(title: live ? "Rebind" : "Bind address") {
-                    let address = model.address
-                    tx.requestPrivate(.private(action: "Bind referrer address", rows: [("Rewards to", address)]),
-                                      host: .identity, onSuccess: { await model.syncPrivacy() }) { w in
-                        try await w.bindReferrer(address: address, consent: model.referrerConsent())
-                    }
-                }
-                EarthButton(title: shared ? "Copied" : "Copy link", role: .secondary) {
-                    UIPasteboard.general.string = "https://erth.network/ref/\(model.address)"
-                    shared = true
-                }
-            }
         }
     }
 }

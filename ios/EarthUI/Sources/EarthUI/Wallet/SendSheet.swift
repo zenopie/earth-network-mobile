@@ -20,6 +20,18 @@ struct SendSheet: View {
 
     enum Source: Hashable { case account, shielded }
 
+    /// A handle ("@alice" or "alice") is looked up in the whole directory,
+    /// downloaded in full and cached, never asked about alone: the node must
+    /// not learn who is about to pay whom. Re-read fresh at review.
+    @State private var resolution: HandleDirectory.Resolution?
+    @State private var resolving = false
+
+    private var toHandle: Bool { Handles.looksLikeHandle(recipient) }
+    private var handleTarget: (entry: HandleEntry, address: ShieldedAddress)? {
+        if case let .payable(e, a) = resolution { return (e, a) }
+        return nil
+    }
+
     private var toShielded: Bool { recipient.hasPrefix(ShieldedAddress.hrp + "1") }
     private var fromNotes: Bool { toShielded || source == .shielded }
 
@@ -39,6 +51,16 @@ struct SendSheet: View {
             }
             .sheet(isPresented: $scanning) {
                 QRScanSheet { recipient = $0 }.earthThemed()
+            }
+            .task(id: recipient) {
+                resolution = nil
+                guard toHandle, Handles.parse(recipient) != nil else { return }
+                try? await Task.sleep(for: .milliseconds(400))
+                if Task.isCancelled { return }
+                resolving = true
+                let r = await model.resolveHandle(recipient)
+                if !Task.isCancelled { resolution = r }
+                resolving = false
             }
             .navigationTitle("Send")
             .navigationBarTitleDisplayMode(.inline)
@@ -90,7 +112,7 @@ struct SendSheet: View {
         VStack(alignment: .leading, spacing: theme.space.x8) {
             EarthLabel("To")
             HStack(spacing: theme.space.x8) {
-                TextField("earth1… or erthz1…", text: $recipient, axis: .vertical)
+                TextField("earth1…, erthz1… or @handle", text: $recipient, axis: .vertical)
                     .font(EarthType.mono)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -111,7 +133,17 @@ struct SendSheet: View {
             // Validated as typed rather than on submit: a bech32 checksum
             // catches a mistyped address before a fee is spent finding out, and
             // the chain's error for one is not readable.
-            if !recipient.isEmpty, !recipientValid {
+            if toHandle {
+                if let h = handleTarget {
+                    Text("@\(h.entry.handle) → \(Handles.truncate(h.entry.address)) · " + (fromNotes ? "sent privately" : "shielded from your public balance"))
+                        .font(EarthType.bodySmall)
+                        .foregroundStyle(theme.colors.textTertiary)
+                } else if resolving {
+                    Text("Looking up the handle…").font(EarthType.bodySmall).foregroundStyle(theme.colors.textTertiary)
+                } else if let why = handleError {
+                    Text(why).font(EarthType.bodySmall).foregroundStyle(theme.colors.textError)
+                }
+            } else if !recipient.isEmpty, !recipientValid {
                 Text(toShielded ? "Not a valid shielded address." : "Not a valid earth address.")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textError)
@@ -161,7 +193,15 @@ struct SendSheet: View {
         return value <= available(token) ? value : nil
     }
 
+    private var handleError: String? {
+        if Handles.parse(recipient) == nil { return "A handle is 3-32 of a-z, 0-9 and -." }
+        if case let .notPayable(why) = resolution { return why }
+        if let h = handleTarget, h.address.encode() == model.shieldedAddress { return "@\(h.entry.handle) names this wallet's own address." }
+        return nil
+    }
+
     private var recipientValid: Bool {
+        if toHandle { return handleTarget != nil && handleError == nil && !resolving }
         if toShielded {
             guard let a = try? ShieldedAddress.decode(recipient) else { return false }
             return a.encode() != model.shieldedAddress
@@ -182,6 +222,10 @@ struct SendSheet: View {
         guard let value = parsedAmount else { return }
         let to = recipient
         let denom = token.denom
+        if toHandle {
+            payHandle(value)
+            return
+        }
         if fromNotes {
             let amount = UInt64(value)
             let shieldedTo = toShielded ? try? ShieldedAddress.decode(to) : nil
@@ -210,5 +254,39 @@ struct SendSheet: View {
             [model.client.msgSend(from: key.address, to: to, denom: denom, amount: String(value))]
         }
         dismiss()
+    }
+
+    /// Pays a handle: the directory read again (fresh) so a handle that
+    /// lapsed or changed hands since the preview is never paid, then the
+    /// confirm shows the handle and the address it names now. From notes, a
+    /// private send; from the account, MsgShield minting the note straight to
+    /// the handle's address (the amount is public, who it pays is not).
+    private func payHandle(_ value: BigInt) {
+        let input = recipient, denom = token.denom, symbol = token.symbol, fromNotes = fromNotes
+        let display = "\(token.format(value)) \(token.symbol)"
+        Task {
+            let r = await model.resolveHandle(input)
+            guard case let .payable(entry, address) = r else { resolution = r; return }
+            let label = "@\(entry.handle) · \(Handles.truncate(entry.address))"
+            if fromNotes {
+                let amount = UInt64(value)
+                tx.requestPrivate(.private(action: "Pay @\(entry.handle) privately", rows: [
+                    ("Amount", display), ("To handle", label),
+                    ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
+                ]), onSuccess: { await model.syncPrivacy() }) { w in
+                    try await w.send(to: address, denom: denom, amount: amount)
+                }
+            } else {
+                guard let w = model.privacy, let out = try? w.shieldOutput(denom: denom, to: address) else { return }
+                tx.request(.init(action: "Pay @\(entry.handle) from your public balance", rows: [
+                    ("Amount", display), ("To handle", label), ("Fee", "\(Token.erth.format(TransactionSigner.defaultFeeUerth)) ERTH"),
+                ]), onSuccess: { await model.syncPrivacy() }) { key in
+                    [MsgShield(sender: key.address, amount: Coin(denom: denom, amount: String(value)),
+                               pc: out.pc.bytes, ciphertext: out.ciphertext).asAny(typeURL: MsgShield.typeURL)]
+                }
+            }
+            _ = symbol
+            dismiss()
+        }
     }
 }

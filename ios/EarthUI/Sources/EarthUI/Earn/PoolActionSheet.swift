@@ -97,7 +97,8 @@ struct PoolActionSheet: View {
             tokenText = ""
             return
         }
-        tokenText = Amounts.fromBaseUnits(units * tokenReserve / erthReserve, exponent: token.decimals)
+        // Rounded up, as x/dex pulls each leg (min-shares maths).
+        tokenText = Amounts.fromBaseUnits(SwapMath.depositLeg(units, from: erthReserve, to: tokenReserve), exponent: token.decimals)
     }
 
     private func setToken(_ raw: String) {
@@ -106,7 +107,7 @@ struct PoolActionSheet: View {
             erthText = ""
             return
         }
-        erthText = Amounts.fromBaseUnits(units * erthReserve / tokenReserve)
+        erthText = Amounts.fromBaseUnits(SwapMath.depositLeg(units, from: tokenReserve, to: erthReserve))
     }
 
     // MARK: - withdraw

@@ -115,6 +115,10 @@ public final class TxController {
         case identity
         /// The shielded-notes screen, another sheet over the settings sheet.
         case notes
+        /// The handle screen, another sheet over the settings sheet.
+        case handle
+        /// The identity switch, a sheet over the identity screen.
+        case switchIdentity
     }
 
     public private(set) var host: Host = .root

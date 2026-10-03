@@ -46,6 +46,16 @@ enum PrivacySession {
         try PrivacyStore.delete(root: try dataRoot())
     }
 
+    /// The app's one handle directory (see HandleDirectory): the privacy
+    /// backend's whole-directory stream first, the chain's own pages to fall
+    /// back on and to check an entry against before money moves on it.
+    static let handles: HandleDirectory = {
+        let queries = PrivacyQueries(rest: EarthRest())
+        let indexer = HTTPPrivacyIndexer()
+        return HandleDirectory(fetchChainPage: { start, limit in try await queries.handlesPage(start: start, limit: limit) },
+                               fetchStream: { from, limit in try await indexer.handles(fromIndex: from, limit: limit) })
+    }()
+
     static func open(mnemonic: String, client: EarthClient) throws -> PrivacyWallet {
         let keys = try PrivacyKeys.fromMnemonic(mnemonic)
         // Named by a hash of the owner key, not the address: nothing on disk

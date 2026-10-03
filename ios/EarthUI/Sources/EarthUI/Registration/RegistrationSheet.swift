@@ -154,8 +154,8 @@ struct RegistrationSheet: View {
             }
 
             VStack(alignment: .leading, spacing: theme.space.x8) {
-                EarthLabel("Referrer (optional)")
-                TextField("earth1…", text: $referrer)
+                EarthLabel("Referred by (optional)")
+                TextField("@handle", text: $referrer)
                     .font(EarthType.mono)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -165,14 +165,17 @@ struct RegistrationSheet: View {
                         RoundedRectangle(cornerRadius: theme.space.radiusMd)
                             .strokeBorder(theme.colors.strokePrimary, lineWidth: theme.space.stroke)
                     }
-                Text("The chain splits the registration reward with a referrer: a registered person who has bound this address as theirs. It is part of the proof, so it is fixed once the chip is read.")
+                Text("Half the registration reward goes to whoever referred you, privately, as a note to their handle's shielded address. Leaving this blank costs you nothing. It is part of the proof, so it is fixed once the chip is read.")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
-                if !referrer.isEmpty, !EarthKey.isValidAddress(referrer) {
-                    Text("Not a valid earth address.")
+                if !referrer.isEmpty, Handles.parse(referrer) == nil {
+                    Text("Not a handle: 3-32 of a-z, 0-9 and -.")
                         .font(EarthType.bodySmall)
                         .foregroundStyle(theme.colors.textError)
                 }
+                Text("Already registered from another wallet? Registering here switches your identity to this wallet. Move your handle and caretaker vote first, from the old wallet's Identity screen (Switch identity), or the new identity waits up to a year before it can hold them.")
+                    .font(EarthType.bodySmall)
+                    .foregroundStyle(theme.colors.textTertiary)
             }
 
             EarthButton(title: "Read the chip") {
@@ -305,8 +308,18 @@ struct RegistrationSheet: View {
         let referrer = referrer
         Task {
             do {
-                let affiliate = try PassportRegistration.normalizeReferrer(referrer)
-                let prep = try await wallet.prepareRegistration(affiliate: affiliate)
+                // The referrer is resolved from the whole handle directory
+                // (never the one handle: that would tell the node who referred
+                // this registrant), live in a fresh copy and on chain.
+                let handle = try PassportRegistration.normalizeReferrer(referrer)
+                var resolved: PrivacyWallet.Referrer?
+                if !handle.isEmpty {
+                    switch await model.resolveHandle(handle) {
+                    case let .payable(e, a): resolved = PrivacyWallet.Referrer(handle: e.handle, address: a)
+                    case let .notPayable(why): throw PrivacyError(why)
+                    }
+                }
+                let prep = try await wallet.prepareRegistration(referrer: resolved)
                 self.prep = prep
                 let scan = try await PassportChip.read(key: key)
                 self.scan = scan
@@ -354,7 +367,7 @@ struct RegistrationSheet: View {
                 rows: [
                     ("Nullifier", proof.nullifier.map { String($0.prefix(12)) + "…" } ?? "—"),
                     ("Circuit", proof.signatureAlgorithm),
-                    ("Referrer", prep.affiliate.isEmpty ? "None" : prep.affiliate),
+                    ("Referred by", prep.referrer.isEmpty ? "None" : "@\(prep.referrer)"),
                     ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.registerGasEstimate))) ERTH, shielded"),
                 ],
                 gas: PrivacyWallet.registerGasEstimate,
@@ -384,7 +397,7 @@ struct RegistrationSheet: View {
         }
         if let registration = error as? PassportRegistration.Error {
             switch registration {
-            case let .malformedReferrer(address): return "\(address) is not a valid earth address."
+            case let .malformedReferrer(handle): return "\(handle) is not a handle."
             case let .algorithmMismatch(expected, got):
                 return "The proof came from \(got) but the certificate selects \(expected)."
             }
@@ -400,7 +413,7 @@ struct RegistrationSheet: View {
     }
 
     private var referrerInvalid: Bool {
-        !referrer.isEmpty && !EarthKey.isValidAddress(referrer)
+        !referrer.isEmpty && Handles.parse(referrer) == nil
     }
 
     private func field(
