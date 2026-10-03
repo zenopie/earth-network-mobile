@@ -98,6 +98,27 @@ PRIVACY_FORMATS.md.
   EarthUI typechecks (build-ios.sh); xcodebuild simulator build (ARCHS=arm64,
   unsigned) succeeds.
 
+## Stake votes without spending (chain 9b29f5d, 2026-10-03)
+- MsgStakeVote v2: circuits/vote proof (8) + vote_nullifier (9), no stake
+  proof, nothing spent or re-minted; one vote per note per proposal, a note
+  votes on every open proposal. Snapshot from the indexer's /stake/snapshots
+  (LCD Query/Snapshot fallback); snapshot nullifier tree rebuilt from
+  /stake/nullifier-tree (LCD Query/StakeNullifierTree fallback), checked
+  against nf_root, rebuilt from the LCD alone on a mismatch. (proposal, vnf)
+  persisted (stake_votes); a chain refusal (1119, at simulate) records it.
+  Weight: amount rounded down to 3 significant figures (PRIVACY_FORMATS 4e).
+- circuits/vote bundled (android assets, iOS references the folder); VK equals
+  the chain's vote.vk; 2^14, under the bundled 2^15 SRS. bb prove/verify and
+  ProverGate (Swoirenberg) proofs of wallet vote witnesses verify.
+- Vectors regenerated from chain 9b29f5d (indexed tree roots/witnesses,
+  nf_leaf, vote_nf, MsgStakeVote encoding/sighash).
+- StakeVoteFlowTest(s): two concurrent proposals, second vote refused (local;
+  restored wallet via the chain), spent before the snapshot refused locally,
+  restaked after it still votes / its outputs cannot, failed vote retried,
+  LCD fallback, forged nullifier stream, weight rule. All dumped witnesses
+  (Android and iOS, 329 each) pass nargo execute.
+- Android versionCode 42 (1.0.35); iOS build 15.
+
 ## Open / notes
 - Device prove times for action/stake not measured on a phone (Mac: ~150ms
   each through Swoirenberg).
