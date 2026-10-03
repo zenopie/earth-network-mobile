@@ -36,6 +36,8 @@ object PassportSrs {
         val part = File(dest.parentFile, dest.name + ".part")
         try {
             val c = URL(SOURCE).openConnection() as HttpURLConnection
+            // Audit 4: never followed to another origin.
+            c.instanceFollowRedirects = false
             c.connectTimeout = 15_000
             c.readTimeout = 60_000
             c.setRequestProperty("Range", "bytes=0-${POINTS * 64 - 1}")

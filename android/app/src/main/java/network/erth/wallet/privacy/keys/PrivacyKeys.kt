@@ -66,8 +66,11 @@ class PrivacyKeys private constructor(
         private const val COIN = 118
         private val HMAC_KEY = "earth.privacy.v1".toByteArray()
 
-        fun fromMnemonic(words: List<String>): PrivacyKeys =
-            fromSeed(MnemonicCode.toSeed(words, ""))
+        fun fromMnemonic(words: List<String>): PrivacyKeys {
+            val seed = MnemonicCode.toSeed(words, "")
+            // Audit 4: the seed is zeroed once the keys are derived.
+            return try { fromSeed(seed) } finally { seed.fill(0) }
+        }
 
         fun fromMnemonic(mnemonic: String): PrivacyKeys =
             fromMnemonic(mnemonic.trim().split(Regex("\\s+")))
