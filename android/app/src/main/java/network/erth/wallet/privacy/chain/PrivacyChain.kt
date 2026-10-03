@@ -79,13 +79,16 @@ object PrivacyQueries {
 
     fun personhoodParams(): PersonhoodParams {
         val p = get("/earth/personhood/v1/params").getJSONObject("params")
+        // Audit 5 (L7): every duration at most Handles.MAX_AHEAD_SECONDS, so
+        // no sum of it with a time can overflow (a node's 2^63 lease is not one).
+        val max = network.erth.wallet.privacy.handles.Handles.MAX_AHEAD_SECONDS
         return PersonhoodParams(
             // Zero falls back to the chain's defaults (365 days; 30 days for the renewal period).
-            caretakerVoteSeconds = p.long("caretaker_vote_seconds").takeIf { it > 0 } ?: 365L * 86_400,
-            identityRootWindowSeconds = p.long("identity_root_window_seconds").takeIf { it > 0 } ?: 3_600,
+            caretakerVoteSeconds = (p.long("caretaker_vote_seconds").takeIf { it > 0 } ?: 365L * 86_400).coerceAtMost(max),
+            identityRootWindowSeconds = (p.long("identity_root_window_seconds").takeIf { it > 0 } ?: 3_600).coerceAtMost(max),
             registrationValiditySeconds = p.long("registration_validity_seconds"),
-            handleLeaseSeconds = p.long("handle_lease_seconds").takeIf { it > 0 } ?: network.erth.wallet.privacy.handles.Handles.DEFAULT_LEASE_SECONDS,
-            handleRenewalSeconds = p.long("handle_renewal_seconds").takeIf { it > 0 } ?: network.erth.wallet.privacy.handles.Handles.DEFAULT_RENEWAL_SECONDS,
+            handleLeaseSeconds = (p.long("handle_lease_seconds").takeIf { it > 0 } ?: network.erth.wallet.privacy.handles.Handles.DEFAULT_LEASE_SECONDS).coerceAtMost(max),
+            handleRenewalSeconds = (p.long("handle_renewal_seconds").takeIf { it > 0 } ?: network.erth.wallet.privacy.handles.Handles.DEFAULT_RENEWAL_SECONDS).coerceAtMost(max),
         )
     }
 

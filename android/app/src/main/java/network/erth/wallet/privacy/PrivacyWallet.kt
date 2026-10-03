@@ -35,6 +35,7 @@ import network.erth.wallet.privacy.prove.VoteWitness
 import network.erth.wallet.privacy.sync.StakeVoteRecord
 import network.erth.wallet.privacy.sync.ChainRoots
 import network.erth.wallet.privacy.sync.IdentityRecord
+import network.erth.wallet.privacy.sync.PendingMove
 import network.erth.wallet.privacy.sync.PendingRegistration
 import network.erth.wallet.privacy.sync.PrivacyIndexer
 import network.erth.wallet.privacy.sync.PrivacyStore
@@ -56,6 +57,8 @@ import network.erth.wallet.privacy.tx.VoteWitnessSpec
 import network.erth.wallet.privacy.zk.IndexedTree
 import network.erth.wallet.privacy.zk.Fr
 import network.erth.wallet.privacy.zk.Privacy
+import network.erth.wallet.privacy.handles.HandleEntry
+import network.erth.wallet.privacy.handles.Handles
 import java.math.BigDecimal
 
 /** The chain reads the wallet's private msgs are built from. */
@@ -140,6 +143,7 @@ class PrivacyWallet(
     @Synchronized
     fun sync(): WalletSync.Result {
         fillPendingRegistration()
+        runCatching { resolvePendingMoves() }
         return WalletSync(indexer, store, keys, chainId, roots, now).sync()
     }
 
@@ -193,6 +197,13 @@ class PrivacyWallet(
     private fun stakeMint(): Pair<Pair<Fr, Fr>, ByteArray> = StakePlan.selfMint(keys)
 
     private fun today(): Long = now() / SECONDS_PER_DAY
+
+    /**
+     * Audit 5 (L2): the chain's time, the LCD tip's block time, for what the
+     * chain checks against its own clock (predecessor bounds, the removal
+     * day); the device clock only when the node cannot say.
+     */
+    private fun chainNow(): Long = runCatching { roots.latestBlock()?.time }.getOrNull()?.takeIf { it > 0 } ?: now()
 
     // ---- running ------------------------------------------------------------
 
@@ -316,9 +327,17 @@ class PrivacyWallet(
     class SyncFirst(message: String) : IllegalStateException(message)
 
     /** The identity is too recent for this action (or replaced another too recently); it opens [waitSeconds] from now. */
-    class NotYet(val waitSeconds: Long) : Exception(
-        if (waitSeconds > 2 * SECONDS_PER_DAY) "this identity replaced another too recently for this action; it opens in ${waitSeconds / SECONDS_PER_DAY + 1} days"
-        else "this registration is too recent for this action; try again in ${waitSeconds / 3600 + 1}h",
+    open class NotYet(val waitSeconds: Long, message: String = notYetText(waitSeconds)) : Exception(message)
+
+    /**
+     * Audit 5 (M1): a renewal or refresh sent with no bound, by an identity
+     * whose own bound has not passed, which the chain refused (in its ante,
+     * before any fee): this identity holds nothing there.
+     */
+    class NotHeld(waitSeconds: Long) : NotYet(
+        waitSeconds,
+        "the chain says this identity holds none here (nothing was charged); it replaced another too recently to take a new one, " +
+            "which opens in ${waitSeconds / SECONDS_PER_DAY + 1} days",
     )
 
     // ---- pool ---------------------------------------------------------------
@@ -556,36 +575,60 @@ class PrivacyWallet(
      * 0 meets it), so the proof does not tell a fresh identity from an old one.
      */
     private fun predecessorBound(lease: Long): Long {
-        val bound = now() - lease - ACTIVATION_MARGIN - CLOCK_MARGIN
+        val bound = Handles.satSub(Handles.satSub(chainNow(), lease), ACTIVATION_MARGIN + CLOCK_MARGIN)
         return maxOf(0L, bound / 3600 * 3600)
     }
 
     /**
      * The max_predecessor for a msg bounded only when the prover holds
-     * nothing in its scope: the lease bound when this identity meets it (it
-     * holds or not, the chain takes it), else no bound when it believes it
-     * holds something there (a renewal or change, or what was moved to it),
-     * else NotYet until the bound passes its predecessor_at.
+     * nothing in its scope, and the wait it implies: the lease bound when
+     * this identity meets it (it holds or not, the chain takes it); else no
+     * bound (audit 5, M1). The chain checks that in its ante, before any fee
+     * is taken: a renewal or refresh of what this identity holds (as the
+     * store knows it, or as a restore lost it) goes through, and anything
+     * else is refused at no cost ([boundAttempt] says why, with the wait,
+     * returned here when the wallet does not believe it holds anything).
      */
-    private fun leaseStatement(lease: Long, holds: Boolean): Long {
+    private fun leaseStatement(lease: Long, holds: Boolean): Pair<Long, Long?> {
         val bound = predecessorBound(lease)
         val id = identity()
         return when {
-            id.predecessorAt <= bound -> bound
-            holds -> Privacy.NO_BOUND
-            else -> throw NotYet(id.predecessorAt - bound)
+            id.predecessorAt <= bound -> bound to null
+            holds -> Privacy.NO_BOUND to null
+            else -> Privacy.NO_BOUND to (id.predecessorAt - bound)
+        }
+    }
+
+    /** Runs [block]; a chain refusal of its unmet predecessor bound becomes [NotHeld] when [wait] is set. */
+    private fun boundAttempt(wait: Long?, block: () -> TxResult): TxResult {
+        if (wait == null) return block()
+        try {
+            return block()
+        } catch (e: Exception) {
+            if (generateSequence<Throwable>(e) { it.cause }.any { it.message.orEmpty().contains("max_predecessor") }) throw NotHeld(wait)
+            throw e
         }
     }
 
     /** Whether this wallet holds a caretaker split the chain still counts (as far as it knows). */
-    fun caretakerLive(): Boolean = store.state.caretakerSplit.isNotEmpty() && caretakerExpiresAt() > now()
+    fun caretakerLive(): Boolean = holdsSplit() && caretakerExpiresAt() > now()
+
+    private fun holdsSplit(): Boolean = store.state.caretakerSplit.isNotEmpty() || store.state.caretakerSplitUnknown
 
     /** When the split lapses: the chain's expires_at, or its cast time + R. 0 for none. */
     fun caretakerExpiresAt(): Long {
         val s = store.state
-        if (s.caretakerSplit.isEmpty()) return 0
+        if (!holdsSplit()) return 0
         if (s.caretakerExpiresAt > 0) return s.caretakerExpiresAt
         return runCatching { Math.addExact(s.caretakerCastAt, reads.personhoodParams().caretakerVoteSeconds) }.getOrDefault(0)
+    }
+
+    /** A value-0 state record note (PRIVACY_FORMATS.md 3b) to [to]'s own address, tagged with its nk. */
+    private fun stateRecord(to: PrivacyKeys, memo: (Fr) -> ByteArray): NoteOut = NoteOut.to(to.address, FEE, 0, memo(to.nk))
+
+    private fun leaseParam(v: Long, name: String): Long {
+        require(v in 1..Handles.MAX_AHEAD_SECONDS) { "the node's $name ($v s) is out of range" }
+        return v
     }
 
     /**
@@ -595,19 +638,32 @@ class PrivacyWallet(
      */
     fun setCaretaker(split: Map<Long, Long>): TxResult {
         check(!store.state.caretakerMovedOut || split.isEmpty()) { "this identity moved its caretaker vote to another; it cannot cast one again" }
-        val r0 = reads.personhoodParams().caretakerVoteSeconds
-        val maxPred = if (split.isEmpty()) Privacy.NO_BOUND else leaseStatement(r0, caretakerLive())
+        check(store.state.pendingMoves.none { !it.incoming && it.kind == PendingMove.CARETAKER && !it.confirmed }) {
+            "this identity's caretaker vote is being moved; wait for the move to be confirmed"
+        }
+        // Validated before anything is sent (audit 5, L6): nothing after the broadcast can throw on it.
+        val r0 = leaseParam(reads.personhoodParams().caretakerVoteSeconds, "caretaker lease")
+        val (maxPred, wait) = if (split.isEmpty()) Privacy.NO_BOUND to null else leaseStatement(r0, caretakerLive())
         val m = membership(Privacy.caretakerScope(), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, maxPred)
         val weights = weights(split)
-        val r = run { fee ->
-            Assembled(listOf(feeBundle(fee)), membership = m) { bs, _, mem ->
-                MsgSetCaretaker.newBuilder().setFee(bs[0]).setMembership(mem).addAllPercentages(weights).setMaxPredecessor(maxPred).build()
+        // The state record: what a wallet restored from the mnemonic finds (audit 5, M1). Its
+        // expiry is the wallet's estimate; the chain's own (from the result) replaces it here.
+        val record = stateRecord(keys) { nk ->
+            if (split.isEmpty()) WalletSync.caretakerMemo(nk, WalletSync.RECORD_NONE)
+            else WalletSync.caretakerMemo(nk, WalletSync.RECORD_HOLDS, Handles.satAdd(now(), r0), split)
+        }
+        val r = boundAttempt(wait) {
+            run { fee ->
+                Assembled(listOf(bundle(listOf(record), mapOf(FEE to fee))), membership = m) { bs, _, mem ->
+                    MsgSetCaretaker.newBuilder().setFee(bs[0]).setMembership(mem).addAllPercentages(weights).setMaxPredecessor(maxPred).build()
+                }
             }
         }
-        val exp = r.attr("set_caretaker", "expires_at")?.toLongOrNull()
+        // Audit 5 (M4, L6): the node's expires_at only within the lease range; else the block time + R, saturating.
+        val exp = r.attr("set_caretaker", "expires_at")?.toLongOrNull()?.takeIf { it > 0 && it <= Handles.satAdd(now(), Handles.MAX_AHEAD_SECONDS) }
         synchronized(this) {
-            store.state.caretakerCastAt = now(); store.state.caretakerSplit = split
-            store.state.caretakerExpiresAt = if (split.isEmpty()) 0 else exp ?: Math.addExact(r.time.takeIf { it > 0 } ?: now(), r0)
+            store.state.caretakerCastAt = now(); store.state.caretakerSplit = split; store.state.caretakerSplitUnknown = false
+            store.state.caretakerExpiresAt = if (split.isEmpty()) 0 else exp ?: Handles.satAdd(r.time.takeIf { it > 0 } ?: now(), r0)
             store.save()
         }
         return r
@@ -626,21 +682,130 @@ class PrivacyWallet(
      * switch of identity keeps its vote. This identity may never cast one
      * again (ErrCaretakerMovedOut, 1126).
      */
-    fun moveCaretaker(newOwner: Fr): TxResult {
+    fun moveCaretaker(newOwner: Fr, target: PrivacyKeys? = null, recorder: MoveRecorder? = null): TxResult {
         check(caretakerLive()) { "this identity holds no live caretaker vote to move" }
         require(newOwner != Privacy.scopeNullifier(keys.idSecret, Privacy.caretakerScope())) { "the new owner is this identity" }
+        target?.let { require(newOwner == newOwner(it, Privacy.caretakerScope())) { "new_owner is not the target wallet's" } }
+        checkNoMove(PendingMove.CARETAKER)
+        val s = store.state
+        val move = PendingMove(PendingMove.CARETAKER, "", 0, incoming = false, split = s.caretakerSplit,
+            splitUnknown = s.caretakerSplitUnknown, expiresAt = caretakerExpiresAt(), target = recorder?.targetId.orEmpty())
+        // State records: moved out for this identity, held (split, expiry) for the new one.
+        val outs = listOf(stateRecord(keys) { WalletSync.caretakerMemo(it, WalletSync.RECORD_MOVED_OUT) }) +
+            listOfNotNull(target?.let { t -> stateRecord(t) { WalletSync.caretakerMemo(it, WalletSync.RECORD_HOLDS, move.expiresAt, if (move.splitUnknown) emptyMap() else move.split) } })
         val m = membership(Privacy.caretakerScope(), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, Privacy.NO_BOUND)
-        val r = run { fee ->
-            Assembled(listOf(feeBundle(fee)), membership = m) { bs, _, mem ->
+        val r = moveRun(move, recorder) { fee ->
+            Assembled(listOf(bundle(outs, mapOf(FEE to fee))), membership = m) { bs, _, mem ->
                 MsgMoveCaretaker.newBuilder().setFee(bs[0]).setMembership(mem).setNewOwner(ByteString.copyFrom(newOwner.toBytes())).build()
             }
         }
-        synchronized(this) {
-            store.state.caretakerMovedOut = true
-            store.state.caretakerSplit = emptyMap(); store.state.caretakerExpiresAt = 0
-            store.save()
-        }
+        synchronized(this) { confirmMove(r.hash) }
         return r
+    }
+
+    /**
+     * Writes a move into the new identity's wallet (audit 5, M2): before the
+     * broadcast, as pending, so neither a lost answer nor a killed app can
+     * strand what moved; undone only on a definite refusal. [targetId] is
+     * that wallet's store id.
+     */
+    interface MoveRecorder {
+        val targetId: String
+        fun record(move: PendingMove)
+        fun rollback(move: PendingMove)
+    }
+
+    private fun checkNoMove(kind: String) =
+        check(store.state.pendingMoves.none { !it.incoming && it.kind == kind && !it.confirmed }) { "a move of this identity's $kind is waiting for the chain" }
+
+    /**
+     * Runs a move: recorded here (outgoing) and in the target (incoming)
+     * before the broadcast; a refusal undoes both; a confirmed tx is applied
+     * by the caller ([confirmMove]); anything else (a wait that timed out, a
+     * tx that may yet land or fail) stays pending for [resolvePendingMoves].
+     */
+    private fun moveRun(move: PendingMove, recorder: MoveRecorder?, assemble: (fee: Long) -> Assembled): TxResult {
+        recorder?.let { rc ->
+            val fixed = store.state.switchTarget
+            check(fixed.isEmpty() || fixed == rc.targetId) { "this identity already moved to another wallet; switch to that one" }
+        }
+        return run(
+            accepted = { hash, timeout ->
+                val p = move.copy(txHash = hash, timeoutHeight = timeout)
+                val ok = recorder?.let { rc -> runCatching { rc.record(p.copy(incoming = true, target = "", recorded = true)) }.isSuccess } ?: true
+                val s = store.state
+                s.pendingMoves.add(p.copy(recorded = ok))
+                if (recorder != null && s.switchTarget.isEmpty()) s.switchTarget = recorder.targetId
+                store.save()
+            },
+            rejected = { hash ->
+                store.state.pendingMoves.removeAll { it.txHash == hash && !it.incoming }
+                store.save()
+                recorder?.let { rc -> runCatching { rc.rollback(move.copy(txHash = hash, incoming = true)) } }
+            },
+            assemble = assemble,
+        )
+    }
+
+    /** The move [hash] is in a block and succeeded: this identity no longer holds what it moved. */
+    private fun confirmMove(hash: String) {
+        val s = store.state
+        val i = s.pendingMoves.indexOfFirst { it.txHash == hash }
+        if (i < 0) return
+        val p = s.pendingMoves[i]
+        if (!p.incoming) {
+            if (p.kind == PendingMove.HANDLE) { s.handle = ""; s.handleMovedOut = true; s.handleSetAt = now() }
+            else { s.caretakerSplit = emptyMap(); s.caretakerSplitUnknown = false; s.caretakerExpiresAt = 0; s.caretakerMovedOut = true }
+        }
+        if (p.incoming || p.recorded) s.pendingMoves.removeAt(i) else s.pendingMoves[i] = p.copy(confirmed = true)
+        store.save()
+    }
+
+    /** The move [p] is definitely not in the chain (refused, failed in its block, or gone past its timeout_height). */
+    private fun dropMove(p: PendingMove) {
+        val s = store.state
+        s.pendingMoves.removeAll { it.txHash == p.txHash && it.incoming == p.incoming }
+        if (p.incoming) undoIncoming(s, p, now())
+        store.save()
+    }
+
+    /**
+     * Settles every move in flight by its tx (audit 5, M2): committed, it is
+     * applied; failed in its block, or unknown to the chain past its
+     * timeout_height, it is undone (and its state records void). A move the
+     * chain cannot say anything about yet stays. Returns whether any is
+     * still unconfirmed.
+     */
+    @Synchronized
+    fun resolvePendingMoves(): Boolean {
+        val s = store.state
+        for (p in s.pendingMoves.toList()) {
+            if (p.confirmed) continue
+            val r = runCatching { chain.tx(p.txHash) }.getOrNull()
+            when {
+                r != null && r.code == 0 -> confirmMove(p.txHash)
+                r != null -> { s.voidRecordHeights.add(r.height); dropMove(p) }
+                else -> {
+                    val tip = runCatching { chain.tipHeight() }.getOrNull() ?: continue
+                    if (tip > p.timeoutHeight) dropMove(p)
+                }
+            }
+        }
+        return s.pendingMoves.any { !it.confirmed }
+    }
+
+    /** Moves away from this identity that the chain has not confirmed yet, and confirmed ones not yet recorded in their target. */
+    fun outgoingMoves(): List<PendingMove> = store.state.pendingMoves.filter { !it.incoming }
+
+    /** Marks a confirmed move recorded in its target (a retried [MoveRecorder.record] succeeded). */
+    @Synchronized
+    fun markRecorded(hash: String) {
+        val s = store.state
+        val i = s.pendingMoves.indexOfFirst { it.txHash == hash && !it.incoming }
+        if (i < 0) return
+        val p = s.pendingMoves[i]
+        if (p.confirmed) s.pendingMoves.removeAt(i) else s.pendingMoves[i] = p.copy(recorded = true)
+        store.save()
     }
 
     // ---- handles ------------------------------------------------------------
@@ -654,31 +819,39 @@ class PrivacyWallet(
      * Nothing renews on its own: the app reminds the owner before expiry.
      */
     fun bindHandle(handle: String, address: ShieldedAddress = keys.address): TxResult {
-        require(network.erth.wallet.privacy.handles.Handles.valid(handle)) { "\"$handle\" is not a handle: 3-32 of a-z, 0-9 and -, no dash at either end" }
+        require(Handles.valid(handle)) { "\"$handle\" is not a handle: 3-32 of a-z, 0-9 and -, no dash at either end" }
         val holds = store.state.handle.isNotEmpty()
         check(holds || !store.state.handleMovedOut) { "this identity moved its handle to another; it cannot claim one again" }
-        val lease = reads.personhoodParams().handleLeaseSeconds
-        val maxPred = leaseStatement(lease, holds)
+        checkNoMove(PendingMove.HANDLE)
+        val lease = leaseParam(reads.personhoodParams().handleLeaseSeconds, "handle lease")
+        val (maxPred, wait) = leaseStatement(lease, holds)
         val addr = address.encode()
         val m = membership(Privacy.handleScope(), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, maxPred)
-        val r = run { fee ->
-            Assembled(listOf(feeBundle(fee)), membership = m) { bs, _, mem ->
-                MsgBindHandle.newBuilder().setFee(bs[0]).setMembership(mem).setHandle(handle).setAddress(addr).setMaxPredecessor(maxPred).build()
+        val record = stateRecord(keys) { WalletSync.handleMemo(it, WalletSync.RECORD_HOLDS, handle) }
+        val r = boundAttempt(wait) {
+            run { fee ->
+                Assembled(listOf(bundle(listOf(record), mapOf(FEE to fee))), membership = m) { bs, _, mem ->
+                    MsgBindHandle.newBuilder().setFee(bs[0]).setMembership(mem).setHandle(handle).setAddress(addr).setMaxPredecessor(maxPred).build()
+                }
             }
         }
-        synchronized(this) { store.state.handle = handle; store.save() }
+        synchronized(this) { store.state.handle = handle; store.state.handleSetAt = now(); store.save() }
         return r
     }
 
     /** Releases this identity's handle at once (anyone may claim it). */
     fun releaseHandle(): TxResult {
+        // Audit 5 (L12): the chain refuses a release by a holder of none only after taking the fee.
+        check(store.state.handle.isNotEmpty()) { "this identity holds no handle to release" }
+        checkNoMove(PendingMove.HANDLE)
         val m = membership(Privacy.handleScope(), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, Privacy.NO_BOUND)
+        val record = stateRecord(keys) { WalletSync.handleMemo(it, WalletSync.RECORD_NONE) }
         val r = run { fee ->
-            Assembled(listOf(feeBundle(fee)), membership = m) { bs, _, mem ->
+            Assembled(listOf(bundle(listOf(record), mapOf(FEE to fee))), membership = m) { bs, _, mem ->
                 MsgBindHandle.newBuilder().setFee(bs[0]).setMembership(mem).setMaxPredecessor(Privacy.NO_BOUND).build()
             }
         }
-        synchronized(this) { store.state.handle = ""; store.save() }
+        synchronized(this) { store.state.handle = ""; store.state.handleSetAt = now(); store.save() }
         return r
     }
 
@@ -687,18 +860,24 @@ class PrivacyWallet(
      * handle-scope nullifier of the identity that is to hold it. This
      * identity may never claim one again (ErrHandleMovedOut, 1125).
      */
-    fun moveHandle(newOwner: Fr): TxResult {
+    fun moveHandle(newOwner: Fr, target: PrivacyKeys? = null, recorder: MoveRecorder? = null): TxResult {
         val handle = store.state.handle
         check(handle.isNotEmpty()) { "this identity holds no handle to move" }
         require(newOwner != Privacy.scopeNullifier(keys.idSecret, Privacy.handleScope())) { "the new owner is this identity" }
+        target?.let { require(newOwner == newOwner(it, Privacy.handleScope())) { "new_owner is not the target wallet's" } }
+        checkNoMove(PendingMove.HANDLE)
+        val move = PendingMove(PendingMove.HANDLE, "", 0, incoming = false, handle = handle, target = recorder?.targetId.orEmpty())
+        // State records: moved out for this identity, held for the new one.
+        val outs = listOf(stateRecord(keys) { WalletSync.handleMemo(it, WalletSync.RECORD_MOVED_OUT) }) +
+            listOfNotNull(target?.let { t -> stateRecord(t) { WalletSync.handleMemo(it, WalletSync.RECORD_HOLDS, handle) } })
         val m = membership(Privacy.handleScope(), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, Privacy.NO_BOUND)
-        val r = run { fee ->
-            Assembled(listOf(feeBundle(fee)), membership = m) { bs, _, mem ->
+        val r = moveRun(move, recorder) { fee ->
+            Assembled(listOf(bundle(outs, mapOf(FEE to fee))), membership = m) { bs, _, mem ->
                 MsgMoveHandle.newBuilder().setFee(bs[0]).setMembership(mem).setHandle(handle)
                     .setNewOwner(ByteString.copyFrom(newOwner.toBytes())).build()
             }
         }
-        synchronized(this) { store.state.handle = ""; store.state.handleMovedOut = true; store.save() }
+        synchronized(this) { confirmMove(r.hash) }
         return r
     }
 
@@ -709,11 +888,38 @@ class PrivacyWallet(
      */
     @Synchronized
     fun adoptMoved(handle: String?, split: Map<Long, Long>?, splitExpiresAt: Long) {
-        if (handle != null) store.state.handle = handle
+        if (handle != null) recordIncoming(store, PendingMove(PendingMove.HANDLE, "", 0, incoming = true, handle = handle), now())
         if (split != null && split.isNotEmpty()) {
-            store.state.caretakerSplit = split; store.state.caretakerExpiresAt = splitExpiresAt; store.state.caretakerCastAt = now()
+            recordIncoming(store, PendingMove(PendingMove.CARETAKER, "", 0, incoming = true, split = split, expiresAt = splitExpiresAt), now())
         }
-        store.save()
+    }
+
+    /**
+     * Audit 5 (M1, L11): squares the store's handle with the chain's
+     * directory [dir], read at [readAt] (wallet clock): a handle the chain
+     * swept (absent or free) is dropped; with none held, a single entry
+     * naming this wallet's own address is taken as held (a restore lost
+     * it; renewing it is refused at no cost if it is not). Nothing changes
+     * while a move is in flight or when the directory predates the store's
+     * last change. Returns every non-free entry naming this wallet's
+     * address, for the reminders.
+     */
+    @Synchronized
+    fun reconcileHandle(dir: Map<String, HandleEntry>, readAt: Long): List<HandleEntry> {
+        val s = store.state
+        val t = now()
+        val own = keys.address.encode()
+        val addressed = dir.values.filter { it.address == own && it.statusAt(t) != HandleEntry.FREE }
+        val moving = s.pendingMoves.any { it.kind == PendingMove.HANDLE && !it.confirmed }
+        if (!moving && readAt > s.handleSetAt) {
+            if (s.handle.isNotEmpty()) {
+                val e = dir[s.handle]
+                if (e == null || e.statusAt(t) == HandleEntry.FREE) { s.handle = ""; s.handleSetAt = t; store.save() }
+            } else if (!s.handleMovedOut && addressed.size == 1) {
+                s.handle = addressed[0].handle; s.handleSetAt = t; store.save()
+            }
+        }
+        return addressed
     }
 
     // ---- assembly -----------------------------------------------------------
@@ -733,7 +939,8 @@ class PrivacyWallet(
     }
 
     fun proposeRemoval(optionId: Long): TxResult {
-        val day = today()
+        // The chain's day (audit 5, L2): its scope is the including block's UTC day.
+        val day = chainNow() / SECONDS_PER_DAY
         // The predecessor bound: the start of today (UTC) less a day, whatever the root window; no activation bound.
         val m = membership(Privacy.proposeRemovalScope(optionId, day), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, day * SECONDS_PER_DAY - ACTIVATION_MARGIN)
         return run { fee ->
@@ -1348,6 +1555,40 @@ class PrivacyWallet(
 
     companion object {
         /**
+         * Writes [p] (a move to this store's identity) into [store]: what it
+         * now holds, and the move as pending until its own wallet settles it
+         * by hash (audit 5, M2). Used by the mover for the other wallet's store.
+         */
+        fun recordIncoming(store: PrivacyStore, p: PendingMove, now: Long) = synchronized(store) {
+            val s = store.state
+            if (p.kind == PendingMove.HANDLE) { s.handle = p.handle; s.handleSetAt = now }
+            else {
+                s.caretakerSplit = p.split; s.caretakerSplitUnknown = p.splitUnknown || p.split.isEmpty()
+                s.caretakerExpiresAt = p.expiresAt.coerceIn(0, Handles.satAdd(now, Handles.MAX_AHEAD_SECONDS)); s.caretakerCastAt = now
+            }
+            if (p.txHash.isNotEmpty() && s.pendingMoves.none { it.txHash == p.txHash && it.incoming }) {
+                s.pendingMoves.add(p.copy(incoming = true, target = "", recorded = true, confirmed = false))
+            }
+            store.save()
+        }
+
+        /** Undoes [recordIncoming] for a move that definitely did not happen. */
+        fun rollbackIncoming(store: PrivacyStore, p: PendingMove, now: Long) = synchronized(store) {
+            val s = store.state
+            s.pendingMoves.removeAll { it.txHash == p.txHash && it.incoming }
+            undoIncoming(s, p, now)
+            store.save()
+        }
+
+        internal fun undoIncoming(s: network.erth.wallet.privacy.sync.PrivacyState, p: PendingMove, now: Long) {
+            if (p.kind == PendingMove.HANDLE) {
+                if (s.handle == p.handle) { s.handle = ""; s.handleSetAt = now }
+            } else if (s.caretakerSplit == p.split && s.caretakerSplitUnknown == (p.splitUnknown || p.split.isEmpty())) {
+                s.caretakerSplit = emptyMap(); s.caretakerSplitUnknown = false; s.caretakerExpiresAt = 0
+            }
+        }
+
+        /**
          * The fee the confirm sheet showed, for the private run on this
          * thread (TxController sets it around the run): a fee above it throws
          * PrivateTxEngine.FeeAboveQuote and the sheet asks again (audit 3).
@@ -1435,6 +1676,10 @@ class PrivacyWallet(
         }.getOrNull() ?: ""
 
         const val SECONDS_PER_DAY = 86_400L
+
+        fun notYetText(waitSeconds: Long): String =
+            if (waitSeconds > 2 * SECONDS_PER_DAY) "this identity replaced another too recently for this action; it opens in ${waitSeconds / SECONDS_PER_DAY + 1} days"
+            else "this registration is too recent for this action; try again in ${waitSeconds / 3600 + 1}h"
         const val ANML_PER_CLAIM = 1_000_000L
         /**
          * MsgRegister's gas, for the fee estimate before simulating: the

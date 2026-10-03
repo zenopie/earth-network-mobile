@@ -58,6 +58,26 @@ object Handles {
 
     /** Seconds before expiry the reminder starts (and it stays through the renewal period). */
     const val REMINDER_LEAD_SECONDS = 30L * 86_400
+
+    /**
+     * The furthest ahead any lease time the wallet takes may lie (audit 5,
+     * M4): a directory entry's expiry and renewal end, a caretaker split's
+     * expiry, and the lease params themselves. Anything past it is a hostile
+     * or broken answer, refused or clamped before it reaches any arithmetic.
+     */
+    const val MAX_AHEAD_SECONDS = 10L * 365 * 86_400
+
+    /** a + b, clamped to the Long range rather than wrapped (iOS would trap). */
+    fun satAdd(a: Long, b: Long): Long {
+        val r = a + b
+        return if (((a xor r) and (b xor r)) < 0) (if (a < 0) Long.MIN_VALUE else Long.MAX_VALUE) else r
+    }
+
+    /** a - b, clamped likewise. */
+    fun satSub(a: Long, b: Long): Long {
+        val r = a - b
+        return if (((a xor b) and (a xor r)) < 0) (if (a < 0) Long.MIN_VALUE else Long.MAX_VALUE) else r
+    }
 }
 
 /** A directory entry as Query/Handles serves it. */
@@ -140,11 +160,22 @@ class HandleDirectory(
         return out
     }
 
+    /** The chain's own directory and when it was read (wallet clock): what the wallet squares its own handle with. */
+    @Synchronized
+    fun chainDirectoryRead(maxAge: Long = maxAgeSeconds): Pair<Map<String, HandleEntry>, Long> {
+        val d = chainDirectory(maxAge)
+        return d to chainFetchedAt
+    }
+
     private fun check(e: HandleEntry, after: String, out: Map<String, HandleEntry>) {
         // In handle order, each once, well formed: anything else is not the chain's directory.
         if (!Handles.valid(e.handle)) throw Inconsistent("the directory holds ${e.handle.take(40)}, not a handle")
         if (e.handle <= after || out.containsKey(e.handle)) throw Inconsistent("the directory is out of order at ${e.handle}")
         if (e.status !in STATUSES) throw Inconsistent("handle ${e.handle}: status ${e.status.take(20)}")
+        // Audit 5 (M4): times a lease can have, 0 < expires_at <= renewal_until <= now + 10 years;
+        // anything else is refused before any reminder or status does arithmetic on it.
+        if (!timesOk(e, now())) throw Inconsistent("handle ${e.handle}: times out of range")
+        if (out.size >= MAX_ROWS) throw Inconsistent("the directory has more than $MAX_ROWS handles")
     }
 
     private fun readChain(): Map<String, HandleEntry> {
@@ -177,8 +208,10 @@ class HandleDirectory(
             while (true) {
                 val page = fetch(from, PAGE)
                 if (page.fromIndex != from || page.handles.size > PAGE) throw Inconsistent("the indexer's handle page is not the one asked for")
-                if (from == 0L) height = page.height
-                else if (page.height != height) { moved = true; break }
+                if (from == 0L) {
+                    height = page.height
+                    if (page.size !in 0..MAX_ROWS.toLong()) throw Inconsistent("the indexer's directory claims ${page.size} handles")
+                } else if (page.height != height) { moved = true; break }
                 for (e in page.handles) { check(e, last, out); out[e.handle] = e; last = e.handle }
                 if (page.lastPage || page.handles.size < PAGE) {
                     if (out.size.toLong() != page.size) throw Inconsistent("the indexer's directory holds ${out.size} of its ${page.size} handles")
@@ -228,9 +261,15 @@ class HandleDirectory(
     companion object {
         /** Query/Handles' largest page, and the backend stream's page. */
         const val PAGE = 1000
-        const val MAX_PAGES = 10_000
+        /** Audit 5 (L4): the most rows the wallet holds (the backend's own cap); more fails closed. */
+        const val MAX_ROWS = 1_000_000
+        const val MAX_PAGES = MAX_ROWS / PAGE
         const val FRESH_SECONDS = 60L
         const val STREAM_RESTARTS = 3
         private val STATUSES = setOf(HandleEntry.LIVE, HandleEntry.RENEWAL, HandleEntry.FREE)
+
+        /** 0 < expires_at <= renewal_until <= now + [Handles.MAX_AHEAD_SECONDS]. */
+        fun timesOk(e: HandleEntry, now: Long): Boolean =
+            e.expiresAt > 0 && e.expiresAt <= e.renewalUntil && e.renewalUntil <= Handles.satAdd(now, Handles.MAX_AHEAD_SECONDS)
     }
 }

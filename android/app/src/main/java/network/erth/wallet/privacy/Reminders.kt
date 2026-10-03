@@ -30,6 +30,13 @@ object Reminders {
          * its owner may renew it ([inRenewal]: it no longer resolves).
          */
         data class HandleExpiring(val handle: String, val expiresAt: Long, val renewalUntil: Long, val inRenewal: Boolean) : Reminder
+
+        /**
+         * The live handle this identity holds pays another address (a
+         * handle moved here keeps the old wallet's): renewing it from this
+         * wallet points it here.
+         */
+        data class HandlePaysElsewhere(val handle: String) : Reminder
     }
 
     data class Inputs(
@@ -43,21 +50,35 @@ object Reminders {
         /** This identity's handle ("" for none) and its directory entry (null: not found). */
         val handle: String,
         val handleEntry: HandleEntry?,
+        /**
+         * Audit 5 (M1): directory entries naming this wallet's own address
+         * (a handle held but not in the store, after a restore): reminded
+         * like the held one.
+         */
+        val addressed: List<HandleEntry> = emptyList(),
+        /** This wallet's shielded address ("" unknown): a held handle paying another is pointed out. */
+        val ownAddress: String = "",
     )
 
     fun due(i: Inputs): List<Reminder> {
         val out = ArrayList<Reminder>()
         if (i.identityLive && !i.claimedToday && i.claimOpensAt == 0L) out.add(Reminder.AnmlReady)
+        // Clamped throughout (audit 5, M4): a hostile time saturates, never wraps or traps.
         val c = i.caretakerExpiresAt
-        if (i.identityLive && c > 0 && i.now >= c - LEAD_SECONDS && i.now < c + LAPSED_SECONDS) {
+        if (i.identityLive && c > 0 && i.now >= Handles.satSub(c, LEAD_SECONDS) && i.now < Handles.satAdd(c, LAPSED_SECONDS)) {
             out.add(Reminder.CaretakerExpiring(c, lapsed = i.now >= c))
         }
-        val e = i.handleEntry
-        if (i.identityLive && i.handle.isNotEmpty() && e != null && e.handle == i.handle) {
+        if (!i.identityLive) return out
+        val held = i.handleEntry?.takeIf { i.handle.isNotEmpty() && it.handle == i.handle }
+        val entries = (listOfNotNull(held) + i.addressed).distinctBy { it.handle }
+        for (e in entries) {
             val st = e.statusAt(i.now)
-            if (st != HandleEntry.FREE && i.now >= e.expiresAt - LEAD_SECONDS && i.now < e.renewalUntil) {
+            if (st != HandleEntry.FREE && i.now >= Handles.satSub(e.expiresAt, LEAD_SECONDS) && i.now < e.renewalUntil) {
                 out.add(Reminder.HandleExpiring(e.handle, e.expiresAt, e.renewalUntil, inRenewal = st == HandleEntry.RENEWAL))
             }
+        }
+        if (held != null && i.ownAddress.isNotEmpty() && held.address != i.ownAddress && held.statusAt(i.now) == HandleEntry.LIVE) {
+            out.add(Reminder.HandlePaysElsewhere(held.handle))
         }
         return out
     }
@@ -67,14 +88,16 @@ object Reminders {
         Reminder.AnmlReady -> "Your ANML is ready to claim today."
         is Reminder.CaretakerExpiring ->
             if (r.lapsed) "Your caretaker vote has lapsed and no longer counts. Cast it again to keep directing emissions."
-            else "Your caretaker vote expires in ${days(r.expiresAt - now)}. Renew it to keep it counted."
+            else "Your caretaker vote expires in ${days(Handles.satSub(r.expiresAt, now))}. Renew it to keep it counted."
         is Reminder.HandleExpiring ->
-            if (r.inRenewal) "@${r.handle} has expired and no longer receives payments. Renew it within ${days(r.renewalUntil - now)} or anyone may claim it."
-            else "@${r.handle} expires in ${days(r.expiresAt - now)}. Renew it to keep it."
+            if (r.inRenewal) "@${r.handle} has expired and no longer receives payments. Renew it within ${days(Handles.satSub(r.renewalUntil, now))} or anyone may claim it."
+            else "@${r.handle} expires in ${days(Handles.satSub(r.expiresAt, now))}. Renew it to keep it."
+        is Reminder.HandlePaysElsewhere ->
+            "@${r.handle} still pays the wallet it moved from. Renew it here to point it at this wallet."
     }
 
     private fun days(seconds: Long): String {
-        val d = maxOf(0L, (seconds + 86_399) / 86_400)
+        val d = maxOf(0L, Handles.satAdd(seconds, 86_399) / 86_400)
         return if (d == 1L) "1 day" else "$d days"
     }
 }

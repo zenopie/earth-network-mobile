@@ -329,6 +329,199 @@ class WalletSync(
             return counter
         }
 
+        /**
+         * State records (PRIVACY_FORMATS.md 3b, audit 5 M1): value-0 notes
+         * whose memo says what this identity holds in a scope, so a wallet
+         * restored from the mnemonic knows its handle and caretaker split
+         * (or that it moved them away). "EH" handle, "EC" caretaker, version 1.
+         */
+        val HANDLE_MAGIC = byteArrayOf(0x45, 0x48, 0x01)
+        val CARETAKER_MAGIC = byteArrayOf(0x45, 0x43, 0x01)
+
+        /** The tag sits at [STATE_TAG_AT] and covers every byte before it. */
+        const val STATE_TAG_AT = 48
+
+        const val RECORD_HOLDS = 1
+        /** Handle released / caretaker split cleared. */
+        const val RECORD_NONE = 2
+        const val RECORD_MOVED_OUT = 3
+        /** OR'd into a caretaker HOLDS kind: the split did not fit the memo and is not recorded. */
+        const val SPLIT_UNRECORDED = 0x80
+
+        /** Entries of a recorded split: (option uvarint, percent u8)..., zero padded. */
+        private const val SPLIT_AT = 8
+
+        /** The most options a caretaker split names (x/allocation MaxVoterOptions). */
+        const val MAX_SPLIT_OPTIONS = 20
+
+        sealed interface StateRecord {
+            data class Handle(val kind: Int, val handle: String) : StateRecord
+            /** [split] null: held, but the split was not recorded. */
+            data class Caretaker(val kind: Int, val expiresAt: Long, val split: Map<Long, Long>?) : StateRecord
+        }
+
+        private fun stateTag(nk: Fr, body: ByteArray): ByteArray =
+            Privacy.h(Privacy.TAG_STATETAG, nk, Privacy.bytes(body.copyOf(STATE_TAG_AT))).toBytes().copyOf(REG_TAG_BYTES)
+
+        private fun sealState(nk: Fr, body: ByteArray): ByteArray {
+            val m = body.copyOf(NoteCipher.MEMO_BYTES)
+            stateTag(nk, m).copyInto(m, STATE_TAG_AT)
+            return m
+        }
+
+        /** A handle record for the identity whose nk is [nk]: HOLDS [handle], or RELEASED / MOVED_OUT (no handle). */
+        fun handleMemo(nk: Fr, kind: Int, handle: String = ""): ByteArray {
+            require(kind in RECORD_HOLDS..RECORD_MOVED_OUT)
+            require(if (kind == RECORD_HOLDS) network.erth.wallet.privacy.handles.Handles.valid(handle) else handle.isEmpty())
+            val b = ByteArray(STATE_TAG_AT)
+            HANDLE_MAGIC.copyInto(b)
+            b[3] = kind.toByte()
+            handle.toByteArray(Charsets.US_ASCII).copyInto(b, 4)
+            return sealState(nk, b)
+        }
+
+        /**
+         * A caretaker record: HOLDS with the split and its expiry (u32 unix
+         * seconds), or CLEARED / MOVED_OUT. A split whose entries do not fit
+         * 40 bytes is marked unrecorded (its expiry still is).
+         */
+        fun caretakerMemo(nk: Fr, kind: Int, expiresAt: Long = 0, split: Map<Long, Long> = emptyMap()): ByteArray {
+            require(kind in RECORD_HOLDS..RECORD_MOVED_OUT)
+            val b = ByteArray(STATE_TAG_AT)
+            CARETAKER_MAGIC.copyInto(b)
+            var k = kind
+            if (kind == RECORD_HOLDS) {
+                java.nio.ByteBuffer.wrap(b, 4, 4).putInt(expiresAt.coerceIn(1, 0xffffffffL).toInt())
+                val entries = java.io.ByteArrayOutputStream()
+                var fits = split.isNotEmpty() && split.size <= MAX_SPLIT_OPTIONS
+                for ((option, percent) in split.toSortedMap()) {
+                    if (option < 0 || percent !in 1..100) fits = false
+                    var v = option
+                    while (v >= 0x80) { entries.write(((v and 0x7f) or 0x80).toInt()); v = v ushr 7 }
+                    entries.write(v.toInt())
+                    entries.write(percent.toInt())
+                }
+                val e = entries.toByteArray()
+                if (!fits || e.size > STATE_TAG_AT - SPLIT_AT) k = kind or SPLIT_UNRECORDED
+                else e.copyInto(b, SPLIT_AT)
+            }
+            b[3] = k.toByte()
+            return sealState(nk, b)
+        }
+
+        /**
+         * The record in [memo] if it is a well-formed state record whose tag
+         * is [nk]'s (anyone can send this wallet a value-0 note with any
+         * memo; only the holder of nk can tag one). Checked before use.
+         */
+        fun parseStateMemo(nk: Fr, memo: ByteArray): StateRecord? {
+            val m = memo.copyOf(NoteCipher.MEMO_BYTES)
+            val head = m.copyOf(3)
+            val isHandle = head.contentEquals(HANDLE_MAGIC)
+            if (!isHandle && !head.contentEquals(CARETAKER_MAGIC)) return null
+            if (!java.security.MessageDigest.isEqual(m.copyOfRange(STATE_TAG_AT, STATE_TAG_AT + REG_TAG_BYTES), stateTag(nk, m))) return null
+            if (m.copyOfRange(STATE_TAG_AT + REG_TAG_BYTES, m.size).any { it.toInt() != 0 }) return null
+            val kind = m[3].toInt() and 0xff
+            if (isHandle) {
+                if (kind !in RECORD_HOLDS..RECORD_MOVED_OUT) return null
+                val raw = m.copyOfRange(4, 36)
+                if (m.copyOfRange(36, STATE_TAG_AT).any { it.toInt() != 0 }) return null
+                val len = raw.indexOfFirst { it.toInt() == 0 }.let { if (it < 0) raw.size else it }
+                if (raw.copyOfRange(len, raw.size).any { it.toInt() != 0 }) return null
+                val h = String(raw, 0, len, Charsets.US_ASCII)
+                if (if (kind == RECORD_HOLDS) !network.erth.wallet.privacy.handles.Handles.valid(h) else h.isNotEmpty()) return null
+                return StateRecord.Handle(kind, h)
+            }
+            val base = kind and SPLIT_UNRECORDED.inv()
+            if (base !in RECORD_HOLDS..RECORD_MOVED_OUT || (kind != base && base != RECORD_HOLDS)) return null
+            val exp = java.nio.ByteBuffer.wrap(m, 4, 4).int.toLong() and 0xffffffffL
+            val entries = m.copyOfRange(SPLIT_AT, STATE_TAG_AT)
+            if (base != RECORD_HOLDS) {
+                if (exp != 0L || entries.any { it.toInt() != 0 }) return null
+                return StateRecord.Caretaker(base, 0, emptyMap())
+            }
+            if (exp == 0L) return null
+            if (kind != base) {
+                if (entries.any { it.toInt() != 0 }) return null
+                return StateRecord.Caretaker(base, exp, null)
+            }
+            val split = LinkedHashMap<Long, Long>()
+            var i = 0
+            var sum = 0L
+            while (i < entries.size && entries.copyOfRange(i, entries.size).any { it.toInt() != 0 }) {
+                var v = 0L
+                var shift = 0
+                while (true) {
+                    if (i >= entries.size || shift > 56) return null
+                    val byte = entries[i++].toInt() and 0xff
+                    v = v or ((byte and 0x7f).toLong() shl shift)
+                    if (byte < 0x80) break
+                    shift += 7
+                }
+                if (i >= entries.size || v < 0) return null
+                val pct = (entries[i++].toInt() and 0xff).toLong()
+                if (pct !in 1L..100L || split.containsKey(v)) return null
+                split[v] = pct; sum += pct
+            }
+            if (split.isEmpty() || split.size > MAX_SPLIT_OPTIONS || sum != 100L) return null
+            return StateRecord.Caretaker(base, exp, split)
+        }
+
+        /**
+         * Applies a state record found at note [position] (audit 5, M1): the
+         * newest record says what this identity holds, unless the wallet
+         * already applied a newer one (or acted since: a reset keeps the
+         * cursor), or the record's tx failed in its block ([height] void).
+         * A held split's expiry is bounded like any other lease time.
+         */
+        fun applyStateRecord(s: PrivacyState, position: Long, height: Long, rec: StateRecord, now: Long) {
+            if (height in s.voidRecordHeights) return
+            when (rec) {
+                is StateRecord.Handle -> {
+                    if (position <= s.handleRecordPos) return
+                    s.handleRecordPos = position
+                    when (rec.kind) {
+                        RECORD_HOLDS -> if (!s.handleMovedOut) s.handle = rec.handle
+                        RECORD_NONE -> s.handle = ""
+                        RECORD_MOVED_OUT -> { s.handle = ""; s.handleMovedOut = true }
+                    }
+                    s.handleSetAt = now
+                    // A move's record is in the chain: the move is no longer in doubt (audit 5, M2).
+                    settleMoves(s, PendingMove.HANDLE, rec.kind) { it.handle == rec.handle }
+                }
+                is StateRecord.Caretaker -> {
+                    if (position <= s.caretakerRecordPos) return
+                    s.caretakerRecordPos = position
+                    when (rec.kind) {
+                        RECORD_HOLDS -> if (!s.caretakerMovedOut) {
+                            val exp = minOf(rec.expiresAt, network.erth.wallet.privacy.handles.Handles.satAdd(now, network.erth.wallet.privacy.handles.Handles.MAX_AHEAD_SECONDS))
+                            val same = rec.split != null && rec.split == s.caretakerSplit
+                            // The chain's own expiry, when the wallet has it for this split, is later than the record's estimate.
+                            s.caretakerExpiresAt = if (same && s.caretakerExpiresAt > exp) s.caretakerExpiresAt else exp
+                            s.caretakerSplit = rec.split ?: emptyMap()
+                            s.caretakerSplitUnknown = rec.split == null
+                        }
+                        else -> {
+                            s.caretakerSplit = emptyMap(); s.caretakerExpiresAt = 0; s.caretakerSplitUnknown = false
+                            if (rec.kind == RECORD_MOVED_OUT) s.caretakerMovedOut = true
+                        }
+                    }
+                    settleMoves(s, PendingMove.CARETAKER, rec.kind) { true }
+                }
+            }
+        }
+
+        /**
+         * A HOLDS record settles an incoming move of [kind] ([matches] it), a
+         * MOVED_OUT one an outgoing move (kept, confirmed, until recorded in
+         * its target).
+         */
+        private fun settleMoves(s: PrivacyState, kind: String, recordKind: Int, matches: (PendingMove) -> Boolean) {
+            val incoming = when (recordKind) { RECORD_HOLDS -> true; RECORD_MOVED_OUT -> false; else -> return }
+            s.pendingMoves.replaceAll { if (it.kind == kind && it.incoming == incoming && matches(it)) it.copy(confirmed = true) else it }
+            s.pendingMoves.removeAll { it.confirmed && (it.incoming || it.recorded) }
+        }
+
         /** Record notes kept (newest first); only this wallet's own registrations carry a valid tag. */
         const val MAX_RECORDS = 32
 
@@ -689,6 +882,7 @@ class WalletSync(
                     if (s.regRecords.size > MAX_RECORDS) s.regRecords.remove(s.regRecords.minBy { it.height })
                 }
             }
+            parseStateMemo(keys.nk, note.memo)?.let { applyStateRecord(s, r.position, r.height, it, now()) }
             return null
         }
         return OwnedNote(r.position, r.height, note, r.cm, Privacy.nf(keys.nk, note.rho, r.position))

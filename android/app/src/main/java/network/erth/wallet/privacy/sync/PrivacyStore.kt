@@ -127,6 +127,35 @@ data class StakeVoteRun(
 data class StakeVoteRecord(val proposalId: Long, val vnf: Fr, val txHash: String?, val until: Long?, val confirmed: Boolean)
 
 /**
+ * A move of a handle or caretaker split (audit 5, M2), recorded before its
+ * broadcast in both wallets: the mover's ([incoming] false: it still holds
+ * what it is moving until the tx is confirmed) and the new identity's
+ * ([incoming] true: it holds it already, rolled back only if the tx is
+ * refused, failed in its block, or missing past its timeout_height).
+ * [target] is the new wallet's store id (the mover's copy), [recorded]
+ * whether writing it there succeeded (retryable while false).
+ */
+data class PendingMove(
+    /** "handle" or "caretaker". */
+    val kind: String,
+    val txHash: String,
+    val timeoutHeight: Long,
+    val incoming: Boolean,
+    val handle: String = "",
+    val split: Map<Long, Long> = emptyMap(),
+    val splitUnknown: Boolean = false,
+    val expiresAt: Long = 0,
+    val target: String = "",
+    val recorded: Boolean = false,
+    val confirmed: Boolean = false,
+) {
+    companion object {
+        const val HANDLE = "handle"
+        const val CARETAKER = "caretaker"
+    }
+}
+
+/**
  * What the wallet keeps between syncs: cursors into each indexer stream, its
  * own notes, its registration, and the automations' bookkeeping. Small; the
  * trees live beside it in per-level files.
@@ -170,6 +199,19 @@ class PrivacyState {
     var handle: String = ""
     /** This identity moved its handle away (MsgMoveHandle): it may never claim one again. */
     var handleMovedOut: Boolean = false
+    /** When [handle] last changed here (wallet clock): a directory read before it says nothing about it. */
+    var handleSetAt: Long = 0
+    /** The caretaker split is held but its record did not carry it (restored from a state record). */
+    var caretakerSplitUnknown: Boolean = false
+    /** The newest handle / caretaker state record applied (note position; -1: none). */
+    var handleRecordPos: Long = -1
+    var caretakerRecordPos: Long = -1
+    /** Heights of this wallet's txs that failed in their block: their state records are void. */
+    val voidRecordHeights: MutableSet<Long> = sortedSetOf()
+    /** Moves in flight, either way (audit 5, M2). */
+    val pendingMoves: MutableList<PendingMove> = ArrayList()
+    /** The store id of the wallet a switch moves to, fixed by its first move (audit 5, L8). */
+    var switchTarget: String = ""
     /** Unbond denoms whose claim the chain refused as not yet matured, to when the automation next tries. */
     val unbondRetryAt: MutableMap<String, Long> = sortedMapOf()
     /** A stake vote being cast (K5), or null. */
@@ -223,7 +265,12 @@ class PrivacyState {
         put("caretaker_cast_at", caretakerCastAt)
         put("caretaker_split", JSONObject().apply { caretakerSplit.forEach { (k, v) -> put(k.toString(), v) } })
         put("caretaker_expires_at", caretakerExpiresAt); put("caretaker_moved_out", caretakerMovedOut)
-        put("handle", handle); put("handle_moved_out", handleMovedOut)
+        put("handle", handle); put("handle_moved_out", handleMovedOut); put("handle_set_at", handleSetAt)
+        put("caretaker_split_unknown", caretakerSplitUnknown)
+        put("handle_record_pos", handleRecordPos); put("caretaker_record_pos", caretakerRecordPos)
+        put("void_record_heights", JSONArray(voidRecordHeights.toList()))
+        put("pending_moves", JSONArray().apply { pendingMoves.forEach { put(moveJson(it)) } })
+        put("switch_target", switchTarget)
         put("unbond_retry_at", JSONObject().apply { unbondRetryAt.forEach { (k, v) -> put(k, v) } })
         stakeVoteRun?.let { r ->
             put("stake_vote_run", JSONObject().put("proposal_id", r.proposalId)
@@ -285,7 +332,12 @@ class PrivacyState {
             caretakerCastAt = j.optLong("caretaker_cast_at")
             caretakerSplit = j.optJSONObject("caretaker_split")?.let { o -> o.keys().asSequence().associate { it.toLong() to o.getLong(it) } } ?: emptyMap()
             caretakerExpiresAt = j.optLong("caretaker_expires_at"); caretakerMovedOut = j.optBoolean("caretaker_moved_out")
-            handle = j.optString("handle"); handleMovedOut = j.optBoolean("handle_moved_out")
+            handle = j.optString("handle"); handleMovedOut = j.optBoolean("handle_moved_out"); handleSetAt = j.optLong("handle_set_at")
+            caretakerSplitUnknown = j.optBoolean("caretaker_split_unknown")
+            handleRecordPos = j.optLong("handle_record_pos", -1); caretakerRecordPos = j.optLong("caretaker_record_pos", -1)
+            voidRecordHeights.addAll(longs(j.optJSONArray("void_record_heights")))
+            j.optJSONArray("pending_moves")?.let { a -> for (i in 0 until a.length()) pendingMoves.add(moveFromJson(a.getJSONObject(i))) }
+            switchTarget = j.optString("switch_target")
             j.optJSONObject("unbond_retry_at")?.let { o -> o.keys().forEach { unbondRetryAt[it] = o.getLong(it) } }
             j.optJSONObject("stake_vote_run")?.let { r ->
                 val o = r.optJSONArray("options"); val v = r.optJSONArray("voted_positions")
@@ -308,6 +360,21 @@ class PrivacyState {
             j.optJSONArray("stake_notes")?.let { a -> for (i in 0 until a.length()) stakeNotes.add(stakeFromJson(a.getJSONObject(i))) }
             j.optJSONArray("denoms")?.let { a -> for (i in 0 until a.length()) denoms.add(a.getString(i)) }
         }
+
+        private fun splitJson(m: Map<Long, Long>) = JSONObject().apply { m.forEach { (k, v) -> put(k.toString(), v) } }
+
+        private fun splitFromJson(o: JSONObject?): Map<Long, Long> = o?.let { s -> s.keys().asSequence().associate { it.toLong() to s.getLong(it) } } ?: emptyMap()
+
+        private fun moveJson(m: PendingMove) = JSONObject()
+            .put("kind", m.kind).put("tx_hash", m.txHash).put("timeout_height", m.timeoutHeight).put("incoming", m.incoming)
+            .put("handle", m.handle).put("split", splitJson(m.split)).put("split_unknown", m.splitUnknown).put("expires_at", m.expiresAt)
+            .put("target", m.target).put("recorded", m.recorded).put("confirmed", m.confirmed)
+
+        private fun moveFromJson(o: JSONObject) = PendingMove(
+            o.getString("kind"), o.getString("tx_hash"), o.optLong("timeout_height"), o.optBoolean("incoming"),
+            o.optString("handle"), splitFromJson(o.optJSONObject("split")), o.optBoolean("split_unknown"), o.optLong("expires_at"),
+            o.optString("target"), o.optBoolean("recorded"), o.optBoolean("confirmed"),
+        )
 
         private fun longs(a: JSONArray?): List<Long> = (0 until (a?.length() ?: 0)).map { a!!.getLong(it) }
 
@@ -431,17 +498,33 @@ class PrivacyStore private constructor(private val dir: File?) {
                 caretakerCastAt = old.caretakerCastAt; caretakerSplit = old.caretakerSplit
                 caretakerExpiresAt = old.caretakerExpiresAt; caretakerMovedOut = old.caretakerMovedOut
                 handle = old.handle; handleMovedOut = old.handleMovedOut
+                keepHandleState(old, this)
                 stakeVoteRun = old.stakeVoteRun
                 stakeVotes.addAll(old.stakeVotes)
             } else if (old.chainId == null) {
                 // Never synced: what a switch moved to this identity was
-                // recorded for the chain the app follows (PrivacySession.adoptMovedInto).
+                // recorded for the chain the app follows (PrivacySession.recorderFor).
                 caretakerCastAt = old.caretakerCastAt; caretakerSplit = old.caretakerSplit
                 caretakerExpiresAt = old.caretakerExpiresAt
                 handle = old.handle
+                keepHandleState(old, this)
             }
         }
         save()
+    }
+
+    /**
+     * What a reset keeps of the moves and state records: the records already
+     * applied are not applied again over what the wallet did since (a resync
+     * reads them from the start), and moves in flight stay in flight.
+     */
+    private fun keepHandleState(old: PrivacyState, s: PrivacyState) {
+        s.handleSetAt = old.handleSetAt
+        s.caretakerSplitUnknown = old.caretakerSplitUnknown
+        s.handleRecordPos = old.handleRecordPos; s.caretakerRecordPos = old.caretakerRecordPos
+        s.voidRecordHeights.addAll(old.voidRecordHeights)
+        s.pendingMoves.addAll(old.pendingMoves)
+        s.switchTarget = old.switchTarget
     }
 
     /**

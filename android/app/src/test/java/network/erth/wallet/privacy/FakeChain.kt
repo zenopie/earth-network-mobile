@@ -784,7 +784,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 val n = f(m.membership.nullifier)
                 if (m.percentagesCount == 0) { caretakerVotes.remove(n); caretakerExpiry.remove(n) }
                 else { caretakerVotes[n] = m.percentagesList.associate { it.optionId to it.percent }; caretakerExpiry[n] = now + caretakerLease }
-                events.add("set_caretaker" to mapOf("expires_at" to (caretakerExpiry[n] ?: 0L).toString()))
+                events.add("set_caretaker" to mapOf("expires_at" to (forgeCaretakerExpiry ?: caretakerExpiry[n] ?: 0L).toString()))
             }
             is MsgMoveCaretaker -> {
                 val n = f(m.membership.nullifier); val o = f(m.newOwner)
@@ -988,6 +988,9 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         val more = directory().count { it.handle > start } > page.size
         return network.erth.wallet.privacy.handles.HandleDirectory.Page(page, if (more) page.last().handle else "")
     }
+
+    /** Set to make a set_caretaker event report this expires_at (a hostile node, audit 5 M4). */
+    var forgeCaretakerExpiry: Long? = null
 
     /** Set to make the backend's handle stream lie about an address (the chain check must catch it). */
     var forgeHandleAddress: String? = null

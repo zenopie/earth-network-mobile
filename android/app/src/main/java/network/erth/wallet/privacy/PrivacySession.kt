@@ -83,23 +83,44 @@ object PrivacySession {
     fun keysOf(context: Context, index: Int): PrivacyKeys =
         SecureWalletManager.executeWithMnemonicAt(context.applicationContext, index) { PrivacyKeys.fromMnemonic(it) }
 
+    /** The store id of the wallet at [index] (its owner key's hash). */
+    fun storeIdOf(context: Context, index: Int): String = storeId(keysOf(context, index))
+
+    fun storeIdOf(keys: PrivacyKeys): String = storeId(keys)
+
     /**
-     * Records in the wallet at [index]'s private store what a switch moved
-     * to its identity (see PrivacyWallet.adoptMoved): its own wallet, when
-     * it is next opened, renews and refreshes them with no predecessor wait.
+     * Writes a switch's moves into another wallet's private store (audit 5,
+     * M2): before the broadcast, as pending; undone only on a definite
+     * refusal. Addressed by store id, so a retry needs no recovery phrase.
      */
-    fun adoptMovedInto(context: Context, index: Int, handle: String?, split: Map<Long, Long>?, splitExpiresAt: Long) {
+    fun recorderFor(context: Context, targetId: String): PrivacyWallet.MoveRecorder {
         val app = context.applicationContext
-        val keys = keysOf(app, index)
-        val store = PrivacyStore.open(app.filesDir, storeId(keys))
-        synchronized(store) {
-            if (handle != null) store.state.handle = handle
-            if (split != null && split.isNotEmpty()) {
-                store.state.caretakerSplit = split; store.state.caretakerExpiresAt = splitExpiresAt
-                store.state.caretakerCastAt = System.currentTimeMillis() / 1000
-            }
-            store.save()
+        return object : PrivacyWallet.MoveRecorder {
+            override val targetId = targetId
+            override fun record(move: network.erth.wallet.privacy.sync.PendingMove) =
+                PrivacyWallet.recordIncoming(PrivacyStore.open(app.filesDir, targetId), move, System.currentTimeMillis() / 1000)
+            override fun rollback(move: network.erth.wallet.privacy.sync.PendingMove) =
+                PrivacyWallet.rollbackIncoming(PrivacyStore.open(app.filesDir, targetId), move, System.currentTimeMillis() / 1000)
         }
+    }
+
+    /** Retries recording every move of the selected wallet whose target write failed; returns how many remain unrecorded. */
+    fun retryMoveRecords(context: Context): Int {
+        val w = wallet(context)
+        for (p in w.outgoingMoves().filter { !it.recorded && it.target.isNotEmpty() }) {
+            if (runCatching { recorderFor(context, p.target).record(p.copy(incoming = true, target = "", recorded = true)) }.isSuccess) w.markRecorded(p.txHash)
+        }
+        return w.outgoingMoves().count { !it.recorded }
+    }
+
+    /** What a switch target already holds (audit 5, L8): a registration, a handle. */
+    data class TargetInfo(val storeId: String, val registered: Boolean, val handle: String)
+
+    fun targetInfo(context: Context, index: Int): TargetInfo {
+        val app = context.applicationContext
+        val id = storeIdOf(app, index)
+        val st = runCatching { PrivacyStore.open(app.filesDir, id).state }.getOrNull()
+        return TargetInfo(id, st?.identity != null || st?.pendingRegistration != null, st?.handle.orEmpty())
     }
 
     /** Forget the cached wallet (lock, wallet switch); everything that held it is stopped first. */

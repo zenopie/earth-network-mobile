@@ -36,6 +36,8 @@ object Privacy {
     val TAG_RECTAG = tag("earth.rectag")
     // Wallet-defined (PRIVACY_FORMATS.md 1): an unlock's closed owner-tag counter.
     val TAG_UNLOCKTAG = tag("earth.unlocktag")
+    // Wallet-defined (PRIVACY_FORMATS.md 3b): a handle or caretaker state record's tag.
+    val TAG_STATETAG = tag("earth.statetag")
 
     /** The fee asset, privacy_core::ASSET_ERTH. */
     val ASSET_ERTH: Fr by lazy { assetId("uerth") }
