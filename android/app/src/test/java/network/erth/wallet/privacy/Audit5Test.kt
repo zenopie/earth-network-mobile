@@ -83,6 +83,9 @@ class Audit5Test {
         assertEquals(StateRecord.Caretaker(WalletSync.RECORD_HOLDS, 1_900_000_000, null),
             WalletSync.parseStateMemo(k.nk, WalletSync.caretakerMemo(k.nk, WalletSync.RECORD_HOLDS, 1_900_000_000, big)))
         assertEquals(StateRecord.Caretaker(WalletSync.RECORD_NONE, 0, emptyMap()), WalletSync.parseStateMemo(k.nk, WalletSync.caretakerMemo(k.nk, WalletSync.RECORD_NONE)))
+        // Goldens, the same in Audit5Tests.swift (Android/iOS byte parity).
+        assertEquals("45480101616c6963650000000000000000000000000000000000000000000000000000000000000000000000000000001d745226aa7b8d3ed9c363b444ef95bb", h.joinToString("") { "%02x".format(it.toInt() and 0xff) })
+        assertEquals("45430101713fb300013cac02280000000000000000000000000000000000000000000000000000000000000000000000035eda1d684c370b3c709013ca43fb93", c.joinToString("") { "%02x".format(it.toInt() and 0xff) })
         // A registration record is not a state record, and the reverse.
         assertNull(WalletSync.parseStateMemo(k.nk, WalletSync.regMemo(k.nk, Fr.of(77), "FR", 1_790_000_000)))
         assertNull(WalletSync.parseRegMemo(k.nk, h))
