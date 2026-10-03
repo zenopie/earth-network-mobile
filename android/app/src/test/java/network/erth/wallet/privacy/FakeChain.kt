@@ -30,7 +30,11 @@ import network.erth.wallet.chain.math.SwapMath
 import network.erth.wallet.privacy.prove.ActionWitness
 import network.erth.wallet.privacy.prove.MembershipWitness
 import network.erth.wallet.privacy.prove.StakeWitness
+import network.erth.wallet.privacy.note.NoteCipher
+import network.erth.wallet.privacy.sync.ChainRoots
 import network.erth.wallet.privacy.sync.HeightPage
+import network.erth.wallet.privacy.sync.NoteRootRecord
+import network.erth.wallet.privacy.sync.TreeState
 import network.erth.wallet.privacy.sync.IdentityPage
 import network.erth.wallet.privacy.sync.IdentityRow
 import network.erth.wallet.privacy.sync.IndexerStatus
@@ -64,7 +68,18 @@ import java.math.BigInteger
  * checks each witness against its circuit's constraints instead and keeps it,
  * so the chain can match it to the tx and a test can hand it to nargo.
  */
-class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L) : PrivateChain, PrivacyIndexer {
+class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L) : PrivateChain, PrivacyIndexer, ChainRoots {
+    /** The first block hash's prefix the indexer keys its base by; a relaunch changes it. */
+    var genesis = "0123456789abcdef"
+    /** Set to make the indexer report it has halted. */
+    var halted: String? = null
+    /** The country the chain records for registrations (the verifying CSCA's). */
+    var registrationCountry = "DE"
+    /** Every note root the chain recorded, with its tree size. */
+    val noteRootSizes = HashMap<Fr, Long>()
+    /** (height -> tree state) after each block, for queries pinned to a height. */
+    val identityAt = java.util.TreeMap<Long, TreeState>()
+    val stakeAt = java.util.TreeMap<Long, TreeState>()
     val notes = ArrayList<NoteRow>()
     val noteTree = MerkleTree(MemNodeStore())
     val identityTree = MerkleTree(MemNodeStore())
@@ -96,7 +111,8 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     var lpSupply = BigInteger.valueOf(700_000_000_000)
     val swapFee = BigDecimal("0.3")
     /** Private withdrawals waiting to mature: shares, erth pc, token pc. */
-    val withdrawals = ArrayList<Triple<BigInteger, Fr, Fr>>()
+    data class Withdrawal(val shares: BigInteger, val erthPc: Fr, val erthCt: ByteArray, val tokenPc: Fr, val tokenCt: ByteArray)
+    val withdrawals = ArrayList<Withdrawal>()
 
     // x/shieldedstaking positions, x/personhood referrers, x/assembly removal ballots.
     data class Pos(val id: Long, val validator: String, val derth: Long, val ownerTag: Fr, var splits: Map<Long, Long>, val createdHeight: Long)
@@ -116,37 +132,47 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     /** Ends the block being built: its roots become anchors. Writes land at [height], the block in progress. */
     private fun block() {
         noteRoots.add(noteTree.root()); identityRoots.add(identityTree.root())
+        noteRootSizes[noteTree.root()] = noteTree.size
         if (stakeTree.size > 0) stakeRoots.add(stakeTree.root())
+        identityAt[height] = TreeState(identityTree.size, if (identityTree.size == 0L) null else identityTree.root())
+        stakeAt[height] = TreeState(stakeTree.size, if (stakeTree.size == 0L) null else stakeTree.root())
         height++
     }
 
-    fun mint(denom: String, value: Long, pc: Fr, ct: ByteArray = ByteArray(0)): Long {
+    init { block() }
+
+    /** Every note the chain mints carries a 177-byte amount-blind ciphertext (one note-discovery rule). */
+    fun mint(denom: String, value: Long, pc: Fr, ct: ByteArray): Long {
+        require(ct.size == NoteCipher.BLIND_CIPHERTEXT_BYTES) { "a minted note needs its 177-byte blind ciphertext, got ${ct.size}" }
         val cm = Privacy.cm(Privacy.assetId(denom), value, pc)
         val pos = noteTree.append(cm)
         notes.add(NoteRow(pos, height, cm, ct, "$value$denom"))
         return pos
     }
 
-    fun mintStake(denom: String, amount: Long, spc: Fr): Long {
+    fun mintStake(denom: String, amount: Long, spc: Fr, ct: ByteArray): Long {
+        require(ct.size == NoteCipher.BLIND_CIPHERTEXT_BYTES) { "a minted stake note needs its blind stake ciphertext" }
         val cm = Privacy.stakeCm(Privacy.assetId(denom), amount, spc)
         val pos = stakeTree.append(cm)
-        stakeRows.add(StakeNoteRow(pos, height, cm, ByteArray(0), denom, amount, spc))
+        stakeRows.add(StakeNoteRow(pos, height, cm, ct, denom, amount, spc))
         return pos
     }
 
-    fun shield(denom: String, value: Long, pc: Fr, ct: ByteArray = ByteArray(0)) { mint(denom, value, pc, ct); block() }
+    /** MsgShield (a gas grant, a shield from a transparent account): its ciphertext is required. */
+    fun shield(denom: String, value: Long, pc: Fr, ct: ByteArray) { mint(denom, value, pc, ct); block() }
 
     /** Ends a block with no tx in it. */
     fun emptyBlock() = block()
 
     /** The LP unbonding period passes: every private withdrawal pays both legs as notes. */
     fun matureWithdrawals() {
-        for ((sh, ePc, tPc) in withdrawals) {
+        for (w in withdrawals) {
+            val sh = w.shares
             val e = sh * poolErth / lpSupply
             val t = sh * poolAnml / lpSupply
             poolErth -= e; poolAnml -= t; lpSupply -= sh
-            mint("uerth", e.toLong(), ePc)
-            mint("uanml", t.toLong(), tPc)
+            mint("uerth", e.toLong(), w.erthPc, w.erthCt)
+            mint("uanml", t.toLong(), w.tokenPc, w.tokenCt)
         }
         withdrawals.clear()
         block()
@@ -225,17 +251,39 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 require(rem.isEmpty() == m.receiver.isEmpty()) { "receiver exactly when something is left" }
                 require(rem.keys.none { it.startsWith("dexlp/") }) { "LP shares cannot be unshielded" }
             }
-            is MsgDelegate -> only("uerth")
+            is MsgDelegate -> { only("uerth"); require(rem.getValue("uerth") == m.amount && m.amount > 0) { "delegate releases amount" } }
             is MsgNoteSwap -> {
-                require(rem.size == 1 && m.denomOut !in rem)
-                require((m.fee == 0L) != (m.feeFromOutput == 0L))
+                require(rem == mapOf(m.denomIn to m.amountIn) && m.denomOut != m.denomIn) { "a swap releases exactly amount_in of denom_in: $rem" }
+                require(PrivateMsgs.privateFee(m) > 0) { "a swap pays a positive fee from its bundle" }
+                require(m.ciphertext.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES)
             }
-            is MsgAddLiquidityShielded -> require(rem.keys == setOf("uerth", "uanml") && m.poolId == 1L)
-            is MsgRemoveLiquidityShielded -> only("dexlp/${m.poolId}")
+            is MsgAddLiquidityShielded -> {
+                require(rem.keys == setOf("uerth", "uanml") && m.poolId == 1L && rem.getValue("uerth") == m.erthAmount)
+                require(PrivateMsgs.privateFee(m) > 0)
+                require(m.shareCiphertext.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES && m.refundCiphertext.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES)
+            }
+            is MsgRemoveLiquidityShielded -> {
+                only("dexlp/${m.poolId}")
+                require(m.erthCiphertext.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES && m.tokenCiphertext.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES)
+            }
+            is MsgClaimUnbonding -> {
+                only(null)
+                require(m.ciphertext.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES)
+                // Exactly one way to pay: the bundle, or from the output.
+                require((PrivateMsgs.privateFee(m) == 0L) != (m.feeFromOutput == 0L))
+            }
+            is MsgRegister -> {
+                only(null)
+                require(m.ciphertextAnml.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES && m.ciphertextErth.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES)
+            }
+            is MsgClaimAnml -> { only(null); require(m.ciphertext.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES) }
             else -> only(null)
         }
         require(PrivateMsgs.totalFee(m) > 0)
     }
+
+    /** Whether the msg has the chain mint a stake note to spc_mint (its blind stake ciphertext is then required). */
+    private fun mintsStake(m: MessageLite) = m is MsgDelegate || m is MsgUndelegate || m is MsgStakeVote || m is MsgUnlockPosition
 
     /** The stake proof's chain-supplied publics: asset, v_out. */
     private fun stakeStatement(m: MessageLite): Pair<String?, Long> = when (m) {
@@ -295,7 +343,6 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 val (denomIn, amountIn) = rem.entries.single()
                 val out = swapOut(denomIn, amountIn, m.denomOut)
                 require(out >= m.minAmountOut) { "slippage: got $out, want >= ${m.minAmountOut}" }
-                require(m.feeFromOutput == 0L || (m.denomOut == "uerth" && m.minAmountOut > m.feeFromOutput))
             }
             is MsgAddLiquidityShielded -> if (m.minShares.isNotEmpty()) {
                 require(shares(rem.getValue("uerth"), rem.getValue("uanml")) >= BigInteger(m.minShares)) { "below min_shares" }
@@ -306,6 +353,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             is MsgVoteRemoval -> require(m.optionId in removalBallots) { "no open ballot" }
             is MsgProposeRemoval -> require(m.optionId !in removalBallots) { "ballot already open" }
             is MsgClaimUnbonding -> require((m.hasBundle()) == (m.feeFromOutput == 0L))
+            is MsgRegister -> require(identityRows.none { it.leaf != Fr.ZERO && registeredIdc[it.index] == f(m.idc) }) { "a switch to the live idc is refused" }
             else -> {}
         }
     }
@@ -320,6 +368,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             require(nf !in nullifiers) { "nullifier spent" }
             require(seen.add(nf)) { "duplicate nullifier" }
             Grumpkin.Point.fromBytes(a.cv.toByteArray())
+            require(a.proof.size() == PROOF_BYTES) { "a proof is exactly $PROOF_BYTES bytes" }
         }
         require(b.bindingSig.size() == Grumpkin.BINDING_SIG_BYTES)
         if (simulate) return
@@ -340,6 +389,9 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         val auth = Tx.AuthInfo.parseFrom(raw.authInfoBytes)
         require(auth.signerInfosCount == 0)
         val m = decode(raw)
+        val body = Tx.TxBody.parseFrom(raw.bodyBytes)
+        // The tx fields every private sighash binds (the ante records them).
+        val txf = PrivateMsgs.TxFields(body.memo, body.timeoutHeight, auth.fee.gasLimit)
         val total = PrivateMsgs.totalFee(m)
         require(auth.fee.amountCount == 1 && auth.fee.getAmount(0).denom == "uerth" && auth.fee.getAmount(0).amount == total.toString()) { "declared fee != msg fee" }
         require(total >= minFee) { "below min fee" }
@@ -348,13 +400,16 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         require(bundles.size in (if (PrivateMsgs.feeFromOutput(m) > 0) 0 else 1)..2) { "bundle count" }
         val rem = remainders(m)
         checkRelease(m, rem)
-        val sighash = PrivateMsgs.sighash(m, chainId)
+        val sighash = PrivateMsgs.sighash(m, chainId, txf)
         val seen = HashSet<Fr>()
         bundles.forEachIndexed { i, b -> checkBundle(i, b, sighash, simulate, seen) }
 
         val stake = PrivateMsgs.stake(m)
         if (stake != null) {
             require(stake.nullifiersCount == 2 && stake.commitmentsCount == 2 && stake.ciphertextsCount <= 2)
+            require(stake.proof.size() == PROOF_BYTES) { "a stake proof is exactly $PROOF_BYTES bytes" }
+            if (mintsStake(m)) require(stake.spcCiphertext.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES) { "spc_ciphertext required" }
+            else require(stake.spcCiphertext.isEmpty) { "spc_ciphertext only for a msg that mints" }
             stakeShape(m, stake)
             val nfs = spent(stake)
             require(nfs.none { it in stakeNullifiers }) { "stake nullifier spent" }
@@ -372,6 +427,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         val membership = membershipOf(m)
         if (membership != null) {
             require(Fr.fromBytes(membership.root.toByteArray()) in identityRoots) { "unknown identity anchor" }
+            require(membership.proof.size() == PROOF_BYTES) { "a membership proof is exactly $PROOF_BYTES bytes" }
             if (!simulate) {
                 val w = prover.memberships.removeFirstOrNull() ?: error("no membership proof")
                 val (scope, maxAct) = membershipStatement(m)!!
@@ -406,31 +462,34 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 val binding = PrivateMsgs.decimalField(m.publicSignalsList[1])
                 require(binding == PrivateMsgs.registrationBinding(m)) { "binding" }
                 val dsc = PrivateMsgs.decimalField(m.publicSignalsList[3])
-                val idx = identityTree.append(Privacy.identityLeaf(f(m.idc), dsc, Privacy.countryField("DE"), now))
+                // A switch: the holder's old leaf is zeroed, the new one appended.
+                registeredIdc.entries.filter { it.value == f(m.idc) || passportOf[it.key] == m.publicSignalsList[2] }.forEach { zeroLeaf(it.key) }
+                val idx = identityTree.append(Privacy.identityLeaf(f(m.idc), dsc, Privacy.countryField(registrationCountry), now))
                 identityRows.add(IdentityRow(idx, height, identityTree.leaf(idx), null))
+                registeredIdc[idx] = f(m.idc); passportOf[idx] = m.publicSignalsList[2]
                 mint("uanml", 1_000_000, f(m.pcAnml), m.ciphertextAnml.toByteArray())
                 mint("uerth", 5_000_000, f(m.pcErth), m.ciphertextErth.toByteArray())
                 events.add("register" to mapOf("leaf_index" to idx.toString()))
             }
             is MsgClaimAnml -> mint("uanml", 1_000_000, f(m.pc), m.ciphertext.toByteArray())
             is MsgVoteProposal -> votes.add(m.proposalId to m.optionValue)
-            is MsgDelegate -> mintStake(PrivacyWallet.derthDenom(m.validator), rem.getValue("uerth") * 9 / 10, spcMint!!)
+            is MsgDelegate -> mintStake(PrivacyWallet.derthDenom(m.validator), m.amount * 9 / 10, spcMint!!, stake.spcCiphertext.toByteArray())
             is MsgRestake -> {}
-            is MsgUndelegate -> mintStake(PrivacyWallet.unbondDenom(m.validator, epoch), m.amount * 10 / 9, spcMint!!)
+            is MsgUndelegate -> mintStake(PrivacyWallet.unbondDenom(m.validator, epoch), m.amount * 10 / 9, spcMint!!, stake.spcCiphertext.toByteArray())
             is MsgClaimUnbonding -> {
                 claimedUnbonds.add(PrivacyWallet.unbondDenom(m.validator, m.epoch))
                 mint("uerth", m.amount - m.feeFromOutput, f(m.pc), m.ciphertext.toByteArray())
             }
             is MsgStakeVote -> {
                 stakeVotes.add(Triple(m.proposalId, m.validator, m.weight))
-                mintStake(PrivacyWallet.derthDenom(m.validator), m.weight, spcMint!!)
+                mintStake(PrivacyWallet.derthDenom(m.validator), m.weight, spcMint!!, stake.spcCiphertext.toByteArray())
             }
             is MsgNoteSwap -> {
                 val (denomIn, amountIn) = rem.entries.single()
                 val out = swapOut(denomIn, amountIn, m.denomOut)
                 if (m.denomOut == "uerth") { poolAnml += BigInteger.valueOf(amountIn); poolErth -= BigInteger.valueOf(out) }
                 else { poolErth += BigInteger.valueOf(amountIn); poolAnml -= BigInteger.valueOf(out) }
-                mint(m.denomOut, out - m.feeFromOutput, f(m.pc), m.ciphertext.toByteArray())
+                mint(m.denomOut, out, f(m.pc), m.ciphertext.toByteArray())
             }
             is MsgAddLiquidityShielded -> {
                 val e = rem.getValue("uerth"); val t = rem.getValue("uanml")
@@ -444,7 +503,9 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 if (rE > 0) mint("uerth", rE, f(m.refundPc), m.refundCiphertext.toByteArray())
                 if (rT > 0) mint("uanml", rT, f(m.refundPc), m.refundCiphertext.toByteArray())
             }
-            is MsgRemoveLiquidityShielded -> withdrawals.add(Triple(BigInteger.valueOf(rem.getValue("dexlp/1")), f(m.erthPc), f(m.tokenPc)))
+            is MsgRemoveLiquidityShielded -> withdrawals.add(
+                Withdrawal(BigInteger.valueOf(rem.getValue("dexlp/1")), f(m.erthPc), m.erthCiphertext.toByteArray(), f(m.tokenPc), m.tokenCiphertext.toByteArray()),
+            )
             is MsgLockPosition -> {
                 val id = nextPositionId++
                 positions[id] = Pos(id, m.validator, m.amount, f(m.stake.ownerTag), m.splitsList.associate { it.optionId to it.percent }, height)
@@ -452,7 +513,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             is MsgUpdatePosition -> positions.getValue(m.positionId).splits = m.splitsList.associate { it.optionId to it.percent }
             is MsgUnlockPosition -> {
                 val p = positions.remove(m.positionId)!!
-                mintStake(PrivacyWallet.derthDenom(p.validator), p.derth, spcMint!!)
+                mintStake(PrivacyWallet.derthDenom(p.validator), p.derth, spcMint!!, stake.spcCiphertext.toByteArray())
             }
             is MsgPositionVote -> positionVotes.add(m.positionId to m.proposalId)
             is MsgBindReferrer -> referrers[f(m.membership.nullifier)] = m.address
@@ -466,7 +527,9 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
 
     // ---- indexer ----
 
-    override fun status() = IndexerStatus(chainId, height - 1, now, notes.size.toLong(), identityRows.size.toLong(), null)
+    override fun status() = IndexerStatus(
+        chainId, height - 1, now, notes.size.toLong(), identityRows.size.toLong(), halted, genesis, "/privacy/$chainId/$genesis",
+    )
 
     override fun notes(fromPos: Long, limit: Int?): NotesPage {
         val n = limit ?: 1000
@@ -486,12 +549,42 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         return IdentityPage(rows, fromIndex + rows.size, identityRows.size.toLong(), height - 1)
     }
 
-    override fun identityZeroed(fromHeight: Long, limit: Int?): HeightPage<Long> = HeightPage(emptyList(), height, false, height - 1)
+    override fun identityZeroed(fromHeight: Long, limit: Int?): HeightPage<Long> {
+        val blocks = zeroed.filter { it.first >= fromHeight && it.first < height }.groupBy({ it.first }, { it.second }).toSortedMap().map { it.key to it.value }
+        return HeightPage(blocks, height, false, height - 1)
+    }
 
     override fun rootsLatest() = LatestRoots(
-        RootRecord(noteTree.root(), noteTree.size, height, now), RootRecord(identityTree.root(), identityTree.size, height, now), height - 1,
-        if (stakeTree.size == 0L) null else RootRecord(stakeTree.root(), stakeTree.size, height, now),
+        if (noteTree.size == 0L) null else RootRecord(noteTree.root(), noteTree.size, height - 1, now),
+        if (identityTree.size == 0L) null else RootRecord(identityTree.root(), identityTree.size, height - 1, now), height - 1,
+        if (stakeTree.size == 0L) null else RootRecord(stakeTree.root(), stakeTree.size, height - 1, now),
     )
+
+    // ---- the chain's own queries (LCD), for the wallet's root checks ----
+
+    override fun noteRoot(root: Fr): NoteRootRecord? = noteRootSizes[root]?.let { NoteRootRecord(true, it) }
+
+    override fun identityTree(height: Long?): TreeState =
+        (if (height == null) identityAt.lastEntry() else identityAt.floorEntry(height))?.value ?: TreeState(0, null)
+
+    override fun stakeTree(height: Long?): TreeState =
+        (if (height == null) stakeAt.lastEntry() else stakeAt.floorEntry(height))?.value ?: TreeState(0, null)
+
+    // ---- registrations ----
+
+    val registeredIdc = HashMap<Long, Fr>()
+    val passportOf = HashMap<Long, String>()
+    /** (height, leaf index) of every zeroing. */
+    val zeroed = ArrayList<Pair<Long, Long>>()
+
+    private fun zeroLeaf(index: Long) {
+        if (identityTree.leaf(index) == Fr.ZERO) return
+        identityTree.update(index, Fr.ZERO)
+        val r = identityRows[index.toInt()]
+        identityRows[index.toInt()] = r.copy(zeroedHeight = height)
+        zeroed.add(height to index)
+        registeredIdc.remove(index)
+    }
 
     override fun rates(epoch: Long?): List<RateRow> = emptyList()
 
@@ -514,6 +607,8 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
  * circuits/{action,stake,membership}/src/main.nr) and keeps it for the chain
  * to match against the tx and for a test to dump as Prover.toml.
  */
+const val PROOF_BYTES = 14_656
+
 class CheckingProver : Prover {
     val actions = ArrayDeque<ActionWitness>()
     val stakes = ArrayDeque<StakeWitness>()

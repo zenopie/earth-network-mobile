@@ -27,7 +27,8 @@ class GasGrantRegisterBodyTest {
         .setAffiliate(affiliate).build()
 
     private val pcGas = ByteArray(32) { 4 }
-    private val body = GasGrant.registerBody(msg("earth1referrer"), pcGas)
+    private val ctGas = ByteArray(177) { 5 }
+    private val body = GasGrant.registerBody(msg("earth1referrer"), pcGas, ctGas)
 
     @Test
     fun bytesAreStandardBase64WithoutWrapping() {
@@ -50,14 +51,14 @@ class GasGrantRegisterBodyTest {
         assertEquals(false, body.has("address"))
         assertEquals("AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=", body.getString("idc"))
         assertEquals("BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=", body.getString("pc_gas"))
-        assertEquals("", body.getString("ciphertext_gas"))
+        assertEquals(java.util.Base64.getEncoder().encodeToString(ctGas), body.getString("ciphertext_gas"))
         assertEquals("rsa_2048_sha256", body.getString("signature_algorithm"))
         assertEquals("earth1referrer", body.getString("affiliate"))
     }
 
     @Test
     fun noReferrerIsEmptyString() {
-        val unreferred = GasGrant.registerBody(msg(""), pcGas)
+        val unreferred = GasGrant.registerBody(msg(""), pcGas, ctGas)
         assertEquals("", unreferred.getString("affiliate"))
     }
 }

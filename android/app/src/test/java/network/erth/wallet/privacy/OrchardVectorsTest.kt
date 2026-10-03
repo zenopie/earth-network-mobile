@@ -110,8 +110,16 @@ class OrchardVectorsTest {
         bundle.addBalances(ValueBalance.newBuilder().setDenom("uerth").setAmount(10_000))
         val digest = PrivateMsgs.digest(bundle.build())
         assertEquals(b.getString("digest"), digest.toHex())
-        val sighash = Privacy.signal(PrivateMsgs.SEND, "earth-1", listOf(Privacy.u64(1), digest, Privacy.bytes(ByteArray(0)), Privacy.u64(10_000)))
+        // Sighash with empty tx fields: Bytes(""), timeout 0, gas 0 after the digests.
+        val noTx = listOf(Privacy.bytes(ByteArray(0)), Privacy.u64(0), Privacy.u64(0))
+        val sighash = Privacy.signal(PrivateMsgs.SEND, "earth-1", listOf(Privacy.u64(1), digest) + noTx + listOf(Privacy.bytes(ByteArray(0)), Privacy.u64(10_000)))
         assertEquals(b.getString("sighash"), sighash.toHex())
+        // The tx's memo (UTF-8), timeout_height and gas_limit are bound (audit M1).
+        val t = b.getJSONObject("sighash_tx")
+        val withTx = Privacy.signal(PrivateMsgs.SEND, "earth-1", listOf(Privacy.u64(1), digest,
+            Privacy.bytes(t.getString("memo").toByteArray(Charsets.UTF_8)), Privacy.u64(t.getLong("timeout_height")), Privacy.u64(t.getLong("gas_limit")),
+            Privacy.bytes(ByteArray(0)), Privacy.u64(10_000)))
+        assertEquals(t.getString("sighash"), withTx.toHex())
 
         val bsk = Grumpkin.bindingKey(rcvs)
         assertEquals(b.getString("bsk"), "%064x".format(bsk))

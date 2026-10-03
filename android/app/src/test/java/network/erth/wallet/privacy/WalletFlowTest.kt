@@ -48,8 +48,18 @@ class WalletFlowTest {
         override fun positions() = chain.positionReads()
     }
 
-    private fun wallet(chain: FakeChain, words: String, reads: PrivacyChainReads = reads(chain)) = PrivacyWallet(
-        PrivacyKeys.fromMnemonic(words), PrivacyStore.memory(), chain, chain, reads, chain.prover, chain.chainId, now = { chain.now },
+    /** Pauses the wallet asked for (stake votes), in milliseconds. */
+    private val pauses = ArrayList<Long>()
+
+    private fun wallet(
+        chain: FakeChain,
+        words: String,
+        reads: PrivacyChainReads = reads(chain),
+        indexer: network.erth.wallet.privacy.sync.PrivacyIndexer = chain,
+        store: PrivacyStore = PrivacyStore.memory(),
+    ) = PrivacyWallet(
+        PrivacyKeys.fromMnemonic(words), store, indexer, chain, reads, chain.prover, chain.chainId, chain,
+        now = { chain.now }, pause = { pauses.add(it) },
     )
 
     private fun bal(w: PrivacyWallet, d: String) = w.balances()[d] ?: 0L
@@ -58,7 +68,7 @@ class WalletFlowTest {
 
     private fun shieldTo(chain: FakeChain, w: PrivacyWallet, denom: String, value: Long) {
         val o = w.shieldOutput(denom, value)
-        chain.shield(denom, o.value, o.pc, o.ciphertext)
+        chain.shield(denom, value, o.pc, o.ciphertext)
     }
 
     @Test
@@ -70,7 +80,7 @@ class WalletFlowTest {
 
         // Registration: prepare, the backend shields gas to pc_gas, register.
         val prep = a.prepareRegistration(null)
-        chain.shield("uerth", 100_000, prep.gas.pc)
+        chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
         a.sync()
         assertEquals(100_000L, bal(a, "uerth"))
         val signals = listOf("261001", prep.binding.toBigInteger().toString(), "123456789", Fr.of(77).toBigInteger().toString())
@@ -78,7 +88,7 @@ class WalletFlowTest {
         a.sync()
         assertEquals(WalletSync.IdentityStatus.LIVE, a.identityStatus())
         assertEquals(1_000_000L, bal(a, "uanml"))
-        // The gas note paid the fee bundle; the reward is a self-mint found by its public amount.
+        // The gas note paid the fee bundle; the reward is found by its v2 ciphertext and public amount.
         assertTrue(bal(a, "uerth") > 5_000_000)
         assertEquals(Privacy.countryField("DE"), a.store.state.identity!!.country)
         // Every bundle is padded to at least two actions.
@@ -154,7 +164,7 @@ class WalletFlowTest {
         val a = wallet(chain, words)
         a.sync()
         val prep = a.prepareRegistration(null)
-        chain.shield("uerth", 100_000, prep.gas.pc)
+        chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
         a.sync()
         val signals = listOf("261001", prep.binding.toBigInteger().toString(), "123456789", Fr.of(77).toBigInteger().toString())
         a.register(prep, ByteArray(14_656), signals, "lean_poa", ByteArray(10))
@@ -177,14 +187,14 @@ class WalletFlowTest {
         assertEquals(2_000_000L, bal(a, "uanml"))
         val pool = { mapOf("uanml" to SwapMath.Reserves(chain.poolErth, chain.poolAnml)) }
 
-        // ANML -> ERTH: the quote is the chain's, the fee comes out of the output.
+        // ANML -> ERTH: the quote is the chain's, the fee comes from an ERTH note (one fee rule).
         val erth0 = bal(a, "uerth")
         val q = SwapMath.route(pool(), "uerth", "uanml", BigInteger.valueOf(600_000), "uerth", chain.swapFee)!!
         a.noteSwap("uanml", 600_000, "uerth", SwapMath.withSlippage(q.amountOut, 100).toLong())
         a.sync()
         assertEquals(1_400_000L, bal(a, "uanml"))
         val fee = q.amountOut.toLong() - (bal(a, "uerth") - erth0)
-        assertTrue("fee from output: $fee", fee in 1000..10_000)
+        assertTrue("fee from the bundle: $fee", fee in 1000..10_000)
 
         // ERTH -> ANML by bob from the one note he was sent: amount and fee
         // from the same note, the change back in the same bundle.

@@ -122,7 +122,9 @@ class FixtureWitnessTest {
         }
         bundle.setBindingSig(bs(Vectors.unhex(bj.getString("binding_sig"))))
         val b = bundle.build()
-        val sighash = Privacy.signal(bj.getString("msg_type"), bj.getString("chain_id"), listOf(Privacy.u64(1), PrivateMsgs.digest(b)))
+        val tx = bj.getJSONObject("tx")
+        val sighash = Privacy.signal(bj.getString("msg_type"), bj.getString("chain_id"), listOf(Privacy.u64(1), PrivateMsgs.digest(b),
+            Privacy.bytes(tx.getString("memo").toByteArray()), Privacy.u64(tx.getLong("timeout_height")), Privacy.u64(tx.getLong("gas_limit"))))
         assertEquals(bj.getString("sighash").removePrefix("0x"), sighash.toHex())
         assertTrue(PrivateMsgs.checkBalance(b, sighash))
     }

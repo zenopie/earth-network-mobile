@@ -75,9 +75,13 @@ class PrivateMsgsTest {
 
     private val zero32 = ByteString.copyFrom(ByteArray(32))
 
-    private fun stake(seed: Long, spends: Int, creates: Int): StakeProof {
+    /** A deterministic 177-byte stand-in for an amount-blind ciphertext (main.go bct). */
+    private fun bct(seed: Int): ByteString = ByteString.copyFrom(ByteArray(177) { (seed + it).toByte() })
+
+    private fun stake(seed: Long, spends: Int, creates: Int, mints: Boolean = false): StakeProof {
         val p = StakeProof.newBuilder().setProof(ByteString.copyFrom(byteArrayOf(0x5e, seed.toByte())))
             .setAnchor(fb(seed)).setSpcMint(fb(seed + 7)).setOwnerTag(fb(seed + 8))
+        if (mints) p.setSpcCiphertext(bct(seed.toInt()))
         for (i in 0 until 2) {
             p.addNullifiers(if (i < spends) fb(seed + 1 + i) else zero32)
             p.addCommitments(if (i < creates) fb(seed + 3 + i) else zero32)
@@ -102,20 +106,22 @@ class PrivateMsgsTest {
         .setFee(fee(40, 2000)).setProof(ByteString.copyFrom(byteArrayOf(1, 2, 3)))
         .addAllPublicSignals(listOf("250930", "12345", "678", "9")).setSignatureAlgorithm("lean_poa")
         .setDscDer(ByteString.copyFrom(byteArrayOf(0x30, 0x03, 1, 2, 3))).setIdc(fb(41)).setPcAnml(fb(42))
-        .setCiphertextAnml(bs("anml")).setPcErth(fb(43)).setCiphertextErth(bs("erth")).setAffiliate(affiliate)
+        .setCiphertextAnml(bct(42)).setPcErth(fb(43)).setCiphertextErth(bct(43)).setAffiliate(affiliate)
         .build()
 
     private val msgs: Map<String, MessageLite> by lazy {
         mapOf(
             "send" to MsgSend.newBuilder().setBundle(fee(10, 1500)).setFee(1500).build(),
+            "send_tx_fields" to MsgSend.newBuilder().setBundle(fee(11, 1500)).setFee(1500).build(),
+            "send_no_gas" to MsgSend.newBuilder().setBundle(fee(12, 1500)).setFee(1500).build(),
             "unshield" to MsgSend.newBuilder().setBundle(bundle(20, "uanml" to 5000, "uerth" to 2000))
                 .setReceiver(addr(1)).setFee(2000).build(),
             "shield" to MsgShield.newBuilder().setSender(addr(30))
-                .setAmount(Coin.newBuilder().setDenom("uerth").setAmount("100000")).setPc(fb(31)).setCiphertext(bs("gas")).build(),
+                .setAmount(Coin.newBuilder().setDenom("uerth").setAmount("100000")).setPc(fb(31)).setCiphertext(bct(31)).build(),
             "register" to register(addr(50)),
             "register_no_affiliate" to register(""),
             "claim_anml" to MsgClaimAnml.newBuilder().setFee(fee(50, 2000)).setMembership(membership(50))
-                .setDay(20360).setPc(fb(51)).setCiphertext(bs("claim")).build(),
+                .setDay(20360).setPc(fb(51)).setCiphertext(bct(51)).build(),
             "set_caretaker" to MsgSetCaretaker.newBuilder().setFee(fee(60, 2000)).setMembership(membership(60))
                 .addAllPercentages(listOf(w(1, 60), w(7, 40))).setMaxActivation(1_780_000_000).build(),
             "bind_referrer" to MsgBindReferrer.newBuilder().setFee(fee(70, 2000)).setMembership(membership(70))
@@ -128,43 +134,44 @@ class PrivateMsgsTest {
                 .setOptionId(3).build(),
             "vote_removal" to MsgVoteRemoval.newBuilder().setFee(fee(82, 2000)).setMembership(membership(82))
                 .setOptionId(3).setOption(VoteOption.VOTE_OPTION_NO).build(),
-            "delegate" to MsgDelegate.newBuilder().setBundle(fee(90, 502000)).setValidator(validator).setFee(2000)
-                .setStake(stake(90, 0, 0)).build(),
-            "restake" to MsgRestake.newBuilder().setBundle(fee(95, 2000)).setValidator(validator).setFee(2000)
+            "delegate" to MsgDelegate.newBuilder().setBundle(fee(90, 502000)).setValidator(validator).setAmount(500000)
+                .setStake(stake(90, 0, 0, mints = true)).build(),
+            "restake" to MsgRestake.newBuilder().setBundle(fee(95, 2000)).setValidator(validator)
                 .setStake(stake(95, 2, 1)).build(),
             "undelegate" to MsgUndelegate.newBuilder().setBundle(fee(100, 2000)).setValidator(validator).setAmount(400000)
-                .setFee(2000).setStake(stake(100, 1, 1)).build(),
+                .setStake(stake(100, 1, 1, mints = true)).build(),
             "claim_unbonding" to MsgClaimUnbonding.newBuilder().setValidator(validator).setEpoch(17).setAmount(400000)
-                .setPc(fb(111)).setFeeFromOutput(2000).setStake(stake(110, 2, 0)).build(),
+                .setPc(fb(111)).setCiphertext(bct(111)).setFeeFromOutput(2000).setStake(stake(110, 2, 0)).build(),
             "claim_unbonding_fee_bundle" to MsgClaimUnbonding.newBuilder().setBundle(fee(115, 2000)).setValidator(validator)
-                .setEpoch(17).setAmount(400000).setPc(fb(116)).setCiphertext(bs("c")).setFee(2000).setStake(stake(117, 1, 1)).build(),
+                .setEpoch(17).setAmount(400000).setPc(fb(116)).setCiphertext(bct(116)).setStake(stake(117, 1, 1)).build(),
             "stake_vote" to MsgStakeVote.newBuilder().setBundle(fee(120, 2000)).setProposalId(5).setValidator(validator)
-                .addAllOptions(opts()).setWeight(400000).setFee(2000).setStake(stake(120, 2, 0)).build(),
+                .addAllOptions(opts()).setWeight(400000).setStake(stake(120, 2, 0, mints = true)).build(),
             "lock_position" to MsgLockPosition.newBuilder().setBundle(fee(140, 2000)).setValidator(validator).setAmount(400000)
-                .addSplits(w(2, 100)).setFee(2000).setStake(stake(140, 1, 1)).build(),
+                .addSplits(w(2, 100)).setStake(stake(140, 1, 1)).build(),
             "update_position" to MsgUpdatePosition.newBuilder().setBundle(fee(150, 2000)).setPositionId(9)
-                .addSplits(w(2, 100)).setFee(2000).setStake(stake(150, 0, 0)).build(),
+                .addSplits(w(2, 100)).setStake(stake(150, 0, 0)).build(),
             "unlock_position" to MsgUnlockPosition.newBuilder().setBundle(fee(160, 2000)).setPositionId(9)
-                .setFee(2000).setStake(stake(160, 0, 0)).build(),
+                .setStake(stake(160, 0, 0, mints = true)).build(),
             "position_vote" to MsgPositionVote.newBuilder().setBundle(fee(170, 2000)).setPositionId(9)
-                .setProposalId(5).addAllOptions(opts()).setFee(2000).setStake(stake(170, 0, 0)).build(),
-            "note_swap" to MsgNoteSwap.newBuilder().setBundle(bundle(180, "uanml" to 300000, "uerth" to 2000)).setDenomOut("uerth")
-                .setMinAmountOut(123456).setPc(fb(181)).setFee(2000).build(),
-            "note_swap_fee_from_output" to MsgNoteSwap.newBuilder().setBundle(bundle(190, "uanml" to 300000)).setDenomOut("uerth")
-                .setMinAmountOut(123456).setPc(fb(191)).setCiphertext(bs("s")).setFeeFromOutput(3000).build(),
-            "note_swap_to_anml" to MsgNoteSwap.newBuilder().setBundle(fee(200, 302000)).setDenomOut("uanml")
-                .setMinAmountOut(1).setPc(fb(201)).setFee(2000).build(),
+                .setProposalId(5).addAllOptions(opts()).setStake(stake(170, 0, 0)).build(),
+            "note_swap" to MsgNoteSwap.newBuilder().setBundle(bundle(180, "uanml" to 300000, "uerth" to 2000))
+                .setDenomIn("uanml").setAmountIn(300000).setDenomOut("uerth")
+                .setMinAmountOut(123456).setPc(fb(181)).setCiphertext(bct(181)).build(),
+            "note_swap_to_anml" to MsgNoteSwap.newBuilder().setBundle(fee(200, 302000)).setDenomIn("uerth").setAmountIn(300000)
+                .setDenomOut("uanml").setMinAmountOut(1).setPc(fb(201)).setCiphertext(bct(201)).build(),
             "add_liquidity_shielded" to MsgAddLiquidityShielded.newBuilder().setBundle(bundle(210, "uanml" to 700000, "uerth" to 902500))
-                .setPoolId(1).setMinShares("777").setRefundPc(fb(211)).setFee(2500).setSharePc(fb(212)).build(),
+                .setPoolId(1).setMinShares("777").setRefundPc(fb(211)).setRefundCiphertext(bct(211)).setErthAmount(900000)
+                .setSharePc(fb(212)).setShareCiphertext(bct(212)).build(),
             "add_liquidity_shielded_no_min" to MsgAddLiquidityShielded.newBuilder().setBundle(bundle(230, "uanml" to 700000, "uerth" to 902500))
-                .setPoolId(1).setRefundPc(fb(231)).setRefundCiphertext(bs("r")).setFee(2500).setSharePc(fb(232))
-                .setShareCiphertext(bs("sh")).build(),
+                .setPoolId(1).setRefundPc(fb(231)).setRefundCiphertext(bct(231)).setErthAmount(900000).setSharePc(fb(232))
+                .setShareCiphertext(bct(232)).build(),
             "remove_liquidity_shielded" to MsgRemoveLiquidityShielded.newBuilder().setBundle(bundle(240, "dexlp/1" to 4242, "uerth" to 2000))
-                .setPoolId(1).setFee(2000).setErthPc(fb(241)).setTokenPc(fb(242)).setTokenCiphertext(bs("t")).build(),
+                .setPoolId(1).setErthPc(fb(241)).setErthCiphertext(bct(241)).setTokenPc(fb(242)).setTokenCiphertext(bct(242)).build(),
             "remove_liquidity_pc" to MsgRemoveLiquidity.newBuilder().setCreator(addr(30)).setPoolId(1)
-                .setShares(Coin.newBuilder().setDenom("dexlp/1").setAmount("4242")).setPc(fb(250)).build(),
+                .setShares(Coin.newBuilder().setDenom("dexlp/1").setAmount("4242")).setPc(fb(250)).setCiphertext(bct(250)).build(),
             "buy_anml" to MsgBuyAnml.newBuilder().setCreator(addr(30))
-                .setTokenIn(Coin.newBuilder().setDenom("uerth").setAmount("5000000")).setMinAmountOut("99").setPc(fb(260)).build(),
+                .setTokenIn(Coin.newBuilder().setDenom("uerth").setAmount("5000000")).setMinAmountOut("99").setPc(fb(260))
+                .setCiphertext(bct(4)).build(),
         )
     }
 
@@ -177,8 +184,10 @@ class PrivateMsgsTest {
             assertEquals("$name proto", v.getString("proto"), hex(m.toByteArray()))
             if (v.has("sighash")) {
                 assertEquals("$name type", v.getString("type_url"), PrivateMsgs.typeUrl(m))
-                assertEquals("$name sighash", v.getString("sighash"), PrivateMsgs.sighash(m, chainId).toHex())
+                val tx = PrivateMsgs.TxFields(v.getString("memo"), v.getLong("timeout_height"), v.getLong("gas_limit"))
+                assertEquals("$name sighash", v.getString("sighash"), PrivateMsgs.sighash(m, chainId, tx).toHex())
                 assertEquals("$name total fee", v.getString("total_fee").toLong(), PrivateMsgs.totalFee(m))
+                assertEquals("$name private fee", v.getString("private_fee").toLong(), PrivateMsgs.privateFee(m))
             }
         }
     }
@@ -186,7 +195,7 @@ class PrivateMsgsTest {
     @Test
     fun stakeFieldsMatchTheChain() {
         val want = json.getJSONArray("stake_fields_undelegate")
-        val got = PrivateMsgs.stakeFields(stake(100, 1, 1))
+        val got = PrivateMsgs.stakeFields(stake(100, 1, 1, mints = true))
         assertEquals(want.length(), got.size)
         for (i in got.indices) assertEquals("field $i", want.getString(i), got[i].toHex())
     }
@@ -204,7 +213,7 @@ class PrivateMsgsTest {
     fun unsignedTxMatchesTheChain() {
         val v = json.getJSONObject("unsigned_tx")
         val m = msgs["claim_anml"]!!
-        val raw = UnsignedTx.build(m, gasLimit = v.getLong("gas_limit"))
+        val raw = UnsignedTx.build(m, gasLimit = v.getLong("gas_limit"), memo = v.getString("memo"), timeoutHeight = v.getLong("timeout_height"))
         assertEquals(v.getString("tx_raw"), hex(raw))
     }
 }

@@ -92,7 +92,11 @@ class ZkVectorsTest {
         assertEquals(d.getString("pc"), pc.toHex())
         assertEquals(d.getString("cm"), Privacy.cm(Privacy.assetId("uanml"), 1_000_000, pc).toHex())
         assertEquals(d.getString("nf"), Privacy.nf(nk, rho, 4_000_000_000).toHex())
-        assertEquals(d.getString("reg_none"), Privacy.registrationBinding(idc, fe(1), fe(2), Fr.ZERO).toHex())
+        assertEquals(d.getString("reg_none"), Privacy.registrationBinding(idc, fe(1), "anml".toByteArray(), fe(2), "erth".toByteArray(), Fr.ZERO).toHex())
+        // The chain's pinned vector (zk/privacy TestRegistrationBindingPinned).
+        assertEquals("20ce5fccf5e6e20a8a7b80f7565e41a7c73dbb16ac5e53746e7234ba8b305b0c", d.getString("reg_pinned"))
+        assertEquals(d.getString("reg_pinned"),
+            Privacy.registrationBinding(Fr.of(1), Fr.of(2), "anml".toByteArray(), Fr.of(3), "erth".toByteArray(), Fr.ZERO).toHex())
         // The stake tree.
         val spc = Privacy.stakePc(opk, rho, rcm)
         assertEquals(d.getString("spc"), spc.toHex())
@@ -112,7 +116,6 @@ class ZkVectorsTest {
         assertEquals(s.getString("proposal_5_1"), Privacy.proposalScope(5, 1).toHex())
         assertEquals(s.getString("removal_3"), Privacy.removalScope(3).toHex())
         assertEquals(s.getString("propose_removal_2_100"), Privacy.proposeRemovalScope(2, 100).toHex())
-        assertEquals(s.getString("gas_202610"), Privacy.gasScope(202610).toHex())
     }
 
     private fun checkTree(t: MerkleTree, appendOneByOne: Boolean) {
