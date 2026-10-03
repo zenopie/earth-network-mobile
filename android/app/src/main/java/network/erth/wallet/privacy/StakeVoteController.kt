@@ -63,6 +63,13 @@ class StakeVoteController(
 
     @Volatile private var job: Job? = null
 
+    /**
+     * The last suspended job: its blocking cast may still be running. A
+     * resumed or new run waits for it to end before casting anything (audit
+     * 4, L5), so the same item is never cast twice at once.
+     */
+    @Volatile private var previous: Job? = null
+
     /** The running job's flag: set by [suspend], so the job keeps the persisted run for [resume]. */
     @Volatile private var suspended = java.util.concurrent.atomic.AtomicBoolean(false)
 
@@ -84,7 +91,7 @@ class StakeVoteController(
                 w.store.state.stakeVoteRun = run.copy(total = total); w.store.save()
             }
             // The first cast is what the confirm sheet showed a fee for.
-            launch(first, shownFee = PrivacyWallet.shownFee.get())
+            launch(w, first, shownFee = PrivacyWallet.shownFee.get())
         }
         return runBlocking { first.await() }
     }
@@ -96,7 +103,7 @@ class StakeVoteController(
         val w = runCatching { wallet() }.getOrNull() ?: return
         val run = synchronized(w) { w.store.state.stakeVoteRun } ?: run { _progress.value = null; return }
         _progress.value = Progress(run.proposalId, run.done, run.total)
-        launch(null, resumed = true)
+        launch(w, null, resumed = true)
     }
 
     /** Stops the run now (between casts, or before the next one starts); nothing is left to resume. */
@@ -114,18 +121,23 @@ class StakeVoteController(
         val j = job ?: return
         suspended.set(true)
         j.cancel()
+        previous = j
         job = null
         _progress.value = null
     }
 
-    private fun launch(first: CompletableDeferred<String>?, resumed: Boolean = false, shownFee: Long? = null) {
+    /** Runs the persisted run of [w] (the wallet the caller resolved: never re-resolved inside the job). */
+    private fun launch(w: PrivacyWallet, first: CompletableDeferred<String>?, resumed: Boolean = false, shownFee: Long? = null) {
         val suspendedFlag = java.util.concurrent.atomic.AtomicBoolean(false)
         suspended = suspendedFlag
         // A suspended job says nothing more on screen (a blocking cast may still finish).
         fun show(p: Progress) { if (!suspendedFlag.get()) _progress.value = p }
+        val before = previous
         job = scope.launch(Dispatchers.IO) {
-            val w = wallet()
+            before?.join()
             var run = synchronized(w) { w.store.state.stakeVoteRun } ?: return@launch
+            // The run is still this one (a chain switch drops it: audit 4, L2).
+            fun stillOurs() = synchronized(w) { w.store.state.stakeVoteRun?.proposalId == run.proposalId }
             try {
                 val options = run.options.map { (o, wt) -> WeightedVoteOption.newBuilder().setOption(VoteOption.forNumber(o)).setWeight(wt).build() }
                 val items = w.stakeVoteItems(run.proposalId).filter { it !is PrivacyWallet.StakeVoteItem.Position || it.id !in run.votedPositions }.shuffled(RNG)
@@ -139,9 +151,20 @@ class StakeVoteController(
                         w.sync()
                     }
                     ensureActive()
+                    if (!stillOurs()) throw CancellationException("the stake vote run was dropped")
+                    // A position's vote is persisted the moment the node takes it
+                    // (audit 4, L5), before the wait for its block: a run resumed
+                    // after a suspend or a lost process never votes it again.
+                    val accepted = { _: String ->
+                        if (item is PrivacyWallet.StakeVoteItem.Position) synchronized(w) {
+                            w.store.state.stakeVoteRun?.takeIf { it.proposalId == run.proposalId }?.let { cur ->
+                                w.store.state.stakeVoteRun = cur.copy(votedPositions = cur.votedPositions + item.id); runCatching { w.store.save() }
+                            }
+                        }
+                    }
                     // As the last sync left it: a note voted (or pending) or a position gone is skipped.
-                    val hash = (if (first?.isCompleted == false && shownFee != null) PrivacyWallet.withShownFee(shownFee) { w.castStakeVote(run.proposalId, item, options) }
-                        else w.castStakeVote(run.proposalId, item, options)) ?: continue
+                    val hash = (if (first?.isCompleted == false && shownFee != null) PrivacyWallet.withShownFee(shownFee) { w.castStakeVote(run.proposalId, item, options, accepted) }
+                        else w.castStakeVote(run.proposalId, item, options, accepted)) ?: continue
                     run = run.copy(
                         done = run.done + 1,
                         votedPositions = if (item is PrivacyWallet.StakeVoteItem.Position) run.votedPositions + item.id else run.votedPositions,
@@ -155,7 +178,8 @@ class StakeVoteController(
             } catch (e: CancellationException) {
                 show(Progress(run.proposalId, run.done, run.total, cancelled = true))
                 first?.completeExceptionally(e)
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // An Error too (audit 4, M7): the run fails, the app does not.
                 show(Progress(run.proposalId, run.done, run.total, error = e.message ?: e.toString()))
                 first?.completeExceptionally(e)
             } finally {

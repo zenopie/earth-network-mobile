@@ -19,8 +19,12 @@ import kotlin.coroutines.coroutineContext
 object GasPow {
     const val VERSION = "earth-gas-pow/v1"
 
-    /** The most bits the wallet will work for (the server's POW_MAX_BITS is 22). */
-    const val MAX_BITS = 28
+    /**
+     * The most bits the wallet will work for (audit 4): the server's policy
+     * caps POW_MAX_BITS at 24 (it ships at 22); a server asking more is
+     * refused rather than worked for (each bit doubles the phone's work).
+     */
+    const val MAX_BITS = 24
 
     data class Stamp(val ts: Long, val nonce: String, val bits: Int)
 

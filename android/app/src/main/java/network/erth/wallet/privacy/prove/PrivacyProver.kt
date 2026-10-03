@@ -99,12 +99,20 @@ object PrivacyProver {
         Loaded(c, c.getVerificationKey())
     }
 
+    /**
+     * A proof's duration, logged in debug builds only (audit 4): in a
+     * release log it would say when and how long this wallet proved what.
+     */
+    private fun timing(context: Context, kind: String, ms: Long) {
+        if (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) Log.i(TAG, "$kind proved in ${ms}ms")
+    }
+
     fun proveAction(context: Context, w: ActionWitness): ByteArray {
         w.check()
         val t0 = SystemClock.elapsedRealtime()
         return prove(context, Kind.ACTION, w.noirInputs(), w.publicInputs()).also {
             lastActionMs = SystemClock.elapsedRealtime() - t0
-            Log.i(TAG, "action proved in ${lastActionMs}ms")
+            timing(context, "action", lastActionMs)
         }
     }
 
@@ -113,7 +121,7 @@ object PrivacyProver {
         val t0 = SystemClock.elapsedRealtime()
         return prove(context, Kind.STAKE, w.noirInputs(), w.publicInputs()).also {
             lastStakeMs = SystemClock.elapsedRealtime() - t0
-            Log.i(TAG, "stake proved in ${lastStakeMs}ms")
+            timing(context, "stake", lastStakeMs)
         }
     }
 
@@ -122,7 +130,7 @@ object PrivacyProver {
         val t0 = SystemClock.elapsedRealtime()
         return prove(context, Kind.MEMBERSHIP, w.noirInputs(), w.publicInputs()).also {
             lastMembershipMs = SystemClock.elapsedRealtime() - t0
-            Log.i(TAG, "membership proved in ${lastMembershipMs}ms")
+            timing(context, "membership", lastMembershipMs)
         }
     }
 
@@ -131,7 +139,7 @@ object PrivacyProver {
         val t0 = SystemClock.elapsedRealtime()
         return prove(context, Kind.VOTE, w.noirInputs(), w.publicInputs()).also {
             lastVoteMs = SystemClock.elapsedRealtime() - t0
-            Log.i(TAG, "vote proved in ${lastVoteMs}ms")
+            timing(context, "vote", lastVoteMs)
         }
     }
 

@@ -120,6 +120,8 @@ class HttpPrivacyIndexer(private val host: String, private val chainId: String =
             throw IOException("indexer path $path leaves ${hostUrl.host}")
         }
         val c = url.openConnection() as HttpURLConnection
+        // Audit 4: a redirect is never followed (it would leave the pinned host); a 3xx is an error.
+        c.instanceFollowRedirects = false
         c.connectTimeout = 15_000
         c.readTimeout = 60_000
         c.setRequestProperty("Accept-Encoding", "gzip")
@@ -130,6 +132,7 @@ class HttpPrivacyIndexer(private val host: String, private val chainId: String =
             val body = stream?.let { readBounded(it, MAX_BODY_BYTES) }.orEmpty()
             if (code == 404) throw IndexerBaseMoved("indexer $path: 404 ${body.take(200)}")
             if (code !in 200..299) throw IOException("indexer $path: $code ${body.take(200)}")
+            network.erth.wallet.chain.EarthRest.checkJsonDepth(body)
             return JSONObject(body)
         } finally {
             c.disconnect()

@@ -87,6 +87,9 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     /** (height -> tree state) after each block, for queries pinned to a height. */
     val identityAt = java.util.TreeMap<Long, TreeState>()
     val stakeAt = java.util.TreeMap<Long, TreeState>()
+    val noteAt = java.util.TreeMap<Long, TreeState>()
+    /** The block each note root was first recorded in (x/shielded RootRecord.height). */
+    val noteRootHeights = HashMap<Fr, Long>()
     /** Each block's time, as the LCD serves it ([blockTimesPruned]: the node has none). */
     val blockTimes = HashMap<Long, Long>()
     val notes = ArrayList<NoteRow>()
@@ -154,6 +157,8 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     private fun block() {
         noteRoots.add(noteTree.root()); identityRoots.add(identityTree.root())
         noteRootSizes[noteTree.root()] = noteTree.size
+        noteRootHeights.putIfAbsent(noteTree.root(), height)
+        noteAt[height] = TreeState(noteTree.size, if (noteTree.size == 0L) null else noteTree.root())
         if (stakeTree.size > 0) stakeRoots.add(stakeTree.root())
         identityAt[height] = TreeState(identityTree.size, if (identityTree.size == 0L) null else identityTree.root())
         stakeAt[height] = TreeState(stakeTree.size, if (stakeTree.size == 0L) null else stakeTree.root())
@@ -267,9 +272,9 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             // The proofs made for it never reach the chain.
             rejectNext--
             prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear(); prover.votes.clear()
-            throw java.io.IOException("broadcast refused (test)")
+            throw network.erth.wallet.privacy.tx.UnsignedTx.TxRejected(19, "broadcast refused (test)")
         }
-        val hash = "HASH$height"
+        val hash = network.erth.wallet.privacy.tx.UnsignedTx.hash(tx)
         if (dropNext > 0) {
             // Accepted by CheckTx, then never included (evicted from the mempool).
             dropNext--
@@ -720,14 +725,28 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     }
 
     override fun rootsLatest() = LatestRoots(
-        if (noteTree.size == 0L) null else RootRecord(noteTree.root(), noteTree.size, height - 1, now),
+        if (noteTree.size == 0L) null else RootRecord(noteTree.root(), noteTree.size, noteRootHeights[noteTree.root()] ?: (height - 1), now),
         if (identityTree.size == 0L) null else RootRecord(identityTree.root(), identityTree.size, height - 1, now), height - 1,
         if (stakeTree.size == 0L) null else RootRecord(stakeTree.root(), stakeTree.size, height - 1, now),
     )
 
     // ---- the chain's own queries (LCD), for the wallet's root checks ----
 
-    override fun noteRoot(root: Fr): NoteRootRecord? = noteRootSizes[root]?.let { NoteRootRecord(true, it) }
+    override fun noteRoot(root: Fr): NoteRootRecord? = noteRootSizes[root]?.let { NoteRootRecord(true, it, noteRootHeights[root]) }
+
+    override fun noteTree(height: Long?): TreeState = at(noteAt, height)
+
+    /** Set to make the LCD say nothing of txs by hash. */
+    var txLookupBlind = false
+
+    override fun txStatus(hash: String): network.erth.wallet.privacy.sync.TxStatus? = when {
+        txLookupBlind -> null
+        txs[hash] == null -> network.erth.wallet.privacy.sync.TxStatus.MISSING
+        txs[hash]!!.code != 0 -> network.erth.wallet.privacy.sync.TxStatus.FAILED
+        else -> network.erth.wallet.privacy.sync.TxStatus.COMMITTED
+    }
+
+    override fun latestBlock(): network.erth.wallet.privacy.sync.ChainTip = network.erth.wallet.privacy.sync.ChainTip(latestHeight(), now)
 
     /** Drops every recorded note root but the latest (x/shielded prunes roots past its window). */
     fun pruneNoteRoots() {

@@ -328,11 +328,38 @@ internal fun EarthContent(
 
         EarthRoute.Activity -> ActivityScreen(rows = activity.orEmpty(), modifier = inset)
 
-        EarthRoute.Settings -> SettingsScreen(
-            items = settingsItems(nav, state),
-            version = version,
-            modifier = inset,
-        )
+        EarthRoute.Settings -> {
+            var forgetting by remember { mutableStateOf(false) }
+            SettingsScreen(
+                items = settingsItems(nav, state) { forgetting = true },
+                version = version,
+                modifier = inset,
+            )
+            if (forgetting) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { forgetting = false },
+                    title = { androidx.compose.material3.Text("Forget private data?") },
+                    text = {
+                        androidx.compose.material3.Text(
+                            "Deletes this wallet's shielded notes, registration record and sync data from this phone. " +
+                                "Nothing on chain changes: the next sync finds everything again from the recovery phrase.",
+                        )
+                    },
+                    confirmButton = {
+                        androidx.compose.material3.TextButton(onClick = {
+                            forgetting = false
+                            scope.launch {
+                                withContext(Dispatchers.IO) { runCatching { network.erth.wallet.privacy.PrivacySession.forgetPrivateData(context) } }
+                                onRefresh()
+                            }
+                        }) { androidx.compose.material3.Text("Forget") }
+                    },
+                    dismissButton = {
+                        androidx.compose.material3.TextButton(onClick = { forgetting = false }) { androidx.compose.material3.Text("Cancel") }
+                    },
+                )
+            }
+        }
 
         EarthRoute.Security -> SecurityScreen(modifier = inset)
 
@@ -1044,7 +1071,7 @@ private fun minShares(poolId: Long, erthIn: java.math.BigInteger, tokenIn: java.
 /** Which direction the stake sheet was opened in. */
 private enum class StakeIntent { Stake, Unstake }
 
-private fun settingsItems(nav: EarthNavController, state: WalletUiState?): List<SettingsItem> =
+private fun settingsItems(nav: EarthNavController, state: WalletUiState?, onForgetPrivate: () -> Unit): List<SettingsItem> =
     listOf(
         SettingsItem(
             title = "Identity",
@@ -1063,6 +1090,12 @@ private fun settingsItems(nav: EarthNavController, state: WalletUiState?): List<
             subtitle = "Merge small notes",
             icon = R.drawable.ic_shield_check,
             onClick = { nav.push(EarthRoute.Notes) },
+        ),
+        SettingsItem(
+            title = "Forget private data",
+            subtitle = "Delete this wallet's shielded data from this phone",
+            icon = R.drawable.ic_lock,
+            onClick = onForgetPrivate,
         ),
         SettingsItem(
             title = "Wallets",

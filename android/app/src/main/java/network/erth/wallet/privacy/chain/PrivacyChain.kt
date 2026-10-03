@@ -262,6 +262,7 @@ object RestPrivateChain : PrivateChain {
             events = events,
             code = tr.optInt("code", 0),
             log = tr.optString("raw_log"),
+            codespace = tr.optString("codespace"),
         )
     }
 }

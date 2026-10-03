@@ -24,6 +24,12 @@ data class IdentityRecord(
     val activatedAt: Long,
     /** The passport nullifier: public in the registration, the switch/expiry key. */
     val passportNullifier: String,
+    /**
+     * Matched against an identity tree the chain verified in the same sync
+     * (audit 4, M5), or resolved from the registration's own committed tx.
+     * A reset keeps only a verified identity; one from before is not.
+     */
+    val verified: Boolean = false,
 )
 
 /**
@@ -159,6 +165,12 @@ class PrivacyState {
     var stakeVoteRun: StakeVoteRun? = null
     /** Every stake vote cast: (proposal, vote nullifier). */
     val stakeVotes: MutableList<StakeVoteRecord> = ArrayList()
+    /** A uniform sample of identity row heights (registration blocks): a record's LCD cover set is drawn from it (audit 4). */
+    val identityHeights: MutableList<Long> = ArrayList()
+    var identityRowsSeen: Long = 0
+    /** The UTC day [claimOffset] was drawn for, and the draw: one per day, whatever restarts the app (audit 4). */
+    var claimOffsetDay: Long = -1
+    var claimOffset: Long = 0
     /** Next unused Groundworks owner-tag counter (PrivacyKeys.otagSalt). */
     var nextOtagCounter: Int = 0
     /** The highest owner-tag counter of a position this wallet closed, from its unlock memos (-1: none; K11). */
@@ -196,7 +208,8 @@ class PrivacyState {
         put("notes", JSONArray().apply { notes.forEach { put(noteJson(it)) } })
         identity?.let { id ->
             put("identity", JSONObject().put("leaf_index", id.leafIndex).put("dsc_key", id.dscKey.toHex())
-                .put("country", id.country.toHex()).put("activated_at", id.activatedAt).put("passport_nullifier", id.passportNullifier))
+                .put("country", id.country.toHex()).put("activated_at", id.activatedAt).put("passport_nullifier", id.passportNullifier)
+                .put("verified", id.verified))
         }
         put("claimed_days", JSONArray(claimedDays.toList()))
         put("caretaker_cast_at", caretakerCastAt)
@@ -214,6 +227,8 @@ class PrivacyState {
                     .put("until", v.until ?: JSONObject.NULL).put("confirmed", v.confirmed))
             }
         })
+        put("identity_heights", JSONArray(identityHeights)); put("identity_rows_seen", identityRowsSeen)
+        put("claim_offset_day", claimOffsetDay); put("claim_offset", claimOffset)
         put("next_otag_counter", nextOtagCounter); put("closed_otag_max", closedOtagMax)
         put("stake_next", stakeNext); put("stake_height", stakeHeight); put("stake_nullifiers_next", stakeNullifiersNext)
         put("stake_notes", JSONArray().apply { stakeNotes.forEach { put(stakeJson(it)) } })
@@ -256,7 +271,7 @@ class PrivacyState {
             j.optJSONArray("notes")?.let { a -> for (i in 0 until a.length()) notes.add(noteFromJson(a.getJSONObject(i))) }
             j.optJSONObject("identity")?.let {
                 identity = IdentityRecord(it.getLong("leaf_index"), Fr.fromHex(it.getString("dsc_key")), Fr.fromHex(it.getString("country")),
-                    it.getLong("activated_at"), it.optString("passport_nullifier"))
+                    it.getLong("activated_at"), it.optString("passport_nullifier"), it.optBoolean("verified", false))
             }
             j.optJSONArray("claimed_days")?.let { a -> for (i in 0 until a.length()) claimedDays.add(a.getLong(i)) }
             caretakerCastAt = j.optLong("caretaker_cast_at")
@@ -278,6 +293,8 @@ class PrivacyState {
                         if (it.isNull("tx_hash")) null else it.getString("tx_hash"), opt(it, "until"), it.optBoolean("confirmed")))
                 }
             }
+            identityHeights.addAll(longs(j.optJSONArray("identity_heights"))); identityRowsSeen = j.optLong("identity_rows_seen")
+            claimOffsetDay = j.optLong("claim_offset_day", -1); claimOffset = j.optLong("claim_offset")
             nextOtagCounter = j.optInt("next_otag_counter"); closedOtagMax = j.optInt("closed_otag_max", -1)
             stakeNext = j.optLong("stake_next"); stakeHeight = j.optLong("stake_height"); stakeNullifiersNext = j.optLong("stake_nullifiers_next")
             j.optJSONArray("stake_notes")?.let { a -> for (i in 0 until a.length()) stakeNotes.add(stakeFromJson(a.getJSONObject(i))) }
@@ -294,6 +311,7 @@ class PrivacyState {
             .put("spent_height", n.spentHeight ?: JSONObject.NULL)
             .put("pending_at", n.pendingAt ?: JSONObject.NULL)
             .put("pending_until", n.pendingUntil ?: JSONObject.NULL)
+            .put("pending_tx", n.pendingTx ?: JSONObject.NULL)
 
         private fun stakeFromJson(o: JSONObject) = OwnedStakeNote(
             position = o.getLong("position"), height = o.getLong("height"), denom = o.getString("denom"), amount = o.getLong("amount"),
@@ -302,7 +320,10 @@ class PrivacyState {
             spentHeight = if (o.isNull("spent_height")) null else o.getLong("spent_height"),
             pendingAt = if (o.isNull("pending_at")) null else o.getLong("pending_at"),
             pendingUntil = opt(o, "pending_until"),
+            pendingTx = optString(o, "pending_tx"),
         )
+
+        private fun optString(o: JSONObject, k: String): String? = if (!o.has(k) || o.isNull(k)) null else o.getString(k)
 
         private fun noteJson(n: OwnedNote) = JSONObject()
             .put("position", n.position).put("height", n.height).put("cm", n.cm.toHex()).put("nf", n.nf.toHex())
@@ -311,6 +332,7 @@ class PrivacyState {
             .put("spent_height", n.spentHeight ?: JSONObject.NULL)
             .put("pending_at", n.pendingAt ?: JSONObject.NULL)
             .put("pending_until", n.pendingUntil ?: JSONObject.NULL)
+            .put("pending_tx", n.pendingTx ?: JSONObject.NULL)
 
         private fun noteFromJson(o: JSONObject): OwnedNote {
             val memo = o.optString("memo")
@@ -322,6 +344,7 @@ class PrivacyState {
                 spentHeight = if (o.isNull("spent_height")) null else o.getLong("spent_height"),
                 pendingAt = if (o.isNull("pending_at")) null else o.getLong("pending_at"),
                 pendingUntil = opt(o, "pending_until"),
+                pendingTx = optString(o, "pending_tx"),
             )
         }
     }
@@ -375,11 +398,13 @@ class PrivacyStore private constructor(private val dir: File?) {
     }
 
     /**
-     * Forgets the synced data. On the same chain (an inconsistent sync) it
-     * keeps the owner-tag counter, the registration (its leaf, or the one
-     * pending) and what the wallet itself cast (claims, caretaker split,
-     * referrer); a different chain or genesis (a relaunch under the same
-     * chain id) keeps only the owner-tag counter.
+     * Forgets the synced data. On the same chain (an inconsistent sync, a
+     * root mismatch) it keeps the owner-tag counter, the registration (its
+     * leaf only when it was matched against a verified tree, audit 4 M5; or
+     * the one pending) and what the wallet itself cast (claims, caretaker
+     * split, referrer, its stake votes, audit 4 L1, and the day's claim
+     * offset); a different chain or genesis (a relaunch under the same chain
+     * id) keeps only the owner-tag counter.
      */
     @Synchronized
     fun reset(chainId: String?, genesis: String? = state.genesis) {
@@ -393,12 +418,14 @@ class PrivacyStore private constructor(private val dir: File?) {
             nextOtagCounter = old.nextOtagCounter
             closedOtagMax = old.closedOtagMax
             if (old.chainId == chainId && old.genesis == genesis) {
-                identity = old.identity
+                identity = old.identity?.takeIf { it.verified }
                 pendingRegistration = old.pendingRegistration
                 claimedDays.addAll(old.claimedDays)
                 caretakerCastAt = old.caretakerCastAt; caretakerSplit = old.caretakerSplit
                 referrerAddress = old.referrerAddress; referrerBoundAt = old.referrerBoundAt
                 stakeVoteRun = old.stakeVoteRun
+                stakeVotes.addAll(old.stakeVotes)
+                claimOffsetDay = old.claimOffsetDay; claimOffset = old.claimOffset
             }
         }
         save()

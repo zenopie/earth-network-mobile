@@ -58,6 +58,8 @@ data class OwnedNote(
     val pendingAt: Long? = null,
     /** That tx's timeout_height: the note is released only once the chain is past it (null: a pre-timeout mark). */
     val pendingUntil: Long? = null,
+    /** That tx's hash: released only once the chain says it is missing or failed (audit 4; null: a mark from before). */
+    val pendingTx: String? = null,
 ) {
     val unspent: Boolean get() = spentHeight == null
 }
@@ -105,6 +107,8 @@ data class OwnedStakeNote(
     val pendingAt: Long? = null,
     /** The spending tx's timeout_height (see OwnedNote.pendingUntil). */
     val pendingUntil: Long? = null,
+    /** The spending tx's hash (see OwnedNote.pendingTx). */
+    val pendingTx: String? = null,
 ) {
     val unspent: Boolean get() = spentHeight == null
     val spendable: Boolean get() = unspent && pendingAt == null && amount > 0

@@ -34,6 +34,8 @@ data class TxResult(
     /** DeliverTx code: 0 is success (a looked-up tx may have failed in its block). */
     val code: Int = 0,
     val log: String = "",
+    /** The module the code is from ("" for success or unknown): a code means nothing without it. */
+    val codespace: String = "",
 ) {
     fun attr(type: String, key: String): String? = events.firstOrNull { it.first == type && key in it.second }?.second?.get(key)
 }
@@ -146,14 +148,16 @@ class PrivateTxEngine(
      * on are fixed first: the sighash binds them, so every proof is made over
      * the tx exactly as broadcast. The fee is capped ([feeCap]) and, with
      * [shownFee], may not exceed what the confirm sheet showed. [accepted]
-     * gets the timeout height: spent notes stay pending until the chain is
-     * past it.
+     * gets the hash and the timeout height before the broadcast: spent notes
+     * stay pending until the chain is past it and says the tx is not in it.
      */
     fun run(
         assemble: (fee: Long) -> Assembled,
         memo: String = "",
         shownFee: Long? = null,
         accepted: (hash: String, Assembled, timeoutHeight: Long) -> Unit = { _, _, _ -> },
+        /** The broadcast was refused outright (the tx is in no mempool): undo what [accepted] marked. */
+        rejected: (hash: String, Assembled) -> Unit = { _, _ -> },
     ): Pair<TxResult, Assembled> {
         val timeout = timeoutHeight()
         val (q, a) = price(assemble, memo, timeout, placeholders = false)
@@ -178,7 +182,23 @@ class PrivateTxEngine(
         check(PrivateMsgs.sighash(msg, chainId, tx) == sighash)
         check(PrivateMsgs.totalFee(msg) == q.fee) { "the msg must pay exactly the quoted fee" }
         checkShape(msg)
-        return chain.broadcast(UnsignedTx.build(msg, tx)) { hash -> accepted(hash, a, timeout) } to a
+        val raw = UnsignedTx.build(msg, tx)
+        // Audit 4: what the tx spends is marked before it is sent, under the
+        // hash computed here (the chain's own: SHA-256 of the bytes). A
+        // broadcast whose answer is lost (a timeout, a killed app) after the
+        // node took it never leaves its notes spendable; they are released
+        // only once the chain says the tx is missing or failed past its
+        // timeout_height. Only a refusal that proves the tx never entered a
+        // mempool (CheckTx's code, no connection at all) undoes the mark.
+        val hash = UnsignedTx.hash(raw)
+        accepted(hash, a, timeout)
+        val result = try {
+            chain.broadcast(raw) { nodeHash -> check(nodeHash.equals(hash, ignoreCase = true)) { "the node names the tx $nodeHash, not $hash" } }
+        } catch (e: Exception) {
+            if (e is UnsignedTx.TxRejected || e is java.net.ConnectException) rejected(hash, a)
+            throw e
+        }
+        return result to a
     }
 
     /**

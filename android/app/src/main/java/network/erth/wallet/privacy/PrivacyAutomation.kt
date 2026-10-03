@@ -118,15 +118,21 @@ object PrivacyAutomation {
     }.map { it.denom }.distinct()
 
     private val rng = SecureRandom()
-    private var offsetDay = -1L
-    private var offset = 0L
 
-    /** Today's random claim offset, drawn once per UTC day. */
-    @Synchronized
-    fun claimOffset(now: Long): Long {
+    /**
+     * Today's random claim offset, drawn once per UTC day and persisted with
+     * the wallet (audit 4): an app restarted during the day keeps the day's
+     * draw. A draw per process start would give every restart another chance
+     * at an early offset, skewing claims towards midnight.
+     */
+    fun claimOffset(state: network.erth.wallet.privacy.sync.PrivacyState, now: Long, save: () -> Unit = {}): Long {
         val day = now / PrivacyWallet.SECONDS_PER_DAY
-        if (day != offsetDay) { offsetDay = day; offset = (rng.nextDouble() * CLAIM_WINDOW_S).toLong() }
-        return offset
+        if (state.claimOffsetDay != day) {
+            state.claimOffsetDay = day
+            state.claimOffset = (rng.nextDouble() * CLAIM_WINDOW_S).toLong()
+            save()
+        }
+        return state.claimOffset
     }
 
     /** The random pause between two automated actions in one pass. */
@@ -176,7 +182,9 @@ object PrivacyAutomation {
                 act(a)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // Audit 4 (M7): an Error too (a hostile response's
+                // StackOverflowError): the action fails, the app does not.
                 onFailure(a, e)
             }
         }
@@ -195,7 +203,7 @@ object PrivacyAutomation {
                 identityLive = w.identityStatus() == WalletSync.IdentityStatus.LIVE,
                 claimOpensAt = runCatching { w.claimOpensAt() }.getOrNull(),
                 claimedToday = w.claimedToday(),
-                claimOffset = claimOffset(now),
+                claimOffset = synchronized(w) { claimOffset(w.store.state, now) { runCatching { w.store.save() } } },
                 caretakerDue = runCatching { w.caretakerDue() }.getOrDefault(false),
                 referrerDue = runCatching { w.referrerDue() }.getOrDefault(false),
                 hasFeeErth = (w.poolBalances()["uerth"] ?: 0L) > 0,
@@ -230,7 +238,8 @@ object PrivacyAutomation {
                 runOnce(context)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // Audit 4 (M7): an Error escaping here would end the coroutine and crash the app on every unlock.
                 Log.w(TAG, "automation pass failed: ${e.javaClass.simpleName}")
             }
             delay(INTERVAL_MS)

@@ -404,7 +404,7 @@ class ReauditFixesTest {
         val c = StakeVoteController(scope, { a }, pause = { pauses.add(it) })
         val before = chain.height
         val first = c.startAndAwaitFirst(12, yes)
-        assertTrue(first.startsWith("HASH"))
+        assertTrue(first.matches(Regex("[0-9A-F]{64}")))
         val p = await(c.progress) { it?.finished == true }!!
         assertEquals(3, p.total)
         assertEquals(3, p.done)

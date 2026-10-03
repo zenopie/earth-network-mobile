@@ -187,16 +187,25 @@ class PrivacyWallet(
      * the chain anyway, and its notes may not exist.
      */
     @Synchronized
-    private fun run(memo: String = "", accepted: (hash: String, timeoutHeight: Long) -> Unit = { _, _ -> }, assemble: (fee: Long) -> Assembled): TxResult {
+    private fun run(
+        memo: String = "",
+        accepted: (hash: String, timeoutHeight: Long) -> Unit = { _, _ -> },
+        rejected: (hash: String) -> Unit = {},
+        assemble: (fee: Long) -> Assembled,
+    ): TxResult {
         requireVerified()
-        // The spent notes are marked the moment the node accepts the tx
-        // (K7), before the wait for its block: a wait that times out (the tx
-        // may still land) or a killed app never leaves them spendable. They
-        // stay pending until the chain is past the tx's timeout_height.
-        val (result, _) = engine.run(assemble, memo, shownFee.get()) { hash, a, timeout ->
-            markPending(a.spends, a.stakeSpends, timeout)
+        // The spent notes are marked before the tx is sent (K7, audit 4),
+        // under its hash: a wait that times out (the tx may still land), a
+        // lost answer or a killed app never leaves them spendable. They stay
+        // pending until the chain is past the tx's timeout_height and says the
+        // tx is not in a block (WalletSync.releaseStalePending).
+        val (result, _) = engine.run(assemble, memo, shownFee.get(), accepted = { hash, a, timeout ->
+            markPending(a.spends, a.stakeSpends, timeout, hash)
             accepted(hash, timeout)
-        }
+        }, rejected = { hash, a ->
+            unmarkPending(a.spends, a.stakeSpends, hash)
+            rejected(hash)
+        })
         return result
     }
 
@@ -214,14 +223,28 @@ class PrivacyWallet(
     /** What [run] would charge, without proving (placeholder nullifiers): for a confirm sheet. */
     fun quote(assemble: (fee: Long) -> Assembled): PrivateTxEngine.Quote = engine.quote(assemble)
 
-    private fun markPending(spent: List<OwnedNote>, stake: List<OwnedStakeNote>, timeoutHeight: Long) {
+    private fun markPending(spent: List<OwnedNote>, stake: List<OwnedStakeNote>, timeoutHeight: Long, hash: String) {
         val positions = spent.map { it.position }.toSet()
         val stakePositions = stake.map { it.position }.toSet()
         val s = store.state
         val t = now()
-        for (i in s.notes.indices) if (s.notes[i].position in positions) s.notes[i] = s.notes[i].copy(pendingAt = t, pendingUntil = timeoutHeight)
+        for (i in s.notes.indices) if (s.notes[i].position in positions) s.notes[i] = s.notes[i].copy(pendingAt = t, pendingUntil = timeoutHeight, pendingTx = hash)
         for (i in s.stakeNotes.indices) if (s.stakeNotes[i].position in stakePositions) {
-            s.stakeNotes[i] = s.stakeNotes[i].copy(pendingAt = t, pendingUntil = timeoutHeight)
+            s.stakeNotes[i] = s.stakeNotes[i].copy(pendingAt = t, pendingUntil = timeoutHeight, pendingTx = hash)
+        }
+        store.save()
+    }
+
+    /** A broadcast refused outright (in no mempool): the notes it marked are spendable again. */
+    private fun unmarkPending(spent: List<OwnedNote>, stake: List<OwnedStakeNote>, hash: String) {
+        val positions = spent.map { it.position }.toSet()
+        val stakePositions = stake.map { it.position }.toSet()
+        val s = store.state
+        for (i in s.notes.indices) if (s.notes[i].position in positions && s.notes[i].pendingTx == hash) {
+            s.notes[i] = s.notes[i].copy(pendingAt = null, pendingUntil = null, pendingTx = null)
+        }
+        for (i in s.stakeNotes.indices) if (s.stakeNotes[i].position in stakePositions && s.stakeNotes[i].pendingTx == hash) {
+            s.stakeNotes[i] = s.stakeNotes[i].copy(pendingAt = null, pendingUntil = null, pendingTx = null)
         }
         store.save()
     }
@@ -415,7 +438,10 @@ class PrivacyWallet(
             )
             store.save()
         }
-        val result = run(accepted = pending) { fee ->
+        val refused = { hash: String ->
+            if (store.state.pendingRegistration?.txHash == hash) { store.state.pendingRegistration = null; store.save() }
+        }
+        val result = run(accepted = pending, rejected = refused) { fee ->
             Assembled(listOf(bundle(listOf(record), mapOf(FEE to fee)))) { bs, _, _ -> base.toBuilder().setFee(bs[0]).build() }
         }
         recordRegistration(result)
@@ -467,9 +493,16 @@ class PrivacyWallet(
     fun claimOpensAt(): Long? {
         if (identityStatus() != WalletSync.IdentityStatus.LIVE) return null
         val id = store.state.identity ?: return null
-        val firstDay = id.activatedAt / SECONDS_PER_DAY + 1 + if (id.activatedAt % SECONDS_PER_DAY == 0L) 0 else 1
-        val day = maxOf(today() + if (claimedToday()) 1 else 0, firstDay)
-        return if (day == today()) 0L else day * SECONDS_PER_DAY
+        // Checked throughout (audit 4, H1): an activated_at no block can
+        // have (sync bounds them; an old store may hold one) has no answer.
+        if (id.activatedAt < 0) return null
+        return try {
+            val firstDay = Math.addExact(id.activatedAt / SECONDS_PER_DAY + 1, if (id.activatedAt % SECONDS_PER_DAY == 0L) 0L else 1L)
+            val day = maxOf(today() + if (claimedToday()) 1 else 0, firstDay)
+            if (day == today()) 0L else Math.multiplyExact(day, SECONDS_PER_DAY)
+        } catch (e: ArithmeticException) {
+            null
+        }
     }
 
     /**
@@ -647,12 +680,24 @@ class PrivacyWallet(
      * Makes [amount] of [denom] spendable by one stake proof (two notes):
      * while the two largest fall short, merges the two smallest (one restake
      * each) and syncs. Returns the merge txs it broadcast.
+     *
+     * Audit 4: at most [maxMerges] merges per confirmation (each pays a fee
+     * the user confirmed once), a random pause before each after the first
+     * and before handing back to the action that follows, so the merges and
+     * the action are not one burst that times them together. More than that
+     * is refused: merge on the Notes screen first.
      */
-    fun consolidateStake(denom: String, amount: Long): List<TxResult> {
+    fun consolidateStake(denom: String, amount: Long, maxMerges: Int = MAX_MERGES_PER_CONFIRM, pause: (Long) -> Unit = { Thread.sleep(it) }): List<TxResult> {
         val out = ArrayList<TxResult>()
+        fun space() = pause(MERGE_PAUSE_MIN_MS + (SPACING_RNG.nextDouble() * (MERGE_PAUSE_MAX_MS - MERGE_PAUSE_MIN_MS)).toLong())
         while (true) {
             val ns = spendableStake(denom)
-            if (Amounts.satSum(ns.sortedByDescending { it.amount }.take(2)) { it.amount } >= amount || ns.size < 3) return out
+            if (Amounts.satSum(ns.sortedByDescending { it.amount }.take(2)) { it.amount } >= amount || ns.size < 3) {
+                if (out.isNotEmpty()) space()
+                return out
+            }
+            if (out.size >= maxMerges) throw IllegalStateException("this stake is spread over too many notes for one confirmation; merge them on the Notes screen first")
+            if (out.isNotEmpty()) space()
             out.add(mergeStake(denom))
             sync()
         }
@@ -729,9 +774,16 @@ class PrivacyWallet(
         val vnf = Privacy.voteNf(keys.nk, note.rho, note.position, proposalId)
         resolveVotes()
         if (voted(proposalId, vnf)) throw AlreadyVoted()
-        val nfRoot = snap.nfRoot!!
+        val nfRoot = snap.nfRoot ?: throw IllegalStateException("this proposal's snapshot has no stake nullifier root; it takes no stake vote")
         val low = snapshotNullifiers(snap).nonMembership(Privacy.stakeNf(keys.nk, note.rho, note.position))
-            ?: throw SpentBeforeSnapshot()
+        if (low == null) {
+            // Audit 4 (M3): only when sync, too, saw the spend at or before the
+            // snapshot's block. Otherwise the two disagree (a stream or a
+            // snapshot that is not the chain's): an error, never a vote
+            // silently skipped.
+            if (note.spentHeight != null && snap.height > 0 && note.spentHeight <= snap.height) throw SpentBeforeSnapshot()
+            throw IllegalStateException("the proposal's snapshot nullifier tree holds this note's nullifier, but sync saw no spend before the snapshot; sync again")
+        }
         val weight = voteWeight(note.amount)
         val path = tree.pathAt(note.position, snap.treeSize)
         val asset = Privacy.assetId(note.denom)
@@ -739,7 +791,10 @@ class PrivacyWallet(
             VoteWitness(keys.nk, note.amount, note.rho, note.rcm, note.position, path, low, snap.root, nfRoot, asset, weight, proposalId, sighash)
         }
         try {
-            val r = run(accepted = { hash, timeout -> recordVote(StakeVoteRecord(proposalId, vnf, hash, timeout, confirmed = false)) }) { fee ->
+            val r = run(
+                accepted = { hash, timeout -> recordVote(StakeVoteRecord(proposalId, vnf, hash, timeout, confirmed = false)) },
+                rejected = { hash -> forgetVote(proposalId, vnf, hash) },
+            ) { fee ->
                 Assembled(listOf(feeBundle(fee)), vote = vote) { bs, _, _ ->
                     MsgStakeVote.newBuilder().setBundle(bs[0]).setProposalId(proposalId).setValidator(validator)
                         .addAllOptions(PrivateMsgs.canonicalOptions(options)).setWeight(weight).build()
@@ -754,33 +809,38 @@ class PrivacyWallet(
         }
     }
 
-    private val snapshotRows = HashMap<Long, network.erth.wallet.privacy.sync.StakeSnapshotRow>()
-    private var snapshotsNext = 0L
+    private val snapshots = HashMap<Long, PrivacyChainReads.Snapshot>()
 
     /**
-     * [proposalId]'s snapshot: from the indexer's full snapshot stream (no
-     * request names the proposal), else the chain's Query/Snapshot (a
-     * legacy snapshot without a nullifier root, or one the indexer has not
-     * reached). Whatever the source, the note root is checked against the
-     * wallet's verified stake tree and the nullifier root against the tree
-     * the nullifiers rebuild; the chain proves against its own.
+     * Per-wallet caches built from one chain (snapshots, the stake nullifier
+     * tree): dropped when the store's genesis changes (audit 4, L2).
+     */
+    private var cacheGenesis: String? = null
+
+    private fun checkCaches() = synchronized(snapshots) {
+        val g = store.state.genesis
+        if (g != cacheGenesis) {
+            snapshots.clear()
+            synchronized(nfValues) { nfValues.clear(); nfTrees.clear() }
+            cacheGenesis = g
+        }
+    }
+
+    /**
+     * [proposalId]'s snapshot, from the chain's own Query/Snapshot (audit 4,
+     * M3): its stake root and size, nullifier root and size, block and
+     * validator rates are taken from the LCD, never from the indexer (a
+     * forged nf_root would make a note look spent before the snapshot). The
+     * proposal id is public, so asking names nothing of this wallet. The
+     * note root is then checked against the wallet's verified stake tree and
+     * the nullifier root against the tree the nullifiers rebuild.
      */
     fun snapshot(proposalId: Long): PrivacyChainReads.Snapshot {
-        val row = synchronized(snapshotRows) {
-            if (proposalId !in snapshotRows) runCatching {
-                repeat(MAX_SNAPSHOT_PAGES) {
-                    val page = indexer.stakeSnapshots(snapshotsNext)
-                    page.rows.forEach { snapshotRows[it.proposalId] = it }
-                    snapshotsNext = maxOf(snapshotsNext, page.nextHeight)
-                    if (!page.complete) return@runCatching
-                }
-            }
-            snapshotRows[proposalId]
-        }
-        if (row?.root != null && row.nfRoot != null) {
-            return PrivacyChainReads.Snapshot(row.root, row.treeSize, row.height, emptyMap(), row.nfRoot, row.nfSize)
-        }
-        return reads.snapshot(proposalId)
+        checkCaches()
+        synchronized(snapshots) { snapshots[proposalId] }?.let { return it }
+        val snap = reads.snapshot(proposalId)
+        synchronized(snapshots) { snapshots[proposalId] = snap }
+        return snap
     }
 
     /** This note already voted on this proposal (the chain's code 1119): votes are final. */
@@ -788,6 +848,11 @@ class PrivacyWallet(
 
     /** The note's nullifier is in the proposal's snapshot nullifier tree: it was spent before voting opened. */
     class SpentBeforeSnapshot : IllegalStateException("this stake was spent before the proposal's snapshot and cannot vote on it")
+
+    /** A vote the node refused outright (in no mempool): the note may vote again. */
+    private fun forgetVote(proposalId: Long, vnf: Fr, hash: String) = synchronized(store) {
+        if (store.state.stakeVotes.removeAll { it.proposalId == proposalId && it.vnf == vnf && !it.confirmed && it.txHash == hash }) store.save()
+    }
 
     private fun voted(proposalId: Long, vnf: Fr): Boolean = synchronized(store) {
         store.state.stakeVotes.any { it.proposalId == proposalId && it.vnf == vnf }
@@ -813,7 +878,7 @@ class PrivacyWallet(
         for (v in pending) {
             val r = v.txHash?.let { h -> runCatching { chain.tx(h) }.getOrNull() }
             val next = when {
-                r != null && (r.code == 0 || r.code == VOTE_NULLIFIER_USED) -> v.copy(confirmed = true)
+                r != null && (r.code == 0 || (r.code == VOTE_NULLIFIER_USED && r.codespace == VOTE_CODESPACE)) -> v.copy(confirmed = true)
                 r != null -> null
                 v.txHash == null || (v.until != null && tip != null && tip!! > v.until) -> null
                 else -> continue
@@ -842,6 +907,8 @@ class PrivacyWallet(
         val nfRoot = snap.nfRoot ?: throw IllegalStateException("this proposal's snapshot has no stake nullifier root; it takes no stake vote")
         nfTrees[nfRoot]?.let { return it }
         require(snap.nfSize in 0..network.erth.wallet.privacy.zk.Merkle.CAPACITY && snap.nfSize - 1 < Int.MAX_VALUE) { "nf_size ${snap.nfSize}" }
+        // Audit 4 (L4): nf_size is the LCD's (snapshot()), so the fetch
+        // below is bounded by the chain's own count, never an indexer's.
         val n = maxOf(0L, snap.nfSize - 1).toInt()
         for (chainOnly in listOf(false, true)) {
             val values = runCatching { fetchNullifiers(n, chainOnly) }.getOrElse { if (chainOnly) throw it else { nfValues.clear(); null } } ?: continue
@@ -860,8 +927,10 @@ class PrivacyWallet(
     private fun fetchNullifiers(n: Int, chainOnly: Boolean): List<Fr> {
         if (!chainOnly) runCatching {
             while (nfValues.size < n) {
-                val page = indexer.stakeNullifierLeaves(nfValues.size + 1L, minOf(n - nfValues.size, NF_PAGE))
+                val want = minOf(n - nfValues.size, NF_PAGE)
+                val page = indexer.stakeNullifierLeaves(nfValues.size + 1L, want)
                 if (page.leaves.isEmpty()) break
+                if (page.leaves.size > want) throw WalletSync.Inconsistent("the indexer sent ${page.leaves.size} stake nullifiers for $want")
                 for ((index, v) in page.leaves) {
                     // Contiguous from where we are, or the page is not the tree's order.
                     if (index != nfValues.size + 1L) throw WalletSync.Inconsistent("stake nullifier leaf $index out of order")
@@ -909,7 +978,9 @@ class PrivacyWallet(
         resolveVotes()
         return store.state.stakeNotes.filter {
             it.denom.startsWith(DERTH_PREFIX) && it.amount > 0 && it.position < snap.treeSize &&
-                (it.spentHeight == null || snap.height == 0L || it.spentHeight >= snap.height) &&
+                // Spent in the snapshot's own block is spent before it (the
+                // snapshot is the trees at that block's end; audit 4).
+                (it.spentHeight == null || snap.height == 0L || it.spentHeight > snap.height) &&
                 !voted(proposalId, Privacy.voteNf(keys.nk, it.rho, it.position, proposalId))
         }
     }
@@ -940,12 +1011,12 @@ class PrivacyWallet(
      * left of it to cast (the note already voted on this proposal, or was
      * spent before its snapshot).
      */
-    fun castStakeVote(proposalId: Long, item: StakeVoteItem, options: List<WeightedVoteOption>): String? = when (item) {
+    fun castStakeVote(proposalId: Long, item: StakeVoteItem, options: List<WeightedVoteOption>, accepted: (hash: String) -> Unit = {}): String? = when (item) {
         is StakeVoteItem.Note -> store.state.stakeNotes.firstOrNull { it.position == item.position }?.let { n ->
             try { stakeVote(proposalId, n, options).hash } catch (e: AlreadyVoted) { null } catch (e: SpentBeforeSnapshot) { null }
         }
         is StakeVoteItem.Position -> positions().firstOrNull { it.first.id == item.id && it.second == item.counter }
-            ?.let { (p, c) -> positionVote(p, c, proposalId, options).hash }
+            ?.let { (p, c) -> positionVote(p, c, proposalId, options, accepted).hash }
     }
 
     /**
@@ -1024,9 +1095,9 @@ class PrivacyWallet(
         }
     }
 
-    fun positionVote(position: PrivacyChainReads.Position, counter: Int, proposalId: Long, options: List<WeightedVoteOption>): TxResult {
+    fun positionVote(position: PrivacyChainReads.Position, counter: Int, proposalId: Long, options: List<WeightedVoteOption>, accepted: (hash: String) -> Unit = {}): TxResult {
         val stake = ownerPlan(position, counter)
-        return run { fee ->
+        return run(accepted = { hash, _ -> accepted(hash) }) { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
                 MsgPositionVote.newBuilder().setBundle(bs[0]).setPositionId(position.id).setProposalId(proposalId)
                     .addAllOptions(PrivateMsgs.canonicalOptions(options)).setStake(sp).build()
@@ -1139,6 +1210,12 @@ class PrivacyWallet(
             try { return block() } finally { shownFee.set(before) }
         }
 
+        /** Stake merges one confirmation may pay for, and the random pause between them (audit 4). */
+        const val MAX_MERGES_PER_CONFIRM = 2
+        const val MERGE_PAUSE_MIN_MS = 15_000L
+        const val MERGE_PAUSE_MAX_MS = 45_000L
+        private val SPACING_RNG = java.security.SecureRandom()
+
         const val FEE = "uerth"
         const val DERTH_PREFIX = "derth/"
         const val UNBOND_PREFIX = "unbond/"
@@ -1171,16 +1248,20 @@ class PrivacyWallet(
         /** x/shieldedstaking ErrVoteNullifierUsed. */
         const val VOTE_NULLIFIER_USED = 1119
 
+        /** The codespace [VOTE_NULLIFIER_USED] is registered in: the code alone could be any module's (audit 4). */
+        const val VOTE_CODESPACE = "shieldedstaking"
+
         /** Whether [e] is the chain refusing a vote nullifier already used on the proposal. */
         fun alreadyVotedError(e: Throwable): Boolean {
-            val m = generateSequence(e) { it.cause }.mapNotNull { it.message }.joinToString(" ")
-            return "already voted on this proposal" in m || Regex("""code\s*$VOTE_NULLIFIER_USED\b""").containsMatchIn(m)
+            val chainOf = generateSequence(e) { it.cause }
+            if (chainOf.any { it is network.erth.wallet.privacy.tx.UnsignedTx.TxRejected && it.code == VOTE_NULLIFIER_USED && it.codespace == VOTE_CODESPACE }) return true
+            // Simulate answers with the error's registered text, not its code.
+            return chainOf.mapNotNull { it.message }.any { "this stake note already voted on this proposal" in it }
         }
 
         /** Stake nullifier leaves asked of the indexer a page, and of the LCD (its maximum). */
         const val NF_PAGE = 5000
         const val LCD_NF_PAGE = 1000
-        private const val MAX_SNAPSHOT_PAGES = 1000
 
         /** Positions created before the block the proposal entered voting at (all, when unknown). */
         fun votingPositions(positions: List<PrivacyChainReads.Position>, snap: PrivacyChainReads.Snapshot) =

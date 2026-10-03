@@ -9,8 +9,18 @@ import network.erth.wallet.privacy.note.OwnedStakeNote
 import network.erth.wallet.privacy.zk.Fr
 import network.erth.wallet.privacy.zk.Privacy
 
-/** x/shielded Query/Root: a root the chain recorded, whether it is still an anchor, and its tree size. */
-data class NoteRootRecord(val valid: Boolean, val treeSize: Long)
+/**
+ * x/shielded Query/Root: a root the chain recorded, whether it is still an
+ * anchor, its tree size, and the height of the block that produced it (null:
+ * the node did not say).
+ */
+data class NoteRootRecord(val valid: Boolean, val treeSize: Long, val height: Long? = null)
+
+/** The chain's latest block: its height and time (unix seconds; null when the node did not say). */
+data class ChainTip(val height: Long, val time: Long?)
+
+/** What the chain says of a tx by hash (audit 4): committed, failed in its block, or unknown to it. */
+enum class TxStatus { COMMITTED, FAILED, MISSING }
 
 /**
  * A tree's state as the chain reports it: size and latest recorded root
@@ -44,6 +54,16 @@ interface ChainRoots {
     fun blockTime(height: Long): Long? = null
     /** The LCD's chain id and genesis key (first block hash, 16 hex); null when it cannot say (K6). */
     fun chainIdentity(): ChainIdentity? = null
+    /** The chain's latest block, with its time when the node says it (audit 4: every indexer height and time is bounded by it). */
+    fun latestBlock(): ChainTip? = latestHeight()?.let { ChainTip(it, null) }
+    /** x/shielded Query/Tree at [height]: the note tree's size then (null: the node cannot say). */
+    fun noteTree(height: Long?): TreeState? = null
+    /**
+     * A tx by [hash] (one this wallet broadcast, so the node knows it
+     * already): null when the node could not say. A pending note is released
+     * only on MISSING or FAILED (audit 4).
+     */
+    fun txStatus(hash: String): TxStatus? = null
 }
 
 /** Which chain the LCD serves: its chain id and the first 16 lowercase hex digits of its block 1 hash (null: unavailable). */
@@ -92,6 +112,42 @@ class WalletSync(
     class SyncTimeout(message: String) : java.io.IOException(message)
 
     private var deadline = Long.MAX_VALUE
+
+    /** The chain's tip (LCD) every indexer height and row time this sync is bounded by (audit 4). */
+    private var tip: ChainTip? = null
+
+    /** Our own tx landed but the indexer never reported its spend: what it served is not the chain's (audit 4). */
+    private var ownSpendMissing = false
+
+    private fun readTip(): ChainTip =
+        (runCatching { chain.latestBlock() }.getOrNull() ?: throw java.io.IOException("the node did not say its latest height; nothing was synced"))
+            .also { tip = it }
+
+    /**
+     * [h], an indexer's height (a row's, a cursor, a synced_height), at most
+     * the chain's tip plus [TIP_SLACK] (audit 4, M1): past it the tip is read
+     * again once (the chain moved), then the page is Inconsistent.
+     */
+    private fun bounded(name: String, h: Long): Long {
+        if (h < 0) throw Inconsistent("the indexer's $name height $h")
+        val t = tip ?: readTip()
+        if (h <= t.height + TIP_SLACK) return h
+        if (h <= readTip().height + TIP_SLACK) return h
+        throw Inconsistent("the indexer's $name height $h is past the chain's tip ${tip?.height}")
+    }
+
+    /** A height page's heights and cursors, bounded by the tip. */
+    private fun bounded(name: String, page: HeightPage<*>) {
+        bounded("$name synced", page.syncedHeight)
+        bounded("$name next", maxOf(0L, page.nextHeight - 1))
+        page.blocks.forEach { bounded(name, it.first) }
+    }
+
+    /** The latest block time an indexer row may carry: the tip's (or, unknown, the wallet's clock) plus [TIME_SLACK]. */
+    private fun maxTime(): Long = (tip?.time ?: now()).let { if (it > Long.MAX_VALUE - TIME_SLACK) Long.MAX_VALUE else it + TIME_SLACK }
+
+    /** Whether [t] can be a block time of this chain (audit 4, H1): never 0, never before [MIN_BLOCK_TIME], never past the tip. */
+    private fun timeOk(t: Long): Boolean = t in MIN_BLOCK_TIME..maxTime()
 
     private fun tick() {
         if (monoMs() > deadline) throw SyncTimeout("the privacy sync did not finish in ${syncTimeoutMs / 1000}s")
@@ -158,6 +214,27 @@ class WalletSync(
 
         /** Blocks the indexer may trail the chain by before what it served is labelled stale (K9). */
         const val STALE_BLOCKS = 30L
+
+        /**
+         * Blocks an indexer height may run past the chain's tip as the LCD
+         * reports it (the indexer's node may be a block or two ahead of the
+         * LCD's). Anything further is Inconsistent (audit 4): a height past
+         * the tip would poison the persisted cursors for good.
+         */
+        const val TIP_SLACK = 10L
+
+        /** Seconds an indexer row's block time may run past the tip's time (or the wallet's clock). */
+        const val TIME_SLACK = 3_600L
+
+        /**
+         * No block time before this (2025-01-01 UTC) is one of earth-1's: an
+         * indexer row time, a record's candidate activated_at below it is
+         * refused (audit 4, H1; earth-1's genesis is later still).
+         */
+        const val MIN_BLOCK_TIME = 1_735_689_600L
+
+        /** Identity row heights kept (a uniform sample) to draw a record's LCD cover set from (audit 4, M2). */
+        const val IDENTITY_HEIGHT_SAMPLE = 256
 
         private val sampleRng = java.security.SecureRandom()
 
@@ -330,6 +407,8 @@ class WalletSync(
             switchChain(status.genesis)
             markSyncing()
         }
+        readTip()
+        ownSpendMissing = false
         val s = store.state
         val newNotes = ArrayList<OwnedNote>()
         val spent = ArrayList<OwnedNote>()
@@ -344,13 +423,21 @@ class WalletSync(
             syncIdentity(s, pageLimit)
             tick()
             roots = indexer.rootsLatest()
+            boundRoots(roots)
             if (atIndexerTip(roots) || ++pass >= MAX_PASSES) break
         }
         releaseStalePending(s)
-        // Once a sync, after every pass: the record search is budgeted per sync (K1).
-        matchRecords(s)
-        resolvePending(s)
         val verified = verifyRoots(s, roots)
+        // Audit 4 (M5): a registration is matched only against an identity
+        // tree this same sync verified against the chain's; an unverified one
+        // waits (its leaves are kept) for a sync that verifies. Once a sync,
+        // after every pass: the record search is budgeted per sync (K1).
+        if (verified) {
+            matchRecords(s)
+            resolvePending(s)
+            // An identity from before (or a reset) whose leaf this verified tree holds is verified now.
+            s.identity?.let { id -> if (!id.verified && identityStatus() == IdentityStatus.LIVE) s.identity = id.copy(verified = true) }
+        }
         store.save()
         return Result(s.notesHeight, newNotes, spent, store.noteTree.root(), store.identityTree.root(), newStake, identityStatus(), verified)
     }
@@ -382,6 +469,12 @@ class WalletSync(
         // treated like a switch: the synced data goes, the registration stays.
         val preK6 = old.chainId == chainId && old.genesis == null
         if (switching || preK6) store.switchGenesis(genesis) else store.reset(chainId, genesis)
+    }
+
+    /** Every height /roots/latest names, bounded by the chain's tip (audit 4). */
+    private fun boundRoots(roots: LatestRoots) {
+        bounded("roots synced", roots.syncedHeight)
+        listOfNotNull(roots.note, roots.identity, roots.stake).forEach { bounded("root", it.height) }
     }
 
     /**
@@ -429,9 +522,24 @@ class WalletSync(
                     mismatch = "the chain recorded the indexer's note root at ${rec.treeSize} notes, not ${store.noteTree.size}"
                 !rec.valid -> problems.add("unverified: the indexer is too far behind the chain (its note root is no longer an anchor)")
             }
+            // Audit 4 (M1): the indexer dates its root as the chain does.
+            val h = rec?.height
+            if (h != null && roots.note != null && h != roots.note.height) {
+                problems.add("unverified: the indexer dates its note root at height ${roots.note.height}, the chain at $h")
+            }
         }
         val tip = atIndexerTip(roots)
         if (!tip) problems.add("unverified: the indexer kept moving; sync again")
+        // Audit 4 (M1): the height the indexer claims to be synced to is
+        // checked, not taken: the chain's note tree at exactly that height
+        // (pinned) must be the one served. A stale indexer naming the
+        // current height is caught here (every spend appends notes).
+        if (mismatch == null && tip && roots.syncedHeight > 0) {
+            val t = runCatching { chain.noteTree(roots.syncedHeight) }.getOrNull()
+            if (t != null && t.pinned && t.size != store.noteTree.size) {
+                problems.add("unverified: the chain's note tree at the indexer's height ${roots.syncedHeight} holds ${t.size} notes, the indexer served ${store.noteTree.size}")
+            }
+        }
         fun tree(name: String, local: network.erth.wallet.privacy.zk.MerkleTree, r: RootRecord?, read: (Long?) -> TreeState) {
             // Pinned to the indexer's root height, which is only the local
             // tree's when the local tree is the indexer's latest.
@@ -459,7 +567,12 @@ class WalletSync(
         if (poolSample.items.any { chain.nullifierSpent(it) == false } || stakeSample.items.any { chain.stakeNullifierSpent(it) == false }) {
             problems.add("unverified: the indexer reported a spend the chain does not hold")
         }
-        chain.latestHeight()?.let { tipHeight ->
+        if (ownSpendMissing) problems.add("unverified: a tx of this wallet is in a block but the indexer did not report its spend")
+        // Behind the chain's tip as the LCD says it (audit 4), the indexer's
+        // height having been checked against the chain's note tree above.
+        val tipHeight = runCatching { readTip().height }.getOrNull()
+        if (tipHeight == null) problems.add("unverified: the node did not say its latest height")
+        else {
             val behind = tipHeight - roots.syncedHeight
             if (behind > STALE_BLOCKS) problems.add("unverified: the indexer is $behind blocks behind the chain")
         }
@@ -485,6 +598,7 @@ class WalletSync(
 
     /** Audit 3: a height page never moves backwards, and one that says more follows moves forwards. */
     private fun checkHeights(name: String, from: Long, page: HeightPage<*>) {
+        bounded(name, page)
         if (page.nextHeight < from || (page.complete && page.nextHeight <= from)) {
             throw Inconsistent("a $name page from height $from names next ${page.nextHeight}")
         }
@@ -497,6 +611,8 @@ class WalletSync(
             tick()
             val page = indexer.notes(s.notesNext, limit)
             checkPage(page.rows.size)
+            bounded("note synced", page.syncedHeight)
+            page.rows.forEach { bounded("note", it.height) }
             checkPositions("note", s.notesNext, page.rows.size, page.nextPos, page.complete)
             if (page.rows.isNotEmpty()) {
                 page.rows.forEachIndexed { i, r ->
@@ -594,19 +710,28 @@ class WalletSync(
      */
     private fun releaseStalePending(s: PrivacyState) {
         val now = now()
-        val tip by lazy { runCatching { chain.latestHeight() }.getOrNull() }
-        fun release(pendingAt: Long?, until: Long?, readThrough: Long): Boolean = when {
+        val tipHeight by lazy { runCatching { readTip().height }.getOrNull() }
+        val status = HashMap<String, TxStatus?>()
+        fun release(pendingAt: Long?, until: Long?, hash: String?, readThrough: Long): Boolean = when {
             pendingAt == null -> false
             until == null -> now - pendingAt > PENDING_TIMEOUT_S
-            else -> readThrough >= until && (tip?.let { it > until } ?: false)
+            readThrough < until || tipHeight?.let { it > until } != true -> false
+            // Marks from before audit 4 carry no hash: the timeout alone.
+            hash == null -> true
+            // Audit 4 (M1): the chain itself says the tx did not land (or failed in its block).
+            else -> when (status.getOrPut(hash) { runCatching { chain.txStatus(hash) }.getOrNull() }) {
+                TxStatus.MISSING, TxStatus.FAILED -> true
+                TxStatus.COMMITTED -> { ownSpendMissing = true; false }
+                null -> false
+            }
         }
         for (i in s.notes.indices) {
             val n = s.notes[i]
-            if (n.unspent && release(n.pendingAt, n.pendingUntil, s.nullifiersNext - 1)) s.notes[i] = n.copy(pendingAt = null, pendingUntil = null)
+            if (n.unspent && release(n.pendingAt, n.pendingUntil, n.pendingTx, s.nullifiersNext - 1)) s.notes[i] = n.copy(pendingAt = null, pendingUntil = null, pendingTx = null)
         }
         for (i in s.stakeNotes.indices) {
             val n = s.stakeNotes[i]
-            if (n.unspent && release(n.pendingAt, n.pendingUntil, s.stakeNullifiersNext - 1)) s.stakeNotes[i] = n.copy(pendingAt = null, pendingUntil = null)
+            if (n.unspent && release(n.pendingAt, n.pendingUntil, n.pendingTx, s.stakeNullifiersNext - 1)) s.stakeNotes[i] = n.copy(pendingAt = null, pendingUntil = null, pendingTx = null)
         }
     }
 
@@ -616,6 +741,8 @@ class WalletSync(
             tick()
             val page = indexer.stakeNotes(s.stakeNext, limit)
             checkPage(page.rows.size)
+            bounded("stake note synced", page.syncedHeight)
+            page.rows.forEach { bounded("stake note", it.height) }
             checkPositions("stake note", s.stakeNext, page.rows.size, page.nextPos, page.complete)
             if (page.rows.isNotEmpty()) {
                 page.rows.forEachIndexed { i, r ->
@@ -712,6 +839,13 @@ class WalletSync(
             tick()
             val page = indexer.identity(s.identityNext, limit)
             checkPage(page.rows.size)
+            bounded("identity synced", page.syncedHeight)
+            for (r in page.rows) {
+                bounded("identity", r.height)
+                r.zeroedHeight?.let { bounded("identity zeroing", it) }
+                // Audit 4 (H1): a row's block time is one of this chain's.
+                if (r.time != null && r.time != 0L && !timeOk(r.time)) throw Inconsistent("identity leaf ${r.index} carries block time ${r.time}, outside the chain's")
+            }
             if (page.rows.isEmpty()) break
             val take = page.rows.takeWhile { it.height <= ceiling }
             take.forEachIndexed { i, r ->
@@ -723,6 +857,7 @@ class WalletSync(
             store.identityTree.appendAll(take.map { if (it.zeroedHeight != null && it.zeroedHeight <= ceiling) Fr.ZERO else it.leaf })
             // Each record keeps the leaves of its block as they pass (persisted:
             // never streamed again), and the block's time if the row carries it.
+            for (r in take) offerIdentityHeight(s, r.height)
             for (r in take) if (r.height in recordHeights) {
                 val leaf = store.identityTree.leaf(r.index)
                 for (k in s.regRecords.indices) {
@@ -738,6 +873,13 @@ class WalletSync(
             s.identityNext += take.size
             if (take.size < page.rows.size || s.identityNext >= page.size) break@outer
         }
+    }
+
+    /** A uniform sample of identity row heights (registration blocks), the cover set's decoys (audit 4, M2). */
+    private fun offerIdentityHeight(s: PrivacyState, h: Long) {
+        s.identityRowsSeen++
+        if (s.identityHeights.size < IDENTITY_HEIGHT_SAMPLE) s.identityHeights.add(h)
+        else (rng.nextDouble() * s.identityRowsSeen).toLong().let { j -> if (j < IDENTITY_HEIGHT_SAMPLE) s.identityHeights[j.toInt()] = h }
     }
 
     /**
@@ -777,11 +919,12 @@ class WalletSync(
                 status = if (rec.status == RecordStatus.EXHAUSTED) RecordStatus.OPEN else rec.status, cursor = 0)
             var found: Triple<Long, Fr, Long>? = null
             var lcdTime: Long? = null
-            // 1. The indexer's block time.
-            rec.time?.let { t -> if (t !in rec.tried) { found = tryTime(rec, leaves, t); rec = rec.copy(tried = rec.tried + t, work = rec.work + ALL_COUNTRIES.size.toLong() * leaves.size) } }
+            // 1. The indexer's block time (bounded by the chain's tip as it streamed, audit 4).
+            rec.time?.takeIf(::timeOk)?.let { t -> if (t !in rec.tried) { found = tryTime(rec, leaves, t); rec = rec.copy(tried = rec.tried + t, work = rec.work + ALL_COUNTRIES.size.toLong() * leaves.size) } }
             // 2. The LCD's, asked with a cover set.
-            if (found == null && rec.tried.containsAll(listOfNotNull(rec.time))) {
-                val (t, r) = coverTime(rec)
+            if (found == null && rec.tried.containsAll(listOfNotNull(rec.time?.takeIf(::timeOk)))) {
+                val (t0, r) = coverTime(rec)
+                val t = t0?.takeIf(::timeOk)
                 rec = r
                 lcdTime = t
                 if (t != null && t !in rec.tried) {
@@ -802,8 +945,11 @@ class WalletSync(
             s.regRecords[k] = rec
             found?.let { (index, country, at) ->
                 val cur = s.identity
-                if (cur == null || index > cur.leafIndex) {
-                    s.identity = IdentityRecord(index, rec.dscKey, country, at, cur?.takeIf { it.leafIndex == index }?.passportNullifier ?: "")
+                // At an index at least the identity's: a match there replaces
+                // one made before (audit 4, M5: an identity from an unverified
+                // tree, or another time, is re-matched rather than kept).
+                if (cur == null || index >= cur.leafIndex) {
+                    s.identity = IdentityRecord(index, rec.dscKey, country, at, cur?.takeIf { it.leafIndex == index }?.passportNullifier ?: "", verified = true)
                 }
                 return
             }
@@ -827,9 +973,16 @@ class WalletSync(
     private fun coverTime(rec: RegRecord): Pair<Long?, RegRecord> {
         rec.chainTime?.let { return it to rec }
         if (rec.coverTries >= MAX_COVER_TRIES) return null to rec
-        val top = maxOf(store.state.notesHeight, rec.height)
+        // Never past the chain's tip (audit 4, M2): a decoy the chain has not
+        // reached yet is no decoy, the LCD sees which height is real.
+        val tipHeight = tip?.height ?: readTip().height
+        val top = minOf(maxOf(store.state.notesHeight, rec.height), tipHeight).coerceAtLeast(1)
         val cover = rec.cover.ifEmpty {
             val set = LinkedHashSet<Long>().apply { add(rec.height) }
+            // Decoys are other registrations' blocks first (a block time is
+            // asked for exactly those when restoring), then any height.
+            store.state.identityHeights.filter { it in 1..top && it != rec.height }.distinct().shuffled(rng)
+                .take(COVER_SET - 1).forEach { set.add(it) }
             val want = minOf(COVER_SET.toLong(), top).toInt()
             while (set.size < want) set.add(1 + (rng.nextDouble() * top).toLong().coerceIn(0, top - 1))
             set.toList()
@@ -861,11 +1014,13 @@ class WalletSync(
             val cost = countries.size.toLong() * leaves.size
             if (spent > 0 && spent + cost > budget) break
             if (work + cost > RECORD_SEARCH_CAP) return null to rec.copy(status = RecordStatus.EXHAUSTED, cursor = cursor, work = work)
-            val t = rec.builtAt + if (narrow) offsetAt(cursor, NARROW_BEFORE, NARROW_AFTER) else offsetAt(cursor - narrowSteps, WIDE_BEFORE, WIDE_AFTER)
+            val off = if (narrow) offsetAt(cursor, NARROW_BEFORE, NARROW_AFTER) else offsetAt(cursor - narrowSteps, WIDE_BEFORE, WIDE_AFTER)
             cursor++
             work += cost
             spent += cost
-            if (t < 0) continue
+            // Checked (audit 4, H1): a candidate that wraps, or that cannot be a block time, is skipped.
+            val t = runCatching { Math.addExact(rec.builtAt, off) }.getOrNull() ?: continue
+            if (!timeOk(t)) continue
             for ((i, leaf) in leaves) for (c in countries) {
                 if (Privacy.identityLeaf(keys.idc, rec.dscKey, c, t) == leaf) {
                     return Triple(i, c, t) to rec.copy(status = RecordStatus.MATCHED, cursor = cursor, work = work)
@@ -894,7 +1049,7 @@ class WalletSync(
         val leaf = store.identityTree.leaf(index)
         val country = countryFor(leaf, p.dscKey, activatedAt, p.countryHint)
         if (country != null) {
-            s.identity = IdentityRecord(index, p.dscKey, country, activatedAt, p.passportNullifier)
+            s.identity = IdentityRecord(index, p.dscKey, country, activatedAt, p.passportNullifier, verified = true)
             s.pendingRegistration = null
         } else {
             s.pendingRegistration = p.copy(

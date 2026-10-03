@@ -36,9 +36,18 @@ class AutomationTest {
 
     @Test
     fun offsetIsWithinTheWindowAndStableForADay() {
-        val a = PrivacyAutomation.claimOffset(day * 86_400 + 10)
-        assertEquals(a, PrivacyAutomation.claimOffset(day * 86_400 + 80_000))
+        val st = network.erth.wallet.privacy.sync.PrivacyState()
+        val a = PrivacyAutomation.claimOffset(st, day * 86_400 + 10)
+        assertEquals(a, PrivacyAutomation.claimOffset(st, day * 86_400 + 80_000))
         assertTrue(a in 0 until PrivacyAutomation.CLAIM_WINDOW_S)
+        // Audit 4: persisted with the wallet, so a restart (the state read back) keeps the day's draw.
+        val back = network.erth.wallet.privacy.sync.PrivacyState.fromJson(st.toJson())
+        var saved = 0
+        assertEquals(a, PrivacyAutomation.claimOffset(back, day * 86_400 + 50_000) { saved++ })
+        assertEquals(0, saved)
+        PrivacyAutomation.claimOffset(back, (day + 1) * 86_400 + 5) { saved++ }
+        assertEquals(1, saved)
+        assertEquals(day + 1, back.claimOffsetDay)
     }
 
     @Test

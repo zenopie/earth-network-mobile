@@ -31,9 +31,7 @@ object PrivacySession {
         val address = SecureWalletManager.getWalletAddress(app) ?: throw IllegalStateException("no wallet")
         current?.let { (a, w) -> if (a == address) return w }
         val keys = SecureWalletManager.executeWithMnemonic(app) { PrivacyKeys.fromMnemonic(it) }
-        // Named by a hash of the owner key, not the address: nothing on disk
-        // pairs the transparent address with the shielded one.
-        val id = Privacy.h(Privacy.TAG_OWNER, keys.ownerPk).toHex().take(16)
+        val id = storeId(keys)
         val w = PrivacyWallet(
             keys = keys,
             store = PrivacyStore.open(app.filesDir, id),
@@ -46,6 +44,28 @@ object PrivacySession {
         )
         current = address to w
         return w
+    }
+
+    /**
+     * A wallet's store directory: named by a hash of the owner key, not the
+     * address, so nothing on disk pairs the transparent address with the
+     * shielded one.
+     */
+    private fun storeId(keys: PrivacyKeys): String = Privacy.h(Privacy.TAG_OWNER, keys.ownerPk).toHex().take(16)
+
+    /**
+     * Deletes the selected wallet's private data from the phone (audit 3/4:
+     * PrivacyStore.delete, zeroed then unlinked). The session lets go of the
+     * wallet first (a running stake vote, the automation); nothing on chain
+     * changes, and the next sync rebuilds everything from the mnemonic.
+     */
+    fun forgetPrivateData(context: Context) {
+        val app = context.applicationContext
+        val keys = SecureWalletManager.executeWithMnemonic(app) { PrivacyKeys.fromMnemonic(it) }
+        synchronized(this) {
+            clear()
+            PrivacyStore.delete(app.filesDir, storeId(keys))
+        }
     }
 
     private val clearListeners = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()

@@ -43,6 +43,13 @@ object UnsignedTx {
 
     fun build(msg: MessageLite, tx: PrivateMsgs.TxFields): ByteArray = build(msg, tx.gasLimit, tx.memo, tx.timeoutHeight)
 
+    /** The tx hash the chain will name [txBytes] by: SHA-256 of the raw bytes, uppercase hex (audit 4: known before broadcast). */
+    fun hash(txBytes: ByteArray): String =
+        java.security.MessageDigest.getInstance("SHA-256").digest(txBytes).joinToString("") { "%02X".format(it.toInt() and 0xff) }
+
+    /** CheckTx refused the tx (a non-zero code): it never entered the mempool and never lands. */
+    class TxRejected(val code: Int, log: String, val codespace: String = "") : IOException("tx rejected (code $code${if (codespace.isEmpty()) "" else ", $codespace"}): $log")
+
     /**
      * Gas the chain charges this tx. In simulate mode the private ante charges
      * every proof's fixed gas but does not verify it, and still runs every
@@ -70,7 +77,7 @@ object UnsignedTx {
         if (code !in 200..299) throw IOException("broadcast failed ($code): ${message(resp)}")
         val txResp = JSONObject(resp).getJSONObject("tx_response")
         val checkCode = txResp.optInt("code", 0)
-        if (checkCode != 0) throw IOException("tx rejected (code $checkCode): ${txResp.optString("raw_log")}")
+        if (checkCode != 0) throw TxRejected(checkCode, txResp.optString("raw_log"), txResp.optString("codespace"))
         return txResp.getString("txhash")
     }
 

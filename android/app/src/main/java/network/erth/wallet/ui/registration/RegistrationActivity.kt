@@ -103,6 +103,9 @@ class RegistrationActivity : ComponentActivity() {
                 // while the passport is against the phone; paying for it is a
                 // separate step that can take as long as it needs.
                 var scan: PassportSession.Scan? by remember { mutableStateOf(null) }
+                // The fee the sheet shows, and so the most the registration may pay
+                // (audit 4): a chain asking more re-shows the sheet at its fee.
+                var registerFee: Long by remember { mutableStateOf(REGISTER_FEE) }
                 var balanceUerth: Long by remember { mutableLongStateOf(0L) }
                 var awaitingGas: Boolean by remember { mutableStateOf(false) }
                 var requestingGas: Boolean by remember { mutableStateOf(false) }
@@ -203,7 +206,7 @@ class RegistrationActivity : ComponentActivity() {
                         details = TxConfirmDetails(
                             action = "Register",
                             msgTypeUrl = "/earth.personhood.v1.MsgRegister",
-                            feeUerth = REGISTER_FEE,
+                            feeUerth = registerFee,
                             balanceUerth = balanceUerth,
                             shielded = true,
                         ),
@@ -214,15 +217,22 @@ class RegistrationActivity : ComponentActivity() {
                         onConfirm = {
                             scan = null
                             submitting = true
+                            val shown = registerFee
                             lifecycleScope.launch {
                                 val hash = withContext(Dispatchers.IO) {
-                                    PassportSession.register(ctx, ready)
+                                    PrivacyWallet.withShownFee(shown) { PassportSession.register(ctx, ready) }
                                 }
                                 submitting = false
                                 hash.onSuccess {
                                     setResult(RESULT_OK, Intent().putExtra(EXTRA_TX_HASH, it))
                                     finish()
                                 }.onFailure { e ->
+                                    if (e is network.erth.wallet.privacy.tx.PrivateTxEngine.FeeAboveQuote) {
+                                        // Nothing was proven or sent: confirm again at the chain's fee.
+                                        registerFee = e.fee
+                                        scan = ready
+                                        return@onFailure
+                                    }
                                     outcome = if (e is TxUnconfirmedException) {
                                         TxOutcome.Pending("Register", e.txHash)
                                     } else {

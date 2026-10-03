@@ -135,7 +135,7 @@ object GasGrant {
     private fun powBits(): Int = runCatching {
         val (code, body) = transport.get("/gas/pow")
         if (code !in 200..299) 0 else JSONObject(body).let { j ->
-            if (j.optString("version") != GasPow.VERSION) 0 else j.optInt("bits", 0).coerceIn(0, GasPow.MAX_BITS)
+            if (j.optString("version") != GasPow.VERSION) 0 else j.optInt("bits", 0).takeIf { it in 0..GasPow.MAX_BITS } ?: 0
         }
     }.getOrDefault(0)
 

@@ -42,6 +42,36 @@ object EarthRest {
      */
     const val MAX_BODY_BYTES = 8 * 1024 * 1024
 
+    /** The deepest JSON nesting any response may have (audit 4: Android's org.json recurses without a cap). */
+    const val MAX_JSON_DEPTH = 64
+
+    /**
+     * Refuses [body] when its JSON arrays/objects nest deeper than [max]
+     * (counted outside strings), before any parser sees it: a deeply nested
+     * body would otherwise overflow org.json's recursion with a
+     * StackOverflowError, which no `catch (Exception)` stops.
+     */
+    fun checkJsonDepth(body: String, max: Int = MAX_JSON_DEPTH) {
+        var depth = 0
+        var inString = false
+        var escaped = false
+        for (c in body) {
+            if (inString) {
+                when {
+                    escaped -> escaped = false
+                    c == '\\' -> escaped = true
+                    c == '"' -> inString = false
+                }
+                continue
+            }
+            when (c) {
+                '"' -> inString = true
+                '[', '{' -> if (++depth > max) throw java.io.IOException("response nests deeper than $max")
+                ']', '}' -> depth--
+            }
+        }
+    }
+
     private fun readBounded(stream: java.io.InputStream?): String {
         if (stream == null) return ""
         return stream.use { s ->
@@ -55,7 +85,7 @@ object EarthRest {
                 if (total > MAX_BODY_BYTES) throw java.io.IOException("response exceeds $MAX_BODY_BYTES bytes")
                 out.write(buf, 0, n)
             }
-            out.toString("UTF-8")
+            out.toString("UTF-8").also { checkJsonDepth(it) }
         }
     }
 
@@ -76,6 +106,9 @@ object EarthRest {
 
         val conn = URL(base + path).openConnection() as HttpURLConnection
         return try {
+            // Audit 4: never followed. A redirect would take the request to
+            // another origin than the one configured; a 3xx is an error.
+            conn.instanceFollowRedirects = false
             conn.connectTimeout = 20000
             conn.readTimeout = 30000
             conn.requestMethod = "GET"
@@ -98,6 +131,7 @@ object EarthRest {
     fun postJson(path: String, json: String, base: String = Constants.EARTH_LCD_URL): Pair<Int, String> {
         val conn = URL(base + path).openConnection() as HttpURLConnection
         return try {
+            conn.instanceFollowRedirects = false
             conn.connectTimeout = 20000
             conn.readTimeout = 30000
             conn.doOutput = true
