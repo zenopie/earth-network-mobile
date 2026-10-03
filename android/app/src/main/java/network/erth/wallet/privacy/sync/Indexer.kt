@@ -191,7 +191,7 @@ class HttpPrivacyIndexer(private val host: String) : PrivacyIndexer {
                     cm = Fr.fromHex(r.getString(2)),
                     ciphertext = if (r.isNull(3)) ByteArray(0) else r.getString(3).decodeBase64()?.toByteArray() ?: ByteArray(0),
                     denom = if (r.isNull(4)) null else r.getString(4),
-                    amount = if (r.isNull(5)) null else r.get(5).toString().toLong(),
+                    amount = if (r.isNull(5)) null else network.erth.wallet.privacy.Amounts.parseU64(r.get(5).toString()),
                     spc = if (r.isNull(6)) null else Fr.fromHex(r.getString(6)),
                 )
             }

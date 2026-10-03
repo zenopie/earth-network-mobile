@@ -32,7 +32,7 @@ object PrivacyQueries {
         return if (raw.isEmpty()) Fr.ZERO else Fr.fromBytes(raw)
     }
 
-    private fun JSONObject.long(k: String): Long = optString(k, "0").ifEmpty { "0" }.toLong()
+    private fun JSONObject.long(k: String): Long = network.erth.wallet.privacy.Amounts.parseU64(optString(k, "0").ifEmpty { "0" }) ?: 0L
 
     /** x/shielded params.min_fee (uerth). */
     /** x/assembly's open removal ballots (public; every one, nothing asked about us). */

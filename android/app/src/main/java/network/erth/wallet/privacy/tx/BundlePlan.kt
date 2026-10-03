@@ -215,12 +215,12 @@ object BundleBuilder {
         val spends = ArrayList<OwnedNote>(forced)
         val outs = outputs.toMutableList()
         for ((denom, amount) in need) {
-            val have = forced.filter { it.note.denom == denom }.sumOf { it.note.value }
+            val have = network.erth.wallet.privacy.Amounts.exactSum(forced.filter { it.note.denom == denom }) { it.note.value }
             val chosen = if (have >= amount) emptyList() else NoteSelection.cover(
                 notes, denom, amount - have, exclude + spends.map { it.position }, maxActions - spends.size,
             )
             spends.addAll(chosen)
-            val change = have + chosen.sumOf { it.note.value } - amount
+            val change = Math.addExact(have, network.erth.wallet.privacy.Amounts.exactSum(chosen) { it.note.value }) - amount
             if (change > 0) outs.add(NoteOut.toSelf(keys, denom, change))
         }
         return fromNotes(keys, tree, spends, outs, maxActions)
@@ -244,7 +244,7 @@ object NoteSelection {
      * spread over more notes than that).
      */
     fun maxSpendable(notes: List<OwnedNote>, denom: String, maxNotes: Int): Long =
-        spendable(notes, denom).map { it.note.value }.sortedDescending().take(maxNotes).sum()
+        network.erth.wallet.privacy.Amounts.satSum(spendable(notes, denom).map { it.note.value }.sortedDescending().take(maxNotes))
 
     /**
      * Notes of [denom] covering [amount]: the smallest single note that
@@ -285,11 +285,11 @@ object StakeSelection {
         var best: List<network.erth.wallet.privacy.note.OwnedStakeNote>? = null
         var bestSum = Long.MAX_VALUE
         for (i in c.indices) for (j in i + 1 until c.size) {
-            val s = c[i].amount + c[j].amount
+            val s = network.erth.wallet.privacy.Amounts.satAdd(c[i].amount, c[j].amount)
             if (s >= amount && s < bestSum) { best = listOf(c[i], c[j]); bestSum = s }
         }
         return best ?: throw NoteSelection.Insufficient(
-            if (c.sumOf { it.amount } >= amount) "this stake is spread over more than two notes; merge them first"
+            if (network.erth.wallet.privacy.Amounts.satSum(c) { it.amount } >= amount) "this stake is spread over more than two notes; merge them first"
             else "insufficient stake",
         )
     }

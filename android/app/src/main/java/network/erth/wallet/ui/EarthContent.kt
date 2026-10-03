@@ -18,6 +18,7 @@ import network.erth.earth.proto.allocation.StreamId
 import network.erth.wallet.Constants
 import network.erth.wallet.R
 import network.erth.wallet.chain.Assembly
+import network.erth.wallet.privacy.Amounts
 import network.erth.wallet.privacy.PrivacySession
 import network.erth.wallet.privacy.PrivacyWallet
 import network.erth.wallet.privacy.tx.ShieldMove
@@ -151,13 +152,15 @@ internal fun EarthContent(
 
     // Private stake: derth notes per validator.
     val derthHeld = loaded.shielded.filterKeys { it.startsWith("derth/") }
-    val privateStake = derthHeld.values.sum() + (privacyState?.positions?.sumOf { it.position.derth } ?: 0L)
+    val privateStake = Amounts.satAdd(Amounts.satSum(derthHeld.values), privacyState?.positions?.let { ps -> Amounts.satSum(ps) { it.position.derth } } ?: 0L)
     // The same stake in ERTH: derth is a claim at rate_v, so face value
     // under-reports it once rewards have compounded.
     fun derthValue(derth: Long, validator: String): Long =
         earnState?.derthValue(derth, validator) ?: derth
-    val privateStakeValue = derthHeld.entries.sumOf { (denom, amount) -> derthValue(amount, denom.removePrefix("derth/")) } +
-        (privacyState?.positions?.sumOf { derthValue(it.position.derth, it.position.validator) } ?: 0L)
+    val privateStakeValue = Amounts.satAdd(
+        Amounts.satSum(derthHeld.entries) { (denom, amount) -> derthValue(amount, denom.removePrefix("derth/")) },
+        privacyState?.positions?.let { ps -> Amounts.satSum(ps) { derthValue(it.position.derth, it.position.validator) } } ?: 0L,
+    )
 
     // LP shares: public ones are ordinary coins (dexlp/<pool>) in the
     // balances call; private ones (a shielded deposit's) are share notes of
@@ -165,7 +168,7 @@ internal fun EarthContent(
     val shares = remember(loaded.holdings, loaded.shielded) {
         val public = loaded.holdings.filter { it.denom.startsWith("dexlp/") }.map { it.denom to it.amount }
         val private = loaded.shielded.filterKeys { it.startsWith("dexlp/") }.toList()
-        (public + private).groupBy({ it.first.removePrefix("dexlp/").toLongOrNull() ?: 0L }, { it.second }).mapValues { it.value.sum() }
+        (public + private).groupBy({ it.first.removePrefix("dexlp/").toLongOrNull() ?: 0L }, { it.second }).mapValues { Amounts.satSum(it.value) }
     }
 
     when (route) {

@@ -126,11 +126,11 @@ class PrivacyWallet(
     /** Spendable pool balance per denom (pending spends excluded). */
     fun poolBalances(): Map<String, Long> =
         store.state.notes.filter { it.unspent && it.pendingAt == null }
-            .groupBy { it.note.denom }.mapValues { (_, ns) -> ns.sumOf { it.note.value } }
+            .groupBy { it.note.denom }.mapValues { (_, ns) -> Amounts.satSum(ns) { it.note.value } }
 
     /** Stake (derth/<valoper>) and unbonding claims (unbond/<valoper>/<epoch>) per denom: owner-locked, never sendable. */
     fun stakeBalances(): Map<String, Long> =
-        store.state.stakeNotes.filter { it.spendable }.groupBy { it.denom }.mapValues { (_, ns) -> ns.sumOf { it.amount } }
+        store.state.stakeNotes.filter { it.spendable }.groupBy { it.denom }.mapValues { (_, ns) -> Amounts.satSum(ns) { it.amount } }
 
     /** Everything held privately: the pool's denoms and the stake denoms. */
     fun balances(): Map<String, Long> = poolBalances() + stakeBalances()
@@ -265,7 +265,7 @@ class PrivacyWallet(
         val budget = if (denom == FEE) maxActions() else maxActions() - 1
         val ns = NoteSelection.spendable(store.state.notes, denom).sortedBy { it.note.value }.take(budget)
         require(ns.size >= 2) { "nothing to merge" }
-        if (denom == FEE) require(ns.sumOf { it.note.value } > fee) { "these notes do not cover the ${fee}uerth fee" }
+        if (denom == FEE) require(Amounts.exactSum(ns) { it.note.value } > fee) { "these notes do not cover the ${fee}uerth fee" }
         val b = bundle(release = mapOf(FEE to fee), forced = ns)
         Assembled(listOf(b)) { bs, _, _ -> MsgSend.newBuilder().setBundle(bs[0]).setFee(fee).build() }
     }
@@ -539,7 +539,7 @@ class PrivacyWallet(
     fun restake(validator: String, notes: List<OwnedStakeNote>, amounts: List<Long>): TxResult {
         val denom = derthDenom(validator)
         require(notes.size in 1..2 && amounts.size in 1..2 && amounts.all { it > 0 })
-        require(notes.sumOf { it.amount } == amounts.sum()) { "a restake keeps the amount" }
+        require(Amounts.exactSum(notes) { it.amount } == Amounts.exactSum(amounts) { it }) { "a restake keeps the amount" }
         val stake = stakePlan(denom, notes, amounts, 0)
         return run { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
@@ -562,7 +562,7 @@ class PrivacyWallet(
         val out = ArrayList<TxResult>()
         while (true) {
             val ns = spendableStake(denom)
-            if (ns.sortedByDescending { it.amount }.take(2).sumOf { it.amount } >= amount || ns.size < 3) return out
+            if (Amounts.satSum(ns.sortedByDescending { it.amount }.take(2)) { it.amount } >= amount || ns.size < 3) return out
             out.add(mergeStake(denom))
             sync()
         }
@@ -572,7 +572,7 @@ class PrivacyWallet(
     fun mergeStake(denom: String): TxResult {
         val two = spendableStake(denom).sortedBy { it.amount }.take(2)
         require(two.size == 2) { "nothing to merge" }
-        return restake(parseDerth(denom), two, listOf(two.sumOf { it.amount }))
+        return restake(parseDerth(denom), two, listOf(Amounts.exactSum(two) { it.amount }))
     }
 
     /**
@@ -583,7 +583,7 @@ class PrivacyWallet(
     fun undelegate(validator: String, amount: Long): TxResult {
         val denom = derthDenom(validator)
         val ins = StakeSelection.cover(spendableStake(denom), amount)
-        val stake = stakePlan(denom, ins, listOf(ins.sumOf { it.amount } - amount), amount, mint = stakeMint())
+        val stake = stakePlan(denom, ins, listOf(Amounts.exactSum(ins) { it.amount } - amount), amount, mint = stakeMint())
         return run { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
                 MsgUndelegate.newBuilder().setBundle(bs[0]).setValidator(validator).setAmount(amount).setStake(sp).build()
@@ -601,7 +601,7 @@ class PrivacyWallet(
         val (validator, epoch) = parseUnbond(denom)
         val ins = spendableStake(denom).sortedByDescending { it.amount }.take(2)
         require(ins.isNotEmpty()) { "no unbonding claim of $denom" }
-        val amount = ins.sumOf { it.amount }
+        val amount = Amounts.exactSum(ins) { it.amount }
         val stake = stakePlan(denom, ins, emptyList(), amount)
         val erth = mint(FEE)
         return run { fee ->
@@ -631,7 +631,7 @@ class PrivacyWallet(
         require(notes.all { it.position < snap.treeSize }) { "this stake arrived after the proposal's snapshot and cannot vote on it" }
         val tree = store.stakeTree
         check(tree.rootAt(snap.treeSize) == snap.root) { "the local stake tree disagrees with the proposal's snapshot root" }
-        val weight = notes.sumOf { it.amount }
+        val weight = Amounts.exactSum(notes) { it.amount }
         val stake = stakePlan(denom, notes, emptyList(), weight, mint = stakeMint(), anchor = snap.root,
             paths = notes.map { tree.pathAt(it.position, snap.treeSize) })
         return run { fee ->
@@ -654,8 +654,10 @@ class PrivacyWallet(
         val snap = reads.snapshot(proposalId)
         val notes = eligible(snap)
         val ps = votingPositions(positions, snap)
-        val total = notes.sumOf { derthValue(it.amount, snap.rates[parseDerth(it.denom)] ?: BigDecimal.ONE) } +
-            ps.sumOf { derthValue(it.derth, snap.rates[it.validator] ?: BigDecimal.ONE) }
+        val total = Amounts.satAdd(
+            Amounts.satSum(notes) { derthValue(it.amount, snap.rates[parseDerth(it.denom)] ?: BigDecimal.ONE) },
+            Amounts.satSum(ps) { derthValue(it.derth, snap.rates[it.validator] ?: BigDecimal.ONE) },
+        )
         return StakeWeight(notes.size, ps.map { it.id }.toSet(), total)
     }
 
@@ -729,7 +731,7 @@ class PrivacyWallet(
         val ins = StakeSelection.cover(spendableStake(denom), amount)
         positions() // a restored wallet's counter starts past every tag it already holds
         val counter = synchronized(this) { store.state.nextOtagCounter.also { store.state.nextOtagCounter = it + 1; store.save() } }
-        val stake = stakePlan(denom, ins, listOf(ins.sumOf { it.amount } - amount), amount, salt = keys.otagSalt(counter))
+        val stake = stakePlan(denom, ins, listOf(Amounts.exactSum(ins) { it.amount } - amount), amount, salt = keys.otagSalt(counter))
         val w = weights(splits)
         return run { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
@@ -869,9 +871,15 @@ class PrivacyWallet(
         const val UNBOND_PREFIX = "unbond/"
         const val LP_PREFIX = "dexlp/"
 
-        /** floor(derth x rate) in uerth, the chain's conversion of derth to ERTH. */
-        fun derthValue(derth: Long, rate: BigDecimal): Long =
-            BigDecimal.valueOf(derth).multiply(rate).setScale(0, java.math.RoundingMode.DOWN).toLong()
+        /** floor(derth x rate) in uerth, the chain's conversion of derth to ERTH (saturating; a negative rate is 0). */
+        fun derthValue(derth: Long, rate: BigDecimal): Long {
+            val v = BigDecimal.valueOf(derth).multiply(rate).setScale(0, java.math.RoundingMode.DOWN).toBigInteger()
+            return when {
+                v.signum() <= 0 -> 0L
+                v.bitLength() > 63 -> Long.MAX_VALUE
+                else -> v.toLong()
+            }
+        }
 
         /** Positions created before the block the proposal entered voting at (all, when unknown). */
         fun votingPositions(positions: List<PrivacyChainReads.Position>, snap: PrivacyChainReads.Snapshot) =
@@ -921,7 +929,7 @@ class PrivacyWallet(
         fun parseUnbond(denom: String): Pair<String, Long> {
             val parts = denom.split("/")
             require(parts.size == 3 && parts[0] == "unbond") { "not an unbond note" }
-            return parts[1] to parts[2].toLong()
+            return parts[1] to (Amounts.parseU64(parts[2]) ?: throw IllegalArgumentException("not an unbond note"))
         }
     }
 }

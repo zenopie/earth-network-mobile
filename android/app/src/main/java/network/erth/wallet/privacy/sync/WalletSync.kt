@@ -285,6 +285,8 @@ class WalletSync(
             NoteCipher.CIPHERTEXT_BYTES -> NoteCipher.tryDecrypt(r.ciphertext, r.cm, keys, AssetDenoms(s.denoms)) ?: return null
             else -> return null
         }
+        // A value past 2^63-1 is not one the wallet can hold (Amounts).
+        if (note.value < 0L) return null
         if (note.value == 0L) {
             parseRegMemo(note.memo)?.let { (dsc, country, builtAt) ->
                 if (s.regRecords.none { it.position == r.position }) s.regRecords.add(RegRecord(r.height, r.position, dsc, country, builtAt))
@@ -296,10 +298,10 @@ class WalletSync(
 
     private fun publicAmount(amount: String?): Pair<Long, String>? {
         if (amount == null) return null
-        val digits = amount.takeWhile { it.isDigit() }
+        val digits = amount.takeWhile { it in '0'..'9' }
         val denom = amount.substring(digits.length)
         if (digits.isEmpty() || denom.isEmpty()) return null
-        return (digits.toLongOrNull() ?: return null) to denom
+        return (network.erth.wallet.privacy.Amounts.parseU64(digits) ?: return null) to denom
     }
 
     private fun syncNullifiers(s: PrivacyState, limit: Int?): List<OwnedNote> {
@@ -385,6 +387,7 @@ class WalletSync(
             }
             else -> return null
         }
+        // Zero, or past 2^63-1 (negative as a Long): nothing the wallet holds (Amounts).
         if (amount <= 0L) return null
         return OwnedStakeNote(r.position, r.height, denom, amount, rho, rcm, r.cm, Privacy.stakeNf(keys.nk, rho, r.position))
     }
