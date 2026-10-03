@@ -53,6 +53,22 @@ the daily claim, the caretaker refresh and handle renewals are reminders;
 the only automatic tx completes an undelegation the user started (§4c).
 Deposits pull each leg rounded up (§4g). Android and iOS identical.
 
+**Mobile audit round 5 (2026-10-03), summary.** A handle or caretaker
+split is restorable: every bind, release, cast, clear and move carries a
+tagged value-0 **state record** note (§3b), so a wallet restored from the
+mnemonic knows what its identity holds or moved away; it also takes as held
+a single non-free directory entry naming its own address, and drops a
+handle the chain swept. A renewal or refresh whose bound the identity does
+not meet goes out with no bound: the chain refuses it in its ante, before
+any fee, unless the identity holds one (§4g). A move is recorded in both
+wallets before its broadcast and counts as done only once the chain
+confirms it (§4g). Directory entries and caretaker expiries outside
+0 < expires_at ≤ renewal_until ≤ now + 10 years are refused or clamped; all
+reminder arithmetic saturates. Referrals come only from the verified
+`https://erth.network/ref/<handle>` link (App Link, universal link) or the
+Play install referrer, and the registrant can remove or replace one (one
+that does not resolve is cleared). Android and iOS identical.
+
 **Stake votes without spending (chain 9b29f5d, ORCHARD_DESIGN 15),
 summary.** MsgStakeVote no longer carries a stake proof: one derth note
 proves (circuits/vote) it was in the stake tree and unspent at the
@@ -395,6 +411,63 @@ must register again (a switch to the same passport is allowed, a switch to
 the same idc is refused by the chain only while the old leaf is live; the
 app tells the user).
 
+## 3b. State records: handle and caretaker split (audit 5, M1)
+
+A handle and a caretaker split are held by a scope nullifier no query
+names, so nothing on chain tells a wallet restored from its mnemonic what
+its identity holds. Every MsgBindHandle (claim, renew, change, release),
+MsgSetCaretaker (cast, refresh, clear), MsgMoveHandle and MsgMoveCaretaker
+therefore carries, as outputs of its fee bundle, value-0 uerth notes (v1
+ciphertext, 217 bytes) whose 64-byte memo is a **state record**, tagged
+like the registration record (only nk makes one):
+
+    handle:    "EH" (0x45 0x48) || 0x01 || kind (u8)
+               || handle (32 ASCII bytes, zero padded; zero unless kind 1)
+               || zero (12) || tag (16)
+    caretaker: "EC" (0x45 0x43) || 0x01 || kind (u8)
+               || expires_at (u32 BE unix seconds; 0 unless kind 1)
+               || split (40 bytes: (option_id uvarint LEB128, percent u8)…,
+                  options ascending, zero padded) || tag (16)
+    kind:      1 holds, 2 released / cleared, 3 moved out;
+               caretaker 0x81: holds, the split not recorded (it did not fit
+               40 bytes: options are u64; at most 20), split bytes zero
+    tag:       first 16 bytes of BE32( H(Tag("earth.statetag"), nk, Bytes(memo[0..48))) )
+
+A record is accepted only if the magic, version and kind are known, the
+tag recomputes (checked first), every padding byte is zero, a held handle
+is a valid handle, and a recorded split has 1-20 distinct options of 1-100
+percent summing to 100. Sync applies them in note order: the newest record
+of each kind sets the store's handle (or none, or moved out) and split
+(with its expiry, at most now + 10 years; a split the wallet already holds
+keeps the chain's own later expiry), unless a newer one was already applied
+(a reset keeps that cursor, so a resync never rolls back what the wallet
+did since) or the record's height is one where the wallet saw its own tx
+fail in its block. Who writes what:
+
+| tx | to this identity's address | to the new identity's address |
+| --- | --- | --- |
+| MsgBindHandle claim/renew/change | holds handle | |
+| MsgBindHandle release | released | |
+| MsgSetCaretaker | holds (split, now + R as estimated when built) / cleared | |
+| MsgMoveHandle | moved out | holds handle (tagged with the new nk) |
+| MsgMoveCaretaker | moved out | holds (split, the chain's expiry) |
+
+The mover has the new wallet's keys on the phone, so it can address and tag
+that wallet's record. A record lands with its fee bundle, so one whose
+msg then fails in its block (the ante's writes stay) still lands; the
+wallet voids it when it sees the failure, and otherwise the chain refuses
+what follows from it at no cost. Records cost nothing extra in the usual
+case (a fee bundle has two actions anyway); a move's two records add one
+action.
+
+**Directory scan.** After a sync (on Home and the handle screens) every
+wallet reads the chain's whole directory (`Query/Handles`, not the
+indexer's stream) and squares its handle with it, unless a move is in
+flight or the read predates the store's last change: a handle the chain
+swept (absent or free) is dropped; with none held and not moved out, the
+single non-free entry naming the wallet's own shielded address is taken
+as held. Every such entry is reminded on.
+
 ## 4. Private tx assembly (follows x/shielded/ante)
 
 - TxRaw with one Any, AuthInfo with no signer infos, fee = exactly the msg's
@@ -675,7 +748,12 @@ run is gone (a chain switch).
   the chain genesis's verifying keys. Golden: vectors.json `leaf`,
   `leaf_pred`, `membership_public_inputs`.
 - **Bounds the wallet names, per msg** (it refuses locally, `NotYet`, when
-  its own identity does not meet them):
+  its own identity does not meet them; audit 5: a set-caretaker or bind
+  whose L is not met goes out with no bound, since a restore can lose what
+  the identity holds; x/personhood checks the bound in its ante, before
+  the fee bundle is spent, so a holder of none is refused at no cost and
+  the wallet says so, `NotHeld`, with the wait; release needs a held
+  handle, since the chain refuses that only after the fee):
 
   | msg | max_activation | max_predecessor |
   | --- | --- | --- |
@@ -684,6 +762,7 @@ run is gone (a chain switch).
   | MsgSetCaretaker, refresh/change/clear of one held | no bound | L(R) if met, else no bound |
   | MsgBindHandle, a claim (holding none) | no bound | L(handle_lease_seconds) |
   | MsgBindHandle, renew/change of the one held | no bound | L(lease) if met, else no bound |
+  | either, bound not met and nothing held as far as the wallet knows | no bound | no bound (audit 5) |
   | MsgBindHandle, release | no bound | no bound |
   | MsgMoveHandle, MsgMoveCaretaker | no bound | no bound |
   | MsgVoteProposal, MsgVoteRemoval | BallotInputs.max_activation (no bound) | BallotInputs.max_predecessor (7) |
@@ -725,6 +804,12 @@ run is gone (a chain switch).
   per-handle query anywhere in the wallet (`Query/Handle` is never used).
   An entry whose expires_at has passed by the wallet's clock is treated as
   in its renewal period (not payable).
+  Audit 5 (M4, L4, L7): a directory with an entry whose times no lease has
+  (not 0 < expires_at ≤ renewal_until ≤ now + 10 years) or with more than
+  1,000,000 rows (the backend's cap; also checked against page 0's `size`)
+  is refused whole; the lease params are taken at most 10 years; a
+  set_caretaker expires_at outside (0, now + 10 years] is replaced by the
+  block time + R; reminder and countdown arithmetic saturates.
 - **Paying a handle.** Send accepts "@handle" or a bare handle. Before the
   confirm the wallet reads a fresh copy (at most 60 s old) and the chain's
   own directory (also whole, also at most 60 s old): the handle must be
@@ -745,6 +830,23 @@ run is gone (a chain switch).
   everything its predecessor could hold has lapsed (lease + 1 day). The
   switch screen requires the new wallet's recovery phrase be backed up and
   explains that a lost wallet's handle and vote cannot be moved.
+  **Audit 5 (M2, L8, L9).** A move is written to both stores at the
+  moment its hash is known, before the broadcast: the mover's as an
+  outgoing pending move (it still holds what it is moving), the new
+  wallet's as incoming (it holds it, pending). A refusal (CheckTx, no
+  connection) undoes both; a tx that failed in its block, or that the
+  chain does not know once past its timeout_height, is undone by each
+  wallet on its own when it settles its pending moves by hash (every sync,
+  and "Check the moves again"); a committed one is applied (the mover
+  records moved out), and its state records (§3b) settle it too. The UI
+  shows a move as done only once confirmed and does not offer "register
+  there" while one is in doubt; a failed write to the new wallet's store
+  is kept for a retry (that wallet also finds the move in its own notes).
+  The first move fixes the target wallet (by store id); a target that
+  already has a registration or a handle is warned about. The recovery
+  phrase is shown only after a fresh PIN or biometric unlock (counted
+  against the unlock backoff) and dropped when the screen is paused or
+  left; the backup box can be ticked only once it was shown.
 - **Dex deposits** (audit 4, C2). x/dex pulls each leg rounded up,
   ceil(shares × R / S) with shares = min(⌊in_e × S / R_e⌋, ⌊in_t × S / R_t⌋);
   the wallet derives the other leg of a deposit as ceil(amount × R_other /
