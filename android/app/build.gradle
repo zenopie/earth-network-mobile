@@ -22,8 +22,8 @@ android {
         applicationId = "network.erth.wallet"
         minSdk = 24
         targetSdk = 36
-        versionCode = 41
-        versionName = "1.0.34"
+        versionCode = 42
+        versionName = "1.0.35"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

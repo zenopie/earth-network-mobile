@@ -36,6 +36,15 @@ rules (canonical bytes, ciphertext slots, one use per binding) are
 followed (§4). Android and iOS implement all of it identically; the record
 memo golden is pinned on both.
 
+**Stake votes without spending (chain 9b29f5d, ORCHARD_DESIGN 15),
+summary.** MsgStakeVote no longer carries a stake proof: one derth note
+proves (circuits/vote) it was in the stake tree and unspent at the
+proposal's snapshot and publishes a per-proposal vote nullifier; nothing is
+spent or re-minted, so a note votes on every concurrently open proposal.
+The wallet rebuilds the snapshot's stake nullifier tree, rounds the weight
+down to three significant figures and remembers (proposal, vote nullifier)
+(§4e). Android and iOS identical.
+
 ## 1. Keys (wallet-only)
 
 From the BIP-39 seed (empty passphrase), BIP-32 hardened derivation:
@@ -59,7 +68,7 @@ this wallet (registration ANML and reward, ANML claim, gas grant, shield,
 swap output, LP shares/refunds/withdrawal legs, unbonding payout) is named by
 a pc of fresh random rho and rcm and carries a v2 ciphertext of them to the
 wallet's own address; a stake note the chain mints (delegation's derth,
-undelegation's claim, stake vote's re-mint, unlocked position) is named by a
+undelegation's claim, unlocked position; a stake vote mints nothing) is named by a
 `spc_mint` of fresh random rho and rcm and carries the blind stake ciphertext
 of them (`StakeProof.spc_ciphertext`). Nothing about them is derived from a
 counter, so failed or abandoned attempts can never open a gap that a restore
@@ -178,8 +187,8 @@ in `BlindNoteTest`:
 
 **Blind stake ciphertext (chain `EncryptBlindStakeNote`).** Required,
 exactly 177 bytes, in `StakeProof.spc_ciphertext` of MsgDelegate,
-MsgUndelegate, MsgStakeVote and MsgUnlockPosition (empty in every other
-staking msg):
+MsgUndelegate and MsgUnlockPosition (empty in every other staking msg;
+MsgStakeVote has no stake proof at all):
 
     ct  = epk || ChaCha20-Poly1305(HKDF-SHA256(X25519(esk, ek_pub), salt "earth.stake.v1", info epk), nonce 0, pt)
     pt  = 0x03 || rho (32) || rcm (32) || memo (64)                          129 bytes
@@ -446,7 +455,7 @@ app tells the user).
   | MsgRestake | StakeFields, Bytes(validator) |
   | MsgUndelegate | StakeFields, Bytes(validator), amount |
   | MsgClaimUnbonding | StakeFields, Bytes(validator), epoch, amount, pc, Bytes(ct), fee_from_output |
-  | MsgStakeVote | StakeFields, proposal_id, Bytes(validator), Bytes(OptionsBytes), weight |
+  | MsgStakeVote | proposal_id, Bytes(validator), Bytes(OptionsBytes), weight, vote_nullifier (no StakeFields) |
   | MsgLockPosition | StakeFields, Bytes(validator), amount, Bytes(SplitsBytes) |
   | MsgUpdatePosition | StakeFields, position_id, Bytes(SplitsBytes) |
   | MsgUnlockPosition | StakeFields, position_id |
@@ -460,7 +469,8 @@ app tells the user).
   removed `fee` fields are reserved; MsgDelegate.amount = 5,
   StakeProof.spc_ciphertext = 8, MsgNoteSwap.denom_in = 8 / amount_in = 9
   (fee_from_output 6 and fee 7 reserved), MsgAddLiquidityShielded.erth_amount
-  = 11. Addresses are lowercase canonical bech32.
+  = 11, MsgStakeVote.proof = 8 / vote_nullifier = 9 (stake 7 reserved).
+  Addresses are lowercase canonical bech32.
 - **Stake proofs.** A staking msg's stake proof spends at most two stake
   notes of the msg's denom (the smallest single covering, else the
   smallest sufficient pair; a balance spread over more is merged first by
@@ -468,14 +478,12 @@ app tells the user).
   restake split) with the wallet stake ciphertext; unused input and output
   slots get random rho/rcm (amount 0: nf 0, cm 0) and a zero path. Anchor:
   the wallet's latest (chain-verified) stake root (zero when the stake tree
-  is empty; not checked when nothing is spent), for a stake vote the
-  proposal's snapshot root, the paths taken against the tree at the
-  snapshot's size. `spc_mint` and `spc_ciphertext` as in §3; `otag` a
-  position's owner tag (lock: a new counter; update/unlock/vote: the
-  position's) or random. A stake vote spends one or two derth notes of one
-  validator (weight = their sum). **Casting a stake vote (K5)** is one path
+  is empty; not checked when nothing is spent). `spc_mint` and
+  `spc_ciphertext` as in §3; `otag` a position's owner tag (lock: a new
+  counter; update/unlock/vote: the position's) or random. A stake vote is
+  not a stake proof (§4e). **Casting a stake vote (K5)** is one path
   in the app (StakeVoteController, what the proposal screen's confirm
-  runs): every eligible derth note pair and every position of ours created
+  runs): every eligible derth note (one vote each, §4e) and every position of ours created
   before the snapshot's block, in a shuffled order, one cast at a time, a
   full sync and a random 20-120 s pause between casts (none before the
   first; one before the first after a resume), so a vote's fee never spends
@@ -484,12 +492,78 @@ app tells the user).
   never holding the wallet lock while it waits), shows its progress and the
   next cast's time, and can be stopped. The plan is persisted (proposal,
   options, positions voted, casts done) and a run the process lost resumes
-  on the next unlock (positions already voted are skipped; voted notes are
-  spent).
+  on the next unlock (positions already voted are skipped; notes already
+  voted are known by their recorded vote nullifiers, §4e).
 - **Groundworks positions** are still per-user msgs with splits; the chain
   weighs them per validator and no longer stores a position's weight. The
   wallet shows a position's weight as derth × its validator's current rate
   (0 without a live split).
+
+## 4e. Stake votes without spending (chain 9b29f5d, ORCHARD_DESIGN 15)
+
+One MsgStakeVote per derth note and proposal:
+
+    bundle (fee), proposal_id, validator, options, weight, proof (8), vote_nullifier (9)
+
+1. **Snapshot.** From the indexer's `{base}/stake/snapshots` stream (read
+   whole from height 0 and kept; no request names the proposal), else the
+   LCD `Query/Snapshot`: root, tree_size, height, nf_root, nf_size (the
+   nullifier tree's leaf count, sentinel included; 0 = nothing inserted). A
+   snapshot without nf_root takes no stake vote.
+2. **Note.** Its path in the wallet's stake tree of the first tree_size
+   leaves; that tree's root must be the snapshot root (a snapshot past the
+   local tree is "sync first"). A note at position >= tree_size cannot vote.
+3. **Nullifier tree.** The first nf_size − 1 stake nullifiers in insertion
+   order, from `{base}/stake/nullifier-tree?from_index=1` (rows [index,
+   nullifier, height], leaf indexes contiguous from 1; anything else is
+   inconsistent) with the LCD `Query/StakeNullifierTree{start, limit}`
+   (1000 a page) for whatever the indexer lacks. Inserted in order into the
+   indexed tree (leaf = H(TAG_SNFL, value, next_value, next_index), leaf 0
+   the sentinel; the wallet writes the final leaves in one batch, the same
+   root as replaying the inserts), its root must equal nf_root; otherwise
+   everything fetched is dropped and the tree is rebuilt from the LCD alone
+   once, else the vote is refused. The values are kept in memory (a prefix
+   of an append-only list) and the last two trees by nf_root.
+4. **Low leaf** of the note's spend nullifier H(TAG_SNF, nk, rho, pos): the
+   predecessor (the sentinel if none) with next = the successor (0, 0 if
+   none), its index and path. If the nullifier is in the tree the note was
+   spent before the snapshot: refused locally (`SpentBeforeSnapshot`),
+   nothing is simulated or broadcast. A note spent after the snapshot still
+   votes; its outputs cannot (not under the root).
+5. **vote_nullifier** = H(TAG_VNF, nk, rho, pos, proposal_id): one per note
+   and proposal, unlinkable to the note's other votes and its spend.
+6. **Weight (wallet rule).** The note's amount (uderth) rounded DOWN to
+   three significant decimal digits, whole below 1000:
+
+       unit = 1; while amount / unit >= 1000: unit *= 10
+       weight = amount / unit * unit
+
+   999 → 999; 1,000 → 1,000; 1,009 → 1,000; 999,999 → 999,000;
+   1,234,567 → 1,230,000; 123,456,789 → 123,000,000. The published weight
+   names a bucket, not the exact amount (a delegation's minted amount is
+   public), and gives up less than 1% of the note's voice. The confirm
+   sheet's weight is the sum of the rounded weights at the snapshot rate.
+7. **Prove** circuits/vote (public inputs note_root, nf_root,
+   AssetID(derth/<validator>), weight, proposal_id, vnf, sighash; Prover.toml
+   names nk, amount, rho, rcm, pos, path, low_value, low_next_value,
+   low_next_index, low_index, low_path), fill the fee bundle; the sighash
+   binds vote_nullifier (fields in §4). A quote (confirm sheet) simulates
+   with a random vote nullifier. Gas estimate: 250,000 + proof + one note
+   write (2,400,000); every stake proof now prices two more note writes per
+   nullifier slot (3,200,000).
+8. **Remember** (proposal, vnf) the moment the node accepts the tx
+   (`stake_votes`: proposal_id, vnf, tx_hash, until = timeout_height,
+   confirmed); confirmed once committed. A vote that failed in its block,
+   or is unknown once the chain is past its timeout_height, is forgotten
+   and the note may vote again. A vote the chain refuses as already cast
+   (code 1119, "already voted on this proposal", caught at simulate: no fee)
+   is recorded as confirmed: that is how a wallet restored from the
+   mnemonic, which does not know its votes, learns them. One vote per note
+   per proposal; the same note votes on every other open proposal.
+
+Eligible notes for a proposal (cast list, weight shown): derth, amount > 0,
+position < tree_size, not spent at or before the snapshot's height as far
+as sync knows (the cast checks the tree itself), not already voted on it.
 
 ## 4d. Chain wave 3 wallet rules (chain 06ea4d6)
 
@@ -563,6 +637,8 @@ app tells the user).
        GET {base}/stake/notes?from_pos=&limit=         [position, height, cm, ciphertext, denom, amount, spc]
        GET {base}/stake/nullifiers?from_height=&limit= [[height, [nf, ...]], ...]
        GET {base}/stake/roots?from_height=&limit=      [height, root, tree_size, time]
+       GET {base}/stake/nullifier-tree?from_index=&limit=  [index, nullifier, height]   (leaf 1 on; size, next_index)
+       GET {base}/stake/snapshots?from_height=&limit=  [height, proposal_id, root, tree_size, nf_root, nf_size]
 
    A 404 means the base moved: re-read the status (step 1) and retry once.
    Response bodies are capped (8 MiB decompressed) and pages to 5000 rows.
@@ -667,5 +743,11 @@ private balances, stake and registration until a later sync verifies them.
 `WalletFlowTest` drives two wallets against an in-memory chain (bundles with
 real binding-signature checks, the stake tree, the fced976 fee and
 ciphertext rules); with `PRIVACY_TOML_OUT=<dir>` it writes every witness as
-`<dir>/{action,stake,membership}/<test>_<i>/Prover.toml`. `nargo execute` on
-circuits/action, circuits/stake and circuits/membership accepts all of them.
+`<dir>/{action,stake,membership,vote}/<test>_<i>/Prover.toml`. `nargo execute` on
+circuits/action, circuits/stake, circuits/membership and circuits/vote accepts
+all of them. `StakeVoteFlowTest` ports the chain's TestStakeVoteConcurrentProposals
+(one note on two open proposals, a second vote refused locally and by the
+chain for a restored wallet, a note spent before the snapshot refused
+locally, one restaked after it still voting while its outputs cannot), the
+LCD fallback, a forged nullifier stream and the weight rule; one vote
+witness was proven with bb v5.0.0 and verified against the chain's vote VK.

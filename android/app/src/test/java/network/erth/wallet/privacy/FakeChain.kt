@@ -822,6 +822,21 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
 }
 
 /**
+ * With PRIVACY_TOML_OUT set, writes every witness [chain]'s prover saw as a
+ * nargo Prover.toml (<dir>/{action,stake,membership,vote}/<test>_<i>/), for
+ * `nargo execute` against the real circuits.
+ */
+fun dumpWitnesses(chain: FakeChain, test: String) {
+    val out = System.getenv("PRIVACY_TOML_OUT") ?: return
+    fun write(kind: String, i: Int, toml: String) =
+        java.io.File(out, "$kind/${test}_$i/Prover.toml").apply { parentFile.mkdirs() }.writeText(toml)
+    chain.prover.allActions.forEachIndexed { i, w -> write("action", i, w.proverToml()) }
+    chain.prover.allStakes.forEachIndexed { i, w -> write("stake", i, w.proverToml()) }
+    chain.prover.allMemberships.forEachIndexed { i, w -> write("membership", i, w.proverToml()) }
+    chain.prover.allVotes.forEachIndexed { i, w -> write("vote", i, w.proverToml()) }
+}
+
+/**
  * Checks each witness against its circuit's constraints (the Kotlin twin of
  * circuits/{action,stake,membership}/src/main.nr) and keeps it for the chain
  * to match against the tx and for a test to dump as Prover.toml.

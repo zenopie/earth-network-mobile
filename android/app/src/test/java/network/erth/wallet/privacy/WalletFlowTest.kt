@@ -397,11 +397,7 @@ class WalletFlowTest {
      * nargo Prover.toml, for `nargo execute` against the real circuits.
      */
     private fun dump(chain: FakeChain, test: String) {
-        val out = System.getenv("PRIVACY_TOML_OUT") ?: return
-        fun write(kind: String, i: Int, toml: String) = File(out, "$kind/${test}_$i/Prover.toml").apply { parentFile.mkdirs() }.writeText(toml)
-        chain.prover.allActions.forEachIndexed { i, w -> write("action", i, w.proverToml()) }
-        chain.prover.allStakes.forEachIndexed { i, w -> write("stake", i, w.proverToml()) }
-        chain.prover.allMemberships.forEachIndexed { i, w -> write("membership", i, w.proverToml()) }
+        dumpWitnesses(chain, test)
     }
 }
 

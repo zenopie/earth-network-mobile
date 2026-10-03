@@ -144,12 +144,7 @@ class AuditFixesTest {
 
     /** With PRIVACY_TOML_OUT set, every witness as a nargo Prover.toml (see WalletFlowTest). */
     private fun dump(chain: FakeChain, test: String) {
-        val out = System.getenv("PRIVACY_TOML_OUT") ?: return
-        fun write(kind: String, i: Int, toml: String) =
-            java.io.File(out, "$kind/${test}_$i/Prover.toml").apply { parentFile.mkdirs() }.writeText(toml)
-        chain.prover.allActions.forEachIndexed { i, w -> write("action", i, w.proverToml()) }
-        chain.prover.allStakes.forEachIndexed { i, w -> write("stake", i, w.proverToml()) }
-        chain.prover.allMemberships.forEachIndexed { i, w -> write("membership", i, w.proverToml()) }
+        dumpWitnesses(chain, test)
     }
 
     /** C2: the indexer is down when the registration commits; the pending record survives and resolves later. */
