@@ -102,6 +102,18 @@ fun RegistrationIntroScreen(
             )
         }
 
+        Spacer(Modifier.height(dimens.space16))
+        // A passport registered from another wallet moves here (a switch):
+        // what the old identity holds stays there unless it was moved first.
+        Text(
+            text = "Already registered from another wallet? Registering here switches your " +
+                "identity to this wallet. Move your handle and caretaker vote first, from the " +
+                "old wallet's Identity screen (Switch identity), or the new identity waits up " +
+                "to a year before it can hold them.",
+            style = EarthTypography.textXs,
+            color = EarthColors.Text.textTertiary,
+        )
+
         Spacer(Modifier.height(dimens.space24))
         EarthButton(
             text = "Start",
