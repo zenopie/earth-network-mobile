@@ -825,6 +825,19 @@ private balances, stake and registration until a later sync verifies them.
   that needs its notes merged first merges at most twice per confirmation,
   15-45 s apart and before the action.
 - **Logs.** Proof timings are logged in debug builds only.
+- **SRS.** The bundled privacy SRS (srs/bn254_g1_32769.dat, 32,769 points)
+  is checked by SHA-256 (d769ac6c…e99c) before use on both platforms; iOS
+  no longer downloads a privacy SRS when the bundled one is missing (a
+  private proof fails with a clear error instead). The passport SRS
+  prefetch (iOS) is streamed to a staged file, hashed as it comes and cut
+  off at the range's 524,289 × 64 bytes; no redirect is followed.
+- **Secrets (iOS).** Every SecRandomCopyBytes status is checked; the
+  phrase's bytes and the BIP-39 seed are zeroed once the keys are derived
+  (the phrase as a String cannot be).
+- **Vote run session (iOS, M4).** A lock, wallet switch or forget that
+  lands while a stake vote is starting or resuming stops it (a session
+  counter checked under the controller's lock before launch and at every
+  step); a suspended run reports no more progress.
 - **A store from before K6** (same chain id, no genesis recorded) keeps its
   identity record when the genesis is first recorded (as a confirmed
   switch: synced data goes, the registration stays).

@@ -33,23 +33,15 @@ public enum PassportSRS {
 
     /// Fetches the file if it is missing. Call once at launch, detached; a
     /// failure leaves nothing behind and is retried on the next launch.
+    /// Audit 4: streamed to a staged file and hashed as it comes, never more
+    /// than the range's bytes read (a server ignoring Range, or streaming
+    /// without end, is cut off there); a redirect is not followed.
     public static func prefetch() async {
         guard path == nil, let dest = file else { return }
+        let want = points * 64
         var r = URLRequest(url: source)
-        r.setValue("bytes=0-\(points * 64 - 1)", forHTTPHeaderField: "Range")
+        r.setValue("bytes=0-\(want - 1)", forHTTPHeaderField: "Range")
         r.timeoutInterval = 120
-        guard let (tmp, resp) = try? await URLSession.shared.download(for: r),
-              let status = (resp as? HTTPURLResponse)?.statusCode, status == 206 || status == 200 else { return }
-        defer { try? FileManager.default.removeItem(at: tmp) }
-        guard let h = try? FileHandle(forReadingFrom: tmp) else { return }
-        var hasher = SHA256()
-        var n: UInt64 = 0
-        while n < points * 64, let chunk = try? h.read(upToCount: Int(min(1 << 20, points * 64 - n))), !chunk.isEmpty {
-            hasher.update(data: chunk)
-            n += UInt64(chunk.count)
-        }
-        try? h.close()
-        guard n == points * 64, hasher.finalize().map({ String(format: "%02x", $0) }).joined() == sha256 else { return }
         let dir = dest.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         var d = dir
@@ -58,10 +50,39 @@ public enum PassportSRS {
         try? d.setResourceValues(v)
         let staged = dir.appendingPathComponent("bn254_g1_524289.dat.part")
         try? FileManager.default.removeItem(at: staged)
-        guard (try? FileManager.default.copyItem(at: tmp, to: staged)) != nil else { return }
-        // A file longer than the range (a server that ignored Range) is cut to it.
-        if let w = try? FileHandle(forWritingTo: staged) { try? w.truncate(atOffset: points * 64); try? w.close() }
+        guard FileManager.default.createFile(atPath: staged.path, contents: nil), let out = try? FileHandle(forWritingTo: staged) else { return }
+        var ok = false
+        defer {
+            try? out.close()
+            if !ok { try? FileManager.default.removeItem(at: staged) }
+        }
+        let session = URLSession(configuration: .ephemeral, delegate: NoRedirects(), delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+        guard let (bytes, resp) = try? await session.bytes(for: r),
+              let status = (resp as? HTTPURLResponse)?.statusCode, status == 206 || status == 200 else { return }
+        var hasher = SHA256()
+        var n: UInt64 = 0
+        var buf = Data()
+        buf.reserveCapacity(1 << 20)
+        do {
+            for try await b in bytes {
+                buf.append(b)
+                if buf.count == 1 << 20 || n + UInt64(buf.count) == want {
+                    hasher.update(data: buf); try out.write(contentsOf: buf)
+                    n += UInt64(buf.count); buf.removeAll(keepingCapacity: true)
+                    if n == want { break }
+                }
+            }
+        } catch { return }
+        guard n == want, hasher.finalize().map({ String(format: "%02x", $0) }).joined() == sha256 else { return }
+        try? out.synchronize()
+        ok = true
         _ = try? FileManager.default.replaceItemAt(dest, withItemAt: staged)
         if !FileManager.default.fileExists(atPath: dest.path) { try? FileManager.default.moveItem(at: staged, to: dest) }
+    }
+
+    final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest) async -> URLRequest? { nil }
     }
 }

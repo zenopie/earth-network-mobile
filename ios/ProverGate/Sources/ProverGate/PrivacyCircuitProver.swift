@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Swoir
 import Swoirenberg
@@ -36,21 +37,47 @@ public enum SRS {
         markProvisioned()
     }
 
-    public enum Failure: Error, CustomStringConvertible {
+    public enum Failure: Error, CustomStringConvertible, LocalizedError {
         case shortFile(String)
+        case corrupt(String)
+        case missing
         public var description: String {
-            switch self { case let .shortFile(p): "the SRS file \((p as NSString).lastPathComponent) is too short" }
+            switch self {
+            case let .shortFile(p): "the SRS file \((p as NSString).lastPathComponent) is too short"
+            case let .corrupt(p): "the SRS file \((p as NSString).lastPathComponent) is corrupt; reinstall the app"
+            case .missing: "this build has no privacy SRS, so it cannot prove a private transaction; reinstall the app"
+            }
         }
+        public var errorDescription: String? { description }
+    }
+
+    /// SHA-256 of the bundled privacy SRS (the Android asset srs/bn254_g1_32769.dat; PrivacyProver.SRS_SHA256).
+    public static let privacySHA256 = "d769ac6c98f8fab858a7e9967f2b7f181d8ad9fdcdf55438c915696febf0e99c"
+
+    /// Whether the file at `path` is exactly `bytes` long with SHA-256 `sha256` (streamed).
+    public static func fileMatches(_ path: String, bytes: UInt64, sha256: String) -> Bool {
+        guard let h = FileHandle(forReadingAtPath: path) else { return false }
+        defer { try? h.close() }
+        var hasher = SHA256()
+        var n: UInt64 = 0
+        while let chunk = try? h.read(upToCount: 1 << 20), !chunk.isEmpty {
+            n += UInt64(chunk.count)
+            if n > bytes { return false }
+            hasher.update(data: chunk)
+        }
+        return n == bytes && hasher.finalize().map { String(format: "%02x", $0) }.joined() == sha256
     }
 
     /// Provisions `size` (a power of two: size + 1 points) from a local `.dat`
     /// prefix of the transcript (audit 3: proving a private tx never fetches
     /// the SRS). The file is checked to hold every point first: noir_rs
     /// slices it unchecked, and a short file is a Rust panic.
-    public static func reserve(points size: UInt32, datPath: String) throws {
+    public static func reserve(points size: UInt32, datPath: String, sha256: String? = nil) throws {
         guard !isProvisioned else { return }
         let have = ((try? FileManager.default.attributesOfItem(atPath: datPath))?[.size] as? NSNumber)?.uint64Value ?? 0
         guard have >= (UInt64(size) + 1) * 64 else { throw Failure.shortFile(datPath) }
+        // Audit 4: the bundled file is checked by hash, not only by length (as Android).
+        if let sha256, !fileMatches(datPath, bytes: have, sha256: sha256) { throw Failure.corrupt(datPath) }
         _ = try Swoirenberg.setup_srs(circuit_size: size, srs_path: datPath)
         markProvisioned()
     }
@@ -123,9 +150,9 @@ public final class PrivacyCircuitProver: @unchecked Sendable {
     ///     still follow in this launch (with the local transcript prefix
     ///     that covers it, when it has been fetched), nil when the privacy
     ///     circuits' own small SRS is enough.
-    ///   - privacySRS: the bundled `.dat` prefix (32,769 points) every privacy
-    ///     circuit is set up from, so a private proof never fetches anything;
-    ///     nil (tests on a Mac): sized from the stake circuit and downloaded.
+    ///   - privacySRS: the bundled `.dat` prefix (32,769 points, its SHA-256
+    ///     pinned) every privacy circuit is set up from, so a private proof
+    ///     never fetches anything; nil: proving fails (`SRS.Failure.missing`).
     public init(manifests: [Kind: Data], privacySRS: String? = nil, reserve: @escaping () -> (manifest: Data, srsPath: String?)? = { nil }) {
         self.manifests = manifests
         self.privacySRS = privacySRS
@@ -143,9 +170,12 @@ public final class PrivacyCircuitProver: @unchecked Sendable {
             if let big = reserve() {
                 try SRS.reserve(forManifest: big.manifest, srsPath: big.srsPath)
             } else if let p = privacySRS {
-                try SRS.reserve(points: SRS.privacyPoints, datPath: p)
-            } else if let m = manifests[Kind.largest] {
-                try SRS.reserve(forManifest: m)
+                try SRS.reserve(points: SRS.privacyPoints, datPath: p, sha256: SRS.privacySHA256)
+            } else {
+                // Audit 4: a private proof never downloads its SRS (the
+                // download would say when, and from where, this wallet
+                // proves); without the bundled file it fails, clearly.
+                throw SRS.Failure.missing
             }
         }
         guard let manifest = manifests[k] else { throw SwoirError.errorLoadingManifest("no \(k.rawValue) circuit") }

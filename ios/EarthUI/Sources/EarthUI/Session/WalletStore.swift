@@ -386,9 +386,11 @@ public struct WalletStore: Sendable {
     /// biometric prompt is a real key rather than four digits.
     public static func generatedSecret() -> String {
         var bytes = Data(count: 32)
-        _ = bytes.withUnsafeMutableBytes {
+        let status = bytes.withUnsafeMutableBytes {
             SecRandomCopyBytes(kSecRandomDefault, $0.count, $0.baseAddress!)
         }
+        // Audit 4: a secret from a failed generator (all zeros) would guard nothing.
+        precondition(status == errSecSuccess, "SecRandomCopyBytes failed: \(status)")
         return bytes.base64EncodedString()
     }
 

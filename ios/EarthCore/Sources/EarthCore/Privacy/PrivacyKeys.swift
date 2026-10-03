@@ -38,7 +38,10 @@ public final class PrivacyKeys: @unchecked Sendable {
     }
 
     public static func fromMnemonic(_ mnemonic: String) throws -> PrivacyKeys {
-        try fromSeed(BIP39.seed(fromMnemonic: BIP39.canonical(mnemonic), passphrase: ""))
+        var seed = BIP39.seed(fromMnemonic: BIP39.canonical(mnemonic), passphrase: "")
+        // Audit 4: the seed is zeroed once the keys are derived.
+        defer { seed.resetBytes(in: 0 ..< seed.count) }
+        return try fromSeed(seed)
     }
 
     public static func fromSeed(_ seed: Data) throws -> PrivacyKeys {

@@ -18,4 +18,8 @@ behavior. Web: app-orch (its own CLIENT_FIX4_PROGRESS.md). Auditor PoCs:
 - [x] PRIVACY_FORMATS.md (3a restore, 4 pending, 4e snapshot/nf tree/1119/eligible, 4a paging/heights/redirects/depth, 4b note root height + claimed height, 4c forget, new 4f). versionCode 43 (1.0.36). testDebugUnitTest + assembleDebug pass.
 
 ## iOS
-- [ ] all of the above
+- [x] EarthCore: all of the above ported (WalletSync bounds/paging/gating/release, LCD roots latestBlock/noteTree/txStatus/RootRecord.height, TxRejected + codespace, local tx hash and pending before broadcast, LCD snapshot, nf paging, StakeVoteController session counter + previous-task join + position persisted at acceptance, GasPow cancellable + cap 24, no redirects (EarthRest.session), JSON depth 64, 503/429 backoff, legacyDec/Amounts/Fees ASCII digits, claim offset persisted, bounded stake merges).
+- [x] Audit4Tests (33: PoCs A4, B1, B1b, B2, B3, C x3 + legacyDec, vote, Android 1-5 equivalents, paging, busy, redirect, deep JSON) + Audit4IndexedCrossCheck (also on Android). swift test: all pass.
+- [x] ProverGate: bundled privacy SRS hash-checked, no download at proving time (SRS.Failure.missing); PassportSRS prefetch streamed with a size cap, no redirects.
+- [x] SecRandomCopyBytes status checked (WalletStore.generatedSecret); seed and phrase bytes zeroed after derivation.
+- [x] Registration fee reconfirm already bound by TxController ($shownFee); build 16. build-ios.sh ok; xcodebuild simulator (ARCHS=arm64) BUILD SUCCEEDED.
