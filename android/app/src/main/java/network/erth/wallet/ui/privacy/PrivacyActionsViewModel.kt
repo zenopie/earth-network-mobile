@@ -18,6 +18,7 @@ import network.erth.wallet.privacy.Reminders
 import network.erth.wallet.privacy.chain.PrivacyQueries
 import network.erth.wallet.privacy.handles.HandleEntry
 import network.erth.wallet.privacy.handles.Handles
+import network.erth.wallet.privacy.sync.PendingMove
 import network.erth.wallet.privacy.sync.WalletSync
 
 /** One of this wallet's Groundworks positions and the key index that signs for it. */
@@ -55,6 +56,16 @@ data class PersonalState(
     val reminders: List<Reminders.Reminder>,
     /** The directory could not be read, or null. */
     val directoryError: String? = null,
+    /** The split is held but was restored without its options. */
+    val caretakerSplitUnknown: Boolean = false,
+    /** Non-free directory entries naming this wallet's address (audit 5, M1). */
+    val addressed: List<HandleEntry> = emptyList(),
+    /** Moves away from this identity not yet confirmed, or not yet recorded in the new wallet (audit 5, M2). */
+    val outgoingMoves: List<PendingMove> = emptyList(),
+    /** Moves to this identity the chain has not confirmed yet. */
+    val incomingMoves: List<PendingMove> = emptyList(),
+    /** The store id of the wallet this identity's moves went to ("" none yet). */
+    val switchTarget: String = "",
 )
 
 /**
@@ -106,8 +117,11 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
             val live = runCatching { w.identityStatus() == WalletSync.IdentityStatus.LIVE }.getOrDefault(false)
             val params = runCatching { PrivacyQueries.personhoodParams() }.getOrNull()
             var dirError: String? = null
-            val entry = if (st.handle.isEmpty()) null else runCatching { PrivacyQueries.handles.lookup(st.handle) }
-                .onFailure { dirError = it.message ?: "network error" }.getOrNull()
+            // Every wallet reads the chain's own directory, whole, holder or not (audit 5: L3, L5),
+            // and squares its handle with it (M1, L11: a handle a restore lost, one the chain swept).
+            val dir = runCatching { PrivacyQueries.handles.chainDirectoryRead() }.onFailure { dirError = it.message ?: "network error" }.getOrNull()
+            val addressed = dir?.let { (d, at) -> runCatching { w.reconcileHandle(d, at) }.getOrNull() }.orEmpty()
+            val entry = if (st.handle.isEmpty()) null else dir?.first?.get(st.handle)
             val caretakerExp = runCatching { w.caretakerExpiresAt() }.getOrDefault(0L)
             val reminders = Reminders.due(
                 Reminders.Inputs(
@@ -118,6 +132,8 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
                     caretakerExpiresAt = caretakerExp,
                     handle = st.handle,
                     handleEntry = entry,
+                    addressed = addressed,
+                    ownAddress = w.address.encode(),
                 ),
             )
             return PersonalState(
@@ -134,6 +150,11 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
                 predecessorAt = st.identity?.predecessorAt ?: 0L,
                 reminders = reminders,
                 directoryError = dirError,
+                caretakerSplitUnknown = st.caretakerSplitUnknown,
+                addressed = addressed,
+                outgoingMoves = st.pendingMoves.filter { !it.incoming },
+                incomingMoves = st.pendingMoves.filter { it.incoming },
+                switchTarget = st.switchTarget,
             )
         }
     }
