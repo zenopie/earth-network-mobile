@@ -182,6 +182,28 @@ an empty string, or empty bytes is *absent* on the wire. Emitting one changes
 the encoded bytes, and since SIGN_MODE_DIRECT signs those bytes, the chain
 would verify a signature over something other than what it re-encodes.
 
+### The privacy core (Orchard-style bundles)
+
+`EarthCore/Sources/EarthCore/Privacy` ports Android's `privacy/` package for
+the chain's Orchard-style bundles and stake tree (PRIVACY_FORMATS.md). With
+full Xcode, `swift test` runs it against the same golden vectors Android
+reads (`Tests/EarthCoreTests/Resources/privacy`, copied from
+`android/app/src/test/resources/privacy`, generated from the chain by
+`android/tools/orchardvectors/gen.sh`): Grumpkin, value commitments and the
+binding signature byte for byte, every private msg's encoding, sighash and
+fee, the chain's action and membership fixtures, and three wallet flows
+against an in-memory chain. The end of that loop is the real circuits and
+verifier:
+
+    cd ios/EarthCore && PRIVACY_TOML_OUT=/tmp/w swift test --filter WalletFlowTests
+    # nargo execute each /tmp/w/{action,stake,membership}/*/Prover.toml in circuits/<kind>
+    cd ios/ProverGate && PRIVACY_TOML_DIR=/tmp/w swift test --filter PrivacyProverTests
+    cd tools/chainverify && go run . ../../ios/ProverGate/.artifacts wallet_stake
+
+The ProverGate test proves every dumped witness through Swoirenberg, checks
+each VK against the chain's genesis VK, and writes one proof per circuit for
+`chainverify` (which needs a chain checkout for its `replace`).
+
 ### Dependency notes
 
 - `swift-secp256k1` is pinned to the **0.17.x** line. 0.18 and later declare
