@@ -6,8 +6,9 @@ and `zk/orchard` (Orchard-style bundles: ORCHARD_DESIGN.md sections 12-14 of
 the chain), and the Android code reproduces those byte for byte
 (`android/.../privacy/zk`, `privacy/tx`, tested against vectors generated from
 the chain by `android/tools/orchardvectors/gen.sh <chain checkout> [ref]`,
-last run against chain privacy/orchard **fced976**; `tools/privacyvectors` is
-the retired transfer-circuit generator).
+last run against chain privacy/orchard **4a663d5**; `tools/privacyvectors` is
+the retired transfer-circuit generator, whose `dexamm_test.go.in` still
+writes the dex vectors).
 
 What the chain never sees, and so does not pin, is defined here. Every item
 is implemented in `android/app/src/main/java/network/erth/wallet/privacy/`
@@ -35,6 +36,22 @@ are cast through one spaced, resumable path (§4); the chain's round-2 tx
 rules (canonical bytes, ciphertext slots, one use per binding) are
 followed (§4). Android and iOS implement all of it identically; the record
 memo golden is pinned on both.
+
+**Handles, predecessor-aware activation and no automatic fees (chain
+4a663d5, clients round 5), summary.** The identity leaf commits to
+`predecessor_at` and every membership proof carries `max_predecessor` after
+`max_activation` (8 public inputs); the wallet names each msg's bounds
+(§4g). Public referrer addresses, MsgBindReferrer and its consent are gone:
+a registered human claims a **handle** (MsgBindHandle) naming their shielded
+address; wallets pay a handle after reading the **whole** directory (the
+backend's `/handles` stream, checked against the chain's `Query/Handles`
+pages before money moves), and a registration names its referrer by handle
+with a referral note to its address (§3a). An identity switch can first
+move the handle (MsgMoveHandle) and the caretaker vote (MsgMoveCaretaker)
+to the new identity. Nothing that spends a fee happens unasked any more:
+the daily claim, the caretaker refresh and handle renewals are reminders;
+the only automatic tx completes an undelegation the user started (§4c).
+Deposits pull each leg rounded up (§4g). Android and iOS identical.
 
 **Stake votes without spending (chain 9b29f5d, ORCHARD_DESIGN 15),
 summary.** MsgStakeVote no longer carries a stake proof: one derth note
@@ -233,15 +250,31 @@ saturates at 2^63 − 1 (a negative rate is 0).
 
     address = H(TAG_REG, idc, pc_anml, Bytes(ct_anml), pc_erth, Bytes(ct_erth), affiliate)
 
-(affiliate = Bytes(address bytes of the lowercase bech32 referrer), 0 for
-none). So the wallet picks fresh rho/rcm for both notes and writes both v2
+with affiliate = 0 for no referrer, and for a referrer named by handle
+
+    affiliate = H(Tag("earth.affiliate"), Bytes(affiliate_handle), affiliate_pc, Bytes(affiliate_ciphertext))
+
+where affiliate_pc / affiliate_ciphertext are the referrer's half of the
+reward as a note to the handle's shielded address: a pc of its owner_pk with
+fresh rho/rcm and a 177-byte amount-blind (v2) ciphertext to its ek_pub,
+value 0 in the plaintext (the chain publishes the amount). MsgRegister
+carries `affiliate_handle` (15), `affiliate_pc` (11), `affiliate_ciphertext`
+(12), all three or none (`affiliate` 13 and `affiliate_code` 14 are
+reserved). The handle is resolved from the whole directory when the
+registrant confirms the passport details (§4g: live in a fresh copy and in
+the chain's own directory), and a wallet never names its own address. So
+the wallet picks fresh rho/rcm for all three notes and writes the
 ciphertexts **before** proving the passport, and sends exactly those
-ciphertexts in MsgRegister and to /gas/register. Chain pinned vector: idc=1,
+ciphertexts in MsgRegister and to /gas/register. A referral link
+(`https://erth.network/ref/<handle>`, `earth://ref/<handle>`, the Play
+install referrer `referrer=<handle>`) prefills the handle. Chain pinned vector: idc=1,
 pc_anml=2, ct_anml="anml", pc_erth=3, ct_erth="erth", affiliate=0 →
 `20ce5fccf5e6e20a8a7b80f7565e41a7c73dbb16ac5e53746e7234ba8b305b0c`.
 
 **Gas grant.** `POST /gas/register` takes MsgRegister's fields (no fee
-bundle) plus `pc_gas` and `ciphertext_gas`, a fresh v2 ciphertext to self
+bundle; the referral as `affiliate_handle`, `affiliate_pc`,
+`affiliate_ciphertext` base64, all three or all "" for none, no `affiliate`)
+plus `pc_gas` and `ciphertext_gas`, a fresh v2 ciphertext to self
 (177 bytes, required). It is the only grant: `/gas/transparent`,
 `/gas/android`, `/gas/challenge`, `/gas/ios`, `/gas/human` are gone.
 **Proof of work (backend services/pow.py).** The request may carry
@@ -296,8 +329,12 @@ a tx that failed in its block is kept as a failure for the UI (a new
 registration replaces it), and its spent notes are released once the chain
 is past its timeout_height (§4). Every sync then tries to resolve it: once the local identity
 tree has the leaf, the country is found by recomputing
-`H(TAG_LEAF, idc, dsc_key, country, activated_at)` over the hint, unknown
-(0) and every A..Z pair; the identity record is written and the pending one
+`H(TAG_LEAF, idc, dsc_key, country, activated_at, predecessor_at)` over the
+hint, unknown (0) and every A..Z pair, each with predecessor_at 0 (a
+passport never registered before) and activated_at (a switch or a re-entry:
+the chain sets it to the registration block's time); the match fixes the
+identity's predecessor_at (every restore search below tries both too, so
+its hash budgets doubled); the identity record is written and the pending one
 dropped. It is never dropped unresolved (a leaf that does not match after
 the tree has it is an error shown to the user, the record kept).
 
@@ -470,6 +507,10 @@ app tells the user).
   | MsgSend | Bytes(receiver bytes), fee |
   | MsgRegister | idc, pc_anml, Bytes(ct_anml), pc_erth, Bytes(ct_erth), affiliate, Bytes(signature_algorithm), signals… |
   | MsgClaimAnml | day, pc, Bytes(ct) |
+  | MsgSetCaretaker | per entry option_id, percent (max_predecessor = 5 is not a sighash field) |
+  | MsgMoveCaretaker | new_owner |
+  | MsgBindHandle | Bytes(handle), owner_pk, Bytes(ek_pub) of the address (release: Bytes(""), 0, Bytes("")) |
+  | MsgMoveHandle | Bytes(handle), new_owner |
   | MsgDelegate | StakeFields, Bytes(validator), amount |
   | MsgRestake | StakeFields, Bytes(validator) |
   | MsgUndelegate | StakeFields, Bytes(validator), amount |
@@ -609,24 +650,9 @@ run is gone (a chain switch).
   is the canonical LegacyDec string, 18 decimals ("1.000000000000000000",
   "0.500000000000000000"); the wallet canonicalizes whatever it is given
   before laying the msg out (the sighash already bound the canonical form).
-- **Referrer consent.** MsgBindReferrer binding an address carries
-  `referrer_pub_key` (field 5: the 33-byte compressed secp256k1 key whose
-  address is `address`) and `referrer_signature` (field 6: 64-byte low-S
-  r||s, cosmos secp256k1 Sign = ECDSA over SHA-256) over
-
-      "earth.referrer.consent.v1" || u8 len(chain_id) || chain_id
-        || membership.nullifier (32) || the address's 20 raw bytes
-
-  Both empty when clearing; not sighash fields. The membership nullifier is
-  the referrer scope's, known before proving. The wallet signs with the
-  selected wallet's transparent key and binds only an address that key
-  controls (the automation's refresh signs the same way while unlocked).
-  Golden in vectors.json `referrer_consent`.
-- **Activation bounds.** Proposal and removal votes take BallotInputs'
-  max_activation (now the round/ballot open time − 86400);
-  MsgProposeRemoval proves the start of today (UTC) − 86400; caretaker
-  splits and referrer bindings name at most now − R − 86400 (less the
-  600 s clock margin, rounded down to the hour). New identities wait a day.
+- **Referrer consent** (MsgBindReferrer): removed with the msg at 4a663d5
+  (§4g).
+- **Activation bounds:** superseded by the predecessor bounds (§4g).
 - **No unshield to a module account.** The wallet refuses, before
   proving, an unshield whose receiver is any module account the chain
   declares (fee_collector, distribution, mint, bonded_tokens_pool,
@@ -635,6 +661,99 @@ run is gone (a chain switch).
   SHA-256(name)[:20]; vectors.json `module_accounts`).
 - **current_date** of a registration's passport proof must be a calendar
   date (YYMMDD; 250231 is refused); the wallet checks before broadcast.
+
+## 4g. Handles, predecessor bounds, moves, reminders (chain 4a663d5)
+
+- **Identity leaf and membership.** leaf = H(Tag("earth.leaf"), idc,
+  dsc_key, country, activated_at, predecessor_at) (`Registration.
+  predecessor_at` = 8). Membership public inputs, in order: root, scope,
+  nullifier, signal, excluded_dsc, excluded_country, max_activation,
+  max_predecessor (the circuit checks activated_at <= max_activation and
+  predecessor_at <= max_predecessor). "No bound" is 2^63 − 1
+  (`Privacy.NO_BOUND`). Bundled `membership.json` was rebuilt with nargo
+  1.0.0-beta.22; `bb write_vk` of all four bundled privacy circuits equals
+  the chain genesis's verifying keys. Golden: vectors.json `leaf`,
+  `leaf_pred`, `membership_public_inputs`.
+- **Bounds the wallet names, per msg** (it refuses locally, `NotYet`, when
+  its own identity does not meet them):
+
+  | msg | max_activation | max_predecessor |
+  | --- | --- | --- |
+  | MsgClaimAnml | start of yesterday (day − 1) × 86400 | no bound |
+  | MsgSetCaretaker, a new split | no bound | L(R) |
+  | MsgSetCaretaker, refresh/change/clear of one held | no bound | L(R) if met, else no bound |
+  | MsgBindHandle, a claim (holding none) | no bound | L(handle_lease_seconds) |
+  | MsgBindHandle, renew/change of the one held | no bound | L(lease) if met, else no bound |
+  | MsgBindHandle, release | no bound | no bound |
+  | MsgMoveHandle, MsgMoveCaretaker | no bound | no bound |
+  | MsgVoteProposal, MsgVoteRemoval | BallotInputs.max_activation (no bound) | BallotInputs.max_predecessor (7) |
+  | MsgProposeRemoval | no bound | start of today (UTC) − 86400 |
+
+  L(lease) = floor_hour(now − lease − 86400 − 600): strictly below the
+  chain's now − lease − 86400 with 600 s of clock margin, rounded to the
+  hour so it says nothing about when the tx was made. Every wallet names
+  the same L, fresh registrants (predecessor_at 0) included: they meet it,
+  so a fresh identity acts at once and its proof does not tell it from an
+  old one (proving max_predecessor = 0 would). R is caretaker_vote_seconds
+  (default 365 days); handle_lease_seconds is param 27 (default 365 days;
+  the chain bounds a claim by the longest lease ever set).
+- **Handles.** Lowercase a-z, 0-9, -; 3-32; no dash at either end; no case
+  folding (the wallet lowercases what is typed and drops a leading @).
+  MsgBindHandle {fee 1, membership 2 (scope Scope("handle")), handle 3,
+  address 4 (canonical lowercase "erthz1..."), max_predecessor 6}. Holding
+  a handle: the same handle renews it (lease now + handle_lease_seconds,
+  the address may change), another changes to it (the old one is freed at
+  once); holding none: a claim; both empty: release at once. MsgMoveHandle
+  {fee 1, membership 2, handle 3, new_owner 4 = H(TAG_SN, new_id_secret,
+  Scope("handle"))}. Lifecycle: live until expires_at; then until
+  renewal_until (= expires_at + handle_renewal_seconds, param 26, default
+  30 days) reserved to its owner and not resolving; then free. Errors:
+  1121 (not a live handle, as a registration's referrer), 1122 (taken),
+  1125 (this identity moved its handle away), 1126 (its caretaker split);
+  codespace personhood. The wallet records the handle it holds in its store
+  (`handle`, `handle_moved_out`); status, expiry and renewal window come
+  from the directory.
+- **The directory, never one handle.** Every lookup reads the whole
+  directory: the backend's `GET {base}/handles?from_index=&limit=1000`
+  (rows [handle, address, status, expires_at, renewal_until]; a snapshot at
+  `height`, read from index 0 in aligned pages until `last_page`, started
+  over (at most 3 times) when `height` changes between pages; refused when
+  out of handle order, a status other than live/renewal/free, a malformed
+  handle, or a row count other than `size`), falling back to the chain's
+  `GET /earth/personhood/v1/handles?start=&limit=1000` from the first page
+  (`next` must be the page's last handle). Cached 10 minutes. There is no
+  per-handle query anywhere in the wallet (`Query/Handle` is never used).
+  An entry whose expires_at has passed by the wallet's clock is treated as
+  in its renewal period (not payable).
+- **Paying a handle.** Send accepts "@handle" or a bare handle. Before the
+  confirm the wallet reads a fresh copy (at most 60 s old) and the chain's
+  own directory (also whole, also at most 60 s old): the handle must be
+  live in both with the same address, else nothing is paid. The confirm
+  shows "@handle · erthz1xxxxxxxx…yyyyyyyy". Funding: from notes when the
+  shielded balance of the asset covers it (a private MsgSend to the
+  address), else from the public balance as MsgShield whose note is minted
+  to the handle's address (pc of its owner_pk, 177-byte blind ciphertext to
+  its ek_pub; the amount is public, the recipient is not).
+- **Moves and switching identity.** A switch is the same passport
+  registered from another wallet on the phone. Before it, the old wallet
+  may move its handle and its live caretaker split to the new identity's
+  nullifiers in those scopes, computed from the other wallet's keys
+  (`H(TAG_SN, id_secret', Scope(...))`), and records them in the other
+  wallet's store (handle, split, expiry; kept by its first sync), so its
+  renewal and refresh take no bound. The mover records `*_moved_out` and
+  never casts or claims again. Without moves, the new identity waits until
+  everything its predecessor could hold has lapsed (lease + 1 day). The
+  switch screen requires the new wallet's recovery phrase be backed up and
+  explains that a lost wallet's handle and vote cannot be moved.
+- **Dex deposits** (audit 4, C2). x/dex pulls each leg rounded up,
+  ceil(shares × R / S) with shares = min(⌊in_e × S / R_e⌋, ⌊in_t × S / R_t⌋);
+  the wallet derives the other leg of a deposit as ceil(amount × R_other /
+  R_typed), so the typed side is the binding one and at most one unit comes
+  back as a refund. min_shares is the shares at the current reserves less
+  1 %. Pinned against the chain's own maths (dex_amm.json `deposits`).
+  ErrPoolCap (dex 1120, past 2^120) is explained to the user.
+- **timeout_height** stays the LCD tip + 50 (above the last committed
+  height, as CheckTx now requires).
 
 ## 4a. Indexer URL scheme (backend README "URL scheme for wallets")
 
@@ -656,7 +775,7 @@ run is gone (a chain switch).
    `GET /cosmos/base/tendermint/v1beta1/blocks/1` (the first 16 lowercase
    hex digits of `block_id.hash` must be the status's genesis). Only a
    confirmed switch wipes the local trees, notes, cursors, records and the
-   old chain's bookkeeping (claimed days, caretaker split, referrer); it
+   old chain's bookkeeping (claimed days, caretaker split, handle); it
    keeps the identity record (with its passport nullifier), the pending
    registration and the owner-tag counters, and the identity's leaf is
    re-verified against the resynced tree (shown as not live if it does not
@@ -782,13 +901,17 @@ private balances, stake and registration until a later sync verifies them.
 
 ## 4c. Wallet behaviors (audit 3)
 
-- **Automation** (daily claim, caretaker/referrer refresh, matured
-  unbonding claims) takes one action at a time, chosen at random among
-  those due; before the next, a random 30-180 s pause and a full sync, and
-  a fresh decision. Actions sharing a single ERTH note are ordered by it:
-  while the first's change has not landed there is no spendable fee note
-  and the second waits for a later pass. Logs name the kind of action only,
-  never a denom.
+- **Automation** (round 5: only matured unbonding claims, the completion
+  of an undelegation the user started, paid from its own output) takes one
+  claim at a time, chosen at random among those due; before the next, a
+  random 30-180 s pause and a full sync, and a fresh decision. Logs name the
+  kind of action only, never a denom. Nothing else spends a fee unasked:
+  the day's ANML claim, the caretaker vote and the handle are **reminders**
+  (Home banners and the Handle screen): "ANML ready to claim" when today's
+  claim is open and not made; the caretaker vote from 30 days before its
+  expires_at until 30 days after; the handle from 30 days before
+  expires_at through its renewal period. A stake vote run continues only a
+  vote the user started.
 - **Stake vote run** (K5) stops with the session: lock, session end and a
   wallet switch suspend it (the wallet's keys are dropped, the persisted
   run kept); the next unlock resumes it from that wallet's own store only.
@@ -815,8 +938,7 @@ private balances, stake and registration until a later sync verifies them.
 - **claimOpensAt** and every time sum are checked (no wrap, no trap): an
   activated_at with no answer gives none.
 - **Automation.** Errors (not only exceptions) fail the action, never the
-  app. The day's claim offset is persisted with the wallet (one draw per
-  UTC day, whatever restarts the app).
+  app. (The claim offset went with the automatic claim in round 5.)
 - **Gas grant proof of work.** The wallet works for at most 24 bits; a
   server asking more is refused (iOS: the work stops when the request is
   cancelled).
@@ -859,3 +981,9 @@ chain for a restored wallet, a note spent before the snapshot refused
 locally, one restaked after it still voting while its outputs cannot), the
 LCD fallback, a forged nullifier stream and the weight rule; one vote
 witness was proven with bb v5.0.0 and verified against the chain's vote VK.
+`HandlesTest` (round 5) drives handles (claim, taken, renew, change, release,
+lapse), paying a handle from the whole directory (a forged indexer entry
+refused), a registration referred by a handle (the referral note found by
+the referrer), a switch that moves the handle and caretaker vote, and every
+predecessor bound; its membership witnesses (switched identities, no-bound
+inputs) pass `nargo execute` with the rest (231 witnesses).
