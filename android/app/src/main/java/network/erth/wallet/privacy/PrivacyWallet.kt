@@ -401,6 +401,7 @@ class PrivacyWallet(
 
     /** Today's ANML. Opens once the identity was activated before yesterday began. */
     fun claimAnml(day: Long = today()): TxResult {
+        require(day >= 1) { "no claim day before day 1" }
         // Chain-minted: a v2 ciphertext, opened against the mint's public amount.
         val anml = mint("uanml")
         val m = membership(Privacy.claimScope(day), Fr.ZERO, Fr.ZERO, (day - 1) * SECONDS_PER_DAY)

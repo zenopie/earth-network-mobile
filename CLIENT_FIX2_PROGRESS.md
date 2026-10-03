@@ -25,5 +25,7 @@ format or behavior change.
 
 - [x] Chain round 2 rules: engine checks 217-byte action ciphertexts and the two stake ciphertext slots before broadcast; FakeChain enforces canonical tx/body/auth/msg bytes, those slots, and one use per registration binding.
 
+- [x] Info: claimAnml refuses day 0 (parity with the iOS underflow fix). versionCode 40 (1.0.33). testDebugUnitTest (all) + assembleDebug pass.
+
 ## iOS
 (not started)
