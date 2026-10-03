@@ -114,9 +114,10 @@ public final class StakeVoteController: @unchecked Sendable {
 
     /// Waits for the current run to end (tests).
     public func wait() async {
-        lock.lock(); let t = task; lock.unlock()
-        await t?.value
+        await currentTask()?.value
     }
+
+    private func currentTask() -> Task<Void, Never>? { lock.lock(); defer { lock.unlock() }; return task }
 
     private func takeKeepRun(cancelled: Bool) -> Bool {
         lock.lock(); defer { lock.unlock() }

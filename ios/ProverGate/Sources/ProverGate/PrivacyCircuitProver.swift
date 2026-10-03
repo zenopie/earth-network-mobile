@@ -26,13 +26,38 @@ public enum SRS {
     }
 
     /// Provisions the SRS for `manifest` (sized from its own bytecode) if
-    /// nothing has yet. A no-op afterwards.
-    public static func reserve(forManifest manifest: Data) throws {
+    /// nothing has yet. A no-op afterwards. `srsPath`: a local `.dat` prefix
+    /// of the transcript that covers the circuit (noir_rs aborts on a short
+    /// file, so only pass one known to cover it); nil downloads it.
+    public static func reserve(forManifest manifest: Data, srsPath: String? = nil) throws {
         guard !isProvisioned else { return }
         let circuit = try Swoir(Swoirenberg.self).createCircuit(manifest: manifest, size: nil)
-        try circuit.setupSrs(srs_path: nil)
+        try circuit.setupSrs(srs_path: srsPath)
         markProvisioned()
     }
+
+    public enum Failure: Error, CustomStringConvertible {
+        case shortFile(String)
+        public var description: String {
+            switch self { case let .shortFile(p): "the SRS file \((p as NSString).lastPathComponent) is too short" }
+        }
+    }
+
+    /// Provisions `size` (a power of two: size + 1 points) from a local `.dat`
+    /// prefix of the transcript (audit 3: proving a private tx never fetches
+    /// the SRS). The file is checked to hold every point first: noir_rs
+    /// slices it unchecked, and a short file is a Rust panic.
+    public static func reserve(points size: UInt32, datPath: String) throws {
+        guard !isProvisioned else { return }
+        let have = ((try? FileManager.default.attributesOfItem(atPath: datPath))?[.size] as? NSNumber)?.uint64Value ?? 0
+        guard have >= (UInt64(size) + 1) * 64 else { throw Failure.shortFile(datPath) }
+        _ = try Swoirenberg.setup_srs(circuit_size: size, srs_path: datPath)
+        markProvisioned()
+    }
+
+    /// The privacy circuits' SRS: 2^15 (32,769 points), every privacy circuit
+    /// fits (stake, the largest, is 9,647 gates).
+    public static let privacyPoints: UInt32 = 1 << 15
 }
 
 /// On-device proofs of the privacy circuits (circuits/membership,
@@ -81,7 +106,8 @@ public final class PrivacyCircuitProver: @unchecked Sendable {
     public static let proofBytes = 14_656
 
     private let manifests: [Kind: Data]
-    private let reserve: () -> Data?
+    private let reserve: () -> (manifest: Data, srsPath: String?)?
+    private let privacySRS: String?
     private let lock = NSLock()
     private var loaded: [Kind: (circuit: Circuit, vk: Data)] = [:]
 
@@ -92,10 +118,15 @@ public final class PrivacyCircuitProver: @unchecked Sendable {
     ///   - manifests: the compiled circuits (the app bundle's circuits/membership.json, action.json, stake.json).
     ///   - reserve: the manifest whose SRS to provision first when nothing has
     ///     been yet — the largest passport circuit while a registration may
-    ///     still follow in this launch, nil when the wallet is registered and
-    ///     the privacy circuits' own small SRS is enough.
-    public init(manifests: [Kind: Data], reserve: @escaping () -> Data? = { nil }) {
+    ///     still follow in this launch (with the local transcript prefix
+    ///     that covers it, when it has been fetched), nil when the privacy
+    ///     circuits' own small SRS is enough.
+    ///   - privacySRS: the bundled `.dat` prefix (32,769 points) every privacy
+    ///     circuit is set up from, so a private proof never fetches anything;
+    ///     nil (tests on a Mac): sized from the stake circuit and downloaded.
+    public init(manifests: [Kind: Data], privacySRS: String? = nil, reserve: @escaping () -> (manifest: Data, srsPath: String?)? = { nil }) {
         self.manifests = manifests
+        self.privacySRS = privacySRS
         self.reserve = reserve
     }
 
@@ -106,7 +137,15 @@ public final class PrivacyCircuitProver: @unchecked Sendable {
         // circuit proves first: a membership- or action-sized SRS (a gas
         // grant, a send) cannot be grown for a stake proof later in the same
         // process (bb: errorSettingUpSRS).
-        if !SRS.isProvisioned, let big = reserve() ?? manifests[Kind.largest] { try SRS.reserve(forManifest: big) }
+        if !SRS.isProvisioned {
+            if let big = reserve() {
+                try SRS.reserve(forManifest: big.manifest, srsPath: big.srsPath)
+            } else if let p = privacySRS {
+                try SRS.reserve(points: SRS.privacyPoints, datPath: p)
+            } else if let m = manifests[Kind.largest] {
+                try SRS.reserve(forManifest: m)
+            }
+        }
         guard let manifest = manifests[k] else { throw SwoirError.errorLoadingManifest("no \(k.rawValue) circuit") }
         let circuit = try LeanPoaProver.loadCircuit(manifest: manifest, size: nil)
         let vk = try circuit.getVerificationKey(proof_type: LeanPoaProver.proofType)

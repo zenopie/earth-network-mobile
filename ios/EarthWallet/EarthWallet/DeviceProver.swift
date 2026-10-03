@@ -20,6 +20,9 @@ enum DeviceProver {
     static func install() {
         PassportProving.install(prove, ready: { passportFits })
         PrivacyProving.install(PrivacyDeviceProver())
+        // The passport SRS, fetched once at launch rather than when a proof
+        // needs it (audit 3; the privacy SRS is bundled).
+        Task.detached(priority: .background) { await PassportSRS.prefetch() }
     }
 
     enum Failure: Error, LocalizedError {
@@ -60,7 +63,7 @@ enum DeviceProver {
     /// cannot be set up now, and the honest instruction is to relaunch.
     private static func loadOrExplain(_ manifest: Data, provisioned: Bool) throws -> LeanPoaProver.LoadedCircuit {
         do {
-            return try LeanPoaProver.loadCircuit(manifest: manifest, size: nil)
+            return try LeanPoaProver.loadCircuit(manifest: manifest, size: nil, srsPath: PassportSRS.path)
         } catch where provisioned && String(describing: error).contains("SRS") {
             throw Failure.srsTooSmall
         }
@@ -118,15 +121,23 @@ struct PrivacyDeviceProver: PrivacyProver {
         Bundle.main.url(forResource: name, withExtension: "json", subdirectory: "circuits").flatMap { try? Data(contentsOf: $0) }
     }
 
+    /// The bundled privacy SRS: the Android asset folder, referenced (audit 3).
+    static let privacySRS = Bundle.main.path(forResource: "bn254_g1_32769", ofType: "dat", inDirectory: "srs")
+
     private static let prover: PrivacyCircuitProver = {
         var manifests: [PrivacyCircuitProver.Kind: Data] = [:]
         for k in PrivacyCircuitProver.Kind.allCases { manifests[k] = manifest(k.rawValue) }
-        return PrivacyCircuitProver(manifests: manifests) {
+        return PrivacyCircuitProver(manifests: manifests, privacySRS: privacySRS) {
             // Asked only while nothing is provisioned, just before reserving
-            // with what it returns.
-            let big = PrivacyProving.registrationMayFollow ? manifest(largestPassportCircuit) : nil
-            reservedForPassport = big != nil
-            return big
+            // with what it returns. The passport size only from the local
+            // file: a private proof never fetches the SRS (audit 3). Without
+            // it, a registration later in this launch asks for a relaunch.
+            guard PrivacyProving.registrationMayFollow, let path = PassportSRS.path, let m = manifest(largestPassportCircuit) else {
+                reservedForPassport = false
+                return nil
+            }
+            reservedForPassport = true
+            return (m, path)
         }
     }()
 

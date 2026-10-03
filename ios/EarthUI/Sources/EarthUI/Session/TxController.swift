@@ -32,7 +32,11 @@ public final class TxController {
         /// Android they did, and claiming rewards (whose gas scales with the
         /// validator count) declared the flat default while broadcasting more.
         /// The sheet then reported the account funded when it was not.
-        public var feeUerth: String { Fees.forGas(gasLimit) }
+        public var feeUerth: String { feeOverride.map(String.init) ?? Fees.forGas(gasLimit) }
+
+        /// A private tx's fee as the chain priced it, when that was more than
+        /// the estimate first shown: the sheet asks again at it (audit 3).
+        public var feeOverride: UInt64?
 
         /// A private tx: unsigned, proven on the phone, its fee paid from a
         /// shielded ERTH note. The fee shown is an estimate (the exact figure
@@ -133,6 +137,9 @@ public final class TxController {
     /// next attempt.
     public private(set) var gasError: String?
 
+    /// The gas request's proof of work, 0...1, while it is being made.
+    public private(set) var gasWork: Double?
+
     /// The action of the transaction in flight — "Send", "Register".
     ///
     /// Kept because `pending` is cleared the instant it is confirmed, and the
@@ -205,7 +212,10 @@ public final class TxController {
         gasError = nil
         do {
             if let reg = details.registration {
-                _ = try await GasGrant.request(.register(reg.msg, pcGas: reg.pcGas, ciphertextGas: reg.ciphertextGas))
+                defer { gasWork = nil }
+                _ = try await GasGrant.request(.register(reg.msg, pcGas: reg.pcGas, ciphertextGas: reg.ciphertextGas)) { p in
+                    Task { @MainActor [weak self] in if self?.requestingGas == true { self?.gasWork = p } }
+                }
             } else if details.shielded {
                 throw GasGrant.Refused(status: 0, message: "Fees for private actions are paid from shielded ERTH: your registration reward, or ERTH sent to your shielded address.")
             } else {
@@ -272,7 +282,8 @@ public final class TxController {
             let hash: String
             if let runPrivate {
                 guard let w = model.privacy else { throw WalletStore.Error.notFound }
-                hash = try await runPrivate(w).hash
+                // The fee the sheet showed bounds what the private run may pay (audit 3).
+                hash = try await PrivacyWallet.$shownFee.withValue(UInt64(details.feeUerth)) { try await runPrivate(w).hash }
                 model.publishPrivacy()
             } else {
                 hash = try await broadcast(details: details, build: build!, model: model)
@@ -280,6 +291,12 @@ public final class TxController {
             outcome = .succeeded(action: details.action, hash: hash)
             await onSuccess?()
             await model.refresh()
+        } catch let e as PrivateTxEngine.FeeAboveQuote {
+            // Nothing was proven or sent: show the sheet again at the chain's fee.
+            var again = details
+            again.feeOverride = e.fee
+            pending = again
+            return
         } catch let EarthClient.Error.notCommitted(hash) {
             // Not `onSuccess`: that clears the form, and the user may need what
             // they typed if this never lands.

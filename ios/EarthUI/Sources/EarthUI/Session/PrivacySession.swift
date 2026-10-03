@@ -34,16 +34,26 @@ public enum PrivacyProving {
 /// Builds the selected wallet's `PrivacyWallet` from its mnemonic (the privacy
 /// keys are derived, never stored apart from it). Ports PrivacySession.kt.
 enum PrivacySession {
+    /// Where every wallet's `privacy/<id>/` directory lives.
+    static func dataRoot() throws -> URL {
+        try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+    }
+
+    /// Deletes every wallet's private data (notes, identity, records, trees):
+    /// forgetting the wallets forgets what they held privately too (audit 3).
+    static func forgetAll() throws {
+        try PrivacyStore.delete(root: try dataRoot())
+    }
+
     static func open(mnemonic: String, client: EarthClient) throws -> PrivacyWallet {
         let keys = try PrivacyKeys.fromMnemonic(mnemonic)
         // Named by a hash of the owner key, not the address: nothing on disk
         // pairs the transparent address with the shielded one.
         let id = String(PrivacyHash.h(PrivacyHash.tagOwner, keys.ownerPK).hex.prefix(16))
-        let root = (try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true))
-            ?? FileManager.default.temporaryDirectory
         return PrivacyWallet(
             keys: keys,
-            store: PrivacyStore.open(root: root, walletID: id),
+            // An unreadable store is an error the user sees, never an empty wallet (audit 3).
+            store: try PrivacyStore.open(root: try dataRoot(), walletID: id),
             indexer: HTTPPrivacyIndexer(),
             chain: RESTPrivateChain(rest: client.rest),
             reads: PrivacyQueries(rest: client.rest),

@@ -453,6 +453,9 @@ public final class AppModel {
     }
 
     public func forget() {
+        closePrivacy()
+        // The wallets' private data goes with them (audit 3); a failure is shown, not dropped.
+        do { try PrivacySession.forgetAll() } catch { privacySyncError = describe(error) }
         store.delete()
         sessionPin = nil
         wallets = []
@@ -460,7 +463,6 @@ public final class AppModel {
         address = ""
         balances = [:]
         activity = nil
-        closePrivacy()
         phase = .setup
     }
 
@@ -724,7 +726,7 @@ public final class AppModel {
             })
             stakeVotes = votes
             // A stake vote the app lost (killed in the background) goes on.
-            votes.resume()
+            Task { await votes.resume() }
             let queries = PrivacyQueries(rest: client.rest)
             automation = Task.detached(priority: .utility) { [weak self] in
                 while !Task.isCancelled {
@@ -782,7 +784,7 @@ public final class AppModel {
         do {
             try await w.sync()
             let snap = w.snapshot
-            privacySyncError = (snap.rootsVerified ? nil : snap.rootsError) ?? snap.pendingRegistration?.failure
+            privacySyncError = (snap.rootsVerified ? nil : snap.rootsError) ?? snap.saveError ?? snap.pendingRegistration?.failure
         } catch {
             privacySyncError = describe(error)
         }

@@ -50,7 +50,9 @@ final class PrivacyProverTests: XCTestCase {
     /// first circuit to prove must not be the smallest.
     static let shared: PrivacyCircuitProver = {
         let root = try! RepoLayout.root(from: #filePath)
-        return PrivacyCircuitProver(manifests: try! manifests(root))
+        // The SRS the app bundles (audit 3): every privacy circuit proves from it, nothing is fetched.
+        let srs = root.appendingPathComponent("android/app/src/main/assets/srs/bn254_g1_32769.dat").path
+        return PrivacyCircuitProver(manifests: try! manifests(root), privacySRS: srs)
     }()
 
     /// The chain checkout beside this one, if any (privacy/orchard).

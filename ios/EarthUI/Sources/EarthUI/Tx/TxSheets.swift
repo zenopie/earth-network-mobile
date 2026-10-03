@@ -90,7 +90,8 @@ struct TxConfirmSheet: View {
                     EarthButton(title: "Confirm") { Task { await tx.confirm(in: model) } }
                 } else if details.registration != nil {
                     EarthButton(
-                        title: tx.awaitingGas ? "Waiting for gas…" : "Get free gas",
+                        title: tx.awaitingGas ? "Waiting for gas…"
+                            : tx.gasWork.map { "Preparing request… \(Int($0 * 100))%" } ?? "Get free gas",
                         busy: tx.requestingGas || tx.awaitingGas
                     ) {
                         Task { await tx.requestGas(in: model) }
