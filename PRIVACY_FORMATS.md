@@ -361,23 +361,53 @@ while the old leaf is live; the app tells the user).
 A minted stake note row has denom, amount and spc and (fced976 on) its blind
 stake ciphertext; a created one its wallet stake ciphertext and nulls.
 
-## 4b. Root verification against the chain (C3)
+## 4b. Root verification against the chain (C3, K8, K9)
 
-After each sync the wallet checks every local root against the chain's LCD,
-not only the indexer:
+**What is trusted.** The operator runs both the indexer (api.erth.network)
+and the LCD (lcd.erth.network); the wallet has no light client and does not
+check consensus signatures, so the LCD is trusted for chain state. What the
+checks below buy is that a compromised or broken *indexer* alone cannot make
+the wallet build on, or show as verified, trees the chain does not have; an
+operator controlling both the indexer and the LCD could still lie
+consistently (it could not forge spends: every proof is checked by the
+validators, so a forged tree only yields proofs the chain refuses).
 
-- note tree: `GET /earth/shielded/v1/roots/{root hex}` must say `valid` with
-  `record.tree_size` = the local size;
+After each sync the wallet checks every local root against the LCD:
+
+- note tree: `GET /earth/shielded/v1/roots/{root hex}`. A record whose
+  `tree_size` differs from the local size is a mismatch. No record is
+  **unverified, not a mismatch** (K8): x/shielded prunes roots after its
+  window (14 days), so an indexer far behind and a forged root look the
+  same; `valid` false (no longer an anchor) is unverified too.
 - identity tree: `GET /earth/personhood/v1/identity_tree` at height H (header
   `x-cosmos-block-height`, H = the indexer's `roots/latest.identity.height`)
   must give `size` = local size and `latest_root` = local root;
 - stake tree: `GET /earth/shieldedstaking/v1/stake_tree` at the indexer's
   stake root height likewise (an empty tree: size 0, root empty).
+- **Pinned heights (K9).** A tree read counts as pinned only if the
+  response's `x-cosmos-block-height` header echoes exactly H. A pinned read
+  that differs is a mismatch. If H is unavailable (pruned) or another height
+  is echoed, the latest state is read instead (both platforms, never
+  silently: it is marked unpinned); an unpinned read verifies equal trees and
+  otherwise leaves the roots **unverified** (a zeroing after H changes the
+  identity root at the same size), never a mismatch.
+- **Nullifier sample (K9).** Up to 4 pool and 4 stake nullifiers, drawn
+  uniformly (reservoir) from everything the nullifier streams delivered in
+  this sync, are asked of `GET /earth/shielded/v1/nullifiers/{hex}` and
+  `GET /earth/shieldedstaking/v1/stake_nullifiers/{hex}`; one the chain says
+  is not spent leaves the roots unverified. The wallet never asks about its
+  own nullifiers (that would name its notes).
+- **Indexer behind the tip (K9).** If the LCD's latest block
+  (`/cosmos/base/tendermint/v1beta1/blocks/latest`) is more than 30 blocks
+  past the indexer's synced height, the roots are unverified ("the indexer
+  is N blocks behind").
 
-A local tree that differs from the indexer's latest is resynced once; one
-the chain disagrees with is never used (no proof is built on it) and the
-error is shown. If a pinned-height query is unavailable (pruned node), the
-check falls back to the latest height and passes only on equal sizes.
+A local tree larger than the indexer's latest, or one of the same size with
+another root, is inconsistent: the wallet starts over from an empty store.
+A local tree that differs from the indexer's latest is resynced once; a
+mismatch wipes the synced data and is shown. Unverified roots block every
+private tx (no proof is built on them) and are shown as such next to the
+private balances, stake and registration until a later sync verifies them.
 
 ## 5. Off-device parity
 

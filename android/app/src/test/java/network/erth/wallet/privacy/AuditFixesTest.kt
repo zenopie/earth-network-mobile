@@ -181,7 +181,11 @@ class AuditFixesTest {
         assertEquals("123456789", store.state.identity!!.passportNullifier)
     }
 
-    /** C3: an indexer serving a note the chain never had (encrypted to us, with roots to match) is refused. */
+    /**
+     * C3 (K8): an indexer serving a note the chain never had (encrypted to
+     * us, with roots to match) leaves the wallet unverified: nothing is
+     * built on it, and the honest indexer's stream replaces it.
+     */
     @Test
     fun forgedIndexerTreesAreRefused() {
         val chain = FakeChain()
@@ -207,15 +211,39 @@ class AuditFixesTest {
             }
         }
         val w = wallet(chain, indexer = idx)
-        assertThrows(WalletSync.ChainMismatch::class.java) { w.sync() }
-        // Nothing synced from it is kept or spendable.
-        assertTrue(w.balances().isEmpty())
-        assertTrue(w.store.state.rootsError!!.contains("never recorded"))
+        assertEquals(false, w.sync().verified)
+        // Nothing synced from it is spendable.
+        assertTrue(w.store.state.rootsError!!.contains("no longer holds"))
         assertThrows(IllegalStateException::class.java) { w.unshield("earth1qqqsyqcyq5rqwzqfpg9scrgwpugpzysncc2uls", "uerth", 1) }
         forge = false
         w.sync()
         assertEquals(1_000_000L, bal(w, "uerth"))
         assertTrue(w.store.state.rootsVerified)
+    }
+
+    /** C3: an identity tree the chain contradicts at the indexer's own height wipes what was synced. */
+    @Test
+    fun forgedIdentityTreeIsAMismatch() {
+        val chain = FakeChain()
+        val a = wallet(chain)
+        val o = a.shieldOutput("uerth", 0)
+        chain.shield("uerth", 1_000_000, o.pc, o.ciphertext)
+        val idx = object : Wrapped(chain) {
+            val leaf = Fr.of(99)
+            override fun identity(fromIndex: Long, limit: Int?) =
+                network.erth.wallet.privacy.sync.IdentityPage(
+                    if (fromIndex == 0L) listOf(network.erth.wallet.privacy.sync.IdentityRow(0, chain.height - 1, leaf, null)) else emptyList(),
+                    1, 1, chain.height - 1,
+                )
+            override fun rootsLatest(): LatestRoots {
+                val t = MerkleTree(MemNodeStore()).apply { append(leaf) }
+                return inner.rootsLatest().copy(identity = RootRecord(t.root(), 1, chain.height - 1, chain.now))
+            }
+        }
+        val w = wallet(chain, indexer = idx)
+        assertThrows(WalletSync.ChainMismatch::class.java) { w.sync() }
+        assertTrue(w.balances().isEmpty())
+        assertTrue(w.store.state.rootsError!!.contains("identity tree"))
     }
 
     /** A halted indexer is not synced from; a new genesis under the same chain id wipes the local data. */

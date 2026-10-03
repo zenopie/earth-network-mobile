@@ -109,6 +109,11 @@ fun HomeScreen(
     onSeeAllActivity: () -> Unit,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
+    /**
+     * Why the private side (notes, stake, registration) is not verified
+     * against the chain, or null when it is (K9): shown, never hidden.
+     */
+    privateNotice: String? = null,
 ) {
     // Which list is under the cards. The third action swaps it.
     var panel by remember { mutableStateOf(HomePanel.Activity) }
@@ -123,6 +128,14 @@ fun HomeScreen(
             anml = anmlBalance,
             visible = balancesVisible,
         )
+        privateNotice?.let {
+            Text(
+                text = "Private balances, stake and registration: $it",
+                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                color = androidx.compose.material3.MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+            )
+        }
         Spacer(Modifier.height(16.dp))
         HomeActions(
             modifier = Modifier.zIndex(1f).offset(y = 8.dp).padding(horizontal = 24.dp),

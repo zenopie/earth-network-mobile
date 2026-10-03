@@ -223,9 +223,12 @@ object RestPrivateChain : PrivateChain {
 /**
  * The chain's own view of the three trees (LCD), against which every root
  * the indexer served is checked before the wallet builds anything on it
- * (WalletSync.verifyRoots). The identity and stake trees are read at the
- * height the indexer's root is from (`x-cosmos-block-height`), falling back
- * to the latest state when that height is pruned.
+ * (WalletSync.verifyRoots; PRIVACY_FORMATS 4b says what this trusts). The
+ * identity and stake trees are read at the height the indexer's root is
+ * from (`x-cosmos-block-height`), pinned only when the node echoes exactly
+ * that height; otherwise (a pruned height, another height echoed) the
+ * latest state is read and marked unpinned, which can verify equal trees
+ * but never condemn different ones (K9).
  */
 object LcdChainRoots : network.erth.wallet.privacy.sync.ChainRoots {
     private fun json(code: Int, body: String, path: String): JSONObject {
@@ -240,12 +243,27 @@ object LcdChainRoots : network.erth.wallet.privacy.sync.ChainRoots {
 
     private fun at(path: String, height: Long?): JSONObject {
         if (height != null && height > 0) {
-            val (code, body) = EarthRest.getAt(path, height)
-            if (code in 200..299) return JSONObject(body)
+            val (code, body, echo) = EarthRest.getAtEcho(path, height)
+            if (code in 200..299) return JSONObject(body).also { if (echo != height) it.put("_latest", true) }
         }
         val (code, body) = EarthRest.get(path)
         return json(code, body, path).put("_latest", true)
     }
+
+    private fun spent(path: String): Boolean? = runCatching {
+        val (code, body) = EarthRest.get(path)
+        if (code !in 200..299) null else JSONObject(body).optBoolean("spent")
+    }.getOrNull()
+
+    override fun nullifierSpent(nf: Fr): Boolean? = spent("/earth/shielded/v1/nullifiers/${nf.toHex()}")
+
+    override fun stakeNullifierSpent(nf: Fr): Boolean? = spent("/earth/shieldedstaking/v1/stake_nullifiers/${nf.toHex()}")
+
+    override fun latestHeight(): Long? = runCatching {
+        val (code, body) = EarthRest.get("/cosmos/base/tendermint/v1beta1/blocks/latest")
+        if (code !in 200..299) null
+        else JSONObject(body).optJSONObject("block")?.optJSONObject("header")?.optString("height")?.toLongOrNull()
+    }.getOrNull()
 
     override fun noteRoot(root: Fr): network.erth.wallet.privacy.sync.NoteRootRecord? {
         val path = "/earth/shielded/v1/roots/${root.toHex()}"

@@ -14,8 +14,10 @@ data class NoteRootRecord(val valid: Boolean, val treeSize: Long)
 
 /**
  * A tree's state as the chain reports it: size and latest recorded root
- * (null for an empty tree); [pinned] when it was read at the height asked
- * for, false when that height was unavailable and the latest was read.
+ * (null for an empty tree); [pinned] only when the node answered at exactly
+ * the height asked for (its echoed `x-cosmos-block-height`), false when that
+ * height was unavailable or the echo differed and the state is some other
+ * height's (K9).
  */
 data class TreeState(val size: Long, val root: Fr?, val pinned: Boolean = true)
 
@@ -32,6 +34,12 @@ interface ChainRoots {
     fun identityTree(height: Long?): TreeState
     /** x/shieldedstaking Query/StakeTree at [height] (latest when null). */
     fun stakeTree(height: Long?): TreeState
+    /** x/shielded Query/Nullifier: whether [nf] is spent (null: the node could not say). */
+    fun nullifierSpent(nf: Fr): Boolean? = null
+    /** x/shieldedstaking Query/StakeNullifier likewise. */
+    fun stakeNullifierSpent(nf: Fr): Boolean? = null
+    /** The chain's latest block height (null: unknown). */
+    fun latestHeight(): Long? = null
 }
 
 /**
@@ -63,6 +71,20 @@ class WalletSync(
 ) {
     class Inconsistent(message: String) : Exception(message)
 
+    /** A uniform sample of up to [n] of everything offered (reservoir): nothing about which are ours. */
+    private class Reservoir(private val n: Int) {
+        val items = ArrayList<Fr>()
+        private var seen = 0L
+        fun offer(x: Fr) {
+            seen++
+            if (items.size < n) items.add(x)
+            else (sampleRng.nextDouble() * seen).toLong().let { j -> if (j < n) items[j.toInt()] = x }
+        }
+    }
+
+    private val poolSample = Reservoir(NULLIFIER_SAMPLE)
+    private val stakeSample = Reservoir(NULLIFIER_SAMPLE)
+
     /** The chain disagrees with what the indexer served: nothing synced is trusted (C3). */
     class ChainMismatch(message: String) : Exception(message)
 
@@ -88,6 +110,14 @@ class WalletSync(
 
         /** Passes over the streams while the indexer keeps moving, before giving up on pinning a height. */
         private const val MAX_PASSES = 4
+
+        /** Nullifiers of this sync's streams (pool, stake) spot-checked against the chain (K9). */
+        const val NULLIFIER_SAMPLE = 4
+
+        /** Blocks the indexer may trail the chain by before what it served is labelled stale (K9). */
+        const val STALE_BLOCKS = 30L
+
+        private val sampleRng = java.security.SecureRandom()
 
         /** The largest tree position the circuits take (u32). */
         private const val MAX_POSITION = 0xffffffffL
@@ -175,13 +205,15 @@ class WalletSync(
 
     /**
      * Whether every local tree is the indexer's latest; a tree of the same
-     * size with another root is inconsistent (the stream and the roots
-     * disagree), a different size just means the indexer moved on.
+     * size with another root, or a larger one, is inconsistent (the stream
+     * and the roots disagree), a smaller one just means the indexer moved on.
      */
     private fun atIndexerTip(roots: LatestRoots): Boolean {
         var tip = true
         fun check(name: String, r: RootRecord?, tree: network.erth.wallet.privacy.zk.MerkleTree) {
             val size = r?.treeSize ?: 0L
+            // More than the indexer now says it has: what it served before is not its tree.
+            if (tree.size > size) throw Inconsistent("$name tree holds ${tree.size} leaves, the indexer's latest $size")
             if (size != tree.size) { tip = false; return }
             if (r != null && r.root != tree.root()) throw Inconsistent("$name tree root differs from the indexer's at $size")
         }
@@ -192,13 +224,18 @@ class WalletSync(
     }
 
     /**
-     * C3: every local root against the chain's own. The note root must be
-     * one the chain recorded, at the local size; the identity and stake
-     * trees must be the chain's at the height the indexer's root is from.
-     * A disagreement wipes the synced data and throws [ChainMismatch]; a
-     * check that cannot be pinned (the indexer moved on, a pruned height)
-     * leaves the roots unverified, and the wallet builds nothing on them
-     * until a later sync verifies them.
+     * C3: every local root against the chain's own (the LCD: PRIVACY_FORMATS
+     * 4b says what that trusts). Only a positive contradiction is a mismatch,
+     * which wipes the synced data and throws [ChainMismatch]: a note root the
+     * chain recorded at another tree size, or an identity or stake tree that
+     * differs from the chain's read at exactly the indexer's root height (the
+     * node echoed that height). Everything that cannot be established leaves
+     * the roots unverified, and the wallet builds nothing on them and labels
+     * what it shows until a later sync verifies them (K8, K9): a note root the
+     * chain no longer holds (pruned after its retention window: an indexer far
+     * behind, or a forged root; the two look the same), a tree read at another
+     * height, the indexer still moving, a sampled nullifier the chain does not
+     * hold spent, or the indexer trailing the chain's tip.
      */
     private fun verifyRoots(s: PrivacyState, roots: LatestRoots): Boolean {
         val problems = ArrayList<String>()
@@ -206,13 +243,14 @@ class WalletSync(
         if (store.noteTree.size > 0) {
             val rec = chain.noteRoot(store.noteTree.root())
             when {
-                rec == null || rec.treeSize != store.noteTree.size ->
-                    mismatch = "the chain never recorded the note root the indexer's notes give (${store.noteTree.size} notes)"
-                !rec.valid -> problems.add("the indexer is too far behind the chain: its note root is no longer an anchor")
+                rec == null -> problems.add("unverified: the chain no longer holds the indexer's note root (the indexer is behind, or its notes are not the chain's)")
+                rec.treeSize != store.noteTree.size ->
+                    mismatch = "the chain recorded the indexer's note root at ${rec.treeSize} notes, not ${store.noteTree.size}"
+                !rec.valid -> problems.add("unverified: the indexer is too far behind the chain (its note root is no longer an anchor)")
             }
         }
         val tip = atIndexerTip(roots)
-        if (!tip) problems.add("the indexer kept moving; sync again")
+        if (!tip) problems.add("unverified: the indexer kept moving; sync again")
         fun tree(name: String, local: network.erth.wallet.privacy.zk.MerkleTree, r: RootRecord?, read: (Long?) -> TreeState) {
             // Pinned to the indexer's root height, which is only the local
             // tree's when the local tree is the indexer's latest.
@@ -222,8 +260,8 @@ class WalletSync(
             val localRoot = if (local.size == 0L) null else local.root()
             when {
                 t.size == local.size && (t.root == localRoot || (local.size == 0L && t.root == null)) -> {}
-                t.size == local.size || t.pinned -> mismatch = "the chain's $name tree (${t.size}) differs from the indexer's (${local.size})"
-                else -> problems.add("the $name tree could not be checked at the indexer's height")
+                t.pinned -> mismatch = "the chain's $name tree (${t.size}) at height $height differs from the indexer's (${local.size})"
+                else -> problems.add("unverified: the $name tree could not be read at the indexer's height $height")
             }
         }
         tree("identity", store.identityTree, roots.identity, chain::identityTree)
@@ -234,6 +272,15 @@ class WalletSync(
             store.state.rootsError = it
             store.save()
             throw ChainMismatch(it)
+        }
+        // A sample of the spends this sync read, asked of the chain: an
+        // indexer inventing spends is caught without asking about ours.
+        if (poolSample.items.any { chain.nullifierSpent(it) == false } || stakeSample.items.any { chain.stakeNullifierSpent(it) == false }) {
+            problems.add("unverified: the indexer reported a spend the chain does not hold")
+        }
+        chain.latestHeight()?.let { tipHeight ->
+            val behind = tipHeight - roots.syncedHeight
+            if (behind > STALE_BLOCKS) problems.add("unverified: the indexer is $behind blocks behind the chain")
         }
         s.rootsVerified = problems.isEmpty()
         s.rootsError = problems.firstOrNull()
@@ -314,6 +361,7 @@ class WalletSync(
             checkPage(page.blocks.sumOf { it.second.size })
             for ((h, nfs) in page.blocks) {
                 if (h > ceiling) break
+                for (nf in nfs) poolSample.offer(nf)
                 for (nf in nfs) mine[nf]?.let { i ->
                     val n = s.notes[i].copy(spentHeight = h)
                     s.notes[i] = n
@@ -401,6 +449,7 @@ class WalletSync(
             checkPage(page.blocks.sumOf { it.second.size })
             for ((h, nfs) in page.blocks) {
                 if (h > ceiling) break
+                for (nf in nfs) stakeSample.offer(nf)
                 for (nf in nfs) mine[nf]?.let { i -> s.stakeNotes[i] = s.stakeNotes[i].copy(spentHeight = h) }
             }
             s.stakeNullifiersNext = minOf(page.nextHeight, ceiling + 1)

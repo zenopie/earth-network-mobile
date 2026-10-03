@@ -23,6 +23,19 @@ object EarthRest {
     fun getAt(path: String, height: Long): Pair<Int, String> = getFrom(Constants.EARTH_LCD_URL, path, height)
 
     /**
+     * [getAt], with the height the node says it answered at (its
+     * `x-cosmos-block-height` response header; null when absent). A caller
+     * pinning state to a height checks the two agree (K9).
+     */
+    fun getAtEcho(path: String, height: Long): Triple<Int, String, Long?> {
+        var echo: Long? = null
+        val (code, body) = getFrom(Constants.EARTH_LCD_URL, path, height) { conn ->
+            echo = conn.getHeaderField("x-cosmos-block-height")?.trim()?.toLongOrNull()
+        }
+        return Triple(code, body, echo)
+    }
+
+    /**
      * The most any response is read to: a node or proxy streaming without
      * end (or a hostile one) cannot exhaust memory. The largest legitimate
      * answers (a page of positions or validators) are far below it.
@@ -53,7 +66,7 @@ object EarthRest {
      */
     fun getRpc(path: String): Pair<Int, String> = getFrom(Constants.EARTH_RPC_URL, path)
 
-    private fun getFrom(base: String, path: String, height: Long? = null): Pair<Int, String> {
+    private fun getFrom(base: String, path: String, height: Long? = null, headers: (HttpURLConnection) -> Unit = {}): Pair<Int, String> {
         // An unset base is a supported configuration, not an error: the RPC is
         // optional and is left empty when the deployment exposes only the LCD.
         // Reported as a non-2xx so callers take their existing failure path
@@ -68,6 +81,7 @@ object EarthRest {
             conn.requestMethod = "GET"
             height?.let { conn.setRequestProperty("x-cosmos-block-height", it.toString()) }
             val code = conn.responseCode
+            headers(conn)
             val stream = if (code >= 400) conn.errorStream else conn.inputStream
             code to readBounded(stream)
         } finally {

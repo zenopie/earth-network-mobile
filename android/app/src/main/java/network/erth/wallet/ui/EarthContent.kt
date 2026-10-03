@@ -192,6 +192,7 @@ internal fun EarthContent(
             stakedUerth = state?.stakedUerth ?: 0L,
             rewardsUerth = state?.rewardsUerth ?: 0L,
             unbondingUerth = earnState?.unbonding?.sumOf { it.amountUerth } ?: 0L,
+            privateNotice = state?.privacySyncError,
             // Private stake (derth) and unbonding claims are notes, not bank
             // balances, so they join the portfolio here.
             // Private stake shows its ERTH value, the derth amount beneath.

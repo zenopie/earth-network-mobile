@@ -573,11 +573,32 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
 
     override fun noteRoot(root: Fr): NoteRootRecord? = noteRootSizes[root]?.let { NoteRootRecord(true, it) }
 
-    override fun identityTree(height: Long?): TreeState =
-        (if (height == null) identityAt.lastEntry() else identityAt.floorEntry(height))?.value ?: TreeState(0, null)
+    /** Drops every recorded note root but the latest (x/shielded prunes roots past its window). */
+    fun pruneNoteRoots() {
+        val keep = noteTree.root()
+        noteRootSizes.keys.retainAll(setOf(keep))
+    }
 
-    override fun stakeTree(height: Long?): TreeState =
-        (if (height == null) stakeAt.lastEntry() else stakeAt.floorEntry(height))?.value ?: TreeState(0, null)
+    /** Set to make the node answer a pinned query at another height than asked (echo differs). */
+    var echoOtherHeight = false
+
+    private fun at(m: java.util.TreeMap<Long, TreeState>, height: Long?): TreeState {
+        if (height != null && echoOtherHeight) return (m.lastEntry()?.value ?: TreeState(0, null)).copy(pinned = false)
+        return (if (height == null) m.lastEntry() else m.floorEntry(height))?.value ?: TreeState(0, null)
+    }
+
+    override fun identityTree(height: Long?): TreeState = at(identityAt, height)
+
+    override fun stakeTree(height: Long?): TreeState = at(stakeAt, height)
+
+    override fun nullifierSpent(nf: Fr): Boolean = nf in nullifiers
+
+    override fun stakeNullifierSpent(nf: Fr): Boolean = nf in stakeNullifiers
+
+    /** The chain's tip as the LCD reports it; tests move it ahead of the indexer. */
+    var tipAhead = 0L
+
+    override fun latestHeight(): Long = height - 1 + tipAhead
 
     // ---- registrations ----
 
