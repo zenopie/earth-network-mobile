@@ -22,6 +22,20 @@ lost their `fee` fields (one fee rule, §4). New: the registration record
 note (§3a), indexer URL scheme and root verification against the chain
 (§4a, §4b).
 
+**Changes for the clients re-audit (2026-10-02), summary.** The record
+note is version 2 with an nk tag (§3a; version 1 ignored), restored by the
+registration block's chain time with a bounded, persisted fallback search;
+an unlock's re-minted stake note names the closed owner-tag counter (§1);
+amounts are bounded to 2^63 − 1 (§3); the pending registration is recorded
+at broadcast acceptance (§3a); a genesis switch is confirmed by the LCD and
+keeps the registration (§4a); the indexer base is validated (§4a); root
+checks distinguish unverified from mismatch, pin heights by the echoed
+header, sample nullifiers and flag an indexer behind (§4b); stake votes
+are cast through one spaced, resumable path (§4); the chain's round-2 tx
+rules (canonical bytes, ciphertext slots, one use per binding) are
+followed (§4). Android and iOS implement all of it identically; the record
+memo golden is pinned on both.
+
 ## 1. Keys (wallet-only)
 
 From the BIP-39 seed (empty passphrase), BIP-32 hardened derivation:
@@ -195,6 +209,14 @@ is ours iff its ciphertext opens: 153 bytes as the wallet stake note, or 177
 bytes as a blind stake note with the row's denom and amount. Value-0 notes
 are dropped, except the registration record note (§3a). Nothing else; a
 restore from the mnemonic alone finds every note.
+
+**Amounts (K12).** Every note value and stake amount is a u64 on chain.
+Both apps parse public amounts as unsigned decimal u64 (no sign, ASCII
+digits only) and take only values up to 2^63 − 1: a row, decrypted note or
+stake note above that is ignored (never wrapped to a negative; no supply
+reaches it). Totals shown to the user saturate; amounts a tx is built from
+are checked (an overflow is an error, never a wrong change); derth × rate
+saturates at 2^63 − 1 (a negative rate is 0).
 
 ## 3a. Registration (binding, gas grant, record note, restore)
 

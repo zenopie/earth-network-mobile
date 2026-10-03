@@ -449,6 +449,15 @@ class ReauditFixesTest {
         assertEquals(2, pauses.size)
     }
 
+    /** Info: a claim for day 0 is refused (iOS trapped on the underflow). */
+    @Test
+    fun claimDayZeroIsRefused() {
+        val chain = FakeChain()
+        val a = wallet(chain)
+        registered(chain, a)
+        assertThrows(IllegalArgumentException::class.java) { a.claimAnml(0) }
+    }
+
     /** K10: a status naming no chain is refused. */
     @Test
     fun nullChainIdIsRefused() {
