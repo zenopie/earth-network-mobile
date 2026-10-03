@@ -6,10 +6,12 @@ import android.net.Uri
 import android.util.Log
 import com.android.installreferrer.api.InstallReferrerClient
 import com.android.installreferrer.api.InstallReferrerStateListener
-import network.erth.wallet.Constants
+import network.erth.wallet.privacy.handles.Handles
 
 /**
- * Where a referrer address comes from, and where it is kept.
+ * Where a referrer handle comes from, and where it is kept. A referrer is a
+ * handle (x/personhood's public directory); the registration pays its half
+ * of the reward as a private note to the address the handle names.
  *
  * Two arrival paths, because "downloading from a referral link" and "opening a
  * referral link" are different events:
@@ -17,11 +19,11 @@ import network.erth.wallet.Constants
  *  - **Install referrer.** Play Store carries the `referrer` query parameter of
  *    the store link through the install and hands it to the app on first run.
  *    This is the one that covers someone who did not have the app yet.
- *  - **Deep link.** An `https://erth.network/ref/<address>` or
- *    `earth://ref/<address>` intent, for someone who already has it installed.
+ *  - **Deep link.** An `https://erth.network/ref/<handle>` or
+ *    `earth://ref/<handle>` intent, for someone who already has it installed.
  *
  * Stored in plain SharedPreferences rather than the encrypted store: it is a
- * public address, it is needed before any wallet exists, and it must survive
+ * public handle, it is needed before any wallet exists, and it must survive
  * the gap between install and registration. It is deliberately NOT cleared
  * after use — a failed registration that gets retried should keep its referrer.
  *
@@ -32,33 +34,34 @@ import network.erth.wallet.Constants
 object Referral {
 
     private const val PREFS = "referral"
-    private const val KEY_ADDRESS = "referrer_address"
+    // A new key: a referrer address captured by an older version names no handle.
+    private const val KEY_HANDLE = "referrer_handle"
     private const val KEY_CHECKED = "install_referrer_checked"
     private const val TAG = "Referral"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    /** The captured referrer, or null. */
+    /** The captured referrer handle (without the @), or null. */
     fun get(context: Context): String? =
-        prefs(context).getString(KEY_ADDRESS, null)?.takeIf { it.isNotBlank() }
+        prefs(context).getString(KEY_HANDLE, null)?.let { Handles.parse(it) }
 
     /**
-     * Records [address] if it looks like an Earth address and none is stored.
-     * Returns true if it was taken.
+     * Records [handle] if it is a handle and none is stored. Returns true if
+     * it was taken. Whether it is live is looked up (in the whole directory)
+     * at registration.
      */
-    fun record(context: Context, address: String?): Boolean {
-        val candidate = address?.trim().orEmpty()
-        if (!looksLikeAddress(candidate)) return false
+    fun record(context: Context, handle: String?): Boolean {
+        val candidate = handle?.let { Handles.parse(it) } ?: return false
         val p = prefs(context)
-        if (!p.getString(KEY_ADDRESS, null).isNullOrBlank()) return false
-        p.edit().putString(KEY_ADDRESS, candidate).apply()
+        if (!p.getString(KEY_HANDLE, null).isNullOrBlank()) return false
+        p.edit().putString(KEY_HANDLE, candidate).apply()
         return true
     }
 
     /**
-     * Pulls the referrer out of a deep link. Accepts the address as the last
-     * path segment (`/ref/earth1…`) or as a `?ref=` / `?referrer=` parameter.
+     * Pulls the referrer out of a deep link. Accepts the handle as the last
+     * path segment (`/ref/alice`) or as a `?ref=` / `?referrer=` parameter.
      */
     fun fromIntent(context: Context, intent: Intent?): Boolean {
         val data = intent?.data ?: return false
@@ -88,10 +91,10 @@ object Referral {
                     if (responseCode == InstallReferrerClient.InstallReferrerResponse.OK) {
                         // The value is the raw query string of the store link,
                         // so it is parsed as one rather than assumed to be a
-                        // bare address: "referrer=earth1…&utm_source=…".
+                        // bare handle: "referrer=alice&utm_source=…".
                         val raw = client.installReferrer.installReferrer.orEmpty()
                         val parsed = Uri.parse("?$raw").getQueryParameter("referrer")
-                            ?: raw.takeIf { looksLikeAddress(it.trim()) }
+                            ?: raw.takeIf { Handles.parse(it) != null }
                         if (record(app, parsed)) {
                             Log.i(TAG, "install referrer captured")
                         }
@@ -109,8 +112,4 @@ object Referral {
             }
         })
     }
-
-    /** Shape only. Whether it is a registered human is the chain's call. */
-    private fun looksLikeAddress(value: String): Boolean =
-        value.startsWith(Constants.EARTH_PREFIX + "1") && value.length >= 39
 }

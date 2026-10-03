@@ -15,7 +15,7 @@ import java.io.File
 /**
  * This wallet's registration as the identity tree holds it. Everything here
  * is needed to prove membership; nothing is sent anywhere. The leaf is
- * H(TAG_LEAF, idc, dsc_key, country, activated_at).
+ * H(TAG_LEAF, idc, dsc_key, country, activated_at, predecessor_at).
  */
 data class IdentityRecord(
     val leafIndex: Long,
@@ -30,6 +30,12 @@ data class IdentityRecord(
      * A reset keeps only a verified identity; one from before is not.
      */
     val verified: Boolean = false,
+    /**
+     * The leaf's predecessor_at: the switch or re-entry that made it (then
+     * equal to [activatedAt]), 0 for a passport never registered before.
+     * Found by matching the leaf with either value.
+     */
+    val predecessorAt: Long = 0,
 )
 
 /**
@@ -151,14 +157,19 @@ class PrivacyState {
      */
     var syncGeneration: Long = 0
     var verifiedGeneration: Long = -1
-    /** UTC days a claim was broadcast for (so the automation does not repeat one). */
+    /** UTC days a claim was broadcast for (so a claim is not offered twice). */
     val claimedDays: MutableSet<Long> = sortedSetOf()
     /** When the caretaker split was last cast (unix seconds), and the split (option -> percent). */
     var caretakerCastAt: Long = 0
     var caretakerSplit: Map<Long, Long> = emptyMap()
-    /** The transparent address bound as this person's referrer ("" for none), and when (unix seconds). */
-    var referrerAddress: String = ""
-    var referrerBoundAt: Long = 0
+    /** When the split lapses (the chain's expires_at; 0: unknown, castAt + R). */
+    var caretakerExpiresAt: Long = 0
+    /** This identity moved its split away (MsgMoveCaretaker): it may never cast one again. */
+    var caretakerMovedOut: Boolean = false
+    /** This identity's handle ("" for none), as last claimed, renewed or moved in. */
+    var handle: String = ""
+    /** This identity moved its handle away (MsgMoveHandle): it may never claim one again. */
+    var handleMovedOut: Boolean = false
     /** Unbond denoms whose claim the chain refused as not yet matured, to when the automation next tries. */
     val unbondRetryAt: MutableMap<String, Long> = sortedMapOf()
     /** A stake vote being cast (K5), or null. */
@@ -168,9 +179,6 @@ class PrivacyState {
     /** A uniform sample of identity row heights (registration blocks): a record's LCD cover set is drawn from it (audit 4). */
     val identityHeights: MutableList<Long> = ArrayList()
     var identityRowsSeen: Long = 0
-    /** The UTC day [claimOffset] was drawn for, and the draw: one per day, whatever restarts the app (audit 4). */
-    var claimOffsetDay: Long = -1
-    var claimOffset: Long = 0
     /** Next unused Groundworks owner-tag counter (PrivacyKeys.otagSalt). */
     var nextOtagCounter: Int = 0
     /** The highest owner-tag counter of a position this wallet closed, from its unlock memos (-1: none; K11). */
@@ -209,12 +217,13 @@ class PrivacyState {
         identity?.let { id ->
             put("identity", JSONObject().put("leaf_index", id.leafIndex).put("dsc_key", id.dscKey.toHex())
                 .put("country", id.country.toHex()).put("activated_at", id.activatedAt).put("passport_nullifier", id.passportNullifier)
-                .put("verified", id.verified))
+                .put("verified", id.verified).put("predecessor_at", id.predecessorAt))
         }
         put("claimed_days", JSONArray(claimedDays.toList()))
         put("caretaker_cast_at", caretakerCastAt)
         put("caretaker_split", JSONObject().apply { caretakerSplit.forEach { (k, v) -> put(k.toString(), v) } })
-        put("referrer_address", referrerAddress); put("referrer_bound_at", referrerBoundAt)
+        put("caretaker_expires_at", caretakerExpiresAt); put("caretaker_moved_out", caretakerMovedOut)
+        put("handle", handle); put("handle_moved_out", handleMovedOut)
         put("unbond_retry_at", JSONObject().apply { unbondRetryAt.forEach { (k, v) -> put(k, v) } })
         stakeVoteRun?.let { r ->
             put("stake_vote_run", JSONObject().put("proposal_id", r.proposalId)
@@ -228,7 +237,6 @@ class PrivacyState {
             }
         })
         put("identity_heights", JSONArray(identityHeights)); put("identity_rows_seen", identityRowsSeen)
-        put("claim_offset_day", claimOffsetDay); put("claim_offset", claimOffset)
         put("next_otag_counter", nextOtagCounter); put("closed_otag_max", closedOtagMax)
         put("stake_next", stakeNext); put("stake_height", stakeHeight); put("stake_nullifiers_next", stakeNullifiersNext)
         put("stake_notes", JSONArray().apply { stakeNotes.forEach { put(stakeJson(it)) } })
@@ -271,12 +279,13 @@ class PrivacyState {
             j.optJSONArray("notes")?.let { a -> for (i in 0 until a.length()) notes.add(noteFromJson(a.getJSONObject(i))) }
             j.optJSONObject("identity")?.let {
                 identity = IdentityRecord(it.getLong("leaf_index"), Fr.fromHex(it.getString("dsc_key")), Fr.fromHex(it.getString("country")),
-                    it.getLong("activated_at"), it.optString("passport_nullifier"), it.optBoolean("verified", false))
+                    it.getLong("activated_at"), it.optString("passport_nullifier"), it.optBoolean("verified", false), it.optLong("predecessor_at", 0))
             }
             j.optJSONArray("claimed_days")?.let { a -> for (i in 0 until a.length()) claimedDays.add(a.getLong(i)) }
             caretakerCastAt = j.optLong("caretaker_cast_at")
             caretakerSplit = j.optJSONObject("caretaker_split")?.let { o -> o.keys().asSequence().associate { it.toLong() to o.getLong(it) } } ?: emptyMap()
-            referrerAddress = j.optString("referrer_address"); referrerBoundAt = j.optLong("referrer_bound_at")
+            caretakerExpiresAt = j.optLong("caretaker_expires_at"); caretakerMovedOut = j.optBoolean("caretaker_moved_out")
+            handle = j.optString("handle"); handleMovedOut = j.optBoolean("handle_moved_out")
             j.optJSONObject("unbond_retry_at")?.let { o -> o.keys().forEach { unbondRetryAt[it] = o.getLong(it) } }
             j.optJSONObject("stake_vote_run")?.let { r ->
                 val o = r.optJSONArray("options"); val v = r.optJSONArray("voted_positions")
@@ -294,7 +303,6 @@ class PrivacyState {
                 }
             }
             identityHeights.addAll(longs(j.optJSONArray("identity_heights"))); identityRowsSeen = j.optLong("identity_rows_seen")
-            claimOffsetDay = j.optLong("claim_offset_day", -1); claimOffset = j.optLong("claim_offset")
             nextOtagCounter = j.optInt("next_otag_counter"); closedOtagMax = j.optInt("closed_otag_max", -1)
             stakeNext = j.optLong("stake_next"); stakeHeight = j.optLong("stake_height"); stakeNullifiersNext = j.optLong("stake_nullifiers_next")
             j.optJSONArray("stake_notes")?.let { a -> for (i in 0 until a.length()) stakeNotes.add(stakeFromJson(a.getJSONObject(i))) }
@@ -402,8 +410,7 @@ class PrivacyStore private constructor(private val dir: File?) {
      * root mismatch) it keeps the owner-tag counter, the registration (its
      * leaf only when it was matched against a verified tree, audit 4 M5; or
      * the one pending) and what the wallet itself cast (claims, caretaker
-     * split, referrer, its stake votes, audit 4 L1, and the day's claim
-     * offset); a different chain or genesis (a relaunch under the same chain
+     * split, handle, the moves, its stake votes, audit 4 L1); a different chain or genesis (a relaunch under the same chain
      * id) keeps only the owner-tag counter.
      */
     @Synchronized
@@ -422,10 +429,10 @@ class PrivacyStore private constructor(private val dir: File?) {
                 pendingRegistration = old.pendingRegistration
                 claimedDays.addAll(old.claimedDays)
                 caretakerCastAt = old.caretakerCastAt; caretakerSplit = old.caretakerSplit
-                referrerAddress = old.referrerAddress; referrerBoundAt = old.referrerBoundAt
+                caretakerExpiresAt = old.caretakerExpiresAt; caretakerMovedOut = old.caretakerMovedOut
+                handle = old.handle; handleMovedOut = old.handleMovedOut
                 stakeVoteRun = old.stakeVoteRun
                 stakeVotes.addAll(old.stakeVotes)
-                claimOffsetDay = old.claimOffsetDay; claimOffset = old.claimOffset
             }
         }
         save()

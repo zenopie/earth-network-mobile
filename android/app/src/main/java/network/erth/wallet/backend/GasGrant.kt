@@ -162,7 +162,9 @@ object GasGrant {
         .put("pc_erth", msg.pcErth.toByteArray().toByteString().base64())
         .put("ciphertext_anml", msg.ciphertextAnml.toByteArray().toByteString().base64())
         .put("ciphertext_erth", msg.ciphertextErth.toByteArray().toByteString().base64())
-        .put("affiliate", msg.affiliate)
+        .put("affiliate_handle", msg.affiliateHandle)
+        .put("affiliate_pc", msg.affiliatePc.toByteArray().toByteString().base64())
+        .put("affiliate_ciphertext", msg.affiliateCiphertext.toByteArray().toByteString().base64())
         .put("pc_gas", pcGas.toByteString().base64())
         .put("ciphertext_gas", ciphertextGas.toByteString().base64())
 

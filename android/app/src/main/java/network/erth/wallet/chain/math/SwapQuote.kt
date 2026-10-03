@@ -133,6 +133,41 @@ object SwapMath {
     }
 
     /**
+     * A deposit's other leg for [amount] of one side, against reserves
+     * [from] (that side's) and [to]: ceil(amount x to / from). x/dex prices a
+     * deposit at shares = min(floor(in_e x S / R_e), floor(in_t x S / R_t))
+     * and pulls each leg rounded up, ceil(shares x R / S) (audit 4, C2); a
+     * leg rounded up here never makes the other side the binding one, so the
+     * shares are all the typed side buys and the pull never exceeds either
+     * leg (at most one unit comes back as a refund). 0 for an empty pool.
+     */
+    fun depositLeg(amount: BigInteger, from: BigInteger, to: BigInteger): BigInteger {
+        if (amount.signum() <= 0 || from.signum() <= 0 || to.signum() < 0) return BigInteger.ZERO
+        val (q, r) = (amount * to).divideAndRemainder(from)
+        return if (r.signum() == 0) q else q + BigInteger.ONE
+    }
+
+    /**
+     * What x/dex mints and pulls for a deposit of [erthIn] and [tokenIn]
+     * into reserves [re], [rt] with [supply] shares out: (shares, erth
+     * pulled, token pulled), each leg ceil(shares x R / S). Null when it
+     * mints nothing (ErrZeroShares) or the pool cannot price it.
+     */
+    fun deposit(erthIn: BigInteger, tokenIn: BigInteger, re: BigInteger, rt: BigInteger, supply: BigInteger): Triple<BigInteger, BigInteger, BigInteger>? {
+        if (supply.signum() <= 0 || re.signum() <= 0 || rt.signum() <= 0) return null
+        val shares = minOf(erthIn * supply / re, tokenIn * supply / rt)
+        if (shares.signum() <= 0) return null
+        fun up(r: BigInteger): BigInteger { val (q, m) = (shares * r).divideAndRemainder(supply); return if (m.signum() == 0) q else q + BigInteger.ONE }
+        val e = up(re); val t = up(rt)
+        if (e > erthIn || t > tokenIn || e.signum() <= 0 || t.signum() <= 0) return null
+        return Triple(shares, e, t)
+    }
+
+    /** x/dex ErrPoolCap: a reserve, share supply or input past 2^120 (code 1120, codespace dex). */
+    const val ERR_POOL_CAP = 1120
+    val POOL_CAP: BigInteger = BigInteger.ONE.shiftLeft(120)
+
+    /**
      * The floor a swap accepts at a tolerance of [bps] basis points.
      * Truncating, so rounding only ever moves the floor down.
      */

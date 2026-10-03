@@ -172,7 +172,7 @@ func main() {
 		"id": hx(privacy.TagID), "owner": hx(privacy.TagOwner), "leaf": hx(privacy.TagLeaf),
 		"sn": hx(privacy.TagSN), "pc": hx(privacy.TagPC), "cm": hx(privacy.TagCM), "nf": hx(privacy.TagNF),
 		"reg": hx(privacy.TagReg), "asset": hx(privacy.TagAsset), "signal": hx(privacy.TagSignal),
-		"bytes": hx(privacy.TagBytes), "scope": hx(privacy.TagScope),
+		"bytes": hx(privacy.TagBytes), "scope": hx(privacy.TagScope), "affiliate": hx(privacy.TagAffiliate),
 		"stake": hx(privacy.TagStake), "spc": hx(privacy.TagSPC), "snf": hx(privacy.TagSNF), "otag": hx(privacy.TagOTag),
 		"snfl": hx(privacy.TagSNFL), "vnf": hx(privacy.TagVNF),
 		"gen": hx(orchard.TagGen), "cv_r": hx(orchard.TagCvR), "bsig": hx(orchard.TagBsig), "bundle": hx(orchard.TagBundle),
@@ -205,7 +205,8 @@ func main() {
 		"id_secret": hx(idSecret), "nk": hx(nk), "rho": hx(rho), "rcm": hx(rcm),
 		"idc":       hx(privacy.IDC(idSecret)),
 		"owner_pk":  hx(opk),
-		"leaf":      hx(privacy.IdentityLeaf(privacy.IDC(idSecret), fe(1005), privacy.CountryField("DE"), 1_790_000_000)),
+		"leaf":      hx(privacy.IdentityLeaf(privacy.IDC(idSecret), fe(1005), privacy.CountryField("DE"), 1_790_000_000, 0)),
+		"leaf_pred": hx(privacy.IdentityLeaf(privacy.IDC(idSecret), fe(1005), privacy.CountryField("DE"), 1_790_000_000, 1_790_000_000)),
 		"leaf_dsc":  hx(fe(1005)),
 		"sn":        hx(privacy.ScopeNullifier(idSecret, privacy.ClaimScope(20360))),
 		"pc":        hx(pc),
@@ -226,7 +227,7 @@ func main() {
 	out["scopes"] = map[string]string{
 		"claim_20360":           hx(privacy.ClaimScope(20360)),
 		"caretaker":             hx(privacy.CaretakerScope()),
-		"referrer":              hx(privacy.ReferrerScope()),
+		"handle":                hx(privacy.HandleScope()),
 		"proposal_5_0":          hx(privacy.ProposalScope(5, 0)),
 		"proposal_5_1":          hx(privacy.ProposalScope(5, 1)),
 		"removal_3":             hx(privacy.RemovalScope(3)),
@@ -464,8 +465,15 @@ func main() {
 		msgs[name] = v
 	}
 	add := func(name string, m sdk.Msg) { addTx(name, m, txf) }
-	affStr, affRaw := addr(50)
 	recvStr, _ := addr(1)
+	// A shielded address for handles and referral notes (the blind golden keys': ek 01..20, owner_pk OwnerPK(7)).
+	var gek [32]byte
+	for i := range gek {
+		gek[i] = byte(i + 1)
+	}
+	gekPub, err := privacy.EKPub(gek)
+	must(err)
+	zaddr := privacy.ShieldedAddress{OwnerPK: privacy.OwnerPK(u(7)), EKPub: gekPub}.Encode()
 	senderStr, _ := addr(30)
 	add("send", &shieldedtypes.MsgSend{Bundle: fee(10, 1500), Fee: 1500})
 	addTx("send_tx_fields", &shieldedtypes.MsgSend{Bundle: fee(11, 1500), Fee: 1500},
@@ -477,24 +485,28 @@ func main() {
 	reg := &personhoodtypes.MsgRegister{
 		Fee: fee(40, 2000), Proof: []byte{1, 2, 3}, PublicSignals: []string{"250930", "12345", "678", "9"},
 		SignatureAlgorithm: "lean_poa", DscDer: []byte{0x30, 0x03, 1, 2, 3}, Idc: fb(41), PcAnml: fb(42), CiphertextAnml: bct(42),
-		PcErth: fb(43), CiphertextErth: bct(43), Affiliate: affStr,
+		PcErth: fb(43), CiphertextErth: bct(43),
+		AffiliateHandle: "alice-01", AffiliatePc: fb(44), AffiliateCiphertext: bct(44),
 	}
 	add("register", reg)
 	bind, err := reg.Binding(ac)
 	must(err)
 	reg0 := *reg
-	reg0.Affiliate = ""
+	reg0.AffiliateHandle, reg0.AffiliatePc, reg0.AffiliateCiphertext = "", nil, nil
 	add("register_no_affiliate", &reg0)
 	bind0, err := reg0.Binding(ac)
 	must(err)
-	out["registration_binding"] = map[string]string{"with_affiliate": hx(bind), "affiliate_bytes_field": hx(privacy.Bytes(affRaw)), "none": hx(bind0)}
+	out["registration_binding"] = map[string]string{"with_affiliate": hx(bind), "affiliate_field": hx(privacy.AffiliateField("alice-01", fe(44), bct(44))), "none": hx(bind0)}
 	add("claim_anml", &personhoodtypes.MsgClaimAnml{Fee: fee(50, 2000), Membership: membership(50), Day: 20360, Pc: fb(51), Ciphertext: bct(51)})
 	add("set_caretaker", &personhoodtypes.MsgSetCaretaker{Fee: fee(60, 2000), Membership: membership(60),
-		Percentages: []allocationtypes.AllocationWeight{{OptionId: 1, Percent: 60}, {OptionId: 7, Percent: 40}}, MaxActivation: 1_780_000_000})
-	// Wave 3 (L6): a binding carries its owner's consent (not sighash fields).
-	add("bind_referrer", &personhoodtypes.MsgBindReferrer{Fee: fee(70, 2000), Membership: membership(70), Address: affStr, MaxActivation: 1_780_000_000,
-		ReferrerPubKey: bytes.Repeat([]byte{0x02}, 33), ReferrerSignature: bytes.Repeat([]byte{0x07}, 64)})
-	add("bind_referrer_clear", &personhoodtypes.MsgBindReferrer{Fee: fee(71, 2000), Membership: membership(71), MaxActivation: 1_780_000_000})
+		Percentages: []allocationtypes.AllocationWeight{{OptionId: 1, Percent: 60}, {OptionId: 7, Percent: 40}}, MaxPredecessor: 1_750_000_000})
+	add("set_caretaker_no_bound", &personhoodtypes.MsgSetCaretaker{Fee: fee(61, 2000), Membership: membership(61),
+		Percentages: []allocationtypes.AllocationWeight{{OptionId: 2, Percent: 100}}, MaxPredecessor: uint64(personhoodtypes.NoBound)})
+	add("move_caretaker", &personhoodtypes.MsgMoveCaretaker{Fee: fee(62, 2000), Membership: membership(62), NewOwner: fb(63)})
+	add("bind_handle", &personhoodtypes.MsgBindHandle{Fee: fee(70, 2000), Membership: membership(70), Handle: "alice-01", Address: zaddr, MaxPredecessor: 1_750_000_000})
+	add("bind_handle_release", &personhoodtypes.MsgBindHandle{Fee: fee(71, 2000), Membership: membership(71), MaxPredecessor: uint64(personhoodtypes.NoBound)})
+	add("move_handle", &personhoodtypes.MsgMoveHandle{Fee: fee(72, 2000), Membership: membership(72), Handle: "alice-01", NewOwner: fb(73)})
+	out["handle_address"] = zaddr
 	add("vote_proposal", &assemblytypes.MsgVoteProposal{Fee: fee(80, 2000), Membership: membership(80), ProposalId: 5, Option: assemblytypes.VoteOption(1)})
 	add("propose_removal", &assemblytypes.MsgProposeRemoval{Fee: fee(81, 2000), Membership: membership(81), OptionId: 3})
 	add("vote_removal", &assemblytypes.MsgVoteRemoval{Fee: fee(82, 2000), Membership: membership(82), OptionId: 3, Option: assemblytypes.VoteOption(2)})
@@ -580,14 +592,25 @@ func main() {
 	must(err)
 	out["unsigned_tx"] = map[string]any{"msg": "claim_anml", "gas_limit": 2_600_000, "memo": "deposit 42 ü", "timeout_height": 123456, "tx_raw": hex.EncodeToString(rawBz)}
 
-	// ---- chain wave 3 (06ea4d6) ---------------------------------------------
-	// The referrer consent's signed bytes (L6), the module accounts an
-	// unshield may not pay (B/F2), canonical vote weights (F3).
-	consentNf := membership(70).Nullifier
-	out["referrer_consent"] = map[string]string{
-		"nullifier": hex.EncodeToString(consentNf), "address": affStr,
-		"bytes": hex.EncodeToString(personhoodtypes.ReferrerConsentBytes(chainID, consentNf, affRaw)),
+	// ---- membership public inputs (predecessor-aware, 4a663d5) ------------
+	{
+		m := membership(50)
+		pis := personhoodtypes.MembershipPublicInputs(m, privacy.ClaimScope(20360), fe(9), fe(10), privacy.CountryField("FR"),
+			uint64(personhoodtypes.NoBound), 1_750_000_000)
+		ps := make([]string, len(pis))
+		for i := range pis {
+			ps[i] = hex.EncodeToString(pis[i])
+		}
+		out["membership_public_inputs"] = map[string]any{
+			"root": hex.EncodeToString(m.Root), "nullifier": hex.EncodeToString(m.Nullifier), "scope": hx(privacy.ClaimScope(20360)),
+			"signal": hx(fe(9)), "excluded_dsc": hx(fe(10)), "excluded_country": hx(privacy.CountryField("FR")),
+			"max_activation": uint64(personhoodtypes.NoBound), "max_predecessor": 1_750_000_000, "inputs": ps,
+		}
 	}
+
+	// ---- chain wave 3 (06ea4d6) ---------------------------------------------
+	// The module accounts an unshield may not pay (B/F2), canonical vote
+	// weights (F3).
 	modules := map[string]string{}
 	for _, n := range []string{"fee_collector", "distribution", "mint", "bonded_tokens_pool", "not_bonded_tokens_pool", "gov", "nft",
 		"transfer", "interchainaccounts", "shielded", "shieldedstaking", "dex", "allocation", "personhood", "earth", "wasm"} {

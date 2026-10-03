@@ -76,13 +76,29 @@ object PrivacySession {
     fun removeOnClear(l: () -> Unit) { clearListeners.remove(l) }
 
     /**
-     * Signs a referrer consent with the selected wallet's transparent key
-     * (wave 3, L6): what lets the private side bind that wallet's own
-     * address. The mnemonic is read for the signature only.
+     * The privacy keys of the wallet at [index] (another of this phone's
+     * wallets): what an identity switch names its moves to. The mnemonic is
+     * read for the derivation only.
      */
-    fun referrerSigner(context: Context): PrivacyWallet.ReferrerSigner = PrivacyWallet.ReferrerSigner { message ->
-        SecureWalletManager.executeWithMnemonic(context.applicationContext) { m ->
-            network.erth.wallet.crypto.WalletCrypto.signConsent(network.erth.wallet.crypto.EarthWallet.deriveKey(m), message)
+    fun keysOf(context: Context, index: Int): PrivacyKeys =
+        SecureWalletManager.executeWithMnemonicAt(context.applicationContext, index) { PrivacyKeys.fromMnemonic(it) }
+
+    /**
+     * Records in the wallet at [index]'s private store what a switch moved
+     * to its identity (see PrivacyWallet.adoptMoved): its own wallet, when
+     * it is next opened, renews and refreshes them with no predecessor wait.
+     */
+    fun adoptMovedInto(context: Context, index: Int, handle: String?, split: Map<Long, Long>?, splitExpiresAt: Long) {
+        val app = context.applicationContext
+        val keys = keysOf(app, index)
+        val store = PrivacyStore.open(app.filesDir, storeId(keys))
+        synchronized(store) {
+            if (handle != null) store.state.handle = handle
+            if (split != null && split.isNotEmpty()) {
+                store.state.caretakerSplit = split; store.state.caretakerExpiresAt = splitExpiresAt
+                store.state.caretakerCastAt = System.currentTimeMillis() / 1000
+            }
+            store.save()
         }
     }
 
@@ -101,11 +117,11 @@ object PrivacySession {
 
     private object RestChainReads : PrivacyChainReads {
         override fun personhoodParams() = PrivacyQueries.personhoodParams().let {
-            PrivacyChainReads.PersonhoodParams(it.caretakerVoteSeconds, it.identityRootWindowSeconds)
+            PrivacyChainReads.PersonhoodParams(it.caretakerVoteSeconds, it.identityRootWindowSeconds, it.handleLeaseSeconds, it.handleRenewalSeconds)
         }
 
         override fun ballotInputs(proposalId: Long, optionId: Long) = PrivacyQueries.ballotInputs(proposalId, optionId).let {
-            PrivacyChainReads.BallotInputs(it.scope, it.excludedDsc, it.excludedCountry, it.maxActivation, it.round, it.ballotId)
+            PrivacyChainReads.BallotInputs(it.scope, it.excludedDsc, it.excludedCountry, it.maxActivation, it.round, it.ballotId, it.maxPredecessor)
         }
 
         override fun epochNumber(): Long = PrivacyQueries.epoch().number

@@ -69,19 +69,37 @@ object PrivacyQueries {
     /** The most actions the wallet lays out in one bundle, whatever the node's param says. */
     const val MAX_ACTIONS_BOUND = 64
 
-    data class PersonhoodParams(val caretakerVoteSeconds: Long, val identityRootWindowSeconds: Long, val registrationValiditySeconds: Long)
+    data class PersonhoodParams(
+        val caretakerVoteSeconds: Long,
+        val identityRootWindowSeconds: Long,
+        val registrationValiditySeconds: Long,
+        val handleLeaseSeconds: Long = network.erth.wallet.privacy.handles.Handles.DEFAULT_LEASE_SECONDS,
+        val handleRenewalSeconds: Long = network.erth.wallet.privacy.handles.Handles.DEFAULT_RENEWAL_SECONDS,
+    )
 
     fun personhoodParams(): PersonhoodParams {
         val p = get("/earth/personhood/v1/params").getJSONObject("params")
         return PersonhoodParams(
-            caretakerVoteSeconds = p.long("caretaker_vote_seconds").takeIf { it > 0 } ?: 30L * 86_400,
+            // Zero falls back to the chain's defaults (365 days; 30 days for the renewal period).
+            caretakerVoteSeconds = p.long("caretaker_vote_seconds").takeIf { it > 0 } ?: 365L * 86_400,
             identityRootWindowSeconds = p.long("identity_root_window_seconds").takeIf { it > 0 } ?: 3_600,
             registrationValiditySeconds = p.long("registration_validity_seconds"),
+            handleLeaseSeconds = p.long("handle_lease_seconds").takeIf { it > 0 } ?: network.erth.wallet.privacy.handles.Handles.DEFAULT_LEASE_SECONDS,
+            handleRenewalSeconds = p.long("handle_renewal_seconds").takeIf { it > 0 } ?: network.erth.wallet.privacy.handles.Handles.DEFAULT_RENEWAL_SECONDS,
         )
     }
 
     /** x/assembly BallotInputs: the membership statement of a proposal's current round or an option's removal ballot. */
-    data class BallotInputs(val scope: Fr, val excludedDsc: Fr, val excludedCountry: Fr, val maxActivation: Long, val round: Long, val ballotId: Long)
+    data class BallotInputs(
+        val scope: Fr,
+        val excludedDsc: Fr,
+        val excludedCountry: Fr,
+        val maxActivation: Long,
+        val round: Long,
+        val ballotId: Long,
+        /** max_predecessor (7): the double-vote bound; max_activation is no bound for ballots. */
+        val maxPredecessor: Long,
+    )
 
     fun ballotInputs(proposalId: Long = 0, optionId: Long = 0): BallotInputs {
         val q = if (proposalId != 0L) "proposal_id=$proposalId" else "option_id=$optionId"
@@ -93,7 +111,39 @@ object PrivacyQueries {
             maxActivation = j.long("max_activation"),
             round = j.long("round"),
             ballotId = j.long("ballot_id"),
+            // Absent from a node older than the predecessor change: 0, which
+            // only a fresh registrant meets (never a vote the chain refuses).
+            maxPredecessor = j.long("max_predecessor"),
         )
+    }
+
+    /**
+     * One page of the handle directory (Query/Handles: handles after
+     * [start], in order; next "" when exhausted). Only HandleDirectory calls
+     * this, from the first page to the last: never a lookup of one handle.
+     */
+    fun handlesPage(start: String, limit: Int): network.erth.wallet.privacy.handles.HandleDirectory.Page {
+        val q = "start=" + java.net.URLEncoder.encode(start, "UTF-8") + "&limit=${limit.coerceIn(1, 1000)}"
+        val j = get("/earth/personhood/v1/handles?$q")
+        val a = j.optJSONArray("handles")
+        val hs = (0 until (a?.length() ?: 0)).map { i ->
+            val h = a!!.getJSONObject(i)
+            network.erth.wallet.privacy.handles.HandleEntry(
+                handle = h.optString("handle"), address = h.optString("address"), status = h.optString("status"),
+                expiresAt = h.long("expires_at"), renewalUntil = h.long("renewal_until"),
+            )
+        }
+        return network.erth.wallet.privacy.handles.HandleDirectory.Page(hs, j.optString("next"))
+    }
+
+    /**
+     * The app's one directory (cached; see HandleDirectory): the privacy
+     * backend's whole-directory stream first, the chain's own pages to fall
+     * back on and to check an entry against before money moves on it.
+     */
+    val handles: network.erth.wallet.privacy.handles.HandleDirectory by lazy {
+        val indexer = network.erth.wallet.privacy.sync.HttpPrivacyIndexer(network.erth.wallet.Constants.EARTH_API_URL)
+        network.erth.wallet.privacy.handles.HandleDirectory(::handlesPage, { from, limit -> indexer.handles(from, limit) })
     }
 
     data class Epoch(val number: Long, val startTime: Long, val endTime: Long)

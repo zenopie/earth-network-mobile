@@ -40,6 +40,13 @@ interface PrivacyIndexer {
     fun stakeNullifierLeaves(fromIndex: Long, limit: Int? = null): StakeNfLeavesPage
     /** Every proposal snapshot (what stake votes prove against), by height. */
     fun stakeSnapshots(fromHeight: Long, limit: Int? = null): StakeSnapshotsPage
+    /**
+     * The handle directory, whole (there is no endpoint for one handle): a
+     * snapshot of the chain's Handles query at one height, paged by place
+     * from [fromIndex] (aligned).
+     */
+    fun handles(fromIndex: Long, limit: Int): network.erth.wallet.privacy.handles.HandleDirectory.StreamPage =
+        throw UnsupportedOperationException("this indexer serves no handle directory")
 }
 
 data class IndexerStatus(
@@ -233,6 +240,9 @@ class HttpPrivacyIndexer(
     override fun stakeSnapshots(fromHeight: Long, limit: Int?): StakeSnapshotsPage =
         parseStakeSnapshots(stream("/stake/snapshots?from_height=$fromHeight${limit(limit)}"))
 
+    override fun handles(fromIndex: Long, limit: Int): network.erth.wallet.privacy.handles.HandleDirectory.StreamPage =
+        parseHandles(stream("/handles?from_index=$fromIndex${limit(limit)}"))
+
     companion object {
         private val CHAIN_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
         private val GENESIS = Regex("[0-9a-f]{16}")
@@ -296,6 +306,18 @@ class HttpPrivacyIndexer(
         }
 
         /** /stake/nullifier-tree: rows [index, nullifier (hex), height]. */
+        /** /handles: rows [handle, address, status, expires_at, renewal_until], the snapshot's height and size. */
+        fun parseHandles(j: JSONObject): network.erth.wallet.privacy.handles.HandleDirectory.StreamPage {
+            val a = j.optJSONArray("handles") ?: JSONArray()
+            val rows = (0 until a.length()).map { i ->
+                val r = a.getJSONArray(i)
+                network.erth.wallet.privacy.handles.HandleEntry(r.getString(0), r.getString(1), r.getString(2), r.getLong(3), r.getLong(4))
+            }
+            return network.erth.wallet.privacy.handles.HandleDirectory.StreamPage(
+                rows, if (j.isNull("height")) null else j.optLong("height"), j.optLong("size"), j.optLong("from_index"), j.optBoolean("last_page"),
+            )
+        }
+
         fun parseStakeNfLeaves(j: JSONObject): StakeNfLeavesPage {
             val a = j.getJSONArray("nullifiers")
             val leaves = (0 until a.length()).map { i -> a.getJSONArray(i).let { r -> r.getLong(0) to Fr.fromHex(r.getString(1)) } }

@@ -22,6 +22,8 @@ object Privacy {
     val TAG_SIGNAL = tag("earth.signal")
     val TAG_BYTES = tag("earth.bytes")
     val TAG_SCOPE = tag("earth.scope")
+    // A registration's referrer: H(TAG_AFFILIATE, Bytes(handle), pc, Bytes(ct)).
+    val TAG_AFFILIATE = tag("earth.affiliate")
     // The stake note tree (x/shieldedstaking, circuits/stake).
     val TAG_STAKE = tag("earth.stake")
     val TAG_SPC = tag("earth.spc")
@@ -48,8 +50,13 @@ object Privacy {
 
     fun ownerPk(nk: Fr): Fr = h(TAG_OWNER, nk)
 
-    fun identityLeaf(idc: Fr, dscKey: Fr, country: Fr, activatedAt: Long): Fr =
-        h(TAG_LEAF, idc, dscKey, country, u64(activatedAt))
+    /**
+     * H(TAG_LEAF, idc, dsc_key, country, activated_at, predecessor_at):
+     * predecessor_at is the time of the switch or re-entry that made the
+     * leaf (its activated_at), 0 for a passport never registered before.
+     */
+    fun identityLeaf(idc: Fr, dscKey: Fr, country: Fr, activatedAt: Long, predecessorAt: Long): Fr =
+        h(TAG_LEAF, idc, dscKey, country, u64(activatedAt), u64(predecessorAt))
 
     /** ISO 3166-1 alpha-2 as two big-endian ASCII bytes; anything else is 0 (unknown). */
     fun countryField(cc: String): Fr {
@@ -124,7 +131,7 @@ object Privacy {
 
     fun claimScope(day: Long): Fr = scope("claim", u64(day))
     fun caretakerScope(): Fr = scope("caretaker")
-    fun referrerScope(): Fr = scope("referrer")
+    fun handleScope(): Fr = scope("handle")
     fun proposalScope(proposalId: Long, round: Long): Fr = scope("proposal", u64(proposalId), u64(round))
     fun removalScope(ballotId: Long): Fr = scope("removal", u64(ballotId))
     fun proposeRemovalScope(optionId: Long, day: Long): Fr = scope("propose_removal", u64(optionId), u64(day))
@@ -135,4 +142,16 @@ object Privacy {
      */
     fun registrationBinding(idc: Fr, pcAnml: Fr, ctAnml: ByteArray, pcErth: Fr, ctErth: ByteArray, affiliate: Fr): Fr =
         h(TAG_REG, idc, pcAnml, bytes(ctAnml), pcErth, bytes(ctErth), affiliate)
+
+    /**
+     * The registration binding's affiliate field for a referrer named by
+     * handle, with the referral note minted to it:
+     * H(TAG_AFFILIATE, Bytes(handle), affiliate_pc, Bytes(affiliate_ct)).
+     * A registration naming no referrer carries 0.
+     */
+    fun affiliateField(handle: String, pc: Fr, ct: ByteArray): Fr =
+        h(TAG_AFFILIATE, bytes(handle.toByteArray(Charsets.US_ASCII)), pc, bytes(ct))
+
+    /** The membership bound that bounds nothing (max_activation / max_predecessor): 2^63 - 1. */
+    const val NO_BOUND: Long = Long.MAX_VALUE
 }

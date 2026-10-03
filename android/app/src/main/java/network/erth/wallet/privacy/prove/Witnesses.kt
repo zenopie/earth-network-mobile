@@ -164,13 +164,16 @@ data class StakeWitness(
 /**
  * The membership circuit's witness (circuits/membership). Public inputs in
  * the chain's order (personhood MembershipPublicInputs): root, scope,
- * nullifier, signal, excluded_dsc, excluded_country, max_activation.
+ * nullifier, signal, excluded_dsc, excluded_country, max_activation,
+ * max_predecessor. A bound of Privacy.NO_BOUND (2^63 - 1) bounds nothing.
  */
 data class MembershipWitness(
     val idSecret: Fr,
     val dscKey: Fr,
     val country: Fr,
     val activatedAt: Long,
+    /** The leaf's predecessor_at: its switch or re-entry time, 0 for a passport never registered before. */
+    val predecessorAt: Long,
     val leafIndex: Long,
     val siblings: List<Fr>,
     val root: Fr,
@@ -179,15 +182,17 @@ data class MembershipWitness(
     val excludedDsc: Fr,
     val excludedCountry: Fr,
     val maxActivation: Long,
+    val maxPredecessor: Long,
 ) {
     init {
         require(siblings.size == Merkle.DEPTH)
+        require(activatedAt >= 0 && predecessorAt >= 0 && maxActivation >= 0 && maxPredecessor >= 0) { "a bound is a u64 below 2^63" }
         require(leafIndex in 0..0xffffffffL)
     }
 
     val nullifier: Fr by lazy { Privacy.scopeNullifier(idSecret, scope) }
 
-    val leaf: Fr get() = Privacy.identityLeaf(Privacy.idc(idSecret), dscKey, country, activatedAt)
+    val leaf: Fr get() = Privacy.identityLeaf(Privacy.idc(idSecret), dscKey, country, activatedAt, predecessorAt)
 
     /** What the circuit will assert, checked before spending seconds on a proof that cannot verify. */
     fun check() {
@@ -195,16 +200,18 @@ data class MembershipWitness(
         require(dscKey != excludedDsc) { "this registration's document signer is excluded from this ballot" }
         require(excludedCountry.isZero || country != excludedCountry) { "this registration's country is excluded from this ballot" }
         require(activatedAt <= maxActivation) { "this identity was activated too recently for this action" }
+        require(predecessorAt <= maxPredecessor) { "this identity replaced another too recently for this action" }
     }
 
     fun publicInputs(): List<Fr> =
-        listOf(root, scope, nullifier, signal, excludedDsc, excludedCountry, Privacy.u64(maxActivation))
+        listOf(root, scope, nullifier, signal, excludedDsc, excludedCountry, Privacy.u64(maxActivation), Privacy.u64(maxPredecessor))
 
     fun noirInputs(): Map<String, Any> = mapOf(
         "id_secret" to idSecret.toNoir(),
         "dsc_key" to dscKey.toNoir(),
         "country" to country.toNoir(),
         "activated_at" to hex(activatedAt),
+        "predecessor_at" to hex(predecessorAt),
         "leaf_index" to hex(leafIndex),
         "siblings" to siblings.map { it.toNoir() },
         "root" to root.toNoir(),
@@ -214,6 +221,7 @@ data class MembershipWitness(
         "excluded_dsc" to excludedDsc.toNoir(),
         "excluded_country" to excludedCountry.toNoir(),
         "max_activation" to hex(maxActivation),
+        "max_predecessor" to hex(maxPredecessor),
     )
 
     fun proverToml(): String = toml(noirInputs())

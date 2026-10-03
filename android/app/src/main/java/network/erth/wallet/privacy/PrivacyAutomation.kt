@@ -11,16 +11,14 @@ import network.erth.wallet.privacy.sync.WalletSync
 import java.security.SecureRandom
 
 /**
- * What the wallet does on its own while it is unlocked (it needs the keys, so
- * never in the background):
+ * The one thing the wallet does on its own while it is unlocked (it needs the
+ * keys, so never in the background): it completes an undelegation the user
+ * started, claiming the unbonding claim (stake note) once its epoch's
+ * undelegation has matured. Its fee comes out of what it claims.
  *
- *  - claims the day's ANML, at a random time of day chosen afresh each day,
- *    so a claim's timing says nothing about who made it;
- *  - refreshes the caretaker split before it lapses (it counts for R after
- *    each cast);
- *  - refreshes the referrer binding the same way;
- *  - claims unbonding claims (stake notes) once their epoch's undelegation
- *    has matured.
+ * Nothing else spends a fee unasked: the day's ANML claim, the caretaker
+ * vote's refresh and the handle's renewal are the user's to make, and
+ * [Reminders] says when each is due.
  *
  * Maturity is worked out from chain-wide timing alone (the current epoch,
  * epoch length, x/staking's unbonding time), never by asking the node about
@@ -30,54 +28,30 @@ import java.security.SecureRandom
  * undelegation was deferred), the claim fails before anything is spent and
  * waits [RETRY_S].
  *
- * Actions are never taken in one burst (audit 3): one at a time, chosen at
+ * Claims are never made in one burst (audit 3): one at a time, chosen at
  * random among those due, with a random pause and a full sync between each
- * and a fresh decision after it. That also orders actions that share a
- * single ERTH note: the second sees the first's change once it landed, and
- * waits for a later pass while it has not (no spendable fee note, no action).
- * Logs name the kind of action only, never a denom.
+ * and a fresh decision after it. Logs name the kind of action only, never a
+ * denom.
  *
  * [decide] is the pure part, unit-tested; [runPass] runs one pass; [loop] runs passes.
  */
 object PrivacyAutomation {
     private const val TAG = "PrivacyAutomation"
     private const val INTERVAL_MS = 10 * 60 * 1000L
-    /** Claims land within this many seconds after UTC midnight plus the day's draw. */
-    const val CLAIM_WINDOW_S = 12 * 3600L
-
+    /** The only automatic action: completing an undelegation the user started. */
     sealed interface Action {
-        data class ClaimAnml(val day: Long) : Action
-        data object RefreshCaretaker : Action
-        data object RefreshReferrer : Action
         data class ClaimUnbonding(val denom: String) : Action
     }
 
     data class Inputs(
         val now: Long,
-        val identityLive: Boolean,
-        val claimOpensAt: Long?,
-        val claimedToday: Boolean,
-        /** Seconds after UTC midnight today's claim waits for. */
-        val claimOffset: Long,
-        val caretakerDue: Boolean,
-        val referrerDue: Boolean = false,
-        val hasFeeErth: Boolean,
         /** unbond/<valoper>/<epoch> denoms whose claims have matured. */
         val maturedUnbonds: List<String>,
     )
 
-    fun decide(i: Inputs): List<Action> {
-        val out = ArrayList<Action>()
-        val day = i.now / PrivacyWallet.SECONDS_PER_DAY
-        if (i.identityLive && i.hasFeeErth && !i.claimedToday && i.claimOpensAt == 0L &&
-            i.now - day * PrivacyWallet.SECONDS_PER_DAY >= i.claimOffset
-        ) out.add(Action.ClaimAnml(day))
-        if (i.identityLive && i.hasFeeErth && i.caretakerDue) out.add(Action.RefreshCaretaker)
-        if (i.identityLive && i.hasFeeErth && i.referrerDue) out.add(Action.RefreshReferrer)
+    fun decide(i: Inputs): List<Action> =
         // Fee from output: needs no fee note.
-        i.maturedUnbonds.forEach { out.add(Action.ClaimUnbonding(it)) }
-        return out
-    }
+        i.maturedUnbonds.map { Action.ClaimUnbonding(it) }
 
     /** Slack past the computed completion for the block that completes it. */
     const val MATURITY_MARGIN_S = 15 * 60L
@@ -118,22 +92,6 @@ object PrivacyAutomation {
     }.map { it.denom }.distinct()
 
     private val rng = SecureRandom()
-
-    /**
-     * Today's random claim offset, drawn once per UTC day and persisted with
-     * the wallet (audit 4): an app restarted during the day keeps the day's
-     * draw. A draw per process start would give every restart another chance
-     * at an early offset, skewing claims towards midnight.
-     */
-    fun claimOffset(state: network.erth.wallet.privacy.sync.PrivacyState, now: Long, save: () -> Unit = {}): Long {
-        val day = now / PrivacyWallet.SECONDS_PER_DAY
-        if (state.claimOffsetDay != day) {
-            state.claimOffsetDay = day
-            state.claimOffset = (rng.nextDouble() * CLAIM_WINDOW_S).toLong()
-            save()
-        }
-        return state.claimOffset
-    }
 
     /** The random pause between two automated actions in one pass. */
     const val ACTION_PAUSE_MIN_MS = 30_000L
@@ -200,13 +158,6 @@ object PrivacyAutomation {
             val now = System.currentTimeMillis() / 1000
             return Inputs(
                 now = now,
-                identityLive = w.identityStatus() == WalletSync.IdentityStatus.LIVE,
-                claimOpensAt = runCatching { w.claimOpensAt() }.getOrNull(),
-                claimedToday = w.claimedToday(),
-                claimOffset = synchronized(w) { claimOffset(w.store.state, now) { runCatching { w.store.save() } } },
-                caretakerDue = runCatching { w.caretakerDue() }.getOrDefault(false),
-                referrerDue = runCatching { w.referrerDue() }.getOrDefault(false),
-                hasFeeErth = (w.poolBalances()["uerth"] ?: 0L) > 0,
                 maturedUnbonds = matured(w.stakeNotes, now, epoch.number, epoch.startTime, timing.epochSeconds, timing.unbondingSeconds,
                     w.store.state.unbondRetryAt),
             )
@@ -214,19 +165,13 @@ object PrivacyAutomation {
         runPass(
             { w.sync() }, ::inputs,
             act = { a ->
-                when (a) {
-                    is Action.ClaimAnml -> w.claimAnml(a.day)
-                    Action.RefreshCaretaker -> w.setCaretaker(w.store.state.caretakerSplit)
-                    Action.RefreshReferrer -> w.bindReferrer(w.store.state.referrerAddress, PrivacySession.referrerSigner(context))
-                    is Action.ClaimUnbonding -> w.claimUnbonding(a.denom)
-                }
+                w.claimUnbonding((a as Action.ClaimUnbonding).denom)
             },
             pause = { delay(it) },
             onFailure = { a, e ->
                 Log.w(TAG, "automation ${kind(a)} failed: ${e.javaClass.simpleName}")
-                if (a is Action.ClaimUnbonding) {
-                    synchronized(w) { w.store.state.unbondRetryAt[a.denom] = System.currentTimeMillis() / 1000 + RETRY_S; runCatching { w.store.save() } }
-                }
+                val denom = (a as Action.ClaimUnbonding).denom
+                synchronized(w) { w.store.state.unbondRetryAt[denom] = System.currentTimeMillis() / 1000 + RETRY_S; runCatching { w.store.save() } }
             },
         )
     }

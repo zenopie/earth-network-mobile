@@ -136,16 +136,6 @@ object WalletCrypto {
         return Bech32.encode(HRP, fiveBits)
     }
 
-    /** The earth address of a 33-byte compressed secp256k1 public key. */
-    fun addressOfPubKey(pub: ByteArray): String =
-        Bech32.encode(HRP, Bech32.convertBits(Utils.sha256hash160(pub), 8, 5, true))
-
-    /** (compressed public key, 64-byte low-S r||s) of [key] over SHA-256([message]): cosmos secp256k1 Sign. */
-    fun signConsent(key: ECKey, message: ByteArray): Pair<ByteArray, ByteArray> {
-        val s = TransactionSigner.TransactionSignature(key.sign(org.bitcoinj.core.Sha256Hash.of(message)), key.pubKey)
-        return key.pubKeyPoint.getEncoded(true) to s.bytes
-    }
-
     /**
      * Get earth address from mnemonic
      */

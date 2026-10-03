@@ -145,7 +145,8 @@ object PassportSession {
             val dsc = PassportInputs.scannedDsc(sodBytes)
             // The proof is bound to the registration it will be broadcast in:
             // its `address` input is RegistrationBinding(idc, pc_anml,
-            // pc_erth, affiliate), which the chain recomputes from MsgRegister,
+            // pc_erth, affiliate), which the chain recomputes from MsgRegister
+            // (affiliate binds the referrer's handle and the note made to it),
             // so a proof read out of a block cannot register anyone else's
             // identity or pay anyone else's notes.
             val proof = PassportProver.prove(context, dg1Bytes, sodBytes, todayYymmddUtc(), prep.binding.toNoir())
@@ -189,11 +190,12 @@ object PassportSession {
 
     /**
      * The notes a registration will pay and the binding its proof carries.
-     * [affiliate] is the optional referrer address (blank for none): it is
-     * bound into the proof, so it is fixed before the passport is read.
+     * [referrer] is the optional referrer, a handle resolved from the full
+     * directory (null for none): it and the note made to its address are
+     * bound into the proof, so they are fixed before the passport is read.
      */
-    fun prepare(context: Context, affiliate: String?): PrivacyWallet.RegistrationPrep =
-        PrivacySession.wallet(context).prepareRegistration(normalizeAffiliate(affiliate))
+    fun prepare(context: Context, referrer: PrivacyWallet.Referrer?): PrivacyWallet.RegistrationPrep =
+        PrivacySession.wallet(context).prepareRegistration(referrer)
 
     /** MsgRegister without its fee transfer: what the registration gas grant is asked on. */
     fun registerMsg(context: Context, scan: Scan): MsgRegister =
@@ -210,9 +212,6 @@ object PassportSession {
             scan.prep, scan.proof.proof, scan.proof.publicSignals, scan.proof.signatureAlgorithm, scan.dscDer,
         ).hash
     }
-
-    private fun normalizeAffiliate(affiliate: String?): String? =
-        affiliate?.trim()?.takeIf { it.isNotEmpty() }
 
     class FailureException(val failure: Failure) : Exception(failure.toString())
 

@@ -38,6 +38,21 @@ object SecureWalletManager {
         return operation(mnemonic)
     }
 
+    /**
+     * Runs [operation] with the mnemonic of the wallet at [index] (not
+     * necessarily the selected one): an identity switch derives the other
+     * wallet's identity keys from it. Read for the call only.
+     */
+    fun <T> executeWithMnemonicAt(context: Context, index: Int, operation: (String) -> T): T {
+        WalletCrypto.initialize(context)
+        requireSession()
+        val wallets = SessionManager.wallets()
+        require(index in 0 until wallets.length()) { "no wallet at $index" }
+        val mnemonic = wallets.getJSONObject(index).optString("mnemonic", "")
+        check(mnemonic.isNotEmpty()) { "the wallet at $index has no mnemonic" }
+        return operation(mnemonic)
+    }
+
     /** The selected wallet's address. Throws when there is no session. */
     fun getWalletAddress(context: Context): String? =
         executeWithMnemonic(context) { WalletCrypto.getAddressFromMnemonic(it) }

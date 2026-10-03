@@ -10,8 +10,10 @@ import network.erth.earth.proto.assembly.VoteOption
 import network.erth.earth.proto.dex.MsgAddLiquidityShielded
 import network.erth.earth.proto.dex.MsgNoteSwap
 import network.erth.earth.proto.dex.MsgRemoveLiquidityShielded
-import network.erth.earth.proto.personhood.MsgBindReferrer
+import network.erth.earth.proto.personhood.MsgBindHandle
 import network.erth.earth.proto.personhood.MsgClaimAnml
+import network.erth.earth.proto.personhood.MsgMoveCaretaker
+import network.erth.earth.proto.personhood.MsgMoveHandle
 import network.erth.earth.proto.personhood.MsgRegister
 import network.erth.earth.proto.personhood.MsgSetCaretaker
 import network.erth.earth.proto.shielded.MsgSend
@@ -58,8 +60,21 @@ import java.math.BigDecimal
 
 /** The chain reads the wallet's private msgs are built from. */
 interface PrivacyChainReads {
-    data class PersonhoodParams(val caretakerVoteSeconds: Long, val identityRootWindowSeconds: Long)
-    data class BallotInputs(val scope: Fr, val excludedDsc: Fr, val excludedCountry: Fr, val maxActivation: Long, val round: Long, val ballotId: Long)
+    data class PersonhoodParams(
+        val caretakerVoteSeconds: Long,
+        val identityRootWindowSeconds: Long,
+        val handleLeaseSeconds: Long = network.erth.wallet.privacy.handles.Handles.DEFAULT_LEASE_SECONDS,
+        val handleRenewalSeconds: Long = network.erth.wallet.privacy.handles.Handles.DEFAULT_RENEWAL_SECONDS,
+    )
+    data class BallotInputs(
+        val scope: Fr,
+        val excludedDsc: Fr,
+        val excludedCountry: Fr,
+        val maxActivation: Long,
+        val round: Long,
+        val ballotId: Long,
+        val maxPredecessor: Long = Privacy.NO_BOUND,
+    )
     /**
      * A proposal's stake-vote snapshot: the stake tree's root and size when it
      * entered voting, the block it did (0 when unknown), rate_v (ERTH per
@@ -270,10 +285,18 @@ class PrivacyWallet(
         return id
     }
 
-    private fun membership(scope: Fr, excludedDsc: Fr, excludedCountry: Fr, maxActivation: Long): MembershipWitnessSpec {
+    /**
+     * A membership proof's witness for [scope] under the chain's statement:
+     * activated_at <= [maxActivation], predecessor_at <= [maxPredecessor]
+     * (Privacy.NO_BOUND: none).
+     */
+    private fun membership(scope: Fr, excludedDsc: Fr, excludedCountry: Fr, maxActivation: Long, maxPredecessor: Long): MembershipWitnessSpec {
         val id = identity()
         if (id.activatedAt > maxActivation) {
             throw NotYet(maxOf(0, id.activatedAt - maxActivation))
+        }
+        if (id.predecessorAt > maxPredecessor) {
+            throw NotYet(maxOf(0, id.predecessorAt - maxPredecessor))
         }
         val tree = store.identityTree
         val path = tree.path(id.leafIndex)
@@ -281,22 +304,22 @@ class PrivacyWallet(
         return MembershipWitnessSpec { signal ->
             MembershipWitness(
                 idSecret = keys.idSecret, dscKey = id.dscKey, country = id.country, activatedAt = id.activatedAt,
+                predecessorAt = id.predecessorAt,
                 leafIndex = id.leafIndex, siblings = path, root = root, scope = scope, signal = signal,
                 excludedDsc = excludedDsc, excludedCountry = excludedCountry, maxActivation = maxActivation,
+                maxPredecessor = maxPredecessor,
             )
         }
-    }
-
-    /** Signs a referrer consent with a transparent account key: (33-byte compressed key, 64-byte low-S r||s over SHA-256 of the message). */
-    fun interface ReferrerSigner {
-        fun sign(message: ByteArray): Pair<ByteArray, ByteArray>
     }
 
     /** The chain is ahead of the local trees for what is asked: sync, then try again. */
     class SyncFirst(message: String) : IllegalStateException(message)
 
-    /** The identity is too recent for this action; it opens [waitSeconds] from now. */
-    class NotYet(val waitSeconds: Long) : Exception("this registration is too recent for this action; try again in ${waitSeconds / 3600 + 1}h")
+    /** The identity is too recent for this action (or replaced another too recently); it opens [waitSeconds] from now. */
+    class NotYet(val waitSeconds: Long) : Exception(
+        if (waitSeconds > 2 * SECONDS_PER_DAY) "this identity replaced another too recently for this action; it opens in ${waitSeconds / SECONDS_PER_DAY + 1} days"
+        else "this registration is too recent for this action; try again in ${waitSeconds / 3600 + 1}h",
+    )
 
     // ---- pool ---------------------------------------------------------------
 
@@ -386,17 +409,28 @@ class PrivacyWallet(
      * carries a v2 ciphertext of fresh secrets to our own address; the
      * binding covers those ciphertexts, so they are written here, before the
      * passport is proven, and sent exactly as they are. [gas] is the
-     * /gas/register note (its ciphertext is not bound).
+     * /gas/register note (its ciphertext is not bound). [referral], when the
+     * registrant names a referrer, is the referrer's half as a note to the
+     * handle's shielded address (a blind v2 ciphertext: the chain publishes
+     * the amount), bound with the handle into the affiliate field.
      */
-    class RegistrationPrep(val anml: NoteOut, val erth: NoteOut, val gas: NoteOut, val affiliate: String, val binding: Fr, val idc: Fr)
+    class RegistrationPrep(val anml: NoteOut, val erth: NoteOut, val gas: NoteOut, val referrer: String, val referral: NoteOut?, val binding: Fr, val idc: Fr)
 
-    fun prepareRegistration(affiliate: String?): RegistrationPrep {
-        val aff = affiliate?.trim().orEmpty()
+    /** A referrer named by handle, resolved from the directory: the handle and the address it names now. */
+    data class Referrer(val handle: String, val address: ShieldedAddress)
+
+    fun prepareRegistration(referrer: Referrer?): RegistrationPrep {
         val anml = mint("uanml")
         val erth = mint(FEE)
         val gas = mint(FEE)
-        val binding = Privacy.registrationBinding(keys.idc, anml.pc, anml.ciphertext, erth.pc, erth.ciphertext, PrivateMsgs.affiliateField(aff))
-        return RegistrationPrep(anml, erth, gas, aff, binding, keys.idc)
+        val referral = referrer?.let {
+            require(network.erth.wallet.privacy.handles.Handles.valid(it.handle)) { "${it.handle} is not a handle" }
+            require(it.address.ownerPk != keys.ownerPk) { "a registration cannot name its own wallet as its referrer" }
+            NoteOut.blindTo(it.address, FEE)
+        }
+        val aff = if (referrer == null || referral == null) Fr.ZERO else Privacy.affiliateField(referrer.handle, referral.pc, referral.ciphertext)
+        val binding = Privacy.registrationBinding(keys.idc, anml.pc, anml.ciphertext, erth.pc, erth.ciphertext, aff)
+        return RegistrationPrep(anml, erth, gas, referrer?.handle.orEmpty(), referral, binding, keys.idc)
     }
 
     /** MsgRegister without its fee bundle: what /gas/register checks. */
@@ -411,7 +445,13 @@ class PrivacyWallet(
             .setCiphertextAnml(ByteString.copyFrom(prep.anml.ciphertext))
             .setPcErth(ByteString.copyFrom(prep.erth.pc.toBytes()))
             .setCiphertextErth(ByteString.copyFrom(prep.erth.ciphertext))
-            .setAffiliate(prep.affiliate)
+            .apply {
+                prep.referral?.let { r ->
+                    setAffiliateHandle(prep.referrer)
+                    setAffiliatePc(ByteString.copyFrom(r.pc.toBytes()))
+                    setAffiliateCiphertext(ByteString.copyFrom(r.ciphertext))
+                }
+            }
             .build()
 
     /**
@@ -472,7 +512,8 @@ class PrivacyWallet(
         require(day >= 1) { "no claim day before day 1" }
         // Chain-minted: a v2 ciphertext, opened against the mint's public amount.
         val anml = mint("uanml")
-        val m = membership(Privacy.claimScope(day), Fr.ZERO, Fr.ZERO, (day - 1) * SECONDS_PER_DAY)
+        // Claims bound the activation only (start of yesterday); the predecessor is no bound.
+        val m = membership(Privacy.claimScope(day), Fr.ZERO, Fr.ZERO, (day - 1) * SECONDS_PER_DAY, Privacy.NO_BOUND)
         val r = run { fee ->
             Assembled(listOf(feeBundle(fee)), membership = m) { bs, _, mem ->
                 MsgClaimAnml.newBuilder().setFee(bs[0]).setMembership(mem).setDay(day)
@@ -506,73 +547,173 @@ class PrivacyWallet(
     }
 
     /**
-     * The max_activation a caretaker split or referrer binding names: at most
-     * now - R - 86400 (the chain's bound since wave 3, L4/L5: the largest root
-     * window, not the live one), rounded down to the hour so it says nothing
-     * about when the tx was made, less a margin for clock skew.
+     * The max_predecessor a new caretaker split or handle claim names: the
+     * chain needs it strictly below now - [lease] - 86400 (the largest root
+     * window), so an identity that replaced another waits until anything its
+     * predecessor could hold there has lapsed. Rounded down to the hour so it
+     * says nothing about when the tx was made, less a margin for clock skew.
+     * Every wallet names the same bound (a fresh registrant's predecessor_at
+     * 0 meets it), so the proof does not tell a fresh identity from an old one.
      */
-    private fun leaseBound(): Long {
-        val p = reads.personhoodParams()
-        val bound = now() - p.caretakerVoteSeconds - ACTIVATION_MARGIN - CLOCK_MARGIN
-        return bound / 3600 * 3600
-    }
-
-    /** Casts, refreshes or (empty) clears the caretaker split, option id -> percent. */
-    fun setCaretaker(split: Map<Long, Long>): TxResult {
-        val maxAct = leaseBound()
-        val m = membership(Privacy.caretakerScope(), Fr.ZERO, Fr.ZERO, maxAct)
-        val weights = weights(split)
-        val r = run { fee ->
-            Assembled(listOf(feeBundle(fee)), membership = m) { bs, _, mem ->
-                MsgSetCaretaker.newBuilder().setFee(bs[0]).setMembership(mem).addAllPercentages(weights).setMaxActivation(maxAct).build()
-            }
-        }
-        store.state.caretakerCastAt = now(); store.state.caretakerSplit = split; store.save()
-        return r
-    }
-
-    /** Whether the split needs refreshing to stay counted: past half of R, or never cast. */
-    fun caretakerDue(): Boolean {
-        if (store.state.caretakerSplit.isEmpty()) return false
-        val r = reads.personhoodParams().caretakerVoteSeconds
-        return now() - store.state.caretakerCastAt > r / 2
+    private fun predecessorBound(lease: Long): Long {
+        val bound = now() - lease - ACTIVATION_MARGIN - CLOCK_MARGIN
+        return maxOf(0L, bound / 3600 * 3600)
     }
 
     /**
-     * Binds (or, empty, clears) the transparent address this person's
-     * referral rewards are paid to. The binding is public (the address is),
-     * the person behind it is not; it lapses after R unless refreshed.
+     * The max_predecessor for a msg bounded only when the prover holds
+     * nothing in its scope: the lease bound when this identity meets it (it
+     * holds or not, the chain takes it), else no bound when it believes it
+     * holds something there (a renewal or change, or what was moved to it),
+     * else NotYet until the bound passes its predecessor_at.
      */
-    fun bindReferrer(address: String, consent: ReferrerSigner? = null): TxResult {
-        val maxAct = leaseBound()
-        val m = membership(Privacy.referrerScope(), Fr.ZERO, Fr.ZERO, maxAct)
-        // Wave 3 (L6): binding an address needs its owner's consent, a
-        // secp256k1 signature over (domain, chain id, the membership's
-        // nullifier, the address) by the key whose address it is. The
-        // nullifier is the scope's, known before proving; not in the sighash.
-        val (pub, sig) = if (address.isEmpty()) ByteArray(0) to ByteArray(0) else {
-            val signer = consent ?: throw IllegalStateException("binding a referrer address needs its owner's signature")
-            val raw = network.erth.wallet.crypto.Bech32.decode(address)
-            val (p, s) = signer.sign(PrivateMsgs.referrerConsentBytes(chainId, m.witness(Fr.ZERO).nullifier.toBytes(), raw))
-            require(p.size == 33 && s.size == 64) { "a referrer consent is a 33-byte key and a 64-byte signature" }
-            require(network.erth.wallet.crypto.WalletCrypto.addressOfPubKey(p) == address) { "$address is not an address this wallet controls" }
-            p to s
+    private fun leaseStatement(lease: Long, holds: Boolean): Long {
+        val bound = predecessorBound(lease)
+        val id = identity()
+        return when {
+            id.predecessorAt <= bound -> bound
+            holds -> Privacy.NO_BOUND
+            else -> throw NotYet(id.predecessorAt - bound)
         }
+    }
+
+    /** Whether this wallet holds a caretaker split the chain still counts (as far as it knows). */
+    fun caretakerLive(): Boolean = store.state.caretakerSplit.isNotEmpty() && caretakerExpiresAt() > now()
+
+    /** When the split lapses: the chain's expires_at, or its cast time + R. 0 for none. */
+    fun caretakerExpiresAt(): Long {
+        val s = store.state
+        if (s.caretakerSplit.isEmpty()) return 0
+        if (s.caretakerExpiresAt > 0) return s.caretakerExpiresAt
+        return runCatching { Math.addExact(s.caretakerCastAt, reads.personhoodParams().caretakerVoteSeconds) }.getOrDefault(0)
+    }
+
+    /**
+     * Casts, refreshes or (empty) clears the caretaker split, option id ->
+     * percent. Nothing refreshes it on its own: it lapses at expires_at
+     * unless its owner casts again (the app reminds them).
+     */
+    fun setCaretaker(split: Map<Long, Long>): TxResult {
+        check(!store.state.caretakerMovedOut || split.isEmpty()) { "this identity moved its caretaker vote to another; it cannot cast one again" }
+        val r0 = reads.personhoodParams().caretakerVoteSeconds
+        val maxPred = if (split.isEmpty()) Privacy.NO_BOUND else leaseStatement(r0, caretakerLive())
+        val m = membership(Privacy.caretakerScope(), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, maxPred)
+        val weights = weights(split)
         val r = run { fee ->
             Assembled(listOf(feeBundle(fee)), membership = m) { bs, _, mem ->
-                MsgBindReferrer.newBuilder().setFee(bs[0]).setMembership(mem).setAddress(address).setMaxActivation(maxAct)
-                    .setReferrerPubKey(ByteString.copyFrom(pub)).setReferrerSignature(ByteString.copyFrom(sig)).build()
+                MsgSetCaretaker.newBuilder().setFee(bs[0]).setMembership(mem).addAllPercentages(weights).setMaxPredecessor(maxPred).build()
             }
         }
-        store.state.referrerAddress = address; store.state.referrerBoundAt = if (address.isEmpty()) 0 else now(); store.save()
+        val exp = r.attr("set_caretaker", "expires_at")?.toLongOrNull()
+        synchronized(this) {
+            store.state.caretakerCastAt = now(); store.state.caretakerSplit = split
+            store.state.caretakerExpiresAt = if (split.isEmpty()) 0 else exp ?: Math.addExact(r.time.takeIf { it > 0 } ?: now(), r0)
+            store.save()
+        }
         return r
     }
 
-    /** Whether the referrer binding needs refreshing to stay live: past half of R. */
-    fun referrerDue(): Boolean {
-        if (store.state.referrerAddress.isEmpty()) return false
-        val r = reads.personhoodParams().caretakerVoteSeconds
-        return now() - store.state.referrerBoundAt > r / 2
+    /**
+     * The nullifier [other]'s identity proves in [scope]: what a move names
+     * as new_owner, H(TAG_SN, new_id_secret, scope). Computed from the other
+     * wallet's keys on this phone; it says nothing about the passport.
+     */
+    fun newOwner(other: PrivacyKeys, scope: Fr): Fr = Privacy.scopeNullifier(other.idSecret, scope)
+
+    /**
+     * Hands the live caretaker split (and its expiry) to [newOwner], the
+     * caretaker-scope nullifier of the identity that is to hold it: how a
+     * switch of identity keeps its vote. This identity may never cast one
+     * again (ErrCaretakerMovedOut, 1126).
+     */
+    fun moveCaretaker(newOwner: Fr): TxResult {
+        check(caretakerLive()) { "this identity holds no live caretaker vote to move" }
+        require(newOwner != Privacy.scopeNullifier(keys.idSecret, Privacy.caretakerScope())) { "the new owner is this identity" }
+        val m = membership(Privacy.caretakerScope(), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, Privacy.NO_BOUND)
+        val r = run { fee ->
+            Assembled(listOf(feeBundle(fee)), membership = m) { bs, _, mem ->
+                MsgMoveCaretaker.newBuilder().setFee(bs[0]).setMembership(mem).setNewOwner(ByteString.copyFrom(newOwner.toBytes())).build()
+            }
+        }
+        synchronized(this) {
+            store.state.caretakerMovedOut = true
+            store.state.caretakerSplit = emptyMap(); store.state.caretakerExpiresAt = 0
+            store.save()
+        }
+        return r
+    }
+
+    // ---- handles ------------------------------------------------------------
+
+    /**
+     * Claims [handle] for [address] (default: this wallet's shielded
+     * address), renews the one held (the same handle: lease now +
+     * handle_lease_seconds, address updated), or changes to another (the old
+     * one is freed at once). A claim by an identity holding none bounds its
+     * predecessor by the longest lease; a renewal or change does not.
+     * Nothing renews on its own: the app reminds the owner before expiry.
+     */
+    fun bindHandle(handle: String, address: ShieldedAddress = keys.address): TxResult {
+        require(network.erth.wallet.privacy.handles.Handles.valid(handle)) { "\"$handle\" is not a handle: 3-32 of a-z, 0-9 and -, no dash at either end" }
+        val holds = store.state.handle.isNotEmpty()
+        check(holds || !store.state.handleMovedOut) { "this identity moved its handle to another; it cannot claim one again" }
+        val lease = reads.personhoodParams().handleLeaseSeconds
+        val maxPred = leaseStatement(lease, holds)
+        val addr = address.encode()
+        val m = membership(Privacy.handleScope(), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, maxPred)
+        val r = run { fee ->
+            Assembled(listOf(feeBundle(fee)), membership = m) { bs, _, mem ->
+                MsgBindHandle.newBuilder().setFee(bs[0]).setMembership(mem).setHandle(handle).setAddress(addr).setMaxPredecessor(maxPred).build()
+            }
+        }
+        synchronized(this) { store.state.handle = handle; store.save() }
+        return r
+    }
+
+    /** Releases this identity's handle at once (anyone may claim it). */
+    fun releaseHandle(): TxResult {
+        val m = membership(Privacy.handleScope(), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, Privacy.NO_BOUND)
+        val r = run { fee ->
+            Assembled(listOf(feeBundle(fee)), membership = m) { bs, _, mem ->
+                MsgBindHandle.newBuilder().setFee(bs[0]).setMembership(mem).setMaxPredecessor(Privacy.NO_BOUND).build()
+            }
+        }
+        synchronized(this) { store.state.handle = ""; store.save() }
+        return r
+    }
+
+    /**
+     * Hands this identity's handle (lease unchanged) to [newOwner], the
+     * handle-scope nullifier of the identity that is to hold it. This
+     * identity may never claim one again (ErrHandleMovedOut, 1125).
+     */
+    fun moveHandle(newOwner: Fr): TxResult {
+        val handle = store.state.handle
+        check(handle.isNotEmpty()) { "this identity holds no handle to move" }
+        require(newOwner != Privacy.scopeNullifier(keys.idSecret, Privacy.handleScope())) { "the new owner is this identity" }
+        val m = membership(Privacy.handleScope(), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, Privacy.NO_BOUND)
+        val r = run { fee ->
+            Assembled(listOf(feeBundle(fee)), membership = m) { bs, _, mem ->
+                MsgMoveHandle.newBuilder().setFee(bs[0]).setMembership(mem).setHandle(handle)
+                    .setNewOwner(ByteString.copyFrom(newOwner.toBytes())).build()
+            }
+        }
+        synchronized(this) { store.state.handle = ""; store.state.handleMovedOut = true; store.save() }
+        return r
+    }
+
+    /**
+     * Records what a switch moved to this wallet's identity (the other
+     * wallet's moves named its nullifiers): the handle, and the split with
+     * its expiry. Its renewal or refresh then takes no predecessor bound.
+     */
+    @Synchronized
+    fun adoptMoved(handle: String?, split: Map<Long, Long>?, splitExpiresAt: Long) {
+        if (handle != null) store.state.handle = handle
+        if (split != null && split.isNotEmpty()) {
+            store.state.caretakerSplit = split; store.state.caretakerExpiresAt = splitExpiresAt; store.state.caretakerCastAt = now()
+        }
+        store.save()
     }
 
     // ---- assembly -----------------------------------------------------------
@@ -581,7 +722,8 @@ class PrivacyWallet(
     fun voteProposal(proposalId: Long, yes: Boolean): TxResult {
         val b = reads.ballotInputs(proposalId = proposalId)
         check(b.scope == Privacy.proposalScope(proposalId, b.round)) { "the node's ballot scope is not this proposal's" }
-        val m = membership(b.scope, b.excludedDsc, b.excludedCountry, b.maxActivation)
+        // The chain's statement: max_activation no bound, max_predecessor the ballot's (opened - 86400).
+        val m = membership(b.scope, b.excludedDsc, b.excludedCountry, b.maxActivation, b.maxPredecessor)
         val option = if (yes) VoteOption.VOTE_OPTION_YES else VoteOption.VOTE_OPTION_NO
         return run { fee ->
             Assembled(listOf(feeBundle(fee)), membership = m) { bs, _, mem ->
@@ -592,8 +734,8 @@ class PrivacyWallet(
 
     fun proposeRemoval(optionId: Long): TxResult {
         val day = today()
-        // Wave 3 (L4/L5): the start of today (UTC) less a day, whatever the root window.
-        val m = membership(Privacy.proposeRemovalScope(optionId, day), Fr.ZERO, Fr.ZERO, day * SECONDS_PER_DAY - ACTIVATION_MARGIN)
+        // The predecessor bound: the start of today (UTC) less a day, whatever the root window; no activation bound.
+        val m = membership(Privacy.proposeRemovalScope(optionId, day), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, day * SECONDS_PER_DAY - ACTIVATION_MARGIN)
         return run { fee ->
             Assembled(listOf(feeBundle(fee)), membership = m) { bs, _, mem ->
                 MsgProposeRemoval.newBuilder().setFee(bs[0]).setMembership(mem).setOptionId(optionId).build()
@@ -604,7 +746,8 @@ class PrivacyWallet(
     fun voteRemoval(optionId: Long, yes: Boolean): TxResult {
         val b = reads.ballotInputs(optionId = optionId)
         check(b.scope == Privacy.removalScope(b.ballotId)) { "the node's ballot scope is not this ballot's" }
-        val m = membership(b.scope, b.excludedDsc, b.excludedCountry, b.maxActivation)
+        // The chain's statement: max_activation no bound, max_predecessor the ballot's (opened - 86400).
+        val m = membership(b.scope, b.excludedDsc, b.excludedCountry, b.maxActivation, b.maxPredecessor)
         val option = if (yes) VoteOption.VOTE_OPTION_YES else VoteOption.VOTE_OPTION_NO
         return run { fee ->
             Assembled(listOf(feeBundle(fee)), membership = m) { bs, _, mem ->

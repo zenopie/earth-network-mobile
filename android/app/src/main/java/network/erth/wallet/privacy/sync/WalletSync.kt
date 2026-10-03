@@ -342,8 +342,11 @@ class WalletSync(
          */
         const val SYNC_SEARCH_BUDGET = 50_000L
 
-        /** Leaf hashes the fallback search may spend on one record before it is given up. */
-        const val RECORD_SEARCH_CAP = 4_000_000L
+        /** Leaf hashes the fallback search may spend on one record before it is given up (two predecessor_at candidates a time). */
+        const val RECORD_SEARCH_CAP = 8_000_000L
+
+        /** predecessor_at candidates per (country, time): 0, or the time itself (a switch or re-entry). */
+        const val PREDECESSORS = 2L
 
         /** The fallback windows around built_at (seconds before, after): hinted countries, then every other. */
         const val NARROW_BEFORE = 3_600L
@@ -942,10 +945,10 @@ class WalletSync(
             // New leaves since the last attempt: every time is worth trying again.
             if (leaves.size > rec.leavesTried) rec = rec.copy(tried = emptyList(), leavesTried = leaves.size,
                 status = if (rec.status == RecordStatus.EXHAUSTED) RecordStatus.OPEN else rec.status, cursor = 0)
-            var found: Triple<Long, Fr, Long>? = null
+            var found: LeafMatch? = null
             var lcdTime: Long? = null
             // 1. The indexer's block time (bounded by the chain's tip as it streamed, audit 4).
-            rec.time?.takeIf(::timeOk)?.let { t -> if (t !in rec.tried) { found = tryTime(rec, leaves, t); rec = rec.copy(tried = rec.tried + t, work = rec.work + ALL_COUNTRIES.size.toLong() * leaves.size) } }
+            rec.time?.takeIf(::timeOk)?.let { t -> if (t !in rec.tried) { found = tryTime(rec, leaves, t); rec = rec.copy(tried = rec.tried + t, work = rec.work + PREDECESSORS * ALL_COUNTRIES.size.toLong() * leaves.size) } }
             // 2. The LCD's, asked with a cover set.
             if (found == null && rec.tried.containsAll(listOfNotNull(rec.time?.takeIf(::timeOk)))) {
                 val (t0, r) = coverTime(rec)
@@ -954,7 +957,7 @@ class WalletSync(
                 lcdTime = t
                 if (t != null && t !in rec.tried) {
                     found = tryTime(rec, leaves, t)
-                    rec = rec.copy(tried = rec.tried + t, work = rec.work + ALL_COUNTRIES.size.toLong() * leaves.size)
+                    rec = rec.copy(tried = rec.tried + t, work = rec.work + PREDECESSORS * ALL_COUNTRIES.size.toLong() * leaves.size)
                 }
                 if (found == null && t != null) rec = rec.copy(status = RecordStatus.EXHAUSTED)
             }
@@ -968,13 +971,13 @@ class WalletSync(
             }
             if (found != null) rec = rec.copy(status = RecordStatus.MATCHED)
             s.regRecords[k] = rec
-            found?.let { (index, country, at) ->
+            found?.let { (index, country, at, pred) ->
                 val cur = s.identity
                 // At an index at least the identity's: a match there replaces
                 // one made before (audit 4, M5: an identity from an unverified
                 // tree, or another time, is re-matched rather than kept).
                 if (cur == null || index >= cur.leafIndex) {
-                    s.identity = IdentityRecord(index, rec.dscKey, country, at, cur?.takeIf { it.leafIndex == index }?.passportNullifier ?: "", verified = true)
+                    s.identity = IdentityRecord(index, rec.dscKey, country, at, cur?.takeIf { it.leafIndex == index }?.passportNullifier ?: "", verified = true, predecessorAt = pred)
                 }
                 return
             }
@@ -982,10 +985,24 @@ class WalletSync(
         }
     }
 
-    /** (index, country, [t]) if a leaf of [rec] is ours at activated_at = [t]. */
-    private fun tryTime(rec: RegRecord, leaves: List<Pair<Long, Fr>>, t: Long): Triple<Long, Fr, Long>? {
+    /** A leaf matched: its index, country, activated_at and predecessor_at. */
+    internal data class LeafMatch(val index: Long, val country: Fr, val at: Long, val pred: Long)
+
+    /**
+     * The predecessor_at with which [leaf] is ours at ([dscKey], [country],
+     * activated_at [t]), or null. The chain sets it to the registration's
+     * own block time for a switch or re-entry, 0 for a passport never seen
+     * before, so those are the only two values to try.
+     */
+    private fun predecessorOf(leaf: Fr, dscKey: Fr, country: Fr, t: Long): Long? =
+        (if (t == 0L) listOf(0L) else listOf(0L, t)).firstOrNull { Privacy.identityLeaf(keys.idc, dscKey, country, t, it) == leaf }
+
+    /** The match if a leaf of [rec] is ours at activated_at = [t]. */
+    private fun tryTime(rec: RegRecord, leaves: List<Pair<Long, Fr>>, t: Long): LeafMatch? {
         val countries = (listOf(countryOrZero(rec.country)) + ALL_COUNTRIES).distinct()
-        return leaves.firstNotNullOfOrNull { (i, leaf) -> countries.firstOrNull { Privacy.identityLeaf(keys.idc, rec.dscKey, it, t) == leaf }?.let { Triple(i, it, t) } }
+        return leaves.firstNotNullOfOrNull { (i, leaf) ->
+            countries.firstNotNullOfOrNull { c -> predecessorOf(leaf, rec.dscKey, c, t)?.let { LeafMatch(i, c, t, it) } }
+        }
     }
 
     /**
@@ -1025,7 +1042,7 @@ class WalletSync(
      * most [budget] hashes (and the record's cap): (index, country,
      * activated_at) if found, with the record's new state.
      */
-    private fun search(rec: RegRecord, leaves: List<Pair<Long, Fr>>, budget: Long): Pair<Triple<Long, Fr, Long>?, RegRecord> {
+    private fun search(rec: RegRecord, leaves: List<Pair<Long, Fr>>, budget: Long): Pair<LeafMatch?, RegRecord> {
         val hinted = listOf(countryOrZero(rec.country), Fr.ZERO).distinct()
         val others = ALL_COUNTRIES - hinted.toSet()
         val narrowSteps = NARROW_BEFORE + NARROW_AFTER + 1
@@ -1036,7 +1053,7 @@ class WalletSync(
         while (cursor < total) {
             val narrow = cursor < narrowSteps
             val countries = if (narrow) hinted else others
-            val cost = countries.size.toLong() * leaves.size
+            val cost = PREDECESSORS * countries.size.toLong() * leaves.size
             if (spent > 0 && spent + cost > budget) break
             if (work + cost > RECORD_SEARCH_CAP) return null to rec.copy(status = RecordStatus.EXHAUSTED, cursor = cursor, work = work)
             val off = if (narrow) offsetAt(cursor, NARROW_BEFORE, NARROW_AFTER) else offsetAt(cursor - narrowSteps, WIDE_BEFORE, WIDE_AFTER)
@@ -1047,8 +1064,8 @@ class WalletSync(
             val t = runCatching { Math.addExact(rec.builtAt, off) }.getOrNull() ?: continue
             if (!timeOk(t)) continue
             for ((i, leaf) in leaves) for (c in countries) {
-                if (Privacy.identityLeaf(keys.idc, rec.dscKey, c, t) == leaf) {
-                    return Triple(i, c, t) to rec.copy(status = RecordStatus.MATCHED, cursor = cursor, work = work)
+                predecessorOf(leaf, rec.dscKey, c, t)?.let { pred ->
+                    return LeafMatch(i, c, t, pred) to rec.copy(status = RecordStatus.MATCHED, cursor = cursor, work = work)
                 }
             }
         }
@@ -1072,9 +1089,9 @@ class WalletSync(
             return
         }
         val leaf = store.identityTree.leaf(index)
-        val country = countryFor(leaf, p.dscKey, activatedAt, p.countryHint)
-        if (country != null) {
-            s.identity = IdentityRecord(index, p.dscKey, country, activatedAt, p.passportNullifier, verified = true)
+        val m = countryFor(leaf, p.dscKey, activatedAt, p.countryHint)
+        if (m != null) {
+            s.identity = IdentityRecord(index, p.dscKey, m.first, activatedAt, p.passportNullifier, verified = true, predecessorAt = m.second)
             s.pendingRegistration = null
         } else {
             s.pendingRegistration = p.copy(
@@ -1084,16 +1101,17 @@ class WalletSync(
         }
     }
 
-    internal fun countryFor(leaf: Fr, dscKey: Fr, activatedAt: Long, hint: String = ""): Fr? {
+    /** (country, predecessor_at) with which [leaf] is ours at [activatedAt], or null. */
+    internal fun countryFor(leaf: Fr, dscKey: Fr, activatedAt: Long, hint: String = ""): Pair<Fr, Long>? {
         if (leaf == Fr.ZERO) return null
         val hinted = listOf(countryOrZero(hint))
-        return (hinted + ALL_COUNTRIES).firstOrNull { Privacy.identityLeaf(keys.idc, dscKey, it, activatedAt) == leaf }
+        return (hinted + ALL_COUNTRIES).firstNotNullOfOrNull { c -> predecessorOf(leaf, dscKey, c, activatedAt)?.let { c to it } }
     }
 
     fun identityStatus(): IdentityStatus {
         val id = store.state.identity ?: return IdentityStatus.NONE
         if (id.leafIndex >= store.identityTree.size) return IdentityStatus.NONE
-        val want = Privacy.identityLeaf(keys.idc, id.dscKey, id.country, id.activatedAt)
+        val want = Privacy.identityLeaf(keys.idc, id.dscKey, id.country, id.activatedAt, id.predecessorAt)
         return if (store.identityTree.leaf(id.leafIndex) == want) IdentityStatus.LIVE else IdentityStatus.ZEROED
     }
 }

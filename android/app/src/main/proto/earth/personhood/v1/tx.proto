@@ -17,7 +17,7 @@ import "earth/shielded/v1/tx.proto";
 // membership proof binds it as its signal.
 
 // Membership is an anonymous proof of holding a live identity-tree leaf. The
-// chain supplies scope, signal, exclusions and max_activation itself.
+// chain supplies scope, signal, exclusions and both bounds itself.
 message Membership {
   bytes proof = 1;
   bytes root = 2;
@@ -25,7 +25,9 @@ message Membership {
 }
 
 // MsgRegister registers a passport. The passport proof's `address` input is
-// zk/privacy.RegistrationBinding(idc, pc_anml, pc_erth, Bytes(affiliate) | 0).
+// zk/privacy.RegistrationBinding(idc, pc_anml, Bytes(ct_anml), pc_erth,
+// Bytes(ct_erth), affiliate), affiliate = 0 for no referrer, else
+// H(TAG_AFFILIATE, Bytes(affiliate_handle), affiliate_pc, Bytes(affiliate_ciphertext)).
 // sighash fields: idc, pc_anml, Bytes(ciphertext_anml), pc_erth,
 // Bytes(ciphertext_erth), affiliate, Bytes(signature_algorithm), public signals.
 message MsgRegister {
@@ -39,8 +41,13 @@ message MsgRegister {
   bytes ciphertext_anml = 8;
   bytes pc_erth = 9;
   bytes ciphertext_erth = 10;
-  string affiliate = 13;
-  reserved 11, 12;
+  // The referrer's half, as a note to the live handle's shielded address
+  // (a pc of its owner_pk, a 177-byte blind ciphertext to its ek_pub). All
+  // three of affiliate_handle, affiliate_pc, affiliate_ciphertext, or none.
+  bytes affiliate_pc = 11;
+  bytes affiliate_ciphertext = 12;
+  string affiliate_handle = 15;
+  reserved 13, 14;
 }
 
 // sighash fields: day, pc, Bytes(ciphertext).
@@ -57,16 +64,35 @@ message MsgSetCaretaker {
   earth.shielded.v1.Bundle fee = 1;
   Membership membership = 2;
   repeated earth.allocation.v1.AllocationWeight percentages = 3;
-  uint64 max_activation = 4;
+  reserved 4;
+  uint64 max_predecessor = 5;
 }
 
-// sighash fields: Bytes(address bytes).
-message MsgBindReferrer {
+// Hands the prover's live caretaker split to new_owner, the caretaker-scope
+// nullifier of the identity that is to hold it. sighash fields: new_owner.
+message MsgMoveCaretaker {
   earth.shielded.v1.Bundle fee = 1;
   Membership membership = 2;
-  string address = 3;
-  uint64 max_activation = 4;
-  // The address owner's consent (chain wave 3, L6): empty when clearing.
-  bytes referrer_pub_key = 5;
-  bytes referrer_signature = 6;
+  bytes new_owner = 3;
+}
+
+// Claims, renews, changes or (both empty) releases the prover's handle.
+// sighash fields: Bytes(handle), owner_pk, Bytes(ek_pub) (Bytes of nothing,
+// 0 and Bytes of nothing for a release).
+message MsgBindHandle {
+  earth.shielded.v1.Bundle fee = 1;
+  Membership membership = 2;
+  string handle = 3;
+  string address = 4;
+  reserved 5;
+  uint64 max_predecessor = 6;
+}
+
+// Hands the prover's handle to new_owner, the handle-scope nullifier of the
+// identity that is to hold it. sighash fields: Bytes(handle), new_owner.
+message MsgMoveHandle {
+  earth.shielded.v1.Bundle fee = 1;
+  Membership membership = 2;
+  string handle = 3;
+  bytes new_owner = 4;
 }

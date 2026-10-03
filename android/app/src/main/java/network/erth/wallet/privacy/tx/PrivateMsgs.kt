@@ -10,8 +10,10 @@ import network.erth.earth.proto.assembly.MsgVoteRemoval
 import network.erth.earth.proto.dex.MsgAddLiquidityShielded
 import network.erth.earth.proto.dex.MsgNoteSwap
 import network.erth.earth.proto.dex.MsgRemoveLiquidityShielded
-import network.erth.earth.proto.personhood.MsgBindReferrer
+import network.erth.earth.proto.personhood.MsgBindHandle
 import network.erth.earth.proto.personhood.MsgClaimAnml
+import network.erth.earth.proto.personhood.MsgMoveCaretaker
+import network.erth.earth.proto.personhood.MsgMoveHandle
 import network.erth.earth.proto.personhood.MsgRegister
 import network.erth.earth.proto.personhood.MsgSetCaretaker
 import network.erth.earth.proto.shielded.Bundle
@@ -27,6 +29,7 @@ import network.erth.earth.proto.shieldedstaking.MsgUnlockPosition
 import network.erth.earth.proto.shieldedstaking.MsgUpdatePosition
 import network.erth.earth.proto.shieldedstaking.StakeProof
 import network.erth.wallet.crypto.Bech32
+import network.erth.wallet.privacy.handles.Handles
 import network.erth.wallet.privacy.zk.Fr
 import network.erth.wallet.privacy.zk.Grumpkin
 import network.erth.wallet.privacy.zk.Privacy
@@ -50,7 +53,9 @@ object PrivateMsgs {
     const val REGISTER = "/earth.personhood.v1.MsgRegister"
     const val CLAIM_ANML = "/earth.personhood.v1.MsgClaimAnml"
     const val SET_CARETAKER = "/earth.personhood.v1.MsgSetCaretaker"
-    const val BIND_REFERRER = "/earth.personhood.v1.MsgBindReferrer"
+    const val BIND_HANDLE = "/earth.personhood.v1.MsgBindHandle"
+    const val MOVE_HANDLE = "/earth.personhood.v1.MsgMoveHandle"
+    const val MOVE_CARETAKER = "/earth.personhood.v1.MsgMoveCaretaker"
     const val VOTE_PROPOSAL = "/earth.assembly.v1.MsgVoteProposal"
     const val PROPOSE_REMOVAL = "/earth.assembly.v1.MsgProposeRemoval"
     const val VOTE_REMOVAL = "/earth.assembly.v1.MsgVoteRemoval"
@@ -79,13 +84,35 @@ object PrivateMsgs {
     /** A bech32 address's raw bytes, as the chain's address codec gives them. */
     fun addressBytes(bech32: String): ByteArray = Bech32.decode(bech32)
 
-    /** The registration binding's affiliate: Bytes(address bytes), or 0 for none. */
-    fun affiliateField(affiliate: String): Fr =
-        if (affiliate.isEmpty()) Fr.ZERO else Privacy.bytes(addressBytes(affiliate))
+    /**
+     * The registration binding's affiliate field (personhood
+     * MsgRegister.AffiliateField): 0 when the registration names no
+     * referrer, else H(TAG_AFFILIATE, Bytes(handle), affiliate_pc,
+     * Bytes(affiliate_ciphertext)). All three set, or none.
+     */
+    fun affiliateField(m: MsgRegister): Fr {
+        if (m.affiliateHandle.isEmpty() && m.affiliatePc.isEmpty && m.affiliateCiphertext.isEmpty) return Fr.ZERO
+        require(Handles.valid(m.affiliateHandle)) { "affiliate_handle ${m.affiliateHandle} is not a handle" }
+        return Privacy.affiliateField(m.affiliateHandle, f(m.affiliatePc), m.affiliateCiphertext.toByteArray())
+    }
 
     fun registrationBinding(m: MsgRegister): Fr = Privacy.registrationBinding(
-        f(m.idc), f(m.pcAnml), m.ciphertextAnml.toByteArray(), f(m.pcErth), m.ciphertextErth.toByteArray(), affiliateField(m.affiliate),
+        f(m.idc), f(m.pcAnml), m.ciphertextAnml.toByteArray(), f(m.pcErth), m.ciphertextErth.toByteArray(), affiliateField(m),
     )
+
+    /**
+     * MsgBindHandle's sighash fields: Bytes(handle), owner_pk, Bytes(ek_pub);
+     * Bytes of nothing, 0 and Bytes of nothing for a release (both empty).
+     * The address must be canonical (lowercase), as the chain requires.
+     */
+    fun bindHandleFields(m: MsgBindHandle): List<Fr> {
+        require(m.handle.isEmpty() == m.address.isEmpty()) { "a bind names a handle and an address; a release neither" }
+        if (m.address.isEmpty()) return listOf(Privacy.bytes(ByteArray(0)), Fr.ZERO, Privacy.bytes(ByteArray(0)))
+        require(Handles.valid(m.handle)) { "${m.handle} is not a handle" }
+        val a = network.erth.wallet.privacy.keys.ShieldedAddress.decode(m.address)
+        require(a.encode() == m.address) { "the address is not in its canonical form" }
+        return listOf(bytes(m.handle), a.ownerPk, Privacy.bytes(a.ekPub))
+    }
 
     /** SplitsBytes: option_id then percent, big-endian u64, per entry. */
     fun splitsBytes(splits: List<AllocationWeight>): ByteArray {
@@ -104,15 +131,6 @@ object PrivateMsgs {
     /** [opts] with every weight in its canonical LegacyDec form ("1" -> "1.000000000000000000"): the only form the chain takes (wave 3, F3). */
     fun canonicalOptions(opts: List<WeightedVoteOption>): List<WeightedVoteOption> =
         opts.map { it.toBuilder().setWeight(legacyDec(it.weight)).build() }
-
-    /** The bytes a referrer address's owner signs (secp256k1 over SHA-256) to consent to a binding (chain x/personhood ReferrerConsentBytes). */
-    const val REFERRER_CONSENT_DOMAIN = "earth.referrer.consent.v1"
-
-    fun referrerConsentBytes(chainId: String, nullifier: ByteArray, address: ByteArray): ByteArray {
-        val c = chainId.toByteArray(Charsets.UTF_8)
-        require(c.size <= 255) { "chain id too long" }
-        return REFERRER_CONSENT_DOMAIN.toByteArray(Charsets.US_ASCII) + byteArrayOf(c.size.toByte()) + c + nullifier + address
-    }
 
     /**
      * Every module account the chain declares (app_config moduleAccPerms):
@@ -189,7 +207,9 @@ object PrivateMsgs {
         is MsgRegister -> listOf(msg.fee)
         is MsgClaimAnml -> listOf(msg.fee)
         is MsgSetCaretaker -> listOf(msg.fee)
-        is MsgBindReferrer -> listOf(msg.fee)
+        is MsgBindHandle -> listOf(msg.fee)
+        is MsgMoveHandle -> listOf(msg.fee)
+        is MsgMoveCaretaker -> listOf(msg.fee)
         is MsgVoteProposal -> listOf(msg.fee)
         is MsgProposeRemoval -> listOf(msg.fee)
         is MsgVoteRemoval -> listOf(msg.fee)
@@ -274,11 +294,13 @@ object PrivateMsgs {
         is MsgSend -> listOf(Privacy.bytes(if (msg.receiver.isEmpty()) ByteArray(0) else addressBytes(msg.receiver)), u(msg.fee))
         is MsgRegister -> listOf(
             f(msg.idc), f(msg.pcAnml), bytes(msg.ciphertextAnml), f(msg.pcErth), bytes(msg.ciphertextErth),
-            affiliateField(msg.affiliate), bytes(msg.signatureAlgorithm),
+            affiliateField(msg), bytes(msg.signatureAlgorithm),
         ) + msg.publicSignalsList.map { decimalField(it) }
         is MsgClaimAnml -> listOf(u(msg.day), f(msg.pc), bytes(msg.ciphertext))
         is MsgSetCaretaker -> msg.percentagesList.flatMap { listOf(u(it.optionId), u(it.percent)) }
-        is MsgBindReferrer -> listOf(Privacy.bytes(if (msg.address.isEmpty()) ByteArray(0) else addressBytes(msg.address)))
+        is MsgBindHandle -> bindHandleFields(msg)
+        is MsgMoveHandle -> listOf(bytes(msg.handle), f(msg.newOwner))
+        is MsgMoveCaretaker -> listOf(f(msg.newOwner))
         is MsgVoteProposal -> listOf(u(msg.proposalId), u(msg.optionValue.toLong()))
         is MsgProposeRemoval -> listOf(u(msg.optionId))
         is MsgVoteRemoval -> listOf(u(msg.optionId), u(msg.optionValue.toLong()))
@@ -335,7 +357,9 @@ object PrivateMsgs {
         is MsgRegister -> REGISTER
         is MsgClaimAnml -> CLAIM_ANML
         is MsgSetCaretaker -> SET_CARETAKER
-        is MsgBindReferrer -> BIND_REFERRER
+        is MsgBindHandle -> BIND_HANDLE
+        is MsgMoveHandle -> MOVE_HANDLE
+        is MsgMoveCaretaker -> MOVE_CARETAKER
         is MsgVoteProposal -> VOTE_PROPOSAL
         is MsgProposeRemoval -> PROPOSE_REMOVAL
         is MsgVoteRemoval -> VOTE_REMOVAL
