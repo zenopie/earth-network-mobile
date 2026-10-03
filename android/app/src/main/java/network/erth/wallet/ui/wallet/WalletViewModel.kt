@@ -105,7 +105,14 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
                     // The private side: notes and registration, from a full
                     // sync of the indexer's streams (nothing asked about us).
                     val privacy = runCatching { PrivacySession.wallet(ctx) }.getOrNull()
-                    val syncError = privacy?.let { w -> runCatching { w.sync() }.exceptionOrNull()?.message }
+                    // A sync error, else roots the chain has not vouched for
+                    // (no private tx is built on them), else a registration
+                    // whose leaf did not match: each is shown, none is hidden.
+                    val syncError = privacy?.let { w ->
+                        runCatching { w.sync() }.exceptionOrNull()?.message
+                            ?: w.store.state.rootsError?.takeIf { !w.store.state.rootsVerified }
+                            ?: w.pendingRegistration?.failure
+                    }
                     val shielded = privacy?.balances().orEmpty()
 
                     val rewards = runCatching {

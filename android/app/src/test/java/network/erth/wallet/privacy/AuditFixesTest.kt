@@ -140,6 +140,17 @@ class AuditFixesTest {
         restored.lockPosition(validator, 100_000, mapOf(3L to 100L))
         restored.sync()
         assertEquals(listOf(40, 41), restored.positions().map { it.second })
+        dump(chain, "restore")
+    }
+
+    /** With PRIVACY_TOML_OUT set, every witness as a nargo Prover.toml (see WalletFlowTest). */
+    private fun dump(chain: FakeChain, test: String) {
+        val out = System.getenv("PRIVACY_TOML_OUT") ?: return
+        fun write(kind: String, i: Int, toml: String) =
+            java.io.File(out, "$kind/${test}_$i/Prover.toml").apply { parentFile.mkdirs() }.writeText(toml)
+        chain.prover.allActions.forEachIndexed { i, w -> write("action", i, w.proverToml()) }
+        chain.prover.allStakes.forEachIndexed { i, w -> write("stake", i, w.proverToml()) }
+        chain.prover.allMemberships.forEachIndexed { i, w -> write("membership", i, w.proverToml()) }
     }
 
     /** C2: the indexer is down when the registration commits; the pending record survives and resolves later. */
@@ -286,5 +297,6 @@ class AuditFixesTest {
         assertEquals(setOf(validator, validator2), chain.stakeVotes.map { it.second }.toSet())
         // Separate blocks, the second laid out after a sync saw the first.
         assertEquals(before + 2, chain.height)
+        dump(chain, "votes")
     }
 }

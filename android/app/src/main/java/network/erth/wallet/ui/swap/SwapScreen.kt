@@ -123,8 +123,9 @@ fun SwapScreen(
      * swap spends notes).
      *
      * Selling ERTH, the fee comes out of the same ERTH notes, so the fee's
-     * worth stays behind. Selling ANML for ERTH, the fee is paid out of the ERTH
-     * received, so the whole balance is available.
+     * worth stays behind. Selling ANML for ERTH, the whole ANML balance is
+     * available, but the fee is paid from an ERTH note (the chain's one fee
+     * rule: only an unbonding claim pays from its output).
      */
     val spendable = when {
         fromUnits == null -> null
@@ -284,12 +285,15 @@ fun SwapScreen(
             }
         }
 
+        // The fee is paid from private ERTH whichever way the swap goes.
+        val noErthForFee = !erthIn && erthUerth != null && erthUerth < TxController.GAS_RESERVE_UERTH
         if (quote != null && !erthIn) {
             Spacer(Modifier.height(dimens.space8))
             Text(
-                text = "The network fee is paid out of the ERTH you receive.",
+                text = if (noErthForFee) "The network fee is paid in ERTH, and you hold too little private ERTH to pay it."
+                else "The network fee is paid from your private ERTH.",
                 style = EarthTypography.textXs,
-                color = EarthColors.Text.textTertiary,
+                color = if (noErthForFee) EarthColors.Utility.ErrorRed.utilityError700 else EarthColors.Text.textTertiary,
             )
         }
         Spacer(Modifier.height(dimens.space24))
@@ -307,7 +311,7 @@ fun SwapScreen(
                     )
                 }
             },
-            enabled = quote != null && quote.amountOut.signum() > 0,
+            enabled = quote != null && quote.amountOut.signum() > 0 && !noErthForFee,
             modifier = Modifier.fillMaxWidth(),
             colors = brandButtonColors(),
         )
