@@ -927,15 +927,24 @@ class PrivacyWallet(
     private fun fetchNullifiers(n: Int, chainOnly: Boolean): List<Fr> {
         if (!chainOnly) runCatching {
             while (nfValues.size < n) {
-                val want = minOf(n - nfValues.size, NF_PAGE)
-                val page = indexer.stakeNullifierLeaves(nfValues.size + 1L, want)
-                if (page.leaves.isEmpty()) break
-                if (page.leaves.size > want) throw WalletSync.Inconsistent("the indexer sent ${page.leaves.size} stake nullifiers for $want")
+                // The backend's paging rule: aligned pages of NF_PAGE leaf
+                // indexes from 0 (leaf 0, the sentinel, is never a row); the
+                // leaves already held are dropped, each checked against ours.
+                val next = nfValues.size + 1L
+                val page = indexer.stakeNullifierLeaves(WalletSync.aligned(next, NF_PAGE), NF_PAGE)
+                if (page.leaves.size > NF_PAGE) throw WalletSync.Inconsistent("the indexer sent ${page.leaves.size} stake nullifiers in a page of $NF_PAGE")
+                var added = 0
                 for ((index, v) in page.leaves) {
+                    if (index in 1 until next) {
+                        if (nfValues[(index - 1).toInt()] != v) throw WalletSync.Inconsistent("stake nullifier leaf $index differs from the one held")
+                        continue
+                    }
                     // Contiguous from where we are, or the page is not the tree's order.
                     if (index != nfValues.size + 1L) throw WalletSync.Inconsistent("stake nullifier leaf $index out of order")
-                    nfValues.add(v)
+                    if (nfValues.size >= n) break
+                    nfValues.add(v); added++
                 }
+                if (added == 0) break
             }
         }
         while (nfValues.size < n) {
@@ -1260,7 +1269,7 @@ class PrivacyWallet(
         }
 
         /** Stake nullifier leaves asked of the indexer a page, and of the LCD (its maximum). */
-        const val NF_PAGE = 5000
+        const val NF_PAGE = WalletSync.PAGE_SIZE
         const val LCD_NF_PAGE = 1000
 
         /** Positions created before the block the proposal entered voting at (all, when unknown). */

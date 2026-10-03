@@ -4,6 +4,8 @@ import cosmos.gov.v1.VoteOption as GovVoteOption
 import cosmos.gov.v1.WeightedVoteOption
 import kotlinx.coroutines.runBlocking
 import network.erth.wallet.privacy.keys.PrivacyKeys
+import network.erth.wallet.privacy.note.NoteCipher
+import network.erth.wallet.privacy.note.NotePlaintext
 import network.erth.wallet.privacy.sync.ChainRoots
 import network.erth.wallet.privacy.sync.HeightPage
 import network.erth.wallet.privacy.sync.HttpPrivacyIndexer
@@ -447,8 +449,8 @@ class Audit4Test {
         val a = wallet(chain, indexer = idx)
         a.sync()
         assertNotNull(a.castStakeVote(1, PrivacyWallet.StakeVoteItem.Note(v.k.position), yes))
-        val n = chain.snapshotRead(1).nfSize - 1
-        assertTrue(asked.all { (from, limit) -> from - 1 + (limit ?: 0) <= n })
+        // The LCD's nf_size (a handful): one aligned page, nothing past it.
+        assertEquals(listOf(0L to PrivacyWallet.NF_PAGE), asked)
     }
 
     /** L1: the stake votes cast survive a same-chain reset (an inconsistent sync). */
@@ -636,5 +638,82 @@ class Audit4Test {
         assertTrue(v.a.store.state.stakeVotes.isEmpty())
         assertNotNull(v.a.castStakeVote(1, PrivacyWallet.StakeVoteItem.Note(v.k.position), yes))
         assertEquals(1, v.a.store.state.stakeVotes.size)
+    }
+    // ---- the backend's paging rule (fixed page sizes, aligned cursors) ----
+
+    private fun others(chain: FakeChain, n: Int) {
+        repeat(n) { chain.mint("uerth", 1, NotePlaintext.randomField(), ByteArray(NoteCipher.BLIND_CIPHERTEXT_BYTES)) }
+        chain.emptyBlock()
+    }
+
+    /**
+     * Every position cursor is page-aligned and every limit a served size;
+     * a tip page is asked again from its aligned start, the rows already
+     * held dropped (and checked), and the trees end up the chain's.
+     */
+    @Test
+    fun pagesAreAlignedAndTheTipPageIsReasked() {
+        val chain = FakeChain()
+        val a = wallet(chain)
+        funded(chain, a)
+        others(chain, 250)
+        val asked = ArrayList<Long>()
+        val idx = object : Wrapped(chain) {
+            override fun notes(fromPos: Long, limit: Int?): NotesPage { asked.add(fromPos); return inner.notes(fromPos, limit) }
+        }
+        val keys = PrivacyKeys.fromMnemonic(alice)
+        val store = PrivacyStore.memory()
+        WalletSync(idx, store, keys, chain.chainId, chain).sync(100)
+        assertEquals(listOf(0L, 100L, 200L), asked)
+        assertEquals(chain.noteTree.root(), store.noteTree.root())
+        others(chain, 30)
+        asked.clear()
+        WalletSync(idx, store, keys, chain.chainId, chain).sync(100)
+        assertEquals(listOf(200L), asked)
+        assertEquals(chain.noteTree.root(), store.noteTree.root())
+        assertTrue(chain.misaligned.isEmpty())
+        // A held row served differently on the re-asked page is an inconsistency.
+        val lying = object : Wrapped(chain) {
+            override fun notes(fromPos: Long, limit: Int?) = inner.notes(fromPos, limit).let { p ->
+                p.copy(rows = p.rows.mapIndexed { i, r -> if (i == 0) r.copy(cm = Fr.of(5)) else r })
+            }
+        }
+        others(chain, 1)
+        assertThrows(WalletSync.Inconsistent::class.java) { WalletSync(lying, store, keys, chain.chainId, chain).sync(100) }
+    }
+
+    /** A sync, a vote's nullifier tree: no request off the paging rule. */
+    @Test
+    fun walletRequestsFollowThePagingRule() {
+        val v = voting()
+        assertNotNull(v.a.castStakeVote(1, PrivacyWallet.StakeVoteItem.Note(v.k.position), yes))
+        assertTrue(v.chain.misaligned.toString(), v.chain.misaligned.isEmpty())
+    }
+
+    /** A busy indexer (503 with Retry-After, 429) is waited out, then given up on. */
+    @Test
+    fun busyIndexerIsBackedOff() {
+        var busy = 2
+        val s = serve { p ->
+            when {
+                p == "/privacy/status" -> "HTTP/1.0 200 OK\r\nContent-Type: application/json" to status
+                busy-- > 0 -> "HTTP/1.0 503 Service Unavailable\r\nRetry-After: 3" to ByteArray(0)
+                else -> "HTTP/1.0 200 OK\r\nContent-Type: application/json" to """{"notes":[],"next_pos":0,"complete":false,"synced_height":1}""".toByteArray()
+            }
+        }
+        val slept = ArrayList<Long>()
+        val idx = HttpPrivacyIndexer("http://127.0.0.1:${s.localPort}", "earth-1") { slept.add(it) }
+        assertEquals(0, idx.notes(0, 1000).rows.size)
+        assertEquals(listOf(3000L, 3000L), slept)
+        val always = serve { p ->
+            if (p == "/privacy/status") "HTTP/1.0 200 OK\r\nContent-Type: application/json" to status
+            else "HTTP/1.0 429 Too Many Requests" to ByteArray(0)
+        }
+        slept.clear()
+        val idx2 = HttpPrivacyIndexer("http://127.0.0.1:${always.localPort}", "earth-1") { slept.add(it) }
+        val e = assertThrows(java.io.IOException::class.java) { idx2.notes(0) }
+        assertTrue("busy" in e.message!!)
+        assertEquals(listOf(1000L, 2000L, 4000L, 8000L), slept)
+        assertThrows(IllegalArgumentException::class.java) { idx2.notes(0, 5000) }
     }
 }

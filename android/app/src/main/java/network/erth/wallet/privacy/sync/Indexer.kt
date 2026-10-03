@@ -109,11 +109,37 @@ data class RateRow(val validator: String, val rate: String, val supply: String, 
  * `/privacy/<chain_id>/<genesis>` for [chainId] (K10), so a hostile status
  * cannot point the stream requests anywhere else.
  */
-class HttpPrivacyIndexer(private val host: String, private val chainId: String = network.erth.wallet.Constants.EARTH_CHAIN_ID) : PrivacyIndexer {
+class HttpPrivacyIndexer(
+    private val host: String,
+    private val chainId: String = network.erth.wallet.Constants.EARTH_CHAIN_ID,
+    /** Waits between retries of a busy indexer (tests pass their own). */
+    private val sleep: (Long) -> Unit = { Thread.sleep(it) },
+) : PrivacyIndexer {
     @Volatile private var base: String? = null
     private val hostUrl = URL(host.trimEnd('/'))
 
+    /** The indexer shed the request (503, its in-flight cap) or rate-limited this client (429). */
+    private class Busy(val code: Int, val retryAfter: Long?) : IOException("the privacy indexer is busy ($code)")
+
+    /**
+     * [getOnce], backing off while the indexer sheds load (audit 4: /privacy
+     * answers 503 with Retry-After past its in-flight cap, 429 past a
+     * client's rate): Retry-After or 1, 2, 4, 8 s (at most 30), then an
+     * error the sync reports like any other.
+     */
     private fun get(path: String): JSONObject {
+        var attempt = 0
+        while (true) {
+            try {
+                return getOnce(path)
+            } catch (e: Busy) {
+                if (++attempt > MAX_BUSY_RETRIES) throw IOException("the privacy indexer is busy (${e.code}); try again later")
+                sleep(backoffMs(e.retryAfter, attempt))
+            }
+        }
+    }
+
+    private fun getOnce(path: String): JSONObject {
         require(path.startsWith("/") && !path.startsWith("//")) { "indexer path $path" }
         val url = URL(hostUrl.toString() + path)
         if (url.protocol != hostUrl.protocol || url.host != hostUrl.host || url.port != hostUrl.port || url.userInfo != null) {
@@ -131,6 +157,7 @@ class HttpPrivacyIndexer(private val host: String, private val chainId: String =
             val stream = if (c.contentEncoding == "gzip") GZIPInputStream(raw) else raw
             val body = stream?.let { readBounded(it, MAX_BODY_BYTES) }.orEmpty()
             if (code == 404) throw IndexerBaseMoved("indexer $path: 404 ${body.take(200)}")
+            if (code == 503 || code == 429) throw Busy(code, c.getHeaderField("Retry-After")?.trim()?.toLongOrNull())
             if (code !in 200..299) throw IOException("indexer $path: $code ${body.take(200)}")
             network.erth.wallet.chain.EarthRest.checkJsonDepth(body)
             return JSONObject(body)
@@ -146,6 +173,12 @@ class HttpPrivacyIndexer(private val host: String, private val chainId: String =
     }
 
     private fun q(name: String, v: Any?): String = if (v == null) "" else "&$name=$v"
+
+    /** The backend serves only its fixed page sizes (audit 4 paging rule); anything else is a 400. */
+    private fun limit(limit: Int?): String {
+        require(limit == null || limit in WalletSync.PAGE_SIZES) { "page size $limit is not one the indexer serves" }
+        return q("limit", limit)
+    }
 
     override fun status(): IndexerStatus = get("/privacy/status").let { j ->
         IndexerStatus(
@@ -166,16 +199,16 @@ class HttpPrivacyIndexer(private val host: String, private val chainId: String =
     }
 
     override fun notes(fromPos: Long, limit: Int?): NotesPage =
-        parseNotes(stream("/notes?from_pos=$fromPos${q("limit", limit)}"))
+        parseNotes(stream("/notes?from_pos=$fromPos${limit(limit)}"))
 
     override fun nullifiers(fromHeight: Long, limit: Int?): HeightPage<Fr> =
-        parseHeights(stream("/nullifiers?from_height=$fromHeight${q("limit", limit)}")) { Fr.fromHex(it as String) }
+        parseHeights(stream("/nullifiers?from_height=$fromHeight${limit(limit)}")) { Fr.fromHex(it as String) }
 
     override fun identity(fromIndex: Long, limit: Int?): IdentityPage =
-        parseIdentity(stream("/identity?from_index=$fromIndex${q("limit", limit)}"))
+        parseIdentity(stream("/identity?from_index=$fromIndex${limit(limit)}"))
 
     override fun identityZeroed(fromHeight: Long, limit: Int?): HeightPage<Long> =
-        parseHeights(stream("/identity/zeroed?from_height=$fromHeight${q("limit", limit)}")) { (it as Number).toLong() }
+        parseHeights(stream("/identity/zeroed?from_height=$fromHeight${limit(limit)}")) { (it as Number).toLong() }
 
     override fun rootsLatest(): LatestRoots = parseRoots(stream("/roots/latest"))
 
@@ -189,16 +222,16 @@ class HttpPrivacyIndexer(private val host: String, private val chainId: String =
     }
 
     override fun stakeNotes(fromPos: Long, limit: Int?): StakeNotesPage =
-        parseStakeNotes(stream("/stake/notes?from_pos=$fromPos${q("limit", limit)}"))
+        parseStakeNotes(stream("/stake/notes?from_pos=$fromPos${limit(limit)}"))
 
     override fun stakeNullifiers(fromHeight: Long, limit: Int?): HeightPage<Fr> =
-        parseHeights(stream("/stake/nullifiers?from_height=$fromHeight${q("limit", limit)}")) { Fr.fromHex(it as String) }
+        parseHeights(stream("/stake/nullifiers?from_height=$fromHeight${limit(limit)}")) { Fr.fromHex(it as String) }
 
     override fun stakeNullifierLeaves(fromIndex: Long, limit: Int?): StakeNfLeavesPage =
-        parseStakeNfLeaves(stream("/stake/nullifier-tree?from_index=$fromIndex${q("limit", limit)}"))
+        parseStakeNfLeaves(stream("/stake/nullifier-tree?from_index=$fromIndex${limit(limit)}"))
 
     override fun stakeSnapshots(fromHeight: Long, limit: Int?): StakeSnapshotsPage =
-        parseStakeSnapshots(stream("/stake/snapshots?from_height=$fromHeight${q("limit", limit)}"))
+        parseStakeSnapshots(stream("/stake/snapshots?from_height=$fromHeight${limit(limit)}"))
 
     companion object {
         private val CHAIN_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
@@ -222,6 +255,13 @@ class HttpPrivacyIndexer(private val host: String, private val chainId: String =
          * server, a gzip bomb) is refused rather than read into memory.
          */
         const val MAX_BODY_BYTES = 8L * 1024 * 1024
+
+        /** Retries of a busy (503/429) indexer before the request fails. */
+        const val MAX_BUSY_RETRIES = 4
+
+        /** Retry-After (seconds, when sent) or 2^(attempt-1) s, whichever is longer, at most 30 s. */
+        fun backoffMs(retryAfter: Long?, attempt: Int): Long =
+            maxOf(retryAfter?.coerceIn(0, 30) ?: 0, 1L shl minOf(attempt - 1, 5)).coerceAtMost(30) * 1000
 
         /** Reads [input] as UTF-8, refusing more than [max] bytes. */
         fun readBounded(input: java.io.InputStream, max: Long): String = input.use { s ->

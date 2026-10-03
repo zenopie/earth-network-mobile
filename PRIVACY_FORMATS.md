@@ -314,12 +314,22 @@ matched:
    keeps the time of its height's rows as they pass, and every country (the
    hint, unknown, then every A..Z pair: at most 677 hashes a leaf) is tried
    at exactly that time. The LCD is never asked about the registration's
-   block alone.
+   block alone. Audit 4 (H1): a row time is a block time of this chain or
+   the page is inconsistent: at least 1,735,689,600 (2025-01-01) and at
+   most the LCD tip's block time + 3600 s; a fallback candidate outside the
+   same range, or one that would overflow, is skipped.
 2. **Block time from the LCD, with a cover set.** When the rows carry no
    time (or it did not match), the LCD is asked for 16 block times
    (`GET /cosmos/base/tendermint/v1beta1/blocks/{h}`, `block.header.time`,
-   the header's height must be h): h and 15 other heights drawn uniformly
-   from [1, the synced height], in a shuffled order. The set is chosen once
+   the header's height must be h): h and 15 other heights, in a shuffled
+   order. Audit 4: the decoys are drawn first from a persisted uniform
+   sample (256) of the identity rows' heights (other registrations' blocks,
+   the blocks a restore asks about), then uniformly from [1, min(the synced
+   height, the LCD's tip)]; never a height past the tip (the synced height
+   itself is bounded by the tip, §4a). Residual: an LCD that also runs the
+   indexer sees 16 registration blocks asked together and knows the wallet
+   is one of their registrants; the indexer's row `time` (preferred, step
+   1) avoids the LCD altogether. The set is chosen once
    and persisted with the record (a retry asks the same set; at most 3
    fetches; once answered, never again). Its time is tried the same way;
    known and unmatched, the record is given up (EXHAUSTED). The device
@@ -378,12 +388,21 @@ app tells the user).
   tag) and timeout_height = the LCD's latest height + 50 (audit 3), and
   fixes the gas limit (from simulation) before proving; the tx carries
   exactly those values (the simulated tx carries the same timeout).
-- **Pending spends (K7, audit 3).** The notes a tx spends are marked
-  pending when the node accepts it, with its timeout_height. They are
-  released (spendable again) only when the LCD's latest height is past that
-  timeout_height and the wallet has read the nullifier stream through it
-  without seeing their nullifiers: never by the wall clock. (Marks made by
-  older builds, without a timeout, keep the old 15-minute rule.)
+- **Pending spends (K7, audit 3, audit 4).** The notes a tx spends are
+  marked pending *before* it is sent, with its timeout_height and its hash
+  (computed locally: uppercase hex SHA-256 of the raw tx bytes, the node's
+  own; a node naming another hash is an error). A refusal that proves the
+  tx is in no mempool (CheckTx's non-zero code, no connection at all)
+  unmarks them at once; any other failure (a timeout, a lost answer) keeps
+  them. They are released (spendable again) only when the LCD's latest
+  height is past that timeout_height, the wallet has read the nullifier
+  stream through it without seeing their nullifiers, and the LCD says the
+  tx is missing (`GET /cosmos/tx/v1beta1/txs/{hash}` 404) or failed in its
+  block (code ≠ 0): never by the wall clock. A tx the LCD says is in a
+  block whose spend the indexer never reported keeps them pending and the
+  sync unverified; an LCD that cannot say keeps them. (Marks made by older
+  builds keep their old rule: no hash, the timeout alone; no timeout, 15
+  minutes.)
 - Fee = max(x/shielded min_fee, ceil(node min gas price × gas limit)); gas
   limit = simulated gas + max(10%, 20,000). Simulation runs on the real
   anchors, nullifiers, commitments, value commitments and ciphertexts with
@@ -505,19 +524,29 @@ One MsgStakeVote per derth note and proposal:
 
     bundle (fee), proposal_id, validator, options, weight, proof (8), vote_nullifier (9)
 
-1. **Snapshot.** From the indexer's `{base}/stake/snapshots` stream (read
-   whole from height 0 and kept; no request names the proposal), else the
-   LCD `Query/Snapshot`: root, tree_size, height, nf_root, nf_size (the
-   nullifier tree's leaf count, sentinel included; 0 = nothing inserted). A
-   snapshot without nf_root takes no stake vote.
+1. **Snapshot.** The LCD `Query/Snapshot`
+   (`/earth/shieldedstaking/v1/snapshots/{proposal_id}`), never the
+   indexer (audit 4, M3: a forged nf_root made a note look spent before the
+   snapshot and the vote was skipped; the proposal id is public, so asking
+   names nothing of the wallet): root, tree_size, height, nf_root, nf_size
+   (the nullifier tree's leaf count, sentinel included; 0 = nothing
+   inserted), and the validators' rates (legacy snapshots; the weight shown
+   uses them). A snapshot without nf_root takes no stake vote. Cached per
+   proposal, dropped with every other per-chain cache when the store's
+   genesis changes.
 2. **Note.** Its path in the wallet's stake tree of the first tree_size
    leaves; that tree's root must be the snapshot root (a snapshot past the
    local tree is "sync first"). A note at position >= tree_size cannot vote.
 3. **Nullifier tree.** The first nf_size − 1 stake nullifiers in insertion
-   order, from `{base}/stake/nullifier-tree?from_index=1` (rows [index,
-   nullifier, height], leaf indexes contiguous from 1; anything else is
-   inconsistent) with the LCD `Query/StakeNullifierTree{start, limit}`
-   (1000 a page) for whatever the indexer lacks. Inserted in order into the
+   order (nf_size the LCD's, so the fetch is bounded by the chain's own
+   count), from `{base}/stake/nullifier-tree?from_index=0&limit=1000` and
+   the aligned pages after it (§4a paging rule: page k holds leaf indexes
+   [1000k, 1000(k+1)), leaf 0 the sentinel never a row, so page 0 holds
+   1..999; rows [index, nullifier, height], indexes contiguous; a leaf
+   already held must be served identically; more than 1000 rows, or
+   anything else, is inconsistent) with the LCD
+   `Query/StakeNullifierTree{start, limit}` (1000 a page) for whatever the
+   indexer lacks. Inserted in order into the
    indexed tree (leaf = H(TAG_SNFL, value, next_value, next_index), leaf 0
    the sentinel; the wallet writes the final leaves in one batch, the same
    root as replaying the inserts), its root must equal nf_root; otherwise
@@ -528,7 +557,9 @@ One MsgStakeVote per derth note and proposal:
    predecessor (the sentinel if none) with next = the successor (0, 0 if
    none), its index and path. If the nullifier is in the tree the note was
    spent before the snapshot: refused locally (`SpentBeforeSnapshot`),
-   nothing is simulated or broadcast. A note spent after the snapshot still
+   nothing is simulated or broadcast, but only when sync, too, saw the spend
+   at or before the snapshot's height; otherwise the two disagree and the
+   cast fails with an error (audit 4: never a vote silently skipped). A note spent after the snapshot still
    votes; its outputs cannot (not under the root).
 5. **vote_nullifier** = H(TAG_VNF, nk, rho, pos, proposal_id): one per note
    and proposal, unlinkable to the note's other votes and its spend.
@@ -556,14 +587,21 @@ One MsgStakeVote per derth note and proposal:
    confirmed); confirmed once committed. A vote that failed in its block,
    or is unknown once the chain is past its timeout_height, is forgotten
    and the note may vote again. A vote the chain refuses as already cast
-   (code 1119, "already voted on this proposal", caught at simulate: no fee)
+   (code 1119 in codespace `shieldedstaking`, or at simulate its registered
+   text "this stake note already voted on this proposal": no fee)
    is recorded as confirmed: that is how a wallet restored from the
    mnemonic, which does not know its votes, learns them. One vote per note
    per proposal; the same note votes on every other open proposal.
 
 Eligible notes for a proposal (cast list, weight shown): derth, amount > 0,
 position < tree_size, not spent at or before the snapshot's height as far
-as sync knows (the cast checks the tree itself), not already voted on it.
+as sync knows (a spend in the snapshot's own block is before it: the
+snapshot is the trees at that block's end), not already voted on it. The
+recorded votes survive a same-chain reset (an inconsistent sync, a root
+mismatch; audit 4, L1). A running vote (StakeVoteController) waits for a
+suspended run's last cast to end before casting (audit 4, L5), records a
+position's vote the moment the node takes it, and stops when its persisted
+run is gone (a chain switch).
 
 ## 4d. Chain wave 3 wallet rules (chain 06ea4d6)
 
@@ -637,11 +675,34 @@ as sync knows (the cast checks the tree itself), not already voted on it.
        GET {base}/stake/notes?from_pos=&limit=         [position, height, cm, ciphertext, denom, amount, spc]
        GET {base}/stake/nullifiers?from_height=&limit= [[height, [nf, ...]], ...]
        GET {base}/stake/roots?from_height=&limit=      [height, root, tree_size, time]
-       GET {base}/stake/nullifier-tree?from_index=&limit=  [index, nullifier, height]   (leaf 1 on; size, next_index)
+       GET {base}/stake/nullifier-tree?from_index=&limit=  [index, nullifier, height]   (from 0; leaf 0 never a row; size, next_index)
        GET {base}/stake/snapshots?from_height=&limit=  [height, proposal_id, root, tree_size, nf_root, nf_size]
 
    A 404 means the base moved: re-read the status (step 1) and retry once.
-   Response bodies are capped (8 MiB decompressed) and pages to 5000 rows.
+   Response bodies are capped (8 MiB decompressed) and nested at most 64
+   arrays/objects deep, checked before parsing (audit 4, M7: Android's
+   org.json recurses without a cap); a redirect is never followed (both
+   platforms; a 3xx is an error), for the LCD as for the indexer. A 503
+   (the indexer's in-flight cap) or 429 (a client's rate) is retried after
+   Retry-After, or 1, 2, 4, 8 s (at most 30 s), four times, then the sync
+   fails like any other.
+   **Paging rule (backend audit 4, B3).** `limit` is 100 or 1000 (the
+   wallet always asks 1000); a position or index cursor (`notes`,
+   `identity`, `stake/notes`, `stake/nullifier-tree`) is a multiple of the
+   limit and page k is exactly [k·limit, (k+1)·limit). The wallet asks
+   for the page holding its cursor, `from = next − next % limit`, and
+   drops the rows it holds (a held note or stake note row must be the
+   leaf held, else inconsistent); a full page is followed by the next, a
+   short one is the tip. A position page carries at most `limit` rows. A
+   height page (nullifiers, identity/zeroed, stake/nullifiers,
+   stake/snapshots) keeps a free `from_height` and never splits a block,
+   so it may exceed the limit by one block (at most 5000 rows).
+   **Heights bounded by the chain (audit 4, M1).** Every height an indexer
+   page names (a row's height or zeroed_height, `synced_height`,
+   `next_height` − 1, every `/roots/latest` height) must be at most the
+   LCD's latest height + 10 (read again once when exceeded: the chain
+   moved); past it the page is inconsistent and nothing from it is kept, so
+   no persisted cursor can be pushed past the chain.
    **Paging (audit 3).** A position page (notes, stake notes) must name
    `next_pos` = from + rows, and one marked complete (more follows) must
    carry rows; a height page never names a `next_height` below its
@@ -698,10 +759,19 @@ After each sync the wallet checks every local root against the LCD:
   is not spent leaves the roots unverified. The wallet never asks about its
   own nullifiers (that would name its notes): they are left out of the
   sample.
+- **Note root height (audit 4).** The record's `height` (the block that
+  produced the root) must be the indexer's `roots/latest.note.height`;
+  otherwise unverified.
+- **The indexer's claimed height (audit 4, M1).** `GET
+  /earth/shielded/v1/tree` at the indexer's `roots/latest.synced_height`
+  (pinned as above) must hold exactly the local note tree's size: a stale
+  indexer naming the current height is caught (every spend appends
+  notes). Unverified otherwise; an unpinned read is not used.
 - **Indexer behind the tip (K9).** If the LCD's latest block
   (`/cosmos/base/tendermint/v1beta1/blocks/latest`) is more than 30 blocks
-  past the indexer's synced height, the roots are unverified ("the indexer
-  is N blocks behind").
+  past the indexer's synced height (now checked as above), the roots are
+  unverified ("the indexer is N blocks behind"). An LCD that cannot say
+  its height leaves them unverified.
 
 A local tree larger than the indexer's latest, or one of the same size with
 another root, is inconsistent: the wallet starts over from an empty store.
@@ -729,7 +799,32 @@ private balances, stake and registration until a later sync verifies them.
   replaced by an empty wallet.
 - **Forgetting a wallet** deletes its `privacy/<id>/` directory (notes,
   identity, records, trees): every file overwritten with zeros, synced,
-  then unlinked.
+  then unlinked. Android (no wallet removal) offers it as Settings →
+  "Forget private data" (audit 4); iOS on forgetting the wallet.
+
+## 4f. Wallet behaviors (audit 4)
+
+- **Restore matching only on verified trees (M5).** Registration records
+  are matched to identity leaves only after the same sync's root checks
+  verified the identity tree; an unverified sync keeps the leaves for a
+  later one. The identity record carries `verified` (matched on a verified
+  tree, resolved from its own committed tx, or found live in one); a
+  same-chain reset keeps only a verified one (an older store's is dropped
+  and found again from its record note). A match at the identity's own
+  index replaces it.
+- **claimOpensAt** and every time sum are checked (no wrap, no trap): an
+  activated_at with no answer gives none.
+- **Automation.** Errors (not only exceptions) fail the action, never the
+  app. The day's claim offset is persisted with the wallet (one draw per
+  UTC day, whatever restarts the app).
+- **Gas grant proof of work.** The wallet works for at most 24 bits; a
+  server asking more is refused (iOS: the work stops when the request is
+  cancelled).
+- **Fees.** The registration's fee is bounded by its confirm sheet's like
+  every private tx (a higher one re-shows the sheet). A stake undelegation
+  that needs its notes merged first merges at most twice per confirmation,
+  15-45 s apart and before the action.
+- **Logs.** Proof timings are logged in debug builds only.
 - **A store from before K6** (same chain id, no genesis recorded) keeps its
   identity record when the genesis is first recorded (as a confirmed
   switch: synced data goes, the registration stays).

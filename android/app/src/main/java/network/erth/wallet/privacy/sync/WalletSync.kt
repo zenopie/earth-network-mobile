@@ -203,8 +203,22 @@ class WalletSync(
         /** LCD cover-set fetches a record may make. */
         const val MAX_COVER_TRIES = 3
 
-        /** The most rows a page may carry (the backend's PRIVACY_PAGE_MAX). */
-        const val MAX_PAGE_ROWS = 5000
+        /**
+         * The page size every stream is asked with (the backend's paging
+         * rule, audit 4: `limit` is 100 or 1000, a position or index cursor a
+         * multiple of it). Every wallet asks for the same URLs, so a CDN keeps
+         * one copy of each page.
+         */
+        const val PAGE_SIZE = 1000
+
+        /** A height page never splits a block, so one block may bring more than the limit; never more than this. */
+        const val MAX_HEIGHT_PAGE_ROWS = 5000
+
+        /** The page sizes the backend serves (PRIVACY_PAGE_SIZES). */
+        val PAGE_SIZES = setOf(100, 1000)
+
+        /** The aligned page holding [cursor]: page k is positions [k*limit, (k+1)*limit). */
+        fun aligned(cursor: Long, limit: Int): Long = cursor - cursor % limit
 
         /** Passes over the streams while the indexer keeps moving, before giving up on pinning a height. */
         private const val MAX_PASSES = 4
@@ -364,7 +378,7 @@ class WalletSync(
      * empty store. The whole of it, retries included, is bounded by
      * [syncTimeoutMs].
      */
-    fun sync(pageLimit: Int? = null): Result {
+    fun sync(pageLimit: Int = PAGE_SIZE): Result {
         deadline = monoMs().let { if (it > Long.MAX_VALUE - syncTimeoutMs) Long.MAX_VALUE else it + syncTimeoutMs }
         return try {
             syncRetryingBase(pageLimit)
@@ -390,13 +404,13 @@ class WalletSync(
     }
 
     /** A 404 means the indexer's base moved (a relaunch): read the status again, once. */
-    private fun syncRetryingBase(pageLimit: Int?): Result = try {
+    private fun syncRetryingBase(pageLimit: Int): Result = try {
         syncOnce(pageLimit)
     } catch (e: IndexerBaseMoved) {
         syncOnce(pageLimit)
     }
 
-    private fun syncOnce(pageLimit: Int?): Result {
+    private fun syncOnce(pageLimit: Int): Result {
         markSyncing()
         tick()
         val status = indexer.status()
@@ -582,8 +596,8 @@ class WalletSync(
         return s.rootsVerified
     }
 
-    private fun checkPage(n: Int) {
-        if (n > MAX_PAGE_ROWS) throw Inconsistent("the indexer sent $n rows in one page")
+    private fun checkPage(n: Int, limit: Int) {
+        if (n > limit) throw Inconsistent("the indexer sent $n rows in a page of $limit")
     }
 
     /**
@@ -605,23 +619,37 @@ class WalletSync(
         if (page.blocks.any { it.first < from }) throw Inconsistent("a $name page from height $from holds an earlier height")
     }
 
-    private fun syncNotes(s: PrivacyState, limit: Int?): List<OwnedNote> {
+    /**
+     * The rows of an aligned position page past [held] (the backend's paging
+     * rule): the page starts at [from], so the rows before [held] are ones the
+     * wallet holds already, and each must be the very leaf it holds.
+     */
+    private fun <R> fresh(name: String, rows: List<R>, from: Long, held: Long, position: (R) -> Long, same: (R) -> Boolean): List<R> {
+        rows.forEachIndexed { i, r ->
+            if (position(r) != from + i) throw Inconsistent("$name at position ${position(r)}, expected ${from + i}")
+            if (position(r) > MAX_POSITION) throw Inconsistent("$name position ${position(r)} beyond the tree")
+        }
+        val n = (held - from).toInt()
+        if (rows.size < n) throw Inconsistent("a $name page from $from ends before the $held held")
+        for (r in rows.take(n)) if (!same(r)) throw Inconsistent("$name ${position(r)} differs from the one held")
+        return rows.drop(n)
+    }
+
+    private fun syncNotes(s: PrivacyState, limit: Int): List<OwnedNote> {
         val found = ArrayList<OwnedNote>()
         while (true) {
             tick()
-            val page = indexer.notes(s.notesNext, limit)
-            checkPage(page.rows.size)
+            val from = aligned(s.notesNext, limit)
+            val page = indexer.notes(from, limit)
+            checkPage(page.rows.size, limit)
             bounded("note synced", page.syncedHeight)
             page.rows.forEach { bounded("note", it.height) }
-            checkPositions("note", s.notesNext, page.rows.size, page.nextPos, page.complete)
-            if (page.rows.isNotEmpty()) {
-                page.rows.forEachIndexed { i, r ->
-                    if (r.position != s.notesNext + i) throw Inconsistent("note at position ${r.position}, expected ${s.notesNext + i}")
-                    if (r.position > MAX_POSITION) throw Inconsistent("note position ${r.position} beyond the tree")
-                }
-                store.noteTree.appendAll(page.rows.map { it.cm })
-                for (r in page.rows) open(r)?.let { found.add(it); s.notes.add(it) }
-                s.notesNext += page.rows.size
+            checkPositions("note", from, page.rows.size, page.nextPos, page.complete)
+            val rows = fresh("note", page.rows, from, s.notesNext, { it.position }) { store.noteTree.leaf(it.position) == it.cm }
+            if (rows.isNotEmpty()) {
+                store.noteTree.appendAll(rows.map { it.cm })
+                for (r in rows) open(r)?.let { found.add(it); s.notes.add(it) }
+                s.notesNext += rows.size
             }
             s.notesHeight = maxOf(s.notesHeight, page.syncedHeight)
             if (!page.complete) break
@@ -671,7 +699,7 @@ class WalletSync(
         return (network.erth.wallet.privacy.Amounts.parseU64(digits) ?: return null) to denom
     }
 
-    private fun syncNullifiers(s: PrivacyState, limit: Int?): List<OwnedNote> {
+    private fun syncNullifiers(s: PrivacyState, limit: Int): List<OwnedNote> {
         val mine = s.notes.withIndex().filter { it.value.unspent }.associate { it.value.nf to it.index }
         // The spot-check sample never holds one of ours (spent or not): asking
         // the chain about it would name our note (PRIVACY_FORMATS 4b).
@@ -683,7 +711,7 @@ class WalletSync(
         while (s.nullifiersNext <= ceiling) {
             tick()
             val page = indexer.nullifiers(s.nullifiersNext, limit)
-            checkPage(page.blocks.sumOf { it.second.size })
+            checkPage(page.blocks.sumOf { it.second.size }, maxOf(limit, MAX_HEIGHT_PAGE_ROWS))
             checkHeights("nullifier", s.nullifiersNext, page)
             for ((h, nfs) in page.blocks) {
                 if (h > ceiling) break
@@ -735,23 +763,21 @@ class WalletSync(
         }
     }
 
-    private fun syncStakeNotes(s: PrivacyState, limit: Int?): List<OwnedStakeNote> {
+    private fun syncStakeNotes(s: PrivacyState, limit: Int): List<OwnedStakeNote> {
         val found = ArrayList<OwnedStakeNote>()
         while (true) {
             tick()
-            val page = indexer.stakeNotes(s.stakeNext, limit)
-            checkPage(page.rows.size)
+            val from = aligned(s.stakeNext, limit)
+            val page = indexer.stakeNotes(from, limit)
+            checkPage(page.rows.size, limit)
             bounded("stake note synced", page.syncedHeight)
             page.rows.forEach { bounded("stake note", it.height) }
-            checkPositions("stake note", s.stakeNext, page.rows.size, page.nextPos, page.complete)
-            if (page.rows.isNotEmpty()) {
-                page.rows.forEachIndexed { i, r ->
-                    if (r.position != s.stakeNext + i) throw Inconsistent("stake note at position ${r.position}, expected ${s.stakeNext + i}")
-                    if (r.position > MAX_POSITION) throw Inconsistent("stake note position ${r.position} beyond the tree")
-                }
-                store.stakeTree.appendAll(page.rows.map { it.cm })
-                for (r in page.rows) openStake(r)?.let { found.add(it); s.stakeNotes.add(it) }
-                s.stakeNext += page.rows.size
+            checkPositions("stake note", from, page.rows.size, page.nextPos, page.complete)
+            val rows = fresh("stake note", page.rows, from, s.stakeNext, { it.position }) { store.stakeTree.leaf(it.position) == it.cm }
+            if (rows.isNotEmpty()) {
+                store.stakeTree.appendAll(rows.map { it.cm })
+                for (r in rows) openStake(r)?.let { found.add(it); s.stakeNotes.add(it) }
+                s.stakeNext += rows.size
             }
             s.stakeHeight = maxOf(s.stakeHeight, page.syncedHeight)
             if (!page.complete) break
@@ -790,14 +816,14 @@ class WalletSync(
 
     private data class StakeOpen(val denom: String, val amount: Long, val rho: Fr, val rcm: Fr)
 
-    private fun syncStakeNullifiers(s: PrivacyState, limit: Int?) {
+    private fun syncStakeNullifiers(s: PrivacyState, limit: Int) {
         val mine = s.stakeNotes.withIndex().filter { it.value.unspent }.associate { it.value.nf to it.index }
         val own = s.stakeNotes.mapTo(HashSet()) { it.nf }
         val ceiling = s.stakeHeight
         while (s.stakeNullifiersNext <= ceiling) {
             tick()
             val page = indexer.stakeNullifiers(s.stakeNullifiersNext, limit)
-            checkPage(page.blocks.sumOf { it.second.size })
+            checkPage(page.blocks.sumOf { it.second.size }, maxOf(limit, MAX_HEIGHT_PAGE_ROWS))
             checkHeights("stake nullifier", s.stakeNullifiersNext, page)
             for ((h, nfs) in page.blocks) {
                 if (h > ceiling) break
@@ -816,14 +842,14 @@ class WalletSync(
      * against it: that is how a wallet restored from the mnemonic finds its
      * registration, with no query naming it.
      */
-    private fun syncIdentity(s: PrivacyState, limit: Int?) {
+    private fun syncIdentity(s: PrivacyState, limit: Int) {
         val ceiling = s.notesHeight
         // Zeroings of leaves already held, first: a leaf appended below
         // carries its own zeroed_height.
         while (s.zeroedNext <= ceiling) {
             tick()
             val page = indexer.identityZeroed(s.zeroedNext, limit)
-            checkPage(page.blocks.sumOf { it.second.size })
+            checkPage(page.blocks.sumOf { it.second.size }, maxOf(limit, MAX_HEIGHT_PAGE_ROWS))
             checkHeights("identity zeroing", s.zeroedNext, page)
             val updates = HashMap<Long, Fr>()
             for ((h, idxs) in page.blocks) {
@@ -837,8 +863,9 @@ class WalletSync(
         val recordHeights = s.regRecords.map { it.height }.toSet()
         outer@ while (true) {
             tick()
-            val page = indexer.identity(s.identityNext, limit)
-            checkPage(page.rows.size)
+            val from = aligned(s.identityNext, limit)
+            val page = indexer.identity(from, limit)
+            checkPage(page.rows.size, limit)
             bounded("identity synced", page.syncedHeight)
             for (r in page.rows) {
                 bounded("identity", r.height)
@@ -846,12 +873,10 @@ class WalletSync(
                 // Audit 4 (H1): a row's block time is one of this chain's.
                 if (r.time != null && r.time != 0L && !timeOk(r.time)) throw Inconsistent("identity leaf ${r.index} carries block time ${r.time}, outside the chain's")
             }
-            if (page.rows.isEmpty()) break
-            val take = page.rows.takeWhile { it.height <= ceiling }
-            take.forEachIndexed { i, r ->
-                if (r.index != s.identityNext + i) throw Inconsistent("identity leaf ${r.index}, expected ${s.identityNext + i}")
-                if (r.index > MAX_POSITION) throw Inconsistent("identity leaf ${r.index} beyond the tree")
-            }
+            // Rows already held are dropped unchecked: a leaf zeroed since reads differently.
+            val rest = fresh("identity leaf", page.rows, from, s.identityNext, { it.index }) { true }
+            if (rest.isEmpty()) break
+            val take = rest.takeWhile { it.height <= ceiling }
             // A leaf zeroed at or below the ceiling is zero here; one zeroed
             // later is zeroed by a later pass's zeroed stream.
             store.identityTree.appendAll(take.map { if (it.zeroedHeight != null && it.zeroedHeight <= ceiling) Fr.ZERO else it.leaf })
@@ -871,7 +896,7 @@ class WalletSync(
                 }
             }
             s.identityNext += take.size
-            if (take.size < page.rows.size || s.identityNext >= page.size) break@outer
+            if (take.size < rest.size || s.identityNext >= page.size || page.rows.size < limit) break@outer
         }
     }
 

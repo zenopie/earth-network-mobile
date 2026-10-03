@@ -698,8 +698,21 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         chainId, height - 1, now, notes.size.toLong(), identityRows.size.toLong(), halted, genesis, "/privacy/$chainId/$genesis",
     )
 
-    override fun notes(fromPos: Long, limit: Int?): NotesPage {
+    /** Every position/index cursor asked, as the backend's paging rule checks it (a misaligned one is a 400). */
+    val misaligned = ArrayList<String>()
+
+    private fun aligned(name: String, from: Long, limit: Int?): Int {
         val n = limit ?: 1000
+        if (n !in setOf(100, 1000) && !anyPageSize) { misaligned.add("$name limit $n"); throw java.io.IOException("indexer /$name: 400 limit") }
+        if (from % n != 0L) { misaligned.add("$name $from/$n"); throw java.io.IOException("indexer /$name: 400 from not aligned") }
+        return n
+    }
+
+    /** Lets tests page with small sizes (the alignment rule still holds). */
+    var anyPageSize = false
+
+    override fun notes(fromPos: Long, limit: Int?): NotesPage {
+        val n = aligned("notes", fromPos, limit)
         val rows = notes.drop(fromPos.toInt()).take(n)
         return NotesPage(rows, fromPos + rows.size, rows.size == n, height - 1)
     }
@@ -715,7 +728,8 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     var identityRowTimes = true
 
     override fun identity(fromIndex: Long, limit: Int?): IdentityPage {
-        val rows = identityRows.drop(fromIndex.toInt()).map { if (identityRowTimes) it else it.copy(time = null) }
+        val n = aligned("identity", fromIndex, limit)
+        val rows = identityRows.drop(fromIndex.toInt()).take(n).map { if (identityRowTimes) it else it.copy(time = null) }
         return IdentityPage(rows, fromIndex + rows.size, identityRows.size.toLong(), height - 1)
     }
 
@@ -811,7 +825,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     override fun rates(epoch: Long?): List<RateRow> = emptyList()
 
     override fun stakeNotes(fromPos: Long, limit: Int?): StakeNotesPage {
-        val n = limit ?: 1000
+        val n = aligned("stake/notes", fromPos, limit)
         val rows = stakeRows.drop(fromPos.toInt()).take(n)
         return StakeNotesPage(rows, fromPos + rows.size, rows.size == n, height - 1)
     }
@@ -820,10 +834,11 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
 
     override fun stakeNullifierLeaves(fromIndex: Long, limit: Int?): StakeNfLeavesPage {
         if (!indexerNfTree) throw IndexerBaseMoved("no /stake/nullifier-tree (test)")
-        val n = limit ?: 1000
-        val from = maxOf(fromIndex, 1L)
-        val rows = (from until from + n).takeWhile { it <= stakeNfValues.size }.map { it to stakeNfValues[(it - 1).toInt()] }
-        return StakeNfLeavesPage(rows, rows.lastOrNull()?.first?.plus(1) ?: from, rows.size == n,
+        val n = aligned("stake/nullifier-tree", fromIndex, limit)
+        // Page k is leaf indexes [k*n, (k+1)*n); leaf 0 (the sentinel) is never a row.
+        val rows = (maxOf(fromIndex, 1L) until fromIndex + n).takeWhile { it <= stakeNfValues.size }.map { it to stakeNfValues[(it - 1).toInt()] }
+        val full = fromIndex + n <= stakeNfValues.size + 1L
+        return StakeNfLeavesPage(rows, if (full) fromIndex + n else (rows.lastOrNull()?.first?.plus(1) ?: maxOf(fromIndex, 1L)), full,
             if (stakeNfValues.isEmpty()) 0 else stakeNfValues.size + 1L, height - 1)
     }
 

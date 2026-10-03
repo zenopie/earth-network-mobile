@@ -290,7 +290,7 @@ class AuditFixesTest {
         assertThrows(WalletSync.Inconsistent::class.java) { wallet(chain, indexer = idx).sync() }
         val big = object : Wrapped(chain) {
             override fun notes(fromPos: Long, limit: Int?) =
-                NotesPage(List(WalletSync.MAX_PAGE_ROWS + 1) { NoteRow(fromPos + it, 1, Fr.ONE, ByteArray(0), null) }, fromPos, false, 1)
+                NotesPage(List(WalletSync.PAGE_SIZE + 1) { NoteRow(fromPos + it, 1, Fr.ONE, ByteArray(0), null) }, fromPos, false, 1)
         }
         assertThrows(WalletSync.Inconsistent::class.java) { wallet(chain, indexer = big).sync() }
     }
