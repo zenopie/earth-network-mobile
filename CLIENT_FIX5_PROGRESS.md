@@ -19,8 +19,17 @@ behavior. Web: app-orch (privacy/orchard). Never pushed.
 - [x] dex: deposit legs derived rounded up (SwapMath.depositLeg/deposit, pinned to x/dex mulDiv/mulDivUp vectors); ChainErrors explains 1120 dex, 1121/1122/1125/1126 personhood
 - [x] orchardvectors regenerated against 4a663d5; FakeChain models handles/leases/moves/predecessors; HandlesTest + AutomationTest + SwapMathTest; testDebugUnitTest (all) and assembleDebug pass; 231 witnesses pass nargo execute; versionCode 44 (1.0.37)
 
-## iOS
-- [ ] (as Android)
+## iOS (done, as Android)
+- [x] EarthCore: PrivacyHash (leaf predecessor_at, handle scope, affiliate field, noBound), PrivateMsgs (MsgRegister 11/12/15, MsgSetCaretaker 5, MsgBindHandle/MsgMoveHandle/MsgMoveCaretaker; referrer + consent removed), MembershipWitness (8 inputs), WalletSync (match with predecessor 0 or activated_at, budgets doubled), PrivacyStore (handle, moves, caretaker expiry; never-synced store keeps what a switch moved in), PrivacyWallet (bounds, bindHandle/releaseHandle/moveHandle/moveCaretaker/newOwner/adoptMoved, prepareRegistration(referrer:)), HandleDirectory actor (backend stream + chain pages + check before money moves), Reminders, PrivacyAutomation (only unbonding claims), GasGrant body, SwapMath.depositLeg/deposit, ChainErrors (e661979)
+- [x] tests: FakeChain ported, HandlesTests, reminders/no-automation, deposit vectors; swift test 171 pass; corecheck 149/149; 389 witnesses (Android + iOS) pass nargo execute (f49cefc)
+- [x] EarthUI: Send pays @handle (private from notes, MsgShield from the account), Handle screen (Settings and Identity), Switch identity (moves, recovery phrase behind ConfirmIdentity, then register there), referral by @handle at registration, reminder banners on Home, deposit legs rounded up, chain errors explained; automation without referrer consent; build 17; build-ios.sh ok; xcodebuild simulator (ARCHS=arm64) BUILD SUCCEEDED (a1ceef6)
+
+## Web
+- [x] app-orch privacy/orchard 05a0271..4fa9191 (see app-orch/CLIENT_FIX5_PROGRESS.md): referrer page removed, pay a handle (Shield), Handles page, legs rounded up, 1120, ballot max_predecessor; build + check:privacy/tx/forms/handles pass. Backend /handles needs CORS for the browser to use the stream (LCD fallback meanwhile).
+
+## Notes for other repos
+- backend-orch: /gas/register takes affiliate_handle/affiliate_pc/affiliate_ciphertext (matches); its /handles stream needs CORS for the web app.
+- Bound choice: every wallet proves the hour-rounded lease bound L (fresh registrants meet it) rather than max_predecessor = 0, so a proof does not mark a fresh identity (PRIVACY_FORMATS 4g).
 
 ## Docs
 - [x] PRIVACY_FORMATS.md: 4a663d5 summary, 3a (affiliate field, gas body, leaf match), msg table, 4d superseded, new 4g, 4c/4f automation, 5 parity
