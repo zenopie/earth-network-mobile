@@ -1,0 +1,7 @@
+[package]
+name = "vote"
+type = "bin"
+authors = [""]
+compiler_version = ">=1.0.0"
+[dependencies]
+privacy_core = { path = "../privacy_core" }

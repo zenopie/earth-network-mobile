@@ -5,6 +5,7 @@ members = [
   "membership",
   "action",
   "stake",
+  "vote",
   "lean_poa",
   "lean_poa_rsa2048",
   "lean_poa_rsa4096",

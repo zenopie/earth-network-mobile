@@ -30,6 +30,9 @@ pub global TAG_STAKE: Field = 0x65617274682e7374616b65; // "earth.stake"
 pub global TAG_SPC: Field = 0x65617274682e737063; // "earth.spc"
 pub global TAG_SNF: Field = 0x65617274682e736e66; // "earth.snf"
 pub global TAG_OTAG: Field = 0x65617274682e6f746167; // "earth.otag"
+// Stake nullifier indexed tree leaves and stake vote nullifiers (circuits/vote).
+pub global TAG_SNFL: Field = 0x65617274682e736e666c; // "earth.snfl"
+pub global TAG_VNF: Field = 0x65617274682e766e66; // "earth.vnf"
 
 /// Asset id of `uerth` = H(TAG_ASSET, 5, 0x7565727468) (zk/privacy.AssetID).
 pub global ASSET_ERTH: Field = 0xad44a14c7205c61e39db2c64b79005ffb14a2a927977e8cda2208be2e3fe54c;
@@ -125,6 +128,46 @@ pub fn owner_tag(owner_pk: Field, salt: Field) -> Field {
     h3(TAG_OTAG, owner_pk, salt)
 }
 
+/// Leaf of the stake nullifier indexed tree = H(TAG_SNFL, value, next_value,
+/// next_index): one inserted stake nullifier `value` and its successor in
+/// numeric order (`next_value`, at leaf `next_index`), next_value = 0 for the
+/// largest. Leaf 0 is the sentinel (0, smallest nullifier, its index). Empty
+/// slots are 0, which no tagged hash equals, so an empty slot is never a leaf.
+/// Matches zk/indexed.Leaf.Hash.
+pub fn nf_leaf(value: Field, next_value: Field, next_index: u32) -> Field {
+    h4(TAG_SNFL, value, next_value, next_index as Field)
+}
+
+/// Stake vote nullifier = H(TAG_VNF, nk, rho, position, proposal_id): one per
+/// stake note and proposal. Unlinkable to the note's spend nullifier and to the
+/// same note's vote on any other proposal without nk.
+pub fn vote_nf(nk: Field, rho: Field, position: u32, proposal_id: u64) -> Field {
+    h5(TAG_VNF, nk, rho, position as Field, proposal_id as Field)
+}
+
+/// Proves `value` is NOT in the indexed tree with root `root`: a low leaf
+/// (low_value, low_next_value, low_next_index) at low_index under root with
+/// low_value < value and (value < low_next_value, or low_next_value = 0: the
+/// low leaf holds the largest value). The leaves form a sorted linked list
+/// from the sentinel 0, so a value strictly between a leaf and its successor
+/// was never inserted. value = 0 is never provable (0 is the sentinel).
+pub fn assert_not_in_indexed(
+    value: Field,
+    low_value: Field,
+    low_next_value: Field,
+    low_next_index: u32,
+    low_index: u32,
+    low_path: [Field; DEPTH],
+    root: Field,
+) {
+    let leaf = nf_leaf(low_value, low_next_value, low_next_index);
+    assert(merkle_root(leaf, low_index, low_path) == root, "low leaf not in nullifier tree");
+    assert(low_value.lt(value), "low leaf not below the nullifier");
+    if low_next_value != 0 {
+        assert(value.lt(low_next_value), "nullifier is in the nullifier tree");
+    }
+}
+
 /// Root of the depth-32 tree from a leaf, its index and siblings (leaf level
 /// first). node = Poseidon2([left, right]); bit i of index set => the running
 /// node is the right child at level i.
@@ -192,9 +235,11 @@ fn test_tags_distinct() {
         TAG_SPC,
         TAG_SNF,
         TAG_OTAG,
+        TAG_SNFL,
+        TAG_VNF,
     ];
-    for i in 0..16 {
-        for j in 0..16 {
+    for i in 0..18 {
+        for j in 0..18 {
             if i != j {
                 assert(t[i] != t[j]);
             }
