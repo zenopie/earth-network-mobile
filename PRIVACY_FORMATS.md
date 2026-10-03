@@ -235,6 +235,17 @@ pc_anml=2, ct_anml="anml", pc_erth=3, ct_erth="erth", affiliate=0 →
 bundle) plus `pc_gas` and `ciphertext_gas`, a fresh v2 ciphertext to self
 (177 bytes, required). It is the only grant: `/gas/transparent`,
 `/gas/android`, `/gas/challenge`, `/gas/ios`, `/gas/human` are gone.
+**Proof of work (backend services/pow.py).** The request may carry
+`"pow": {"ts": <int>, "nonce": "<str>"}`, a hashcash stamp:
+SHA-256(`"earth-gas-pow/v1:" + ts + ":" + binding + ":" + nullifier + ":" + nonce`,
+ASCII) with at least `bits` leading zero bits, ts unix seconds (±600 s),
+binding and nullifier `public_signals[1]` and `[2]` exactly as sent, nonce a
+lowercase hex counter. The wallet asks `GET /gas/pow` for `bits`, stamps at
+it (off the main thread, cancellable, with progress; 22 bits is a few
+seconds), posts; on 428 it makes a fresh stamp at the answer's `pow.bits`
+and posts again (at most 4 rounds); it keeps a stamp for the next try only
+after a 503 or 429 (the server gave it back, reused within 300 s), never
+after a 403.
 
 **Registration record note (version 2, K1).** MsgRegister's fee bundle
 always carries, as one of its outputs, a value-0 uerth note to the wallet's
@@ -273,8 +284,8 @@ too. The leaf index (the tx's `register` event) and activated_at (its block
 time) are filled in when the wait for the block returns, or else by the
 next sync, which looks the tx up by hash (`GET /cosmos/tx/v1beta1/txs/{hash}`);
 a tx that failed in its block is kept as a failure for the UI (a new
-registration replaces it), and its spent notes are released after the usual
-15 minutes. Every sync then tries to resolve it: once the local identity
+registration replaces it), and its spent notes are released once the chain
+is past its timeout_height (§4). Every sync then tries to resolve it: once the local identity
 tree has the leaf, the country is found by recomputing
 `H(TAG_LEAF, idc, dsc_key, country, activated_at)` over the hint, unknown
 (0) and every A..Z pair; the identity record is written and the pending one
@@ -288,14 +299,23 @@ no higher than the notes, so the record is always seen first; at most 64).
 Then, once a sync, newest record first, stopping at the newest that
 matched:
 
-1. **Chain time.** activated_at is exactly the registration block's time,
-   so the wallet asks the LCD for block h
+1. **Block time from the indexer (audit 3).** activated_at is exactly the
+   registration block's time. The indexer's identity rows may carry it as a
+   fifth column (`[index, height, leaf, zeroed_height, time]`); the record
+   keeps the time of its height's rows as they pass, and every country (the
+   hint, unknown, then every A..Z pair: at most 677 hashes a leaf) is tried
+   at exactly that time. The LCD is never asked about the registration's
+   block alone.
+2. **Block time from the LCD, with a cover set.** When the rows carry no
+   time (or it did not match), the LCD is asked for 16 block times
    (`GET /cosmos/base/tendermint/v1beta1/blocks/{h}`, `block.header.time`,
-   the header's height must be h) and tries every country (the hint,
-   unknown, then every A..Z pair: at most 677 hashes a leaf) at exactly that
-   time. Known and unmatched, the record is given up. The device clock's
-   built_at plays no part, so a skewed phone clock does not matter.
-2. **Fallback (block unavailable).** built_at is searched outward
+   the header's height must be h): h and 15 other heights drawn uniformly
+   from [1, the synced height], in a shuffled order. The set is chosen once
+   and persisted with the record (a retry asks the same set; at most 3
+   fetches; once answered, never again). Its time is tried the same way;
+   known and unmatched, the record is given up (EXHAUSTED). The device
+   clock's built_at plays no part in steps 1-2.
+3. **Fallback (no block time at all).** built_at is searched outward
    (0, +1, -1, +2, ...), the hint and unknown over [built_at − 3600,
    built_at + 86400], then every other country over [built_at − 600,
    built_at + 3600]. The search is resumable and bounded: the cursor and
@@ -304,7 +324,13 @@ matched:
    hashes over all records (a few seconds on a phone, so the wallet lock is
    never held long), and a record that spent 4,000,000 is given up. A
    device clock off by more than the windows (a day slow, an hour fast) is
-   only found by step 1.
+   only found by steps 1-2.
+
+Every exact time tried is recorded with the record; a time not tried
+before (the indexer's, the LCD's) is still tried after the record was given
+up, more leaves at its height reopen it, and a store reset finds every
+record afresh (K13): an indexer serving a wrong time cannot block a
+restore for good.
 
 A match gives leaf_index, dsc_key, country and activated_at: the identity
 record (passport nullifier left empty; nothing needs it). A registration
@@ -340,8 +366,15 @@ app tells the user).
 
   `Bytes(memo)` over the memo's UTF-8 bytes (Bytes("") for none). The wallet
   sets memo "" (an unshield may carry a user memo, e.g. an exchange deposit
-  tag) and timeout_height 0, and fixes the gas limit (from simulation)
-  before proving; the tx carries exactly those values.
+  tag) and timeout_height = the LCD's latest height + 50 (audit 3), and
+  fixes the gas limit (from simulation) before proving; the tx carries
+  exactly those values (the simulated tx carries the same timeout).
+- **Pending spends (K7, audit 3).** The notes a tx spends are marked
+  pending when the node accepts it, with its timeout_height. They are
+  released (spendable again) only when the LCD's latest height is past that
+  timeout_height and the wallet has read the nullifier stream through it
+  without seeing their nullifiers: never by the wall clock. (Marks made by
+  older builds, without a timeout, keep the old 15-minute rule.)
 - Fee = max(x/shielded min_fee, ceil(node min gas price × gas limit)); gas
   limit = simulated gas + max(10%, 20,000). Simulation runs on the real
   anchors, nullifiers, commitments, value commitments and ciphertexts with
@@ -351,6 +384,27 @@ app tells the user).
   then the sighash is computed (with that gas limit) and every action, the
   stake proof and the membership proven over it, every bundle signed. Every
   proof must be exactly 14,656 bytes (checked before broadcast).
+- **Fee cap (audit 3).** Before anything is proven the fee must be at most
+  min(2 ERTH, 2 × the wallet's own estimate): the estimate prices, at the
+  node's gas price (and at least min_fee), the gas of the tx's shape at the
+  chain's default schedule: 100,000 + 10 per tx byte + per bundle 100,000 +
+  2,300,000 per action, + 2,600,000 for a stake proof, + 2,150,000 for a
+  membership, + 3,600,000 for MsgRegister. A node asking more is refused
+  (nothing proven or sent); the automation has no other limit. A confirm
+  sheet's fee bounds the tx it confirms: a simulated fee above what the
+  sheet showed throws before proving and the sheet is shown again at the
+  new fee (Android's sheet shows the fee of 10,000,000 gas).
+- **Quotes (audit 3).** A quote for a sheet (simulate without proving)
+  carries random nullifiers in place of the wallet's (pool, stake, and the
+  membership's), so the node learns nothing about the notes before the
+  user confirms; only the confirmed run simulates the real ones.
+- **SRS (audit 3).** Both apps bundle the first 32,769 G1 points of Aztec's
+  bn254 transcript (`crs.aztec.network/g1.dat` bytes 0..2,097,215, sha256
+  `d769ac6c98f8fab858a7e9967f2b7f181d8ad9fdcdf55438c915696febf0e99c`),
+  enough for every privacy circuit (all set up at 2^15), passed to bb as a
+  `.dat` path: proving a private tx never touches the network. The passport
+  circuits (2^18 and more: 16-34 MB) still download theirs, at
+  registration, which is public anyway.
 - **One fee rule.** fee = the bundles' uerth balance less the uerth the msg
   moves itself. Moves: MsgDelegate.amount; MsgNoteSwap.amount_in when
   denom_in is uerth; MsgAddLiquidityShielded.erth_amount; nothing for every
@@ -474,6 +528,14 @@ app tells the user).
 
    A 404 means the base moved: re-read the status (step 1) and retry once.
    Response bodies are capped (8 MiB decompressed) and pages to 5000 rows.
+   **Paging (audit 3).** A position page (notes, stake notes) must name
+   `next_pos` = from + rows, and one marked complete (more follows) must
+   carry rows; a height page never names a `next_height` below its
+   `from_height` (nor equal to it when complete) and holds no earlier
+   height. Anything else is inconsistent (the wallet starts over once,
+   then stops). One sync, its retries included, gives up after 10 minutes.
+   The identity stream's optional fifth column `time` is the leaf's block
+   time (§3a restore).
 
 A minted stake note row has denom, amount and spc and (fced976 on) its blind
 stake ciphertext; a created one its wallet stake ciphertext and nulls.
@@ -488,6 +550,13 @@ the wallet build on, or show as verified, trees the chain does not have; an
 operator controlling both the indexer and the LCD could still lie
 consistently (it could not forge spends: every proof is checked by the
 validators, so a forged tree only yields proofs the chain refuses).
+
+**Sync generations (audit 3).** Before a sync's first request the wallet
+bumps its sync generation, clears "verified" and persists both; only the
+root checks at the end of that same sync mark that generation verified. A
+sync that fails part way (an indexer that serves forged notes and then
+breaks a later stream) leaves the wallet unverified, and every private tx
+needs the latest generation verified.
 
 After each sync the wallet checks every local root against the LCD:
 
@@ -513,7 +582,8 @@ After each sync the wallet checks every local root against the LCD:
   this sync, are asked of `GET /earth/shielded/v1/nullifiers/{hex}` and
   `GET /earth/shieldedstaking/v1/stake_nullifiers/{hex}`; one the chain says
   is not spent leaves the roots unverified. The wallet never asks about its
-  own nullifiers (that would name its notes).
+  own nullifiers (that would name its notes): they are left out of the
+  sample.
 - **Indexer behind the tip (K9).** If the LCD's latest block
   (`/cosmos/base/tendermint/v1beta1/blocks/latest`) is more than 30 blocks
   past the indexer's synced height, the roots are unverified ("the indexer
@@ -525,6 +595,34 @@ A local tree that differs from the indexer's latest is resynced once; a
 mismatch wipes the synced data and is shown. Unverified roots block every
 private tx (no proof is built on them) and are shown as such next to the
 private balances, stake and registration until a later sync verifies them.
+
+## 4c. Wallet behaviors (audit 3)
+
+- **Automation** (daily claim, caretaker/referrer refresh, matured
+  unbonding claims) takes one action at a time, chosen at random among
+  those due; before the next, a random 30-180 s pause and a full sync, and
+  a fresh decision. Actions sharing a single ERTH note are ordered by it:
+  while the first's change has not landed there is no spendable fee note
+  and the second waits for a later pass. Logs name the kind of action only,
+  never a denom.
+- **Stake vote run** (K5) stops with the session: lock, session end and a
+  wallet switch suspend it (the wallet's keys are dropped, the persisted
+  run kept); the next unlock resumes it from that wallet's own store only.
+  A second start while one runs is refused.
+- **Saved state.** state.json is written to a temp file, fsynced and
+  renamed over (iOS: atomic write); a failed save is an error, never
+  silent. An unreadable state.json is an error shown to the user, never
+  replaced by an empty wallet.
+- **Forgetting a wallet** deletes its `privacy/<id>/` directory (notes,
+  identity, records, trees): every file overwritten with zeros, synced,
+  then unlinked.
+- **A store from before K6** (same chain id, no genesis recorded) keeps its
+  identity record when the genesis is first recorded (as a confirmed
+  switch: synced data goes, the registration stays).
+- **Untrusted numbers** from the LCD or indexer (tree sizes, params,
+  durations, epochs, a stake snapshot ahead of the local tree) are parsed
+  bounded and refused, never trapped on or wrapped: a snapshot past the
+  local stake tree is "sync first".
 
 ## 5. Off-device parity
 
