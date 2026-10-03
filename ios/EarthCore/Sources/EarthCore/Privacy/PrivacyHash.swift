@@ -19,8 +19,10 @@ public enum PrivacyHash {
     public static let tagSignal = tag("earth.signal")
     public static let tagBytes = tag("earth.bytes")
     public static let tagScope = tag("earth.scope")
-    /// A registration's referrer: H(TAG_AFFILIATE, Bytes(handle), pc, Bytes(ct)).
+    /// A registration's referrer: H(TAG_AFFILIATE, Bytes(handle)).
     public static let tagAffiliate = tag("earth.affiliate")
+    /// The opening of the referral note the chain mints to a referrer handle's address.
+    public static let tagReferral = tag("earth.referral")
     // The stake note tree (x/shieldedstaking, circuits/stake).
     public static let tagStake = tag("earth.stake")
     public static let tagSPC = tag("earth.spc")
@@ -148,11 +150,20 @@ public enum PrivacyHash {
     }
 
     /// The registration binding's affiliate field for a referrer named by
-    /// handle, with the referral note minted to it:
-    /// H(TAG_AFFILIATE, Bytes(handle), affiliate_pc, Bytes(affiliate_ct)).
-    /// A registration naming no referrer carries 0.
-    public static func affiliateField(handle: String, pc: Fr, ct: Data) -> Fr {
-        h(tagAffiliate, bytes(Data(handle.utf8)), pc, bytes(ct))
+    /// handle: H(TAG_AFFILIATE, Bytes(handle)). A registration naming no
+    /// referrer carries 0. The chain makes the referral note itself
+    /// (`referralOpening`), so the handle is all the registrant binds.
+    public static func affiliateField(handle: String) -> Fr {
+        h(tagAffiliate, bytes(Data(handle.utf8)))
+    }
+
+    /// The (rho, rcm) of the referral note a registration mints to its
+    /// referrer handle's owner_pk (chain zk/privacy.ReferralOpening):
+    /// H(TAG_REFERRAL, nullifier, leaf_index, 0) and (..., 1), nullifier the
+    /// passport nullifier, leaf_index the new identity leaf's. Public: the
+    /// mint event carries them.
+    public static func referralOpening(nullifier: Fr, leafIndex: UInt64) -> (rho: Fr, rcm: Fr) {
+        (h(tagReferral, nullifier, u64(leafIndex), u64(0)), h(tagReferral, nullifier, u64(leafIndex), u64(1)))
     }
 
     /// The membership bound that bounds nothing (max_activation / max_predecessor): 2^63 - 1.

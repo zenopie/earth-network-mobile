@@ -15,20 +15,21 @@ func checkMath() {
         let tokenForHub: (out: String, fee: String)
     }
     let fee = Decimal(string: "0.3")!
+    // Chain 203d3b2: the fee rounds up (audit 5 L-DX4).
     let vectors = [
         Vector(erth: "1000000000", token: "500000000", amountIn: "1000000",
-               hubForToken: ("498003", "3000"), tokenForHub: ("1990019", "5988")),
+               hubForToken: ("498003", "3000"), tokenForHub: ("1990018", "5989")),
         Vector(erth: "1000000000", token: "500000000", amountIn: "250000000",
-               hubForToken: ("99759855", "750000"), tokenForHub: ("332333334", "999999")),
-        // A single base unit: the fee truncates to zero, and the chain still
-        // pays out. A quote that rounded the fee up would refuse this trade.
+               hubForToken: ("99759855", "750000"), tokenForHub: ("332333333", "1000000")),
+        // A single base unit: the fee rounds up to one, which leaves nothing to
+        // swap; a quote that truncated the fee would promise output the chain never pays.
         Vector(erth: "123456789012", token: "987654321098", amountIn: "1",
-               hubForToken: ("8", "0"), tokenForHub: ("0", "0")),
+               hubForToken: ("0", "1"), tokenForHub: ("0", "0")),
         Vector(erth: "123456789012", token: "987654321098", amountIn: "7777777",
-               hubForToken: ("62031656", "23333"), tokenForHub: ("969298", "2916")),
-        // Nearly draining a tiny pool — the region where truncation shows.
+               hubForToken: ("62031648", "23334"), tokenForHub: ("969297", "2917")),
+        // Nearly draining a tiny pool — the region where rounding shows.
         Vector(erth: "1000000", token: "1000000", amountIn: "999999",
-               hubForToken: ("499248", "2999"), tokenForHub: ("498500", "1499")),
+               hubForToken: ("499248", "3000"), tokenForHub: ("498499", "1500")),
     ]
 
     for v in vectors {

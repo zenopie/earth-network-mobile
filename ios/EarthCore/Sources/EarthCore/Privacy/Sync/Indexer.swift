@@ -73,6 +73,10 @@ public struct IndexerHalted: Swift.Error, LocalizedError {
     public var errorDescription: String? { "the privacy indexer has halted: \(reason)" }
 }
 
+/// A note tree leaf. A note the chain minted with an opening it chose
+/// (MintOpenNote: the referral note a registration pays its referrer handle)
+/// has no ciphertext and carries the opening from its `shielded_mint` event,
+/// `ownerPK`, `rho` and `rcm`; every other row has them nil.
 public struct NoteRow: Sendable {
     public let position: UInt64
     public let height: UInt64
@@ -80,8 +84,12 @@ public struct NoteRow: Sendable {
     public let ciphertext: Data
     /// The public amount ("<value><denom>") of a shield or mint; nil for a transfer output.
     public let amount: String?
-    public init(position: UInt64, height: UInt64, cm: Fr, ciphertext: Data, amount: String?) {
+    public let ownerPK: Fr?
+    public let rho: Fr?
+    public let rcm: Fr?
+    public init(position: UInt64, height: UInt64, cm: Fr, ciphertext: Data, amount: String?, ownerPK: Fr? = nil, rho: Fr? = nil, rcm: Fr? = nil) {
         self.position = position; self.height = height; self.cm = cm; self.ciphertext = ciphertext; self.amount = amount
+        self.ownerPK = ownerPK; self.rho = rho; self.rcm = rcm
     }
 }
 
@@ -437,10 +445,37 @@ public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
                               syncedHeight: j.synced_height.uint64(default: 0))
     }
 
+    /// The notes stream format this wallet reads (backend README "Note stream format 2", chain 203d3b2).
+    public static let noteFormat = 2
+    static let noteFields = ["position", "height", "cm", "ciphertext", "amount", "owner_pk", "rho", "rcm"]
+
+    /// /notes, format 2: columns by name from `fields` (position, height, cm,
+    /// ciphertext, amount, owner_pk, rho, rcm). `ciphertext` is null exactly
+    /// for an open note, whose owner_pk, rho and rcm (hex) are then all set;
+    /// they are null on every other row. A page of another format (an old
+    /// backend) or one missing a column is refused.
     static func parseNotes(_ j: JSON) throws -> NotesPage {
-        let rows = try j.notes.array.map { r in
-            NoteRow(position: r[0].uint64(default: 0), height: r[1].uint64(default: 0), cm: try Fr(hex: r[2].string ?? ""),
-                    ciphertext: Data(base64Encoded: r[3].string ?? "") ?? Data(), amount: r[4].string)
+        let format = j.format.int64 ?? 1
+        guard format == Int64(noteFormat) else { throw PrivacyError("the privacy indexer serves notes format \(format), not \(noteFormat); it needs an update") }
+        let fields = j.fields.array.compactMap(\.string)
+        var col: [String: Int] = [:]
+        for name in noteFields {
+            guard let i = fields.firstIndex(of: name) else { throw PrivacyError("the notes page has no \(name) column") }
+            col[name] = i
+        }
+        let rows = try j.notes.array.map { r -> NoteRow in
+            func v(_ name: String) -> JSON { r[col[name]!] }
+            func hex(_ name: String) throws -> Fr? { v(name).exists ? try Fr(hex: v(name).string ?? "") : nil }
+            let opening = [try hex("owner_pk"), try hex("rho"), try hex("rcm")]
+            let open = !v("ciphertext").exists
+            if opening.contains(where: { $0 == nil }), opening.contains(where: { $0 != nil }) { throw PrivacyError("a note row carries part of an opening") }
+            if open != (opening[0] != nil) {
+                throw PrivacyError("a note row has \(open ? "neither a ciphertext nor an opening" : "both a ciphertext and an opening")")
+            }
+            if open, !v("amount").exists { throw PrivacyError("an open note row has no amount") }
+            return NoteRow(position: v("position").uint64(default: 0), height: v("height").uint64(default: 0), cm: try Fr(hex: v("cm").string ?? ""),
+                           ciphertext: open ? Data() : Data(base64Encoded: v("ciphertext").string ?? "") ?? Data(), amount: v("amount").string,
+                           ownerPK: opening[0], rho: opening[1], rcm: opening[2])
         }
         return NotesPage(rows: rows, nextPos: j.next_pos.uint64(default: 0), complete: j.complete.bool(default: false),
                          syncedHeight: j.synced_height.uint64(default: 0))

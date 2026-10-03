@@ -2,12 +2,16 @@ import Foundation
 
 /// x/shielded Query/Root: a root the chain recorded, whether it is still an
 /// anchor, its tree size, and the height of the block that produced it (nil:
-/// the node did not say).
+/// the node did not say). `expiresAt`: when it stops being an anchor (0: the
+/// latest root, which does not lapse; nil: the node did not say).
 public struct NoteRootRecord: Sendable, Equatable {
     public let valid: Bool
     public let treeSize: UInt64
     public let height: UInt64?
-    public init(valid: Bool, treeSize: UInt64, height: UInt64? = nil) { self.valid = valid; self.treeSize = treeSize; self.height = height }
+    public let expiresAt: Int64?
+    public init(valid: Bool, treeSize: UInt64, height: UInt64? = nil, expiresAt: Int64? = nil) {
+        self.valid = valid; self.treeSize = treeSize; self.height = height; self.expiresAt = expiresAt
+    }
 }
 
 /// The chain's latest block: its height and time (unix seconds; nil when the node did not say).
@@ -88,7 +92,10 @@ public struct ChainIdentity: Sendable, Equatable {
 ///     (chain id, genesis) wipes the local data;
 ///  2. every note commitment, appended to the local note tree, every
 ///     ciphertext trial-decrypted with this wallet's ek (v1, or v2 against
-///     the row's public amount: one note-discovery rule, no counters);
+///     the row's public amount: one note-discovery rule, no counters), and
+///     every open note (no ciphertext: the referral note) whose owner_pk is
+///     ours checked against its cm; a split payout's rows sharing one
+///     ciphertext are each a note of their own;
 ///  3. every nullifier, up to the height the notes reached;
 ///  4. the stake tree the same way (the wallet's own stake ciphertexts, and
 ///     the blind stake ciphertexts of the notes the chain minted);
@@ -863,6 +870,16 @@ public final class WalletSync {
         if let a = amount { store.mutate { _ = $0.denoms.insert(a.denom) } }
         let note: NotePlaintext
         switch r.ciphertext.count {
+        // An open mint (chain 203d3b2: the referral note to a handle we hold):
+        // no ciphertext, the opening on the row. Ours if its owner_pk is ours
+        // and the opening with the public amount recomputes the row's cm
+        // (which the tree check pins to the chain's root). Matched here, over
+        // the whole stream: no query ever names our owner_pk.
+        case 0:
+            guard let a = amount, let owner = r.ownerPK, let rho = r.rho, let rcm = r.rcm, owner == keys.ownerPK else { return nil }
+            let n = NotePlaintext(denom: a.denom, value: a.value, rho: rho, rcm: rcm)
+            guard n.cm(ownerPK: keys.ownerPK) == r.cm else { return nil }
+            note = n
         case NoteCipher.blindCiphertextBytes:
             guard let a = amount, let n = NoteCipher.tryDecryptBlind(r.ciphertext, cm: r.cm, denom: a.denom, value: a.value, keys: keys) else { return nil }
             note = n

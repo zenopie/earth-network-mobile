@@ -148,17 +148,26 @@ final class HandlesTests: XCTestCase {
         let b = try wallet(chain, bob)
         guard case let .payable(e, addr) = try await chain.handleDirectory().resolveForPayment("@alice") else { return XCTFail("not payable") }
         let prep = try await register(chain, b, passport: "222", referrer: PrivacyWallet.Referrer(handle: e.handle, address: addr))
-        // The binding commits to the handle and the referral note made to it.
-        let ref = prep.referral!
-        XCTAssertEqual(177, ref.ciphertext.count)
+        // The binding commits to the handle alone (chain 203d3b2): the chain makes the referral note.
         XCTAssertEqual(PrivacyHash.registrationBinding(idc: b.keys.idc, pcAnml: prep.anml.pc, ctAnml: prep.anml.ciphertext, pcErth: prep.erth.pc,
-                                                       ctErth: prep.erth.ciphertext, affiliate: PrivacyHash.affiliateField(handle: "alice", pc: ref.pc, ct: ref.ciphertext)),
+                                                       ctErth: prep.erth.ciphertext, affiliate: PrivacyHash.affiliateField(handle: "alice")),
                        prep.binding)
+        // Minted to the handle's owner_pk with the opening derived from the passport nullifier and the leaf.
+        let leaf = b.store.state.identity!.leafIndex
+        let o = PrivacyHash.referralOpening(nullifier: Fr(UInt64(222)), leafIndex: leaf)
         XCTAssertEqual(1, chain.referralNotes.count)
         XCTAssertEqual("alice", chain.referralNotes.first?.0)
-        // The referrer finds its half as a note, privately.
+        XCTAssertEqual(PrivacyHash.pc(ownerPK: a.keys.ownerPK, rho: o.rho, rcm: o.rcm), chain.referralNotes.first?.1)
+        // The referrer's wallet finds it in the stream (no ciphertext: by owner_pk, cm checked), privately.
         try await a.sync()
         XCTAssertEqual(before + 5_000_000, bal(a))
+        let note = try XCTUnwrap(a.notes.first { $0.position == chain.referralPositions.first })
+        XCTAssertEqual(o.rho, note.note.rho)
+        XCTAssertEqual(o.rcm, note.note.rcm)
+        XCTAssertEqual(PrivacyHash.nf(nk: a.keys.nk, rho: o.rho, position: note.position), note.nf)
+        // Nobody else's wallet takes it.
+        try await b.sync()
+        XCTAssertFalse(b.notes.contains { $0.position == note.position })
 
         // A lapsed handle is refused (1121); a registration cannot name its own wallet.
         chain.now += chain.handleLease + 10

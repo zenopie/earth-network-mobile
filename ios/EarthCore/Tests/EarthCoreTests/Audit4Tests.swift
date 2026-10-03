@@ -62,7 +62,7 @@ final class Audit4Tests: XCTestCase {
 
     /// iOS PoC A4: synced_height = 2^64-1 used to trap (`ceiling + 1`); it is now Inconsistent.
     func testA4_SyncedHeightMaxIsInconsistentNotATrap() async throws {
-        let body = #"{"notes":[],"next_pos":0,"complete":false,"synced_height":"18446744073709551615"}"#
+        let body = #"{"format":2,"fields":["position","height","cm","ciphertext","amount","owner_pk","rho","rcm"],"notes":[],"next_pos":0,"complete":false,"synced_height":"18446744073709551615"}"#
         let j = JSON(try JSONSerialization.jsonObject(with: Data(body.utf8)))
         XCTAssertEqual(UInt64.max, try HTTPPrivacyIndexer.parseNotes(j).syncedHeight)
         let chain = FakeChain()
@@ -339,6 +339,7 @@ final class Audit4Tests: XCTestCase {
         let snap: PrivacyReads.Snapshot
         let values: [Fr]
         func personhoodParams() async throws -> PrivacyReads.PersonhoodParams { try await inner.personhoodParams() }
+        func leaseBounds() async throws -> PrivacyReads.LeaseBounds { try await inner.leaseBounds() }
         func ballotInputs(proposalID: UInt64, optionID: UInt64) async throws -> PrivacyReads.BallotInputs {
             try await inner.ballotInputs(proposalID: proposalID, optionID: optionID)
         }
@@ -768,7 +769,7 @@ final class ScriptedProtocol: URLProtocol {
             client?.urlProtocol(self, didReceive: resp, cacheStoragePolicy: .notAllowed)
             client?.urlProtocolDidFinishLoading(self)
         } else {
-            send(200, ["Content-Type": "application/json"], Data(#"{"notes":[],"next_pos":0,"complete":false,"synced_height":1}"#.utf8))
+            send(200, ["Content-Type": "application/json"], Data(#"{"format":2,"fields":["position","height","cm","ciphertext","amount","owner_pk","rho","rcm"],"notes":[],"next_pos":0,"complete":false,"synced_height":1}"#.utf8))
         }
     }
 

@@ -152,15 +152,27 @@ public enum SwapMath {
         amountOut * BigInt(10_000 - bps) / 10_000
     }
 
-    /// The chain's `feeOf`: a percent of the amount, truncated.
+    /// The chain's `feeOf` (chain 203d3b2, audit 5 L-DX4: rounded up, so a
+    /// small swap cannot pay nothing):
+    /// LegacyDec(amount).Mul(fee).Quo(100).Ceil().TruncateInt(). Mul is exact
+    /// for an 18-place fee; Quo rounds its 18th place half-even
+    /// (chopPrecisionAndRound) before the ceiling, which only matters for a
+    /// fee whose quotient lands within 1e-18 of an integer. As Android's.
     ///
     /// Done in integers via the percent's own scale rather than in `Decimal`,
     /// because `Decimal` carries 38 digits and a large reserve times a fee
     /// would round somewhere the chain does not.
     static func feeOf(_ amount: BigInt, _ feePercent: Decimal) -> BigInt {
         let (numerator, scale) = ratio(of: feePercent)
-        guard numerator > 0 else { return 0 }
-        return amount * numerator / (BigInt(100) * scale)
+        guard numerator > 0, amount > 0 else { return 0 }
+        // The quotient in units of 1e-18, rounded half-even, then the ceiling of it.
+        let unit = BigInt(10).power(18)
+        let den = BigInt(100) * scale
+        let (q, r) = (amount * numerator * unit).quotientAndRemainder(dividingBy: den)
+        let twice = r * 2
+        let atto = twice > den || (twice == den && q % 2 != 0) ? q + 1 : q
+        let (whole, frac) = atto.quotientAndRemainder(dividingBy: unit)
+        return frac > 0 ? whole + 1 : whole
     }
 
     /// A decimal percent as an exact integer fraction, so no precision is lost

@@ -109,6 +109,25 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     var predecessorOf: [UInt64: Int64] = [:]
     /// Referral notes minted (handle, pc).
     var referralNotes: [(String, Fr)] = []
+    var referralPositions: [UInt64] = []
+    /// The longest handle lease ever in force (handle_lease_max), and a caretaker
+    /// lease held after a cut (lease_hold): what LeaseBounds reports and the bounds use.
+    var handleLeaseMax: Int64 = 0
+    var caretakerLeaseHold: Int64 = 0
+    var effectiveHandleLease: Int64 { max(handleLease, handleLeaseMax) }
+    var effectiveCaretakerLease: Int64 { max(caretakerLease, caretakerLeaseHold) }
+    /// Every LeaseBounds read (the wallet must use it for every bound).
+    var leaseBoundsReads = 0
+    /// Query/Root's expires_at per root (nil: not said).
+    var rootExpiresAt: ((Fr) -> Int64?)?
+
+    /// Query/LeaseBounds at the chain's last block time.
+    func leaseBounds() -> PrivacyReads.LeaseBounds {
+        leaseBoundsReads += 1
+        return PrivacyReads.LeaseBounds(blockTime: now, activationMarginSeconds: 86_400, handleLeaseSeconds: effectiveHandleLease,
+                                        handleClaimBound: now - effectiveHandleLease - 86_400, caretakerLeaseSeconds: effectiveCaretakerLease,
+                                        caretakerCastBound: now - effectiveCaretakerLease - 86_400)
+    }
     /// Set to make the backend's handle stream lie about an address (the chain check must catch it).
     var forgeHandleAddress: String?
     /// Set to make a set_caretaker event report this expires_at (a hostile node, audit 5 M4).
@@ -148,6 +167,20 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         notes.append(NoteRow(position: pos, height: height, cm: cm, ciphertext: ct, amount: "\(value)\(denom)"))
         return pos
     }
+
+    /// MintOpenNote: a note whose opening the chain chose, no ciphertext; the
+    /// row carries owner_pk, rho and rcm (the shielded_mint event's).
+    @discardableResult
+    func mintOpen(_ denom: String, _ value: UInt64, ownerPK: Fr, rho: Fr, rcm: Fr) -> UInt64 {
+        let cm = PrivacyHash.cm(asset: PrivacyHash.assetID(denom), value: value, pc: PrivacyHash.pc(ownerPK: ownerPK, rho: rho, rcm: rcm))
+        let pos = noteTree.append(cm)
+        notes.append(NoteRow(position: pos, height: height, cm: cm, ciphertext: Data(), amount: "\(value)\(denom)", ownerPK: ownerPK, rho: rho, rcm: rcm))
+        return pos
+    }
+
+    /// MintNoteSplit: one pc and one ciphertext, several notes, each its own amount and position.
+    func mintSplit(_ denom: String, _ values: [UInt64], _ pc: Fr, _ ct: Data) -> [UInt64] { values.map { mint(denom, $0, pc, ct) } }
+
 
     @discardableResult
     func mintStake(_ denom: String, _ amount: UInt64, _ spc: Fr, _ ct: Data) -> UInt64 {
@@ -336,10 +369,9 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             try only(nil)
             try need(m.ciphertextAnml.count == NoteCipher.blindCiphertextBytes && m.ciphertextErth.count == NoteCipher.blindCiphertextBytes,
                      "registration ciphertexts")
-            // All three of the referral, or none; its note is a 177-byte blind ciphertext.
-            if !m.affiliateHandle.isEmpty || !m.affiliatePc.isEmpty || !m.affiliateCiphertext.isEmpty {
-                try need(Handles.valid(m.affiliateHandle) && m.affiliatePc.count == 32 && m.affiliateCiphertext.count == NoteCipher.blindCiphertextBytes,
-                         "affiliate: all three, or none")
+            // The referral is the handle alone (chain 203d3b2); the chain makes its note.
+            if !m.affiliateHandle.isEmpty {
+                try need(Handles.valid(m.affiliateHandle), "affiliate_handle")
             }
         case let m as MsgBindHandle:
             try only(nil)
@@ -397,6 +429,10 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
 
     private func handleOf(_ n: Fr) -> HandleRec? { handles.values.first { $0.nullifier == n } }
 
+    /// Audit 5 P2: a lapsed split the sweep has not reached is not held; only a live handle renews unbounded.
+    private func caretakerHoldsLive(_ n: Fr) -> Bool { caretakerVotes[n] != nil && (caretakerExpiry[n] ?? 0) > now }
+    private func holdsLiveHandle(_ n: Fr) -> Bool { handleOf(n).map { now < $0.expiresAt } ?? false }
+
     /// The chain's refusal of a too-recent predecessor (strictly before the bound).
     private func predecessorBound(_ maxPredecessor: UInt64, _ bound: Int64) throws {
         try need(bound > 0 && maxPredecessor < UInt64(bound), "max_predecessor \(maxPredecessor) is not before \(bound) (now - lease length - activation margin)")
@@ -413,9 +449,9 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         case let m as MsgVoteProposalPrivate: return (PrivacyHash.proposalScope(proposalID: m.proposalID, round: 0), none, ballotMaxPredecessor())
         case let m as MsgSetCaretaker:
             let n = try f(m.membership.nullifier)
-            if caretakerVotes[n] == nil, !m.percentages.isEmpty {
+            if !caretakerHoldsLive(n), !m.percentages.isEmpty {
                 try need(!caretakerMovedOut.contains(n), "this identity moved its caretaker split away (code 1126)")
-                try predecessorBound(m.maxPredecessor, now - caretakerLease - 86_400)
+                try predecessorBound(m.maxPredecessor, now - effectiveCaretakerLease - 86_400)
             }
             return (PrivacyHash.caretakerScope(), none, m.maxPredecessor)
         case let m as MsgMoveCaretaker:
@@ -432,9 +468,9 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             if !m.handle.isEmpty {
                 try need(Handles.valid(m.handle), "not a handle")
                 if let h = handles[m.handle] { try need(h.nullifier == n || now >= h.expiresAt + handleRenewal, "handle is held by another human (code 1122)") }
-                if !holds {
+                if !holdsLiveHandle(n) {
                     try need(!handleMovedOut.contains(n), "this identity moved its handle away (code 1125)")
-                    try predecessorBound(m.maxPredecessor, now - handleLease - 86_400)
+                    try predecessorBound(m.maxPredecessor, now - effectiveHandleLease - 86_400)
                 }
             } else {
                 try need(holds, "the prover holds no handle to release")
@@ -443,6 +479,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         case let m as MsgMoveHandle:
             let n = try f(m.membership.nullifier)
             try need(handles[m.handle]?.nullifier == n, "the prover does not hold \(m.handle)")
+            try need(now < handles[m.handle]!.expiresAt, "\"\(m.handle)\" is not live (renewal): renew it before moving it")
             let o = try f(m.newOwner)
             try need(handleOf(o) == nil, "new_owner already holds a handle")
             try need(!handleMovedOut.contains(o), "this identity moved its handle away (code 1125)")
@@ -647,10 +684,14 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             mint("uanml", 1_000_000, try f(m.pcAnml), m.ciphertextAnml)
             if !switched {
                 mint("uerth", 5_000_000, try f(m.pcErth), m.ciphertextErth)
-                // The referrer's half, as a note to the handle's address.
+                // The referrer's half: the chain's own note to the handle's address, its
+                // opening derived from the passport nullifier and the leaf (ReferralOpening).
                 if !m.affiliateHandle.isEmpty {
-                    mint("uerth", 5_000_000, try f(m.affiliatePc), m.affiliateCiphertext)
-                    referralNotes.append((m.affiliateHandle, try f(m.affiliatePc)))
+                    let to = try ShieldedAddress.decode(handles[m.affiliateHandle]!.address)
+                    let o = PrivacyHash.referralOpening(nullifier: try PrivateMsgs.decimalField(m.publicSignals[2]), leafIndex: idx)
+                    let pos = mintOpen("uerth", 5_000_000, ownerPK: to.ownerPK, rho: o.rho, rcm: o.rcm)
+                    referralNotes.append((m.affiliateHandle, PrivacyHash.pc(ownerPK: to.ownerPK, rho: o.rho, rcm: o.rcm)))
+                    referralPositions.append(pos)
                 }
             }
             events.append((type: "register", attributes: ["leaf_index": String(idx), "switched": String(switched)]))
@@ -794,7 +835,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     // MARK: the chain's own queries (LCD), for the wallet's root checks
 
     func noteRoot(_ root: Fr) async throws -> NoteRootRecord? {
-        noteRootSizes[root].map { NoteRootRecord(valid: true, treeSize: $0, height: noteRootHeights[root]) }
+        noteRootSizes[root].map { NoteRootRecord(valid: true, treeSize: $0, height: noteRootHeights[root], expiresAt: rootExpiresAt?(root)) }
     }
 
     func noteTree(height: UInt64?) async -> TreeState? { read(noteAt, height) }
@@ -989,6 +1030,8 @@ struct FakeReads: PrivacyChainReads, @unchecked Sendable {
         .init(caretakerVoteSeconds: chain.caretakerLease, identityRootWindowSeconds: 3_600, handleLeaseSeconds: chain.handleLease,
               handleRenewalSeconds: chain.handleRenewal)
     }
+
+    func leaseBounds() async throws -> PrivacyReads.LeaseBounds { chain.leaseBounds() }
 
     func ballotInputs(proposalID: UInt64, optionID: UInt64) async throws -> PrivacyReads.BallotInputs {
         if proposalID != 0 {

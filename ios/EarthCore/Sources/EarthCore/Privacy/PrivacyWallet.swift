@@ -1,3 +1,4 @@
+import BigInt
 import Foundation
 
 /// One wallet's private side: its notes, stake notes and registration, kept
@@ -22,6 +23,10 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// simulated fee shows the sheet again at it). Two actions, a stake or
     /// membership proof, the tx's bytes and the 10% headroom fit under it.
     public static let privateGasEstimate: UInt64 = 10_000_000
+    /// A handle bind's: the chain prices it as nine note writes (chain
+    /// 203d3b2, audit 5 L-P5), 1.2M more than `privateGasEstimate`'s
+    /// membership, with a three-action fee bundle (the state record). As Android.
+    public static let bindHandleGasEstimate: UInt64 = 12_500_000
     /// Slack against the chain's clock for bounds the wallet must stay under.
     public static let clockMargin: Int64 = 600
     /// x/shielded's default max_actions_per_bundle, until the chain is read.
@@ -273,6 +278,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     private func run(memo: String = "", accepted: (String, UInt64) -> Void = { _, _ in }, rejected: (String) -> Void = { _ in },
                      _ assemble: (UInt64) throws -> Assembled) async throws -> TxResult {
         try requireVerified()
+        try await requireFreshAnchor()
         // The spent notes are marked before the tx is sent (K7, audit 4),
         // under its hash: a wait that times out (the tx may still land), a
         // lost answer or a killed app never leaves them spendable. They stay
@@ -293,6 +299,44 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// `PrivateTxEngine.FeeAboveQuote` and the sheet asks again (audit 3).
     /// Unbound (automation, later stake-vote casts): only the cap applies.
     @TaskLocal public static var shownFee: UInt64?
+
+    /// Whether the local note tree's root, every bundle's anchor, stays an
+    /// anchor long enough (chain 203d3b2): CheckTx refuses one lapsing within
+    /// 120 s of the last block, and a proposer leaves out a tx whose anchor
+    /// lapsed by its block. `anchorMargin` covers proving and the tx's
+    /// timeout_height on top. Nil: the node could not say (the chain's own
+    /// check stands).
+    private func anchorFresh() async -> Bool? {
+        if store.noteTree.size == 0 { return true }
+        guard let rec = try? await roots.noteRoot(store.noteTree.root()) else { return nil }
+        if !rec.valid { return false }
+        guard let exp = rec.expiresAt else { return nil }
+        if exp == 0 { return true }
+        let t = await chainNow()
+        return exp >= Handles.satAdd(t, Self.anchorMargin)
+    }
+
+    /// A root lapsing soon is replaced by a newer one before anything is laid
+    /// out: sync (newer notes, a newer root), and refuse if it is still too
+    /// old (an indexer behind the chain). Runs under the wallet's lock.
+    private func requireFreshAnchor() async throws {
+        if await anchorFresh() != false { return }
+        _ = try await syncLocked()
+        try requireVerified()
+        if await anchorFresh() == false { throw AnchorTooOld() }
+    }
+
+    /// How long an anchor must stay valid past the chain's last block for a
+    /// tx built on it: the chain's CheckTx margin (120 s), the tx's
+    /// timeout_height (50 blocks) and proving on a phone, with room.
+    public static let anchorMargin: Int64 = 1_800
+
+    /// The local note tree's root lapses too soon to anchor a tx, and a sync found none newer. Nothing was sent.
+    public struct AnchorTooOld: Swift.Error, LocalizedError {
+        public var errorDescription: String? {
+            "This wallet's notes are anchored to a note tree the chain stops accepting within \(PrivacyWallet.anchorMargin / 60) minutes; sync again and retry."
+        }
+    }
 
     /// Audit 3: only on roots verified by the last sync, in that sync's own
     /// generation (a sync that failed part way leaves them unverified).
@@ -377,14 +421,30 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// The identity is too recent for this action (or replaced another too recently); it opens `waitSeconds` from now.
     /// `notHeld` (audit 5, M1): a renewal or refresh sent with no bound, by an identity whose own bound has not
     /// passed, which the chain refused (in its ante, before any fee): this identity holds nothing there.
+    /// `lapsed` (chain 203d3b2): held but not live, so bounded like a claim, which this identity cannot make yet;
+    /// refused before anything was sent (a handle in its renewal period, a caretaker split past its expiry).
     public struct NotYet: Swift.Error, LocalizedError {
+        public enum Lapsed: Sendable, Equatable { case handle(String), caretaker }
         public let waitSeconds: Int64
         public var notHeld: Bool = false
-        public init(waitSeconds: Int64, notHeld: Bool = false) { self.waitSeconds = waitSeconds; self.notHeld = notHeld }
+        public var lapsed: Lapsed?
+        public init(waitSeconds: Int64, notHeld: Bool = false, lapsed: Lapsed? = nil) {
+            self.waitSeconds = waitSeconds; self.notHeld = notHeld; self.lapsed = lapsed
+        }
         public var errorDescription: String? {
+            let days = waitSeconds / PrivacyWallet.secondsPerDay + 1
+            switch lapsed {
+            case let .handle(h)?:
+                return "@\(h) is past its expiry (in its renewal period): renewing or changing it now counts as a new claim, and this identity "
+                    + "replaced another too recently to make one; that opens in \(days) days. Until its renewal period ends nobody else can take it."
+            case .caretaker?:
+                return "Your caretaker vote has lapsed: casting again counts as a new vote, and this identity replaced another too recently to make one; "
+                    + "that opens in \(days) days."
+            case nil: break
+            }
             if notHeld {
-                return "The chain says this identity holds none here (nothing was charged); it replaced another too recently to take a new one, "
-                    + "which opens in \(waitSeconds / PrivacyWallet.secondsPerDay + 1) days."
+                return "The chain says this identity holds nothing live here (nothing was charged): a lapsed one renews only as a new claim, "
+                    + "and this identity replaced another too recently to make one; that opens in \(days) days."
             }
             return waitSeconds > 2 * PrivacyWallet.secondsPerDay
                 ? "This identity replaced another too recently for this action; it opens in \(waitSeconds / PrivacyWallet.secondsPerDay + 1) days."
@@ -502,17 +562,16 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// carries a v2 ciphertext of fresh secrets to our own address; the
     /// binding covers those ciphertexts, so they are written here, before the
     /// passport is proven, and sent exactly as they are. `gas` is the
-    /// /gas/register note (its ciphertext is not bound). `referral`, when the
-    /// registrant names a referrer, is the referrer's half as a note to the
-    /// handle's shielded address (a blind v2 ciphertext: the chain publishes
-    /// the amount), bound with the handle into the affiliate field.
+    /// /gas/register note (its ciphertext is not bound). `referrer`, when the
+    /// registrant names one, is a handle, bound into the affiliate field as
+    /// H(TAG_AFFILIATE, Bytes(handle)); the chain mints the referrer's half
+    /// itself, to the address the handle resolves to (chain 203d3b2).
     public struct RegistrationPrep: Sendable {
         public let anml: NoteOut
         public let erth: NoteOut
         public let gas: NoteOut
-        /// The referrer's handle ("" for none) and the referral note.
+        /// The referrer's handle ("" for none).
         public let referrer: String
-        public let referral: NoteOut?
         public let binding: Fr
         public let idc: Fr
     }
@@ -529,18 +588,15 @@ public final class PrivacyWallet: @unchecked Sendable {
             let anml = try mint("uanml")
             let erth = try mint("uerth")
             let gas = try mint("uerth")
-            var referral: NoteOut?
             var aff = Fr.zero
             if let r = referrer {
                 try require(Handles.valid(r.handle), "\(r.handle) is not a handle")
                 try require(r.address.ownerPK != keys.ownerPK, "a registration cannot name its own wallet as its referrer")
-                let n = try NoteOut.blindTo(r.address, denom: Self.fee)
-                referral = n
-                aff = PrivacyHash.affiliateField(handle: r.handle, pc: n.pc, ct: n.ciphertext)
+                aff = PrivacyHash.affiliateField(handle: r.handle)
             }
             let binding = PrivacyHash.registrationBinding(idc: keys.idc, pcAnml: anml.pc, ctAnml: anml.ciphertext, pcErth: erth.pc,
                                                           ctErth: erth.ciphertext, affiliate: aff)
-            return RegistrationPrep(anml: anml, erth: erth, gas: gas, referrer: referrer?.handle ?? "", referral: referral,
+            return RegistrationPrep(anml: anml, erth: erth, gas: gas, referrer: referrer?.handle ?? "",
                                     binding: binding, idc: keys.idc)
         }
     }
@@ -550,8 +606,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         MsgRegisterPrivate(fee: nil, proof: proof, publicSignals: publicSignals, signatureAlgorithm: signatureAlgorithm, dscDer: dscDer,
                            idc: prep.idc.bytes, pcAnml: prep.anml.pc.bytes, ciphertextAnml: prep.anml.ciphertext,
                            pcErth: prep.erth.pc.bytes, ciphertextErth: prep.erth.ciphertext,
-                           affiliateHandle: prep.referral == nil ? "" : prep.referrer,
-                           affiliatePc: prep.referral?.pc.bytes ?? Data(), affiliateCiphertext: prep.referral?.ciphertext ?? Data())
+                           affiliateHandle: prep.referrer)
     }
 
     /// Broadcasts the registration, its fee paid by a fee bundle (the gas
@@ -674,32 +729,54 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// The day every activation bound keeps from now (wave 3: the largest identity root window).
     public static let activationMargin: Int64 = 86_400
 
+    /// The chain's lease bounds now (Query/LeaseBounds), checked before use:
+    /// lease lengths in range, a sane margin, and bounds that are what the
+    /// lengths give at its block time. Every max_predecessor below comes from
+    /// these lease lengths, never from Params (audit 5 P3; mobile audit 5 L1).
+    private func leaseBounds() async throws -> PrivacyReads.LeaseBounds {
+        let lb = try await reads.leaseBounds()
+        guard lb.blockTime > 0 else { throw PrivacyError("the node's lease bounds have no block time") }
+        _ = try Self.leaseParam(lb.handleLeaseSeconds, "handle lease")
+        _ = try Self.leaseParam(lb.caretakerLeaseSeconds, "caretaker lease")
+        guard (0 ... Handles.maxAheadSeconds).contains(lb.activationMarginSeconds) else {
+            throw PrivacyError("the node's activation margin \(lb.activationMarginSeconds) is out of range")
+        }
+        guard lb.handleClaimBound == lb.blockTime - lb.handleLeaseSeconds - lb.activationMarginSeconds,
+              lb.caretakerCastBound == lb.blockTime - lb.caretakerLeaseSeconds - lb.activationMarginSeconds
+        else { throw PrivacyError("the node's lease bounds do not add up") }
+        return lb
+    }
+
     /// The max_predecessor a new caretaker split or handle claim names: the
-    /// chain needs it strictly below now - `lease` - 86400 (the largest root
-    /// window), so an identity that replaced another waits until anything its
-    /// predecessor could hold there has lapsed. Rounded down to the hour so it
+    /// chain needs it strictly below block time - `lease` - the activation
+    /// margin, so an identity that replaced another waits until anything its
+    /// predecessor could hold there has lapsed. `lease` is the length
+    /// LeaseBounds reports (the longest handle lease ever in force; a held
+    /// longer caretaker lease after a cut). Rounded down to the hour so it
     /// says nothing about when the tx was made, less a margin for clock skew.
     /// Every wallet names the same bound (a fresh registrant's predecessor_at
     /// 0 meets it), so the proof does not tell a fresh identity from an old one.
-    private func predecessorBound(lease: Int64, now t: Int64) -> UInt64 {
-        let bound = Handles.satSub(Handles.satSub(t, lease), Self.activationMargin + Self.clockMargin)
+    private func predecessorBound(_ lb: PrivacyReads.LeaseBounds, lease: Int64) -> UInt64 {
+        let bound = Handles.satSub(Handles.satSub(lb.blockTime, lease), Handles.satAdd(lb.activationMarginSeconds, Self.clockMargin))
         return UInt64(max(0, bound / 3600 * 3600))
     }
 
-    /// The max_predecessor for a msg bounded only when the prover holds
-    /// nothing in its scope, and the wait it implies: the lease bound when
-    /// this identity meets it (it holds or not, the chain takes it); else no
-    /// bound (audit 5, M1). The chain checks that in its ante, before any fee
-    /// is taken: a renewal or refresh of what this identity holds (as the
-    /// store knows it, or as a restore lost it) goes through, and anything
-    /// else is refused at no cost (`boundAttempt` says why, with the wait,
-    /// returned here when the wallet does not believe it holds anything).
-    private func leaseStatement(lease: Int64, holds: Bool, now t: Int64) throws -> (UInt64, Int64?) {
-        let bound = predecessorBound(lease: lease, now: t)
+    /// The max_predecessor for a msg bounded unless the prover holds something
+    /// live in its scope, and the wait it implies: the lease bound when this
+    /// identity meets it (the chain takes it either way); else no bound when
+    /// the wallet believes it holds a live one (`held` true) or cannot tell
+    /// (nil), and the chain checks that in its ante, before any fee: a
+    /// renewal or refresh of a live one goes through, anything else is
+    /// refused at no cost (`boundAttempt` says why, with the wait). Held but
+    /// known lapsed (`held` false; chain 203d3b2: a handle in its renewal
+    /// period, a split past its expiry) needs the bound like a claim, so
+    /// NotYet(`lapsed`) is thrown before anything is sent.
+    private func leaseStatement(bound: UInt64, held: Bool?, lapsed: NotYet.Lapsed) throws -> (UInt64, Int64?) {
         let id = try identity()
         if id.predecessorAt <= bound { return (bound, nil) }
-        if holds { return (PrivacyHash.noBound, nil) }
-        return (PrivacyHash.noBound, Int64(clamping: id.predecessorAt - bound))
+        let wait = Int64(clamping: id.predecessorAt - bound)
+        if held == false { throw NotYet(waitSeconds: wait, lapsed: lapsed) }
+        return (PrivacyHash.noBound, wait)
     }
 
     /// Runs `body`; a chain refusal of its unmet predecessor bound becomes NotYet(notHeld) when `wait` is set.
@@ -737,6 +814,18 @@ public final class PrivacyWallet: @unchecked Sendable {
         return o ? 0 : v
     }
 
+    /// Whether the split this wallet holds is live at chain time `t`: true, or
+    /// false when the chain's own expiry has passed (a lapsed split the sweep
+    /// has not reached is not held: refreshing it is a new split, bounded;
+    /// chain 203d3b2), nil when it holds none or knows only an estimate.
+    private func caretakerHeldLive(at t: Int64) async -> Bool? {
+        let snap = snapshot
+        if snap.caretakerSplit.isEmpty && !snap.caretakerSplitUnknown { return nil }
+        let exp = await caretakerExpiresAt()
+        if exp > t { return true }
+        return snap.caretakerExpiresAt > 0 ? false : nil
+    }
+
     /// Whether this wallet holds a caretaker split the chain still counts (as far as it knows).
     public func caretakerLive() async -> Bool {
         if snapshot.caretakerSplit.isEmpty && !snapshot.caretakerSplitUnknown { return false }
@@ -749,13 +838,16 @@ public final class PrivacyWallet: @unchecked Sendable {
     public func setCaretaker(split: [UInt64: UInt64]) async throws -> TxResult {
         let mx = await maxActions()
         // Validated before anything is sent (audit 5, L6): nothing after the broadcast can trap on it.
+        // r0: the lease a cast gets now (Params), for the record's expiry estimate. The
+        // bound: LeaseBounds' caretaker lease, which a held longer one keeps after a cut.
         let r0 = try Self.leaseParam(try await reads.personhoodParams().caretakerVoteSeconds, "caretaker lease")
-        let holds = await caretakerLive()
-        let t = await chainNow()
+        let lb: PrivacyReads.LeaseBounds? = split.isEmpty ? nil : try await leaseBounds()
+        let held = await caretakerHeldLive(at: lb?.blockTime ?? 0)
         return try await locked {
             try require(!store.state.caretakerMovedOut || split.isEmpty, "this identity moved its caretaker vote to another; it cannot cast one again")
             try checkNoMove(PendingMove.caretakerKind)
-            let (maxPred, wait) = split.isEmpty ? (PrivacyHash.noBound, nil) : try leaseStatement(lease: r0, holds: holds, now: t)
+            var (maxPred, wait): (UInt64, Int64?) = (PrivacyHash.noBound, nil)
+            if let lb { (maxPred, wait) = try leaseStatement(bound: predecessorBound(lb, lease: lb.caretakerLeaseSeconds), held: held, lapsed: .caretaker) }
             let m = try membership(scope: PrivacyHash.caretakerScope(), excludedDsc: .zero, excludedCountry: .zero,
                                    maxActivation: PrivacyHash.noBound, maxPredecessor: maxPred)
             let w = Self.weights(split)
@@ -982,14 +1074,20 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// Nothing renews on its own: the app reminds the owner before expiry.
     public func bindHandle(_ handle: String, address: ShieldedAddress? = nil) async throws -> TxResult {
         let mx = await maxActions()
-        let lease = try Self.leaseParam(try await reads.personhoodParams().handleLeaseSeconds, "handle lease")
-        let t = await chainNow()
+        // The lease this bind gets (Params), validated before anything is sent (audit 5, L6).
+        let leaseNow = try Self.leaseParam(try await reads.personhoodParams().handleLeaseSeconds, "handle lease")
+        // Chain 203d3b2: only a live handle renews or changes unbounded; one in its
+        // renewal period is bounded like a claim, by the longest lease ever in force.
+        let lb = try await leaseBounds()
         return try await locked {
             try require(Handles.valid(handle), "\"\(handle)\" is not a handle: 3-32 of a-z, 0-9 and -, no dash at either end")
             let holds = !store.state.handle.isEmpty
             try require(holds || !store.state.handleMovedOut, "this identity moved its handle to another; it cannot claim one again")
             try checkNoMove(PendingMove.handleKind)
-            let (maxPred, wait) = try leaseStatement(lease: lease, holds: holds, now: t)
+            let exp = handleExpiresAtLocked()
+            let held: Bool? = !holds || exp == 0 ? nil : exp > lb.blockTime
+            let (maxPred, wait) = try leaseStatement(bound: predecessorBound(lb, lease: lb.handleLeaseSeconds), held: held,
+                                                     lapsed: .handle(store.state.handle))
             let addr = (address ?? keys.address).encode()
             let m = try membership(scope: PrivacyHash.handleScope(), excludedDsc: .zero, excludedCountry: .zero,
                                    maxActivation: PrivacyHash.noBound, maxPredecessor: maxPred)
@@ -1001,9 +1099,33 @@ public final class PrivacyWallet: @unchecked Sendable {
                     }
                 }
             }
-            store.mutate { $0.handle = handle; $0.handleSetAt = now() }
+            // The chain's expires_at (handle_bound), within the lease range; else the block time + the lease.
+            let limit = Handles.satAdd(now(), Handles.maxAheadSeconds)
+            let bound = r.attr("handle_bound", "expires_at").flatMap(Int64.init).flatMap { $0 > 0 && $0 <= limit ? $0 : nil }
+            let at = r.time > 0 ? r.time : now()
+            store.mutate {
+                $0.handle = handle; $0.handleSetAt = now()
+                $0.handleExpiresFor = handle; $0.handleExpiresAt = bound ?? Handles.satAdd(at, leaseNow)
+            }
             try store.save()
             return r
+        }
+    }
+
+    /// When this identity's handle stops being live, as the chain last said
+    /// (its bind, or its directory); 0 when the wallet does not know.
+    public func handleExpiresAt() async -> Int64 { await locked { handleExpiresAtLocked() } }
+
+    private func handleExpiresAtLocked() -> Int64 {
+        let s = store.state
+        return !s.handle.isEmpty && s.handleExpiresFor == s.handle ? s.handleExpiresAt : 0
+    }
+
+    /// Chain 203d3b2: MsgMoveHandle moves only a live handle. Nothing was sent.
+    public struct HandleNotMovable: Swift.Error, LocalizedError {
+        public let handle: String
+        public var errorDescription: String? {
+            "@\(handle) is past its expiry (in its renewal period), and only a live handle can be moved: renew it first, then move it."
         }
     }
 
@@ -1033,12 +1155,16 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// identity may never claim one again (ErrHandleMovedOut, 1125).
     public func moveHandle(newOwner: Fr, target: PrivacyKeys? = nil, recorder: MoveRecorder? = nil) async throws -> TxResult {
         let mx = await maxActions()
+        let t = await chainNow()
         return try await locked {
             let handle = store.state.handle
             try require(!handle.isEmpty, "this identity holds no handle to move")
             try require(newOwner != PrivacyHash.scopeNullifier(idSecret: keys.idSecret, scope: PrivacyHash.handleScope()), "the new owner is this identity")
             if let target { try require(newOwner == Self.newOwner(target, scope: PrivacyHash.handleScope()), "new_owner is not the target wallet's") }
             try checkNoMove(PendingMove.handleKind)
+            // Chain 203d3b2: MsgMoveHandle refuses a handle that is not live (its renewal period).
+            let exp = handleExpiresAtLocked()
+            if exp > 0, exp <= t { throw HandleNotMovable(handle: handle) }
             let move = PendingMove(kind: PendingMove.handleKind, txHash: "", timeoutHeight: 0, incoming: false, handle: handle,
                                    target: recorder?.targetID ?? "")
             // State records: moved out for this identity, held for the new one.
@@ -1095,6 +1221,12 @@ public final class PrivacyWallet: @unchecked Sendable {
                 } else if !s.handleMovedOut, addressed.count == 1 {
                     let h = addressed[0].handle
                     store.mutate { $0.handle = h; $0.handleSetAt = t }; persistNoThrow()
+                }
+                // The chain's expiry of the handle held: whether it is live (chain 203d3b2).
+                let cur = store.state
+                if !cur.handle.isEmpty, let e = dir[cur.handle], e.status(at: t) != HandleEntry.free,
+                   cur.handleExpiresFor != cur.handle || cur.handleExpiresAt != e.expiresAt {
+                    store.mutate { $0.handleExpiresFor = cur.handle; $0.handleExpiresAt = e.expiresAt }; persistNoThrow()
                 }
             }
             return addressed
@@ -1889,6 +2021,36 @@ public final class PrivacyWallet: @unchecked Sendable {
                     MsgRemoveLiquidityShielded(bundle: bs[0], poolID: poolID, erthPC: erth.pc.bytes, erthCiphertext: erth.ciphertext,
                                                tokenPC: tok.pc.bytes, tokenCiphertext: tok.ciphertext)
                 }
+            }
+        }
+    }
+
+    /// A withdrawal whose note-paid leg is too large to start (nothing was sent).
+    public struct WithdrawalTooLarge: Swift.Error, LocalizedError {
+        public let message: String
+        public var errorDescription: String? { message }
+    }
+
+    /// The most a withdrawal's note-paid leg may be worth when it starts: a
+    /// quarter of one note this wallet can hold (2^63 - 1), so the pool can
+    /// move 4x against the provider before maturity, as x/dex allows for its
+    /// own cap. x/dex refuses at start a leg above 16 notes' worth
+    /// (16 x (2^64 - 1), chain 203d3b2) and pays a leg above 2^64 - 1 as
+    /// several notes; a note above 2^63 - 1 is one this wallet cannot hold,
+    /// so the wallet's bound is the one that binds. As Android.
+    public static let maxWithdrawalNoteLeg = BigInt(Int64.max / 4)
+
+    /// Refuses, before anything is proven or signed, a withdrawal of `shares`
+    /// of `totalShares` whose note legs (`erthNote`, `tokenNote`) at the
+    /// pool's reserves now are above `maxWithdrawalNoteLeg` (x/dex
+    /// checkWithdrawalNoteLegs: floor(shares x reserve / total)).
+    public static func checkWithdrawalNoteLegs(shares: BigInt, totalShares: BigInt, reserveErth: BigInt, reserveToken: BigInt,
+                                               tokenDenom: String, erthNote: Bool, tokenNote: Bool) throws {
+        guard totalShares > 0 else { return }
+        for (on, reserve, denom) in [(erthNote, reserveErth, fee), (tokenNote, reserveToken, tokenDenom)] where on {
+            let v = shares * reserve / totalShares
+            if v > maxWithdrawalNoteLeg {
+                throw WithdrawalTooLarge(message: "this withdrawal's \(denom) leg (\(v)) is more than one withdrawal can pay as private notes; withdraw in smaller parts")
             }
         }
     }

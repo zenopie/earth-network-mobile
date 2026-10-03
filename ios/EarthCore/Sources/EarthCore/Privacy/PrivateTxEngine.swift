@@ -156,6 +156,11 @@ public struct PrivateTxEngine: Sendable {
     public static let membershipGas: UInt64 = 2_150_000
     /// MsgRegister: the passport proof (3,000,000), the DSC chain (300,000) and two minted notes.
     public static let registerGas: UInt64 = 3_600_000
+    /// One note write (x/shielded note_gas default).
+    public static let noteGas: UInt64 = 150_000
+    /// MsgBindHandle's writes beyond the one in `membershipGas`: the chain
+    /// prices a bind as nine note writes (chain 203d3b2, audit 5 L-P5).
+    public static let bindHandleExtraGas: UInt64 = 8 * noteGas
 
     /// The absolute cap on any private fee, in uerth.
     public let maxFee: UInt64
@@ -186,6 +191,7 @@ public struct PrivateTxEngine: Sendable {
         if a.membership != nil { g = g &+ membershipGas }
         if a.vote != nil { g = g &+ voteGas }
         if msg is MsgRegisterPrivate { g = g &+ registerGas }
+        if msg is MsgBindHandle { g = g &+ bindHandleExtraGas }
         return g
     }
 

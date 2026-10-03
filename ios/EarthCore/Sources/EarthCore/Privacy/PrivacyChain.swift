@@ -5,6 +5,8 @@ import Foundation
 /// nullifier or an identity of this wallet.
 public protocol PrivacyChainReads: Sendable {
     func personhoodParams() async throws -> PrivacyReads.PersonhoodParams
+    /// x/personhood Query/LeaseBounds (chain 203d3b2): what every predecessor bound is computed from, never Params.
+    func leaseBounds() async throws -> PrivacyReads.LeaseBounds
     func ballotInputs(proposalID: UInt64, optionID: UInt64) async throws -> PrivacyReads.BallotInputs
     func epochNumber() async throws -> UInt64
     func snapshot(proposalID: UInt64) async throws -> PrivacyReads.Snapshot
@@ -24,6 +26,29 @@ public enum PrivacyReads {
                     handleLeaseSeconds: Int64 = Handles.defaultLeaseSeconds, handleRenewalSeconds: Int64 = Handles.defaultRenewalSeconds) {
             self.caretakerVoteSeconds = caretakerVoteSeconds; self.identityRootWindowSeconds = identityRootWindowSeconds
             self.handleLeaseSeconds = handleLeaseSeconds; self.handleRenewalSeconds = handleRenewalSeconds
+        }
+    }
+
+    /// x/personhood Query/LeaseBounds (chain 203d3b2): the lease lengths the
+    /// chain's predecessor bounds use now (the longest handle lease ever in
+    /// force; the caretaker lease including a held longer one after a cut),
+    /// the activation margin, and both bounds at `blockTime`. Every
+    /// max_predecessor a handle claim or a new caretaker split names comes
+    /// from here, never from Params, which may be shorter.
+    public struct LeaseBounds: Sendable, Equatable {
+        public var blockTime: Int64
+        public var activationMarginSeconds: Int64
+        public var handleLeaseSeconds: Int64
+        public var handleClaimBound: Int64
+        public var caretakerLeaseSeconds: Int64
+        public var caretakerCastBound: Int64
+        public var caretakerLeaseHoldUntil: Int64
+        public init(blockTime: Int64, activationMarginSeconds: Int64, handleLeaseSeconds: Int64, handleClaimBound: Int64,
+                    caretakerLeaseSeconds: Int64, caretakerCastBound: Int64, caretakerLeaseHoldUntil: Int64 = 0) {
+            self.blockTime = blockTime; self.activationMarginSeconds = activationMarginSeconds
+            self.handleLeaseSeconds = handleLeaseSeconds; self.handleClaimBound = handleClaimBound
+            self.caretakerLeaseSeconds = caretakerLeaseSeconds; self.caretakerCastBound = caretakerCastBound
+            self.caretakerLeaseHoldUntil = caretakerLeaseHoldUntil
         }
     }
 
@@ -181,6 +206,23 @@ public struct PrivacyQueries: PrivacyChainReads {
         return PrivacyReads.PersonhoodParams(caretakerVoteSeconds: min(r > 0 ? r : 365 * 86_400, m), identityRootWindowSeconds: min(w > 0 ? w : 3_600, m),
                                              handleLeaseSeconds: min(l > 0 ? l : Handles.defaultLeaseSeconds, m),
                                              handleRenewalSeconds: min(n > 0 ? n : Handles.defaultRenewalSeconds, m))
+    }
+
+    /// x/personhood Query/LeaseBounds. int64 fields arrive as JSON strings; a
+    /// field that is present but not an int64 is refused.
+    public func leaseBounds() async throws -> PrivacyReads.LeaseBounds {
+        let j = try await rest.get("/earth/personhood/v1/lease_bounds")
+        func i64(_ v: JSON, _ name: String) throws -> Int64 {
+            guard v.exists else { return 0 }
+            guard let x = v.int64 else { throw PrivacyError("lease_bounds \(name) is not an int64") }
+            return x
+        }
+        return PrivacyReads.LeaseBounds(
+            blockTime: try i64(j.block_time, "block_time"), activationMarginSeconds: try i64(j.activation_margin_seconds, "activation_margin_seconds"),
+            handleLeaseSeconds: try i64(j.handle_lease_seconds, "handle_lease_seconds"), handleClaimBound: try i64(j.handle_claim_bound, "handle_claim_bound"),
+            caretakerLeaseSeconds: try i64(j.caretaker_lease_seconds, "caretaker_lease_seconds"),
+            caretakerCastBound: try i64(j.caretaker_cast_bound, "caretaker_cast_bound"),
+            caretakerLeaseHoldUntil: try i64(j.caretaker_lease_hold_until, "caretaker_lease_hold_until"))
     }
 
     public func ballotInputs(proposalID: UInt64, optionID: UInt64) async throws -> PrivacyReads.BallotInputs {
@@ -443,7 +485,8 @@ public struct LCDChainRoots: ChainRoots {
     public func noteRoot(_ root: Fr) async throws -> NoteRootRecord? {
         let j = try await rest.get("/earth/shielded/v1/roots/\(root.hex)")
         guard j.record.exists, Self.field(j.record.root) == root else { return nil }
-        return NoteRootRecord(valid: j.valid.bool(default: false), treeSize: j.record.tree_size.uint64(default: 0), height: j.record.height.uint64)
+        return NoteRootRecord(valid: j.valid.bool(default: false), treeSize: j.record.tree_size.uint64(default: 0), height: j.record.height.uint64,
+                              expiresAt: j.expires_at.exists ? j.expires_at.int64 : nil)
     }
 
     public func identityTree(height: UInt64?) async throws -> TreeState {

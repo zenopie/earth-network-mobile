@@ -31,12 +31,29 @@ final class ZkVectorsTests: XCTestCase {
         }
     }
 
+    /// Chain 203d3b2: the referral note's opening the chain derives
+    /// (zk/privacy.ReferralOpening) and the pc / cm a handle owner's wallet
+    /// recomputes from the mint row (5 ERTH to OwnerPK(7100+i)).
+    func testReferralOpening() throws {
+        let a = Vectors.json["referral_opening"] as! [[String: Any]]
+        XCTAssertEqual(5, a.count)
+        for (i, v) in a.enumerated() {
+            let o = PrivacyHash.referralOpening(nullifier: Vectors.fr(v["nullifier"] as! String), leafIndex: (v["leaf_index"] as! NSNumber).uint64Value)
+            XCTAssertEqual(v["rho"] as? String, o.rho.hex, "rho \(i)")
+            XCTAssertEqual(v["rcm"] as? String, o.rcm.hex, "rcm \(i)")
+            let owner = Vectors.fr(v["owner_pk"] as! String)
+            let pc = PrivacyHash.pc(ownerPK: owner, rho: o.rho, rcm: o.rcm)
+            XCTAssertEqual(v["pc"] as? String, pc.hex, "pc \(i)")
+            XCTAssertEqual(v["cm"] as? String, PrivacyHash.cm(asset: PrivacyHash.assetID("uerth"), value: 5_000_000, pc: pc).hex, "cm \(i)")
+        }
+    }
+
     func testTagsAssetsBytesCountry() {
         let tags = Vectors.obj("tags")
         let mine: [String: Fr] = [
             "id": PrivacyHash.tagID, "owner": PrivacyHash.tagOwner, "leaf": PrivacyHash.tagLeaf, "sn": PrivacyHash.tagSN,
             "pc": PrivacyHash.tagPC, "cm": PrivacyHash.tagCM, "nf": PrivacyHash.tagNF, "reg": PrivacyHash.tagReg,
-            "asset": PrivacyHash.tagAsset, "signal": PrivacyHash.tagSignal, "bytes": PrivacyHash.tagBytes, "scope": PrivacyHash.tagScope, "affiliate": PrivacyHash.tagAffiliate,
+            "asset": PrivacyHash.tagAsset, "signal": PrivacyHash.tagSignal, "bytes": PrivacyHash.tagBytes, "scope": PrivacyHash.tagScope, "affiliate": PrivacyHash.tagAffiliate, "referral": PrivacyHash.tagReferral,
             "stake": PrivacyHash.tagStake, "spc": PrivacyHash.tagSPC, "snf": PrivacyHash.tagSNF, "otag": PrivacyHash.tagOTag,
             "snfl": PrivacyHash.tagSNFL, "vnf": PrivacyHash.tagVNF,
             "gen": Grumpkin.tagGen, "cv_r": Grumpkin.tagCvR, "bsig": Grumpkin.tagBsig, "bundle": PrivateMsgs.tagBundle,

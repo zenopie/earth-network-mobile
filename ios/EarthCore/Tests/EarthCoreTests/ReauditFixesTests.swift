@@ -539,7 +539,8 @@ final class StatusProtocol: URLProtocol {
         Self.paths.append(path)
         let body: [String: Any] = url.path == "/privacy/status"
             ? ["chain_id": "earth-1", "genesis": "0123456789abcdef", "base": Self.base, "synced_height": 1]
-            : ["notes": [], "next_pos": 0, "complete": true, "synced_height": 1]
+            : ["format": 2, "fields": ["position", "height", "cm", "ciphertext", "amount", "owner_pk", "rho", "rcm"],
+               "notes": [], "next_pos": 0, "complete": true, "synced_height": 1]
         let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
         client?.urlProtocol(self, didReceive: resp, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: try! JSONSerialization.data(withJSONObject: body))

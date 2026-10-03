@@ -54,7 +54,7 @@ final class PrivateMsgsTests: XCTestCase {
             fee: fee(40, 2000), proof: Data([1, 2, 3]), publicSignals: ["250930", "12345", "678", "9"],
             signatureAlgorithm: "lean_poa", dscDer: Data([0x30, 0x03, 1, 2, 3]), idc: fb(41), pcAnml: fb(42),
             ciphertextAnml: bct(42), pcErth: fb(43), ciphertextErth: bct(43),
-            affiliateHandle: handle, affiliatePc: handle.isEmpty ? Data() : fb(44), affiliateCiphertext: handle.isEmpty ? Data() : bct(44)
+            affiliateHandle: handle
         )
     }
 
@@ -190,7 +190,7 @@ final class PrivateMsgsTests: XCTestCase {
         let reg = register("alice-01")
         let b = Vectors.obj("registration_binding")
         XCTAssertEqual(b["affiliate_field"] as? String, try reg.affiliateField().hex)
-        XCTAssertEqual(b["affiliate_field"] as? String, PrivacyHash.affiliateField(handle: "alice-01", pc: try Fr(bytes: fb(44)), ct: bct(44)).hex)
+        XCTAssertEqual(b["affiliate_field"] as? String, PrivacyHash.affiliateField(handle: "alice-01").hex)
     }
 
     /// Chain wave 3 (06ea4d6): the module accounts, canonical weights, calendar dates.

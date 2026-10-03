@@ -340,12 +340,11 @@ public enum PrivateMsgs {
 
     /// The registration binding's affiliate field (personhood
     /// MsgRegister.AffiliateField): 0 when the registration names no
-    /// referrer, else H(TAG_AFFILIATE, Bytes(handle), affiliate_pc,
-    /// Bytes(affiliate_ciphertext)). All three set, or none.
-    public static func affiliateField(handle: String, pc: Data, ciphertext: Data) throws -> Fr {
-        if handle.isEmpty, pc.isEmpty, ciphertext.isEmpty { return .zero }
+    /// referrer, else H(TAG_AFFILIATE, Bytes(affiliate_handle)).
+    public static func affiliateField(handle: String) throws -> Fr {
+        if handle.isEmpty { return .zero }
         guard Handles.valid(handle) else { throw Error.shape("affiliate_handle \(handle) is not a handle") }
-        return PrivacyHash.affiliateField(handle: handle, pc: try f(pc), ct: ciphertext)
+        return PrivacyHash.affiliateField(handle: handle)
     }
 
     /// SplitsBytes: option_id then percent, big-endian u64, per entry.
@@ -517,21 +516,18 @@ public struct MsgRegisterPrivate: DecodablePrivateMsg, FeeBundleMsg, Equatable {
     public var ciphertextAnml: Data
     public var pcErth: Data
     public var ciphertextErth: Data
-    /// The referrer's half, as a note to the live handle's shielded address
-    /// (a pc of its owner_pk, a 177-byte blind ciphertext to its ek_pub):
-    /// affiliate_handle (15), affiliate_pc (11), affiliate_ciphertext (12),
-    /// all three or none.
+    /// The referrer: a live handle (15), empty for none. The chain mints the
+    /// referrer's half itself, to the handle's address (ReferralOpening);
+    /// affiliate_pc / affiliate_ciphertext (11, 12) are gone (chain 203d3b2).
     public var affiliateHandle: String
-    public var affiliatePc: Data
-    public var affiliateCiphertext: Data
 
     public init(fee: ShieldedBundle?, proof: Data, publicSignals: [String], signatureAlgorithm: String, dscDer: Data,
                 idc: Data, pcAnml: Data, ciphertextAnml: Data, pcErth: Data, ciphertextErth: Data,
-                affiliateHandle: String = "", affiliatePc: Data = Data(), affiliateCiphertext: Data = Data()) {
+                affiliateHandle: String = "") {
         self.fee = fee; self.proof = proof; self.publicSignals = publicSignals; self.signatureAlgorithm = signatureAlgorithm
         self.dscDer = dscDer; self.idc = idc; self.pcAnml = pcAnml; self.ciphertextAnml = ciphertextAnml
         self.pcErth = pcErth; self.ciphertextErth = ciphertextErth
-        self.affiliateHandle = affiliateHandle; self.affiliatePc = affiliatePc; self.affiliateCiphertext = affiliateCiphertext
+        self.affiliateHandle = affiliateHandle
     }
 
     public var feeBundle: ShieldedBundle { fee ?? ShieldedBundle() }
@@ -548,8 +544,6 @@ public struct MsgRegisterPrivate: DecodablePrivateMsg, FeeBundleMsg, Equatable {
         w.bytes(8, ciphertextAnml)
         w.bytes(9, pcErth)
         w.bytes(10, ciphertextErth)
-        w.bytes(11, affiliatePc)
-        w.bytes(12, affiliateCiphertext)
         w.string(15, affiliateHandle)
         return w.data
     }
@@ -559,12 +553,12 @@ public struct MsgRegisterPrivate: DecodablePrivateMsg, FeeBundleMsg, Equatable {
         return Self(fee: f.has(1) ? try f.message(1, ShieldedBundle.decode) : nil, proof: f.bytes(2), publicSignals: f.repeatedString(3),
                     signatureAlgorithm: f.string(4), dscDer: f.bytes(5), idc: f.bytes(6), pcAnml: f.bytes(7), ciphertextAnml: f.bytes(8),
                     pcErth: f.bytes(9), ciphertextErth: f.bytes(10),
-                    affiliateHandle: f.string(15), affiliatePc: f.bytes(11), affiliateCiphertext: f.bytes(12))
+                    affiliateHandle: f.string(15))
     }
 
-    /// The binding's affiliate field: 0, or the handle with the referral note.
+    /// The binding's affiliate field: 0, or H(TAG_AFFILIATE, Bytes(handle)).
     public func affiliateField() throws -> Fr {
-        try PrivateMsgs.affiliateField(handle: affiliateHandle, pc: affiliatePc, ciphertext: affiliateCiphertext)
+        try PrivateMsgs.affiliateField(handle: affiliateHandle)
     }
 
     /// The passport proof's `address` input this msg must carry.

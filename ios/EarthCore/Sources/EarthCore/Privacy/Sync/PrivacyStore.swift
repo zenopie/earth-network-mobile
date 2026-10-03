@@ -246,6 +246,12 @@ public struct PrivacyState: Codable, Sendable {
     public var handleMovedOut: Bool = false
     /// When `handle` last changed here (wallet clock): a directory read before it says nothing about it.
     public var handleSetAt: Int64 = 0
+    /// When the handle `handleExpiresFor` stops being live (the chain's
+    /// expires_at, from its bind or the chain's directory). Counts only while
+    /// it is `handle`; otherwise unknown. Past it, a renewal or change is
+    /// bounded like a claim and a move is refused (chain 203d3b2).
+    public var handleExpiresAt: Int64 = 0
+    public var handleExpiresFor: String = ""
     /// The caretaker split is held but its record did not carry it (restored from a state record).
     public var caretakerSplitUnknown: Bool = false
     /// The newest handle / caretaker state record applied (note position; nil: none).
@@ -285,7 +291,8 @@ public struct PrivacyState: Codable, Sendable {
              regRecords, rootsVerified, rootsError, claimedDays, caretakerCastAt, caretakerSplit, caretakerExpiresAt, caretakerMovedOut, handle, handleMovedOut,
              unbondRetryAt, nextOtagCounter, stakeNext, stakeHeight, stakeNullifiersNext, stakeNotes, denoms, closedOtagMax, stakeVoteRun,
              syncGeneration, verifiedGeneration, stakeVotes, identityHeights, identityRowsSeen,
-             handleSetAt, caretakerSplitUnknown, handleRecordPos, caretakerRecordPos, voidRecordHeights, pendingMoves, switchTarget
+             handleSetAt, caretakerSplitUnknown, handleRecordPos, caretakerRecordPos, voidRecordHeights, pendingMoves, switchTarget,
+             handleExpiresAt, handleExpiresFor
     }
 
     /// Tolerates a state file from before the stake tree (missing keys keep their defaults).
@@ -315,6 +322,7 @@ public struct PrivacyState: Codable, Sendable {
         handleRecordPos = try c.decodeIfPresent(UInt64.self, forKey: .handleRecordPos)
         caretakerRecordPos = try c.decodeIfPresent(UInt64.self, forKey: .caretakerRecordPos)
         voidRecordHeights = try v(.voidRecordHeights, []); pendingMoves = try v(.pendingMoves, []); switchTarget = try v(.switchTarget, "")
+        handleExpiresAt = try v(.handleExpiresAt, 0); handleExpiresFor = try v(.handleExpiresFor, "")
     }
 }
 
@@ -481,6 +489,7 @@ public final class PrivacyStore {
     /// reads them from the start), and moves in flight stay in flight.
     private static func keepHandleState(_ old: PrivacyState, _ s: inout PrivacyState) {
         s.handleSetAt = old.handleSetAt
+        s.handleExpiresAt = old.handleExpiresAt; s.handleExpiresFor = old.handleExpiresFor
         s.caretakerSplitUnknown = old.caretakerSplitUnknown
         s.handleRecordPos = old.handleRecordPos; s.caretakerRecordPos = old.caretakerRecordPos
         s.voidRecordHeights = old.voidRecordHeights
