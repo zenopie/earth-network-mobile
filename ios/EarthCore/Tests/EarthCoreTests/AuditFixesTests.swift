@@ -62,7 +62,7 @@ final class AuditFixesTests: XCTestCase {
         try await a.sync()
         // The first broadcast of the registration fails after proving; the retry lands.
         chain.rejectNext = 1
-        await assertThrowsAsync({ try await self.register(a, prep) }) { $0 is URLError }
+        await assertThrowsAsync({ try await self.register(a, prep) }) { $0 is UnsignedTx.TxRejected }
         try await a.sync()
         _ = try await register(a, prep)
         try await a.sync()
@@ -75,7 +75,7 @@ final class AuditFixesTests: XCTestCase {
         // Swaps: five refused by the node after proving, one through.
         chain.rejectNext = 5
         for _ in 0 ..< 5 {
-            await assertThrowsAsync({ try await a.noteSwap(denomIn: "uanml", amountIn: 100_000, denomOut: "uerth", minOut: 1) }) { $0 is URLError }
+            await assertThrowsAsync({ try await a.noteSwap(denomIn: "uanml", amountIn: 100_000, denomOut: "uerth", minOut: 1) }) { $0 is UnsignedTx.TxRejected }
         }
         try await a.sync()
         _ = try await a.noteSwap(denomIn: "uanml", amountIn: 100_000, denomOut: "uerth", minOut: 1)
@@ -90,7 +90,7 @@ final class AuditFixesTests: XCTestCase {
         // Forty locks proved and refused: owner-tag counters 0..39 burnt.
         chain.rejectNext = 40
         for _ in 0 ..< 40 {
-            await assertThrowsAsync({ try await a.lockPosition(validator: self.validator, amount: 100_000, splits: [2: 100]) }) { $0 is URLError }
+            await assertThrowsAsync({ try await a.lockPosition(validator: self.validator, amount: 100_000, splits: [2: 100]) }) { $0 is UnsignedTx.TxRejected }
         }
         try await a.sync()
         _ = try await a.lockPosition(validator: validator, amount: 100_000, splits: [2: 100])
@@ -288,7 +288,7 @@ final class AuditFixesTests: XCTestCase {
         await assertThrowsAsync({ try await self.wallet(chain, indexer: idx).sync() }) { $0 is WalletSync.Inconsistent }
         let big = WrappedIndexer(chain)
         big.notesOverride = { fromPos, _ in
-            NotesPage(rows: (0 ... UInt64(WalletSync.maxPageRows)).map { NoteRow(position: fromPos + $0, height: 1, cm: .one, ciphertext: Data(), amount: nil) },
+            NotesPage(rows: (0 ... UInt64(WalletSync.pageSize)).map { NoteRow(position: fromPos + $0, height: 1, cm: .one, ciphertext: Data(), amount: nil) },
                       nextPos: fromPos, complete: false, syncedHeight: 1)
         }
         await assertThrowsAsync({ try await self.wallet(chain, indexer: big).sync() }) { $0 is WalletSync.Inconsistent }
@@ -416,8 +416,10 @@ final class WrappedIndexer: PrivacyIndexer, @unchecked Sendable {
         let p = try await inner.identity(fromIndex: fromIndex, limit: limit)
         return identityMap?(p) ?? p
     }
+    var identityZeroedOverride: ((UInt64) -> HeightPage<UInt64>?)?
     func identityZeroed(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<UInt64> {
-        try await inner.identityZeroed(fromHeight: fromHeight, limit: limit)
+        if let o = identityZeroedOverride, let p = o(fromHeight) { return p }
+        return try await inner.identityZeroed(fromHeight: fromHeight, limit: limit)
     }
 
     func rootsLatest() async throws -> LatestRoots {
@@ -434,11 +436,17 @@ final class WrappedIndexer: PrivacyIndexer, @unchecked Sendable {
     /// Rewrites every stake nullifier tree page served.
     var stakeNfLeavesMap: ((StakeNfLeavesPage) -> StakeNfLeavesPage)?
     func stakeNullifierLeaves(fromIndex: UInt64, limit: Int?) async throws -> StakeNfLeavesPage {
+        nfLeafAsks.append((fromIndex, limit))
         let p = try await inner.stakeNullifierLeaves(fromIndex: fromIndex, limit: limit)
         return stakeNfLeavesMap?(p) ?? p
     }
+    /// Rewrites every snapshot page served.
+    var stakeSnapshotsMap: ((StakeSnapshotsPage) -> StakeSnapshotsPage)?
+    /// Every stake nullifier tree page asked: (from_index, limit).
+    var nfLeafAsks: [(UInt64, Int?)] = []
     func stakeSnapshots(fromHeight: UInt64, limit: Int?) async throws -> StakeSnapshotsPage {
-        try await inner.stakeSnapshots(fromHeight: fromHeight, limit: limit)
+        let p = try await inner.stakeSnapshots(fromHeight: fromHeight, limit: limit)
+        return stakeSnapshotsMap?(p) ?? p
     }
 }
 

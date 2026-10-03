@@ -35,10 +35,10 @@ public enum Amounts {
         guard !parts.isEmpty, parts.count <= 2 else { return nil }
 
         let wholeText = parts[0].isEmpty ? "0" : String(parts[0])
-        guard wholeText.allSatisfy(\.isNumber), let whole = BigInt(wholeText) else { return nil }
+        guard wholeText.allSatisfy({ $0.isASCII && $0.isNumber }), let whole = BigInt(wholeText) else { return nil }
 
         var fractionText = parts.count == 2 ? String(parts[1]) : ""
-        guard fractionText.allSatisfy(\.isNumber) else { return nil }
+        guard fractionText.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
         fractionText = String(fractionText.prefix(exponent))
         fractionText += String(repeating: "0", count: exponent - fractionText.count)
 

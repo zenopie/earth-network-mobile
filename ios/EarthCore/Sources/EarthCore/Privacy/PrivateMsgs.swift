@@ -357,7 +357,7 @@ public enum PrivateMsgs {
     public static func legacyDec(_ weight: String) throws -> String {
         let s = weight.trimmingCharacters(in: .whitespaces)
         let parts = s.split(separator: ".", omittingEmptySubsequences: false)
-        guard (1 ... 2).contains(parts.count), parts.allSatisfy({ $0.allSatisfy(\.isNumber) }),
+        guard (1 ... 2).contains(parts.count), parts.allSatisfy({ $0.allSatisfy { $0.isASCII && $0.isNumber } }),
               !(parts[0].isEmpty && (parts.count == 1 || parts[1].isEmpty))
         else { throw Error.badWeight(weight) }
         var intPart = String(parts[0].drop { $0 == "0" })
@@ -366,7 +366,8 @@ public enum PrivateMsgs {
         while frac.count > 18, frac.last == "0" { frac.removeLast() }
         guard frac.count <= 18 else { throw Error.badWeight(weight) }
         frac += String(repeating: "0", count: 18 - frac.count)
-        let scaled = BigUInt(intPart + frac, radix: 10)!
+        // ASCII digits only (audit 4: Character.isNumber takes "٥", which BigUInt would not parse).
+        guard let scaled = BigUInt(intPart + frac, radix: 10) else { throw Error.badWeight(weight) }
         let one = BigUInt(10).power(18)
         guard scaled > 0, scaled <= one else { throw Error.badWeight(weight) }
         return intPart + "." + frac
@@ -420,7 +421,7 @@ public enum PrivateMsgs {
 
     /// A passport public signal (decimal) as a canonical field element (personhood ParseSignal).
     public static func decimalField(_ s: String) throws -> Fr {
-        guard let n = BigUInt(s, radix: 10), n < Fr.modulus, !s.isEmpty, s.allSatisfy(\.isNumber) else { throw Error.badSignal(s) }
+        guard let n = BigUInt(s, radix: 10), n < Fr.modulus, !s.isEmpty, s.allSatisfy({ $0.isASCII && $0.isNumber }) else { throw Error.badSignal(s) }
         return Fr(n)
     }
 

@@ -83,6 +83,8 @@ public final class PrivacyWallet: @unchecked Sendable {
         public let maxActions: Int
         /// Why the last save that could not throw failed (nil: saved).
         public let saveError: String?
+        /// The genesis the synced data is from.
+        public let genesis: String?
 
         init(store: PrivacyStore, keys: PrivacyKeys, maxActions: Int, saveError: String? = nil) {
             let s = store.state
@@ -94,6 +96,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             identityStatus = WalletSync.identityStatus(store: store, keys: keys)
             self.maxActions = maxActions
             self.saveError = saveError
+            genesis = s.genesis
         }
 
         /// Spendable pool balance per denom (pending spends excluded).
@@ -247,17 +250,21 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// Proves and broadcasts. Only on trees the chain itself vouched for at
     /// the last sync (C3): a proof over an indexer's forged tree is refused by
     /// the chain anyway, and its notes may not exist.
-    private func run(memo: String = "", accepted: @escaping @Sendable (String, UInt64) -> Void = { _, _ in },
+    private func run(memo: String = "", accepted: (String, UInt64) -> Void = { _, _ in }, rejected: (String) -> Void = { _ in },
                      _ assemble: (UInt64) throws -> Assembled) async throws -> TxResult {
         try requireVerified()
-        // The spent notes are marked the moment the node accepts the tx
-        // (K7), before the wait for its block: a wait that times out (the tx
-        // may still land) or a killed app never leaves them spendable. They
-        // stay pending until the chain is past the tx's timeout_height.
-        let (result, _) = try await engine.run(assemble, memo: memo, shownFee: Self.shownFee) { [self] hash, a, timeout in
-            markPending(a.spends, a.stakeSpends, timeoutHeight: timeout)
+        // The spent notes are marked before the tx is sent (K7, audit 4),
+        // under its hash: a wait that times out (the tx may still land), a
+        // lost answer or a killed app never leaves them spendable. They stay
+        // pending until the chain is past the tx's timeout_height and says the
+        // tx is not in a block (WalletSync.releaseStalePending).
+        let (result, _) = try await engine.run(assemble, memo: memo, shownFee: Self.shownFee, accepted: { [self] hash, a, timeout in
+            markPending(a.spends, a.stakeSpends, timeoutHeight: timeout, hash: hash)
             accepted(hash, timeout)
-        }
+        }, rejected: { [self] hash, a in
+            unmarkPending(a.spends, a.stakeSpends, hash: hash)
+            rejected(hash)
+        })
         return result
     }
 
@@ -289,16 +296,31 @@ public final class PrivacyWallet: @unchecked Sendable {
         }
     }
 
-    private func markPending(_ spent: [OwnedNote], _ stake: [OwnedStakeNote], timeoutHeight: UInt64) {
+    private func markPending(_ spent: [OwnedNote], _ stake: [OwnedStakeNote], timeoutHeight: UInt64, hash: String) {
         let positions = Set(spent.map(\.position))
         let stakePositions = Set(stake.map(\.position))
         let t = now()
         store.mutate { s in
             for i in s.notes.indices where positions.contains(s.notes[i].position) {
-                s.notes[i].pendingAt = t; s.notes[i].pendingUntil = timeoutHeight
+                s.notes[i].pendingAt = t; s.notes[i].pendingUntil = timeoutHeight; s.notes[i].pendingTx = hash
             }
             for i in s.stakeNotes.indices where stakePositions.contains(s.stakeNotes[i].position) {
-                s.stakeNotes[i].pendingAt = t; s.stakeNotes[i].pendingUntil = timeoutHeight
+                s.stakeNotes[i].pendingAt = t; s.stakeNotes[i].pendingUntil = timeoutHeight; s.stakeNotes[i].pendingTx = hash
+            }
+        }
+        persistNoThrow()
+    }
+
+    /// A broadcast refused outright (in no mempool): the notes it marked are spendable again.
+    private func unmarkPending(_ spent: [OwnedNote], _ stake: [OwnedStakeNote], hash: String) {
+        let positions = Set(spent.map(\.position))
+        let stakePositions = Set(stake.map(\.position))
+        store.mutate { s in
+            for i in s.notes.indices where positions.contains(s.notes[i].position) && s.notes[i].pendingTx == hash {
+                s.notes[i].pendingAt = nil; s.notes[i].pendingUntil = nil; s.notes[i].pendingTx = nil
+            }
+            for i in s.stakeNotes.indices where stakePositions.contains(s.stakeNotes[i].position) && s.stakeNotes[i].pendingTx == hash {
+                s.stakeNotes[i].pendingAt = nil; s.stakeNotes[i].pendingUntil = nil; s.stakeNotes[i].pendingTx = nil
             }
         }
         persistNoThrow()
@@ -491,7 +513,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             let hint = Self.dscCountry(dscDer)
             let record = try NoteOut.to(keys.address, denom: Self.fee, value: 0,
                                         memo: WalletSync.regMemo(nk: keys.nk, dscKey: dscKey, country: hint, builtAt: UInt64(max(0, now()))))
-            let pending: @Sendable (String, UInt64) -> Void = { [self] hash, _ in
+            let pending: (String, UInt64) -> Void = { [self] hash, _ in
                 // K7: by hash, the moment the node accepts it; the leaf comes later.
                 store.mutate {
                     $0.pendingRegistration = PendingRegistration(
@@ -500,7 +522,10 @@ public final class PrivacyWallet: @unchecked Sendable {
                 }
                 persistNoThrow()
             }
-            let result = try await run(accepted: pending) { fee in
+            let refused: (String) -> Void = { [self] hash in
+                if store.state.pendingRegistration?.txHash == hash { store.mutate { $0.pendingRegistration = nil }; persistNoThrow() }
+            }
+            let result = try await run(accepted: pending, rejected: refused) { fee in
                 Assembled(bundles: [try self.bundle([record], release: [Self.fee: fee], maxActions: mx)]) { bs, _, _ in
                     var m = base
                     m.fee = bs[0]
@@ -567,17 +592,33 @@ public final class PrivacyWallet: @unchecked Sendable {
 
     public func claimedToday() -> Bool { snapshot.claimedDays.contains(today()) }
 
+    /// Today's claim offset for the automation, persisted with this wallet (audit 4).
+    public func claimOffset(now: Int64) async -> Int64 {
+        var o: Int64 = 0
+        await lockedNoThrow {
+            let (v, changed) = store.mutate { PrivacyAutomation.claimOffset(&$0, now: now) }
+            o = v
+            if changed { persistNoThrow() }
+        }
+        return o
+    }
+
     /// When ANML can next be claimed: 0 for now, nil without a live
     /// registration. A claim for day d needs activated_at <= (d - 1) * 86400,
     /// so a fresh registration first claims on the day after next.
     public func claimOpensAt() -> Int64? {
         let snap = snapshot
         guard snap.identityStatus == .live, let id = snap.identity else { return nil }
-        let a = Int64(clamping: id.activatedAt)
-        let firstDay = a / Self.secondsPerDay + 1 + (a % Self.secondsPerDay == 0 ? 0 : 1)
+        // Checked throughout (audit 4, H1): an activated_at no block can have
+        // (sync bounds them; an old store may hold one) has no answer, never a trap.
+        guard id.activatedAt <= UInt64(Int64.max) else { return nil }
+        let a = Int64(id.activatedAt)
+        let (firstDay, o1) = (a / Self.secondsPerDay).addingReportingOverflow(1 + (a % Self.secondsPerDay == 0 ? 0 : 1))
         let t = Int64(today())
         let day = max(t + (snap.claimedDays.contains(UInt64(t)) ? 1 : 0), firstDay)
-        return day == t ? 0 : day * Self.secondsPerDay
+        let (at, o2) = day.multipliedReportingOverflow(by: Self.secondsPerDay)
+        if o1 || o2 { return nil }
+        return day == t ? 0 : at
     }
 
     /// The day every activation bound keeps from now (wave 3: the largest identity root window).
@@ -798,16 +839,34 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// Makes `amount` of `denom` spendable by one stake proof (two notes):
     /// while the two largest fall short, merges the two smallest (one restake
     /// each) and syncs. Returns the merge txs it broadcast.
-    public func consolidateStake(denom: String, amount: UInt64) async throws -> [TxResult] {
+    ///
+    /// Audit 4: at most `maxMerges` merges per confirmation (each pays a fee
+    /// the user confirmed once), a random pause before each after the first
+    /// and before handing back to the action that follows, so the merges and
+    /// the action are not one burst that times them together. More than that
+    /// is refused: merge on the Notes screen first.
+    public func consolidateStake(denom: String, amount: UInt64, maxMerges: Int = PrivacyWallet.maxMergesPerConfirm,
+                                 pause: (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0 * 1_000_000) }) async throws -> [TxResult] {
         var out: [TxResult] = []
+        func space() async throws { try await pause(UInt64.random(in: Self.mergePauseMinMs ... Self.mergePauseMaxMs)) }
         while true {
             let ns = snapshot.stakeNotes.filter { $0.spendable && $0.denom == denom }
             let top2 = ns.map(\.amount).sorted(by: >).prefix(2).reduce(0, PrivateMsgs.saturatingAdd)
-            if top2 >= amount || ns.count < 3 { return out }
+            if top2 >= amount || ns.count < 3 {
+                if !out.isEmpty { try await space() }
+                return out
+            }
+            if out.count >= maxMerges { throw PrivacyError("this stake is spread over too many notes for one confirmation; merge them on the Notes screen first") }
+            if !out.isEmpty { try await space() }
             out.append(try await mergeStake(denom: denom))
             try await sync()
         }
     }
+
+    /// Stake merges one confirmation may pay for, and the random pause between them (audit 4).
+    public static let maxMergesPerConfirm = 2
+    public static let mergePauseMinMs: UInt64 = 15_000
+    public static let mergePauseMaxMs: UInt64 = 45_000
 
     /// Merges the two smallest stake notes of `denom` (derth/<valoper>) into one.
     public func mergeStake(denom: String) async throws -> TxResult {
@@ -914,8 +973,15 @@ public final class PrivacyWallet: @unchecked Sendable {
         await resolveVotesLocked()
         if voted(proposalID, vnf) { throw AlreadyVoted() }
         guard let nfRoot = snap.nfRoot else { throw PrivacyError("this proposal's snapshot has no stake nullifier root; it takes no stake vote") }
-        guard let low = try await snapshotNullifiers(snap).nonMembership(PrivacyHash.stakeNF(nk: keys.nk, rho: note.rho, position: note.position))
-        else { throw SpentBeforeSnapshot() }
+        guard let low = try await snapshotNullifiers(snap).nonMembership(PrivacyHash.stakeNF(nk: keys.nk, rho: note.rho, position: note.position)) else {
+            // Audit 4 (M3): only when sync, too, saw the spend at or before the
+            // snapshot's block. Otherwise the two disagree (a stream or a
+            // snapshot that is not the chain's): an error, never a vote
+            // silently skipped.
+            let held = store.state.stakeNotes.first { $0.position == note.position } ?? note
+            if let h = held.spentHeight, snap.height > 0, h <= UInt64(snap.height) { throw SpentBeforeSnapshot() }
+            throw PrivacyError("the proposal's snapshot nullifier tree holds this note's nullifier, but sync saw no spend before the snapshot; sync again")
+        }
         let weight = try Self.voteWeight(note.amount)
         let path = tree.pathAt(note.position, size: snap.treeSize)
         let asset = PrivacyHash.assetID(note.denom)
@@ -927,6 +993,8 @@ public final class PrivacyWallet: @unchecked Sendable {
         do {
             let r = try await run(accepted: { [self] hash, timeout in
                 recordVote(StakeVoteRecord(proposalID: proposalID, vnf: vnf, txHash: hash, until: timeout, confirmed: false))
+            }, rejected: { [self] hash in
+                forgetVote(proposalID, vnf, hash: hash)
             }) { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], vote: vote) { bs, _, _ in
                     MsgStakeVote(bundle: bs[0], proposalID: proposalID, validator: validator, options: try PrivateMsgs.canonicalOptions(options),
@@ -948,10 +1016,14 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// x/shieldedstaking ErrVoteNullifierUsed.
     public static let voteNullifierUsed = 1119
 
+    /// The codespace `voteNullifierUsed` is registered in: the code alone could be any module's (audit 4).
+    public static let voteCodespace = "shieldedstaking"
+
     /// Whether `e` is the chain refusing a vote nullifier already used on the proposal.
     public static func alreadyVotedError(_ e: Swift.Error) -> Bool {
-        let m = "\(e) \(e.localizedDescription)"
-        return m.contains("already voted on this proposal") || m.range(of: "code\\s*\(voteNullifierUsed)\\b", options: .regularExpression) != nil
+        if let r = e as? UnsignedTx.TxRejected { return r.code == voteNullifierUsed && r.codespace == voteCodespace }
+        // Simulate answers with the error's registered text, not its code.
+        return "\(e) \(e.localizedDescription)".contains("this stake note already voted on this proposal")
     }
 
     /// A stake vote's public weight for a note of `amount` uderth
@@ -964,6 +1036,12 @@ public final class PrivacyWallet: @unchecked Sendable {
         var unit: UInt64 = 1
         while amount / unit >= 1000 { unit *= 10 }
         return amount / unit * unit
+    }
+
+    /// A vote the node refused outright (in no mempool): the note may vote again.
+    private func forgetVote(_ proposalID: UInt64, _ vnf: Fr, hash: String) {
+        store.mutate { s in s.stakeVotes.removeAll { $0.proposalID == proposalID && $0.vnf == vnf && !$0.confirmed && $0.txHash == hash } }
+        persistNoThrow()
     }
 
     private func voted(_ proposalID: UInt64, _ vnf: Fr) -> Bool {
@@ -991,7 +1069,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             if let h = v.txHash { r = (try? await chain.tx(h)) ?? nil }
             var next: StakeVoteRecord? = v
             if let r {
-                next = r.code == 0 || r.code == Self.voteNullifierUsed ? StakeVoteRecord(proposalID: v.proposalID, vnf: v.vnf, txHash: v.txHash,
+                next = r.code == 0 || (r.code == Self.voteNullifierUsed && r.codespace == Self.voteCodespace) ? StakeVoteRecord(proposalID: v.proposalID, vnf: v.vnf, txHash: v.txHash,
                                                                                         until: v.until, confirmed: true) : nil
             } else if v.txHash == nil {
                 next = nil
@@ -1012,8 +1090,8 @@ public final class PrivacyWallet: @unchecked Sendable {
     // Used under the wallet's lock only.
     private var nfValues: [Fr] = []
     private var nfTrees: [(root: Fr, tree: IndexedTree)] = []
-    /// Stake nullifier leaves asked of the indexer a page, and of the LCD (its maximum).
-    static let nfPage = 5000
+    /// Stake nullifier leaves asked of the indexer a page (the backend's paging rule), and of the LCD (its maximum).
+    static let nfPage = WalletSync.pageSize
     static let lcdNfPage = 1000
 
     /// The stake nullifier tree at `snap` (ORCHARD_DESIGN 15, wallet format 3):
@@ -1024,8 +1102,12 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// drops what was fetched and rebuilds from the chain alone once.
     private func snapshotNullifiers(_ snap: PrivacyReads.Snapshot) async throws -> IndexedTree {
         guard let nfRoot = snap.nfRoot else { throw PrivacyError("this proposal's snapshot has no stake nullifier root; it takes no stake vote") }
+        snapshotLock.lock(); let stale = nfCacheStale; nfCacheStale = false; snapshotLock.unlock()
+        if stale { nfValues = []; nfTrees = [] }
         if let t = nfTrees.first(where: { $0.root == nfRoot }) { return t.tree }
         try require(snap.nfSize <= Merkle.capacity && snap.nfSize <= UInt64(Int.max), "nf_size \(snap.nfSize)")
+        // Audit 4 (L4): nf_size is the LCD's (snapshot()), so the fetch below
+        // is bounded by the chain's own count, never an indexer's.
         let n = Int(snap.nfSize > 0 ? snap.nfSize - 1 : 0)
         for chainOnly in [false, true] {
             let values: [Fr]
@@ -1051,13 +1133,26 @@ public final class PrivacyWallet: @unchecked Sendable {
         if !chainOnly {
             do {
                 while nfValues.count < n {
-                    let page = try await indexer.stakeNullifierLeaves(fromIndex: UInt64(nfValues.count) + 1, limit: min(n - nfValues.count, Self.nfPage))
-                    if page.leaves.isEmpty { break }
+                    // The backend's paging rule: aligned pages of nfPage leaf
+                    // indexes from 0 (leaf 0, the sentinel, is never a row); the
+                    // leaves already held are dropped, each checked against ours.
+                    let next = UInt64(nfValues.count) + 1
+                    let page = try await indexer.stakeNullifierLeaves(fromIndex: WalletSync.aligned(next, Self.nfPage), limit: Self.nfPage)
+                    guard page.leaves.count <= Self.nfPage else {
+                        throw WalletSync.Inconsistent(message: "the indexer sent \(page.leaves.count) stake nullifiers in a page of \(Self.nfPage)")
+                    }
+                    var added = 0
                     for (index, v) in page.leaves {
+                        if index >= 1 && index < next {
+                            guard nfValues[Int(index - 1)] == v else { throw WalletSync.Inconsistent(message: "stake nullifier leaf \(index) differs from the one held") }
+                            continue
+                        }
                         // Contiguous from where we are, or the page is not the tree's order.
                         guard index == UInt64(nfValues.count) + 1 else { throw WalletSync.Inconsistent(message: "stake nullifier leaf \(index) out of order") }
-                        nfValues.append(v)
+                        if nfValues.count >= n { break }
+                        nfValues.append(v); added += 1
                     }
+                    if added == 0 { break }
                 }
             } catch is WalletSync.Inconsistent {
                 throw PrivacyError("the indexer's stake nullifiers are out of order")
@@ -1075,44 +1170,37 @@ public final class PrivacyWallet: @unchecked Sendable {
     }
 
     private let snapshotLock = NSLock()
-    private var snapshotRows: [UInt64: StakeSnapshotRow] = [:]
-    private var snapshotsNext: UInt64 = 0
-    private static let maxSnapshotPages = 1000
+    private var snapshots: [UInt64: PrivacyReads.Snapshot] = [:]
+    /// The genesis the per-wallet caches (snapshots, the stake nullifier
+    /// tree) were built under: dropped when the store's changes (audit 4, L2).
+    private var cacheGenesis: String?
 
-    private func cachedSnapshotRow(_ id: UInt64) -> (StakeSnapshotRow?, UInt64) {
+    private func cachedSnapshot(_ id: UInt64) -> PrivacyReads.Snapshot? {
+        let g = snapshot.genesis
         snapshotLock.lock(); defer { snapshotLock.unlock() }
-        return (snapshotRows[id], snapshotsNext)
+        if g != cacheGenesis { snapshots = [:]; cacheGenesis = g; nfCacheStale = true }
+        return snapshots[id]
     }
 
-    private func cacheSnapshotRows(_ rows: [StakeSnapshotRow], next: UInt64) {
-        snapshotLock.lock(); defer { snapshotLock.unlock() }
-        for r in rows { snapshotRows[r.proposalID] = r }
-        snapshotsNext = max(snapshotsNext, next)
+    private func cacheSnapshot(_ id: UInt64, _ s: PrivacyReads.Snapshot) {
+        snapshotLock.lock(); snapshots[id] = s; snapshotLock.unlock()
     }
 
-    /// `proposalID`'s snapshot: from the indexer's full snapshot stream (no
-    /// request names the proposal), else the chain's Query/Snapshot (a
-    /// legacy snapshot without a nullifier root, or one the indexer has not
-    /// reached). Whatever the source, the note root is checked against the
-    /// wallet's verified stake tree and the nullifier root against the tree
-    /// the nullifiers rebuild; the chain proves against its own.
+    /// Set when the genesis changed: the nullifier values and trees (held under the wallet's lock) are dropped at their next use.
+    private var nfCacheStale = false
+
+    /// `proposalID`'s snapshot, from the chain's own Query/Snapshot (audit 4,
+    /// M3): its stake root and size, nullifier root and size, block and
+    /// validator rates are taken from the LCD, never from the indexer (a
+    /// forged nf_root would make a note look spent before the snapshot). The
+    /// proposal id is public, so asking names nothing of this wallet. The
+    /// note root is then checked against the wallet's verified stake tree and
+    /// the nullifier root against the tree the nullifiers rebuild.
     public func snapshot(proposalID: UInt64) async throws -> PrivacyReads.Snapshot {
-        var (row, from) = cachedSnapshotRow(proposalID)
-        if row == nil {
-            do {
-                for _ in 0 ..< Self.maxSnapshotPages {
-                    let page = try await indexer.stakeSnapshots(fromHeight: from, limit: nil)
-                    cacheSnapshotRows(page.rows, next: page.nextHeight)
-                    from = max(from, page.nextHeight)
-                    if !page.complete { break }
-                }
-            } catch {}
-            row = cachedSnapshotRow(proposalID).0
-        }
-        if let row, let root = row.root, let nfRoot = row.nfRoot {
-            return PrivacyReads.Snapshot(root: root, treeSize: row.treeSize, height: Int64(clamping: row.height), nfRoot: nfRoot, nfSize: row.nfSize)
-        }
-        return try await reads.snapshot(proposalID: proposalID)
+        if let s = cachedSnapshot(proposalID) { return s }
+        let s = try await reads.snapshot(proposalID: proposalID)
+        cacheSnapshot(proposalID, s)
+        return s
     }
 
     /// Derth notes that may vote on `proposalID`: in the stake tree at the
@@ -1126,7 +1214,9 @@ public final class PrivacyWallet: @unchecked Sendable {
             let nk = keys.nk
             return store.state.stakeNotes.filter {
                 $0.denom.hasPrefix(Self.derthPrefix) && $0.amount > 0 && $0.position < snap.treeSize &&
-                    ($0.spentHeight == nil || snap.height <= 0 || $0.spentHeight! >= UInt64(snap.height)) &&
+                    // Spent in the snapshot's own block is spent before it (the
+                    // snapshot is the trees at that block's end; audit 4).
+                    ($0.spentHeight == nil || snap.height <= 0 || $0.spentHeight! > UInt64(snap.height)) &&
                     !voted(proposalID, PrivacyHash.voteNF(nk: nk, rho: $0.rho, position: $0.position, proposalID: proposalID))
             }
         }
@@ -1197,7 +1287,8 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// Casts `item` as the last sync left things; nil when there is nothing
     /// left of it to cast (the note already voted on this proposal, or was
     /// spent before its snapshot).
-    public func castStakeVote(proposalID: UInt64, item: StakeVoteItem, options: [WeightedVoteOption]) async throws -> TxResult? {
+    public func castStakeVote(proposalID: UInt64, item: StakeVoteItem, options: [WeightedVoteOption],
+                              accepted: @escaping (String) -> Void = { _ in }) async throws -> TxResult? {
         switch item {
         case let .note(position):
             guard let n = snapshot.stakeNotes.first(where: { $0.position == position }) else { return nil }
@@ -1210,7 +1301,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             }
         case let .position(id, counter):
             guard let p = try await positions().first(where: { $0.position.id == id && $0.counter == counter }) else { return nil }
-            return try await positionVote(p.position, counter: p.counter, proposalID: proposalID, options: options)
+            return try await positionVote(p.position, counter: p.counter, proposalID: proposalID, options: options, accepted: accepted)
         }
     }
 
@@ -1323,11 +1414,12 @@ public final class PrivacyWallet: @unchecked Sendable {
         }
     }
 
-    public func positionVote(_ position: PrivacyReads.Position, counter: UInt32, proposalID: UInt64, options: [WeightedVoteOption]) async throws -> TxResult {
+    public func positionVote(_ position: PrivacyReads.Position, counter: UInt32, proposalID: UInt64, options: [WeightedVoteOption],
+                             accepted: @escaping (String) -> Void = { _ in }) async throws -> TxResult {
         let mx = await maxActions()
         return try await locked {
             let stake = try ownerPlan(position, counter: counter)
-            return try await run { fee in
+            return try await run(accepted: { hash, _ in accepted(hash) }) { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
                     MsgPositionVote(bundle: bs[0], positionID: position.id, proposalID: proposalID, options: try PrivateMsgs.canonicalOptions(options), stake: sp!)
                 }

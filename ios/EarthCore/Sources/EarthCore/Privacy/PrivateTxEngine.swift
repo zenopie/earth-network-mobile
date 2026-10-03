@@ -20,9 +20,12 @@ public struct TxResult: Sendable {
     /// DeliverTx code: 0 is success (a looked-up tx may have failed in its block).
     public let code: Int
     public let log: String
+    /// The module the code is from ("" for success or unknown): a code means nothing without it.
+    public let codespace: String
 
-    public init(hash: String, height: UInt64, time: Int64, events: [(type: String, attributes: [String: String])], code: Int = 0, log: String = "") {
-        self.hash = hash; self.height = height; self.time = time; self.events = events; self.code = code; self.log = log
+    public init(hash: String, height: UInt64, time: Int64, events: [(type: String, attributes: [String: String])], code: Int = 0, log: String = "",
+                codespace: String = "") {
+        self.hash = hash; self.height = height; self.time = time; self.events = events; self.code = code; self.log = log; self.codespace = codespace
     }
 
     public func attr(_ type: String, _ key: String) -> String? {
@@ -221,10 +224,12 @@ public struct PrivateTxEngine: Sendable {
     /// on are fixed first: the sighash binds them, so every proof is made
     /// over the tx exactly as broadcast. The fee is capped (`feeCap`) and,
     /// with `shownFee`, may not exceed what the confirm sheet showed.
-    /// `accepted` gets the timeout height: spent notes stay pending until the
-    /// chain is past it.
+    /// `accepted` gets the hash and the timeout height before the broadcast:
+    /// spent notes stay pending until the chain is past it and says the tx is
+    /// not in it; `rejected`, a refusal proving the tx is in no mempool.
     public func run(_ assemble: (UInt64) throws -> Assembled, memo: String = "", shownFee: UInt64? = nil,
-                    accepted: @Sendable (String, Assembled, UInt64) -> Void = { _, _, _ in }) async throws -> (TxResult, Assembled) {
+                    accepted: (String, Assembled, UInt64) -> Void = { _, _, _ in },
+                    rejected: (String, Assembled) -> Void = { _, _ in }) async throws -> (TxResult, Assembled) {
         let timeout = try await timeoutHeight()
         let (q, a) = try await price(assemble, memo: memo, timeout: timeout, placeholders: false)
         if let shownFee, q.fee > shownFee { throw FeeAboveQuote(fee: q.fee, shown: shownFee) }
@@ -256,8 +261,30 @@ public struct PrivateTxEngine: Sendable {
         guard try msg.sighash(chainID: chainID, tx: tx) == sighash else { throw PrivacyError("the proven msg binds another sighash") }
         guard msg.totalFee == q.fee else { throw PrivacyError("the msg must pay exactly the quoted fee") }
         try Self.checkShape(msg)
-        let assembled = a
-        return (try await chain.broadcast(UnsignedTx.build(msg, tx: tx)) { accepted($0, assembled, timeout) }, a)
+        let raw = UnsignedTx.build(msg, tx: tx)
+        // Audit 4: what the tx spends is marked before it is sent, under the
+        // hash computed here (the chain's own: SHA-256 of the bytes). A
+        // broadcast whose answer is lost (a timeout, a killed app) after the
+        // node took it never leaves its notes spendable; they are released
+        // only once the chain says the tx is missing or failed past its
+        // timeout_height. Only a refusal that proves the tx never entered a
+        // mempool (CheckTx's code, no connection at all) undoes the mark.
+        let hash = UnsignedTx.hash(raw)
+        accepted(hash, a, timeout)
+        do {
+            let r = try await chain.broadcast(raw) { _ in }
+            guard r.hash.uppercased() == hash else { throw PrivacyError("the node names the tx \(r.hash), not \(hash)") }
+            return (r, a)
+        } catch {
+            if error is UnsignedTx.TxRejected || Self.neverSent(error) { rejected(hash, a) }
+            throw error
+        }
+    }
+
+    /// No connection was ever made: the tx reached no node.
+    static func neverSent(_ e: Swift.Error) -> Bool {
+        guard let u = e as? URLError else { return false }
+        return [.cannotConnectToHost, .cannotFindHost, .dnsLookupFailed, .notConnectedToInternet].contains(u.code)
     }
 
     /// The chain's wallet format rules (round 2), checked before broadcast:

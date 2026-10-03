@@ -110,7 +110,7 @@ public enum Fees {
         guard let raw = json["minimum_gas_price"].string, raw.hasSuffix("uerth") else {
             return nil
         }
-        let digits = raw.prefix { $0.isNumber || $0 == "." }
+        let digits = raw.prefix { ($0.isASCII && $0.isNumber) || $0 == "." }
         guard !digits.isEmpty, let price = Decimal(string: String(digits)),
               price <= maximumPrice
         else { return nil }

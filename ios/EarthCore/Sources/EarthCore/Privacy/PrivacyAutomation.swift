@@ -108,19 +108,17 @@ public enum PrivacyAutomation {
         return out
     }
 
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var offsetDay: Int64 = -1
-    nonisolated(unsafe) private static var offset: Int64 = 0
-
-    /// Today's random claim offset, drawn once per UTC day.
-    public static func claimOffset(now: Int64) -> Int64 {
-        lock.lock(); defer { lock.unlock() }
+    /// Today's random claim offset, drawn once per UTC day and persisted
+    /// with the wallet (audit 4): an app restarted during the day keeps the
+    /// day's draw. A draw per process start would give every restart another
+    /// chance at an early offset, skewing claims towards midnight. Returns
+    /// the offset and whether `state` changed (to be saved).
+    public static func claimOffset(_ state: inout PrivacyState, now: Int64) -> (offset: Int64, changed: Bool) {
         let day = now / PrivacyWallet.secondsPerDay
-        if day != offsetDay {
-            offsetDay = day
-            offset = Int64.random(in: 0 ..< claimWindow)
-        }
-        return offset
+        if state.claimOffsetDay == day { return (state.claimOffset, false) }
+        state.claimOffsetDay = day
+        state.claimOffset = Int64.random(in: 0 ..< claimWindow)
+        return (state.claimOffset, true)
     }
 
     /// The random pause between two automated actions in one pass, milliseconds.
@@ -206,7 +204,7 @@ public enum PrivacyAutomation {
                     identityLive: snap.identityStatus == .live,
                     claimOpensAt: wallet.claimOpensAt(),
                     claimedToday: wallet.claimedToday(),
-                    claimOffset: claimOffset(now: now),
+                    claimOffset: await wallet.claimOffset(now: now),
                     caretakerDue: (try? await wallet.caretakerDue()) ?? false,
                     referrerDue: (try? await wallet.referrerDue()) ?? false,
                     hasFeeErth: (snap.poolBalances["uerth"] ?? 0) > 0,

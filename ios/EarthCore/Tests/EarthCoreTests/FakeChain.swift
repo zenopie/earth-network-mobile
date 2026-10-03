@@ -26,6 +26,9 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     /// (height -> tree state) after each block, for queries pinned to a height.
     var identityAt: [UInt64: TreeState] = [:]
     var stakeAt: [UInt64: TreeState] = [:]
+    var noteAt: [UInt64: TreeState] = [:]
+    /// The block each note root was first recorded in (x/shielded RootRecord.height).
+    var noteRootHeights: [Fr: UInt64] = [:]
     var notes: [NoteRow] = []
     let noteTree = MerkleTree(store: MemNodeStore())
     let identityTree = MerkleTree(store: MemNodeStore())
@@ -105,6 +108,8 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     private func block() {
         noteRoots.insert(noteTree.root()); identityRoots.insert(identityTree.root())
         noteRootSizes[noteTree.root()] = noteTree.size
+        if noteRootHeights[noteTree.root()] == nil { noteRootHeights[noteTree.root()] = height }
+        noteAt[height] = TreeState(size: noteTree.size, root: noteTree.size == 0 ? nil : noteTree.root())
         if stakeTree.size > 0 { stakeRoots.insert(stakeTree.root()) }
         identityAt[height] = TreeState(size: identityTree.size, root: identityTree.size == 0 ? nil : identityTree.root())
         stakeAt[height] = TreeState(size: stakeTree.size, root: stakeTree.size == 0 ? nil : stakeTree.root())
@@ -220,9 +225,9 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             // The proofs made for it never reach the chain.
             rejectNext -= 1
             prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll(); prover.votes.removeAll()
-            throw URLError(.networkConnectionLost)
+            throw UnsignedTx.TxRejected(code: 19, log: "broadcast refused (test)")
         }
-        let hash = "HASH\(height)"
+        let hash = UnsignedTx.hash(tx)
         if dropNext > 0 {
             // Accepted by CheckTx, then never included (evicted from the mempool).
             dropNext -= 1
@@ -630,8 +635,20 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
                       identityLeaves: UInt64(identityRows.count), halted: halted, genesis: genesis, base: "/privacy/\(chainID)/\(genesis)")
     }
 
-    func notes(fromPos: UInt64, limit: Int?) async throws -> NotesPage {
+    /// Every position/index cursor asked off the backend's paging rule (each a 400).
+    var misaligned: [String] = []
+    /// Lets tests page with other sizes (the alignment rule still holds).
+    var anyPageSize = false
+
+    private func aligned(_ name: String, _ from: UInt64, _ limit: Int?) throws -> Int {
         let n = limit ?? 1000
+        if ![100, 1000].contains(n) && !anyPageSize { misaligned.append("\(name) limit \(n)"); throw Refused(why: "indexer /\(name): 400 limit") }
+        if from % UInt64(n) != 0 { misaligned.append("\(name) \(from)/\(n)"); throw Refused(why: "indexer /\(name): 400 from not aligned") }
+        return n
+    }
+
+    func notes(fromPos: UInt64, limit: Int?) async throws -> NotesPage {
+        let n = try aligned("notes", fromPos, limit)
         let rows = Array(notes.dropFirst(Int(fromPos)).prefix(n))
         return NotesPage(rows: rows, nextPos: fromPos + UInt64(rows.count), complete: rows.count == n, syncedHeight: height - 1)
     }
@@ -648,7 +665,8 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     var identityRowTimes = true
 
     func identity(fromIndex: UInt64, limit: Int?) async throws -> IdentityPage {
-        let rows = Array(identityRows.dropFirst(Int(fromIndex))).map { identityRowTimes ? $0 : $0.with(time: nil) }
+        let n = try aligned("identity", fromIndex, limit)
+        let rows = Array(identityRows.dropFirst(Int(fromIndex)).prefix(n)).map { identityRowTimes ? $0 : $0.with(time: nil) }
         return IdentityPage(rows: rows, nextIndex: fromIndex + UInt64(rows.count), size: UInt64(identityRows.count), syncedHeight: height - 1)
     }
 
@@ -659,7 +677,8 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     }
 
     func rootsLatest() async throws -> LatestRoots {
-        LatestRoots(note: noteTree.size == 0 ? nil : RootRecord(root: noteTree.root(), treeSize: noteTree.size, height: height - 1, time: now),
+        LatestRoots(note: noteTree.size == 0 ? nil : RootRecord(root: noteTree.root(), treeSize: noteTree.size,
+                                                               height: noteRootHeights[noteTree.root()] ?? height - 1, time: now),
                     identity: identityTree.size == 0 ? nil : RootRecord(root: identityTree.root(), treeSize: identityTree.size, height: height - 1, time: now),
                     syncedHeight: height - 1,
                     stake: stakeTree.size == 0 ? nil : RootRecord(root: stakeTree.root(), treeSize: stakeTree.size, height: height - 1, time: now))
@@ -667,7 +686,22 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
 
     // MARK: the chain's own queries (LCD), for the wallet's root checks
 
-    func noteRoot(_ root: Fr) async throws -> NoteRootRecord? { noteRootSizes[root].map { NoteRootRecord(valid: true, treeSize: $0) } }
+    func noteRoot(_ root: Fr) async throws -> NoteRootRecord? {
+        noteRootSizes[root].map { NoteRootRecord(valid: true, treeSize: $0, height: noteRootHeights[root]) }
+    }
+
+    func noteTree(height: UInt64?) async -> TreeState? { read(noteAt, height) }
+
+    /// Set to make the LCD say nothing of txs by hash.
+    var txLookupBlind = false
+
+    func txStatus(_ hash: String) async -> TxStatus? {
+        if txLookupBlind { return nil }
+        guard let r = txs[hash] else { return .missing }
+        return r.code == 0 ? .committed : .failed
+    }
+
+    func latestBlock() async -> ChainTip? { ChainTip(height: height - 1 + tipAhead, time: UInt64(now)) }
 
     private static func at(_ m: [UInt64: TreeState], _ h: UInt64?) -> TreeState {
         let keys = m.keys.filter { h == nil || $0 <= h! }
@@ -731,7 +765,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     func rates(epoch: UInt64?) async throws -> [RateRow] { [] }
 
     func stakeNotes(fromPos: UInt64, limit: Int?) async throws -> StakeNotesPage {
-        let n = limit ?? 1000
+        let n = try aligned("stake/notes", fromPos, limit)
         let rows = Array(stakeRows.dropFirst(Int(fromPos)).prefix(n))
         return StakeNotesPage(rows: rows, nextPos: fromPos + UInt64(rows.count), complete: rows.count == n, syncedHeight: height - 1)
     }
@@ -740,11 +774,13 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
 
     func stakeNullifierLeaves(fromIndex: UInt64, limit: Int?) async throws -> StakeNfLeavesPage {
         guard indexerNfTree else { throw IndexerBaseMoved("no /stake/nullifier-tree (test)") }
-        let n = UInt64(limit ?? 1000)
+        let n = UInt64(try aligned("stake/nullifier-tree", fromIndex, limit))
+        // Page k is leaf indexes [k*n, (k+1)*n); leaf 0 (the sentinel) is never a row.
         let from = max(fromIndex, 1)
-        let to = min(from + n, UInt64(stakeNfValues.count) + 1)
+        let to = min(fromIndex + n, UInt64(stakeNfValues.count) + 1)
         let rows = from < to ? (from ..< to).map { (index: $0, value: stakeNfValues[Int($0 - 1)]) } : []
-        return StakeNfLeavesPage(leaves: rows, nextIndex: rows.last.map { $0.index + 1 } ?? from, complete: UInt64(rows.count) == n,
+        let full = fromIndex + n <= UInt64(stakeNfValues.count) + 1
+        return StakeNfLeavesPage(leaves: rows, nextIndex: full ? fromIndex + n : (rows.last.map { $0.index + 1 } ?? from), complete: full,
                                  size: stakeNfValues.isEmpty ? 0 : UInt64(stakeNfValues.count) + 1, syncedHeight: height - 1)
     }
 

@@ -1,11 +1,24 @@
 import Foundation
 
-/// x/shielded Query/Root: a root the chain recorded, whether it is still an anchor, and its tree size.
+/// x/shielded Query/Root: a root the chain recorded, whether it is still an
+/// anchor, its tree size, and the height of the block that produced it (nil:
+/// the node did not say).
 public struct NoteRootRecord: Sendable, Equatable {
     public let valid: Bool
     public let treeSize: UInt64
-    public init(valid: Bool, treeSize: UInt64) { self.valid = valid; self.treeSize = treeSize }
+    public let height: UInt64?
+    public init(valid: Bool, treeSize: UInt64, height: UInt64? = nil) { self.valid = valid; self.treeSize = treeSize; self.height = height }
 }
+
+/// The chain's latest block: its height and time (unix seconds; nil when the node did not say).
+public struct ChainTip: Sendable, Equatable {
+    public let height: UInt64
+    public let time: UInt64?
+    public init(height: UInt64, time: UInt64?) { self.height = height; self.time = time }
+}
+
+/// What the chain says of a tx by hash (audit 4): committed, failed in its block, or unknown to it.
+public enum TxStatus: Sendable, Equatable { case committed, failed, missing }
 
 /// A tree's state as the chain reports it: size and latest recorded root
 /// (nil for an empty tree); `pinned` only when the node answered at exactly
@@ -40,6 +53,14 @@ public protocol ChainRoots: Sendable {
     func blockTime(_ height: UInt64) async -> UInt64?
     /// The LCD's chain id and genesis key (first block hash, 16 hex); nil when it cannot say (K6).
     func chainIdentity() async -> ChainIdentity?
+    /// The chain's latest block, with its time when the node says it (audit 4: every indexer height and time is bounded by it).
+    func latestBlock() async -> ChainTip?
+    /// x/shielded Query/Tree at `height`: the note tree's size then (nil: the node cannot say).
+    func noteTree(height: UInt64?) async -> TreeState?
+    /// A tx by `hash` (one this wallet broadcast, so the node knows it
+    /// already): nil when the node could not say. A pending note is released
+    /// only on missing or failed (audit 4).
+    func txStatus(_ hash: String) async -> TxStatus?
 }
 
 public extension ChainRoots {
@@ -48,6 +69,9 @@ public extension ChainRoots {
     func latestHeight() async -> UInt64? { nil }
     func blockTime(_ height: UInt64) async -> UInt64? { nil }
     func chainIdentity() async -> ChainIdentity? { nil }
+    func latestBlock() async -> ChainTip? { await latestHeight().map { ChainTip(height: $0, time: nil) } }
+    func noteTree(height: UInt64?) async -> TreeState? { nil }
+    func txStatus(_ hash: String) async -> TxStatus? { nil }
 }
 
 /// Which chain the LCD serves: its chain id and the first 16 lowercase hex digits of its block 1 hash (nil: unavailable).
@@ -124,8 +148,26 @@ public final class WalletSync {
         public let message: String
         public var errorDescription: String? { message }
     }
-    /// The most rows a page may carry (the backend's PRIVACY_PAGE_MAX).
-    public static let maxPageRows = 5000
+    /// The page size every stream is asked with (the backend's paging rule,
+    /// audit 4: `limit` is 100 or 1000, a position or index cursor a multiple
+    /// of it). Every wallet asks for the same URLs, so a CDN keeps one copy.
+    public static let pageSize = 1000
+    /// The page sizes the backend serves (PRIVACY_PAGE_SIZES).
+    public static let pageSizes: Set<Int> = [100, 1000]
+    /// A height page never splits a block, so one block may bring more than the limit; never more than this.
+    public static let maxHeightPageRows = 5000
+    /// The aligned page holding `cursor`: page k is positions [k*limit, (k+1)*limit).
+    public static func aligned(_ cursor: UInt64, _ limit: Int) -> UInt64 { cursor - cursor % UInt64(limit) }
+    /// Blocks an indexer height may run past the chain's tip as the LCD
+    /// reports it. Anything further is Inconsistent (audit 4): a height past
+    /// the tip would poison the persisted cursors for good.
+    public static let tipSlack: UInt64 = 10
+    /// Seconds an indexer row's block time may run past the tip's time (or the wallet's clock).
+    public static let timeSlack: UInt64 = 3_600
+    /// No block time before this (2025-01-01 UTC) is one of earth-1's (audit 4, H1).
+    public static let minBlockTime: UInt64 = 1_735_689_600
+    /// Identity row heights kept (a uniform sample) to draw a record's LCD cover set from (audit 4, M2).
+    public static let identityHeightSample = 256
     /// Passes over the streams while the indexer keeps moving, before giving up on pinning a height.
     static let maxPasses = 4
     /// The largest tree position the circuits take (u32).
@@ -277,6 +319,46 @@ public final class WalletSync {
     private var deadline = Double.infinity
     private let poolSample = Reservoir(WalletSync.nullifierSample)
     private let stakeSample = Reservoir(WalletSync.nullifierSample)
+    /// The chain's tip (LCD) every indexer height and row time this sync is bounded by (audit 4).
+    private var tip: ChainTip?
+    /// Our own tx landed but the indexer never reported its spend: what it served is not the chain's (audit 4).
+    private var ownSpendMissing = false
+
+    @discardableResult
+    private func readTip() async throws -> ChainTip {
+        guard let t = await chain.latestBlock() else { throw PrivacyError("the node did not say its latest height; nothing was synced") }
+        tip = t
+        return t
+    }
+
+    /// `h`, an indexer's height (a row's, a cursor, a synced_height), at most
+    /// the chain's tip plus `tipSlack` (audit 4, M1): past it the tip is read
+    /// again once (the chain moved), then the page is Inconsistent.
+    @discardableResult
+    private func bounded(_ name: String, _ h: UInt64) async throws -> UInt64 {
+        let t0: ChainTip
+        if let t = tip { t0 = t } else { t0 = try await readTip() }
+        if h <= t0.height &+ Self.tipSlack { return h }
+        if h <= (try await readTip()).height &+ Self.tipSlack { return h }
+        throw Inconsistent(message: "the indexer's \(name) height \(h) is past the chain's tip \(tip?.height ?? 0)")
+    }
+
+    /// A height page's heights and cursors, bounded by the tip.
+    private func bounded<T>(_ name: String, _ page: HeightPage<T>) async throws {
+        try await bounded("\(name) synced", page.syncedHeight)
+        try await bounded("\(name) next", page.nextHeight == 0 ? 0 : page.nextHeight - 1)
+        for b in page.blocks { try await bounded(name, b.height) }
+    }
+
+    /// The latest block time an indexer row may carry: the tip's (or, unknown, the wallet's clock) plus `timeSlack`.
+    private func maxTime() -> UInt64 {
+        let base = tip?.time ?? UInt64(max(now(), 0))
+        let (v, o) = base.addingReportingOverflow(Self.timeSlack)
+        return o ? .max : v
+    }
+
+    /// Whether `t` can be a block time of this chain (audit 4, H1): never 0, never before `minBlockTime`, never past the tip.
+    private func timeOK(_ t: UInt64) -> Bool { t >= Self.minBlockTime && t <= maxTime() }
 
     public init(indexer: PrivacyIndexer, store: PrivacyStore, keys: PrivacyKeys, chainID: String, chain: ChainRoots,
                 now: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970) }, searchBudget: UInt64 = WalletSync.syncSearchBudget,
@@ -293,7 +375,7 @@ public final class WalletSync {
     /// Syncs; on an inconsistency with the indexer, starts over once from an
     /// empty store. The whole of it, retries included, is bounded by
     /// `syncTimeout`.
-    public func sync(pageLimit: Int? = nil) async throws -> Result {
+    public func sync(pageLimit: Int = WalletSync.pageSize) async throws -> Result {
         deadline = monotonic() + syncTimeout
         do {
             return try await syncRetryingBase(pageLimit)
@@ -318,7 +400,7 @@ public final class WalletSync {
     }
 
     /// A 404 means the indexer's base moved (a relaunch): read the status again, once.
-    private func syncRetryingBase(_ limit: Int?) async throws -> Result {
+    private func syncRetryingBase(_ limit: Int) async throws -> Result {
         do {
             return try await syncOnce(limit)
         } catch is IndexerBaseMoved {
@@ -326,7 +408,7 @@ public final class WalletSync {
         }
     }
 
-    private func syncOnce(_ limit: Int?) async throws -> Result {
+    private func syncOnce(_ limit: Int) async throws -> Result {
         try markSyncing()
         try tick()
         let status = try await indexer.status()
@@ -337,6 +419,8 @@ public final class WalletSync {
             try await switchChain(status.genesis)
             try markSyncing()
         }
+        try await readTip()
+        ownSpendMissing = false
         var newNotes: [OwnedNote] = []
         var spent: [OwnedNote] = []
         var newStake: [OwnedStakeNote] = []
@@ -350,14 +434,22 @@ public final class WalletSync {
             try await syncIdentity(limit)
             try tick()
             roots = try await indexer.rootsLatest()
+            try await boundRoots(roots)
             pass += 1
             if try atIndexerTip(roots) || pass >= Self.maxPasses { break }
         }
         await releaseStalePending()
-        // Once a sync, after every pass: the record search is budgeted per sync (K1).
-        await matchRecords()
-        resolvePending()
         let verified = try await verifyRoots(roots)
+        // Audit 4 (M5): a registration is matched only against an identity
+        // tree this same sync verified against the chain's; an unverified one
+        // waits (its leaves are kept) for a sync that verifies. Once a sync,
+        // after every pass: the record search is budgeted per sync (K1).
+        if verified {
+            await matchRecords()
+            resolvePending()
+            // An identity from before (or a reset) whose leaf this verified tree holds is verified now.
+            if let id = store.state.identity, !id.verified, identityStatus() == .live { store.mutate { $0.identity?.verified = true } }
+        }
         try store.save()
         return Result(syncedHeight: store.state.notesHeight, newNotes: newNotes, spent: spent, noteRoot: store.noteTree.root(),
                       identityRoot: store.identityTree.root(), newStake: newStake, identityStatus: identityStatus(), verified: verified)
@@ -388,6 +480,12 @@ public final class WalletSync {
         // treated like a switch: the synced data goes, the registration stays.
         let preK6 = old.chainID == chainID && old.genesis == nil
         if switching || preK6 { try store.switchGenesis(genesis!) } else { try store.reset(chainID: chainID, genesis: genesis) }
+    }
+
+    /// Every height /roots/latest names, bounded by the chain's tip (audit 4).
+    private func boundRoots(_ roots: LatestRoots) async throws {
+        try await bounded("roots synced", roots.syncedHeight)
+        for r in [roots.note, roots.identity, roots.stake].compactMap({ $0 }) { try await bounded("root", r.height) }
     }
 
     /// Whether every local tree is the indexer's latest; a tree of the same
@@ -433,9 +531,20 @@ public final class WalletSync {
             } else if !rec!.valid {
                 problems.append("unverified: the indexer is too far behind the chain (its note root is no longer an anchor)")
             }
+            // Audit 4 (M1): the indexer dates its root as the chain does.
+            if let h = rec?.height, let n = roots.note, h != n.height {
+                problems.append("unverified: the indexer dates its note root at height \(n.height), the chain at \(h)")
+            }
         }
         let tip = try atIndexerTip(roots)
         if !tip { problems.append("unverified: the indexer kept moving; sync again") }
+        // Audit 4 (M1): the height the indexer claims to be synced to is
+        // checked, not taken: the chain's note tree at exactly that height
+        // (pinned) must be the one served. A stale indexer naming the
+        // current height is caught here (every spend appends notes).
+        if mismatch == nil, tip, roots.syncedHeight > 0, let t = await chain.noteTree(height: roots.syncedHeight), t.pinned, t.size != store.noteTree.size {
+            problems.append("unverified: the chain's note tree at the indexer's height \(roots.syncedHeight) holds \(t.size) notes, the indexer served \(store.noteTree.size)")
+        }
         func tree(_ name: String, _ local: MerkleTree, _ r: RootRecord?, _ read: (UInt64?) async throws -> TreeState) async throws {
             // Pinned to the indexer's root height, which is only the local
             // tree's when the local tree is the indexer's latest.
@@ -465,8 +574,15 @@ public final class WalletSync {
         for nf in poolSample.items where await chain.nullifierSpent(nf) == false { invented = true }
         for nf in stakeSample.items where await chain.stakeNullifierSpent(nf) == false { invented = true }
         if invented { problems.append("unverified: the indexer reported a spend the chain does not hold") }
-        if let tipHeight = await chain.latestHeight(), tipHeight > roots.syncedHeight, tipHeight - roots.syncedHeight > Self.staleBlocks {
-            problems.append("unverified: the indexer is \(tipHeight - roots.syncedHeight) blocks behind the chain")
+        if ownSpendMissing { problems.append("unverified: a tx of this wallet is in a block but the indexer did not report its spend") }
+        // Behind the chain's tip as the LCD says it (audit 4), the indexer's
+        // height having been checked against the chain's note tree above.
+        if let tipHeight = try? await readTip().height {
+            if tipHeight > roots.syncedHeight, tipHeight - roots.syncedHeight > Self.staleBlocks {
+                problems.append("unverified: the indexer is \(tipHeight - roots.syncedHeight) blocks behind the chain")
+            }
+        } else {
+            problems.append("unverified: the node did not say its latest height")
         }
         store.mutate { s in
             s.rootsVerified = problems.isEmpty
@@ -476,8 +592,19 @@ public final class WalletSync {
         return problems.isEmpty
     }
 
-    private func checkPage(_ n: Int) throws {
-        if n > Self.maxPageRows { throw Inconsistent(message: "the indexer sent \(n) rows in one page") }
+    private func checkPage(_ n: Int, _ limit: Int) throws {
+        if n > limit { throw Inconsistent(message: "the indexer sent \(n) rows in a page of \(limit)") }
+    }
+
+    /// The rows of an aligned position page past `held` (the backend's
+    /// paging rule): the page starts at `from`, so the rows before `held` are
+    /// ones the wallet holds already, and each must be the very leaf it holds.
+    private func fresh<R>(_ name: String, _ rows: [R], from: UInt64, held: UInt64, _ position: (R) -> UInt64, same: (R) -> Bool) throws -> [R] {
+        try checkPositions(rows.map(position), from: from, name)
+        let n = Int(held - from)
+        if rows.count < n { throw Inconsistent(message: "a \(name) page from \(from) ends before the \(held) held") }
+        for r in rows.prefix(n) where !same(r) { throw Inconsistent(message: "\(name) \(position(r)) differs from the one held") }
+        return Array(rows.dropFirst(n))
     }
 
     /// Positions must follow the cursor one by one and stay within the tree (L7).
@@ -499,30 +626,35 @@ public final class WalletSync {
     }
 
     /// Audit 3: a height page never moves backwards, and one that says more follows moves forwards.
-    private func checkHeights<T>(_ name: String, from: UInt64, _ page: HeightPage<T>) throws {
+    private func checkHeights<T>(_ name: String, from: UInt64, _ page: HeightPage<T>) async throws {
+        try await bounded(name, page)
         if page.nextHeight < from || (page.complete && page.nextHeight <= from) {
             throw Inconsistent(message: "a \(name) page from height \(from) names next \(page.nextHeight)")
         }
         if page.blocks.contains(where: { $0.height < from }) { throw Inconsistent(message: "a \(name) page from height \(from) holds an earlier height") }
     }
 
-    private func syncNotes(_ limit: Int?) async throws -> [OwnedNote] {
+    private func syncNotes(_ limit: Int) async throws -> [OwnedNote] {
         var found: [OwnedNote] = []
         while true {
             try tick()
-            let page = try await indexer.notes(fromPos: store.state.notesNext, limit: limit)
-            try checkPage(page.rows.count)
-            try checkPositions("note", from: store.state.notesNext, rows: page.rows.count, next: page.nextPos, complete: page.complete)
-            if !page.rows.isEmpty {
-                try checkPositions(page.rows.map(\.position), from: store.state.notesNext, "note")
-                store.noteTree.appendAll(page.rows.map(\.cm))
-                for r in page.rows {
+            let from = Self.aligned(store.state.notesNext, limit)
+            let page = try await indexer.notes(fromPos: from, limit: limit)
+            try checkPage(page.rows.count, limit)
+            try await bounded("note synced", page.syncedHeight)
+            for r in page.rows { try await bounded("note", r.height) }
+            try checkPositions("note", from: from, rows: page.rows.count, next: page.nextPos, complete: page.complete)
+            let tree = store.noteTree
+            let rows = try fresh("note", page.rows, from: from, held: store.state.notesNext, { $0.position }) { tree.leaf($0.position) == $0.cm }
+            if !rows.isEmpty {
+                store.noteTree.appendAll(rows.map(\.cm))
+                for r in rows {
                     if let n = open(r) {
                         found.append(n)
                         store.mutate { $0.notes.append(n) }
                     }
                 }
-                store.mutate { $0.notesNext += UInt64(page.rows.count) }
+                store.mutate { $0.notesNext += UInt64(rows.count) }
             }
             store.mutate { $0.notesHeight = max($0.notesHeight, page.syncedHeight) }
             if !page.complete { break }
@@ -575,7 +707,7 @@ public final class WalletSync {
         return (v, String(denom))
     }
 
-    private func syncNullifiers(_ limit: Int?) async throws -> [OwnedNote] {
+    private func syncNullifiers(_ limit: Int) async throws -> [OwnedNote] {
         var mine: [Fr: Int] = [:]
         for (i, n) in store.state.notes.enumerated() where n.unspent { mine[n.nf] = i }
         // The spot-check sample never holds one of ours (spent or not): asking
@@ -588,8 +720,8 @@ public final class WalletSync {
         while store.state.nullifiersNext <= ceiling {
             try tick()
             let page = try await indexer.nullifiers(fromHeight: store.state.nullifiersNext, limit: limit)
-            try checkPage(page.blocks.reduce(0) { $0 + $1.items.count })
-            try checkHeights("nullifier", from: store.state.nullifiersNext, page)
+            try checkPage(page.blocks.reduce(0) { $0 + $1.items.count }, max(limit, Self.maxHeightPageRows))
+            try await checkHeights("nullifier", from: store.state.nullifiersNext, page)
             for (h, nfs) in page.blocks {
                 if h > ceiling { break }
                 for nf in nfs where !own.contains(nf) { poolSample.offer(nf) }
@@ -600,7 +732,7 @@ public final class WalletSync {
                     }
                 }
             }
-            store.mutate { $0.nullifiersNext = min(page.nextHeight, ceiling + 1) }
+            store.mutate { $0.nullifiersNext = min(page.nextHeight, ceiling &+ 1) }
             if !page.complete { break }
         }
         return spent
@@ -616,42 +748,66 @@ public final class WalletSync {
         let t = now()
         let needsTip = store.state.notes.contains { $0.unspent && $0.pendingUntil != nil } ||
             store.state.stakeNotes.contains { $0.unspent && $0.pendingUntil != nil }
-        let tip = needsTip ? await chain.latestHeight() : nil
-        func release(_ at: Int64?, _ until: UInt64?, _ readThrough: UInt64) -> Bool {
+        let tipHeight = needsTip ? (try? await readTip())?.height : nil
+        let st = store.state
+        let poolRead = st.nullifiersNext == 0 ? 0 : st.nullifiersNext - 1
+        let stakeRead = st.stakeNullifiersNext == 0 ? 0 : st.stakeNullifiersNext - 1
+        // Past its timeout and read through: the chain's word on its tx (audit 4, M1).
+        func due(_ at: Int64?, _ until: UInt64?, _ readThrough: UInt64) -> Bool {
+            guard at != nil, let until, let tipHeight else { return false }
+            return readThrough >= until && tipHeight > until
+        }
+        var status: [String: TxStatus?] = [:]
+        for h in Set(st.notes.filter { $0.unspent && due($0.pendingAt, $0.pendingUntil, poolRead) }.compactMap(\.pendingTx) +
+                     st.stakeNotes.filter { $0.unspent && due($0.pendingAt, $0.pendingUntil, stakeRead) }.compactMap(\.pendingTx)) {
+            status[h] = await chain.txStatus(h)
+        }
+        var missing = false
+        func release(_ at: Int64?, _ until: UInt64?, _ hash: String?, _ readThrough: UInt64) -> Bool {
             guard let at else { return false }
-            guard let until else { return t - at > Self.pendingTimeout }
-            guard let tip else { return false }
-            return readThrough >= until && tip > until
+            guard until != nil else { return t - at > Self.pendingTimeout }
+            guard due(at, until, readThrough) else { return false }
+            // Marks from before audit 4 carry no hash: the timeout alone.
+            guard let hash else { return true }
+            switch status[hash] ?? nil {
+            case .missing?, .failed?: return true
+            case .committed?: missing = true; return false
+            case nil: return false
+            }
         }
         store.mutate { s in
-            let poolRead = s.nullifiersNext == 0 ? 0 : s.nullifiersNext - 1
-            let stakeRead = s.stakeNullifiersNext == 0 ? 0 : s.stakeNullifiersNext - 1
-            for i in s.notes.indices where s.notes[i].unspent && release(s.notes[i].pendingAt, s.notes[i].pendingUntil, poolRead) {
-                s.notes[i].pendingAt = nil; s.notes[i].pendingUntil = nil
+            for i in s.notes.indices where s.notes[i].unspent && release(s.notes[i].pendingAt, s.notes[i].pendingUntil, s.notes[i].pendingTx, poolRead) {
+                s.notes[i].pendingAt = nil; s.notes[i].pendingUntil = nil; s.notes[i].pendingTx = nil
             }
-            for i in s.stakeNotes.indices where s.stakeNotes[i].unspent && release(s.stakeNotes[i].pendingAt, s.stakeNotes[i].pendingUntil, stakeRead) {
-                s.stakeNotes[i].pendingAt = nil; s.stakeNotes[i].pendingUntil = nil
+            for i in s.stakeNotes.indices where s.stakeNotes[i].unspent &&
+                release(s.stakeNotes[i].pendingAt, s.stakeNotes[i].pendingUntil, s.stakeNotes[i].pendingTx, stakeRead) {
+                s.stakeNotes[i].pendingAt = nil; s.stakeNotes[i].pendingUntil = nil; s.stakeNotes[i].pendingTx = nil
             }
         }
+        if missing { ownSpendMissing = true }
     }
 
-    private func syncStakeNotes(_ limit: Int?) async throws -> [OwnedStakeNote] {
+    private func syncStakeNotes(_ limit: Int) async throws -> [OwnedStakeNote] {
         var found: [OwnedStakeNote] = []
         while true {
             try tick()
-            let page = try await indexer.stakeNotes(fromPos: store.state.stakeNext, limit: limit)
-            try checkPage(page.rows.count)
-            try checkPositions("stake note", from: store.state.stakeNext, rows: page.rows.count, next: page.nextPos, complete: page.complete)
-            if !page.rows.isEmpty {
-                try checkPositions(page.rows.map(\.position), from: store.state.stakeNext, "stake note")
-                store.stakeTree.appendAll(page.rows.map(\.cm))
-                for r in page.rows {
+            let from = Self.aligned(store.state.stakeNext, limit)
+            let page = try await indexer.stakeNotes(fromPos: from, limit: limit)
+            try checkPage(page.rows.count, limit)
+            try await bounded("stake note synced", page.syncedHeight)
+            for r in page.rows { try await bounded("stake note", r.height) }
+            try checkPositions("stake note", from: from, rows: page.rows.count, next: page.nextPos, complete: page.complete)
+            let tree = store.stakeTree
+            let rows = try fresh("stake note", page.rows, from: from, held: store.state.stakeNext, { $0.position }) { tree.leaf($0.position) == $0.cm }
+            if !rows.isEmpty {
+                store.stakeTree.appendAll(rows.map(\.cm))
+                for r in rows {
                     if let n = openStake(r) {
                         found.append(n)
                         store.mutate { $0.stakeNotes.append(n) }
                     }
                 }
-                store.mutate { $0.stakeNext += UInt64(page.rows.count) }
+                store.mutate { $0.stakeNext += UInt64(rows.count) }
             }
             store.mutate { $0.stakeHeight = max($0.stakeHeight, page.syncedHeight) }
             if !page.complete { break }
@@ -687,7 +843,7 @@ public final class WalletSync {
                               nf: PrivacyHash.stakeNF(nk: keys.nk, rho: rho, position: r.position))
     }
 
-    private func syncStakeNullifiers(_ limit: Int?) async throws {
+    private func syncStakeNullifiers(_ limit: Int) async throws {
         var mine: [Fr: Int] = [:]
         for (i, n) in store.state.stakeNotes.enumerated() where n.unspent { mine[n.nf] = i }
         let own = Set(store.state.stakeNotes.map(\.nf))
@@ -695,14 +851,14 @@ public final class WalletSync {
         while store.state.stakeNullifiersNext <= ceiling {
             try tick()
             let page = try await indexer.stakeNullifiers(fromHeight: store.state.stakeNullifiersNext, limit: limit)
-            try checkPage(page.blocks.reduce(0) { $0 + $1.items.count })
-            try checkHeights("stake nullifier", from: store.state.stakeNullifiersNext, page)
+            try checkPage(page.blocks.reduce(0) { $0 + $1.items.count }, max(limit, Self.maxHeightPageRows))
+            try await checkHeights("stake nullifier", from: store.state.stakeNullifiersNext, page)
             for (h, nfs) in page.blocks {
                 if h > ceiling { break }
                 for nf in nfs where !own.contains(nf) { stakeSample.offer(nf) }
                 for nf in nfs { if let i = mine[nf] { store.mutate { $0.stakeNotes[i].spentHeight = h } } }
             }
-            store.mutate { $0.stakeNullifiersNext = min(page.nextHeight, ceiling + 1) }
+            store.mutate { $0.stakeNullifiersNext = min(page.nextHeight, ceiling &+ 1) }
             if !page.complete { break }
         }
     }
@@ -712,37 +868,47 @@ public final class WalletSync {
     /// Each appended leaf at the height of an unmatched record note is tried
     /// against it: that is how a wallet restored from the mnemonic finds its
     /// registration, with no query naming it.
-    private func syncIdentity(_ limit: Int?) async throws {
+    private func syncIdentity(_ limit: Int) async throws {
         let ceiling = store.state.notesHeight
         // Zeroings of leaves already held, first: a leaf appended below
         // carries its own zeroed_height.
         while store.state.zeroedNext <= ceiling {
             try tick()
             let page = try await indexer.identityZeroed(fromHeight: store.state.zeroedNext, limit: limit)
-            try checkPage(page.blocks.reduce(0) { $0 + $1.items.count })
-            try checkHeights("identity zeroing", from: store.state.zeroedNext, page)
+            try checkPage(page.blocks.reduce(0) { $0 + $1.items.count }, max(limit, Self.maxHeightPageRows))
+            try await checkHeights("identity zeroing", from: store.state.zeroedNext, page)
             var updates: [UInt64: Fr] = [:]
             for (h, idxs) in page.blocks {
                 if h > ceiling { break }
                 for i in idxs where i < store.identityTree.size { updates[i] = .zero }
             }
             store.identityTree.updateAll(updates)
-            store.mutate { $0.zeroedNext = min(page.nextHeight, ceiling + 1) }
+            store.mutate { $0.zeroedNext = min(page.nextHeight, ceiling &+ 1) }
             if !page.complete { break }
         }
         let recordHeights = Set(store.state.regRecords.map(\.height))
         while true {
             try tick()
-            let page = try await indexer.identity(fromIndex: store.state.identityNext, limit: limit)
-            try checkPage(page.rows.count)
-            if page.rows.isEmpty { break }
-            let take = Array(page.rows.prefix { $0.height <= ceiling })
-            try checkPositions(take.map(\.index), from: store.state.identityNext, "identity leaf")
+            let from = Self.aligned(store.state.identityNext, limit)
+            let page = try await indexer.identity(fromIndex: from, limit: limit)
+            try checkPage(page.rows.count, limit)
+            try await bounded("identity synced", page.syncedHeight)
+            for r in page.rows {
+                try await bounded("identity", r.height)
+                if let z = r.zeroedHeight { try await bounded("identity zeroing", z) }
+                // Audit 4 (H1): a row's block time is one of this chain's.
+                if let t = r.time, t != 0, !timeOK(t) { throw Inconsistent(message: "identity leaf \(r.index) carries block time \(t), outside the chain's") }
+            }
+            // Rows already held are dropped unchecked: a leaf zeroed since reads differently.
+            let rest = try fresh("identity leaf", page.rows, from: from, held: store.state.identityNext, { $0.index }) { _ in true }
+            if rest.isEmpty { break }
+            let take = Array(rest.prefix { $0.height <= ceiling })
             // A leaf zeroed at or below the ceiling is zero here; one zeroed
             // later is zeroed by a later pass's zeroed stream.
             store.identityTree.appendAll(take.map { r in r.zeroedHeight.map { $0 <= ceiling } == true ? .zero : r.leaf })
             // Each record keeps the leaves of its block as they pass (persisted:
             // never streamed again), and the block's time if the row carries it.
+            for r in take { offerIdentityHeight(r.height) }
             for r in take where recordHeights.contains(r.height) {
                 let leaf = store.identityTree.leaf(r.index)
                 store.mutate { s in
@@ -755,7 +921,17 @@ public final class WalletSync {
                 }
             }
             store.mutate { $0.identityNext += UInt64(take.count) }
-            if take.count < page.rows.count || store.state.identityNext >= page.size { break }
+            if take.count < rest.count || store.state.identityNext >= page.size || page.rows.count < limit { break }
+        }
+    }
+
+    /// A uniform sample of identity row heights (registration blocks), the cover set's decoys (audit 4, M2).
+    private func offerIdentityHeight(_ h: UInt64) {
+        store.mutate { s in
+            s.identityRowsSeen &+= 1
+            if s.identityHeights.count < Self.identityHeightSample { s.identityHeights.append(h); return }
+            let j = UInt64.random(in: 0 ..< s.identityRowsSeen)
+            if j < UInt64(Self.identityHeightSample) { s.identityHeights[Int(j)] = h }
         }
     }
 
@@ -797,14 +973,16 @@ public final class WalletSync {
             }
             var found: (UInt64, Fr, UInt64)?
             var lcdTime: UInt64?
-            // 1. The indexer's block time.
-            if let t = rec.time, !rec.tried.contains(t) {
+            // 1. The indexer's block time (bounded by the chain's tip as it streamed, audit 4).
+            let rowTime = rec.time.flatMap { timeOK($0) ? $0 : nil }
+            if let t = rowTime, !rec.tried.contains(t) {
                 found = tryTime(rec, leaves, t)
                 rec.tried.append(t); rec.work &+= perTime * UInt64(leaves.count)
             }
             // 2. The LCD's, asked with a cover set.
-            if found == nil, rec.time.map({ rec.tried.contains($0) }) ?? true {
-                let (t, r) = await coverTime(rec)
+            if found == nil, rowTime.map({ rec.tried.contains($0) }) ?? true {
+                let (t0, r) = await coverTime(rec)
+                let t = t0.flatMap { timeOK($0) ? $0 : nil }
                 rec = r
                 lcdTime = t
                 if let t, !rec.tried.contains(t) {
@@ -826,10 +1004,14 @@ public final class WalletSync {
             store.mutate { $0.regRecords[k] = updated }
             if let (index, country, at) = found {
                 let cur = store.state.identity
-                if cur == nil || index > cur!.leafIndex {
+                // At an index at least the identity's: a match there replaces
+                // one made before (audit 4, M5: an identity from an unverified
+                // tree, or another time, is re-matched rather than kept).
+                if cur == nil || index >= cur!.leafIndex {
                     let nullifier = (cur?.leafIndex == index ? cur?.passportNullifier : nil) ?? ""
                     store.mutate {
-                        $0.identity = IdentityRecord(leafIndex: index, dscKey: rec.dscKey, country: country, activatedAt: at, passportNullifier: nullifier)
+                        $0.identity = IdentityRecord(leafIndex: index, dscKey: rec.dscKey, country: country, activatedAt: at, passportNullifier: nullifier,
+                                                     verified: true)
                     }
                 }
                 return
@@ -860,8 +1042,16 @@ public final class WalletSync {
         if let t = rec.chainTime { return (t, rec) }
         if rec.coverTries >= Self.maxCoverTries { return (nil, rec) }
         if rec.cover.isEmpty {
-            let top = max(store.state.notesHeight, rec.height)
+            // Never past the chain's tip (audit 4, M2): a decoy the chain has
+            // not reached yet is no decoy, the LCD sees which height is real.
+            var tipHeight = rec.height
+            if let t = tip { tipHeight = t.height } else if let t = try? await readTip() { tipHeight = t.height }
+            let top = max(min(max(store.state.notesHeight, rec.height), tipHeight), 1)
             var set: [UInt64] = [rec.height]
+            // Decoys are other registrations' blocks first (a block time is
+            // asked for exactly those when restoring), then any height.
+            for h in Array(Set(store.state.identityHeights.filter { $0 >= 1 && $0 <= top && $0 != rec.height })).shuffled()
+                .prefix(Self.coverSet - 1) { set.append(h) }
             let want = Int(min(UInt64(Self.coverSet), max(top, 1)))
             while set.count < want {
                 let h = UInt64.random(in: 1 ... max(top, 1))
@@ -901,8 +1091,9 @@ public final class WalletSync {
             out.cursor += 1
             out.work += cost
             spent += cost
-            let t = Int64(clamping: rec.builtAt) + off
-            if t < 0 { continue }
+            // Checked (audit 4, H1): a candidate that wraps, or that cannot be a block time, is skipped.
+            let (t, o) = Int64(clamping: rec.builtAt).addingReportingOverflow(off)
+            if o || t < 0 || !timeOK(UInt64(t)) { continue }
             for l in leaves {
                 for c in countries where PrivacyHash.identityLeaf(idc: keys.idc, dscKey: rec.dscKey, country: c, activatedAt: UInt64(t)) == l.leaf {
                     out.status = .matched
@@ -932,7 +1123,7 @@ public final class WalletSync {
         if let country = countryFor(leaf: leaf, dscKey: p.dscKey, activatedAt: activatedAt, hint: p.countryHint) {
             store.mutate {
                 $0.identity = IdentityRecord(leafIndex: index, dscKey: p.dscKey, country: country, activatedAt: activatedAt,
-                                             passportNullifier: p.passportNullifier)
+                                             passportNullifier: p.passportNullifier, verified: true)
                 $0.pendingRegistration = nil
             }
         } else {

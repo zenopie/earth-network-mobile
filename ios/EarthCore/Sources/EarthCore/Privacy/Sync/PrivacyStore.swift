@@ -10,10 +10,24 @@ public struct IdentityRecord: Codable, Equatable, Sendable {
     public let activatedAt: UInt64
     /// The passport nullifier: public in the registration, the switch/expiry key.
     public let passportNullifier: String
+    /// Matched against an identity tree the chain verified in the same sync
+    /// (audit 4, M5), or resolved from the registration's own committed tx.
+    /// A reset keeps only a verified identity; one from before is not.
+    public var verified: Bool
 
-    public init(leafIndex: UInt64, dscKey: Fr, country: Fr, activatedAt: UInt64, passportNullifier: String) {
+    public init(leafIndex: UInt64, dscKey: Fr, country: Fr, activatedAt: UInt64, passportNullifier: String, verified: Bool = false) {
         self.leafIndex = leafIndex; self.dscKey = dscKey; self.country = country
-        self.activatedAt = activatedAt; self.passportNullifier = passportNullifier
+        self.activatedAt = activatedAt; self.passportNullifier = passportNullifier; self.verified = verified
+    }
+
+    enum CodingKeys: String, CodingKey { case leafIndex, dscKey, country, activatedAt, passportNullifier, verified }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        leafIndex = try c.decode(UInt64.self, forKey: .leafIndex); dscKey = try c.decode(Fr.self, forKey: .dscKey)
+        country = try c.decode(Fr.self, forKey: .country); activatedAt = try c.decode(UInt64.self, forKey: .activatedAt)
+        passportNullifier = try c.decode(String.self, forKey: .passportNullifier)
+        verified = try c.decodeIfPresent(Bool.self, forKey: .verified) ?? false
     }
 }
 
@@ -203,6 +217,12 @@ public struct PrivacyState: Codable, Sendable {
     public var stakeNotes: [OwnedStakeNote] = []
     /// Every denom seen in a public amount: resolves the asset ids ciphertexts carry.
     public var denoms: Set<String> = []
+    /// A uniform sample of identity row heights (registration blocks): a record's LCD cover set is drawn from it (audit 4).
+    public var identityHeights: [UInt64] = []
+    public var identityRowsSeen: UInt64 = 0
+    /// The UTC day `claimOffset` was drawn for, and the draw: one per day, whatever restarts the app (audit 4).
+    public var claimOffsetDay: Int64 = -1
+    public var claimOffset: Int64 = 0
 
     public init() {}
 
@@ -210,7 +230,7 @@ public struct PrivacyState: Codable, Sendable {
         case chainID, genesis, notesNext, notesHeight, nullifiersNext, identityNext, zeroedNext, notes, identity, pendingRegistration,
              regRecords, rootsVerified, rootsError, claimedDays, caretakerCastAt, caretakerSplit, referrerAddress, referrerBoundAt,
              unbondRetryAt, nextOtagCounter, stakeNext, stakeHeight, stakeNullifiersNext, stakeNotes, denoms, closedOtagMax, stakeVoteRun,
-             syncGeneration, verifiedGeneration, stakeVotes
+             syncGeneration, verifiedGeneration, stakeVotes, identityHeights, identityRowsSeen, claimOffsetDay, claimOffset
     }
 
     /// Tolerates a state file from before the stake tree (missing keys keep their defaults).
@@ -234,6 +254,8 @@ public struct PrivacyState: Codable, Sendable {
         stakeVotes = try v(.stakeVotes, [])
         syncGeneration = try v(.syncGeneration, 0)
         verifiedGeneration = try c.decodeIfPresent(UInt64.self, forKey: .verifiedGeneration)
+        identityHeights = try v(.identityHeights, []); identityRowsSeen = try v(.identityRowsSeen, 0)
+        claimOffsetDay = try v(.claimOffsetDay, -1); claimOffset = try v(.claimOffset, 0)
     }
 }
 
@@ -355,11 +377,13 @@ public final class PrivacyStore {
         }
     }
 
-    /// Forgets the synced data. On the same chain (an inconsistent sync) it
-    /// keeps the owner-tag counter, the registration (its leaf, or the one
-    /// pending) and what the wallet itself cast (claims, caretaker split,
-    /// referrer); a different chain or genesis (a relaunch under the same
-    /// chain id) keeps only the owner-tag counter.
+    /// Forgets the synced data. On the same chain (an inconsistent sync, a
+    /// root mismatch) it keeps the owner-tag counter, the registration (its
+    /// leaf only when it was matched against a verified tree, audit 4 M5; or
+    /// the one pending) and what the wallet itself cast (claims, caretaker
+    /// split, referrer, its stake votes, audit 4 L1, and the day's claim
+    /// offset); a different chain or genesis (a relaunch under the same chain
+    /// id) keeps only the owner-tag counter.
     public func reset(chainID: String?) throws { try reset(chainID: chainID, genesis: state.genesis) }
 
     public func reset(chainID: String?, genesis: String?) throws {
@@ -374,8 +398,10 @@ public final class PrivacyStore {
         s.closedOtagMax = old.closedOtagMax
         if old.chainID == chainID && old.genesis == genesis {
             s.stakeVoteRun = old.stakeVoteRun
-            s.identity = old.identity
+            s.identity = old.identity?.verified == true ? old.identity : nil
             s.pendingRegistration = old.pendingRegistration
+            s.stakeVotes = old.stakeVotes
+            s.claimOffsetDay = old.claimOffsetDay; s.claimOffset = old.claimOffset
             s.claimedDays = old.claimedDays
             s.caretakerCastAt = old.caretakerCastAt; s.caretakerSplit = old.caretakerSplit
             s.referrerAddress = old.referrerAddress; s.referrerBoundAt = old.referrerBoundAt

@@ -24,6 +24,46 @@ public struct EarthRest: Sendable {
     /// are far below it.
     public static let maxBodyBytes = 8 * 1024 * 1024
 
+    /// The deepest JSON nesting any response may have (audit 4), checked before parsing.
+    public static let maxJSONDepth = 64
+
+    /// Refuses `data` when its JSON arrays/objects nest deeper than `max`
+    /// (counted outside strings), before any parser sees it.
+    public static func checkJSONDepth(_ data: Data, max: Int = maxJSONDepth) throws {
+        var depth = 0, inString = false, escaped = false
+        for b in data {
+            if inString {
+                if escaped { escaped = false } else if b == 0x5c { escaped = true } else if b == 0x22 { inString = false }
+                continue
+            }
+            switch b {
+            case 0x22: inString = true
+            case 0x5b, 0x7b: depth += 1; if depth > max { throw Error.notJSON("response nests deeper than \(max)") }
+            case 0x5d, 0x7d: depth -= 1
+            default: break
+            }
+        }
+    }
+
+    /// JSON of `data`, its nesting bounded first (audit 4).
+    static func parseJSON(_ data: Data) throws -> Any {
+        try checkJSONDepth(data)
+        guard let o = try? JSONSerialization.jsonObject(with: data) else { throw Error.notJSON(String(decoding: data.prefix(200), as: UTF8.self)) }
+        return o
+    }
+
+    /// A session that never follows a redirect (audit 4): a 3xx comes back as
+    /// the response (a non-2xx, an error), never a request to another origin.
+    public static func session(_ config: URLSessionConfiguration) -> URLSession {
+        URLSession(configuration: config, delegate: NoRedirects.shared, delegateQueue: nil)
+    }
+
+    final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+        static let shared = NoRedirects()
+        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest) async -> URLRequest? { nil }
+    }
+
     /// Reads `request`'s response, refusing more than `max` bytes (after
     /// URLSession's own gzip decoding). Returns the body and HTTP status.
     static func boundedData(_ session: URLSession, _ request: URLRequest, max: Int = maxBodyBytes) async throws -> (Data, Int) {
@@ -55,7 +95,7 @@ public struct EarthRest: Sendable {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 20
         config.timeoutIntervalForResource = 30
-        self.session = URLSession(configuration: config)
+        self.session = Self.session(config)
     }
 
     public func get(_ path: String) async throws -> JSON {
@@ -79,7 +119,7 @@ public struct EarthRest: Sendable {
         r.setValue(String(height), forHTTPHeaderField: "x-cosmos-block-height")
         let (data, status, resp) = try await Self.boundedResponse(session, r)
         guard (200 ... 299).contains(status) else { throw Error.http(status: status, body: String(decoding: data, as: UTF8.self)) }
-        guard let object = try? JSONSerialization.jsonObject(with: data) else { throw Error.notJSON(String(decoding: data, as: UTF8.self)) }
+        let object = try Self.parseJSON(data)
         let echo = (resp?.value(forHTTPHeaderField: "x-cosmos-block-height")).flatMap { UInt64($0.trimmingCharacters(in: .whitespaces)) }
         return (JSON(object), echo)
     }
@@ -104,10 +144,7 @@ public struct EarthRest: Sendable {
         guard (200 ... 299).contains(status) else {
             throw Error.http(status: status, body: String(decoding: data, as: UTF8.self))
         }
-        guard let object = try? JSONSerialization.jsonObject(with: data) else {
-            throw Error.notJSON(String(decoding: data, as: UTF8.self))
-        }
-        return JSON(object)
+        return JSON(try Self.parseJSON(data))
     }
 }
 

@@ -416,7 +416,7 @@ final class ReauditFixesTests: XCTestCase {
         let c = StakeVoteController(wallet: { a }, pause: { pauses.add($0) })
         let before = chain.height
         let first = try await c.startAndAwaitFirst(proposalID: 12, options: yes)
-        XCTAssertTrue(first.hasPrefix("HASH"))
+        XCTAssertEqual(64, first.count)
         await c.wait()
         let p = try XCTUnwrap(c.progress)
         XCTAssertTrue(p.finished)

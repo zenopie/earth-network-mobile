@@ -104,7 +104,7 @@ public enum GasGrant {
             let c = URLSessionConfiguration.ephemeral
             c.timeoutIntervalForRequest = 30
             c.timeoutIntervalForResource = 60
-            return URLSession(configuration: c)
+            return EarthRest.session(c)
         }()
 
         private static func url(_ path: String) throws -> URL {
@@ -157,9 +157,12 @@ public enum GasGrant {
         func stamp(_ bits: Int) async throws -> GasPow.Stamp? {
             guard bits > 0 else { return nil }
             let ts = clock()
-            return try await Task.detached(priority: .userInitiated) {
+            // Off the caller's thread, but cancelled with it (audit 4): a
+            // detached task does not inherit the caller's cancellation.
+            let work = Task.detached(priority: .userInitiated) {
                 try GasPow.solve(ts: ts, binding: binding, nullifier: nullifier, bits: bits, progress: progress)
-            }.value
+            }
+            return try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
         }
         var current = takeKept(key, now: clock())
         if current == nil { current = try await stamp(await powBits(transport)) }
@@ -196,6 +199,7 @@ public enum GasGrant {
               let o = try? JSONSerialization.jsonObject(with: data) else { return 0 }
         let j = JSON(o)
         guard j.version.string == GasPow.version, let b = j.bits.int64 else { return 0 }
-        return Int(max(0, min(Int64(GasPow.maxBits), b)))
+        // More than the wallet works for: no stamp now, and the POST's 428 is refused.
+        return (0 ... Int64(GasPow.maxBits)).contains(b) ? Int(b) : 0
     }
 }

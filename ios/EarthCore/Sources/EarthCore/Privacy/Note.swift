@@ -61,6 +61,8 @@ public struct OwnedNote: Hashable, Sendable, Codable {
     public var pendingAt: Int64?
     /// That tx's timeout_height: the note is released only once the chain is past it (nil: a pre-timeout mark).
     public var pendingUntil: UInt64?
+    /// That tx's hash: released only once the chain says it is missing or failed (audit 4; nil: a mark from before).
+    public var pendingTx: String?
 
     public init(position: UInt64, height: UInt64, note: NotePlaintext, cm: Fr, nf: Fr, spentHeight: UInt64? = nil, pendingAt: Int64? = nil,
                 pendingUntil: UInt64? = nil) {
@@ -91,6 +93,8 @@ public struct OwnedStakeNote: Hashable, Sendable, Codable {
     public var pendingAt: Int64?
     /// The spending tx's timeout_height (see OwnedNote.pendingUntil).
     public var pendingUntil: UInt64?
+    /// The spending tx's hash (see OwnedNote.pendingTx).
+    public var pendingTx: String?
 
     public init(position: UInt64, height: UInt64, denom: String, amount: UInt64, rho: Fr, rcm: Fr, cm: Fr, nf: Fr,
                 spentHeight: UInt64? = nil, pendingAt: Int64? = nil, pendingUntil: UInt64? = nil) {

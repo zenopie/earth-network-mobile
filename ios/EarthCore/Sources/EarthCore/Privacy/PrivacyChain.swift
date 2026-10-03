@@ -279,7 +279,8 @@ public struct RESTPrivateChain: PrivateChain {
         }
         let code = j.tx_response.code.int64(default: 0)
         guard code == 0 else {
-            throw EarthClient.Error.rejected(code: Int(clamping: code), log: j.tx_response.raw_log.string(default: ""))
+            throw UnsignedTx.TxRejected(code: Int(clamping: code), log: j.tx_response.raw_log.string(default: ""),
+                                        codespace: j.tx_response.codespace.string(default: ""))
         }
         guard let hash = j.tx_response.txhash.string else { throw EarthClient.Error.notCommitted(hash: "") }
         accepted(hash)
@@ -323,7 +324,8 @@ public struct RESTPrivateChain: PrivateChain {
              attributes: Dictionary(e.attributes.array.map { ($0.key.string(default: ""), $0.value.string(default: "")) }, uniquingKeysWith: { a, _ in a }))
         }
         return TxResult(hash: hash, height: tr.height.uint64(default: 0), time: Self.parseTime(tr.timestamp.string(default: "")), events: events,
-                        code: Int(clamping: tr.code.int64(default: 0)), log: tr.raw_log.string(default: ""))
+                        code: Int(clamping: tr.code.int64(default: 0)), log: tr.raw_log.string(default: ""),
+                        codespace: tr.codespace.string(default: ""))
     }
 }
 
@@ -363,8 +365,31 @@ public struct LCDChainRoots: ChainRoots {
 
     public func stakeNullifierSpent(_ nf: Fr) async -> Bool? { await spent("/earth/shieldedstaking/v1/stake_nullifiers/\(nf.hex)") }
 
-    public func latestHeight() async -> UInt64? {
-        (try? await rest.get("/cosmos/base/tendermint/v1beta1/blocks/latest")).flatMap { $0.block.header.height.uint64 }
+    public func latestHeight() async -> UInt64? { await latestBlock()?.height }
+
+    public func latestBlock() async -> ChainTip? {
+        guard let h = (try? await rest.get("/cosmos/base/tendermint/v1beta1/blocks/latest"))?.block.header, let height = h.height.uint64 else { return nil }
+        let t = RESTPrivateChain.parseTime(h.time.string(default: ""))
+        return ChainTip(height: height, time: t > 0 ? UInt64(t) : nil)
+    }
+
+    /// x/shielded Query/Tree at `height` (pinned when the node echoes it).
+    public func noteTree(height: UInt64?) async -> TreeState? {
+        guard let (j, pinned) = try? await at("/earth/shielded/v1/tree", height), let size = j.tree_size.uint64 else { return nil }
+        return TreeState(size: size, root: nil, pinned: pinned)
+    }
+
+    /// A tx this wallet broadcast, by hash: 404 missing, a non-zero code failed (audit 4).
+    public func txStatus(_ hash: String) async -> TxStatus? {
+        do {
+            let tr = try await rest.get("/cosmos/tx/v1beta1/txs/\(hash)").tx_response
+            guard tr.exists else { return nil }
+            return tr.code.int64(default: 0) == 0 ? .committed : .failed
+        } catch let EarthRest.Error.http(status, _) where status == 404 {
+            return .missing
+        } catch {
+            return nil
+        }
     }
 
     public func blockTime(_ height: UInt64) async -> UInt64? {
@@ -386,7 +411,7 @@ public struct LCDChainRoots: ChainRoots {
     public func noteRoot(_ root: Fr) async throws -> NoteRootRecord? {
         let j = try await rest.get("/earth/shielded/v1/roots/\(root.hex)")
         guard j.record.exists, Self.field(j.record.root) == root else { return nil }
-        return NoteRootRecord(valid: j.valid.bool(default: false), treeSize: j.record.tree_size.uint64(default: 0))
+        return NoteRootRecord(valid: j.valid.bool(default: false), treeSize: j.record.tree_size.uint64(default: 0), height: j.record.height.uint64)
     }
 
     public func identityTree(height: UInt64?) async throws -> TreeState {

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// A private tx: exactly one private msg, no signer infos, no signatures, a
@@ -20,6 +21,20 @@ public enum UnsignedTx {
 
     public static func build(_ msg: any PrivateMsg, tx: PrivateMsgs.TxFields) -> Data {
         build(msg, gasLimit: tx.gasLimit, memo: tx.memo, timeoutHeight: tx.timeoutHeight)
+    }
+
+    /// The tx hash the chain will name `txBytes` by: SHA-256 of the raw bytes, uppercase hex (audit 4: known before broadcast).
+    public static func hash(_ txBytes: Data) -> String {
+        SHA256.hash(data: txBytes).map { String(format: "%02X", $0) }.joined()
+    }
+
+    /// CheckTx refused the tx (a non-zero code): it never entered the mempool and never lands.
+    public struct TxRejected: Swift.Error, LocalizedError, Sendable {
+        public let code: Int
+        public let log: String
+        public let codespace: String
+        public init(code: Int, log: String, codespace: String = "") { self.code = code; self.log = log; self.codespace = codespace }
+        public var errorDescription: String? { "tx rejected (code \(code)\(codespace.isEmpty ? "" : ", \(codespace)")): \(log)" }
     }
 
     /// The private msg a TxRaw carries, with its declared fee, gas limit and body fields.

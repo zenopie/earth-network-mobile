@@ -230,13 +230,26 @@ public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
         self.init(host: host, chainID: chainID, configuration: config)
     }
 
-    init(host: URL, chainID: String, configuration: URLSessionConfiguration) {
+    /// Waits between retries of a busy indexer (tests pass their own).
+    private let sleep: @Sendable (UInt64) async throws -> Void
+
+    init(host: URL, chainID: String, configuration: URLSessionConfiguration,
+         sleep: @escaping @Sendable (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0 * 1_000_000) }) {
         self.host = host
         self.chainID = chainID
-        session = URLSession(configuration: configuration)
+        self.sleep = sleep
+        session = EarthRest.session(configuration)
     }
 
-    public enum Error: Swift.Error { case http(Int, String), notJSON, noBase, badBase(String), badPath(String) }
+    /// Retries of a busy (503/429) indexer before the request fails.
+    public static let maxBusyRetries = 4
+
+    /// Retry-After (seconds, when sent) or 2^(attempt-1) s, whichever is longer, at most 30 s; in milliseconds.
+    public static func backoffMs(retryAfter: UInt64?, attempt: Int) -> UInt64 {
+        Swift.min(Swift.max(Swift.min(retryAfter ?? 0, 30), UInt64(1) << UInt64(Swift.min(attempt - 1, 5))), 30) * 1000
+    }
+
+    public enum Error: Swift.Error { case http(Int, String), notJSON, noBase, badBase(String), badPath(String), busy(Int), badLimit(Int) }
 
     /// K10: `base` is exactly `/privacy/<chain_id>/<genesis>` for the chain
     /// the wallet follows (`expected`), as the same status names it, with a
@@ -256,16 +269,37 @@ public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
         set { lock.lock(); _base = newValue; lock.unlock() }
     }
 
+    /// `getOnce`, backing off while the indexer sheds load (audit 4: /privacy
+    /// answers 503 with Retry-After past its in-flight cap, 429 past a
+    /// client's rate): Retry-After or 1, 2, 4, 8 s (at most 30), then an error.
     private func get(_ path: String) async throws -> JSON {
+        var attempt = 0
+        while true {
+            do {
+                return try await getOnce(path)
+            } catch let Busy.shed(code, retryAfter) {
+                attempt += 1
+                if attempt > Self.maxBusyRetries { throw Error.busy(code) }
+                try await sleep(Self.backoffMs(retryAfter: retryAfter, attempt: attempt))
+            }
+        }
+    }
+
+    private enum Busy: Swift.Error { case shed(Int, UInt64?) }
+
+    private func getOnce(_ path: String) async throws -> JSON {
         guard path.hasPrefix("/"), !path.hasPrefix("//"),
               let url = URL(string: host.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + path),
               url.scheme == host.scheme, url.host == host.host, url.port == host.port, url.user == nil else {
             throw Error.badPath(String(path.prefix(80)))
         }
-        let (data, code) = try await EarthRest.boundedData(session, URLRequest(url: url))
+        let (data, code, resp) = try await EarthRest.boundedResponse(session, URLRequest(url: url))
         if code == 404 { throw IndexerBaseMoved("indexer \(path): 404 \(String(decoding: data.prefix(200), as: UTF8.self))") }
+        if code == 503 || code == 429 {
+            throw Busy.shed(code, resp?.value(forHTTPHeaderField: "Retry-After").flatMap { UInt64($0.trimmingCharacters(in: .whitespaces)) })
+        }
         guard (200 ... 299).contains(code) else { throw Error.http(code, String(decoding: data.prefix(200), as: UTF8.self)) }
-        guard let o = try? JSONSerialization.jsonObject(with: data) else { throw Error.notJSON }
+        guard let o = try? EarthRest.parseJSON(data) else { throw Error.notJSON }
         return JSON(o)
     }
 
@@ -277,7 +311,11 @@ public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
         return try await get(b + path)
     }
 
-    private func q(_ name: String, _ v: Int?) -> String { v.map { "&\(name)=\($0)" } ?? "" }
+    private func q(_ name: String, _ v: Int?) throws -> String {
+        // The backend serves only its fixed page sizes (audit 4 paging rule); anything else is a 400.
+        if let v, !WalletSync.pageSizes.contains(v) { throw Error.badLimit(v) }
+        return v.map { "&\(name)=\($0)" } ?? ""
+    }
 
     public func status() async throws -> IndexerStatus {
         let j = try await get("/privacy/status")
@@ -302,19 +340,19 @@ public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
     }
 
     public func notes(fromPos: UInt64, limit: Int?) async throws -> NotesPage {
-        try Self.parseNotes(await stream("/notes?from_pos=\(fromPos)\(q("limit", limit))"))
+        try Self.parseNotes(await stream("/notes?from_pos=\(fromPos)\(try q("limit", limit))"))
     }
 
     public func nullifiers(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<Fr> {
-        try Self.parseHeights(await stream("/nullifiers?from_height=\(fromHeight)\(q("limit", limit))")) { try Fr(hex: $0.string ?? "") }
+        try Self.parseHeights(await stream("/nullifiers?from_height=\(fromHeight)\(try q("limit", limit))")) { try Fr(hex: $0.string ?? "") }
     }
 
     public func identity(fromIndex: UInt64, limit: Int?) async throws -> IdentityPage {
-        try Self.parseIdentity(await stream("/identity?from_index=\(fromIndex)\(q("limit", limit))"))
+        try Self.parseIdentity(await stream("/identity?from_index=\(fromIndex)\(try q("limit", limit))"))
     }
 
     public func identityZeroed(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<UInt64> {
-        try Self.parseHeights(await stream("/identity/zeroed?from_height=\(fromHeight)\(q("limit", limit))")) { $0.uint64(default: 0) }
+        try Self.parseHeights(await stream("/identity/zeroed?from_height=\(fromHeight)\(try q("limit", limit))")) { $0.uint64(default: 0) }
     }
 
     public func rootsLatest() async throws -> LatestRoots { try Self.parseRoots(await stream("/roots/latest")) }
@@ -328,19 +366,19 @@ public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
     }
 
     public func stakeNotes(fromPos: UInt64, limit: Int?) async throws -> StakeNotesPage {
-        try Self.parseStakeNotes(await stream("/stake/notes?from_pos=\(fromPos)\(q("limit", limit))"))
+        try Self.parseStakeNotes(await stream("/stake/notes?from_pos=\(fromPos)\(try q("limit", limit))"))
     }
 
     public func stakeNullifiers(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<Fr> {
-        try Self.parseHeights(await stream("/stake/nullifiers?from_height=\(fromHeight)\(q("limit", limit))")) { try Fr(hex: $0.string ?? "") }
+        try Self.parseHeights(await stream("/stake/nullifiers?from_height=\(fromHeight)\(try q("limit", limit))")) { try Fr(hex: $0.string ?? "") }
     }
 
     public func stakeNullifierLeaves(fromIndex: UInt64, limit: Int?) async throws -> StakeNfLeavesPage {
-        try Self.parseStakeNfLeaves(await stream("/stake/nullifier-tree?from_index=\(fromIndex)\(q("limit", limit))"))
+        try Self.parseStakeNfLeaves(await stream("/stake/nullifier-tree?from_index=\(fromIndex)\(try q("limit", limit))"))
     }
 
     public func stakeSnapshots(fromHeight: UInt64, limit: Int?) async throws -> StakeSnapshotsPage {
-        try Self.parseStakeSnapshots(await stream("/stake/snapshots?from_height=\(fromHeight)\(q("limit", limit))"))
+        try Self.parseStakeSnapshots(await stream("/stake/snapshots?from_height=\(fromHeight)\(try q("limit", limit))"))
     }
 
     /// /stake/nullifier-tree: rows [index, nullifier (hex), height].

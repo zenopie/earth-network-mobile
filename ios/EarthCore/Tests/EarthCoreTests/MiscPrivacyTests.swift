@@ -119,9 +119,18 @@ final class AutomationTests: XCTestCase {
     }
 
     func testOffsetIsWithinTheWindowAndStableForADay() {
-        let a = PrivacyAutomation.claimOffset(now: day * 86_400 + 10)
-        XCTAssertEqual(a, PrivacyAutomation.claimOffset(now: day * 86_400 + 80_000))
+        var st = PrivacyState()
+        let (a, first) = PrivacyAutomation.claimOffset(&st, now: day * 86_400 + 10)
+        XCTAssertTrue(first)
+        XCTAssertEqual(a, PrivacyAutomation.claimOffset(&st, now: day * 86_400 + 80_000).offset)
         XCTAssertTrue((0 ..< PrivacyAutomation.claimWindow).contains(a))
+        // Audit 4: persisted with the wallet, so a restart (the state read back) keeps the day's draw.
+        var back = try! JSONDecoder().decode(PrivacyState.self, from: JSONEncoder().encode(st))
+        let again = PrivacyAutomation.claimOffset(&back, now: day * 86_400 + 50_000)
+        XCTAssertEqual(a, again.offset)
+        XCTAssertFalse(again.changed)
+        XCTAssertTrue(PrivacyAutomation.claimOffset(&back, now: (day + 1) * 86_400 + 5).changed)
+        XCTAssertEqual(day + 1, back.claimOffsetDay)
     }
 
     func testMaturityComesFromEpochTimingAlone() {
