@@ -85,6 +85,8 @@ fun TxConfirmSheet(
     requestingGas: Boolean = false,
     /** Why the last request for gas was refused, if it was. */
     gasError: String? = null,
+    /** The gas request's proof of work, 0..1, while it is being made. */
+    gasWork: Float? = null,
 ) {
     val colors = EarthTheme.colors
     val dimens = EarthTheme.dimens
@@ -144,7 +146,11 @@ fun TxConfirmSheet(
             }
             Box(Modifier.padding(top = dimens.space12)) {
                 EarthButton(
-                    text = if (awaitingGas) "Waiting for gas…" else "Get free gas",
+                    text = when {
+                        awaitingGas -> "Waiting for gas…"
+                        requestingGas && gasWork != null -> "Preparing request… ${(gasWork * 100).toInt()}%"
+                        else -> "Get free gas"
+                    },
                     onClick = onGetGas,
                     // A second tap while one is in flight would ask for a
                     // second grant for the same transaction.

@@ -107,6 +107,8 @@ class RegistrationActivity : ComponentActivity() {
                 var awaitingGas: Boolean by remember { mutableStateOf(false) }
                 var requestingGas: Boolean by remember { mutableStateOf(false) }
                 var gasError: String? by remember { mutableStateOf(null) }
+                // The proof of work /gas/register may ask for, 0..1 while it is being made.
+                var gasWork: Float? by remember { mutableStateOf(null) }
                 var outcome: TxOutcome? by remember { mutableStateOf(null) }
 
                 // MsgRegister verifies an UltraHonk proof on chain and is by
@@ -208,6 +210,7 @@ class RegistrationActivity : ComponentActivity() {
                         awaitingGas = awaitingGas,
                         requestingGas = requestingGas,
                         gasError = gasError,
+                        gasWork = gasWork,
                         onConfirm = {
                             scan = null
                             submitting = true
@@ -253,9 +256,12 @@ class RegistrationActivity : ComponentActivity() {
                                     // (a fresh pc with its v2 ciphertext, found by
                                     // trial decryption), never to an address.
                                     val msg = withContext(Dispatchers.IO) { PassportSession.registerMsg(ctx, ready) }
-                                    GasGrant.forRegistration(msg, ready.prep.gas.pc.toBytes(), ready.prep.gas.ciphertext)
+                                    GasGrant.forRegistration(msg, ready.prep.gas.pc.toBytes(), ready.prep.gas.ciphertext) { p ->
+                                        lifecycleScope.launch { gasWork = p }
+                                    }
                                 } finally {
                                     requestingGas = false
+                                    gasWork = null
                                 }
                                 if (result is GasGrant.Result.Refused) {
                                     gasError = result.message

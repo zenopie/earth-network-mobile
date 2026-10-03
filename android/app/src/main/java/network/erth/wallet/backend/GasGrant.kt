@@ -28,6 +28,12 @@ import java.io.IOException
  *
  * This returns when the backend has *sent* the grant, not when it has landed:
  * callers sync until the note appears.
+ *
+ * The request may need a proof of work ([GasPow]): GET /gas/pow says how
+ * many bits admit a request now; a stamp at that difficulty goes with the
+ * request; a 428 names the bits that request needs and a fresh stamp is made
+ * at them. A stamp is kept for the person's next try only after a 503 or a
+ * 429 (the server gave it back); a 403 or anything else drops it.
  */
 object GasGrant {
     private const val TAG = "GasGrant"
@@ -49,8 +55,96 @@ object GasGrant {
      * 177-byte v2 ciphertext (MsgShield's; the app finds the note by it). A
      * refusal carries the chain's own reason (an expired passport, say).
      */
-    suspend fun forRegistration(msg: MsgRegister, pcGas: ByteArray, ciphertextGas: ByteArray): Result =
-        post("/gas/register", registerBody(msg, pcGas, ciphertextGas), onRefused = { it })
+    suspend fun forRegistration(
+        msg: MsgRegister,
+        pcGas: ByteArray,
+        ciphertextGas: ByteArray,
+        /** The proof of work's progress, 0..1, while one is being made. */
+        onProgress: (Float) -> Unit = {},
+    ): Result {
+        val body = registerBody(msg, pcGas, ciphertextGas)
+        val binding = msg.publicSignalsList.getOrNull(1) ?: return Result.Refused(UNAVAILABLE)
+        val nullifier = msg.publicSignalsList.getOrNull(2) ?: return Result.Refused(UNAVAILABLE)
+        return withPow(body, binding, nullifier, onProgress)
+    }
+
+    /** What talks to the backend; tests swap in a fake server. */
+    internal interface Transport {
+        fun get(path: String): Pair<Int, String>
+        fun post(path: String, json: String): Pair<Int, String>
+    }
+
+    internal var transport: Transport = object : Transport {
+        override fun get(path: String) = EarthRest.getFrom(Constants.EARTH_API_URL, path)
+        override fun post(path: String, json: String) = EarthRest.postJson(path, json, base = Constants.EARTH_API_URL)
+    }
+
+    /** Unix seconds; tests pin it. */
+    internal var clock: () -> Long = { System.currentTimeMillis() / 1000 }
+
+    /** A stamp the server gave back (503, 429), for the next try of the same registration. */
+    private var kept: Pair<String, GasPow.Stamp>? = null
+
+    private const val MAX_POW_ROUNDS = 4
+
+    /** How long a kept stamp is reused (the server takes ts within 600 s). */
+    private const val STAMP_REUSE_S = 300L
+
+    internal suspend fun withPow(body: JSONObject, binding: String, nullifier: String, onProgress: (Float) -> Unit): Result {
+        val key = "$binding:$nullifier"
+        suspend fun stamp(bits: Int): GasPow.Stamp? = if (bits <= 0) null else withContext(Dispatchers.Default) {
+            GasPow.solve(clock(), binding, nullifier, bits, onProgress)
+        }
+        try {
+            var stamp: GasPow.Stamp? = kept?.takeIf { it.first == key && clock() - it.second.ts < STAMP_REUSE_S }?.second
+            kept = null
+            if (stamp == null) stamp = stamp(withContext(Dispatchers.IO) { powBits() })
+            repeat(MAX_POW_ROUNDS) {
+                stamp?.let { body.put("pow", JSONObject().put("ts", it.ts).put("nonce", it.nonce)) } ?: body.remove("pow")
+                val (code, response) = withContext(Dispatchers.IO) { transport.post("/gas/register", body.toString()) }
+                val json = parse(response)
+                when {
+                    code == 200 && json?.optString("status") == "success" -> return Result.Sent
+                    code == 202 -> return Result.Pending
+                    code == 428 -> {
+                        // A stamp is needed, or this one was stale or used: a fresh one at the bits asked.
+                        val bits = json?.optJSONObject("pow")?.optInt("bits", -1) ?: -1
+                        if (bits !in 1..GasPow.MAX_BITS) return refused(code, json, response)
+                        stamp = stamp(bits)
+                    }
+                    else -> {
+                        // 503, 429: the server gave the stamp back; the next try may use it.
+                        if ((code == 503 || code == 429) && stamp != null) kept = key to stamp!!
+                        return refused(code, json, response)
+                    }
+                }
+            }
+            return Result.Refused(UNAVAILABLE)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: IOException) {
+            Log.w(TAG, "gas service unreachable: ${e.javaClass.simpleName}")
+            return Result.Refused(UNREACHABLE)
+        } catch (e: Exception) {
+            Log.w(TAG, "gas grant failed: ${e.javaClass.simpleName}")
+            return Result.Refused(UNAVAILABLE)
+        }
+    }
+
+    /** GET /gas/pow's bits: what admits a request now (0 when it cannot say: the POST's 428 will). */
+    private fun powBits(): Int = runCatching {
+        val (code, body) = transport.get("/gas/pow")
+        if (code !in 200..299) 0 else JSONObject(body).let { j ->
+            if (j.optString("version") != GasPow.VERSION) 0 else j.optInt("bits", 0).coerceIn(0, GasPow.MAX_BITS)
+        }
+    }.getOrDefault(0)
+
+    private fun refused(code: Int, json: JSONObject?, response: String): Result {
+        Log.w(TAG, "/gas/register refused: $code")
+        val message = json?.optString("message")?.takeIf { it.isNotBlank() }
+        if (json == null) Log.w(TAG, "not JSON: ${response.take(80)}")
+        return Result.Refused(message ?: UNAVAILABLE)
+    }
 
     /**
      * MsgRegister's fields as the backend takes them: bytes as standard base64
@@ -71,35 +165,6 @@ object GasGrant {
         .put("affiliate", msg.affiliate)
         .put("pc_gas", pcGas.toByteString().base64())
         .put("ciphertext_gas", ciphertextGas.toByteString().base64())
-
-    internal suspend fun post(
-        path: String,
-        body: JSONObject,
-        onRefused: (String) -> String,
-    ): Result = withContext(Dispatchers.IO) {
-        try {
-            val (code, response) = EarthRest.postJson(path, body.toString(), base = Constants.EARTH_API_URL)
-            val json = parse(response)
-            val status = json?.optString("status").orEmpty()
-            when {
-                code == 200 && status == "success" -> Result.Sent
-                code == 202 -> Result.Pending
-                else -> {
-                    Log.w(TAG, "$path refused: $code $response")
-                    val message = json?.optString("message")?.takeIf { it.isNotBlank() }
-                    Result.Refused(message?.let(onRefused) ?: UNAVAILABLE)
-                }
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: IOException) {
-            Log.w(TAG, "gas service unreachable", e)
-            Result.Refused(UNREACHABLE)
-        } catch (e: Exception) {
-            Log.e(TAG, "gas grant failed", e)
-            Result.Refused(UNAVAILABLE)
-        }
-    }
 
     // An error in front of the backend (the tunnel, a proxy) answers in HTML,
     // so a body is not trusted to be JSON.

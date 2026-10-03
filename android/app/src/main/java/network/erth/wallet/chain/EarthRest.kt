@@ -66,7 +66,7 @@ object EarthRest {
      */
     fun getRpc(path: String): Pair<Int, String> = getFrom(Constants.EARTH_RPC_URL, path)
 
-    private fun getFrom(base: String, path: String, height: Long? = null, headers: (HttpURLConnection) -> Unit = {}): Pair<Int, String> {
+    internal fun getFrom(base: String, path: String, height: Long? = null, headers: (HttpURLConnection) -> Unit = {}): Pair<Int, String> {
         // An unset base is a supported configuration, not an error: the RPC is
         // optional and is left empty when the deployment exposes only the LCD.
         // Reported as a non-2xx so callers take their existing failure path

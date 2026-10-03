@@ -20,3 +20,5 @@ format or behavior change. Auditor PoCs: /private/tmp/claude-501/audit3/clients/
 - [x] 13 records: tried times kept; a new time (indexer, LCD) is tried even after EXHAUSTED; new leaves reopen; reset finds afresh.
 - [x] 14 quote/quoteSend simulate with random nullifiers; automation logs kind only; pre-K6 store keeps identity.
 - Audit3Test (22 tests); privacy suite green.
+- [x] Addition: /gas/register proof of work (GasPow: SHA-256 hashcash, cancellable, progress; GasGrant: GET /gas/pow, stamp, 428 restamp at pow.bits, stamp kept only after 503/429, new after 403). GasPowTest (fake server checking stamps like services/pow). Registration sheet shows "Preparing request… N%".
+- [x] versionCode 41 (1.0.34). testDebugUnitTest (all) + assembleDebug pass.
