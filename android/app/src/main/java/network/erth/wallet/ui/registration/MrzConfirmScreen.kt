@@ -1,7 +1,9 @@
 package network.erth.wallet.ui.registration
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -25,6 +27,7 @@ import network.erth.wallet.ui.components.brandButtonColors
 import network.erth.wallet.ui.components.dismissKeyboardOnTap
 import network.erth.wallet.ui.components.doneKeyboard
 import network.erth.wallet.ui.designsystem.component.EarthButton
+import network.erth.wallet.ui.designsystem.component.EarthButtonDefaults
 import network.erth.wallet.ui.designsystem.component.EarthTextField
 import network.erth.wallet.ui.designsystem.theme.colors.EarthColors
 import network.erth.wallet.ui.designsystem.theme.typography.EarthTypography
@@ -51,6 +54,10 @@ fun MrzConfirmScreen(
     referrer: String,
     onReferrerChange: (String) -> Unit,
     referrerLocked: Boolean = false,
+    /** Drop the referrer a link set (and forget it). */
+    onRemoveReferrer: () -> Unit = {},
+    /** Edit the referrer a link set. */
+    onReplaceReferrer: () -> Unit = {},
     /** Why the named referrer cannot be used (looked up in the handle directory), or null. */
     referrerLookupError: String? = null,
     /** The handle directory is being fetched for the referrer. */
@@ -163,6 +170,21 @@ fun MrzConfirmScreen(
                 style = EarthTypography.textXs,
                 color = EarthColors.Text.textSecondary,
             )
+            Spacer(Modifier.height(8.dp()))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp())) {
+                EarthButton(
+                    text = "Change",
+                    onClick = onReplaceReferrer,
+                    modifier = Modifier.weight(1f),
+                    colors = EarthButtonDefaults.secondaryColors(),
+                )
+                EarthButton(
+                    text = "Remove",
+                    onClick = onRemoveReferrer,
+                    modifier = Modifier.weight(1f),
+                    colors = EarthButtonDefaults.secondaryColors(),
+                )
+            }
         } else {
             EarthLabel("Referred by (optional)")
             Spacer(Modifier.height(8.dp()))

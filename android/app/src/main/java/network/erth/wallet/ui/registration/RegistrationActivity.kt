@@ -92,10 +92,11 @@ class RegistrationActivity : ComponentActivity() {
                 var mrzError: String? by remember { mutableStateOf(null) }
 
                 // A referrer captured from a referral link or a Play install
-                // is fixed for the session: the person did not type it and
-                // should not have to, and letting them edit it turns a link
-                // into a form for no reason.
+                // is shown filled in: the person did not type it and should
+                // not have to. They may remove or replace it (audit 5, M5),
+                // and one that does not resolve to a live handle is cleared.
                 val linkedReferrer = remember { Referral.get(this@RegistrationActivity) }
+                var referrerLocked: Boolean by remember { mutableStateOf(linkedReferrer != null) }
 
                 // Held across the whole flow: entered on the confirm screen but
                 // not used until the broadcast, several steps later.
@@ -370,7 +371,18 @@ class RegistrationActivity : ComponentActivity() {
                         Step.Confirm -> MrzConfirmScreen(
                             referrer = referrer,
                             onReferrerChange = { referrer = it },
-                            referrerLocked = linkedReferrer != null,
+                            referrerLocked = referrerLocked,
+                            onRemoveReferrer = {
+                                Referral.clear(this@RegistrationActivity)
+                                referrer = ""
+                                referrerLocked = false
+                                referrerLookupError = null
+                            },
+                            onReplaceReferrer = {
+                                Referral.clear(this@RegistrationActivity)
+                                referrerLocked = false
+                                referrerLookupError = null
+                            },
                             referrerLookupError = referrerLookupError,
                             checkingReferrer = checkingReferrer,
                             initial = mrz,
@@ -401,7 +413,14 @@ class RegistrationActivity : ComponentActivity() {
                                                         stage = NfcStage.Waiting
                                                         step = Step.Scan
                                                     }
-                                                    is HandleDirectory.Resolution.NotPayable -> referrerLookupError = res.reason
+                                                    is HandleDirectory.Resolution.NotPayable -> {
+                                                        // A link's referrer that is not live never blocks the registration.
+                                                        if (referrerLocked) {
+                                                            Referral.clear(this@RegistrationActivity)
+                                                            referrerLocked = false
+                                                            referrerLookupError = "${res.reason}. It was removed: enter another handle or leave this blank."
+                                                        } else referrerLookupError = res.reason
+                                                    }
                                                 }
                                             },
                                             { referrerLookupError = "Couldn't check the handle: ${it.message ?: "network error"}" },

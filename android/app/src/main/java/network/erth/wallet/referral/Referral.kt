@@ -19,8 +19,10 @@ import network.erth.wallet.privacy.handles.Handles
  *  - **Install referrer.** Play Store carries the `referrer` query parameter of
  *    the store link through the install and hands it to the app on first run.
  *    This is the one that covers someone who did not have the app yet.
- *  - **Deep link.** An `https://erth.network/ref/<handle>` or
- *    `earth://ref/<handle>` intent, for someone who already has it installed.
+ *  - **App Link.** A verified `https://erth.network/ref/<handle>` intent,
+ *    for someone who already has it installed. Only that (audit 5, M5): the
+ *    `earth://ref` custom scheme is unverified, so any page could fire one
+ *    first and lock in its own referrer.
  *
  * Stored in plain SharedPreferences rather than the encrypted store: it is a
  * public handle, it is needed before any wallet exists, and it must survive
@@ -29,7 +31,9 @@ import network.erth.wallet.privacy.handles.Handles
  *
  * First write wins. Someone who arrives through one link and later opens
  * another keeps the first, so a referrer cannot be overwritten by whoever
- * happens to send the most recent link.
+ * happens to send the most recent link. The registrant sees it and may
+ * remove or replace it ([clear]); one that does not resolve to a live
+ * handle at registration is cleared (audit 5, M5).
  */
 object Referral {
 
@@ -59,16 +63,30 @@ object Referral {
         return true
     }
 
+    /** Forgets the stored referrer: removed or replaced by the registrant, or not a live handle. */
+    fun clear(context: Context) {
+        prefs(context).edit().remove(KEY_HANDLE).apply()
+    }
+
     /**
-     * Pulls the referrer out of a deep link. Accepts the handle as the last
-     * path segment (`/ref/alice`) or as a `?ref=` / `?referrer=` parameter.
+     * Pulls the referrer out of a verified App Link: exactly
+     * `https://erth.network/ref/<handle>`. Nothing else names a referrer.
      */
     fun fromIntent(context: Context, intent: Intent?): Boolean {
-        val data = intent?.data ?: return false
-        val fromQuery = data.getQueryParameter("ref") ?: data.getQueryParameter("referrer")
-        val candidate = fromQuery ?: data.lastPathSegment
-        return record(context, candidate)
+        if (intent?.action != Intent.ACTION_VIEW) return false
+        return record(context, handleFromLink(intent.data?.toString()))
     }
+
+    /** The handle of an `https://erth.network/ref/<handle>` link, else null. */
+    fun handleFromLink(link: String?): String? {
+        val u = link?.let { runCatching { java.net.URI(it) }.getOrNull() } ?: return null
+        if (u.scheme != "https" || u.host != HOST || u.port != -1 || u.userInfo != null) return null
+        val parts = u.path.orEmpty().trim('/').split('/')
+        if (parts.size != 2 || parts[0] != "ref") return null
+        return Handles.parse(parts[1])?.takeIf { it == parts[1] }
+    }
+
+    private const val HOST = "erth.network"
 
     /**
      * Asks Play for the install referrer, once ever.
