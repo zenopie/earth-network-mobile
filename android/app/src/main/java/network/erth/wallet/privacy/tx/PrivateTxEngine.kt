@@ -133,7 +133,28 @@ class PrivateTxEngine(
         val msg = a.build(bundles, stake, membership)
         check(PrivateMsgs.sighash(msg, chainId, tx) == sighash)
         check(PrivateMsgs.totalFee(msg) == q.fee) { "the msg must pay exactly the quoted fee" }
+        checkShape(msg)
         return chain.broadcast(UnsignedTx.build(msg, tx)) { hash -> accepted(hash, a) } to a
+    }
+
+    /**
+     * The chain's wallet format rules (fced976 round 2), checked before
+     * broadcast: every action's output ciphertext exactly 217 bytes (dummies
+     * too); a stake proof's ciphertexts exactly two, entry i empty iff
+     * commitment i is zero, a non-empty one exactly 153 bytes.
+     */
+    private fun checkShape(msg: MessageLite) {
+        for (b in PrivateMsgs.bundles(msg)) for (a in b.actionsList) {
+            check(a.ciphertext.size() == network.erth.wallet.privacy.note.NoteCipher.CIPHERTEXT_BYTES) { "an action ciphertext is ${a.ciphertext.size()} bytes" }
+        }
+        PrivateMsgs.stake(msg)?.let { p ->
+            check(p.ciphertextsCount == 2 && p.commitmentsCount == 2) { "a stake proof carries two ciphertext slots" }
+            for (i in 0..1) {
+                val zero = Fr.fromBytes(p.getCommitments(i).toByteArray()).isZero
+                val n = p.getCiphertexts(i).size()
+                check(if (zero) n == 0 else n == network.erth.wallet.privacy.note.NoteCipher.STAKE_CIPHERTEXT_BYTES) { "stake ciphertext $i is $n bytes" }
+            }
+        }
     }
 
     /** The chain refuses any proof that is not exactly PROOF_BYTES (bb ignored trailing bytes). */

@@ -23,5 +23,7 @@ format or behavior change.
 
 - [x] K5 StakeVoteController is the only path: notes + positions shuffled, sync + 20-120 s random pause between, off-screen (activity VM, coroutine delay, no lock held), progress + Stop on the proposal, persisted run resumed on unlock; stakeVoteAll/stakeVoteNotes and the inline UI loop deleted; tests drive the controller the UI calls (spacing, cancel, resume).
 
+- [x] Chain round 2 rules: engine checks 217-byte action ciphertexts and the two stake ciphertext slots before broadcast; FakeChain enforces canonical tx/body/auth/msg bytes, those slots, and one use per registration binding.
+
 ## iOS
 (not started)

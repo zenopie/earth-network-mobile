@@ -296,6 +296,21 @@ app tells the user).
 - TxRaw with one Any, AuthInfo with no signer infos, fee = exactly the msg's
   total fee in uerth (the bundles' fee + fee_from_output), no payer or
   granter, no signatures, no timeout_timestamp (refused for private txs).
+- **Canonical bytes (chain round 2, R7).** The tx is exactly
+  TxRaw{body_bytes, auth_info_bytes}, each part and the msg inside the body
+  the canonical protobuf encoding of what it decodes to (fields in number
+  order, minimal varints, no default scalars, no unknown or extension
+  fields), AuthInfo.tip unset. Both apps encode with protobuf builders
+  (javalite, SwiftProtobuf), which produce exactly this; FakeChain checks
+  the round trip.
+- **Ciphertext slots (round 2).** Every action's output ciphertext is
+  exactly 217 bytes, dummy outputs included; `StakeProof.ciphertexts` has
+  exactly two entries, entry i empty iff `commitments[i]` is zero, a
+  non-empty one exactly 153 bytes. Both apps check this before broadcast.
+- **One use per binding (round 2, R1).** A registration's binding (the
+  passport proof's address input) is refused once a registration with it
+  has landed: the wallet prepares fresh notes (and so a fresh binding) for
+  every registration; a proof whose registration landed is never resent.
 - **Sighash** (every private msg):
 
       sighash = H(TAG_SIGNAL, Bytes(type_url), Bytes(chain_id), K, digest(bundle_0..K-1),

@@ -430,6 +430,21 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         require(auth.signerInfosCount == 0)
         val m = decode(raw)
         val body = Tx.TxBody.parseFrom(raw.bodyBytes)
+        // Round 2 (R7): exactly the canonical encoding of what it decodes to (the wallet's AuthInfo proto has no tip field at all).
+        require(raw.toByteArray().contentEquals(txBytes)) { "tx bytes are not canonical" }
+        require(body.toByteArray().contentEquals(raw.bodyBytes.toByteArray())) { "body bytes are not canonical" }
+        require(auth.toByteArray().contentEquals(raw.authInfoBytes.toByteArray())) { "auth info bytes are not canonical" }
+        require(m.toByteArray().contentEquals(body.getMessages(0).value.toByteArray())) { "msg bytes are not canonical" }
+        // Every action's output ciphertext exactly 217 bytes, dummies included.
+        for (b in PrivateMsgs.bundles(m)) for (a in b.actionsList) require(a.ciphertext.size() == NoteCipher.CIPHERTEXT_BYTES) { "action ciphertext ${a.ciphertext.size()} bytes" }
+        // Stake proofs: exactly two ciphertext slots, empty iff the commitment is zero, else 153 bytes.
+        PrivateMsgs.stake(m)?.let { p ->
+            require(p.ciphertextsCount == 2) { "stake proof has ${p.ciphertextsCount} ciphertexts" }
+            for (i in 0..1) {
+                val n = p.getCiphertexts(i).size()
+                require(if (f(p.getCommitments(i)).isZero) n == 0 else n == NoteCipher.STAKE_CIPHERTEXT_BYTES) { "stake ciphertext $i: $n bytes" }
+            }
+        }
         // The tx fields every private sighash binds (the ante records them).
         val txf = PrivateMsgs.TxFields(body.memo, body.timeoutHeight, auth.fee.gasLimit)
         val total = PrivateMsgs.totalFee(m)
@@ -501,6 +516,8 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             is MsgRegister -> {
                 val binding = PrivateMsgs.decimalField(m.publicSignalsList[1])
                 require(binding == PrivateMsgs.registrationBinding(m)) { "binding" }
+                // Round 2 (R1): a landed binding is never used again.
+                require(usedBindings.add(binding)) { "binding already used (ErrBindingUsed)" }
                 val dsc = PrivateMsgs.decimalField(m.publicSignalsList[3])
                 // A switch: the holder's old leaf is zeroed, the new one appended.
                 registeredIdc.entries.filter { it.value == f(m.idc) || passportOf[it.key] == m.publicSignalsList[2] }.forEach { zeroLeaf(it.key) }
@@ -644,6 +661,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     // ---- registrations ----
 
     val registeredIdc = HashMap<Long, Fr>()
+    val usedBindings = HashSet<Fr>()
     val passportOf = HashMap<Long, String>()
     /** (height, leaf index) of every zeroing. */
     val zeroed = ArrayList<Pair<Long, Long>>()
