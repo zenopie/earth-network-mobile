@@ -385,6 +385,10 @@ public final class PrivacyWallet: @unchecked Sendable {
         try Self.requireTransferable(denom)
         try require(!denom.hasPrefix(Self.lpPrefix), "LP shares leave the pool only by a withdrawal")
         try require(!feeFromAmount || denom == Self.fee, "only an ERTH unshield pays its fee from the amount")
+        // Wave 3 (B/F2): the chain refuses an unshield to any module account.
+        if let module = PrivateMsgs.moduleAccount(of: Data(try Bech32.decode(receiver).data)) {
+            throw PrivacyError("\(receiver) is the \(module) module account; it cannot receive an unshield")
+        }
         let m = await maxActions()
         return try await locked {
             // The memo (an exchange's deposit tag) is bound by the sighash.
@@ -481,6 +485,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         let result: TxResult = try await locked {
             try require(publicSignals.count == 4, "a passport proof has four public signals")
             try require(try PrivateMsgs.decimalField(publicSignals[1]) == prep.binding, "the passport proof is bound to other notes")
+            try require(PrivateMsgs.isCalendarDate(publicSignals[0]), "the passport proof's current_date \(publicSignals[0]) is not a calendar date")
             let base = registerMsg(prep, proof: proof, publicSignals: publicSignals, signatureAlgorithm: signatureAlgorithm, dscDer: dscDer)
             let dscKey = try PrivateMsgs.decimalField(publicSignals[3])
             let hint = Self.dscCountry(dscDer)
@@ -575,12 +580,16 @@ public final class PrivacyWallet: @unchecked Sendable {
         return day == t ? 0 : day * Self.secondsPerDay
     }
 
+    /// The day every activation bound keeps from now (wave 3: the largest identity root window).
+    public static let activationMargin: Int64 = 86_400
+
     /// The max_activation a caretaker split or referrer binding names: at most
-    /// now - R - root window (the chain's bound), rounded down to the hour so it
-    /// says nothing about when the tx was made, less a margin for clock skew.
+    /// now - R - 86400 (the chain's bound since wave 3, L4/L5: the largest
+    /// root window, not the live one), rounded down to the hour so it says
+    /// nothing about when the tx was made, less a margin for clock skew.
     private func leaseBound() async throws -> UInt64 {
         let p = try await reads.personhoodParams()
-        let bound = now() - p.caretakerVoteSeconds - p.identityRootWindowSeconds - Self.clockMargin
+        let bound = now() - p.caretakerVoteSeconds - Self.activationMargin - Self.clockMargin
         return UInt64(max(0, bound / 3600 * 3600))
     }
 
@@ -617,14 +626,29 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// Binds (or, empty, clears) the transparent address this person's
     /// referral rewards are paid to. The binding is public (the address is),
     /// the person behind it is not; it lapses after R unless refreshed.
-    public func bindReferrer(address: String) async throws -> TxResult {
+    ///
+    /// Binding an address needs its owner's consent (wave 3, L6): `consent`
+    /// signs (domain, chain id, the membership's nullifier, the address) with
+    /// the key whose address it is, a transparent account of this wallet.
+    /// The nullifier is the scope's, known before proving; not in the sighash.
+    public func bindReferrer(address: String, consent: ((Data) throws -> (publicKey: Data, signature: Data))? = nil) async throws -> TxResult {
         let mx = await maxActions()
         return try await locked {
             let maxAct = try await leaseBound()
             let m = try membership(scope: PrivacyHash.referrerScope(), excludedDsc: .zero, excludedCountry: .zero, maxActivation: maxAct)
+            var pub = Data(), sig = Data()
+            if !address.isEmpty {
+                guard let consent else { throw PrivacyError("binding a referrer address needs its owner's signature") }
+                let decoded = try Bech32.decode(address)
+                let c = try consent(try PrivateMsgs.referrerConsentBytes(chainID: chainID, nullifier: try m.witness(signal: .zero).nullifier.bytes,
+                                                                          address: Data(decoded.data)))
+                try require(c.publicKey.count == 33 && c.signature.count == 64, "a referrer consent is a 33-byte key and a 64-byte signature")
+                try require(try EarthKey.address(fromPublicKey: c.publicKey) == address, "\(address) is not an address this wallet controls")
+                pub = c.publicKey; sig = c.signature
+            }
             let r = try await run { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], membership: m) { bs, _, mem in
-                    MsgBindReferrer(fee: bs[0], membership: mem!, address: address, maxActivation: maxAct)
+                    MsgBindReferrer(fee: bs[0], membership: mem!, address: address, maxActivation: maxAct, referrerPubKey: pub, referrerSignature: sig)
                 }
             }
             store.mutate { $0.referrerAddress = address; $0.referrerBoundAt = address.isEmpty ? 0 : now() }
@@ -664,8 +688,8 @@ public final class PrivacyWallet: @unchecked Sendable {
         let mx = await maxActions()
         return try await locked {
             let day = today()
-            let window = try await reads.personhoodParams().identityRootWindowSeconds
-            let maxAct = UInt64(max(0, Int64(day) * Self.secondsPerDay - window))
+            // Wave 3 (L4/L5): the start of today (UTC) less a day, whatever the root window.
+            let maxAct = UInt64(max(0, Int64(day) * Self.secondsPerDay - Self.activationMargin))
             let m = try membership(scope: PrivacyHash.proposeRemovalScope(optionID: optionID, day: day), excludedDsc: .zero,
                                    excludedCountry: .zero, maxActivation: maxAct)
             return try await run { fee in
@@ -877,7 +901,8 @@ public final class PrivacyWallet: @unchecked Sendable {
                                   paths: notes.map { tree.pathAt($0.position, size: snap.treeSize) })
         return try await run { fee in
             Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
-                MsgStakeVote(bundle: bs[0], proposalID: proposalID, validator: validator, options: options, weight: weight, stake: sp!)
+                MsgStakeVote(bundle: bs[0], proposalID: proposalID, validator: validator, options: try PrivateMsgs.canonicalOptions(options),
+                             weight: weight, stake: sp!)
             }
         }
     }
@@ -1079,7 +1104,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             let stake = try ownerPlan(position, counter: counter)
             return try await run { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
-                    MsgPositionVote(bundle: bs[0], positionID: position.id, proposalID: proposalID, options: options, stake: sp!)
+                    MsgPositionVote(bundle: bs[0], positionID: position.id, proposalID: proposalID, options: try PrivateMsgs.canonicalOptions(options), stake: sp!)
                 }
             }
         }

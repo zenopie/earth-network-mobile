@@ -510,6 +510,33 @@ final class Audit3Tests: XCTestCase {
         XCTAssertEqual(.live, w.identityStatus())
         XCTAssertEqual(chain.genesis, w.store.state.genesis)
     }
+
+    // MARK: chain wave 3 (06ea4d6)
+
+    /// B/F2: an unshield to any module account is refused before anything is proven.
+    func testUnshieldToAModuleAccountIsRefused() async throws {
+        let chain = FakeChain()
+        let w = try wallet(chain)
+        try funded(chain, w)
+        try await w.sync()
+        let staking = try Bech32.encode(hrp: "earth", data: try Bech32.convertBits([UInt8](PrivateMsgs.moduleAddress("shieldedstaking")), from: 8, to: 5, pad: true))
+        await assertThrowsAsync({ try await w.unshield(receiver: staking, denom: "uerth", amount: 1000) }) { String(describing: $0).contains("shieldedstaking") }
+        XCTAssertEqual(0, chain.simulated)
+        _ = try await w.unshield(receiver: receiver, denom: "uerth", amount: 1000)
+    }
+
+    /// I1: a passport proof whose current_date is not a calendar date is refused before broadcast.
+    func testRegistrationNeedsACalendarDate() async throws {
+        let chain = FakeChain()
+        let w = try wallet(chain)
+        let prep = try await w.prepareRegistration(affiliate: nil)
+        chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
+        try await w.sync()
+        var s = sigs(prep)
+        s[0] = "250231"
+        await assertThrowsAsync({ try await w.register(prep, proof: Data(count: 14_656), publicSignals: s, signatureAlgorithm: "lean_poa", dscDer: Data(count: 10)) })
+        XCTAssertEqual(0, chain.simulated)
+    }
 }
 
 final class Tally: @unchecked Sendable {

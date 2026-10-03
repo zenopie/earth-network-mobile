@@ -1,4 +1,5 @@
 import BigInt
+import CryptoKit
 import Foundation
 
 // The chain's private msgs: their wire encoding (field numbers from
@@ -372,6 +373,42 @@ public enum PrivateMsgs {
     }
 
     /// OptionsBytes: per option, u64 BE option, u32 BE length, the weight's LegacyDec string.
+    /// `opts` with every weight in its canonical LegacyDec form ("1" -> "1.000000000000000000"): the only form the chain takes (wave 3, F3).
+    public static func canonicalOptions(_ opts: [WeightedVoteOption]) throws -> [WeightedVoteOption] {
+        try opts.map { WeightedVoteOption(option: $0.option, weight: try legacyDec($0.weight)) }
+    }
+
+    /// The bytes a referrer address's owner signs (secp256k1 over SHA-256) to consent to a binding (chain x/personhood ReferrerConsentBytes).
+    public static let referrerConsentDomain = "earth.referrer.consent.v1"
+
+    public static func referrerConsentBytes(chainID: String, nullifier: Data, address: Data) throws -> Data {
+        let c = Data(chainID.utf8)
+        guard c.count <= 255 else { throw PrivacyError("chain id too long") }
+        return Data(referrerConsentDomain.utf8) + Data([UInt8(c.count)]) + c + nullifier + address
+    }
+
+    /// Every module account the chain declares (app_config moduleAccPerms):
+    /// an unshield to one is refused (wave 3, B/F2). Address = the first 20
+    /// bytes of SHA-256(name) (authtypes.NewModuleAddress).
+    public static let moduleAccounts = [
+        "fee_collector", "distribution", "mint", "bonded_tokens_pool", "not_bonded_tokens_pool", "gov", "nft", "transfer",
+        "interchainaccounts", "shielded", "shieldedstaking", "dex", "allocation", "personhood", "earth", "wasm",
+    ]
+
+    public static func moduleAddress(_ name: String) -> Data { Data(SHA256.hash(data: Data(name.utf8))).prefix(20) }
+
+    /// The module whose account `address` (20 raw bytes) is, or nil.
+    public static func moduleAccount(of address: Data) -> String? { moduleAccounts.first { moduleAddress($0) == address } }
+
+    /// Whether YYMMDD `s` is a real calendar date (the chain refuses 250231; wave 3, I1).
+    public static func isCalendarDate(_ s: String) -> Bool {
+        guard s.count == 6, s.allSatisfy({ $0.isASCII && $0.isNumber }), let n = Int(s) else { return false }
+        let y = 2000 + n / 10000, m = n / 100 % 100, d = n % 100
+        guard (1 ... 12).contains(m), d >= 1 else { return false }
+        let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+        return d <= [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1]
+    }
+
     public static func optionsBytes(_ opts: [WeightedVoteOption]) throws -> Data {
         var out = Data()
         for o in opts {
@@ -601,9 +638,14 @@ public struct MsgBindReferrer: DecodablePrivateMsg, FeeBundleMsg, Equatable {
     public var membership: Membership
     public var address: String
     public var maxActivation: UInt64
+    /// The address owner's consent (chain wave 3, L6): empty when clearing. Not sighash fields.
+    public var referrerPubKey: Data
+    public var referrerSignature: Data
 
-    public init(fee: ShieldedBundle, membership: Membership, address: String, maxActivation: UInt64) {
+    public init(fee: ShieldedBundle, membership: Membership, address: String, maxActivation: UInt64,
+                referrerPubKey: Data = Data(), referrerSignature: Data = Data()) {
         self.fee = fee; self.membership = membership; self.address = address; self.maxActivation = maxActivation
+        self.referrerPubKey = referrerPubKey; self.referrerSignature = referrerSignature
     }
 
     public var feeBundle: ShieldedBundle { fee }
@@ -614,13 +656,15 @@ public struct MsgBindReferrer: DecodablePrivateMsg, FeeBundleMsg, Equatable {
         w.message(2, membership)
         w.string(3, address)
         w.uint64(4, maxActivation)
+        w.bytes(5, referrerPubKey)
+        w.bytes(6, referrerSignature)
         return w.data
     }
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
         return Self(fee: try f.message(1, ShieldedBundle.decode), membership: try f.message(2, Membership.decode),
-                    address: f.string(3), maxActivation: f.uint64(4))
+                    address: f.string(3), maxActivation: f.uint64(4), referrerPubKey: f.bytes(5), referrerSignature: f.bytes(6))
     }
 
     public func sighashFields() throws -> [Fr] { [try PrivateMsgs.addressField(address)] }

@@ -189,6 +189,8 @@ public enum PrivacyAutomation {
         queries: PrivacyQueries,
         clock: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970) },
         pause: (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0 * 1_000_000) },
+        /// Signs the referrer refresh's consent (wave 3, L6) with the wallet's transparent key.
+        referrerConsent: ((Data) throws -> (publicKey: Data, signature: Data))? = nil,
         onFailure: (Action, Swift.Error) -> Void = { _, _ in }
     ) async throws {
         // Global reads only: the same for every wallet.
@@ -216,7 +218,7 @@ public enum PrivacyAutomation {
                 switch a {
                 case let .claimAnml(day): _ = try await wallet.claimAnml(day: day)
                 case .refreshCaretaker: _ = try await wallet.setCaretaker(split: wallet.snapshot.caretakerSplit)
-                case .refreshReferrer: _ = try await wallet.bindReferrer(address: wallet.snapshot.referrerAddress)
+                case .refreshReferrer: _ = try await wallet.bindReferrer(address: wallet.snapshot.referrerAddress, consent: referrerConsent)
                 case let .claimUnbonding(denom): _ = try await wallet.claimUnbonding(denom: denom)
                 }
             },

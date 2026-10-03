@@ -45,7 +45,7 @@ final class PrivateMsgsTests: XCTestCase {
     }
 
     let validator = "earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
-    let opts = [WeightedVoteOption(option: WeightedVoteOption.yes, weight: "0.7"),
+    let opts = [WeightedVoteOption(option: WeightedVoteOption.yes, weight: "0.700000000000000000"),
                 WeightedVoteOption(option: WeightedVoteOption.no, weight: "0.300000000000000000")]
     func w(_ o: UInt64, _ p: UInt64) -> Msg.AllocationWeight { Msg.AllocationWeight(optionID: o, percent: p) }
 
@@ -67,7 +67,8 @@ final class PrivateMsgsTests: XCTestCase {
         "register_no_affiliate": register(""),
         "claim_anml": MsgClaimAnmlPrivate(fee: fee(50, 2000), membership: membership(50), day: 20360, pc: fb(51), ciphertext: bct(51)),
         "set_caretaker": MsgSetCaretaker(fee: fee(60, 2000), membership: membership(60), percentages: [w(1, 60), w(7, 40)], maxActivation: 1_780_000_000),
-        "bind_referrer": MsgBindReferrer(fee: fee(70, 2000), membership: membership(70), address: addr(50), maxActivation: 1_780_000_000),
+        "bind_referrer": MsgBindReferrer(fee: fee(70, 2000), membership: membership(70), address: addr(50), maxActivation: 1_780_000_000,
+                                         referrerPubKey: Data(repeating: 2, count: 33), referrerSignature: Data(repeating: 7, count: 64)),
         "bind_referrer_clear": MsgBindReferrer(fee: fee(71, 2000), membership: membership(71), address: "", maxActivation: 1_780_000_000),
         "vote_proposal": MsgVoteProposalPrivate(fee: fee(80, 2000), membership: membership(80), proposalID: 5, option: .yes),
         "propose_removal": MsgProposeRemoval(fee: fee(81, 2000), membership: membership(81), optionID: 3),
@@ -158,5 +159,26 @@ final class PrivateMsgsTests: XCTestCase {
         XCTAssertEqual(0, back.signatures)
         XCTAssertEqual(0, back.signerInfos)
         XCTAssertEqual("2000", back.feeCoins.first?.amount)
+    }
+
+    /// Chain wave 3 (06ea4d6): the referrer consent bytes, the module accounts, canonical weights, calendar dates.
+    func testWave3Vectors() throws {
+        let c = Vectors.json["referrer_consent"] as! [String: String]
+        let bytes = try PrivateMsgs.referrerConsentBytes(chainID: Vectors.json["chain_id"] as! String, nullifier: Vectors.unhex(c["nullifier"]!),
+                                                         address: Data(try Bech32.decode(c["address"]!).data))
+        XCTAssertEqual(c["bytes"], Vectors.hex(bytes))
+        let mods = Vectors.json["module_accounts"] as! [String: String]
+        XCTAssertEqual(Set(PrivateMsgs.moduleAccounts), Set(mods.keys))
+        for name in PrivateMsgs.moduleAccounts {
+            XCTAssertEqual(name, PrivateMsgs.moduleAccount(of: Data(try Bech32.decode(mods[name]!).data)))
+        }
+        let dec = Vectors.json["legacy_dec"] as! [String: String]
+        XCTAssertEqual(dec["1"], try PrivateMsgs.legacyDec("1"))
+        XCTAssertEqual(dec["0.5"], try PrivateMsgs.legacyDec("0.5"))
+        XCTAssertEqual(["1.000000000000000000"], try PrivateMsgs.canonicalOptions([WeightedVoteOption(option: 1, weight: "1")]).map(\.weight))
+        XCTAssertTrue(PrivateMsgs.isCalendarDate("261001"))
+        XCTAssertFalse(PrivateMsgs.isCalendarDate("250231"))
+        XCTAssertTrue(PrivateMsgs.isCalendarDate("240229"))
+        XCTAssertFalse(PrivateMsgs.isCalendarDate("250229"))
     }
 }

@@ -1,4 +1,5 @@
 import BigInt
+import secp256k1
 import Foundation
 @testable import EarthCore
 
@@ -242,6 +243,8 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         case let m as MsgSend:
             try need(m.fee > 0, "send fee")
             try need(rem.isEmpty == m.receiver.isEmpty, "receiver exactly when something is left")
+            // Wave 3 (B/F2): never to a module account.
+            if !m.receiver.isEmpty { try need(PrivateMsgs.moduleAccount(of: Data(try Bech32.decode(m.receiver).data)) == nil, "receiver is a module account") }
             try need(!rem.keys.contains { $0.hasPrefix("dexlp/") }, "LP shares cannot be unshielded")
         case let m as MsgShieldedDelegate:
             try only("uerth")
@@ -319,9 +322,10 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         switch m {
         case let m as MsgClaimAnmlPrivate: return (PrivacyHash.claimScope(day: m.day), (m.day - 1) * 86_400)
         case let m as MsgVoteProposalPrivate: return (PrivacyHash.proposalScope(proposalID: m.proposalID, round: 0), UInt64(now - 3600))
-        case let m as MsgSetCaretaker: return (PrivacyHash.caretakerScope(), m.maxActivation)
-        case let m as MsgBindReferrer: return (PrivacyHash.referrerScope(), m.maxActivation)
-        case let m as MsgProposeRemoval: return (PrivacyHash.proposeRemovalScope(optionID: m.optionID, day: day), day * 86_400 - 3600)
+        // Wave 3 (L4/L5): a lease's max_activation is at most now - R - 86400 (R = 30 days here).
+        case let m as MsgSetCaretaker: return (PrivacyHash.caretakerScope(), Int64(m.maxActivation) <= now - 31 * 86_400 ? m.maxActivation : UInt64.max)
+        case let m as MsgBindReferrer: return (PrivacyHash.referrerScope(), Int64(m.maxActivation) <= now - 31 * 86_400 ? m.maxActivation : UInt64.max)
+        case let m as MsgProposeRemoval: return (PrivacyHash.proposeRemovalScope(optionID: m.optionID, day: day), day * 86_400 - 86_400)
         case let m as MsgVoteRemoval: return (PrivacyHash.removalScope(ballotID: removalBallots[m.optionID] ?? 0), UInt64(now - 3600))
         default: return nil
         }
@@ -346,6 +350,22 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             try need(positions[m.positionID]?.ownerTag == (try f(m.stake.ownerTag)), "not the position's owner")
         case let m as MsgPositionVote:
             try need(positions[m.positionID]?.ownerTag == (try f(m.stake.ownerTag)), "not the position's owner")
+            try need(m.options.allSatisfy { (try? PrivateMsgs.legacyDec($0.weight)) == $0.weight }, "a vote weight is not canonical")
+        case let m as MsgStakeVote:
+            // Wave 3 (F3): option weights only in their canonical LegacyDec form.
+            try need(m.options.allSatisfy { (try? PrivateMsgs.legacyDec($0.weight)) == $0.weight }, "a vote weight is not canonical")
+        case let m as MsgBindReferrer:
+            // Wave 3 (L6): binding an address needs its owner's consent (cosmos secp256k1 over SHA-256).
+            if m.address.isEmpty {
+                try need(m.referrerPubKey.isEmpty && m.referrerSignature.isEmpty, "clearing a binding carries no consent")
+            } else {
+                try need(m.referrerPubKey.count == 33 && m.referrerSignature.count == 64, "no referrer consent")
+                try need(try EarthKey.address(fromPublicKey: m.referrerPubKey) == m.address, "consent key is not the address's")
+                let msg = try PrivateMsgs.referrerConsentBytes(chainID: chainID, nullifier: m.membership.nullifier, address: Data(try Bech32.decode(m.address).data))
+                let key = try secp256k1.Signing.PublicKey(dataRepresentation: m.referrerPubKey, format: .compressed)
+                let sig = try secp256k1.Signing.ECDSASignature(compactRepresentation: m.referrerSignature)
+                try need(key.isValidSignature(sig, for: msg), "bad referrer consent")
+            }
         case let m as MsgVoteRemoval: try need(removalBallots[m.optionID] != nil, "no open ballot")
         case let m as MsgProposeRemoval: try need(removalBallots[m.optionID] == nil, "ballot already open")
         case let m as MsgClaimUnbonding: try need((m.bundle != nil) == (m.feeFromOutput == 0), "claim fee")

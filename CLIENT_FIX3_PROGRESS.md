@@ -22,3 +22,18 @@ format or behavior change. Auditor PoCs: /private/tmp/claude-501/audit3/clients/
 - Audit3Test (22 tests); privacy suite green.
 - [x] Addition: /gas/register proof of work (GasPow: SHA-256 hashcash, cancellable, progress; GasGrant: GET /gas/pow, stamp, 428 restamp at pow.bits, stamp kept only after 503/429, new after 403). GasPowTest (fake server checking stamps like services/pow). Registration sheet shows "Preparing request… N%".
 - [x] versionCode 41 (1.0.34). testDebugUnitTest (all) + assembleDebug pass.
+
+- [x] Passport SRS (Android 2^18+1 points, iOS 2^19+1) fetched once at launch, hash-pinned; privacy SRS bundled (iOS references the Android asset folder).
+
+## Chain wave 3 (chain-orch 06ea4d6), both platforms
+- [x] F3 vote weights canonical LegacyDec (wallet canonicalizes; FakeChain refuses others).
+- [x] L6 MsgBindReferrer referrer_pub_key (5) / referrer_signature (6) over the consent bytes, signed by the selected wallet's transparent key (UI and automation refresh); address must be the key's.
+- [x] L4/L5 max_activation: proposeRemoval = today 00:00 UTC - 86400; caretaker/referrer <= now - R - 86400 (- 600 s margin, hour-rounded); ballot votes from BallotInputs.
+- [x] B/F2 unshield to any module account refused client-side (16 module names, SHA-256(name)[:20]).
+- [x] I1 registration current_date must be a calendar date.
+- [x] Vectors regenerated (android/tools/orchardvectors/gen.sh, chain 06ea4d6): bind_referrer with consent fields, canonical stake_vote weights, referrer_consent, module_accounts, legacy_dec; iOS copy updated.
+
+## iOS
+- [x] EarthCore: all of the above ported (byte-identical vectors); Audit3Tests (PoCs A-C fixed + 1-14 + wave 3), GasPowTests. swift test 121/121.
+- [x] EarthUI: shownFee TaskLocal + FeeAboveQuote re-shows the sheet; forget deletes privacy data; save errors shown; gas PoW progress; referrer consent.
+- [x] App: srs folder reference (Android asset), PassportSRS prefetch; ProverGate PrivacyProverTests prove from the bundled SRS. build-ios.sh ok; xcodebuild simulator (ARCHS=arm64) BUILD SUCCEEDED. CURRENT_PROJECT_VERSION 14.

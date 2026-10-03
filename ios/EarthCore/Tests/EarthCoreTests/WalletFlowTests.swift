@@ -283,8 +283,12 @@ final class WalletFlowTests: XCTestCase {
         // Referrer binding (lapses after R; refreshed past R/2).
         chain.now += 31 * 86_400
         try await a.sync()
-        _ = try await a.bindReferrer(address: receiver)
-        XCTAssertEqual([receiver], Array(chain.referrers.values))
+        // Wave 3 (L6): the bound address is one this wallet controls; its key consents.
+        let key = try EarthKey(mnemonic: alice)
+        await assertThrowsAsync({ try await a.bindReferrer(address: key.address) })
+        await assertThrowsAsync({ try await a.bindReferrer(address: self.receiver) { m in (key.publicKey, try key.sign(m)) } })
+        _ = try await a.bindReferrer(address: key.address) { m in (key.publicKey, try key.sign(m)) }
+        XCTAssertEqual([key.address], Array(chain.referrers.values))
         let due0 = try await a.referrerDue()
         XCTAssertFalse(due0)
         chain.now += 16 * 86_400

@@ -710,6 +710,18 @@ public final class AppModel {
     /// Builds the selected wallet's private side from its mnemonic and starts
     /// the automations (daily claim, caretaker and referrer refresh, unbond
     /// claims), which run only while unlocked: they need the keys.
+    /// Signs a referrer consent with the selected wallet's transparent key
+    /// (wave 3, L6): what lets the private side bind that wallet's own
+    /// address. Nil while locked.
+    func referrerConsent() -> ((Data) throws -> (publicKey: Data, signature: Data))? {
+        guard wallets.indices.contains(selected) else { return nil }
+        let mnemonic = wallets[selected].mnemonic
+        return { message in
+            let key = try EarthKey(mnemonic: mnemonic)
+            return (key.publicKey, try key.sign(message))
+        }
+    }
+
     private func openPrivacy() {
         guard privacy == nil, wallets.indices.contains(selected) || !wallets.isEmpty else { return }
         let entry = wallets.indices.contains(selected) ? wallets[selected] : wallets[0]
@@ -728,11 +740,17 @@ public final class AppModel {
             // A stake vote the app lost (killed in the background) goes on.
             Task { await votes.resume() }
             let queries = PrivacyQueries(rest: client.rest)
+            // The referrer refresh signs with this wallet's own transparent key (wave 3, L6).
+            let mnemonic = entry.mnemonic
+            let consent: @Sendable (Data) throws -> (publicKey: Data, signature: Data) = { m in
+                let key = try EarthKey(mnemonic: mnemonic)
+                return (key.publicKey, try key.sign(m))
+            }
             automation = Task.detached(priority: .utility) { [weak self] in
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(20))
                     if Task.isCancelled { break }
-                    try? await PrivacyAutomation.runOnce(wallet: w, queries: queries)
+                    try? await PrivacyAutomation.runOnce(wallet: w, queries: queries, referrerConsent: consent)
                     await self?.publishPrivacy()
                     try? await Task.sleep(for: PrivacyAutomation.interval)
                 }

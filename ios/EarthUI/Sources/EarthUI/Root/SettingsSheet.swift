@@ -217,7 +217,7 @@ struct ReferrerSection: View {
                     let address = model.address
                     tx.requestPrivate(.private(action: "Bind referrer address", rows: [("Rewards to", address)]),
                                       host: .identity, onSuccess: { await model.syncPrivacy() }) { w in
-                        try await w.bindReferrer(address: address)
+                        try await w.bindReferrer(address: address, consent: model.referrerConsent())
                     }
                 }
                 EarthButton(title: shared ? "Copied" : "Copy link", role: .secondary) {
