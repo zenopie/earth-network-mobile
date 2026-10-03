@@ -26,9 +26,15 @@ final class WalletFlowTests: XCTestCase {
         FakeReads(chain: chain, snapshotSize: size ?? { [unowned self] in self.snapshot ?? chain.stakeTree.size })
     }
 
-    func wallet(_ chain: FakeChain, _ words: String, reads r: FakeReads? = nil) throws -> PrivacyWallet {
-        PrivacyWallet(keys: try PrivacyKeys.fromMnemonic(words), store: .memory(), indexer: chain, chain: chain,
-                      reads: r ?? reads(chain), prover: chain.prover, chainID: chain.chainID, now: { [unowned chain] in chain.now })
+    /// Pauses the wallet asked for (stake votes), in milliseconds.
+    let pauses = Pauses()
+
+    func wallet(_ chain: FakeChain, _ words: String, reads r: FakeReads? = nil, indexer: PrivacyIndexer? = nil,
+                store: PrivacyStore = .memory()) throws -> PrivacyWallet {
+        let p = pauses
+        return PrivacyWallet(keys: try PrivacyKeys.fromMnemonic(words), store: store, indexer: indexer ?? chain, chain: chain,
+                             reads: r ?? reads(chain), prover: chain.prover, chainID: chain.chainID, roots: chain,
+                             now: { [unowned chain] in chain.now }, pause: { p.add($0) })
     }
 
     func signals(_ prep: PrivacyWallet.RegistrationPrep) -> [String] {
@@ -41,7 +47,7 @@ final class WalletFlowTests: XCTestCase {
 
     func shieldTo(_ chain: FakeChain, _ w: PrivacyWallet, _ denom: String, _ value: UInt64) throws {
         let o = try w.shieldOutput(denom: denom, amount: value)
-        chain.shield(denom, o.value, o.pc, o.ciphertext)
+        chain.shield(denom, value, o.pc, o.ciphertext)
     }
 
     func assertThrowsAsync<T>(_ body: () async throws -> T, _ check: (Error) -> Bool = { _ in true }, line: UInt = #line) async {
@@ -61,14 +67,14 @@ final class WalletFlowTests: XCTestCase {
 
         // Registration: prepare, the backend shields gas to pc_gas, register.
         let prep = try await a.prepareRegistration(affiliate: nil)
-        chain.shield("uerth", 100_000, prep.gas.pc)
+        chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
         try await a.sync()
         XCTAssertEqual(100_000, bal(a, "uerth"))
         _ = try await a.register(prep, proof: Data(count: 14_656), publicSignals: signals(prep), signatureAlgorithm: "lean_poa", dscDer: Data(count: 10))
         try await a.sync()
         XCTAssertEqual(.live, a.identityStatus())
         XCTAssertEqual(1_000_000, bal(a, "uanml"))
-        // The gas note paid the fee bundle; the reward is a self-mint found by its public amount.
+        // The gas note paid the fee bundle; the reward is found by its v2 ciphertext and public amount.
         XCTAssertGreaterThan(bal(a, "uerth"), 5_000_000)
         XCTAssertEqual(PrivacyHash.countryField("DE"), a.snapshot.identity?.country)
         // Every bundle is padded to at least two actions.
@@ -149,7 +155,7 @@ final class WalletFlowTests: XCTestCase {
         let a = try wallet(chain, words)
         try await a.sync()
         let prep = try await a.prepareRegistration(affiliate: nil)
-        chain.shield("uerth", 100_000, prep.gas.pc)
+        chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
         try await a.sync()
         _ = try await a.register(prep, proof: Data(count: 14_656), publicSignals: signals(prep), signatureAlgorithm: "lean_poa", dscDer: Data(count: 10))
         chain.now += 2 * 86_400
@@ -168,14 +174,14 @@ final class WalletFlowTests: XCTestCase {
         XCTAssertEqual(2_000_000, bal(a, "uanml"))
         let pool = { ["uanml": SwapMath.Reserves(erth: chain.poolErth, token: chain.poolAnml)] }
 
-        // ANML -> ERTH: the quote is the chain's, the fee comes out of the output.
+        // ANML -> ERTH: the quote is the chain's, the fee comes from an ERTH note (one fee rule).
         let erth0 = bal(a, "uerth")
         let q = SwapMath.route(pools: pool(), hub: "uerth", denomIn: "uanml", amountIn: 600_000, denomOut: "uerth", feePercent: chain.swapFee)!
         _ = try await a.noteSwap(denomIn: "uanml", amountIn: 600_000, denomOut: "uerth", minOut: UInt64(SwapMath.withSlippage(q.amountOut, bps: 100)))
         try await a.sync()
         XCTAssertEqual(1_400_000, bal(a, "uanml"))
         let fee = Int64(q.amountOut) - Int64(bal(a, "uerth") - erth0)
-        XCTAssertTrue((1000 ... 10_000).contains(fee), "fee from output: \(fee)")
+        XCTAssertTrue((1000 ... 10_000).contains(fee), "fee from the bundle: \(fee)")
 
         // ERTH -> ANML by bob from the one note he was sent: amount and fee
         // from the same note, the change back in the same bundle.
@@ -389,4 +395,12 @@ final class WalletFlowTests: XCTestCase {
         for (i, w) in chain.prover.allStakes.enumerated() { write("stake", i, w.proverToml()) }
         for (i, w) in chain.prover.allMemberships.enumerated() { write("membership", i, w.proverToml()) }
     }
+}
+
+/// Records the pauses a wallet asked for (thread-safe: the wallet calls it from its own task).
+final class Pauses: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [UInt64] = []
+    func add(_ v: UInt64) { lock.lock(); values.append(v); lock.unlock() }
+    var all: [UInt64] { lock.lock(); defer { lock.unlock() }; return values }
 }

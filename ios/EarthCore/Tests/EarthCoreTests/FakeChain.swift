@@ -11,9 +11,20 @@ import Foundation
 /// are not real: `CheckingProver` checks each witness against its circuit's
 /// constraints instead and keeps it, so the chain can match it to the tx and
 /// a test can hand it to nargo.
-final class FakeChain: PrivateChain, PrivacyIndexer, @unchecked Sendable {
+final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Sendable {
     let chainID = "earth-1"
     var now: Int64 = 1_790_000_000
+    /// The first block hash's prefix the indexer keys its base by; a relaunch changes it.
+    var genesis = "0123456789abcdef"
+    /// Set to make the indexer report it has halted.
+    var halted: String?
+    /// The country the chain records for registrations (the verifying CSCA's).
+    var registrationCountry = "DE"
+    /// Every note root the chain recorded, with its tree size.
+    var noteRootSizes: [Fr: UInt64] = [:]
+    /// (height -> tree state) after each block, for queries pinned to a height.
+    var identityAt: [UInt64: TreeState] = [:]
+    var stakeAt: [UInt64: TreeState] = [:]
     var notes: [NoteRow] = []
     let noteTree = MerkleTree(store: MemNodeStore())
     let identityTree = MerkleTree(store: MemNodeStore())
@@ -44,8 +55,9 @@ final class FakeChain: PrivateChain, PrivacyIndexer, @unchecked Sendable {
     var poolAnml = BigInt(500_000_000_000)
     var lpSupply = BigInt(700_000_000_000)
     let swapFee = Decimal(string: "0.3")!
-    /// Private withdrawals waiting to mature: shares, erth pc, token pc.
-    var withdrawals: [(BigInt, Fr, Fr)] = []
+    /// Private withdrawals waiting to mature.
+    struct Withdrawal { let shares: BigInt; let erthPC: Fr; let erthCt: Data; let tokenPC: Fr; let tokenCt: Data }
+    var withdrawals: [Withdrawal] = []
 
     final class Pos {
         let id: UInt64, validator: String, derth: UInt64, ownerTag: Fr, createdHeight: UInt64
@@ -70,6 +82,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, @unchecked Sendable {
     init() {
         noteRoots.insert(noteTree.root())
         identityRoots.insert(identityTree.root())
+        block()
     }
 
     struct Refused: Error, CustomStringConvertible { let why: String; var description: String { why } }
@@ -78,12 +91,17 @@ final class FakeChain: PrivateChain, PrivacyIndexer, @unchecked Sendable {
     /// Ends the block being built: its roots become anchors. Writes land at `height`, the block in progress.
     private func block() {
         noteRoots.insert(noteTree.root()); identityRoots.insert(identityTree.root())
+        noteRootSizes[noteTree.root()] = noteTree.size
         if stakeTree.size > 0 { stakeRoots.insert(stakeTree.root()) }
+        identityAt[height] = TreeState(size: identityTree.size, root: identityTree.size == 0 ? nil : identityTree.root())
+        stakeAt[height] = TreeState(size: stakeTree.size, root: stakeTree.size == 0 ? nil : stakeTree.root())
         height += 1
     }
 
+    /// Every note the chain mints carries a 177-byte amount-blind ciphertext (one note-discovery rule).
     @discardableResult
-    func mint(_ denom: String, _ value: UInt64, _ pc: Fr, _ ct: Data = Data()) -> UInt64 {
+    func mint(_ denom: String, _ value: UInt64, _ pc: Fr, _ ct: Data) -> UInt64 {
+        precondition(ct.count == NoteCipher.blindCiphertextBytes, "a minted note needs its 177-byte blind ciphertext, got \(ct.count)")
         let cm = PrivacyHash.cm(asset: PrivacyHash.assetID(denom), value: value, pc: pc)
         let pos = noteTree.append(cm)
         notes.append(NoteRow(position: pos, height: height, cm: cm, ciphertext: ct, amount: "\(value)\(denom)"))
@@ -91,26 +109,29 @@ final class FakeChain: PrivateChain, PrivacyIndexer, @unchecked Sendable {
     }
 
     @discardableResult
-    func mintStake(_ denom: String, _ amount: UInt64, _ spc: Fr) -> UInt64 {
+    func mintStake(_ denom: String, _ amount: UInt64, _ spc: Fr, _ ct: Data) -> UInt64 {
+        precondition(ct.count == NoteCipher.blindCiphertextBytes, "a minted stake note needs its blind stake ciphertext")
         let cm = PrivacyHash.stakeCM(asset: PrivacyHash.assetID(denom), amount: amount, spc: spc)
         let pos = stakeTree.append(cm)
-        stakeRows.append(StakeNoteRow(position: pos, height: height, cm: cm, ciphertext: Data(), denom: denom, amount: amount, spc: spc))
+        stakeRows.append(StakeNoteRow(position: pos, height: height, cm: cm, ciphertext: ct, denom: denom, amount: amount, spc: spc))
         return pos
     }
 
-    func shield(_ denom: String, _ value: UInt64, _ pc: Fr, _ ct: Data = Data()) { mint(denom, value, pc, ct); block() }
+    /// MsgShield (a gas grant, a shield from a transparent account): its ciphertext is required.
+    func shield(_ denom: String, _ value: UInt64, _ pc: Fr, _ ct: Data) { mint(denom, value, pc, ct); block() }
 
     /// Ends a block with no tx in it.
     func emptyBlock() { block() }
 
     /// The LP unbonding period passes: every private withdrawal pays both legs as notes.
     func matureWithdrawals() {
-        for (sh, ePC, tPC) in withdrawals {
+        for w in withdrawals {
+            let sh = w.shares
             let e = sh * poolErth / lpSupply
             let t = sh * poolAnml / lpSupply
             poolErth -= e; poolAnml -= t; lpSupply -= sh
-            mint("uerth", UInt64(e), ePC)
-            mint("uanml", UInt64(t), tPC)
+            mint("uerth", UInt64(e), w.erthPC, w.erthCt)
+            mint("uanml", UInt64(t), w.tokenPC, w.tokenCt)
         }
         withdrawals.removeAll()
         block()
@@ -130,7 +151,16 @@ final class FakeChain: PrivateChain, PrivacyIndexer, @unchecked Sendable {
         return 200_000 + 100_000 * UInt64(m.bundles.count) + 350_000 * UInt64(actions) + (m.stakeProof != nil ? 400_000 : 0)
     }
 
+    /// Broadcasts to refuse (after the wallet proved them): a node down, a tx dropped.
+    var rejectNext = 0
+
     func broadcast(_ tx: Data) async throws -> TxResult {
+        if rejectNext > 0 {
+            // The proofs made for it never reach the chain.
+            rejectNext -= 1
+            prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll()
+            throw URLError(.networkConnectionLost)
+        }
         let (_, events) = try check(tx, simulate: false)
         block()
         return TxResult(hash: "HASH\(height - 1)", height: height - 1, time: now, events: events)
@@ -165,15 +195,42 @@ final class FakeChain: PrivateChain, PrivacyIndexer, @unchecked Sendable {
             try need(m.fee > 0, "send fee")
             try need(rem.isEmpty == m.receiver.isEmpty, "receiver exactly when something is left")
             try need(!rem.keys.contains { $0.hasPrefix("dexlp/") }, "LP shares cannot be unshielded")
-        case is MsgShieldedDelegate: try only("uerth")
+        case let m as MsgShieldedDelegate:
+            try only("uerth")
+            try need(rem["uerth"] == m.amount && m.amount > 0, "delegate releases amount")
         case let m as MsgNoteSwap:
-            try need(rem.count == 1 && rem[m.denomOut] == nil, "swap release")
-            try need((m.fee == 0) != (m.feeFromOutput == 0), "swap fee")
-        case let m as MsgAddLiquidityShielded: try need(Set(rem.keys) == ["uerth", "uanml"] && m.poolID == 1, "deposit legs")
-        case let m as MsgRemoveLiquidityShielded: try only("dexlp/\(m.poolID)")
+            try need(rem == [m.denomIn: m.amountIn] && m.denomOut != m.denomIn, "a swap releases exactly amount_in of denom_in: \(rem)")
+            try need(m.privateFee > 0, "a swap pays a positive fee from its bundle")
+            try need(m.ciphertext.count == NoteCipher.blindCiphertextBytes, "swap ciphertext")
+        case let m as MsgAddLiquidityShielded:
+            try need(Set(rem.keys) == ["uerth", "uanml"] && m.poolID == 1 && rem["uerth"] == m.erthAmount, "deposit legs")
+            try need(m.privateFee > 0, "deposit fee")
+            try need(m.shareCiphertext.count == NoteCipher.blindCiphertextBytes && m.refundCiphertext.count == NoteCipher.blindCiphertextBytes,
+                     "deposit ciphertexts")
+        case let m as MsgRemoveLiquidityShielded:
+            try only("dexlp/\(m.poolID)")
+            try need(m.erthCiphertext.count == NoteCipher.blindCiphertextBytes && m.tokenCiphertext.count == NoteCipher.blindCiphertextBytes,
+                     "withdrawal ciphertexts")
+        case let m as MsgClaimUnbonding:
+            try only(nil)
+            try need(m.ciphertext.count == NoteCipher.blindCiphertextBytes, "claim ciphertext")
+            // Exactly one way to pay: the bundle, or from the output.
+            try need((m.privateFee == 0) != (m.feeFromOutput == 0), "claim fee")
+        case let m as MsgRegisterPrivate:
+            try only(nil)
+            try need(m.ciphertextAnml.count == NoteCipher.blindCiphertextBytes && m.ciphertextErth.count == NoteCipher.blindCiphertextBytes,
+                     "registration ciphertexts")
+        case let m as MsgClaimAnmlPrivate:
+            try only(nil)
+            try need(m.ciphertext.count == NoteCipher.blindCiphertextBytes, "claim ciphertext")
         default: try only(nil)
         }
         try need(m.totalFee > 0, "no fee")
+    }
+
+    /// Whether the msg has the chain mint a stake note to spc_mint (its blind stake ciphertext is then required).
+    private func mintsStake(_ m: any PrivateMsg) -> Bool {
+        m is MsgShieldedDelegate || m is MsgShieldedUndelegate || m is MsgStakeVote || m is MsgUnlockPosition
     }
 
     /// The stake proof's chain-supplied publics: asset, v_out.
@@ -233,7 +290,6 @@ final class FakeChain: PrivateChain, PrivacyIndexer, @unchecked Sendable {
             let (denomIn, amountIn) = rem.first!
             let out = try swapOut(denomIn, amountIn, m.denomOut)
             try need(out >= m.minAmountOut, "slippage: got \(out), want >= \(m.minAmountOut)")
-            try need(m.feeFromOutput == 0 || (m.denomOut == "uerth" && m.minAmountOut > m.feeFromOutput), "fee from output")
         case let m as MsgAddLiquidityShielded:
             if !m.minShares.isEmpty { try need(shares(rem["uerth"]!, rem["uanml"]!) >= BigInt(m.minShares)!, "below min_shares") }
         case let m as MsgUpdatePosition:
@@ -245,6 +301,9 @@ final class FakeChain: PrivateChain, PrivacyIndexer, @unchecked Sendable {
         case let m as MsgVoteRemoval: try need(removalBallots[m.optionID] != nil, "no open ballot")
         case let m as MsgProposeRemoval: try need(removalBallots[m.optionID] == nil, "ballot already open")
         case let m as MsgClaimUnbonding: try need((m.bundle != nil) == (m.feeFromOutput == 0), "claim fee")
+        case let m as MsgRegisterPrivate:
+            let idc = try f(m.idc)
+            try need(!identityRows.contains { $0.leaf != .zero && registeredIdc[$0.index] == idc }, "a switch to the live idc is refused")
         default: break
         }
     }
@@ -259,6 +318,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, @unchecked Sendable {
             try need(nullifiers[nf] == nil, "nullifier spent")
             try need(seen.insert(nf).inserted, "duplicate nullifier")
             _ = try Grumpkin.Point(bytes: a.cv)
+            try need(a.proof.count == PrivateTxEngine.proofBytes, "a proof is exactly \(PrivateTxEngine.proofBytes) bytes")
         }
         try need(b.bindingSig.count == Grumpkin.bindingSigBytes, "binding sig size")
         if simulate { return }
@@ -286,13 +346,20 @@ final class FakeChain: PrivateChain, PrivacyIndexer, @unchecked Sendable {
         try need(((m.feeFromOutput > 0 ? 0 : 1) ... 2).contains(bundles.count), "bundle count")
         let rem = try remainders(m)
         try checkRelease(m, rem)
-        let sighash = try m.sighash(chainID: chainID)
+        // The tx fields every private sighash binds (the ante records them).
+        let sighash = try m.sighash(chainID: chainID, tx: tx.txFields)
         var seen = Set<Fr>()
         for (i, b) in bundles.enumerated() { try checkBundle(i, b, sighash, simulate: simulate, seen: &seen) }
 
         let stake = m.stakeProof
         if let stake {
             try need(stake.nullifiers.count == 2 && stake.commitments.count == 2 && stake.ciphertexts.count <= 2, "stake proof shape")
+            try need(stake.proof.count == PrivateTxEngine.proofBytes, "a stake proof is exactly \(PrivateTxEngine.proofBytes) bytes")
+            if mintsStake(m) {
+                try need(stake.spcCiphertext.count == NoteCipher.blindCiphertextBytes, "spc_ciphertext required")
+            } else {
+                try need(stake.spcCiphertext.isEmpty, "spc_ciphertext only for a msg that mints")
+            }
             try stakeShape(m, stake)
             let nfs = try spent(stake)
             try need(!nfs.contains { stakeNullifiers[$0] != nil }, "stake nullifier spent")
@@ -310,6 +377,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, @unchecked Sendable {
         if let mm = m as? any MembershipMsg {
             let mem = mm.membership
             try need(identityRoots.contains(try f(mem.root)), "unknown identity anchor")
+            try need(mem.proof.count == PrivateTxEngine.proofBytes, "a membership proof is exactly \(PrivateTxEngine.proofBytes) bytes")
             if !simulate {
                 guard !prover.memberships.isEmpty else { throw Refused(why: "no membership proof") }
                 let w = prover.memberships.removeFirst()
@@ -346,8 +414,13 @@ final class FakeChain: PrivateChain, PrivacyIndexer, @unchecked Sendable {
             let binding = try PrivateMsgs.decimalField(m.publicSignals[1])
             try need(binding == (try m.binding()), "binding")
             let dsc = try PrivateMsgs.decimalField(m.publicSignals[3])
-            let idx = identityTree.append(PrivacyHash.identityLeaf(idc: try f(m.idc), dscKey: dsc, country: PrivacyHash.countryField("DE"), activatedAt: UInt64(now)))
+            let idc = try f(m.idc)
+            // A switch: the holder's old leaf is zeroed, the new one appended.
+            for (i, c) in registeredIdc where c == idc || passportOf[i] == m.publicSignals[2] { zeroLeaf(i) }
+            let idx = identityTree.append(PrivacyHash.identityLeaf(idc: idc, dscKey: dsc, country: PrivacyHash.countryField(registrationCountry),
+                                                                   activatedAt: UInt64(now)))
             identityRows.append(IdentityRow(index: idx, height: height, leaf: identityTree.leaf(idx), zeroedHeight: nil))
+            registeredIdc[idx] = idc; passportOf[idx] = m.publicSignals[2]
             mint("uanml", 1_000_000, try f(m.pcAnml), m.ciphertextAnml)
             mint("uerth", 5_000_000, try f(m.pcErth), m.ciphertextErth)
             events.append((type: "register", attributes: ["leaf_index": String(idx)]))
@@ -356,21 +429,21 @@ final class FakeChain: PrivateChain, PrivacyIndexer, @unchecked Sendable {
         case let m as MsgVoteProposalPrivate:
             votes.append((m.proposalID, m.option.rawValue))
         case let m as MsgShieldedDelegate:
-            mintStake(PrivacyWallet.derthDenom(m.validator), rem["uerth"]! * 9 / 10, spcMint!)
+            mintStake(PrivacyWallet.derthDenom(m.validator), m.amount * 9 / 10, spcMint!, stake!.spcCiphertext)
         case is MsgRestake: break
         case let m as MsgShieldedUndelegate:
-            mintStake(PrivacyWallet.unbondDenom(m.validator, epoch: epoch), m.amount * 10 / 9, spcMint!)
+            mintStake(PrivacyWallet.unbondDenom(m.validator, epoch: epoch), m.amount * 10 / 9, spcMint!, stake!.spcCiphertext)
         case let m as MsgClaimUnbonding:
             claimedUnbonds.append(PrivacyWallet.unbondDenom(m.validator, epoch: m.epoch))
             mint("uerth", m.amount - m.feeFromOutput, try f(m.pc), m.ciphertext)
         case let m as MsgStakeVote:
             stakeVotes.append((m.proposalID, m.validator, m.weight))
-            mintStake(PrivacyWallet.derthDenom(m.validator), m.weight, spcMint!)
+            mintStake(PrivacyWallet.derthDenom(m.validator), m.weight, spcMint!, stake!.spcCiphertext)
         case let m as MsgNoteSwap:
             let (denomIn, amountIn) = rem.first!
             let out = try swapOut(denomIn, amountIn, m.denomOut)
             if m.denomOut == "uerth" { poolAnml += BigInt(amountIn); poolErth -= BigInt(out) } else { poolErth += BigInt(amountIn); poolAnml -= BigInt(out) }
-            mint(m.denomOut, out - m.feeFromOutput, try f(m.pc), m.ciphertext)
+            mint(m.denomOut, out, try f(m.pc), m.ciphertext)
         case let m as MsgAddLiquidityShielded:
             let e = rem["uerth"]!, t = rem["uanml"]!
             let sh = shares(e, t)
@@ -382,7 +455,8 @@ final class FakeChain: PrivateChain, PrivacyIndexer, @unchecked Sendable {
             if rE > 0 { mint("uerth", rE, try f(m.refundPC), m.refundCiphertext) }
             if rT > 0 { mint("uanml", rT, try f(m.refundPC), m.refundCiphertext) }
         case let m as MsgRemoveLiquidityShielded:
-            withdrawals.append((BigInt(rem["dexlp/1"]!), try f(m.erthPC), try f(m.tokenPC)))
+            withdrawals.append(Withdrawal(shares: BigInt(rem["dexlp/1"]!), erthPC: try f(m.erthPC), erthCt: m.erthCiphertext,
+                                          tokenPC: try f(m.tokenPC), tokenCt: m.tokenCiphertext))
         case let m as MsgLockPosition:
             let id = nextPositionID
             nextPositionID += 1
@@ -394,7 +468,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, @unchecked Sendable {
         case let m as MsgUnlockPosition:
             let p = positions.removeValue(forKey: m.positionID)!
             positionOrder.removeAll { $0 == m.positionID }
-            mintStake(PrivacyWallet.derthDenom(p.validator), p.derth, spcMint!)
+            mintStake(PrivacyWallet.derthDenom(p.validator), p.derth, spcMint!, stake!.spcCiphertext)
         case let m as MsgPositionVote:
             positionVotes.append((m.positionID, m.proposalID))
         case let m as MsgBindReferrer:
@@ -414,7 +488,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, @unchecked Sendable {
 
     func status() async throws -> IndexerStatus {
         IndexerStatus(chainID: chainID, syncedHeight: height - 1, syncedTime: now, notes: UInt64(notes.count),
-                      identityLeaves: UInt64(identityRows.count), halted: nil)
+                      identityLeaves: UInt64(identityRows.count), halted: halted, genesis: genesis, base: "/privacy/\(chainID)/\(genesis)")
     }
 
     func notes(fromPos: UInt64, limit: Int?) async throws -> NotesPage {
@@ -437,14 +511,44 @@ final class FakeChain: PrivateChain, PrivacyIndexer, @unchecked Sendable {
     }
 
     func identityZeroed(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<UInt64> {
-        HeightPage(blocks: [], nextHeight: height, complete: false, syncedHeight: height - 1)
+        let grouped = Dictionary(grouping: zeroed.filter { $0.height >= fromHeight && $0.height < height }, by: \.height)
+        let blocks = grouped.keys.sorted().map { (height: $0, items: grouped[$0]!.map(\.index)) }
+        return HeightPage(blocks: blocks, nextHeight: height, complete: false, syncedHeight: height - 1)
     }
 
     func rootsLatest() async throws -> LatestRoots {
-        LatestRoots(note: RootRecord(root: noteTree.root(), treeSize: noteTree.size, height: height, time: now),
-                    identity: RootRecord(root: identityTree.root(), treeSize: identityTree.size, height: height, time: now),
+        LatestRoots(note: noteTree.size == 0 ? nil : RootRecord(root: noteTree.root(), treeSize: noteTree.size, height: height - 1, time: now),
+                    identity: identityTree.size == 0 ? nil : RootRecord(root: identityTree.root(), treeSize: identityTree.size, height: height - 1, time: now),
                     syncedHeight: height - 1,
-                    stake: stakeTree.size == 0 ? nil : RootRecord(root: stakeTree.root(), treeSize: stakeTree.size, height: height, time: now))
+                    stake: stakeTree.size == 0 ? nil : RootRecord(root: stakeTree.root(), treeSize: stakeTree.size, height: height - 1, time: now))
+    }
+
+    // MARK: the chain's own queries (LCD), for the wallet's root checks
+
+    func noteRoot(_ root: Fr) async throws -> NoteRootRecord? { noteRootSizes[root].map { NoteRootRecord(valid: true, treeSize: $0) } }
+
+    private static func at(_ m: [UInt64: TreeState], _ h: UInt64?) -> TreeState {
+        let keys = m.keys.filter { h == nil || $0 <= h! }
+        return keys.max().flatMap { m[$0] } ?? TreeState(size: 0, root: nil)
+    }
+
+    func identityTree(height: UInt64?) async throws -> TreeState { Self.at(identityAt, height) }
+    func stakeTree(height: UInt64?) async throws -> TreeState { Self.at(stakeAt, height) }
+
+    // MARK: registrations
+
+    var registeredIdc: [UInt64: Fr] = [:]
+    var passportOf: [UInt64: String] = [:]
+    /// (height, leaf index) of every zeroing.
+    var zeroed: [(height: UInt64, index: UInt64)] = []
+
+    private func zeroLeaf(_ index: UInt64) {
+        if identityTree.leaf(index) == .zero { return }
+        identityTree.update(index, .zero)
+        let r = identityRows[Int(index)]
+        identityRows[Int(index)] = IdentityRow(index: r.index, height: r.height, leaf: r.leaf, zeroedHeight: height)
+        zeroed.append((height: height, index: index))
+        registeredIdc.removeValue(forKey: index)
     }
 
     func rates(epoch: UInt64?) async throws -> [RateRow] { [] }

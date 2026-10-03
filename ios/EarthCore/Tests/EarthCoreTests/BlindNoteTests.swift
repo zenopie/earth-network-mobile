@@ -42,6 +42,32 @@ final class BlindNoteTests: XCTestCase {
         XCTAssertNil(NoteCipher.tryDecryptBlind(try NoteCipher.encryptWith(esk: esk, note, to: owner), cm: cm, denom: "uerth", value: 1_234_567, ek: ek, ownerPK: owner.ownerPK))
     }
 
+    /// The blind stake ciphertext (spc_ciphertext) against the chain's goldenBlindStakeCT and orchardvectors.
+    func testBlindStakeMatchesTheChainsGolden() throws {
+        let v = Vectors.obj("blind")
+        let ct = try NoteCipher.encryptBlindStakeWith(esk: esk, rho: Fr(UInt64(11)), rcm: Fr(UInt64(13)), ekPub: owner.ekPub,
+                                                     memo: Data("golden memo".utf8))
+        XCTAssertEqual(177, ct.count)
+        XCTAssertEqual(Self.goldenStake, Vectors.hex(ct))
+        XCTAssertEqual(v["stake_ct"] as? String, Vectors.hex(ct))
+        XCTAssertEqual(v["note_ct"] as? String, Self.goldenV2)
+        let denom = Vectors.json["derth_denom"] as! String
+        let spc = PrivacyHash.stakePC(ownerPK: owner.ownerPK, rho: Fr(UInt64(11)), rcm: Fr(UInt64(13)))
+        XCTAssertEqual(v["spc"] as? String, spc.hex)
+        let cm = try Fr(hex: v["stake_cm_derth_1800000"] as! String)
+        let opened = NoteCipher.tryDecryptBlindStake(ct, cm: cm, denom: denom, amount: 1_800_000, ek: ek, ownerPK: owner.ownerPK)
+        XCTAssertEqual(Fr(UInt64(11)), opened?.rho)
+        XCTAssertEqual(Fr(UInt64(13)), opened?.rcm)
+        // The published amount and the cm bind it; v2 and blind stake never open as each other.
+        XCTAssertNil(NoteCipher.tryDecryptBlindStake(ct, cm: cm, denom: denom, amount: 1_800_001, ek: ek, ownerPK: owner.ownerPK))
+        let v2 = try NoteCipher.encryptBlindWith(esk: esk, note, ekPub: owner.ekPub)
+        XCTAssertNil(NoteCipher.tryDecryptBlindStake(v2, cm: cm, denom: denom, amount: 1_800_000, ek: ek, ownerPK: owner.ownerPK))
+        XCTAssertNil(NoteCipher.tryDecryptBlind(ct, cm: note.cm(ownerPK: owner.ownerPK), denom: "uerth", value: 1_234_567, ek: ek, ownerPK: owner.ownerPK))
+    }
+
+    /// chain zk/privacy formats_test.go goldenBlindStakeCT (Python cross-checked).
+    static let goldenStake = "79a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51aee8945675bfea325467df067f447ff0537e1b1b9afd7e07645f504ccb3e3191db98002dd3d6117d2707071721157989713d23aa9e382fc26cd5c51222610d5fa1f25d4bc3ef9fe7634b319e691e6a1d4d90865917da6b72c6b247658114c4bdf82055ede3b4e2fe90ae1406fac3aceaf280ecf08dd8ce8f3e572daa238d8157fe50fe43d980ffd1b4fc4b9af1526c7b568"
+
     /// A low-order public key (all zeros) yields an all-zero shared secret:
     /// refused on encrypt and silently not ours on decrypt, as on Android.
     func testLowOrderPointIsRefused() throws {

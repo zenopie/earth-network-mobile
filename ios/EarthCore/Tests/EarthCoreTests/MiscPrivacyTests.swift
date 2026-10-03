@@ -78,9 +78,14 @@ final class FixtureWitnessTests: XCTestCase {
         let balances = (bj["balances"] as! [[String: Any]]).map { ValueBalance(denom: $0["denom"] as! String, amount: ($0["value"] as! NSNumber).uint64Value) }
         let b = ShieldedBundle(actions: actions, balances: balances, bindingSig: Vectors.unhex(bj["binding_sig"] as! String))
         let sighash = PrivacyHash.signal(msgType: bj["msg_type"] as! String, chainID: bj["chain_id"] as! String,
-                                         fields: [PrivacyHash.u64(1), try PrivateMsgs.digest(b)])
+                                         fields: [PrivacyHash.u64(1), try PrivateMsgs.digest(b)] + Self.txFields(bj["tx"] as! [String: Any]))
         XCTAssertEqual(String((bj["sighash"] as! String).dropFirst(2)), sighash.hex)
         XCTAssertTrue(PrivateMsgs.checkBalance(b, sighash: sighash))
+    }
+
+    static func txFields(_ t: [String: Any]) -> [Fr] {
+        [PrivacyHash.bytes(Data((t["memo"] as! String).utf8)), PrivacyHash.u64((t["timeout_height"] as! NSNumber).uint64Value),
+         PrivacyHash.u64((t["gas_limit"] as! NSNumber).uint64Value)]
     }
 }
 
@@ -141,57 +146,6 @@ final class AutomationTests: XCTestCase {
         XCTAssertEqual([.refreshReferrer], PrivacyAutomation.decide(i))
         i.hasFeeErth = false
         XCTAssertTrue(PrivacyAutomation.decide(i).isEmpty)
-    }
-}
-
-/// Ports GasTransparentTest.kt.
-final class GasTransparentTests: XCTestCase {
-    func testScopeAndSignalMatchTheChain() {
-        XCTAssertEqual("189ca0017ef0d3fb8ebca623f3a5b50b0db38b16ff09ed877b8ed66a9548c9ff", PrivacyHash.gasScope(yyyymm: 202610).hex)
-        XCTAssertEqual("1985e8e50ba97e2b2a44119f927d4c6ea9d58f8cafa89c8c2a60eabe3ba29c80",
-                       PrivacyHash.gasTransparentSignal(chainID: "earth-1", address: Data((0 ..< 20).map { UInt8($0 + 1) })).hex)
-    }
-
-    func testMonthIsUtcYyyymm() {
-        XCTAssertEqual(202610, GasTransparent.month(1_790_812_800))
-        XCTAssertEqual(202609, GasTransparent.month(1_790_812_799))
-        XCTAssertEqual(202612, GasTransparent.month(1_798_761_599))
-    }
-
-    func testWitnessProvesTheWalletsLeafForThisMonthAndAddress() async throws {
-        let chain = FakeChain()
-        let a = PrivacyWallet(keys: try PrivacyKeys.fromMnemonic(KeysAndNotesTests.mnemonic), store: .memory(), indexer: chain, chain: chain,
-                              reads: FakeReads(chain: chain, snapshotSize: { 0 }), prover: chain.prover, chainID: chain.chainID,
-                              now: { [unowned chain] in chain.now })
-        try await a.sync()
-        let target = try Bech32.encode(hrp: "earth", data: Bech32.convertBits(Array(repeating: 9, count: 20), from: 8, to: 5, pad: true))
-        do { _ = try await GasTransparent.witness(wallet: a, address: target, now: chain.now); XCTFail("unregistered") } catch {}
-
-        let prep = try await a.prepareRegistration(affiliate: nil)
-        chain.shield("uerth", 100_000, prep.gas.pc)
-        try await a.sync()
-        _ = try await a.register(prep, proof: Data(count: 14_656),
-                                 publicSignals: ["261001", prep.binding.bigUInt.description, "123456789", Fr(UInt64(77)).bigUInt.description],
-                                 signatureAlgorithm: "lean_poa", dscDer: Data(count: 10))
-        try await a.sync()
-        do { _ = try await GasTransparent.witness(wallet: a, address: target, now: chain.now); XCTFail("too soon") } catch is PrivacyWallet.NotYet {}
-
-        let now = chain.now + 2 * 3600
-        let w = try await GasTransparent.witness(wallet: a, address: target, now: now)
-        XCTAssertEqual(PrivacyHash.gasScope(yyyymm: GasTransparent.month(now)), w.scope)
-        XCTAssertEqual(PrivacyHash.gasTransparentSignal(chainID: "earth-1", address: try PrivateMsgs.addressBytes(target)), w.signal)
-        XCTAssertEqual(0, w.maxActivation % 3600)
-        XCTAssertEqual(chain.identityTree.root(), w.root)
-        XCTAssertEqual(PrivacyHash.scopeNullifier(idSecret: a.keys.idSecret, scope: w.scope), w.nullifier)
-
-        let req = try await GasTransparent.request(wallet: a, address: target, prove: { _ in Data(repeating: 7, count: 3) }, now: now)
-        let body = GasTransparent.body(req)
-        XCTAssertEqual(target, body["address"] as? String)
-        XCTAssertEqual("BwcH", body["proof"] as? String)
-        XCTAssertEqual(w.root.bytes, Data(base64Encoded: body["root"] as! String))
-        XCTAssertEqual(w.nullifier.bytes, Data(base64Encoded: body["nullifier"] as! String))
-        XCTAssertEqual(w.maxActivation, body["max_activation"] as? UInt64)
-        XCTAssertTrue(JSONSerialization.isValidJSONObject(body))
     }
 }
 

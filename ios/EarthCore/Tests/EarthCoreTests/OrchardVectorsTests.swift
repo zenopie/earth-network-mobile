@@ -78,9 +78,19 @@ final class OrchardVectorsTests: XCTestCase {
         var bundle = ShieldedBundle(actions: actions, balances: [ValueBalance(denom: "uerth", amount: 10_000)])
         let digest = try PrivateMsgs.digest(bundle)
         XCTAssertEqual(b["digest"] as? String, digest.hex)
+        // Sighash with empty tx fields: Bytes(""), timeout 0, gas 0 after the digests.
+        let noTx = [PrivacyHash.bytes(Data()), PrivacyHash.u64(0), PrivacyHash.u64(0)]
         let sighash = PrivacyHash.signal(msgType: MsgSend.typeURL, chainID: "earth-1",
-                                         fields: [PrivacyHash.u64(1), digest, PrivacyHash.bytes(Data()), PrivacyHash.u64(10_000)])
+                                         fields: [PrivacyHash.u64(1), digest] + noTx + [PrivacyHash.bytes(Data()), PrivacyHash.u64(10_000)])
         XCTAssertEqual(b["sighash"] as? String, sighash.hex)
+        // The tx's memo (UTF-8), timeout_height and gas_limit are bound (audit M1).
+        let t = b["sighash_tx"] as! [String: Any]
+        let withTx = PrivacyHash.signal(msgType: MsgSend.typeURL, chainID: "earth-1", fields: [
+            PrivacyHash.u64(1), digest, PrivacyHash.bytes(Data((t["memo"] as! String).utf8)),
+            PrivacyHash.u64((t["timeout_height"] as! NSNumber).uint64Value), PrivacyHash.u64((t["gas_limit"] as! NSNumber).uint64Value),
+            PrivacyHash.bytes(Data()), PrivacyHash.u64(10_000),
+        ])
+        XCTAssertEqual(t["sighash"] as? String, withTx.hex)
 
         let bsk = Grumpkin.bindingKey(rcvs)
         XCTAssertEqual(b["bsk"] as? String, Vectors.hex(Grumpkin.be32(bsk)))

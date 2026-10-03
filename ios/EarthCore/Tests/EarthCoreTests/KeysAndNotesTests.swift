@@ -26,16 +26,11 @@ final class KeysAndNotesTests: XCTestCase {
         XCTAssertEqual(Self.knownAddress, keys.address.encode())
         XCTAssertEqual(PrivacyHash.idc(keys.idSecret), keys.idc)
         XCTAssertNotEqual(keys.idSecret, other.idSecret)
-        // Stake self-mints and owner-tag salts (PRIVACY_FORMATS.md section 1),
-        // cross-checked with an independent Python HMAC derivation.
-        XCTAssertEqual("2e169030a56d7e472fc9f342ef18783bc65662f82edf58e00b9fa23b7131fbb3", keys.stakeMintSecrets(0).rho.hex)
-        XCTAssertEqual("16443a6dc3a8058eaafa1b6feb6d1804cf71794815a830e782756c2ccf759bab", keys.stakeMintSecrets(0).rcm.hex)
-        XCTAssertEqual("05708bcf1c37660a1859a735e21a57c9d802f78ab8274364eb9199583b095c32", keys.stakeMintSecrets(1).rho.hex)
-        XCTAssertEqual("2e4cb7ef401c2041af61f2e4a7593f5afed0d85ab28cefc6cde17aa9c28b1b22", keys.stakeMintSecrets(1).rcm.hex)
+        // Owner-tag salts (PRIVACY_FORMATS.md section 1; the self-mint
+        // counters are gone), cross-checked with an independent Python HMAC
+        // derivation.
         XCTAssertEqual("0685f54037389aaceee42288ed8c8c996a884e297ffee771c73370ca885e1618", keys.otagSalt(0).hex)
         XCTAssertEqual("2e52e73b7af259664a34df8bcee1c0476009a37e0ab2e52b285bae497845a9ba", keys.otagSalt(1).hex)
-        let (r0, c0) = keys.stakeMintSecrets(0)
-        XCTAssertEqual(PrivacyHash.stakePC(ownerPK: keys.ownerPK, rho: r0, rcm: c0), keys.stakeMintPC(0))
         XCTAssertEqual(PrivacyHash.ownerTag(ownerPK: keys.ownerPK, salt: keys.otagSalt(1)), keys.ownerTag(1))
     }
 
@@ -90,14 +85,6 @@ final class KeysAndNotesTests: XCTestCase {
         let ct = try NoteCipher.encryptWith(esk: esk, n, to: keys.address)
         XCTAssertEqual(Self.noteCTGolden, Vectors.hex(ct))
         XCTAssertEqual(n, NoteCipher.tryDecrypt(ct, cm: n.cm(ownerPK: keys.ownerPK), keys: keys))
-    }
-
-    func testSelfMintsAreDeterministic() throws {
-        let (rho, rcm) = keys.mintSecrets(0)
-        XCTAssertEqual(keys.mintSecrets(0).rho, rho)
-        XCTAssertEqual(PrivacyHash.pc(ownerPK: keys.ownerPK, rho: rho, rcm: rcm), keys.mintPC(0))
-        XCTAssertNotEqual(keys.mintPC(0), keys.mintPC(1))
-        XCTAssertEqual(keys.mintPC(3), try PrivacyKeys.fromMnemonic(Self.mnemonic).mintPC(3))
     }
 
     /// Stake ciphertext v3 (PRIVACY_FORMATS.md section 3) against an
