@@ -111,9 +111,11 @@ fun EarthApp(
     val draftMnemonic by wallets.draftMnemonic.collectAsStateWithLifecycle()
     val walletsError by wallets.error.collectAsStateWithLifecycle()
 
-    // The private automations (daily claim, caretaker refresh, matured
-    // unbonding claims) need the keys, so they live exactly as long as this
-    // unlocked shell does, and restart on a wallet switch.
+    // The one private automation (claiming matured unbonding claims, the end
+    // of an undelegation the user started) needs the keys, so it lives
+    // exactly as long as this unlocked shell does, and restarts on a wallet
+    // switch. Nothing else spends a fee unasked: the ANML claim, the caretaker
+    // vote and the handle are reminders (Reminders), acted on by the user.
     LaunchedEffect(walletEpoch) {
         PrivacySession.clear()
         stakeVotes.resume()
@@ -127,7 +129,7 @@ fun EarthApp(
         when (nav.currentTab) {
             // The portfolio values private stake at the live rates and lists
             // unbonding, both from the earn read.
-            EarthRoute.Wallet -> { wallet.refresh(); earn.refresh() }
+            EarthRoute.Wallet -> { wallet.refresh(); earn.refresh(); privacy.refreshPersonal() }
             // Earn shows pools now, so it needs the market data too.
             EarthRoute.Earn -> { earn.refresh(); markets.refresh() }
             EarthRoute.Swap -> markets.refresh()
@@ -440,6 +442,8 @@ private fun EarthRoute.title(): String = when (this) {
     EarthRoute.Positions -> "Groundworks positions"
     EarthRoute.RemovalBallots -> "Removal ballots"
     EarthRoute.Notes -> "Shielded notes"
+    EarthRoute.Handle -> "Handle"
+    EarthRoute.SwitchIdentity -> "Switch identity"
     EarthRoute.Wallets -> "Wallets"
     EarthRoute.CreateWallet -> "New wallet"
     EarthRoute.ImportWallet -> "Import wallet"

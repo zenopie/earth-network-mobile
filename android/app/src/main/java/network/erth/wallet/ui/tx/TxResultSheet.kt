@@ -177,7 +177,13 @@ private fun describe(error: Throwable?): String {
         if (parts.isEmpty() || parts.last() != msg) parts.add(msg)
         current = current.cause
     }
-    return parts.joinToString("\n\ncaused by:\n")
+    // A refusal the chain explains in a known way leads with that sentence.
+    val known = generateSequence(error) { it.cause }.firstNotNullOfOrNull { e ->
+        if (e is network.erth.wallet.privacy.tx.UnsignedTx.TxRejected) network.erth.wallet.chain.ChainErrors.explain(e.code, e.codespace, e.message.orEmpty())
+        else e.message?.let { network.erth.wallet.chain.ChainErrors.explain(it) }
+    }
+    val detail = parts.joinToString("\n\ncaused by:\n")
+    return if (known != null) "$known\n\n$detail" else detail
 }
 
 // The old StatusModal's success animation, in its own numbers.

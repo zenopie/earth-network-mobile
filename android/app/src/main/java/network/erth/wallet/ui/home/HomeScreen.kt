@@ -114,6 +114,8 @@ fun HomeScreen(
      * against the chain, or null when it is (K9): shown, never hidden.
      */
     privateNotice: String? = null,
+    /** What is due (a claim, a renewal), each with where to do it: reminders, never automatic. */
+    reminders: List<Pair<String, () -> Unit>> = emptyList(),
 ) {
     // Which list is under the cards. The third action swaps it.
     var panel by remember { mutableStateOf(HomePanel.Activity) }
@@ -135,6 +137,9 @@ fun HomeScreen(
                 color = androidx.compose.material3.MaterialTheme.colorScheme.error,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
             )
+        }
+        reminders.forEach { (text, open) ->
+            network.erth.wallet.ui.privacy.ReminderBanner(text, open, Modifier.padding(horizontal = 24.dp))
         }
         Spacer(Modifier.height(16.dp))
         HomeActions(

@@ -93,6 +93,12 @@ sealed interface EarthRoute {
 
     /** Shielded notes per asset, and merging small ones. */
     data object Notes : EarthRoute
+
+    /** This identity's handle: claim, renew, change, release. */
+    data object Handle : EarthRoute
+
+    /** A voluntary switch of identity to another wallet, moving the handle and caretaker vote first. */
+    data object SwitchIdentity : EarthRoute
     data object Wallets : EarthRoute
     data object CreateWallet : EarthRoute
     data object ImportWallet : EarthRoute

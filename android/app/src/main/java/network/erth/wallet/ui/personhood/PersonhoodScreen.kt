@@ -51,8 +51,11 @@ fun PersonhoodScreen(
     onClaim: () -> Unit,
     modifier: Modifier = Modifier,
     claiming: Boolean = false,
-    /** The referrals section, shown to a registered wallet. */
-    referrals: (@Composable () -> Unit)? = null,
+    /** Opens the handle screen; [handle] is this identity's ("" for none). */
+    onHandle: () -> Unit = {},
+    handle: String = "",
+    /** Opens the identity switch (moving the handle and caretaker vote first). */
+    onSwitch: () -> Unit = {},
 ) {
     val dimens = EarthTheme.dimens
     val shape = RoundedCornerShape(EarthDimensions.Radius.radius3xl)
@@ -136,10 +139,15 @@ fun PersonhoodScreen(
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
             )
-            if (referrals != null) {
-                Spacer(Modifier.height(dimens.space24))
-                referrals()
-            }
+            Spacer(Modifier.height(dimens.space16))
+            EarthDetailRow("Handle", if (handle.isNotEmpty()) "@$handle" else "None")
+            Spacer(Modifier.height(dimens.space8))
+            EarthButton(
+                text = if (handle.isNotEmpty()) "Manage @$handle" else "Claim a handle",
+                onClick = onHandle,
+                modifier = Modifier.fillMaxWidth(),
+                colors = network.erth.wallet.ui.designsystem.component.EarthButtonDefaults.secondaryColors(),
+            )
 
             // There is no way to leave from here any more. The chain removed
             // MsgUnregister: retiring a registration freed its nullifier, and
@@ -147,19 +155,26 @@ fun PersonhoodScreen(
             // not already live, so leaving and returning was a way to draw the
             // reward pool repeatedly.
             //
-            // Moving a registration still works, and is the thing people
-            // actually wanted this for — but it starts from the wallet being
-            // moved to, so it is described rather than offered.
+            // Moving a registration still works: register the same passport
+            // from another wallet. The switch screen moves the handle and the
+            // caretaker vote there first, so the new identity keeps them.
             Spacer(Modifier.height(dimens.space32))
             Text(
                 text = "Your registration stays with this wallet until it " +
-                    "expires. To move it to another wallet, register there " +
-                    "with the same passport — the proof moves the registration " +
-                    "across rather than making a second one, and pays nothing " +
-                    "the second time.",
+                    "expires. To move it to another wallet, switch identity: " +
+                    "your handle and caretaker vote move first, then you " +
+                    "register the same passport there. Nothing is paid the " +
+                    "second time.",
                 style = EarthTypography.textSm,
                 color = EarthColors.Text.textTertiary,
                 textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(dimens.space12))
+            EarthButton(
+                text = "Switch identity",
+                onClick = onSwitch,
+                modifier = Modifier.fillMaxWidth(),
+                colors = network.erth.wallet.ui.designsystem.component.EarthButtonDefaults.secondaryColors(),
             )
         } else {
             Spacer(Modifier.height(dimens.space24))

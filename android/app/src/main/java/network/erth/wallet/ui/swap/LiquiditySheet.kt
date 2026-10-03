@@ -27,6 +27,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import network.erth.wallet.chain.Dex
+import network.erth.wallet.chain.math.SwapMath
 import network.erth.wallet.ui.components.asAmountInput
 import network.erth.wallet.ui.components.fromBaseUnits
 import network.erth.wallet.ui.components.toBaseUnits
@@ -115,7 +116,8 @@ fun LiquiditySheet(
                 tokenText = if (units == null || erthReserve.signum() == 0) {
                     ""
                 } else {
-                    (units * tokenReserve / erthReserve).asDecimalOrBlank()
+                    // Rounded up, as x/dex pulls each leg (min-shares maths).
+                    SwapMath.depositLeg(units, erthReserve, tokenReserve).asDecimalOrBlank()
                 }
             }
 
@@ -125,7 +127,7 @@ fun LiquiditySheet(
                 erthText = if (units == null || tokenReserve.signum() == 0) {
                     ""
                 } else {
-                    (units * erthReserve / tokenReserve).asDecimalOrBlank()
+                    SwapMath.depositLeg(units, tokenReserve, erthReserve).asDecimalOrBlank()
                 }
             }
 

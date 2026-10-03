@@ -21,6 +21,8 @@ import network.erth.wallet.R
 import network.erth.wallet.chain.Assembly
 import network.erth.wallet.privacy.Amounts
 import network.erth.wallet.privacy.PrivacySession
+import network.erth.wallet.privacy.chain.PrivacyQueries
+import network.erth.wallet.wallet.SecureWalletManager
 import network.erth.wallet.privacy.PrivacyWallet
 import network.erth.wallet.privacy.tx.ShieldMove
 import network.erth.wallet.privacy.tx.PrivateMsgs
@@ -58,7 +60,12 @@ import network.erth.wallet.ui.privacy.PositionRow
 import network.erth.wallet.ui.privacy.PositionsScreen
 import network.erth.wallet.ui.privacy.PrivacyActionsState
 import network.erth.wallet.ui.privacy.PrivacyActionsViewModel
-import network.erth.wallet.ui.privacy.ReferrerSection
+import network.erth.wallet.ui.privacy.HandleScreen
+import network.erth.wallet.ui.privacy.PersonalState
+import network.erth.wallet.ui.privacy.SwitchIdentityScreen
+import network.erth.wallet.privacy.Reminders
+import network.erth.wallet.privacy.handles.Handles
+import network.erth.wallet.privacy.zk.Privacy
 import network.erth.wallet.ui.privacy.RemovalBallotsScreen
 import network.erth.wallet.chain.math.SwapMath
 import cosmos.gov.v1.WeightedVoteOption
@@ -147,6 +154,9 @@ internal fun EarthContent(
     val scope = rememberCoroutineScope()
     val stakeVotes: network.erth.wallet.ui.govern.StakeVoteViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val stakeVoteProgress by stakeVotes.progress.collectAsStateWithLifecycle()
+    // This identity's handle, caretaker vote and what is due (reminders only).
+    val personal by privacy.personal.collectAsStateWithLifecycle()
+    val now = System.currentTimeMillis() / 1000
     val onShare = { text: String ->
         val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
             .putExtra(android.content.Intent.EXTRA_TEXT, text)
@@ -196,6 +206,14 @@ internal fun EarthContent(
             rewardsUerth = state?.rewardsUerth ?: 0L,
             unbondingUerth = earnState?.unbonding?.sumOf { it.amountUerth } ?: 0L,
             privateNotice = state?.privacySyncError,
+            // What is due, never done unasked: each reminder opens where it is done.
+            reminders = personal?.reminders.orEmpty().map { r ->
+                Reminders.text(r, now) to when (r) {
+                    Reminders.Reminder.AnmlReady -> onClaimAnml
+                    is Reminders.Reminder.CaretakerExpiring -> { { nav.push(EarthRoute.Stream(true)) } }
+                    is Reminders.Reminder.HandleExpiring -> { { nav.push(EarthRoute.Handle) } }
+                }
+            },
             // Private stake (derth) and unbonding claims are notes, not bank
             // balances, so they join the portfolio here.
             // Private stake shows its ERTH value, the derth amount beneath.
@@ -331,7 +349,7 @@ internal fun EarthContent(
         EarthRoute.Settings -> {
             var forgetting by remember { mutableStateOf(false) }
             SettingsScreen(
-                items = settingsItems(nav, state) { forgetting = true },
+                items = settingsItems(nav, state, personal) { forgetting = true },
                 version = version,
                 modifier = inset,
             )
@@ -379,30 +397,131 @@ internal fun EarthContent(
                 anmlBalance = loaded.anmlBalance,
                 onRegister = onRegister,
                 onClaim = onClaimAnml,
+                onHandle = { nav.push(EarthRoute.Handle) },
+                onSwitch = { nav.push(EarthRoute.SwitchIdentity) },
+                handle = personal?.handle.orEmpty(),
                 modifier = inset,
-                referrals = {
-                    ReferrerSection(
-                        myAddress = loaded.address,
-                        boundAddress = privacyState?.referrerAddress.orEmpty(),
-                        boundAt = privacyState?.referrerBoundAt ?: 0L,
-                        lapseSeconds = privacyState?.referrerLapseSeconds ?: 30L * 86_400,
-                        onBind = {
-                            tx.requestPrivate(
-                                details = TxConfirmDetails(
-                                    action = "Bind referrer address",
-                                    msgTypeUrl = PrivateMsgs.BIND_REFERRER,
-                                    balanceUerth = 0L,
-                                    recipient = loaded.address,
-                                    recipientLabel = "Rewards to",
-                                ),
-                                shieldedErth = loaded.shieldedErthUerth,
-                                onSuccess = { privacy.refresh() },
-                                run = { ctx -> PrivacySession.wallet(ctx).bindReferrer(walletAddress(ctx), PrivacySession.referrerSigner(ctx)).hash },
-                            )
-                        },
-                        onShare = { onShare("Join Earth: https://erth.network/ref/${loaded.address}") },
+            )
+        }
+
+        EarthRoute.Handle -> {
+            LaunchedEffect(Unit) { privacy.refreshPersonal() }
+            HandleScreen(
+                state = personal,
+                now = now,
+                onClaim = { h ->
+                    val changing = personal?.handle?.isNotEmpty() == true
+                    tx.requestPrivate(
+                        details = TxConfirmDetails(
+                            action = if (changing) "Change handle to @$h" else "Claim @$h",
+                            msgTypeUrl = PrivateMsgs.BIND_HANDLE,
+                            balanceUerth = 0L,
+                            recipient = "@$h · ${Handles.truncate(loaded.shieldedAddress)}",
+                            recipientLabel = "Pays",
+                        ),
+                        shieldedErth = loaded.shieldedErthUerth,
+                        onSuccess = { PrivacyQueries.handles.invalidate(); privacy.refreshPersonal() },
+                        run = { ctx -> PrivacySession.wallet(ctx).bindHandle(h).hash },
                     )
                 },
+                onRenew = {
+                    val h = personal?.handle.orEmpty()
+                    if (h.isNotEmpty()) tx.requestPrivate(
+                        details = TxConfirmDetails(
+                            action = "Renew @$h for a year",
+                            msgTypeUrl = PrivateMsgs.BIND_HANDLE,
+                            balanceUerth = 0L,
+                            recipient = "@$h · ${Handles.truncate(loaded.shieldedAddress)}",
+                            recipientLabel = "Pays",
+                        ),
+                        shieldedErth = loaded.shieldedErthUerth,
+                        onSuccess = { PrivacyQueries.handles.invalidate(); privacy.refreshPersonal() },
+                        run = { ctx -> PrivacySession.wallet(ctx).bindHandle(h).hash },
+                    )
+                },
+                onRelease = {
+                    val h = personal?.handle.orEmpty()
+                    tx.requestPrivate(
+                        details = TxConfirmDetails(
+                            action = "Release @$h",
+                            msgTypeUrl = PrivateMsgs.BIND_HANDLE,
+                            balanceUerth = 0L,
+                        ),
+                        shieldedErth = loaded.shieldedErthUerth,
+                        onSuccess = { PrivacyQueries.handles.invalidate(); privacy.refreshPersonal() },
+                        run = { ctx -> PrivacySession.wallet(ctx).releaseHandle().hash },
+                    )
+                },
+                onShare = { h -> onShare("Pay me privately on Earth: @$h · join with https://erth.network/ref/$h") },
+                modifier = inset,
+            )
+        }
+
+        EarthRoute.SwitchIdentity -> {
+            LaunchedEffect(Unit) { privacy.refreshPersonal(); wallets.refresh() }
+            var moved by remember { mutableStateOf(emptySet<String>()) }
+            SwitchIdentityScreen(
+                state = personal,
+                wallets = walletsState?.wallets.orEmpty(),
+                currentIndex = walletsState?.selectedIndex ?: SecureWalletManager.getSelectedWalletIndex(),
+                moved = moved,
+                onMove = { target, moveHandle, moveCaretaker ->
+                    val handle = personal?.handle.orEmpty()
+                    val split = personal?.caretakerSplit.orEmpty()
+                    val expires = personal?.caretakerExpiresAt ?: 0L
+                    // Each move names the new wallet's nullifier in that scope,
+                    // derived from its keys on this phone, then records in its
+                    // store what it now holds.
+                    fun moveVote() = tx.requestPrivate(
+                        details = TxConfirmDetails(
+                            action = "Move caretaker vote to the new wallet",
+                            msgTypeUrl = PrivateMsgs.MOVE_CARETAKER,
+                            balanceUerth = 0L,
+                        ),
+                        shieldedErth = loaded.shieldedErthUerth,
+                        onSuccess = { moved = moved + "caretaker"; privacy.refreshPersonal() },
+                        run = { ctx ->
+                            val other = PrivacySession.keysOf(ctx, target)
+                            val w = PrivacySession.wallet(ctx)
+                            val r = w.moveCaretaker(w.newOwner(other, Privacy.caretakerScope()))
+                            PrivacySession.adoptMovedInto(ctx, target, null, split, expires)
+                            r.hash
+                        },
+                    )
+                    if (moveHandle) tx.requestPrivate(
+                        details = TxConfirmDetails(
+                            action = "Move @$handle to the new wallet",
+                            msgTypeUrl = PrivateMsgs.MOVE_HANDLE,
+                            balanceUerth = 0L,
+                        ),
+                        shieldedErth = loaded.shieldedErthUerth,
+                        onSuccess = {
+                            moved = moved + "handle"
+                            privacy.refreshPersonal()
+                            if (moveCaretaker) moveVote()
+                        },
+                        run = { ctx ->
+                            val other = PrivacySession.keysOf(ctx, target)
+                            val w = PrivacySession.wallet(ctx)
+                            val r = w.moveHandle(w.newOwner(other, Privacy.handleScope()))
+                            PrivacySession.adoptMovedInto(ctx, target, handle, null, 0)
+                            r.hash
+                        },
+                    ) else if (moveCaretaker) moveVote()
+                },
+                onContinue = { target ->
+                    // The new wallet registers the same passport: the chain
+                    // treats it as a switch (this wallet's leaf is zeroed).
+                    onSwitchWallet(target)
+                    nav.pop()
+                    onRegister()
+                },
+                onCreateWallet = {
+                    wallets.beginCreate()
+                    nav.push(EarthRoute.CreateWallet)
+                },
+                revealPhrase = { idx -> runCatching { SecureWalletManager.executeWithMnemonicAt(context, idx) { it } }.getOrNull() },
+                modifier = inset,
             )
         }
 
@@ -1071,7 +1190,7 @@ private fun minShares(poolId: Long, erthIn: java.math.BigInteger, tokenIn: java.
 /** Which direction the stake sheet was opened in. */
 private enum class StakeIntent { Stake, Unstake }
 
-private fun settingsItems(nav: EarthNavController, state: WalletUiState?, onForgetPrivate: () -> Unit): List<SettingsItem> =
+private fun settingsItems(nav: EarthNavController, state: WalletUiState?, personal: PersonalState?, onForgetPrivate: () -> Unit): List<SettingsItem> =
     listOf(
         SettingsItem(
             title = "Identity",
@@ -1084,6 +1203,12 @@ private fun settingsItems(nav: EarthNavController, state: WalletUiState?, onForg
             },
             icon = R.drawable.ic_shield_check,
             onClick = { nav.push(EarthRoute.Personhood) },
+        ),
+        SettingsItem(
+            title = "Handle",
+            subtitle = personal?.let { p -> if (p.handle.isNotEmpty()) "@${p.handle}" else "Claim a name others can pay" },
+            icon = R.drawable.ic_shield_check,
+            onClick = { nav.push(EarthRoute.Handle) },
         ),
         SettingsItem(
             title = "Shielded notes",

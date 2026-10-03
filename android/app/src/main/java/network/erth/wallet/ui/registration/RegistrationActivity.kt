@@ -34,6 +34,8 @@ import network.erth.wallet.privacy.PrivacySession
 import network.erth.wallet.privacy.PrivacyWallet
 import network.erth.wallet.chain.TxUnconfirmedException
 import network.erth.wallet.referral.Referral
+import network.erth.wallet.privacy.chain.PrivacyQueries
+import network.erth.wallet.privacy.handles.HandleDirectory
 import network.erth.wallet.ui.designsystem.component.BlankBgScaffold
 import network.erth.wallet.ui.navigation.EarthDetailTopBar
 import network.erth.wallet.ui.theme.EarthTheme
@@ -97,7 +99,13 @@ class RegistrationActivity : ComponentActivity() {
 
                 // Held across the whole flow: entered on the confirm screen but
                 // not used until the broadcast, several steps later.
-                var referrer: String by remember { mutableStateOf(linkedReferrer.orEmpty()) }
+                var referrer: String by remember { mutableStateOf(linkedReferrer?.let { "@$it" }.orEmpty()) }
+                // The referrer as the handle directory resolved it when the
+                // passport details were confirmed: its handle and the address it
+                // names, which the referral note is made to.
+                var resolvedReferrer: PrivacyWallet.Referrer? by remember { mutableStateOf(null) }
+                var referrerLookupError: String? by remember { mutableStateOf(null) }
+                var checkingReferrer: Boolean by remember { mutableStateOf(false) }
 
                 // Held between the read and the broadcast. The proof is built
                 // while the passport is against the phone; paying for it is a
@@ -160,7 +168,7 @@ class RegistrationActivity : ComponentActivity() {
                         val result = withContext(Dispatchers.IO) {
                             // The referrer is bound into the proof, so it is
                             // final from here on.
-                            runCatching { PassportSession.prepare(ctx, referrer) }
+                            runCatching { PassportSession.prepare(ctx, resolvedReferrer) }
                                 .fold(
                                     { prep -> PassportSession.read(ctx, tag, fields, prep) },
                                     { Result.failure(PassportSession.FailureException(PassportSession.Failure.Error(it))) },
@@ -363,13 +371,43 @@ class RegistrationActivity : ComponentActivity() {
                             referrer = referrer,
                             onReferrerChange = { referrer = it },
                             referrerLocked = linkedReferrer != null,
+                            referrerLookupError = referrerLookupError,
+                            checkingReferrer = checkingReferrer,
                             initial = mrz,
                             error = mrzError,
-                            onContinue = {
-                                mrz = it
+                            onContinue = { fields ->
+                                mrz = fields
                                 mrzError = null
-                                stage = NfcStage.Waiting
-                                step = Step.Scan
+                                referrerLookupError = null
+                                if (referrer.isBlank()) {
+                                    resolvedReferrer = null
+                                    stage = NfcStage.Waiting
+                                    step = Step.Scan
+                                } else {
+                                    // The whole directory, never the one handle: a
+                                    // lookup of it alone would tell the node who
+                                    // referred this registrant.
+                                    checkingReferrer = true
+                                    lifecycleScope.launch {
+                                        val r = withContext(Dispatchers.IO) {
+                                            runCatching { PrivacyQueries.handles.resolveForPayment(referrer) }
+                                        }
+                                        checkingReferrer = false
+                                        r.fold(
+                                            { res ->
+                                                when (res) {
+                                                    is HandleDirectory.Resolution.Payable -> {
+                                                        resolvedReferrer = PrivacyWallet.Referrer(res.entry.handle, res.address)
+                                                        stage = NfcStage.Waiting
+                                                        step = Step.Scan
+                                                    }
+                                                    is HandleDirectory.Resolution.NotPayable -> referrerLookupError = res.reason
+                                                }
+                                            },
+                                            { referrerLookupError = "Couldn't check the handle: ${it.message ?: "network error"}" },
+                                        )
+                                    }
+                                }
                             },
                             modifier = inset,
                         )

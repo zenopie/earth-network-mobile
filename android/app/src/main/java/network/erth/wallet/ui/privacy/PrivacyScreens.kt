@@ -34,7 +34,7 @@ import java.util.Date
 import java.util.Locale
 
 @Composable
-private fun Page(modifier: Modifier, content: @Composable () -> Unit) {
+internal fun Page(modifier: Modifier, content: @Composable () -> Unit) {
     val dimens = EarthTheme.dimens
     Column(
         modifier
@@ -50,12 +50,12 @@ private fun Page(modifier: Modifier, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun Note(text: String) {
+internal fun Note(text: String) {
     Text(text = text, style = EarthTypography.textSm, color = EarthColors.Text.textTertiary)
 }
 
 @Composable
-private fun Card(content: @Composable () -> Unit) {
+internal fun Card(content: @Composable () -> Unit) {
     val dimens = EarthTheme.dimens
     Column(
         Modifier
@@ -69,7 +69,7 @@ private fun Card(content: @Composable () -> Unit) {
 private fun optionName(options: List<Allocation.OptionInfo>, id: Long) =
     options.firstOrNull { it.id == id }?.description?.ifBlank { null } ?: "Option $id"
 
-private fun date(unix: Long): String = SimpleDateFormat("d MMM yyyy, HH:mm", Locale.getDefault()).format(Date(unix * 1000))
+internal fun date(unix: Long): String = SimpleDateFormat("d MMM yyyy, HH:mm", Locale.getDefault()).format(Date(unix * 1000))
 
 /**
  * Groundworks positions: the private way to direct the Groundworks Fund.
@@ -259,58 +259,4 @@ private fun String.label(): String = when {
     startsWith("derth/") -> "Staked ERTH · ${removePrefix("derth/").take(20)}…"
     startsWith("unbond/") -> "Unbonding · ${split("/").getOrNull(2)?.let { "epoch $it" }.orEmpty()}"
     else -> this
-}
-
-/**
- * Referrals. This person's referral rewards are paid, in transparent ERTH,
- * to an address they bind with a membership proof: the binding is public
- * (the address is), who bound it is not. It lapses after the caretaker
- * period unless refreshed, which the wallet does while unlocked.
- */
-@Composable
-fun ReferrerSection(
-    myAddress: String,
-    boundAddress: String,
-    boundAt: Long,
-    lapseSeconds: Long,
-    onBind: () -> Unit,
-    onShare: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val dimens = EarthTheme.dimens
-    Column(modifier.fillMaxWidth()) {
-        EarthLabel("Referrals")
-        Spacer(Modifier.height(dimens.space8))
-        Note(
-            "Share your link. When someone registers through it you receive half of their " +
-                "registration reward at your public address below. Binding the address proves " +
-                "you are a registered person without saying which one.",
-        )
-        Spacer(Modifier.height(dimens.space8))
-        EarthDetailRow("Your referrer address", myAddress)
-        val live = boundAddress == myAddress && boundAt > 0
-        EarthDetailRow(
-            "Status",
-            when {
-                live -> "Bound, refreshed until ${date(boundAt + lapseSeconds)}"
-                boundAddress.isNotEmpty() -> "Bound to another address"
-                else -> "Not bound"
-            },
-        )
-        Spacer(Modifier.height(dimens.space12))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(dimens.space8)) {
-            EarthButton(
-                text = if (live) "Rebind" else "Bind address",
-                onClick = onBind,
-                modifier = Modifier.weight(1f),
-                colors = brandButtonColors(),
-            )
-            EarthButton(
-                text = "Share link",
-                onClick = onShare,
-                modifier = Modifier.weight(1f),
-                colors = EarthButtonDefaults.secondaryColors(),
-            )
-        }
-    }
 }

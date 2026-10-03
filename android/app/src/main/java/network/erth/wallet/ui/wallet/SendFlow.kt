@@ -1,6 +1,19 @@
 package network.erth.wallet.ui.wallet
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
+import com.google.protobuf.ByteString
+import cosmos.base.v1beta1.CoinOuterClass
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import network.erth.earth.proto.shielded.MsgShield
+import network.erth.wallet.chain.EarthTx
+import network.erth.wallet.privacy.chain.PrivacyQueries
+import network.erth.wallet.privacy.handles.HandleDirectory
+import network.erth.wallet.privacy.handles.Handles
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,6 +51,26 @@ fun SendFlow(
     var recipient by remember { mutableStateOf("") }
     val scan = rememberAddressScanner { recipient = it }
     var amount by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
+
+    // A handle ("@alice" or "alice") is looked up in the whole directory,
+    // downloaded in full and cached, never asked about alone: the node must
+    // not learn who is about to pay whom. Re-fetched fresh before the confirm.
+    val toHandle = Handles.looksLikeHandle(recipient)
+    var resolution: HandleDirectory.Resolution? by remember { mutableStateOf(null) }
+    var resolving by remember { mutableStateOf(false) }
+    LaunchedEffect(recipient) {
+        resolution = null
+        if (!toHandle || Handles.parse(recipient) == null) return@LaunchedEffect
+        delay(400)
+        resolving = true
+        resolution = withContext(Dispatchers.IO) {
+            runCatching { PrivacyQueries.handles.resolveForPayment(recipient) }
+                .getOrElse { HandleDirectory.Resolution.NotPayable("Couldn't load the handle directory: ${it.message ?: "network error"}") }
+        }
+        resolving = false
+    }
+    val handleTarget = (resolution as? HandleDirectory.Resolution.Payable)
 
     // ERTH holdings sort first, so it is the default without a special case.
     // A wallet with no balances at all still needs something to render.
@@ -57,9 +90,17 @@ fun SendFlow(
     // a transparent one by a bank send, as before.
     val shieldedTo = recipient.startsWith(ShieldedAddress.HRP + "1")
     val shieldedBalance = state.shielded[selected.denom] ?: 0L
+    val amountUerth = amount.toUerthOrNull()
+    val sendingErth = selected.denom == Constants.UERTH_DENOM
+    // A handle is paid privately from notes when they cover it; otherwise
+    // from the public balance, shielded straight to the handle's address.
+    val handleFromNotes = amountUerth != null && amountUerth <= shieldedBalance && state.shieldedErthUerth > 0
 
     val recipientError = when {
         recipient.isEmpty() -> null
+        toHandle && Handles.parse(recipient) == null -> "A handle is 3-32 of a-z, 0-9 and -."
+        toHandle -> (resolution as? HandleDirectory.Resolution.NotPayable)?.reason
+            ?: handleTarget?.takeIf { it.address.encode() == state.shieldedAddress }?.let { "@${it.entry.handle} names this wallet's own address." }
         shieldedTo && !ShieldedAddress.isShielded(recipient) -> "That shielded address is not valid."
         shieldedTo && recipient == state.shieldedAddress -> "That is this wallet's own shielded address."
         shieldedTo -> null
@@ -69,14 +110,15 @@ fun SendFlow(
         else -> null
     }
 
-    val amountUerth = amount.toUerthOrNull()
-
-    val sendingErth = selected.denom == Constants.UERTH_DENOM
-
     val amountError = when {
         amount.isEmpty() -> null
         amountUerth == null -> "Enter an amount, for example 1.5."
         amountUerth <= 0 -> "Enter more than zero."
+        toHandle && handleFromNotes -> null
+        toHandle && amountUerth > selected.amount -> "That is more than your ${selected.symbol}, public or shielded."
+        toHandle && sendingErth && amountUerth + TxController.DEFAULT_FEE_UERTH > state.balanceUerth -> "That leaves nothing for the fee."
+        toHandle && !sendingErth && state.balanceUerth < TxController.DEFAULT_FEE_UERTH -> "You need a little ERTH to pay the fee."
+        toHandle -> null
         shieldedTo && amountUerth > shieldedBalance -> "That is more than your shielded ${selected.symbol}."
         shieldedTo && state.shieldedErthUerth <= 0 -> "You need shielded ERTH to pay the fee."
         shieldedTo -> null
@@ -93,7 +135,75 @@ fun SendFlow(
     }
 
     val valid = recipient.isNotEmpty() && amount.isNotEmpty() &&
-        recipientError == null && amountError == null && amountUerth != null
+        recipientError == null && amountError == null && amountUerth != null &&
+        (!toHandle || (handleTarget != null && !resolving))
+
+    val recipientHint = when {
+        !toHandle -> null
+        resolving -> "Looking up the handle…"
+        handleTarget != null -> "@${handleTarget.entry.handle} → ${Handles.truncate(handleTarget.entry.address)}" +
+            if (amountUerth != null && !handleFromNotes) " · shielded from your public balance" else " · sent privately"
+        else -> null
+    }
+
+    fun clear() { recipient = ""; amount = "" }
+
+    // Pays a handle: the directory fetched again (fresh) so a handle that
+    // lapsed or changed hands since the preview is never paid, then the
+    // confirm shows the handle and the address it names now.
+    fun payHandle(amountUerth: Long) = scope.launch {
+        val r = withContext(Dispatchers.IO) { runCatching { PrivacyQueries.handles.resolveForPayment(recipient) } }
+        val target = r.getOrNull()
+        if (target !is HandleDirectory.Resolution.Payable) {
+            resolution = target ?: HandleDirectory.Resolution.NotPayable("Couldn't load the handle directory: ${r.exceptionOrNull()?.message ?: "network error"}")
+            return@launch
+        }
+        resolution = target
+        val to = target.address
+        val label = "@${target.entry.handle} · ${Handles.truncate(target.entry.address)}"
+        if (handleFromNotes) {
+            tx.requestPrivate(
+                details = TxConfirmDetails(
+                    action = "Pay @${target.entry.handle} privately",
+                    msgTypeUrl = PrivateMsgs.SEND,
+                    balanceUerth = 0L,
+                    amountLabel = "Amount",
+                    amountValue = "$amount ${selected.symbol}",
+                    recipient = label,
+                    recipientLabel = "To handle",
+                ),
+                shieldedErth = state.shieldedErthUerth,
+                onSuccess = { clear(); onSent() },
+                run = { ctx -> PrivacySession.wallet(ctx).send(to, selected.denom, amountUerth).hash },
+            )
+        } else {
+            // MsgShield, signed by the account (the coins are its), the note
+            // minted straight to the handle's address: the amount is public,
+            // who it pays is not.
+            tx.request(
+                details = TxConfirmDetails(
+                    action = "Pay @${target.entry.handle} from your public balance",
+                    msgTypeUrl = PrivateMsgs.SHIELD,
+                    balanceUerth = state.balanceUerth,
+                    amountLabel = "Amount",
+                    amountValue = "$amount ${selected.symbol}",
+                    recipient = label,
+                    recipientLabel = "To handle",
+                ),
+                onSuccess = { clear(); onSent() },
+                build = { ctx ->
+                    val out = PrivacySession.wallet(ctx).payout(selected.denom, to)
+                    val msg = MsgShield.newBuilder()
+                        .setSender(SecureWalletManager.getWalletAddress(ctx).orEmpty())
+                        .setAmount(CoinOuterClass.Coin.newBuilder().setDenom(selected.denom).setAmount(amountUerth.toString()))
+                        .setPc(ByteString.copyFrom(out.pc.toBytes()))
+                        .setCiphertext(ByteString.copyFrom(out.ciphertext))
+                        .build()
+                    listOf(EarthTx.anyOf(PrivateMsgs.SHIELD, msg))
+                },
+            )
+        }
+    }
 
     SendScreen(
         recipient = recipient,
@@ -107,9 +217,14 @@ fun SendFlow(
         onSelectToken = { selectedDenom = it.denom; amount = "" },
         recipientError = recipientError,
         amountError = amountError,
+        recipientHint = recipientHint,
         modifier = modifier,
         onSend = {
             if (!valid || amountUerth == null) return@SendScreen
+            if (toHandle) {
+                payHandle(amountUerth)
+                return@SendScreen
+            }
             if (shieldedTo) {
                 val to = ShieldedAddress.decode(recipient)
                 tx.requestPrivate(

@@ -64,6 +64,8 @@ fun SendScreen(
     recipientError: String? = null,
     amountError: String? = null,
     sending: Boolean = false,
+    /** A line under the recipient: what a handle resolves to. */
+    recipientHint: String? = null,
 ) {
     val colors = EarthTheme.colors
     val dimens = EarthTheme.dimens
@@ -98,7 +100,7 @@ fun SendScreen(
             value = recipient,
             onValueChange = onRecipientChange,
             error = recipientError,
-            placeholder = { Text("earth1…", style = EarthTypography.textMd) },
+            placeholder = { Text("earth1…, erthz1… or @handle", style = EarthTypography.textMd) },
             modifier = Modifier.fillMaxWidth(),
             // No capitalisation, no autocorrect: bech32 is lowercase, and a
             // keyboard that helpfully capitalises the first letter produces an
@@ -120,6 +122,10 @@ fun SendScreen(
                 )
             },
         )
+        if (recipientHint != null && recipientError == null) {
+            Spacer(Modifier.height(dimens.space8))
+            Text(text = recipientHint, style = EarthTypography.textXs, color = EarthColors.Text.textSecondary)
+        }
         Spacer(Modifier.height(dimens.space16))
 
         // The token picker only appears when there is a choice to make. One

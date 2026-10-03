@@ -19,7 +19,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
-import network.erth.wallet.Constants
+import network.erth.wallet.privacy.handles.Handles
 import network.erth.wallet.ui.components.EarthLabel
 import network.erth.wallet.ui.components.brandButtonColors
 import network.erth.wallet.ui.components.dismissKeyboardOnTap
@@ -51,6 +51,10 @@ fun MrzConfirmScreen(
     referrer: String,
     onReferrerChange: (String) -> Unit,
     referrerLocked: Boolean = false,
+    /** Why the named referrer cannot be used (looked up in the handle directory), or null. */
+    referrerLookupError: String? = null,
+    /** The handle directory is being fetched for the referrer. */
+    checkingReferrer: Boolean = false,
     onContinue: (PassportSession.Mrz) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -66,13 +70,12 @@ fun MrzConfirmScreen(
     val dateKeys = doneKeyboard(keyboardType = KeyboardType.Number)
     val referrerKeys = doneKeyboard(autoCorrect = false)
 
-    // Only the shape is checked here. Whether the address is a distinct,
-    // currently-registered human is the chain's call, and it rejects the
-    // message rather than silently dropping the referral.
-    val referrerError = if (referrer.isNotEmpty() && !referrer.startsWith(Constants.EARTH_PREFIX + "1")) {
-        "Not an Earth address"
-    } else {
-        null
+    // The shape is checked here; whether the handle is live is looked up in
+    // the whole handle directory when Continue is pressed (never the one
+    // handle alone), and the chain checks it again.
+    val referrerError = when {
+        referrer.isNotEmpty() && Handles.parse(referrer) == null -> "Not a handle: 3-32 of a-z, 0-9 and -"
+        else -> referrerLookupError
     }
 
     Column(
@@ -145,34 +148,38 @@ fun MrzConfirmScreen(
             EarthLabel("Referred by")
             Spacer(Modifier.height(8.dp()))
             Text(
-                text = referrer,
+                text = Handles.parse(referrer)?.let { "@$it" } ?: referrer,
                 style = EarthTypography.textSm,
                 color = EarthColors.Text.textPrimary,
             )
+            referrerLookupError?.let {
+                Spacer(Modifier.height(8.dp()))
+                Text(text = it, style = EarthTypography.textXs, color = EarthColors.Text.textPrimary)
+            }
             Spacer(Modifier.height(8.dp()))
             Text(
-                text = "Half the registration reward goes to them. Your own half " +
-                    "is unaffected.",
+                text = "Half the registration reward goes to them, privately, as a note to " +
+                    "their shielded address. Your own half is unaffected.",
                 style = EarthTypography.textXs,
                 color = EarthColors.Text.textSecondary,
             )
         } else {
-            EarthLabel("Referrer address (optional)")
+            EarthLabel("Referred by (optional)")
             Spacer(Modifier.height(8.dp()))
             EarthTextField(
                 value = referrer,
                 onValueChange = { onReferrerChange(it.trim()) },
                 modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("earth1…") },
+                placeholder = { Text("@handle") },
                 error = referrerError,
                 keyboardOptions = referrerKeys.first,
                 keyboardActions = referrerKeys.second,
             )
             Spacer(Modifier.height(8.dp()))
             Text(
-                text = "Half the registration reward goes to whoever referred you. " +
-                    "Leaving this blank costs you nothing — your own half is the " +
-                    "same either way.",
+                text = "Half the registration reward goes to whoever referred you, " +
+                    "privately, as a note to their handle's shielded address. Leaving " +
+                    "this blank costs you nothing — your own half is the same either way.",
                 style = EarthTypography.textXs,
                 color = EarthColors.Text.textSecondary,
             )
@@ -180,9 +187,9 @@ fun MrzConfirmScreen(
 
         Spacer(Modifier.height(24.dp()))
         EarthButton(
-            text = "Continue",
+            text = if (checkingReferrer) "Checking @handle…" else "Continue",
             onClick = { onContinue(mrz) },
-            enabled = mrz.isComplete && referrerError == null,
+            enabled = mrz.isComplete && !checkingReferrer && (referrer.isEmpty() || Handles.parse(referrer) != null),
             modifier = Modifier.fillMaxWidth(),
             colors = brandButtonColors(),
         )
