@@ -403,8 +403,13 @@ app tells the user).
   `d769ac6c98f8fab858a7e9967f2b7f181d8ad9fdcdf55438c915696febf0e99c`),
   enough for every privacy circuit (all set up at 2^15), passed to bb as a
   `.dat` path: proving a private tx never touches the network. The passport
-  circuits (2^18 and more: 16-34 MB) still download theirs, at
-  registration, which is public anyway.
+  circuits' SRS (too large to bundle) is fetched once at launch, not when a
+  proof needs it: a byte range of the same file, hash-pinned (Android 2^18+1
+  points, sha256 `8f5cd75519c2e995fa47aa7ecd7b213b9ae13824bc4b0f15025a63acd8c139eb`;
+  iOS 2^19+1 points, `1df37a2ce1da3713c7300691a65ffe84de144ea64899d5cfbf0061aaaeb6ad31`),
+  kept out of backups; until it is there a passport proof downloads its own
+  (registration is public anyway). iOS reserves the passport size for a
+  private proof only from that local file, never from the network.
 - **One fee rule.** fee = the bundles' uerth balance less the uerth the msg
   moves itself. Moves: MsgDelegate.amount; MsgNoteSwap.amount_in when
   denom_in is uerth; MsgAddLiquidityShielded.erth_amount; nothing for every

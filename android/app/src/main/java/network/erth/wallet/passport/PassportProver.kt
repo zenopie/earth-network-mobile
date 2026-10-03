@@ -73,7 +73,8 @@ object PassportProver {
         val circuitJson = context.assets.open("circuits/${inputs.algorithm}.json")
             .bufferedReader().use { it.readText() }
         val circuit = NoirProver.loadCircuit(circuitJson, SRS_SIZE)
-        circuit.setupSrs()
+        // The local transcript prefix when the launch fetch has it (audit 3), else bb downloads it.
+        circuit.setupSrs(PassportSrs.path(context))
 
         val vk = circuit.getVerificationKey()
         val proofHex = NoirProver.prove(circuit, inputs.map, vk)

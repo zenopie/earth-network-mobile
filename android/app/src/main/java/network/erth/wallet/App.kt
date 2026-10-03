@@ -42,5 +42,11 @@ class App : Application() {
         thread(isDaemon = true, name = "fees-prime") {
             runCatching { Fees.prime() }
         }
+
+        // The passport SRS, fetched once at launch rather than when a proof
+        // needs it (audit 3; the privacy SRS is in the APK).
+        thread(isDaemon = true, name = "passport-srs") {
+            runCatching { network.erth.wallet.passport.PassportSrs.prefetch(this) }
+        }
     }
 }
