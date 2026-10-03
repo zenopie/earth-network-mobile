@@ -73,6 +73,8 @@ class WalletSync(
     private val keys: PrivacyKeys,
     private val chainId: String,
     private val chain: ChainRoots,
+    /** The wallet's clock (unix seconds): what pending marks are stamped with. */
+    private val now: () -> Long = { System.currentTimeMillis() / 1000 },
 ) {
     class Inconsistent(message: String) : Exception(message)
 
@@ -410,7 +412,7 @@ class WalletSync(
      * unconfirmed broadcast that dropped), and the note is spendable again.
      */
     private fun releaseStalePending(s: PrivacyState) {
-        val now = System.currentTimeMillis() / 1000
+        val now = now()
         for (i in s.notes.indices) {
             val n = s.notes[i]
             if (n.unspent && n.pendingAt != null && now - n.pendingAt > PENDING_TIMEOUT_S) s.notes[i] = n.copy(pendingAt = null)
@@ -581,19 +583,22 @@ class WalletSync(
      */
     private fun resolvePending(s: PrivacyState) {
         val p = s.pendingRegistration ?: return
-        if (p.leafIndex >= store.identityTree.size) {
+        // Not committed yet as far as the wallet knows (PrivacyWallet.sync looks it up by hash).
+        val index = p.leafIndex ?: return
+        val activatedAt = p.activatedAt ?: return
+        if (index >= store.identityTree.size) {
             s.pendingRegistration = p.copy(failure = null)
             return
         }
-        val leaf = store.identityTree.leaf(p.leafIndex)
-        val country = countryFor(leaf, p.dscKey, p.activatedAt, p.countryHint)
+        val leaf = store.identityTree.leaf(index)
+        val country = countryFor(leaf, p.dscKey, activatedAt, p.countryHint)
         if (country != null) {
-            s.identity = IdentityRecord(p.leafIndex, p.dscKey, country, p.activatedAt, p.passportNullifier)
+            s.identity = IdentityRecord(index, p.dscKey, country, activatedAt, p.passportNullifier)
             s.pendingRegistration = null
         } else {
             s.pendingRegistration = p.copy(
-                failure = if (leaf == Fr.ZERO) "the registration's leaf ${p.leafIndex} has been zeroed"
-                else "leaf ${p.leafIndex} does not match this registration",
+                failure = if (leaf == Fr.ZERO) "the registration's leaf $index has been zeroed"
+                else "leaf $index does not match this registration",
             )
         }
     }

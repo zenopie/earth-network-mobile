@@ -177,6 +177,58 @@ class ReauditFixesTest {
         assertThrows(WalletSync.GenesisUnverified::class.java) { wallet(chain).sync() }
     }
 
+    /**
+     * K7: the registration is recorded by hash the moment the node accepts
+     * it and the gas note marked spent, so a wait that times out followed by
+     * a killed app loses nothing: the next wallet finds the tx by hash.
+     */
+    @Test
+    fun registrationRecordedAtAcceptance() {
+        val chain = FakeChain()
+        val store = PrivacyStore.memory()
+        val a = wallet(chain, store = store)
+        val prep = a.prepareRegistration(null)
+        chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
+        a.sync()
+        assertEquals(100_000L, bal(a, "uerth"))
+        chain.unconfirmedNext = 1
+        val sigs = listOf("261001", prep.binding.toBigInteger().toString(), "31337", Fr.of(77).toBigInteger().toString())
+        assertThrows(network.erth.wallet.chain.TxUnconfirmedException::class.java) { a.register(prep, ByteArray(14_656), sigs, "lean_poa", ByteArray(10)) }
+        val p = store.state.pendingRegistration!!
+        assertEquals(chain.txs.keys.single { chain.txs[it]!!.events.any { e -> e.first == "register" } }, p.txHash)
+        assertEquals(null, p.leafIndex)
+        assertEquals(0L, bal(a, "uerth"))
+        // The app is killed; a new wallet over the same store resolves it by hash.
+        val b = wallet(chain, store = store)
+        b.sync()
+        assertEquals(null, b.pendingRegistration)
+        assertEquals(WalletSync.IdentityStatus.LIVE, b.identityStatus())
+        assertEquals("31337", store.state.identity!!.passportNullifier)
+    }
+
+    /** K7: accepted then failed in its block: the failure is kept for the UI, the gas note released later. */
+    @Test
+    fun registrationFailedInBlockIsShown() {
+        val chain = FakeChain()
+        val a = wallet(chain)
+        val prep = a.prepareRegistration(null)
+        chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
+        a.sync()
+        chain.failInBlockNext = 1
+        val sigs = listOf("261001", prep.binding.toBigInteger().toString(), "1", Fr.of(77).toBigInteger().toString())
+        assertThrows(java.io.IOException::class.java) { a.register(prep, ByteArray(14_656), sigs, "lean_poa", ByteArray(10)) }
+        a.sync()
+        assertTrue(a.pendingRegistration!!.failure!!.startsWith(PrivacyWallet.TX_FAILED))
+        assertEquals(0L, bal(a, "uerth"))
+        chain.now += WalletSync.PENDING_TIMEOUT_S + 1
+        a.sync()
+        assertEquals(100_000L, bal(a, "uerth"))
+        // A new registration replaces it.
+        a.register(prep, ByteArray(14_656), sigs, "lean_poa", ByteArray(10))
+        a.sync()
+        assertEquals(WalletSync.IdentityStatus.LIVE, a.identityStatus())
+    }
+
     /** K10: a status naming no chain is refused. */
     @Test
     fun nullChainIdIsRefused() {

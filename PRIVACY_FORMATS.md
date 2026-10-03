@@ -208,10 +208,17 @@ ciphertext) whose 64-byte memo is the registration record:
 DSC's issuer C=, else the passport's issuing state). Sync keeps every record
 note it finds (they are value 0, never spent).
 
-**Recording (C2).** Right after the broadcast returns (before any sync) the
-wallet persists a pending registration {leaf_index from the tx's `register`
-event, dsc_key, passport nullifier, public signals, block time, tx hash,
-country hint}. Every sync then tries to resolve it: once the local identity
+**Recording (C2, K7).** The moment the node accepts the registration
+(broadcast returns code 0, before waiting for its block) the wallet persists
+a pending registration {tx hash, dsc_key, passport nullifier, public
+signals, country hint} and marks the notes the fee bundle spends (the gas
+grant's note) pending; every private tx marks its spends at that moment
+too. The leaf index (the tx's `register` event) and activated_at (its block
+time) are filled in when the wait for the block returns, or else by the
+next sync, which looks the tx up by hash (`GET /cosmos/tx/v1beta1/txs/{hash}`);
+a tx that failed in its block is kept as a failure for the UI (a new
+registration replaces it), and its spent notes are released after the usual
+15 minutes. Every sync then tries to resolve it: once the local identity
 tree has the leaf, the country is found by recomputing
 `H(TAG_LEAF, idc, dsc_key, country, activated_at)` over the hint, unknown
 (0) and every A..Z pair; the identity record is written and the pending one

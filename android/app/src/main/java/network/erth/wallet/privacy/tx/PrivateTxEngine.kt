@@ -29,6 +29,9 @@ data class TxResult(
     val time: Long,
     /** (type, attributes) of every event the tx emitted. */
     val events: List<Pair<String, Map<String, String>>>,
+    /** DeliverTx code: 0 is success (a looked-up tx may have failed in its block). */
+    val code: Int = 0,
+    val log: String = "",
 ) {
     fun attr(type: String, key: String): String? = events.firstOrNull { it.first == type && key in it.second }?.second?.get(key)
 }
@@ -37,7 +40,15 @@ data class TxResult(
 interface PrivateChain {
     /** Gas used by [tx], from the simulate endpoint. */
     fun simulate(tx: ByteArray): Long
-    fun broadcast(tx: ByteArray): TxResult
+    /**
+     * Broadcasts [tx] and waits for its block. [accepted] runs with the tx
+     * hash as soon as the node accepts it into the mempool (CheckTx code 0),
+     * before the wait (K7): the caller records what it spent there, so a
+     * wait that times out or a killed app cannot lose it.
+     */
+    fun broadcast(tx: ByteArray, accepted: (hash: String) -> Unit = {}): TxResult
+    /** A tx by hash: null while the node does not know it (still in the mempool, or dropped). */
+    fun tx(hash: String): TxResult? = null
     /** The node's min gas price in uerth (CheckTx holds a private fee to it). */
     fun gasPrice(): BigDecimal
     /** x/shielded params.min_fee: the consensus floor on any private fee. */
@@ -104,7 +115,7 @@ class PrivateTxEngine(
      * and the gas limit the pricing settled on are fixed first: the sighash
      * binds them, so every proof is made over the tx exactly as broadcast.
      */
-    fun run(assemble: (fee: Long) -> Assembled, memo: String = ""): Pair<TxResult, Assembled> {
+    fun run(assemble: (fee: Long) -> Assembled, memo: String = "", accepted: (hash: String, Assembled) -> Unit = { _, _ -> }): Pair<TxResult, Assembled> {
         val (q, a) = price(assemble, memo)
         val tx = PrivateMsgs.TxFields(memo = memo, timeoutHeight = 0, gasLimit = q.gasLimit)
         val sighash = PrivateMsgs.sighash(draft(a), chainId, tx)
@@ -122,7 +133,7 @@ class PrivateTxEngine(
         val msg = a.build(bundles, stake, membership)
         check(PrivateMsgs.sighash(msg, chainId, tx) == sighash)
         check(PrivateMsgs.totalFee(msg) == q.fee) { "the msg must pay exactly the quoted fee" }
-        return chain.broadcast(UnsignedTx.build(msg, tx)) to a
+        return chain.broadcast(UnsignedTx.build(msg, tx)) { hash -> accepted(hash, a) } to a
     }
 
     /** The chain refuses any proof that is not exactly PROOF_BYTES (bb ignored trailing bytes). */

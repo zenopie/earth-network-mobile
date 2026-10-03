@@ -58,7 +58,10 @@ object UnsignedTx {
     }
 
     /** Broadcasts and waits for the block. Returns the tx hash; throws on any non-zero code. */
-    fun broadcast(txBytes: ByteArray): String {
+    fun broadcast(txBytes: ByteArray): String = EarthTx.awaitCommit(submit(txBytes))
+
+    /** Broadcasts (sync mode): the tx hash once CheckTx accepted it; throws on any non-zero code. */
+    fun submit(txBytes: ByteArray): String {
         val payload = JSONObject()
             .put("tx_bytes", txBytes.toByteString().base64())
             .put("mode", "BROADCAST_MODE_SYNC")
@@ -68,7 +71,7 @@ object UnsignedTx {
         val txResp = JSONObject(resp).getJSONObject("tx_response")
         val checkCode = txResp.optInt("code", 0)
         if (checkCode != 0) throw IOException("tx rejected (code $checkCode): ${txResp.optString("raw_log")}")
-        return EarthTx.awaitCommit(txResp.getString("txhash"))
+        return txResp.getString("txhash")
     }
 
     private fun message(resp: String): String =

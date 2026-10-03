@@ -194,16 +194,43 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     /** Broadcasts to refuse (after the wallet proved them): a node down, a tx dropped. */
     var rejectNext = 0
 
-    override fun broadcast(tx: ByteArray): TxResult {
+    /** Broadcasts accepted and committed whose wait then times out (the app sees TxUnconfirmedException). */
+    var unconfirmedNext = 0
+    /** Broadcasts accepted (CheckTx) that then fail in their block (DeliverTx code 5): nothing changes. */
+    var failInBlockNext = 0
+    /** Every tx by hash, as Query/GetTx answers. */
+    val txs = HashMap<String, TxResult>()
+
+    override fun tx(hash: String): TxResult? = txs[hash]
+
+    override fun broadcast(tx: ByteArray, accepted: (hash: String) -> Unit): TxResult {
         if (rejectNext > 0) {
             // The proofs made for it never reach the chain.
             rejectNext--
             prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear()
             throw java.io.IOException("broadcast refused (test)")
         }
+        val hash = "HASH$height"
+        if (failInBlockNext > 0) {
+            failInBlockNext--
+            check(tx, simulate = true)
+            accepted(hash)
+            prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear()
+            block()
+            txs[hash] = TxResult(hash, height - 1, now, emptyList(), code = 5, log = "failed in block (test)")
+            throw java.io.IOException("tx failed (code 5)")
+        }
+        check(tx, simulate = true)
+        accepted(hash)
         val (_, events) = check(tx, simulate = false)
         block()
-        return TxResult("HASH${height - 1}", height - 1, now, events)
+        val r = TxResult(hash, height - 1, now, events)
+        txs[hash] = r
+        if (unconfirmedNext > 0) {
+            unconfirmedNext--
+            throw network.erth.wallet.chain.TxUnconfirmedException(hash)
+        }
+        return r
     }
 
     private fun decode(raw: Tx.TxRaw): MessageLite {

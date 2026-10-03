@@ -15,5 +15,7 @@ format or behavior change.
 
 - [x] K6 genesis switch confirmed by the LCD (node_info network + block 1 hash) before any wipe; confirmed switch keeps identity record, passport nullifier, pending registration, otag counters and re-verifies the leaf; unconfirmed claim wipes nothing (GenesisUnverified). ReauditFixesTest.
 
+- [x] K7 PrivateChain.broadcast(accepted:) runs at CheckTx code 0: spends marked pending and the registration recorded by tx hash before awaitCommit; leaf/activated_at filled from the result or looked up by hash (PrivateChain.tx) on later syncs; failed-in-block kept as failure. Also: WalletSync stamps/releases pending with the wallet clock. ReauditFixesTest (timeout + killed app; failed in block).
+
 ## iOS
 (not started)

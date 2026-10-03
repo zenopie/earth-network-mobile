@@ -112,9 +112,31 @@ class PrivacyWallet(
     val address: ShieldedAddress get() = keys.address
 
     @Synchronized
-    fun sync(): WalletSync.Result = WalletSync(indexer, store, keys, chainId, roots).sync()
+    fun sync(): WalletSync.Result {
+        fillPendingRegistration()
+        return WalletSync(indexer, store, keys, chainId, roots, now).sync()
+    }
 
-    fun identityStatus(): WalletSync.IdentityStatus = WalletSync(indexer, store, keys, chainId, roots).identityStatus()
+    /**
+     * K7: a registration recorded at acceptance whose block the wallet has
+     * not seen (the wait timed out, the app was killed) is looked up by its
+     * hash: committed, it gets its leaf index and activated_at; failed in its
+     * block, the failure is kept for the UI (a new registration replaces it).
+     */
+    private fun fillPendingRegistration() {
+        val p = store.state.pendingRegistration ?: return
+        if (p.leafIndex != null || p.failure?.startsWith(TX_FAILED) == true) return
+        val r = runCatching { chain.tx(p.txHash) }.getOrNull() ?: return
+        store.state.pendingRegistration = if (r.code != 0) {
+            p.copy(failure = "$TX_FAILED (code ${r.code}): ${r.log.take(200)}")
+        } else {
+            val index = r.attr("register", "leaf_index")?.toLongOrNull() ?: return
+            p.copy(leafIndex = index, activatedAt = r.time, failure = null)
+        }
+        store.save()
+    }
+
+    fun identityStatus(): WalletSync.IdentityStatus = WalletSync(indexer, store, keys, chainId, roots, now).identityStatus()
 
     /** A committed registration whose leaf is not matched yet (null: none), and why, if it failed. */
     val pendingRegistration: PendingRegistration? get() = store.state.pendingRegistration
@@ -154,10 +176,15 @@ class PrivacyWallet(
      * the chain anyway, and its notes may not exist.
      */
     @Synchronized
-    private fun run(memo: String = "", assemble: (fee: Long) -> Assembled): TxResult {
+    private fun run(memo: String = "", accepted: (hash: String) -> Unit = {}, assemble: (fee: Long) -> Assembled): TxResult {
         requireVerified()
-        val (result, a) = engine.run(assemble, memo)
-        markPending(a.spends, a.stakeSpends)
+        // The spent notes are marked the moment the node accepts the tx
+        // (K7), before the wait for its block: a wait that times out (the tx
+        // may still land) or a killed app never leaves them spendable.
+        val (result, _) = engine.run(assemble, memo) { hash, a ->
+            markPending(a.spends, a.stakeSpends)
+            accepted(hash)
+        }
         return result
     }
 
@@ -340,28 +367,36 @@ class PrivacyWallet(
         val dscKey = PrivateMsgs.decimalField(publicSignals[3])
         val hint = dscCountry(dscDer)
         val record = NoteOut.to(keys.address, FEE, 0, WalletSync.regMemo(dscKey, hint, now()))
-        val result = run { fee ->
+        val pending = { hash: String ->
+            // K7: by hash, the moment the node accepts it; the leaf comes later.
+            store.state.pendingRegistration = PendingRegistration(
+                txHash = hash, leafIndex = null, dscKey = dscKey, passportNullifier = publicSignals.getOrElse(2) { "" },
+                publicSignals = publicSignals, activatedAt = null, countryHint = hint,
+            )
+            store.save()
+        }
+        val result = run(accepted = pending) { fee ->
             Assembled(listOf(bundle(listOf(record), mapOf(FEE to fee)))) { bs, _, _ -> base.toBuilder().setFee(bs[0]).build() }
         }
-        recordRegistration(result, dscKey, publicSignals, hint)
+        recordRegistration(result)
         return result
     }
 
     /**
-     * Persists the committed registration as pending (C2) — its leaf index
-     * from the tx's register event, activated_at its block time — before
-     * syncing, so a lagging indexer can never lose it; every later sync
-     * retries until the leaf is in the local identity tree and matches.
+     * Fills the pending registration (C2, K7) from its committed tx — the
+     * leaf index from its register event, activated_at its block time —
+     * and syncs; every later sync retries until the leaf is in the local
+     * identity tree and matches.
      */
-    fun recordRegistration(result: TxResult, dscKey: Fr, publicSignals: List<String>, countryHint: String = "") {
+    fun recordRegistration(result: TxResult) {
         val index = result.attr("register", "leaf_index")?.toLongOrNull()
             ?: throw IllegalStateException("registration tx ${result.hash} has no leaf_index")
         synchronized(this) {
-            store.state.pendingRegistration = PendingRegistration(
-                txHash = result.hash, leafIndex = index, dscKey = dscKey, passportNullifier = publicSignals.getOrElse(2) { "" },
-                publicSignals = publicSignals, activatedAt = result.time, countryHint = countryHint,
-            )
-            store.save()
+            val p = store.state.pendingRegistration
+            if (p != null && p.txHash == result.hash) {
+                store.state.pendingRegistration = p.copy(leafIndex = index, activatedAt = result.time, failure = null)
+                store.save()
+            }
         }
         runCatching { sync() }
     }
@@ -914,6 +949,9 @@ class PrivacyWallet(
          * action proofs and note writes, and the tx's bytes.
          */
         const val REGISTER_GAS_ESTIMATE = 7_000_000L
+        /** A pending registration whose tx failed in its block (K7). */
+        const val TX_FAILED = "the registration tx failed"
+
         /** Slack against the chain's clock for bounds the wallet must stay under. */
         const val CLOCK_MARGIN = 600L
 

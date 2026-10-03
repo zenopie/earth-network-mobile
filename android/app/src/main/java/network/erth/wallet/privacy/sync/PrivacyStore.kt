@@ -27,19 +27,22 @@ data class IdentityRecord(
 )
 
 /**
- * A registration broadcast and committed whose identity leaf the wallet has
- * not resolved yet (C2): everything needed to rebuild the identity record,
- * persisted before any sync so a lagging indexer cannot lose it. Each sync
- * retries until the local identity tree holds [leafIndex].
+ * A registration the node accepted whose identity leaf the wallet has not
+ * resolved yet (C2, K7): everything needed to rebuild the identity record,
+ * persisted the moment the broadcast is accepted (before the wait for its
+ * block), so neither a lagging indexer, a wait that times out nor a killed
+ * app can lose it. [leafIndex] and [activatedAt] come from the committed tx
+ * (its register event, its block time): null until it is found by
+ * [txHash]. Each sync retries until the local identity tree holds the leaf.
  */
 data class PendingRegistration(
     val txHash: String,
-    val leafIndex: Long,
+    val leafIndex: Long?,
     val dscKey: Fr,
     val passportNullifier: String,
     val publicSignals: List<String>,
-    /** The registration block's time: the leaf's activated_at. */
-    val activatedAt: Long,
+    /** The registration block's time: the leaf's activated_at (null until the tx is found). */
+    val activatedAt: Long?,
     /** ISO alpha-2 guess at the verifying CSCA's country ("" for none). */
     val countryHint: String,
     /** Why the last attempt to resolve it failed, for the UI (null: waiting for the indexer). */
@@ -99,9 +102,9 @@ class PrivacyState {
         put("chain_id", chainId)
         put("genesis", genesis)
         pendingRegistration?.let { p ->
-            put("pending_registration", JSONObject().put("tx_hash", p.txHash).put("leaf_index", p.leafIndex).put("dsc_key", p.dscKey.toHex())
+            put("pending_registration", JSONObject().put("tx_hash", p.txHash).put("leaf_index", p.leafIndex ?: JSONObject.NULL).put("dsc_key", p.dscKey.toHex())
                 .put("passport_nullifier", p.passportNullifier).put("public_signals", JSONArray(p.publicSignals))
-                .put("activated_at", p.activatedAt).put("country_hint", p.countryHint).put("failure", p.failure ?: JSONObject.NULL))
+                .put("activated_at", p.activatedAt ?: JSONObject.NULL).put("country_hint", p.countryHint).put("failure", p.failure ?: JSONObject.NULL))
         }
         put("reg_records", JSONArray().apply {
             regRecords.forEach {
@@ -135,8 +138,8 @@ class PrivacyState {
             j.optJSONObject("pending_registration")?.let { p ->
                 val sigs = p.optJSONArray("public_signals")
                 pendingRegistration = PendingRegistration(
-                    p.getString("tx_hash"), p.getLong("leaf_index"), Fr.fromHex(p.getString("dsc_key")), p.optString("passport_nullifier"),
-                    (0 until (sigs?.length() ?: 0)).map { sigs!!.getString(it) }, p.getLong("activated_at"), p.optString("country_hint"),
+                    p.getString("tx_hash"), if (p.isNull("leaf_index")) null else p.getLong("leaf_index"), Fr.fromHex(p.getString("dsc_key")), p.optString("passport_nullifier"),
+                    (0 until (sigs?.length() ?: 0)).map { sigs!!.getString(it) }, if (p.isNull("activated_at")) null else p.getLong("activated_at"), p.optString("country_hint"),
                     if (p.isNull("failure")) null else p.optString("failure"),
                 )
             }

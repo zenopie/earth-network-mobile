@@ -1,6 +1,7 @@
 package network.erth.wallet.privacy.chain
 
 import network.erth.wallet.chain.EarthRest
+import network.erth.wallet.chain.EarthTx
 import network.erth.wallet.chain.Fees
 import network.erth.wallet.privacy.tx.PrivateChain
 import network.erth.wallet.privacy.tx.TxResult
@@ -176,8 +177,16 @@ object PrivacyQueries {
 object RestPrivateChain : PrivateChain {
     override fun simulate(tx: ByteArray): Long = UnsignedTx.simulate(tx)
 
-    override fun broadcast(tx: ByteArray): TxResult {
-        val hash = UnsignedTx.broadcast(tx)
+    override fun broadcast(tx: ByteArray, accepted: (hash: String) -> Unit): TxResult {
+        val hash = UnsignedTx.submit(tx)
+        accepted(hash)
+        EarthTx.awaitCommit(hash)
+        return fetch(hash)
+    }
+
+    override fun tx(hash: String): TxResult? {
+        val (code, _) = EarthRest.get("/cosmos/tx/v1beta1/txs/$hash")
+        if (code == 404 || code == 400) return null
         return fetch(hash)
     }
 
@@ -216,6 +225,8 @@ object RestPrivateChain : PrivateChain {
             height = tr.optString("height", "0").toLong(),
             time = parseTime(tr.optString("timestamp")),
             events = events,
+            code = tr.optInt("code", 0),
+            log = tr.optString("raw_log"),
         )
     }
 }
