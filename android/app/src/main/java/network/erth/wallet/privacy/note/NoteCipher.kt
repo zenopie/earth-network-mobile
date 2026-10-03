@@ -189,9 +189,16 @@ object NoteCipher {
     fun tryDecryptBlindStake(ct: ByteArray, cm: Fr, denom: String, amount: Long, keys: PrivacyKeys): Pair<Fr, Fr>? =
         tryDecryptBlindStake(ct, cm, denom, amount, keys.ek(), keys.ownerPk)
 
-    internal fun tryDecryptBlindStake(ct: ByteArray, cm: Fr, denom: String, amount: Long, ek: X25519PrivateKeyParameters, ownerPk: Fr): Pair<Fr, Fr>? {
-        val (rho, rcm, _) = openBlind(ct, ek, STAKE_SALT, STAKE_VERSION) ?: return null
-        return if (Privacy.stakeCm(Privacy.assetId(denom), amount, Privacy.stakePc(ownerPk, rho, rcm)) == cm) rho to rcm else null
+    internal fun tryDecryptBlindStake(ct: ByteArray, cm: Fr, denom: String, amount: Long, ek: X25519PrivateKeyParameters, ownerPk: Fr): Pair<Fr, Fr>? =
+        tryOpenBlindStake(ct, cm, denom, amount, ek, ownerPk)?.let { (rho, rcm, _) -> rho to rcm }
+
+    /** [tryDecryptBlindStake] with the memo (trailing zeros dropped). */
+    fun tryOpenBlindStake(ct: ByteArray, cm: Fr, denom: String, amount: Long, keys: PrivacyKeys): Triple<Fr, Fr, ByteArray>? =
+        tryOpenBlindStake(ct, cm, denom, amount, keys.ek(), keys.ownerPk)
+
+    internal fun tryOpenBlindStake(ct: ByteArray, cm: Fr, denom: String, amount: Long, ek: X25519PrivateKeyParameters, ownerPk: Fr): Triple<Fr, Fr, ByteArray>? {
+        val (rho, rcm, memo) = openBlind(ct, ek, STAKE_SALT, STAKE_VERSION) ?: return null
+        return if (Privacy.stakeCm(Privacy.assetId(denom), amount, Privacy.stakePc(ownerPk, rho, rcm)) == cm) Triple(rho, rcm, memo) else null
     }
 
     /**

@@ -330,6 +330,39 @@ class ReauditFixesTest {
         assertEquals(chain.identityTree.leaf(store.state.identity!!.leafIndex), Privacy.identityLeaf(keys.idc, store.state.identity!!.dscKey, store.state.identity!!.country, store.state.identity!!.activatedAt))
     }
 
+    /**
+     * K11: positions closed before a restore are known from their unlock
+     * memos, so the restored wallet's next lock never reuses a tag the chain
+     * has already seen (without them it would take counter 1 again).
+     */
+    @Test
+    fun restoredWalletNeverReusesAClosedTag() {
+        val chain = FakeChain()
+        val v = "earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+        val a = wallet(chain)
+        funded(chain, a, 5_000_000)
+        a.sync()
+        a.delegate(v, 3_000_000)
+        a.sync()
+        repeat(3) { a.lockPosition(v, 100_000, mapOf(2L to 100L)); a.sync() }
+        val used = chain.positions.values.map { it.ownerTag }.toSet()
+        assertEquals(3, used.size)
+        for ((p, c) in a.positions().filter { it.second >= 1 }) { a.unlockPosition(p, c); a.sync() }
+        assertEquals(listOf(0), a.positions().map { it.second })
+        assertEquals(2, a.store.state.closedOtagMax)
+        val restored = wallet(chain)
+        restored.sync()
+        assertEquals(2, restored.store.state.closedOtagMax)
+        assertEquals(listOf(0), restored.positions().map { it.second })
+        restored.lockPosition(v, 100_000, mapOf(2L to 100L))
+        restored.sync()
+        val fresh = chain.positions.values.last().ownerTag
+        assertFalse(fresh in used)
+        assertEquals(listOf(0, 3), restored.positions().map { it.second })
+        // A gift of stake carrying someone else's (untagged) unlock memo is ignored.
+        assertEquals(null, WalletSync.parseUnlockMemo(a.keys.nk, WalletSync.unlockMemo(Fr.of(9), 1_000_000)))
+    }
+
     /** K10: a status naming no chain is refused. */
     @Test
     fun nullChainIdIsRefused() {

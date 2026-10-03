@@ -96,10 +96,10 @@ class StakePlan(
          * rcm, and their blind stake ciphertext to our own address, which
          * sync opens against the denom and amount the chain publishes.
          */
-        fun selfMint(keys: PrivacyKeys): Pair<Pair<Fr, Fr>, ByteArray> {
+        fun selfMint(keys: PrivacyKeys, memo: ByteArray = ByteArray(0)): Pair<Pair<Fr, Fr>, ByteArray> {
             val rho = NotePlaintext.randomField()
             val rcm = NotePlaintext.randomField()
-            return (rho to rcm) to NoteCipher.encryptBlindStake(rho, rcm, keys.ekPub)
+            return (rho to rcm) to NoteCipher.encryptBlindStake(rho, rcm, keys.ekPub, memo)
         }
 
         /**

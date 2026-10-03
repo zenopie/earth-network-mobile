@@ -183,6 +183,33 @@ class WalletSync(
             return Triple(dsc, country, builtAt)
         }
 
+        /** Unlock memo: "EU", version 1 (PRIVACY_FORMATS.md 1, K11). */
+        val UNLOCK_MAGIC = byteArrayOf(0x45, 0x55, 0x01)
+
+        private fun unlockTag(nk: Fr, counter: Int): ByteArray =
+            Privacy.h(Privacy.TAG_UNLOCKTAG, nk, Privacy.u64(counter.toLong() and 0xffffffffL)).toBytes().copyOf(REG_TAG_BYTES)
+
+        /**
+         * The memo of an unlock's re-minted stake note: the owner-tag counter
+         * of the position it closed, so a wallet restored from the mnemonic
+         * knows the tags of closed positions too and never locks under one
+         * again (K11). Tagged like the record (only nk makes one): a gift of
+         * stake carrying a huge counter cannot stretch the owner-tag scan.
+         */
+        fun unlockMemo(nk: Fr, counter: Int): ByteArray =
+            java.nio.ByteBuffer.allocate(NoteCipher.MEMO_BYTES).put(UNLOCK_MAGIC).putInt(counter).put(unlockTag(nk, counter)).array()
+
+        /** The closed counter if [memo] is this wallet's unlock memo. */
+        fun parseUnlockMemo(nk: Fr, memo: ByteArray): Int? {
+            val m = memo.copyOf(NoteCipher.MEMO_BYTES)
+            if (!m.copyOf(3).contentEquals(UNLOCK_MAGIC)) return null
+            val counter = java.nio.ByteBuffer.wrap(m, 3, 4).int
+            if (counter < 0) return null
+            if (m.copyOfRange(7 + REG_TAG_BYTES, m.size).any { it.toInt() != 0 }) return null
+            if (!java.security.MessageDigest.isEqual(m.copyOfRange(7, 7 + REG_TAG_BYTES), unlockTag(nk, counter))) return null
+            return counter
+        }
+
         /** Record notes kept (newest first); only this wallet's own registrations carry a valid tag. */
         const val MAX_RECORDS = 32
 
@@ -527,7 +554,8 @@ class WalletSync(
             NoteCipher.BLIND_CIPHERTEXT_BYTES -> {
                 val denom = r.denom ?: return null
                 val amount = r.amount ?: return null
-                val (rho, rcm) = NoteCipher.tryDecryptBlindStake(r.ciphertext, r.cm, denom, amount, keys) ?: return null
+                val (rho, rcm, memo) = NoteCipher.tryOpenBlindStake(r.ciphertext, r.cm, denom, amount, keys) ?: return null
+                parseUnlockMemo(keys.nk, memo)?.let { c -> if (c > s.closedOtagMax) s.closedOtagMax = c }
                 StakeOpen(denom, amount, rho, rcm)
             }
             else -> return null

@@ -739,8 +739,9 @@ class PrivacyWallet(
         val all = reads.positions()
         // Counters 0 ... next + OTAG_GAP, extended past every match: closed
         // positions vanish from the chain, so the window must cross a run of
-        // them (and of failed locks) to reach a live one.
-        var limit = s.nextOtagCounter + OTAG_GAP
+        // them (and of failed locks) to reach a live one. A restored wallet
+        // knows the closed ones' counters from their unlock memos (K11).
+        var limit = maxOf(s.nextOtagCounter, s.closedOtagMax + 1) + OTAG_GAP
         val out = ArrayList<Pair<PrivacyChainReads.Position, Int>>()
         var from = 0
         while (from < limit) {
@@ -750,9 +751,8 @@ class PrivacyWallet(
             from = limit
             found.maxOfOrNull { it.second }?.let { top -> if (top + 1 + OTAG_GAP > limit) limit = top + 1 + OTAG_GAP }
         }
-        out.maxOfOrNull { it.second }?.let { top ->
-            if (top + 1 > s.nextOtagCounter) { s.nextOtagCounter = top + 1; store.save() }
-        }
+        val next = maxOf(s.nextOtagCounter, s.closedOtagMax + 1, (out.maxOfOrNull { it.second } ?: -1) + 1)
+        if (next > s.nextOtagCounter) { s.nextOtagCounter = next; store.save() }
         return out.sortedBy { it.first.id }
     }
 
@@ -791,9 +791,13 @@ class PrivacyWallet(
         }
     }
 
-    /** Closes [position]; its derth comes back as a stake note to our stake self-mint pc. */
+    /**
+     * Closes [position]; its derth comes back as a stake note to our stake
+     * self-mint pc, whose memo names the closed counter (K11) so no restore
+     * ever locks under its tag again.
+     */
     fun unlockPosition(position: PrivacyChainReads.Position, counter: Int): TxResult {
-        val stake = ownerPlan(position, counter, mint = stakeMint())
+        val stake = ownerPlan(position, counter, mint = StakePlan.selfMint(keys, WalletSync.unlockMemo(keys.nk, counter)))
         return run { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
                 MsgUnlockPosition.newBuilder().setBundle(bs[0]).setPositionId(position.id).setStake(sp).build()

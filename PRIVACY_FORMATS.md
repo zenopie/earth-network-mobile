@@ -58,12 +58,30 @@ to update, unlock or vote it; positions carry no ciphertext), counter c a u32:
     salt_c = HMAC-SHA512("earth.privacy.v1", "otag-salt" || nk (32 BE) || c (u32 BE)) mod p
     otag_c = H(TAG_OTAG, owner_pk, salt_c)
 
-A lock takes counter max(next_otag_counter, highest owned counter found + 1)
-and advances next_otag_counter. Sync matches the public positions against
-counters 0 … max(next_otag_counter, highest found + 1) + 1024 (OTAG_GAP =
-1024: a closed position disappears from the chain, so the window must cross
-a run of closed positions and failed locks). A stake proof whose msg stores
-no tag (everything but a position msg) uses a fresh random salt.
+A lock takes counter max(next_otag_counter, highest owned counter found + 1,
+highest closed counter + 1) and advances next_otag_counter. Sync matches the
+public positions against counters 0 … that + 1024 (OTAG_GAP = 1024: a closed
+position disappears from the chain, so the window must cross a run of closed
+positions and failed locks). A stake proof whose msg stores no tag
+(everything but a position msg) uses a fresh random salt.
+
+**Closed tags are never reused (K11; chosen over a random high counter,
+which a restore could not find again).** A position disappears from the
+chain when it is unlocked, and the chain's events do not carry its tag, so
+a wallet restored from the mnemonic would otherwise start at the highest
+*live* counter + 1 and lock again under a closed position's public tag,
+linking the two. So MsgUnlockPosition's re-minted stake note carries, in
+its blind stake ciphertext's memo, the counter it closed:
+
+    memo = "EU" (0x45 0x55) || 0x01 || counter (u32 BE)
+           || first 16 bytes of BE32( H(Tag("earth.unlocktag"), nk, U64(counter)) ) || zero padding
+
+Sync opens every minted stake note anyway; an unlock memo whose tag
+recomputes raises `closed_otag_max` (a gift of stake with someone else's
+memo is ignored, so it cannot stretch the scan). Positions only ever
+disappear by unlock (x/shieldedstaking removes them nowhere else). Left
+open: a lock that failed in its block published its tag in the failed tx
+without creating a position; a restored wallet may reuse that counter.
 
 Pinned in `KeysAndNotesTest` (cross-checked with an independent Python
 derivation) for the mnemonic `abandon ×11 about`:

@@ -109,6 +109,8 @@ class PrivacyState {
     val unbondRetryAt: MutableMap<String, Long> = sortedMapOf()
     /** Next unused Groundworks owner-tag counter (PrivacyKeys.otagSalt). */
     var nextOtagCounter: Int = 0
+    /** The highest owner-tag counter of a position this wallet closed, from its unlock memos (-1: none; K11). */
+    var closedOtagMax: Int = -1
     /** The stake tree's stream cursors and this wallet's stake notes. */
     var stakeNext: Long = 0
     var stakeHeight: Long = 0
@@ -146,7 +148,7 @@ class PrivacyState {
         put("caretaker_split", JSONObject().apply { caretakerSplit.forEach { (k, v) -> put(k.toString(), v) } })
         put("referrer_address", referrerAddress); put("referrer_bound_at", referrerBoundAt)
         put("unbond_retry_at", JSONObject().apply { unbondRetryAt.forEach { (k, v) -> put(k, v) } })
-        put("next_otag_counter", nextOtagCounter)
+        put("next_otag_counter", nextOtagCounter); put("closed_otag_max", closedOtagMax)
         put("stake_next", stakeNext); put("stake_height", stakeHeight); put("stake_nullifiers_next", stakeNullifiersNext)
         put("stake_notes", JSONArray().apply { stakeNotes.forEach { put(stakeJson(it)) } })
         put("denoms", JSONArray(denoms.toList()))
@@ -191,7 +193,7 @@ class PrivacyState {
             caretakerSplit = j.optJSONObject("caretaker_split")?.let { o -> o.keys().asSequence().associate { it.toLong() to o.getLong(it) } } ?: emptyMap()
             referrerAddress = j.optString("referrer_address"); referrerBoundAt = j.optLong("referrer_bound_at")
             j.optJSONObject("unbond_retry_at")?.let { o -> o.keys().forEach { unbondRetryAt[it] = o.getLong(it) } }
-            nextOtagCounter = j.optInt("next_otag_counter")
+            nextOtagCounter = j.optInt("next_otag_counter"); closedOtagMax = j.optInt("closed_otag_max", -1)
             stakeNext = j.optLong("stake_next"); stakeHeight = j.optLong("stake_height"); stakeNullifiersNext = j.optLong("stake_nullifiers_next")
             j.optJSONArray("stake_notes")?.let { a -> for (i in 0 until a.length()) stakeNotes.add(stakeFromJson(a.getJSONObject(i))) }
             j.optJSONArray("denoms")?.let { a -> for (i in 0 until a.length()) denoms.add(a.getString(i)) }
@@ -278,6 +280,7 @@ class PrivacyStore private constructor(private val dir: File?) {
             this.chainId = chainId
             this.genesis = genesis
             nextOtagCounter = old.nextOtagCounter
+            closedOtagMax = old.closedOtagMax
             if (old.chainId == chainId && old.genesis == genesis) {
                 identity = old.identity
                 pendingRegistration = old.pendingRegistration
@@ -305,6 +308,7 @@ class PrivacyStore private constructor(private val dir: File?) {
             chainId = old.chainId
             this.genesis = genesis
             nextOtagCounter = old.nextOtagCounter
+            closedOtagMax = old.closedOtagMax
             identity = old.identity
             pendingRegistration = old.pendingRegistration?.copy(failure = null)
         }

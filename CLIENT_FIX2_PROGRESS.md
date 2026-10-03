@@ -19,5 +19,7 @@ format or behavior change.
 
 - [x] K1 record memo v2 with 16-byte tag H(Tag("earth.rectag"), nk, dsc_key, U64(built_at)) checked before any search (v1 ignored); records keep their block's leaves, status, cursor and work (persisted); match by the LCD's block time first (<=677 hashes a leaf), else a resumable outward search capped at 50k hashes a sync and 4M a record, once a sync after all passes. Golden vector pinned; forged-spam, bounded-resume tests (ReauditFixesTest).
 
+- [x] K11 unlock re-mint memo "EU"|1|counter|tag(earth.unlocktag); sync raises closed_otag_max; scans and new locks start past closed counters (documented choice). ReauditFixesTest.
+
 ## iOS
 (not started)
