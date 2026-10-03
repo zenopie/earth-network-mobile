@@ -178,30 +178,38 @@ class PrivacyWallet(
         requireVerified()
         // The spent notes are marked the moment the node accepts the tx
         // (K7), before the wait for its block: a wait that times out (the tx
-        // may still land) or a killed app never leaves them spendable.
-        val (result, _) = engine.run(assemble, memo) { hash, a ->
-            markPending(a.spends, a.stakeSpends)
+        // may still land) or a killed app never leaves them spendable. They
+        // stay pending until the chain is past the tx's timeout_height.
+        val (result, _) = engine.run(assemble, memo, shownFee.get()) { hash, a, timeout ->
+            markPending(a.spends, a.stakeSpends, timeout)
             accepted(hash)
         }
         return result
     }
 
+    /**
+     * Audit 3: only on roots verified by the last sync, in that sync's own
+     * generation (a sync that failed part way leaves them unverified).
+     */
     private fun requireVerified() {
-        check(store.state.rootsVerified) {
-            store.state.rootsError ?: "the wallet has not checked its notes against the chain yet; sync again"
+        val s = store.state
+        check(s.rootsVerified && s.verifiedGeneration == s.syncGeneration) {
+            s.rootsError ?: "the wallet has not checked its notes against the chain yet; sync again"
         }
     }
 
-    /** What [run] would charge, without proving: for the confirm sheet. */
+    /** What [run] would charge, without proving (placeholder nullifiers): for a confirm sheet. */
     fun quote(assemble: (fee: Long) -> Assembled): PrivateTxEngine.Quote = engine.quote(assemble)
 
-    private fun markPending(spent: List<OwnedNote>, stake: List<OwnedStakeNote>) {
+    private fun markPending(spent: List<OwnedNote>, stake: List<OwnedStakeNote>, timeoutHeight: Long) {
         val positions = spent.map { it.position }.toSet()
         val stakePositions = stake.map { it.position }.toSet()
         val s = store.state
         val t = now()
-        for (i in s.notes.indices) if (s.notes[i].position in positions) s.notes[i] = s.notes[i].copy(pendingAt = t)
-        for (i in s.stakeNotes.indices) if (s.stakeNotes[i].position in stakePositions) s.stakeNotes[i] = s.stakeNotes[i].copy(pendingAt = t)
+        for (i in s.notes.indices) if (s.notes[i].position in positions) s.notes[i] = s.notes[i].copy(pendingAt = t, pendingUntil = timeoutHeight)
+        for (i in s.stakeNotes.indices) if (s.stakeNotes[i].position in stakePositions) {
+            s.stakeNotes[i] = s.stakeNotes[i].copy(pendingAt = t, pendingUntil = timeoutHeight)
+        }
         store.save()
     }
 
@@ -243,6 +251,9 @@ class PrivacyWallet(
         }
     }
 
+    /** The chain is ahead of the local trees for what is asked: sync, then try again. */
+    class SyncFirst(message: String) : IllegalStateException(message)
+
     /** The identity is too recent for this action; it opens [waitSeconds] from now. */
     class NotYet(val waitSeconds: Long) : Exception("this registration is too recent for this action; try again in ${waitSeconds / 3600 + 1}h")
 
@@ -251,10 +262,18 @@ class PrivacyWallet(
     /** A private send of [amount] [denom] to [to]; the fee comes out of ERTH notes. */
     fun send(to: ShieldedAddress, denom: String, amount: Long, memo: ByteArray = ByteArray(0)): TxResult {
         requireTransferable(denom)
-        return run { fee ->
-            val b = bundle(listOf(NoteOut.to(to, denom, amount, memo)), mapOf(FEE to fee))
-            Assembled(listOf(b)) { bs, _, _ -> MsgSend.newBuilder().setBundle(bs[0]).setFee(fee).build() }
-        }
+        return run(assemble = sendAssembly(to, denom, amount, memo))
+    }
+
+    /** What [send] would charge (simulated with placeholder nullifiers, nothing proven): for a confirm sheet. */
+    fun quoteSend(to: ShieldedAddress, denom: String, amount: Long, memo: ByteArray = ByteArray(0)): PrivateTxEngine.Quote {
+        requireTransferable(denom)
+        return quote(sendAssembly(to, denom, amount, memo))
+    }
+
+    private fun sendAssembly(to: ShieldedAddress, denom: String, amount: Long, memo: ByteArray): (Long) -> Assembled = { fee ->
+        val b = bundle(listOf(NoteOut.to(to, denom, amount, memo)), mapOf(FEE to fee))
+        Assembled(listOf(b)) { bs, _, _ -> MsgSend.newBuilder().setBundle(bs[0]).setFee(fee).build() }
     }
 
     /**
@@ -662,8 +681,10 @@ class PrivacyWallet(
         require(notes.all { it.denom == denom }) { "one validator per stake vote" }
         val validator = parseDerth(denom)
         val snap = reads.snapshot(proposalId)
-        require(notes.all { it.position < snap.treeSize }) { "this stake arrived after the proposal's snapshot and cannot vote on it" }
         val tree = store.stakeTree
+        // Audit 3: a snapshot past the local tree (stake landed since the last sync) cannot be checked here.
+        if (snap.treeSize < 0 || snap.treeSize > tree.size) throw SyncFirst("the proposal's stake snapshot is ahead of this wallet; sync first")
+        require(notes.all { it.position < snap.treeSize }) { "this stake arrived after the proposal's snapshot and cannot vote on it" }
         check(tree.rootAt(snap.treeSize) == snap.root) { "the local stake tree disagrees with the proposal's snapshot root" }
         val weight = Amounts.exactSum(notes) { it.amount }
         val stake = stakePlan(denom, notes, emptyList(), weight, mint = stakeMint(), anchor = snap.root,
@@ -906,6 +927,21 @@ class PrivacyWallet(
         if (to == null || to.ownerPk == keys.ownerPk) mint(denom) else NoteOut.blindTo(to, denom)
 
     companion object {
+        /**
+         * The fee the confirm sheet showed, for the private run on this
+         * thread (TxController sets it around the run): a fee above it throws
+         * PrivateTxEngine.FeeAboveQuote and the sheet asks again (audit 3).
+         * Unset (automation, later stake-vote casts): only the cap applies.
+         */
+        val shownFee = ThreadLocal<Long?>()
+
+        /** Runs [block] with [fee] as the shown fee on this thread. */
+        fun <T> withShownFee(fee: Long, block: () -> T): T {
+            val before = shownFee.get()
+            shownFee.set(fee)
+            try { return block() } finally { shownFee.set(before) }
+        }
+
         const val FEE = "uerth"
         const val DERTH_PREFIX = "derth/"
         const val UNBOND_PREFIX = "unbond/"

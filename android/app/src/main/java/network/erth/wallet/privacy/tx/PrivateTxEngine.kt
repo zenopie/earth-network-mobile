@@ -55,6 +55,8 @@ interface PrivateChain {
     fun minFee(): Long
     /** x/shielded params.max_actions_per_bundle. */
     fun maxActionsPerBundle(): Int
+    /** The chain's latest block height: a private tx's timeout_height is set from it. */
+    fun tipHeight(): Long
 }
 
 /**
@@ -104,20 +106,49 @@ class PrivateTxEngine(
     private val chainId: String,
     private val chain: PrivateChain,
     private val prover: Prover,
+    /** The absolute cap on any private fee, in uerth (audit 3). */
+    private val maxFee: Long = MAX_PRIVATE_FEE,
 ) {
     data class Quote(val gasLimit: Long, val fee: Long)
 
-    /** Lays out, prices and simulates without proving: what the confirm sheet shows. */
-    fun quote(assemble: (fee: Long) -> Assembled, memo: String = ""): Quote = price(assemble, memo).first
+    /** The fee the chain asks is more than the sheet showed: ask the user again at [fee]. */
+    class FeeAboveQuote(val fee: Long, val shown: Long) :
+        IllegalStateException("the fee is now ${fee}uerth, more than the ${shown}uerth shown; confirm again")
+
+    /** The fee the node's pricing asks is past the wallet's cap: nothing is proven or sent. */
+    class FeeAboveCap(val fee: Long, val cap: Long) :
+        IllegalStateException("the node asks a ${fee}uerth fee, above this wallet's ${cap}uerth cap for this transaction")
 
     /**
-     * Prices, proves and broadcasts. The tx's [memo], timeout_height (none)
-     * and the gas limit the pricing settled on are fixed first: the sighash
-     * binds them, so every proof is made over the tx exactly as broadcast.
+     * Lays out, prices and simulates without proving: what a confirm sheet
+     * may show. Simulated with random placeholder nullifiers (audit 3): the
+     * node learns nothing about which notes would be spent before the user
+     * confirms (gas is the tx's shape, the same either way).
      */
-    fun run(assemble: (fee: Long) -> Assembled, memo: String = "", accepted: (hash: String, Assembled) -> Unit = { _, _ -> }): Pair<TxResult, Assembled> {
-        val (q, a) = price(assemble, memo)
-        val tx = PrivateMsgs.TxFields(memo = memo, timeoutHeight = 0, gasLimit = q.gasLimit)
+    fun quote(assemble: (fee: Long) -> Assembled, memo: String = ""): Quote =
+        price(assemble, memo, timeoutHeight(), placeholders = true).first
+
+    private fun timeoutHeight(): Long = Math.addExact(chain.tipHeight(), TIMEOUT_BLOCKS)
+
+    /**
+     * Prices, proves and broadcasts. The tx's [memo], timeout_height (the
+     * chain's tip + [TIMEOUT_BLOCKS]) and the gas limit the pricing settled
+     * on are fixed first: the sighash binds them, so every proof is made over
+     * the tx exactly as broadcast. The fee is capped ([feeCap]) and, with
+     * [shownFee], may not exceed what the confirm sheet showed. [accepted]
+     * gets the timeout height: spent notes stay pending until the chain is
+     * past it.
+     */
+    fun run(
+        assemble: (fee: Long) -> Assembled,
+        memo: String = "",
+        shownFee: Long? = null,
+        accepted: (hash: String, Assembled, timeoutHeight: Long) -> Unit = { _, _, _ -> },
+    ): Pair<TxResult, Assembled> {
+        val timeout = timeoutHeight()
+        val (q, a) = price(assemble, memo, timeout, placeholders = false)
+        if (shownFee != null && q.fee > shownFee) throw FeeAboveQuote(q.fee, shownFee)
+        val tx = PrivateMsgs.TxFields(memo = memo, timeoutHeight = timeout, gasLimit = q.gasLimit)
         val sighash = PrivateMsgs.sighash(draft(a), chainId, tx)
         val bundles = a.bundles.map { it.prove(sighash) { w -> proofSized(prover.proveAction(w)) } }
         bundles.forEachIndexed { i, b -> check(PrivateMsgs.checkBalance(b, sighash)) { "bundle $i does not balance" } }
@@ -134,7 +165,7 @@ class PrivateTxEngine(
         check(PrivateMsgs.sighash(msg, chainId, tx) == sighash)
         check(PrivateMsgs.totalFee(msg) == q.fee) { "the msg must pay exactly the quoted fee" }
         checkShape(msg)
-        return chain.broadcast(UnsignedTx.build(msg, tx)) { hash -> accepted(hash, a) } to a
+        return chain.broadcast(UnsignedTx.build(msg, tx)) { hash -> accepted(hash, a, timeout) } to a
     }
 
     /**
@@ -163,21 +194,27 @@ class PrivateTxEngine(
         return p
     }
 
-    private fun price(assemble: (fee: Long) -> Assembled, memo: String): Pair<Quote, Assembled> {
+    private fun price(assemble: (fee: Long) -> Assembled, memo: String, timeout: Long, placeholders: Boolean): Pair<Quote, Assembled> {
         val minFee = chain.minFee()
         val price = chain.gasPrice()
         var fee = maxOf(minFee, feeFor(price, GUESS_GAS))
         var a = assemble(fee)
         var first = true
         repeat(MAX_RELAYS) {
-            val gas = chain.simulate(UnsignedTx.build(draft(a), 0, memo))
+            val d = draft(a, placeholders)
+            val raw = UnsignedTx.build(d, 0, memo, timeout)
+            val gas = chain.simulate(raw)
             val limit = gas + maxOf(gas / 10, MIN_HEADROOM)
             val need = maxOf(minFee, feeFor(price, limit))
             // The guess is re-laid at the fee its layout needs; after that a
             // layout whose gas the fee covers is final (a fee needing one more
             // note, or one fewer leaving change, changes the action count, and
             // so the gas, so the fee may only rise from here).
-            if (need == fee || (need < fee && !first)) return Quote(limit, fee) to a
+            if (need == fee || (need < fee && !first)) {
+                val cap = feeCap(d, a, raw.size, minFee, price)
+                if (fee > cap) throw FeeAboveCap(fee, cap)
+                return Quote(limit, fee) to a
+            }
             first = false
             fee = need
             a = assemble(fee)
@@ -185,16 +222,42 @@ class PrivateTxEngine(
         throw IllegalStateException("the fee did not settle")
     }
 
-    private fun draft(a: Assembled): MessageLite =
-        a.build(a.bundles.map { it.proto() }, a.stake?.proto(PLACEHOLDER), a.membership?.let { placeholderMembership(it) })
+    /**
+     * The most this tx may pay (audit 3): twice the wallet's own estimate
+     * from the tx's shape at x/shielded's (and the proof modules') default
+     * gas, priced like the node's quote, and never more than [maxFee]. A node
+     * whose simulation or prices ask more than that is refused before
+     * anything is proven; so is the automation, which has no sheet.
+     */
+    fun feeCap(msg: MessageLite, a: Assembled, txBytes: Int, minFee: Long, price: BigDecimal): Long {
+        val estimate = maxOf(minFee, feeFor(price, estimateGas(msg, a, txBytes)))
+        return minOf(maxFee, if (estimate > Long.MAX_VALUE / 2) Long.MAX_VALUE else 2 * estimate)
+    }
+
+    private fun draft(a: Assembled, placeholders: Boolean = false): MessageLite {
+        val bundles = a.bundles.map { it.proto() }.map { if (placeholders) randomNullifiers(it) else it }
+        val stake = a.stake?.proto(PLACEHOLDER)?.let { if (placeholders) randomNullifiers(it) else it }
+        return a.build(bundles, stake, a.membership?.let { placeholderMembership(it, placeholders) })
+    }
+
+    private fun randomField(): ByteString = ByteString.copyFrom(network.erth.wallet.privacy.note.NotePlaintext.randomField().toBytes())
+
+    private fun randomNullifiers(b: Bundle): Bundle = b.toBuilder().apply {
+        for (i in 0 until actionsCount) setActions(i, getActions(i).toBuilder().setNullifier(randomField()))
+    }.build()
+
+    /** A stake proof's nullifiers, each non-zero one replaced (a zero marks an unused slot and stays). */
+    private fun randomNullifiers(p: StakeProof): StakeProof = p.toBuilder().apply {
+        for (i in 0 until nullifiersCount) if (!Fr.fromBytes(getNullifiers(i).toByteArray()).isZero) setNullifiers(i, randomField())
+    }.build()
 
     /** The membership's real root and nullifier (the chain checks both before any proof), a placeholder proof. */
-    private fun placeholderMembership(spec: MembershipWitnessSpec): Membership {
+    private fun placeholderMembership(spec: MembershipWitnessSpec, placeholders: Boolean): Membership {
         val w = spec.witness(Fr.ZERO)
         return Membership.newBuilder()
             .setProof(ByteString.copyFrom(PLACEHOLDER))
             .setRoot(ByteString.copyFrom(w.root.toBytes()))
-            .setNullifier(ByteString.copyFrom(w.nullifier.toBytes()))
+            .setNullifier(if (placeholders) randomField() else ByteString.copyFrom(w.nullifier.toBytes()))
             .build()
     }
 
@@ -209,6 +272,36 @@ class PrivateTxEngine(
         const val MIN_HEADROOM = 20_000L
 
         private const val MAX_RELAYS = 4
+
+        /** Blocks past the chain's tip a private tx stays valid for (its timeout_height; audit 3). */
+        const val TIMEOUT_BLOCKS = 50L
+
+        /** The absolute cap on a private fee: 2 ERTH (audit 3). */
+        const val MAX_PRIVATE_FEE = 2_000_000L
+
+        // The chain's default gas schedule (x/shielded params, the proof
+        // modules' verification charges), for the wallet's own estimate.
+        const val BASE_GAS = 100_000L
+        const val TX_BYTE_GAS = 10L
+        const val BUNDLE_GAS = 100_000L
+        /** One action: its proof (2,000,000) and two note writes (150,000 each). */
+        const val ACTION_GAS = 2_300_000L
+        /** A stake proof: its proof and four note writes. */
+        const val STAKE_GAS = 2_600_000L
+        /** A membership proof and its nullifier write. */
+        const val MEMBERSHIP_GAS = 2_150_000L
+        /** MsgRegister: the passport proof (3,000,000), the DSC chain (300,000) and two minted notes. */
+        const val REGISTER_GAS = 3_600_000L
+
+        /** The wallet's estimate of [msg]'s gas from its shape alone. */
+        fun estimateGas(msg: MessageLite, a: Assembled, txBytes: Int): Long {
+            var g = BASE_GAS + TX_BYTE_GAS * txBytes
+            for (b in PrivateMsgs.bundles(msg)) g += BUNDLE_GAS + ACTION_GAS * b.actionsCount
+            if (PrivateMsgs.stake(msg) != null) g += STAKE_GAS
+            if (a.membership != null) g += MEMBERSHIP_GAS
+            if (msg is network.erth.earth.proto.personhood.MsgRegister) g += REGISTER_GAS
+            return g
+        }
 
         fun feeFor(price: BigDecimal, gas: Long): Long =
             price.multiply(BigDecimal(gas)).setScale(0, RoundingMode.CEILING).toLong()

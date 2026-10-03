@@ -26,11 +26,57 @@ object PrivacyProver {
     const val PROOF_BYTES = 14_656
 
     private enum class Kind(val file: String, val srsSize: Int, val publicInputs: Int) {
-        // Twice the next power of two above the gate count (5,645, 8,120
-        // and 9,647), with the same headroom PassportProver gives lean_poa.
-        MEMBERSHIP("membership", 1 shl 14, 7),
-        ACTION("action", 1 shl 14, 6),
-        STAKE("stake", 1 shl 15, 11),
+        // Every kind asks the same SRS: bb honours only a process's first SRS
+        // initialization, so whichever proves first sizes it for all three
+        // (twice the next power of two above the largest gate count, stake's
+        // 9,647; membership 5,645 and action 8,120 fit under it).
+        MEMBERSHIP("membership", SRS_SIZE, 7),
+        ACTION("action", SRS_SIZE, 6),
+        STAKE("stake", SRS_SIZE, 11),
+    }
+
+    /** The privacy circuits' SRS size hint (2^15: 32,769 points). */
+    const val SRS_SIZE = 1 shl 15
+
+    /**
+     * The bundled SRS (audit 3): the first 32,769 G1 points of Aztec's
+     * bn254 transcript (crs.aztec.network/g1.dat, bytes 0..2,097,215),
+     * enough for every privacy circuit. Proving a private tx never fetches
+     * the SRS, so nothing outside the chain sees when one is made. The
+     * passport circuits (2^18 and up, 16 MB and more) still download theirs
+     * once, at registration, which is public anyway.
+     */
+    const val SRS_ASSET = "srs/bn254_g1_32769.dat"
+    const val SRS_POINTS = 32_769
+    const val SRS_SHA256 = "d769ac6c98f8fab858a7e9967f2b7f181d8ad9fdcdf55438c915696febf0e99c"
+
+    /**
+     * The bundled SRS as a file noir_rs reads (a `.dat` path: raw G1
+     * points), copied out of the APK and checked once; null when [size]
+     * needs more points than it holds (noir_rs would abort on a short file),
+     * which falls back to the download.
+     */
+    @Synchronized
+    fun srsPath(context: Context, size: Int): String? {
+        var subgroup = 1L
+        while (subgroup < size) subgroup = subgroup shl 1
+        if (subgroup + 1 > SRS_POINTS) return null
+        val f = java.io.File(context.noBackupFilesDir, SRS_ASSET)
+        if (f.length() == SRS_POINTS * 64L) return f.absolutePath
+        f.parentFile?.mkdirs()
+        val tmp = java.io.File(f.parentFile, f.name + ".tmp")
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        context.assets.open(SRS_ASSET).use { input ->
+            java.io.FileOutputStream(tmp).use { out ->
+                val buf = ByteArray(64 * 1024)
+                while (true) { val n = input.read(buf); if (n < 0) break; md.update(buf, 0, n); out.write(buf, 0, n) }
+                out.fd.sync()
+            }
+        }
+        val hex = md.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        check(hex == SRS_SHA256 && tmp.length() == SRS_POINTS * 64L) { "the bundled SRS is corrupt" }
+        check(tmp.renameTo(f)) { "could not install the bundled SRS" }
+        return f.absolutePath
     }
 
     private class Loaded(val circuit: Circuit, val vk: String)
@@ -46,7 +92,7 @@ object PrivacyProver {
     private fun load(context: Context, k: Kind): Loaded = loaded.getOrPut(k) {
         val json = context.assets.open("circuits/${k.file}.json").bufferedReader().use { it.readText() }
         val c = NoirProver.loadCircuit(json, k.srsSize)
-        c.setupSrs()
+        c.setupSrs(srsPath(context, k.srsSize))
         Loaded(c, c.getVerificationKey())
     }
 

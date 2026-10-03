@@ -30,7 +30,14 @@ import java.security.SecureRandom
  * undelegation was deferred), the claim fails before anything is spent and
  * waits [RETRY_S].
  *
- * [decide] is the pure part, unit-tested; [loop] runs it.
+ * Actions are never taken in one burst (audit 3): one at a time, chosen at
+ * random among those due, with a random pause and a full sync between each
+ * and a fresh decision after it. That also orders actions that share a
+ * single ERTH note: the second sees the first's change once it landed, and
+ * waits for a later pass while it has not (no spendable fee note, no action).
+ * Logs name the kind of action only, never a denom.
+ *
+ * [decide] is the pure part, unit-tested; [runPass] runs one pass; [loop] runs passes.
  */
 object PrivacyAutomation {
     private const val TAG = "PrivacyAutomation"
@@ -85,8 +92,13 @@ object PrivacyAutomation {
      * Null while e has not ended.
      */
     fun maturesBy(e: Long, current: Long, currentStart: Long, epochSeconds: Long, unbondingSeconds: Long): Long? {
-        if (e >= current) return null
-        return currentStart - (current - 1 - e) * epochSeconds + unbondingSeconds + MATURITY_MARGIN_S
+        if (e >= current || e < 0) return null
+        // Chain-supplied numbers: any overflow means no answer, never a wrapped one (audit 3).
+        return try {
+            Math.addExact(Math.addExact(Math.subtractExact(currentStart, Math.multiplyExact(current - 1 - e, epochSeconds)), unbondingSeconds), MATURITY_MARGIN_S)
+        } catch (x: ArithmeticException) {
+            null
+        }
     }
 
     /** The unbond denoms to claim now: matured by [maturesBy], and not waiting out a refused claim. */
@@ -100,7 +112,7 @@ object PrivacyAutomation {
         retryAt: Map<String, Long>,
     ): List<String> = notes.filter { n ->
         if (!n.spendable || !n.denom.startsWith(PrivacyWallet.UNBOND_PREFIX)) return@filter false
-        val (_, e) = PrivacyWallet.parseUnbond(n.denom)
+        val e = runCatching { PrivacyWallet.parseUnbond(n.denom).second }.getOrNull() ?: return@filter false
         val by = maturesBy(e, current, currentStart, epochSeconds, unbondingSeconds) ?: return@filter false
         now >= by && now >= (retryAt[n.denom] ?: 0L)
     }.map { it.denom }.distinct()
@@ -117,49 +129,110 @@ object PrivacyAutomation {
         return offset
     }
 
-    /** One pass. Blocking; IO thread. */
-    fun runOnce(context: Context) {
+    /** The random pause between two automated actions in one pass. */
+    const val ACTION_PAUSE_MIN_MS = 30_000L
+    const val ACTION_PAUSE_MAX_MS = 180_000L
+
+    /** The kind of [a], for logs: never its denom. */
+    fun kind(a: Action): String = a::class.java.simpleName
+
+    /**
+     * One pass: a [sync], then while anything is due, one action
+     * chosen at random among those due ([inputs] is read afresh each time),
+     * and before the next a random pause and a full sync. Each action is
+     * tried at most once a pass. Returns the actions taken, in order.
+     */
+    suspend fun runPass(
+        sync: () -> Unit,
+        inputs: () -> Inputs,
+        act: (Action) -> Unit,
+        pause: suspend (Long) -> Unit,
+        onFailure: (Action, Throwable) -> Unit = { _, _ -> },
+        random: java.util.Random = rng,
+    ): List<Action> {
+        sync()
+        val attempted = ArrayList<Action>()
+        var acted = false
+        // Whether more than the last action was due when it was chosen.
+        var othersDue = false
+        while (true) {
+            val due = decide(inputs()).filterNot { it in attempted }
+            if (acted) {
+                // Never two actions without a pause and a sync between; a
+                // pause too when another was due (it may be waiting for the
+                // last one's change to land).
+                if (due.isEmpty() && !othersDue) return attempted
+                pause(ACTION_PAUSE_MIN_MS + (random.nextDouble() * (ACTION_PAUSE_MAX_MS - ACTION_PAUSE_MIN_MS)).toLong())
+                sync()
+                acted = false
+                continue
+            }
+            if (due.isEmpty()) return attempted
+            val a = due[random.nextInt(due.size)]
+            attempted.add(a)
+            acted = true
+            othersDue = due.size > 1
+            try {
+                act(a)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onFailure(a, e)
+            }
+        }
+    }
+
+    /** One pass on the selected wallet. Suspends through its pauses; blocking calls, so an IO dispatcher. */
+    suspend fun runOnce(context: Context) {
         val w = PrivacySession.wallet(context)
-        w.sync()
-        val now = System.currentTimeMillis() / 1000
         // Global reads only: the same for every wallet.
         val epoch = PrivacyQueries.epoch()
         val timing = PrivacyQueries.stakingTiming()
-        val matured = matured(w.stakeNotes, now, epoch.number, epoch.startTime, timing.epochSeconds, timing.unbondingSeconds,
-            w.store.state.unbondRetryAt)
-        val inputs = Inputs(
-            now = now,
-            identityLive = w.identityStatus() == WalletSync.IdentityStatus.LIVE,
-            claimOpensAt = runCatching { w.claimOpensAt() }.getOrNull(),
-            claimedToday = w.claimedToday(),
-            claimOffset = claimOffset(now),
-            caretakerDue = runCatching { w.caretakerDue() }.getOrDefault(false),
-            referrerDue = runCatching { w.referrerDue() }.getOrDefault(false),
-            hasFeeErth = (w.poolBalances()["uerth"] ?: 0L) > 0,
-            maturedUnbonds = matured,
-        )
-        for (a in decide(inputs)) {
-            runCatching {
+        fun inputs(): Inputs {
+            val now = System.currentTimeMillis() / 1000
+            return Inputs(
+                now = now,
+                identityLive = w.identityStatus() == WalletSync.IdentityStatus.LIVE,
+                claimOpensAt = runCatching { w.claimOpensAt() }.getOrNull(),
+                claimedToday = w.claimedToday(),
+                claimOffset = claimOffset(now),
+                caretakerDue = runCatching { w.caretakerDue() }.getOrDefault(false),
+                referrerDue = runCatching { w.referrerDue() }.getOrDefault(false),
+                hasFeeErth = (w.poolBalances()["uerth"] ?: 0L) > 0,
+                maturedUnbonds = matured(w.stakeNotes, now, epoch.number, epoch.startTime, timing.epochSeconds, timing.unbondingSeconds,
+                    w.store.state.unbondRetryAt),
+            )
+        }
+        runPass(
+            { w.sync() }, ::inputs,
+            act = { a ->
                 when (a) {
                     is Action.ClaimAnml -> w.claimAnml(a.day)
                     Action.RefreshCaretaker -> w.setCaretaker(w.store.state.caretakerSplit)
                     Action.RefreshReferrer -> w.bindReferrer(w.store.state.referrerAddress)
                     is Action.ClaimUnbonding -> w.claimUnbonding(a.denom)
                 }
-            }.onFailure {
-                Log.w(TAG, "automation $a failed", it)
+            },
+            pause = { delay(it) },
+            onFailure = { a, e ->
+                Log.w(TAG, "automation ${kind(a)} failed: ${e.javaClass.simpleName}")
                 if (a is Action.ClaimUnbonding) {
-                    w.store.state.unbondRetryAt[a.denom] = now + RETRY_S
-                    w.store.save()
+                    synchronized(w) { w.store.state.unbondRetryAt[a.denom] = System.currentTimeMillis() / 1000 + RETRY_S; runCatching { w.store.save() } }
                 }
-            }
-        }
+            },
+        )
     }
 
     /** Runs [runOnce] every ten minutes until cancelled (scope it to the unlocked session). */
     suspend fun loop(context: Context) {
         while (coroutineContext.isActive) {
-            runCatching { runOnce(context) }.onFailure { Log.w(TAG, "automation pass failed", it) }
+            try {
+                runOnce(context)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "automation pass failed: ${e.javaClass.simpleName}")
+            }
             delay(INTERVAL_MS)
         }
     }

@@ -59,7 +59,8 @@ data class NotesPage(val rows: List<NoteRow>, val nextPos: Long, val complete: B
 
 data class HeightPage<T>(val blocks: List<Pair<Long, List<T>>>, val nextHeight: Long, val complete: Boolean, val syncedHeight: Long)
 
-data class IdentityRow(val index: Long, val height: Long, val leaf: Fr, val zeroedHeight: Long?)
+/** An identity leaf; [time] is its block's time (unix seconds) when the indexer serves it (a fifth column), null otherwise. */
+data class IdentityRow(val index: Long, val height: Long, val leaf: Fr, val zeroedHeight: Long?, val time: Long? = null)
 
 data class IdentityPage(val rows: List<IdentityRow>, val nextIndex: Long, val size: Long, val syncedHeight: Long)
 
@@ -258,7 +259,8 @@ class HttpPrivacyIndexer(private val host: String, private val chainId: String =
             val a = j.getJSONArray("leaves")
             val rows = (0 until a.length()).map { i ->
                 val r = a.getJSONArray(i)
-                IdentityRow(r.getLong(0), r.getLong(1), Fr.fromHex(r.getString(2)), if (r.isNull(3)) null else r.getLong(3))
+                IdentityRow(r.getLong(0), r.getLong(1), Fr.fromHex(r.getString(2)), if (r.isNull(3)) null else r.getLong(3),
+                    if (r.length() > 4 && !r.isNull(4)) r.getLong(4) else null)
             }
             return IdentityPage(rows, j.getLong("next_index"), j.getLong("size"), j.getLong("synced_height"))
         }

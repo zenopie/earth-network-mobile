@@ -57,11 +57,17 @@ object PrivacyQueries {
         get("/cosmos/bank/v1beta1/supply/by_denom?denom=dexlp/$poolId").optJSONObject("amount")?.optString("amount")
             ?.toBigIntegerOrNull() ?: java.math.BigInteger.ZERO
 
-    fun shieldedMinFee(): Long = get("/earth/shielded/v1/params").getJSONObject("params").optString("min_fee", "1000").toLong()
+    fun shieldedMinFee(): Long = get("/earth/shielded/v1/params").getJSONObject("params").optString("min_fee", "1000").let {
+        network.erth.wallet.privacy.Amounts.parseU64(it) ?: throw IOException("x/shielded min_fee $it is not a fee")
+    }
 
-    /** x/shielded params.max_actions_per_bundle (default 16). */
+    /** x/shielded params.max_actions_per_bundle (default 16), bounded to [2, 64] whatever the node says. */
     fun maxActionsPerBundle(): Int =
-        get("/earth/shielded/v1/params").getJSONObject("params").optString("max_actions_per_bundle", "16").toIntOrNull()?.takeIf { it >= 2 } ?: 16
+        get("/earth/shielded/v1/params").getJSONObject("params").optString("max_actions_per_bundle", "16").toIntOrNull()
+            ?.takeIf { it >= 2 }?.coerceAtMost(MAX_ACTIONS_BOUND) ?: 16
+
+    /** The most actions the wallet lays out in one bundle, whatever the node's param says. */
+    const val MAX_ACTIONS_BOUND = 64
 
     data class PersonhoodParams(val caretakerVoteSeconds: Long, val identityRootWindowSeconds: Long, val registrationValiditySeconds: Long)
 
@@ -134,7 +140,17 @@ object PrivacyQueries {
     fun stakingTiming(): StakingTiming {
         val epochSeconds = get("/earth/shieldedstaking/v1/params").getJSONObject("params").long("epoch_seconds").takeIf { it > 0 } ?: 86_400
         val unbonding = get("/cosmos/staking/v1beta1/params").getJSONObject("params").optString("unbonding_time", "1814400s")
-        return StakingTiming(epochSeconds, unbonding.removeSuffix("s").toBigDecimal().toLong())
+        return StakingTiming(minOf(epochSeconds, MAX_DURATION_S), durationSeconds(unbonding) ?: throw IOException("unbonding_time $unbonding is not a duration"))
+    }
+
+    /** The longest chain duration the wallet takes (100 years): longer is refused or clamped, never wrapped. */
+    const val MAX_DURATION_S = 100L * 365 * 86_400
+
+    /** A protobuf JSON duration ("1814400s", "0.5s") in whole seconds, null unless finite, non-negative and at most [MAX_DURATION_S]. */
+    fun durationSeconds(d: String): Long? {
+        val v = d.removeSuffix("s").toBigDecimalOrNull() ?: return null
+        if (v.signum() < 0 || v > java.math.BigDecimal.valueOf(MAX_DURATION_S)) return null
+        return v.toLong()
     }
 
     data class Position(
@@ -199,6 +215,8 @@ object RestPrivateChain : PrivateChain {
 
     override fun maxActionsPerBundle(): Int = PrivacyQueries.maxActionsPerBundle()
 
+    override fun tipHeight(): Long = LcdChainRoots.latestHeight() ?: throw IOException("the node did not say its latest height")
+
     /** RFC 3339 block time to unix seconds (java.time needs API 26; minSdk is 24). */
     internal fun parseTime(ts: String): Long = runCatching {
         val f = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
@@ -261,6 +279,9 @@ object LcdChainRoots : network.erth.wallet.privacy.sync.ChainRoots {
         return json(code, body, path).put("_latest", true)
     }
 
+    private fun size(j: JSONObject): Long =
+        network.erth.wallet.privacy.Amounts.parseU64(j.optString("size", "0").ifEmpty { "0" }) ?: throw IOException("tree size ${j.optString("size").take(40)}")
+
     private fun spent(path: String): Boolean? = runCatching {
         val (code, body) = EarthRest.get(path)
         if (code !in 200..299) null else JSONObject(body).optBoolean("spent")
@@ -303,20 +324,21 @@ object LcdChainRoots : network.erth.wallet.privacy.sync.ChainRoots {
         val j = json(code, body, path)
         val rec = j.optJSONObject("record") ?: return null
         if (b64Field(rec.optString("root")) != root) return null
-        return network.erth.wallet.privacy.sync.NoteRootRecord(j.optBoolean("valid"), rec.optString("tree_size", "0").toLong())
+        val size = network.erth.wallet.privacy.Amounts.parseU64(rec.optString("tree_size", "0")) ?: throw IOException("$path: tree_size")
+        return network.erth.wallet.privacy.sync.NoteRootRecord(j.optBoolean("valid"), size)
     }
 
     override fun identityTree(height: Long?): network.erth.wallet.privacy.sync.TreeState {
         val j = at("/earth/personhood/v1/identity_tree", height)
         return network.erth.wallet.privacy.sync.TreeState(
-            j.optString("size", "0").ifEmpty { "0" }.toLong(), b64Field(j.optString("latest_root")), !j.has("_latest"),
+            size(j), b64Field(j.optString("latest_root")), !j.has("_latest"),
         )
     }
 
     override fun stakeTree(height: Long?): network.erth.wallet.privacy.sync.TreeState {
         val j = at("/earth/shieldedstaking/v1/stake_tree", height)
         return network.erth.wallet.privacy.sync.TreeState(
-            j.optString("size", "0").ifEmpty { "0" }.toLong(), b64Field(j.optString("root")), !j.has("_latest"),
+            size(j), b64Field(j.optString("root")), !j.has("_latest"),
         )
     }
 }

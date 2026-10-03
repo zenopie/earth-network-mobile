@@ -137,7 +137,8 @@ class TxController : ViewModel() {
             outcome = try {
                 val hash = withContext(Dispatchers.IO) {
                     if (privateRun != null) {
-                        privateRun(context)
+                        // The fee the sheet showed bounds what the private run may pay (audit 3).
+                        network.erth.wallet.privacy.PrivacyWallet.withShownFee(details.feeUerth) { privateRun(context) }
                     } else {
                         SecureWalletManager.executeWithMnemonic(context) { mnemonic ->
                             val key = EarthWallet.deriveKey(mnemonic)
@@ -153,6 +154,14 @@ class TxController : ViewModel() {
                 // while the first may yet land.
                 onDone?.invoke()
                 TxOutcome.Pending(details.action, e.txHash)
+            } catch (e: network.erth.wallet.privacy.tx.PrivateTxEngine.FeeAboveQuote) {
+                // Nothing was proven or sent: show the sheet again at the chain's fee.
+                if (privateRun != null) {
+                    private = privateRun
+                    feeUerth = e.fee
+                    pending = details.copy(feeUerth = e.fee)
+                }
+                null
             } catch (e: Exception) {
                 TxOutcome.Failure(details.action, e)
             } finally {
@@ -191,11 +200,13 @@ class TxController : ViewModel() {
         const val DEFAULT_GAS_LIMIT = 400_000L
 
         /**
-         * A private tx's gas for the confirm sheet's estimate: two proofs at
-         * x/shielded's default 2M each plus note writes and size. The chain's
-         * exact figure comes from simulating at confirm time.
+         * A private tx's gas for the confirm sheet: what the sheet shows is
+         * the most the tx may then pay without asking again (audit 3: a
+         * higher simulated fee shows the sheet again at it). Two actions
+         * (4.7M at x/shielded's defaults), a stake or membership proof
+         * (2.6M), the tx's bytes and the 10% headroom fit under it.
          */
-        const val PRIVATE_GAS_ESTIMATE = 5_000_000L
+        const val PRIVATE_GAS_ESTIMATE = 10_000_000L
 
         /**
          * The fee for [DEFAULT_GAS_LIMIT]. Derived rather than flat: a screen

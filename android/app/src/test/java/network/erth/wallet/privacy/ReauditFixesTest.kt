@@ -11,6 +11,7 @@ import network.erth.wallet.privacy.sync.PrivacyStore
 import network.erth.wallet.privacy.sync.WalletSync
 import network.erth.wallet.privacy.zk.Fr
 import network.erth.wallet.privacy.zk.Privacy
+import network.erth.wallet.privacy.tx.PrivateTxEngine
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -222,7 +223,11 @@ class ReauditFixesTest {
         a.sync()
         assertTrue(a.pendingRegistration!!.failure!!.startsWith(PrivacyWallet.TX_FAILED))
         assertEquals(0L, bal(a, "uerth"))
+        // Audit 3: released only once the chain is past the tx's timeout_height, not by the clock.
         chain.now += WalletSync.PENDING_TIMEOUT_S + 1
+        a.sync()
+        assertEquals(0L, bal(a, "uerth"))
+        repeat(PrivateTxEngine.TIMEOUT_BLOCKS.toInt() + 1) { chain.emptyBlock() }
         a.sync()
         assertEquals(100_000L, bal(a, "uerth"))
         // A new registration replaces it.
@@ -308,6 +313,7 @@ class ReauditFixesTest {
         skewed.sync()
         skewed.register(prep, ByteArray(14_656), listOf("261001", prep.binding.toBigInteger().toString(), "9", Fr.of(77).toBigInteger().toString()), "lean_poa", ByteArray(10))
         chain.blockTimesPruned = true
+        chain.identityRowTimes = false
         val dir = java.nio.file.Files.createTempDirectory("k1").toFile()
         val keys = PrivacyKeys.fromMnemonic(alice)
         val budget = 30_000L

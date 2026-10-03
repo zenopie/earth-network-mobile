@@ -29,6 +29,11 @@ import network.erth.wallet.privacy.sync.StakeVoteRun
  * once. The plan is persisted (PrivacyState.stakeVoteRun) so a run the
  * process lost is picked up by [resume] on the next unlock; positions
  * already voted are not voted twice, notes already voted are spent.
+ *
+ * The run lives no longer than the unlocked session (audit 3): [suspend]
+ * (on lock, session end and wallet switch: PrivacySession.clear) stops it
+ * and drops the wallet it held, keeping the persisted run, which [resume]
+ * picks up only from that wallet's own store on the next unlock.
  */
 class StakeVoteController(
     private val scope: CoroutineScope,
@@ -55,74 +60,106 @@ class StakeVoteController(
 
     @Volatile private var job: Job? = null
 
+    /** The running job's flag: set by [suspend], so the job keeps the persisted run for [resume]. */
+    @Volatile private var suspended = java.util.concurrent.atomic.AtomicBoolean(false)
+
     /**
      * Plans and starts a run on [proposalId], blocking the calling thread
      * (an IO thread: the confirm sheet's) until the first cast is broadcast;
      * returns its hash. The rest goes on in [scope].
      */
     fun startAndAwaitFirst(proposalId: Long, options: List<WeightedVoteOption>): String {
-        check(job?.isActive != true) { "a stake vote is already running" }
-        val w = wallet()
-        val run = StakeVoteRun(proposalId, options.map { it.optionValue to it.weight }, emptySet(), 0)
-        val total = w.stakeVoteItems(proposalId).size
-        require(total > 0) { "no stake from before this proposal's voting opened" }
-        synchronized(w) { w.store.state.stakeVoteRun = run.copy(total = total); w.store.save() }
         val first = CompletableDeferred<String>()
-        launch(first)
+        synchronized(this) {
+            check(job?.isActive != true) { "a stake vote is already running" }
+            val w = wallet()
+            val run = StakeVoteRun(proposalId, options.map { it.optionValue to it.weight }, emptySet(), 0)
+            val total = w.stakeVoteItems(proposalId).size
+            require(total > 0) { "no stake from before this proposal's voting opened" }
+            synchronized(w) {
+                check(w.store.state.stakeVoteRun == null) { "a stake vote is already running" }
+                w.store.state.stakeVoteRun = run.copy(total = total); w.store.save()
+            }
+            // The first cast is what the confirm sheet showed a fee for.
+            launch(first, shownFee = PrivacyWallet.shownFee.get())
+        }
         return runBlocking { first.await() }
     }
 
-    /** Picks up a persisted run the process lost (call on unlock). */
+    /** Picks up a persisted run the process lost (call on unlock): the selected wallet's own, from its store. */
+    @Synchronized
     fun resume() {
         if (job?.isActive == true) return
-        val run = runCatching { wallet().store.state.stakeVoteRun }.getOrNull() ?: return
+        val w = runCatching { wallet() }.getOrNull() ?: return
+        val run = synchronized(w) { w.store.state.stakeVoteRun } ?: run { _progress.value = null; return }
         _progress.value = Progress(run.proposalId, run.done, run.total)
         launch(null, resumed = true)
     }
 
-    /** Stops the run now (between casts, or before the next one starts). */
+    /** Stops the run now (between casts, or before the next one starts); nothing is left to resume. */
     fun cancel() {
         job?.cancel()
     }
 
-    private fun launch(first: CompletableDeferred<String>?, resumed: Boolean = false) {
+    /**
+     * Stops the run without forgetting it (lock, session end, wallet
+     * switch): the job and the wallet it held go, the persisted run stays
+     * for [resume] on the next unlock of the same wallet.
+     */
+    @Synchronized
+    fun suspend() {
+        val j = job ?: return
+        suspended.set(true)
+        j.cancel()
+        job = null
+        _progress.value = null
+    }
+
+    private fun launch(first: CompletableDeferred<String>?, resumed: Boolean = false, shownFee: Long? = null) {
+        val suspendedFlag = java.util.concurrent.atomic.AtomicBoolean(false)
+        suspended = suspendedFlag
+        // A suspended job says nothing more on screen (a blocking cast may still finish).
+        fun show(p: Progress) { if (!suspendedFlag.get()) _progress.value = p }
         job = scope.launch(Dispatchers.IO) {
             val w = wallet()
-            var run = w.store.state.stakeVoteRun ?: return@launch
+            var run = synchronized(w) { w.store.state.stakeVoteRun } ?: return@launch
             try {
                 val options = run.options.map { (o, wt) -> WeightedVoteOption.newBuilder().setOption(VoteOption.forNumber(o)).setWeight(wt).build() }
                 val items = w.stakeVoteItems(run.proposalId).filter { it !is PrivacyWallet.StakeVoteItem.Position || it.id !in run.votedPositions }.shuffled(RNG)
-                _progress.value = Progress(run.proposalId, run.done, run.total)
+                show(Progress(run.proposalId, run.done, run.total))
                 for ((i, item) in items.withIndex()) {
                     if (i > 0 || resumed) {
                         val ms = VOTE_PAUSE_MIN_MS + (RNG.nextDouble() * (VOTE_PAUSE_MAX_MS - VOTE_PAUSE_MIN_MS)).toLong()
-                        _progress.value = Progress(run.proposalId, run.done, run.total, nextAt = clock() + ms)
+                        show(Progress(run.proposalId, run.done, run.total, nextAt = clock() + ms))
                         pause(ms)
                         ensureActive()
                         w.sync()
                     }
                     ensureActive()
                     // As the last sync left it: a note voted (or pending) or a position gone is skipped.
-                    val hash = w.castStakeVote(run.proposalId, item, options) ?: continue
+                    val hash = (if (first?.isCompleted == false && shownFee != null) PrivacyWallet.withShownFee(shownFee) { w.castStakeVote(run.proposalId, item, options) }
+                        else w.castStakeVote(run.proposalId, item, options)) ?: continue
                     run = run.copy(
                         done = run.done + 1,
                         votedPositions = if (item is PrivacyWallet.StakeVoteItem.Position) run.votedPositions + item.id else run.votedPositions,
                     )
                     synchronized(w) { w.store.state.stakeVoteRun = run; w.store.save() }
-                    _progress.value = Progress(run.proposalId, run.done, run.total)
+                    show(Progress(run.proposalId, run.done, run.total))
                     first?.complete(hash)
                 }
                 first?.completeExceptionally(IllegalStateException("nothing left to vote with"))
-                _progress.value = Progress(run.proposalId, run.done, run.total, finished = true)
+                show(Progress(run.proposalId, run.done, run.total, finished = true))
             } catch (e: CancellationException) {
-                _progress.value = Progress(run.proposalId, run.done, run.total, cancelled = true)
+                show(Progress(run.proposalId, run.done, run.total, cancelled = true))
                 first?.completeExceptionally(e)
             } catch (e: Exception) {
-                _progress.value = Progress(run.proposalId, run.done, run.total, error = e.message ?: e.toString())
+                show(Progress(run.proposalId, run.done, run.total, error = e.message ?: e.toString()))
                 first?.completeExceptionally(e)
             } finally {
-                // Finished, cancelled or failed: nothing to resume.
-                synchronized(w) { if (w.store.state.stakeVoteRun?.proposalId == run.proposalId) { w.store.state.stakeVoteRun = null; w.store.save() } }
+                // Finished, cancelled or failed: nothing to resume. Suspended: kept for resume.
+                if (!suspendedFlag.get()) synchronized(w) {
+                    if (w.store.state.stakeVoteRun?.proposalId == run.proposalId) { w.store.state.stakeVoteRun = null; runCatching { w.store.save() } }
+                }
             }
         }
     }

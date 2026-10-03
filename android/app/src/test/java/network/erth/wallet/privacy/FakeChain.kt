@@ -97,7 +97,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     val stakeRoots = HashSet<Fr>()
     var height = 1L
     val minFee = 1000L
-    val price = BigDecimal("0.001")
+    var price = BigDecimal("0.001")
     var maxActions = 16
     val prover = CheckingProver()
     /** receiver -> denom -> amount unshielded. */
@@ -185,20 +185,33 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     override fun gasPrice(): BigDecimal = price
     override fun minFee(): Long = minFee
     override fun maxActionsPerBundle(): Int = maxActions
+    override fun tipHeight(): Long = height - 1 + tipAhead
 
     /** The ante charges per bundle and per action, before anything else: gas is the tx's shape. */
+    /** Every nullifier (pool, stake, membership) the node saw in a simulated tx. */
+    val simulatedNullifiers = ArrayList<Fr>()
+
     override fun simulate(tx: ByteArray): Long {
         simulated++
         val m = check(tx, simulate = true).first
+        PrivateMsgs.bundles(m).forEach { b -> b.actionsList.forEach { simulatedNullifiers.add(f(it.nullifier)) } }
+        PrivateMsgs.stake(m)?.nullifiersList?.forEach { simulatedNullifiers.add(f(it)) }
         val actions = PrivateMsgs.bundles(m).sumOf { it.actionsCount }
         return 200_000L + 100_000L * PrivateMsgs.bundles(m).size + 350_000L * actions + (if (PrivateMsgs.stake(m) != null) 400_000 else 0)
     }
+
+    /** Whether a committed tx must carry a timeout_height (the wallet always sets one). */
+    var requireTimeout = true
+    /** The last checked tx's timeout_height. */
+    var lastTimeoutHeight = 0L
 
     /** Broadcasts to refuse (after the wallet proved them): a node down, a tx dropped. */
     var rejectNext = 0
 
     /** Broadcasts accepted and committed whose wait then times out (the app sees TxUnconfirmedException). */
     var unconfirmedNext = 0
+    /** Broadcasts accepted (CheckTx) and then dropped: never in a block. */
+    var dropNext = 0
     /** Broadcasts accepted (CheckTx) that then fail in their block (DeliverTx code 5): nothing changes. */
     var failInBlockNext = 0
     /** Every tx by hash, as Query/GetTx answers. */
@@ -214,6 +227,14 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             throw java.io.IOException("broadcast refused (test)")
         }
         val hash = "HASH$height"
+        if (dropNext > 0) {
+            // Accepted by CheckTx, then never included (evicted from the mempool).
+            dropNext--
+            check(tx, simulate = true)
+            accepted(hash)
+            prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear()
+            throw java.io.IOException("tx not committed (test)")
+        }
         if (failInBlockNext > 0) {
             failInBlockNext--
             check(tx, simulate = true)
@@ -447,6 +468,10 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         }
         // The tx fields every private sighash binds (the ante records them).
         val txf = PrivateMsgs.TxFields(body.memo, body.timeoutHeight, auth.fee.gasLimit)
+        // timeout_height: the block being built must not be past it (0: none).
+        require(body.timeoutHeight == 0L || height <= body.timeoutHeight) { "tx timed out (timeout_height ${body.timeoutHeight}, block $height)" }
+        if (requireTimeout && !simulate) require(body.timeoutHeight > 0) { "a private tx without timeout_height" }
+        lastTimeoutHeight = body.timeoutHeight
         val total = PrivateMsgs.totalFee(m)
         require(auth.fee.amountCount == 1 && auth.fee.getAmount(0).denom == "uerth" && auth.fee.getAmount(0).amount == total.toString()) { "declared fee != msg fee" }
         require(total >= minFee) { "below min fee" }
@@ -522,7 +547,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 // A switch: the holder's old leaf is zeroed, the new one appended.
                 registeredIdc.entries.filter { it.value == f(m.idc) || passportOf[it.key] == m.publicSignalsList[2] }.forEach { zeroLeaf(it.key) }
                 val idx = identityTree.append(Privacy.identityLeaf(f(m.idc), dsc, Privacy.countryField(registrationCountry), now))
-                identityRows.add(IdentityRow(idx, height, identityTree.leaf(idx), null))
+                identityRows.add(IdentityRow(idx, height, identityTree.leaf(idx), null, now))
                 registeredIdc[idx] = f(m.idc); passportOf[idx] = m.publicSignalsList[2]
                 mint("uanml", 1_000_000, f(m.pcAnml), m.ciphertextAnml.toByteArray())
                 mint("uerth", 5_000_000, f(m.pcErth), m.ciphertextErth.toByteArray())
@@ -601,8 +626,11 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         return HeightPage(blocks.filter { it.first < height }, height, false, height - 1)
     }
 
+    /** Whether the indexer serves each identity row's block time (the fifth column); false: an indexer without it. */
+    var identityRowTimes = true
+
     override fun identity(fromIndex: Long, limit: Int?): IdentityPage {
-        val rows = identityRows.drop(fromIndex.toInt())
+        val rows = identityRows.drop(fromIndex.toInt()).map { if (identityRowTimes) it else it.copy(time = null) }
         return IdentityPage(rows, fromIndex + rows.size, identityRows.size.toLong(), height - 1)
     }
 
@@ -650,7 +678,13 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
 
     var blockTimesPruned = false
 
-    override fun blockTime(height: Long): Long? = if (blockTimesPruned) null else blockTimes[height]
+    /** Every height whose block time the LCD was asked for, in order. */
+    val blockTimeAsks = ArrayList<Long>()
+
+    override fun blockTime(height: Long): Long? {
+        blockTimeAsks.add(height)
+        return if (blockTimesPruned) null else blockTimes[height]
+    }
 
     /** What the LCD says block 1's hash prefix is (null: the indexer's [genesis]); [lcdBlind]: it cannot say. */
     var lcdGenesis: String? = null

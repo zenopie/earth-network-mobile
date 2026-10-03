@@ -56,6 +56,8 @@ data class OwnedNote(
     val spentHeight: Long? = null,
     /** When a tx spending this note was broadcast (unix seconds), until sync sees its nullifier. */
     val pendingAt: Long? = null,
+    /** That tx's timeout_height: the note is released only once the chain is past it (null: a pre-timeout mark). */
+    val pendingUntil: Long? = null,
 ) {
     val unspent: Boolean get() = spentHeight == null
 }
@@ -101,6 +103,8 @@ data class OwnedStakeNote(
     val nf: Fr,
     val spentHeight: Long? = null,
     val pendingAt: Long? = null,
+    /** The spending tx's timeout_height (see OwnedNote.pendingUntil). */
+    val pendingUntil: Long? = null,
 ) {
     val unspent: Boolean get() = spentHeight == null
     val spendable: Boolean get() = unspent && pendingAt == null && amount > 0

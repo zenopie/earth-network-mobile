@@ -48,8 +48,18 @@ object PrivacySession {
         return w
     }
 
-    /** Forget the cached wallet (lock, wallet switch). */
-    fun clear() { current = null }
+    private val clearListeners = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
+
+    /** Runs [l] whenever the session's wallet is dropped (lock, session end, wallet switch): what holds the wallet lets go. */
+    fun onClear(l: () -> Unit) { clearListeners.add(l) }
+
+    fun removeOnClear(l: () -> Unit) { clearListeners.remove(l) }
+
+    /** Forget the cached wallet (lock, wallet switch); everything that held it is stopped first. */
+    fun clear() {
+        clearListeners.forEach { runCatching { it() } }
+        current = null
+    }
 
     private class AndroidProver(private val context: Context) : Prover {
         override fun proveAction(w: ActionWitness): ByteArray = PrivacyProver.proveAction(context, w)

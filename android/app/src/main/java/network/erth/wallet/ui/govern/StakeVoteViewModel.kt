@@ -15,6 +15,16 @@ class StakeVoteViewModel(app: Application) : AndroidViewModel(app) {
     val controller = StakeVoteController(viewModelScope, { PrivacySession.wallet(getApplication()) })
     val progress = controller.progress
 
+    /** Lock, session end, wallet switch: the run stops and lets go of the wallet; it resumes on the next unlock. */
+    private val onClear: () -> Unit = { controller.suspend() }
+
+    init { PrivacySession.onClear(onClear) }
+
     fun resume() = controller.resume()
     fun cancel() = controller.cancel()
+
+    override fun onCleared() {
+        PrivacySession.removeOnClear(onClear)
+        controller.suspend()
+    }
 }

@@ -71,8 +71,26 @@ data class RegRecord(
     val cursor: Long = 0,
     /** Leaf hashes spent on this record so far (capped). */
     val work: Long = 0,
+    /** [height]'s block time as the indexer's identity rows carry it (null: not served). */
+    val time: Long? = null,
+    /** Exact activated_at candidates already tried (each at most 677 hashes a leaf): a new one is tried even after EXHAUSTED. */
+    val tried: List<Long> = emptyList(),
+    /** The cover set of heights whose block times were asked of the LCD with [height]'s (chosen once, reused). */
+    val cover: List<Long> = emptyList(),
+    /** LCD cover-set fetches made (bounded). */
+    val coverTries: Int = 0,
+    /** [height]'s block time as the LCD answered it (null: not asked, or it could not say). */
+    val chainTime: Long? = null,
+    /** How many leaves [tried] was tried against: more leaves later reopen the record. */
+    val leavesTried: Int = 0,
 )
 
+/**
+ * OPEN: still searching; MATCHED: the identity; EXHAUSTED: the bounded
+ * fallback search is spent. EXHAUSTED never blocks a restore for good: an
+ * exact time not tried before (the indexer's, the LCD's) is still tried, and
+ * a store reset finds the record afresh (K13).
+ */
 enum class RecordStatus { OPEN, MATCHED, EXHAUSTED }
 
 /**
@@ -110,7 +128,16 @@ class PrivacyState {
     val regRecords: MutableList<RegRecord> = ArrayList()
     /** Whether the last sync's roots matched the chain's own (C3), and why not. */
     var rootsVerified: Boolean = false
-    var rootsError: String? = null    /** UTC days a claim was broadcast for (so the automation does not repeat one). */
+    var rootsError: String? = null
+    /**
+     * Sync generations (audit 3): [syncGeneration] is bumped, with
+     * [rootsVerified] cleared and persisted, before a sync's first request;
+     * [verifiedGeneration] is set to it only when every stream and the root
+     * checks of that same sync succeeded. Txs need the two equal.
+     */
+    var syncGeneration: Long = 0
+    var verifiedGeneration: Long = -1
+    /** UTC days a claim was broadcast for (so the automation does not repeat one). */
     val claimedDays: MutableSet<Long> = sortedSetOf()
     /** When the caretaker split was last cast (unix seconds), and the split (option -> percent). */
     var caretakerCastAt: Long = 0
@@ -147,10 +174,13 @@ class PrivacyState {
                 put(JSONObject().put("height", it.height).put("position", it.position).put("dsc_key", it.dscKey.toHex())
                     .put("country", it.country).put("built_at", it.builtAt)
                     .put("leaves", JSONArray().apply { it.leaves.forEach { (i, l) -> put(JSONArray().put(i).put(l.toHex())) } })
-                    .put("status", it.status.name).put("cursor", it.cursor).put("work", it.work))
+                    .put("status", it.status.name).put("cursor", it.cursor).put("work", it.work)
+                    .put("time", it.time ?: JSONObject.NULL).put("tried", JSONArray(it.tried)).put("cover", JSONArray(it.cover))
+                    .put("cover_tries", it.coverTries).put("chain_time", it.chainTime ?: JSONObject.NULL).put("leaves_tried", it.leavesTried))
             }
         })
         put("roots_verified", rootsVerified); put("roots_error", rootsError ?: JSONObject.NULL)
+        put("sync_generation", syncGeneration); put("verified_generation", verifiedGeneration)
         put("notes_next", notesNext); put("notes_height", notesHeight)
         put("nullifiers_next", nullifiersNext); put("identity_next", identityNext); put("zeroed_next", zeroedNext)
         put("notes", JSONArray().apply { notes.forEach { put(noteJson(it)) } })
@@ -195,12 +225,16 @@ class PrivacyState {
                             (0 until (ls?.length() ?: 0)).map { k -> ls!!.getJSONArray(k).let { l -> l.getLong(0) to Fr.fromHex(l.getString(1)) } },
                             runCatching { RecordStatus.valueOf(it.optString("status")) }.getOrDefault(RecordStatus.OPEN),
                             it.optLong("cursor"), it.optLong("work"),
+                            opt(it, "time"),
+                            longs(it.optJSONArray("tried")), longs(it.optJSONArray("cover")), it.optInt("cover_tries"),
+                            opt(it, "chain_time"), it.optInt("leaves_tried"),
                         ),
                     )
                 }
             }
             rootsVerified = j.optBoolean("roots_verified")
             rootsError = if (j.isNull("roots_error")) null else j.optString("roots_error").ifEmpty { null }
+            syncGeneration = j.optLong("sync_generation"); verifiedGeneration = j.optLong("verified_generation", -1)
             notesNext = j.optLong("notes_next"); notesHeight = j.optLong("notes_height")
             nullifiersNext = j.optLong("nullifiers_next"); identityNext = j.optLong("identity_next"); zeroedNext = j.optLong("zeroed_next")
             j.optJSONArray("notes")?.let { a -> for (i in 0 until a.length()) notes.add(noteFromJson(a.getJSONObject(i))) }
@@ -228,11 +262,16 @@ class PrivacyState {
             j.optJSONArray("denoms")?.let { a -> for (i in 0 until a.length()) denoms.add(a.getString(i)) }
         }
 
+        private fun longs(a: JSONArray?): List<Long> = (0 until (a?.length() ?: 0)).map { a!!.getLong(it) }
+
+        private fun opt(o: JSONObject, k: String): Long? = if (!o.has(k) || o.isNull(k)) null else o.getLong(k)
+
         private fun stakeJson(n: OwnedStakeNote) = JSONObject()
             .put("position", n.position).put("height", n.height).put("denom", n.denom).put("amount", n.amount)
             .put("rho", n.rho.toHex()).put("rcm", n.rcm.toHex()).put("cm", n.cm.toHex()).put("nf", n.nf.toHex())
             .put("spent_height", n.spentHeight ?: JSONObject.NULL)
             .put("pending_at", n.pendingAt ?: JSONObject.NULL)
+            .put("pending_until", n.pendingUntil ?: JSONObject.NULL)
 
         private fun stakeFromJson(o: JSONObject) = OwnedStakeNote(
             position = o.getLong("position"), height = o.getLong("height"), denom = o.getString("denom"), amount = o.getLong("amount"),
@@ -240,6 +279,7 @@ class PrivacyState {
             cm = Fr.fromHex(o.getString("cm")), nf = Fr.fromHex(o.getString("nf")),
             spentHeight = if (o.isNull("spent_height")) null else o.getLong("spent_height"),
             pendingAt = if (o.isNull("pending_at")) null else o.getLong("pending_at"),
+            pendingUntil = opt(o, "pending_until"),
         )
 
         private fun noteJson(n: OwnedNote) = JSONObject()
@@ -248,6 +288,7 @@ class PrivacyState {
             .put("memo", n.note.memo.joinToString("") { "%02x".format(it.toInt() and 0xff) })
             .put("spent_height", n.spentHeight ?: JSONObject.NULL)
             .put("pending_at", n.pendingAt ?: JSONObject.NULL)
+            .put("pending_until", n.pendingUntil ?: JSONObject.NULL)
 
         private fun noteFromJson(o: JSONObject): OwnedNote {
             val memo = o.optString("memo")
@@ -258,6 +299,7 @@ class PrivacyState {
                 cm = Fr.fromHex(o.getString("cm")), nf = Fr.fromHex(o.getString("nf")),
                 spentHeight = if (o.isNull("spent_height")) null else o.getLong("spent_height"),
                 pendingAt = if (o.isNull("pending_at")) null else o.getLong("pending_at"),
+                pendingUntil = opt(o, "pending_until"),
             )
         }
     }
@@ -274,22 +316,40 @@ class PrivacyStore private constructor(private val dir: File?) {
     private val identityNodes: NodeStore = dir?.let { FileNodeStore(File(it, "identity")) } ?: MemNodeStore()
     private val stakeNodes: NodeStore = dir?.let { FileNodeStore(File(it, "stake")) } ?: MemNodeStore()
 
-    var state: PrivacyState = dir?.let { File(it, STATE).takeIf(File::exists) }
-        ?.let { runCatching { PrivacyState.fromJson(JSONObject(it.readText())) }.getOrNull() } ?: PrivacyState()
+    /** state.json exists but does not parse: shown as an error, never silently replaced by an empty state (audit 3). */
+    class CorruptState(message: String, cause: Throwable?) : java.io.IOException(message, cause)
+
+    var state: PrivacyState = dir?.let { File(it, STATE).takeIf(File::exists) }?.let { f ->
+        try {
+            PrivacyState.fromJson(JSONObject(f.readText()))
+        } catch (e: Exception) {
+            throw CorruptState("this wallet's private data (${f.name}) is unreadable: ${e.message}", e)
+        }
+    } ?: PrivacyState()
         private set
 
     val noteTree = MerkleTree(noteNodes, state.notesNext)
     val identityTree = MerkleTree(identityNodes, state.identityNext)
     val stakeTree = MerkleTree(stakeNodes, state.stakeNext)
 
-    /** Persists state after the trees, so a crash between the two leaves state behind (and resyncs) rather than ahead. */
+    /**
+     * Persists state after the trees, so a crash between the two leaves state
+     * behind (and resyncs) rather than ahead. The state is written to a temp
+     * file, fsynced, then renamed over state.json (atomic on one filesystem)
+     * and any failure throws (audit 3: never silent).
+     */
     @Synchronized
     fun save() {
         noteTree.flush(); identityTree.flush(); stakeTree.flush()
         val d = dir ?: return
         val tmp = File(d, "$STATE.tmp")
-        tmp.writeText(state.toJson().toString())
-        tmp.renameTo(File(d, STATE))
+        java.io.FileOutputStream(tmp).use { out ->
+            out.write(state.toJson().toString().toByteArray(Charsets.UTF_8))
+            out.flush()
+            out.fd.sync()
+        }
+        // rename(2): atomic within one filesystem (java.nio.file needs API 26; minSdk is 24).
+        if (!tmp.renameTo(File(d, STATE))) throw java.io.IOException("could not save this wallet's private data")
     }
 
     /**
@@ -351,5 +411,29 @@ class PrivacyStore private constructor(private val dir: File?) {
         fun memory(): PrivacyStore = PrivacyStore(null)
 
         fun open(root: File, walletId: String): PrivacyStore = PrivacyStore(File(root, "privacy/$walletId").apply { mkdirs() })
+
+        /**
+         * Deletes a wallet's private data (notes, identity, records, trees)
+         * when the wallet is forgotten (audit 3): every file is overwritten
+         * with zeros and synced before it is unlinked (best effort on flash,
+         * where the FTL may keep old blocks; the app's sandbox is the real
+         * boundary). [walletId] null: every wallet's.
+         */
+        fun delete(root: File, walletId: String? = null) {
+            val target = if (walletId == null) File(root, "privacy") else File(root, "privacy/$walletId")
+            if (!target.exists()) return
+            target.walkBottomUp().forEach { f ->
+                if (f.isFile) runCatching {
+                    java.io.RandomAccessFile(f, "rw").use { r ->
+                        val zeros = ByteArray(64 * 1024)
+                        var left = r.length()
+                        r.seek(0)
+                        while (left > 0) { val n = minOf(left, zeros.size.toLong()).toInt(); r.write(zeros, 0, n); left -= n }
+                        r.fd.sync()
+                    }
+                }
+                if (!f.delete() && f.exists()) throw java.io.IOException("could not delete ${f.name}")
+            }
+        }
     }
 }
