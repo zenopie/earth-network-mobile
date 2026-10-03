@@ -89,14 +89,18 @@ public struct HeightPage<T: Sendable>: Sendable {
     }
 }
 
+/// An identity leaf; `time` is its block's time (unix seconds) when the indexer serves it (a fifth column), nil otherwise.
 public struct IdentityRow: Sendable {
     public let index: UInt64
     public let height: UInt64
     public let leaf: Fr
     public let zeroedHeight: UInt64?
-    public init(index: UInt64, height: UInt64, leaf: Fr, zeroedHeight: UInt64?) {
-        self.index = index; self.height = height; self.leaf = leaf; self.zeroedHeight = zeroedHeight
+    public let time: UInt64?
+    public init(index: UInt64, height: UInt64, leaf: Fr, zeroedHeight: UInt64?, time: UInt64? = nil) {
+        self.index = index; self.height = height; self.leaf = leaf; self.zeroedHeight = zeroedHeight; self.time = time
     }
+
+    public func with(time: UInt64?) -> IdentityRow { IdentityRow(index: index, height: height, leaf: leaf, zeroedHeight: zeroedHeight, time: time) }
 }
 
 public struct IdentityPage: Sendable {
@@ -318,7 +322,8 @@ public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
 
     static func parseIdentity(_ j: JSON) throws -> IdentityPage {
         let rows = try j.leaves.array.map { r in
-            IdentityRow(index: r[0].uint64(default: 0), height: r[1].uint64(default: 0), leaf: try Fr(hex: r[2].string ?? ""), zeroedHeight: r[3].uint64)
+            IdentityRow(index: r[0].uint64(default: 0), height: r[1].uint64(default: 0), leaf: try Fr(hex: r[2].string ?? ""), zeroedHeight: r[3].uint64,
+                        time: r.array.count > 4 ? r[4].uint64 : nil)
         }
         return IdentityPage(rows: rows, nextIndex: j.next_index.uint64(default: 0), size: j.size.uint64(default: 0),
                             syncedHeight: j.synced_height.uint64(default: 0))

@@ -245,7 +245,11 @@ final class ReauditFixesTests: XCTestCase {
         try await a.sync()
         XCTAssertTrue(a.pendingRegistration?.failure?.hasPrefix(PrivacyWallet.txFailed) == true)
         XCTAssertEqual(0, bal(a, "uerth"))
+        // Audit 3: released only once the chain is past the tx's timeout_height, not by the clock.
         chain.now += WalletSync.pendingTimeout + 1
+        try await a.sync()
+        XCTAssertEqual(0, bal(a, "uerth"))
+        for _ in 0 ... PrivateTxEngine.timeoutBlocks { chain.emptyBlock() }
         try await a.sync()
         XCTAssertEqual(100_000, bal(a, "uerth"))
         _ = try await a.register(prep, proof: Data(count: 14_656), publicSignals: sigs(prep, "1"), signatureAlgorithm: "lean_poa", dscDer: Data(count: 10))
@@ -322,6 +326,7 @@ final class ReauditFixesTests: XCTestCase {
         try await skewed.sync()
         _ = try await skewed.register(prep, proof: Data(count: 14_656), publicSignals: sigs(prep, "9"), signatureAlgorithm: "lean_poa", dscDer: Data(count: 10))
         chain.blockTimesPruned = true
+        chain.identityRowTimes = false
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("earth-k1-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         let keys = try PrivacyKeys.fromMnemonic(alice)
@@ -329,7 +334,7 @@ final class ReauditFixesTests: XCTestCase {
         var works: [UInt64] = []
         while true {
             // A fresh store each time: what a killed and restarted app reads back from disk.
-            let store = PrivacyStore.open(root: root, walletID: "w")
+            let store = try PrivacyStore.open(root: root, walletID: "w")
             _ = try await WalletSync(indexer: chain, store: store, keys: keys, chainID: chain.chainID, chain: chain,
                                      now: { [unowned chain] in chain.now }, searchBudget: budget).sync()
             let rec = store.state.regRecords[0]
@@ -338,7 +343,7 @@ final class ReauditFixesTests: XCTestCase {
             XCTAssertLessThan(works.count, 20)
             if works.count >= 20 { return }
         }
-        let store = PrivacyStore.open(root: root, walletID: "w")
+        let store = try PrivacyStore.open(root: root, walletID: "w")
         XCTAssertEqual(.matched, store.state.regRecords[0].status)
         XCTAssertGreaterThanOrEqual(works.count, 3)
         for (x, y) in zip(works, works.dropFirst()) { XCTAssertTrue((1 ... budget + 2).contains(y - x)) }
@@ -449,7 +454,7 @@ final class ReauditFixesTests: XCTestCase {
         }
         let pauses = Pauses()
         let c = StakeVoteController(wallet: { a }, pause: { pauses.add($0) })
-        c.resume()
+        await c.resume()
         await c.wait()
         XCTAssertEqual(true, c.progress?.finished)
         XCTAssertEqual(3, c.progress?.done)

@@ -19,7 +19,12 @@ import Foundation
 /// undelegation was deferred), the claim fails before anything is spent and
 /// waits `retrySeconds`.
 ///
-/// `decide` is the pure part, unit-tested; `runOnce` runs it.
+/// Actions are never taken in one burst (audit 3): one at a time, chosen at
+/// random among those due, with a random pause and a full sync between each
+/// and a fresh decision after it, which also orders actions that share a
+/// single ERTH note. Logs name the kind of action only (`kind`), never a denom.
+///
+/// `decide` is the pure part, unit-tested; `runPass` runs one pass; `runOnce` runs it on a wallet.
 public enum PrivacyAutomation {
     /// Claims land within this many seconds after UTC midnight plus the day's draw.
     public static let claimWindow: Int64 = 12 * 3600
@@ -79,7 +84,13 @@ public enum PrivacyAutomation {
     /// while e has not ended.
     public static func maturesBy(_ e: UInt64, current: UInt64, currentStart: Int64, epochSeconds: Int64, unbondingSeconds: Int64) -> Int64? {
         guard e < current else { return nil }
-        return currentStart - Int64(current - 1 - e) * epochSeconds + unbondingSeconds + maturityMargin
+        // Chain-supplied numbers: any overflow means no answer, never a trap (audit 3).
+        guard let n = Int64(exactly: current - 1 - e) else { return nil }
+        let (span, o1) = n.multipliedReportingOverflow(by: epochSeconds)
+        let (a, o2) = currentStart.subtractingReportingOverflow(span)
+        let (b, o3) = a.addingReportingOverflow(unbondingSeconds)
+        let (c, o4) = b.addingReportingOverflow(maturityMargin)
+        return o1 || o2 || o3 || o4 ? nil : c
     }
 
     /// The unbond denoms to claim now: matured by `maturesBy`, and not waiting out a refused claim.
@@ -112,44 +123,108 @@ public enum PrivacyAutomation {
         return offset
     }
 
-    /// One pass: sync, then whatever `decide` says. Failures are logged by the
-    /// caller's `onFailure`; a refused unbonding claim waits `retrySeconds`.
+    /// The random pause between two automated actions in one pass, milliseconds.
+    public static let actionPauseMinMs: UInt64 = 30_000
+    public static let actionPauseMaxMs: UInt64 = 180_000
+
+    /// The kind of `a`, for logs: never its denom (as Android's class names).
+    public static func kind(_ a: Action) -> String {
+        switch a {
+        case .claimAnml: "ClaimAnml"
+        case .refreshCaretaker: "RefreshCaretaker"
+        case .refreshReferrer: "RefreshReferrer"
+        case .claimUnbonding: "ClaimUnbonding"
+        }
+    }
+
+    /// One pass (audit 3): a `sync`, then while anything is due, one action
+    /// chosen at random among those due (`inputs` read afresh each time),
+    /// and before the next a random pause and a full sync. Never two actions
+    /// in one burst; a pause and a sync too when another was due when the
+    /// last was chosen (it may wait for the last one's change to land). Each
+    /// action is tried at most once a pass. Returns the actions taken.
+    @discardableResult
+    public static func runPass(
+        sync: () async throws -> Void,
+        inputs: () async throws -> Inputs,
+        act: (Action) async throws -> Void,
+        pause: (UInt64) async throws -> Void,
+        onFailure: (Action, Swift.Error) async -> Void = { _, _ in },
+        pick: (Int) -> Int = { Int.random(in: 0 ..< $0) },
+        pauseMs: () -> UInt64 = { UInt64.random(in: actionPauseMinMs ... actionPauseMaxMs) }
+    ) async throws -> [Action] {
+        try await sync()
+        var attempted: [Action] = []
+        var acted = false
+        var othersDue = false
+        while true {
+            let due = decide(try await inputs()).filter { !attempted.contains($0) }
+            if acted {
+                if due.isEmpty && !othersDue { return attempted }
+                try await pause(pauseMs())
+                try await sync()
+                acted = false
+                continue
+            }
+            if due.isEmpty { return attempted }
+            let a = due[pick(due.count)]
+            attempted.append(a)
+            acted = true
+            othersDue = due.count > 1
+            do {
+                try await act(a)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                await onFailure(a, error)
+            }
+        }
+    }
+
+    /// One pass on `wallet` (see `runPass`). Failures go to `onFailure` (its
+    /// kind only is fit for a log); a refused unbonding claim waits
+    /// `retrySeconds`.
     public static func runOnce(
         wallet: PrivacyWallet,
         queries: PrivacyQueries,
-        now: Int64 = Int64(Date().timeIntervalSince1970),
+        clock: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970) },
+        pause: (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0 * 1_000_000) },
         onFailure: (Action, Swift.Error) -> Void = { _, _ in }
     ) async throws {
-        try await wallet.sync()
         // Global reads only: the same for every wallet.
         let epoch = try await queries.epoch()
         let timing = try await queries.stakingTiming()
-        let snap = wallet.snapshot
-        let mature = matured(snap.stakeNotes, now: now, current: epoch.number, currentStart: epoch.startTime,
-                             epochSeconds: timing.epochSeconds, unbondingSeconds: timing.unbondingSeconds, retryAt: snap.unbondRetryAt)
-        let inputs = Inputs(
-            now: now,
-            identityLive: snap.identityStatus == .live,
-            claimOpensAt: wallet.claimOpensAt(),
-            claimedToday: wallet.claimedToday(),
-            claimOffset: claimOffset(now: now),
-            caretakerDue: (try? await wallet.caretakerDue()) ?? false,
-            referrerDue: (try? await wallet.referrerDue()) ?? false,
-            hasFeeErth: (snap.poolBalances["uerth"] ?? 0) > 0,
-            maturedUnbonds: mature
-        )
-        for a in decide(inputs) {
-            do {
+        try await runPass(
+            sync: { try await wallet.sync() },
+            inputs: {
+                let now = clock()
+                let snap = wallet.snapshot
+                return Inputs(
+                    now: now,
+                    identityLive: snap.identityStatus == .live,
+                    claimOpensAt: wallet.claimOpensAt(),
+                    claimedToday: wallet.claimedToday(),
+                    claimOffset: claimOffset(now: now),
+                    caretakerDue: (try? await wallet.caretakerDue()) ?? false,
+                    referrerDue: (try? await wallet.referrerDue()) ?? false,
+                    hasFeeErth: (snap.poolBalances["uerth"] ?? 0) > 0,
+                    maturedUnbonds: matured(snap.stakeNotes, now: now, current: epoch.number, currentStart: epoch.startTime,
+                                            epochSeconds: timing.epochSeconds, unbondingSeconds: timing.unbondingSeconds, retryAt: snap.unbondRetryAt)
+                )
+            },
+            act: { a in
                 switch a {
                 case let .claimAnml(day): _ = try await wallet.claimAnml(day: day)
                 case .refreshCaretaker: _ = try await wallet.setCaretaker(split: wallet.snapshot.caretakerSplit)
                 case .refreshReferrer: _ = try await wallet.bindReferrer(address: wallet.snapshot.referrerAddress)
                 case let .claimUnbonding(denom): _ = try await wallet.claimUnbonding(denom: denom)
                 }
-            } catch {
+            },
+            pause: pause,
+            onFailure: { a, error in
                 onFailure(a, error)
-                if case let .claimUnbonding(denom) = a { await wallet.deferUnbondClaim(denom: denom, until: now + retrySeconds) }
+                if case let .claimUnbonding(denom) = a { await wallet.deferUnbondClaim(denom: denom, until: clock() + retrySeconds) }
             }
-        }
+        )
     }
 }

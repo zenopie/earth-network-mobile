@@ -108,7 +108,22 @@ public final class WalletSync {
 
     public enum IdentityStatus: Sendable, Equatable { case none, live, zeroed }
 
+    /// Pending marks made before txs carried a timeout_height are released after this long (wall clock).
     public static let pendingTimeout: Int64 = 15 * 60
+    /// One sync's time limit, its retries included (audit 3).
+    public static let syncTimeoutSeconds: Double = 10 * 60
+    /// What rootsError says while a sync has not finished (audit 3).
+    public static let syncUnfinished = "unverified: the last sync did not finish; sync again"
+    /// Block heights asked of the LCD with a record's own when the indexer serves no block time (audit 3).
+    public static let coverSet = 16
+    /// LCD cover-set fetches a record may make.
+    public static let maxCoverTries = 3
+
+    /// The sync ran past `syncTimeoutSeconds`: an indexer that never stops serving, or one far too slow.
+    public struct SyncTimeout: Swift.Error, LocalizedError {
+        public let message: String
+        public var errorDescription: String? { message }
+    }
     /// The most rows a page may carry (the backend's PRIVACY_PAGE_MAX).
     public static let maxPageRows = 5000
     /// Passes over the streams while the indexer keeps moving, before giving up on pinning a height.
@@ -257,23 +272,49 @@ public final class WalletSync {
     private let chain: ChainRoots
     private let now: () -> Int64
     private let searchBudget: UInt64
+    private let syncTimeout: Double
+    private let monotonic: () -> Double
+    private var deadline = Double.infinity
     private let poolSample = Reservoir(WalletSync.nullifierSample)
     private let stakeSample = Reservoir(WalletSync.nullifierSample)
 
     public init(indexer: PrivacyIndexer, store: PrivacyStore, keys: PrivacyKeys, chainID: String, chain: ChainRoots,
-                now: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970) }, searchBudget: UInt64 = WalletSync.syncSearchBudget) {
+                now: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970) }, searchBudget: UInt64 = WalletSync.syncSearchBudget,
+                syncTimeout: Double = WalletSync.syncTimeoutSeconds,
+                monotonic: @escaping () -> Double = { Double(DispatchTime.now().uptimeNanoseconds) / 1e9 }) {
         self.indexer = indexer; self.store = store; self.keys = keys; self.chainID = chainID; self.chain = chain; self.now = now
-        self.searchBudget = searchBudget
+        self.searchBudget = searchBudget; self.syncTimeout = syncTimeout; self.monotonic = monotonic
     }
 
-    /// Syncs; on an inconsistency with the indexer, starts over once from an empty store.
+    private func tick() throws {
+        if monotonic() > deadline { throw SyncTimeout(message: "the privacy sync did not finish in \(Int(syncTimeout))s") }
+    }
+
+    /// Syncs; on an inconsistency with the indexer, starts over once from an
+    /// empty store. The whole of it, retries included, is bounded by
+    /// `syncTimeout`.
     public func sync(pageLimit: Int? = nil) async throws -> Result {
+        deadline = monotonic() + syncTimeout
         do {
             return try await syncRetryingBase(pageLimit)
         } catch is Inconsistent {
-            store.reset(chainID: chainID)
+            try store.reset(chainID: chainID)
             return try await syncRetryingBase(pageLimit)
         }
+    }
+
+    /// Audit 3: before a sync's first request the roots are unverified, and
+    /// persisted so: a sync that fails part way (an indexer that serves
+    /// forged notes and then breaks a later stream) leaves nothing labelled
+    /// verified. Only `verifyRoots` at the end of this same sync sets the new
+    /// generation verified.
+    private func markSyncing() throws {
+        store.mutate { s in
+            s.syncGeneration &+= 1
+            s.rootsVerified = false
+            s.rootsError = Self.syncUnfinished
+        }
+        try store.save()
     }
 
     /// A 404 means the indexer's base moved (a relaunch): read the status again, once.
@@ -286,11 +327,16 @@ public final class WalletSync {
     }
 
     private func syncOnce(_ limit: Int?) async throws -> Result {
+        try markSyncing()
+        try tick()
         let status = try await indexer.status()
         if let h = status.halted { throw IndexerHalted(h) }
         guard let c = status.chainID else { throw PrivacyError("the privacy indexer names no chain yet") }
         if c != chainID { throw PrivacyError("the privacy indexer follows \(c), not \(chainID)") }
-        if store.state.chainID != chainID || store.state.genesis != status.genesis { try await switchChain(status.genesis) }
+        if store.state.chainID != chainID || store.state.genesis != status.genesis {
+            try await switchChain(status.genesis)
+            try markSyncing()
+        }
         var newNotes: [OwnedNote] = []
         var spent: [OwnedNote] = []
         var newStake: [OwnedStakeNote] = []
@@ -302,16 +348,17 @@ public final class WalletSync {
             newStake += try await syncStakeNotes(limit)
             try await syncStakeNullifiers(limit)
             try await syncIdentity(limit)
+            try tick()
             roots = try await indexer.rootsLatest()
             pass += 1
             if try atIndexerTip(roots) || pass >= Self.maxPasses { break }
         }
-        releaseStalePending()
+        await releaseStalePending()
         // Once a sync, after every pass: the record search is budgeted per sync (K1).
         await matchRecords()
         resolvePending()
         let verified = try await verifyRoots(roots)
-        store.save()
+        try store.save()
         return Result(syncedHeight: store.state.notesHeight, newNotes: newNotes, spent: spent, noteRoot: store.noteTree.root(),
                       identityRoot: store.identityTree.root(), newStake: newStake, identityStatus: identityStatus(), verified: verified)
     }
@@ -334,10 +381,13 @@ public final class WalletSync {
             let m = "unverified: the indexer names genesis \(genesis ?? "none"), which the chain does not confirm" +
                 (id.map { " (the LCD serves \($0.chainID), genesis \($0.genesis ?? "unknown"))" } ?? " (the LCD could not say)")
             store.mutate { $0.rootsVerified = false; $0.rootsError = m }
-            store.save()
+            try store.save()
             throw GenesisUnverified(message: m)
         }
-        if switching { store.switchGenesis(genesis!) } else { store.reset(chainID: chainID, genesis: genesis) }
+        // A store from before K6 (same chain id, no genesis recorded) is
+        // treated like a switch: the synced data goes, the registration stays.
+        let preK6 = old.chainID == chainID && old.genesis == nil
+        if switching || preK6 { try store.switchGenesis(genesis!) } else { try store.reset(chainID: chainID, genesis: genesis) }
     }
 
     /// Whether every local tree is the indexer's latest; a tree of the same
@@ -404,9 +454,9 @@ public final class WalletSync {
         try await tree("identity", store.identityTree, roots.identity) { try await self.chain.identityTree(height: $0) }
         try await tree("stake", store.stakeTree, roots.stake) { try await self.chain.stakeTree(height: $0) }
         if let m = mismatch {
-            store.reset(chainID: chainID)
+            try store.reset(chainID: chainID)
             store.mutate { $0.rootsVerified = false; $0.rootsError = m }
-            store.save()
+            try store.save()
             throw ChainMismatch(message: m)
         }
         // A sample of the spends this sync read, asked of the chain: an
@@ -418,7 +468,11 @@ public final class WalletSync {
         if let tipHeight = await chain.latestHeight(), tipHeight > roots.syncedHeight, tipHeight - roots.syncedHeight > Self.staleBlocks {
             problems.append("unverified: the indexer is \(tipHeight - roots.syncedHeight) blocks behind the chain")
         }
-        store.mutate { $0.rootsVerified = problems.isEmpty; $0.rootsError = problems.first }
+        store.mutate { s in
+            s.rootsVerified = problems.isEmpty
+            s.rootsError = problems.first
+            if problems.isEmpty { s.verifiedGeneration = s.syncGeneration }
+        }
         return problems.isEmpty
     }
 
@@ -435,11 +489,30 @@ public final class WalletSync {
         }
     }
 
+    /// Audit 3: a position page must say where it ends (next = from + rows)
+    /// and a page that says more follows must carry rows; otherwise the same
+    /// page could be asked for forever while the wallet lock is held.
+    private func checkPositions(_ name: String, from: UInt64, rows: Int, next: UInt64, complete: Bool) throws {
+        let (want, o) = from.addingReportingOverflow(UInt64(rows))
+        if o || next != want { throw Inconsistent(message: "a \(name) page from \(from) with \(rows) rows names next \(next)") }
+        if complete && rows == 0 { throw Inconsistent(message: "an empty \(name) page from \(from) says more follows") }
+    }
+
+    /// Audit 3: a height page never moves backwards, and one that says more follows moves forwards.
+    private func checkHeights<T>(_ name: String, from: UInt64, _ page: HeightPage<T>) throws {
+        if page.nextHeight < from || (page.complete && page.nextHeight <= from) {
+            throw Inconsistent(message: "a \(name) page from height \(from) names next \(page.nextHeight)")
+        }
+        if page.blocks.contains(where: { $0.height < from }) { throw Inconsistent(message: "a \(name) page from height \(from) holds an earlier height") }
+    }
+
     private func syncNotes(_ limit: Int?) async throws -> [OwnedNote] {
         var found: [OwnedNote] = []
         while true {
+            try tick()
             let page = try await indexer.notes(fromPos: store.state.notesNext, limit: limit)
             try checkPage(page.rows.count)
+            try checkPositions("note", from: store.state.notesNext, rows: page.rows.count, next: page.nextPos, complete: page.complete)
             if !page.rows.isEmpty {
                 try checkPositions(page.rows.map(\.position), from: store.state.notesNext, "note")
                 store.noteTree.appendAll(page.rows.map(\.cm))
@@ -505,16 +578,21 @@ public final class WalletSync {
     private func syncNullifiers(_ limit: Int?) async throws -> [OwnedNote] {
         var mine: [Fr: Int] = [:]
         for (i, n) in store.state.notes.enumerated() where n.unspent { mine[n.nf] = i }
+        // The spot-check sample never holds one of ours (spent or not): asking
+        // the chain about it would name our note (PRIVACY_FORMATS 4b).
+        let own = Set(store.state.notes.map(\.nf))
         var spent: [OwnedNote] = []
         // Only up to the height the note stream reached: a note found next
         // time could otherwise have been spent in a block this pass skipped.
         let ceiling = store.state.notesHeight
         while store.state.nullifiersNext <= ceiling {
+            try tick()
             let page = try await indexer.nullifiers(fromHeight: store.state.nullifiersNext, limit: limit)
             try checkPage(page.blocks.reduce(0) { $0 + $1.items.count })
+            try checkHeights("nullifier", from: store.state.nullifiersNext, page)
             for (h, nfs) in page.blocks {
                 if h > ceiling { break }
-                for nf in nfs { poolSample.offer(nf) }
+                for nf in nfs where !own.contains(nf) { poolSample.offer(nf) }
                 for nf in nfs {
                     if let i = mine[nf] {
                         store.mutate { $0.notes[i].spentHeight = h }
@@ -528,17 +606,31 @@ public final class WalletSync {
         return spent
     }
 
-    /// A note marked pending by a broadcast whose nullifier has not appeared
-    /// after `pendingTimeout` is released: the tx did not land, and the note
-    /// is spendable again.
-    private func releaseStalePending() {
+    /// A note marked pending by a broadcast is released (spendable again)
+    /// only once its tx can no longer land (audit 3): the chain's tip (LCD)
+    /// is past the tx's timeout_height and this wallet has read the nullifier
+    /// stream through that height without seeing its nullifier. Never by the
+    /// wall clock. Marks made before txs carried a timeout keep the old
+    /// 15-minute rule.
+    private func releaseStalePending() async {
         let t = now()
+        let needsTip = store.state.notes.contains { $0.unspent && $0.pendingUntil != nil } ||
+            store.state.stakeNotes.contains { $0.unspent && $0.pendingUntil != nil }
+        let tip = needsTip ? await chain.latestHeight() : nil
+        func release(_ at: Int64?, _ until: UInt64?, _ readThrough: UInt64) -> Bool {
+            guard let at else { return false }
+            guard let until else { return t - at > Self.pendingTimeout }
+            guard let tip else { return false }
+            return readThrough >= until && tip > until
+        }
         store.mutate { s in
-            for i in s.notes.indices {
-                if s.notes[i].unspent, let p = s.notes[i].pendingAt, t - p > Self.pendingTimeout { s.notes[i].pendingAt = nil }
+            let poolRead = s.nullifiersNext == 0 ? 0 : s.nullifiersNext - 1
+            let stakeRead = s.stakeNullifiersNext == 0 ? 0 : s.stakeNullifiersNext - 1
+            for i in s.notes.indices where s.notes[i].unspent && release(s.notes[i].pendingAt, s.notes[i].pendingUntil, poolRead) {
+                s.notes[i].pendingAt = nil; s.notes[i].pendingUntil = nil
             }
-            for i in s.stakeNotes.indices {
-                if s.stakeNotes[i].unspent, let p = s.stakeNotes[i].pendingAt, t - p > Self.pendingTimeout { s.stakeNotes[i].pendingAt = nil }
+            for i in s.stakeNotes.indices where s.stakeNotes[i].unspent && release(s.stakeNotes[i].pendingAt, s.stakeNotes[i].pendingUntil, stakeRead) {
+                s.stakeNotes[i].pendingAt = nil; s.stakeNotes[i].pendingUntil = nil
             }
         }
     }
@@ -546,8 +638,10 @@ public final class WalletSync {
     private func syncStakeNotes(_ limit: Int?) async throws -> [OwnedStakeNote] {
         var found: [OwnedStakeNote] = []
         while true {
+            try tick()
             let page = try await indexer.stakeNotes(fromPos: store.state.stakeNext, limit: limit)
             try checkPage(page.rows.count)
+            try checkPositions("stake note", from: store.state.stakeNext, rows: page.rows.count, next: page.nextPos, complete: page.complete)
             if !page.rows.isEmpty {
                 try checkPositions(page.rows.map(\.position), from: store.state.stakeNext, "stake note")
                 store.stakeTree.appendAll(page.rows.map(\.cm))
@@ -596,13 +690,16 @@ public final class WalletSync {
     private func syncStakeNullifiers(_ limit: Int?) async throws {
         var mine: [Fr: Int] = [:]
         for (i, n) in store.state.stakeNotes.enumerated() where n.unspent { mine[n.nf] = i }
+        let own = Set(store.state.stakeNotes.map(\.nf))
         let ceiling = store.state.stakeHeight
         while store.state.stakeNullifiersNext <= ceiling {
+            try tick()
             let page = try await indexer.stakeNullifiers(fromHeight: store.state.stakeNullifiersNext, limit: limit)
             try checkPage(page.blocks.reduce(0) { $0 + $1.items.count })
+            try checkHeights("stake nullifier", from: store.state.stakeNullifiersNext, page)
             for (h, nfs) in page.blocks {
                 if h > ceiling { break }
-                for nf in nfs { stakeSample.offer(nf) }
+                for nf in nfs where !own.contains(nf) { stakeSample.offer(nf) }
                 for nf in nfs { if let i = mine[nf] { store.mutate { $0.stakeNotes[i].spentHeight = h } } }
             }
             store.mutate { $0.stakeNullifiersNext = min(page.nextHeight, ceiling + 1) }
@@ -620,8 +717,10 @@ public final class WalletSync {
         // Zeroings of leaves already held, first: a leaf appended below
         // carries its own zeroed_height.
         while store.state.zeroedNext <= ceiling {
+            try tick()
             let page = try await indexer.identityZeroed(fromHeight: store.state.zeroedNext, limit: limit)
             try checkPage(page.blocks.reduce(0) { $0 + $1.items.count })
+            try checkHeights("identity zeroing", from: store.state.zeroedNext, page)
             var updates: [UInt64: Fr] = [:]
             for (h, idxs) in page.blocks {
                 if h > ceiling { break }
@@ -633,6 +732,7 @@ public final class WalletSync {
         }
         let recordHeights = Set(store.state.regRecords.map(\.height))
         while true {
+            try tick()
             let page = try await indexer.identity(fromIndex: store.state.identityNext, limit: limit)
             try checkPage(page.rows.count)
             if page.rows.isEmpty { break }
@@ -641,13 +741,16 @@ public final class WalletSync {
             // A leaf zeroed at or below the ceiling is zero here; one zeroed
             // later is zeroed by a later pass's zeroed stream.
             store.identityTree.appendAll(take.map { r in r.zeroedHeight.map { $0 <= ceiling } == true ? .zero : r.leaf })
-            // Each record keeps the leaves of its block as they pass (persisted: never streamed again).
+            // Each record keeps the leaves of its block as they pass (persisted:
+            // never streamed again), and the block's time if the row carries it.
             for r in take where recordHeights.contains(r.height) {
                 let leaf = store.identityTree.leaf(r.index)
                 store.mutate { s in
-                    for k in s.regRecords.indices where s.regRecords[k].height == r.height && s.regRecords[k].leaves.count < Self.maxRecordLeaves
-                        && !s.regRecords[k].leaves.contains(where: { $0.index == r.index }) {
-                        s.regRecords[k].leaves.append(RegRecord.Leaf(index: r.index, leaf: leaf))
+                    for k in s.regRecords.indices where s.regRecords[k].height == r.height {
+                        if s.regRecords[k].leaves.count < Self.maxRecordLeaves && !s.regRecords[k].leaves.contains(where: { $0.index == r.index }) {
+                            s.regRecords[k].leaves.append(RegRecord.Leaf(index: r.index, leaf: leaf))
+                        }
+                        if let t = r.time, t > 0, s.regRecords[k].time == nil { s.regRecords[k].time = t }
                     }
                 }
             }
@@ -658,45 +761,67 @@ public final class WalletSync {
 
     /// Matches record notes to the leaves appended at their heights (several
     /// registrations may share a block), newest record first, stopping at the
-    /// newest that matched (it is the identity). K1, bounded:
+    /// newest that matched (it is the identity). K1, bounded, and (audit 3)
+    /// never asking the LCD about this wallet's own registration block alone:
     ///
-    ///  1. activated_at is the registration block's time, so the chain's time
-    ///     for the record's height (the LCD) is tried first: every country
-    ///     (hint, unknown, then A..Z) at exactly that time, at most 677 hashes
-    ///     a leaf. Known and unmatched, the record is given up.
-    ///  2. Only when the chain cannot say (a pruned block), the device
-    ///     clock's built_at is searched outward, hinted countries over [-1h,
-    ///     +24h], then every other over [-10min, +1h], resumably: the cursor
-    ///     and the hashes spent are persisted, each sync spends at most
-    ///     `searchBudget` hashes over all records and a record at most
-    ///     `recordSearchCap` before it is given up.
+    ///  1. activated_at is the registration block's time. The indexer's
+    ///     identity rows carry it (the record keeps it as the leaves pass):
+    ///     every country (hint, unknown, then A..Z) at exactly that time, at
+    ///     most 677 hashes a leaf.
+    ///  2. When the rows carry no time (or it did not match), the LCD is asked
+    ///     for the block times of a cover set: the record's height among
+    ///     `coverSet` - 1 others drawn uniformly from the chain so far, in a
+    ///     shuffled order, the same set on every retry. Its time is tried the
+    ///     same way; known and unmatched, the record is given up.
+    ///  3. Only when no block time can be had, the device clock's built_at is
+    ///     searched outward, hinted countries over [-1h, +24h], then every
+    ///     other over [-10min, +1h], resumably: the cursor and the hashes
+    ///     spent are persisted, each sync spends at most `searchBudget`
+    ///     hashes over all records and a record at most `recordSearchCap`.
+    ///
+    /// A time already tried is not tried again; a new one (or new leaves at
+    /// the record's height) is, even after the record was given up (K13).
     private func matchRecords() async {
         var budget = Int64(searchBudget)
+        let perTime = UInt64(Self.allCountries.count)
         for rec0 in store.state.regRecords.sorted(by: { $0.height > $1.height }) {
             if rec0.status == .matched { return }
-            if rec0.status == .exhausted { continue }
             let leaves = rec0.leaves.filter { $0.leaf != .zero }
             if leaves.isEmpty { continue }
             guard let k = store.state.regRecords.firstIndex(where: { $0.position == rec0.position }) else { continue }
             var rec = rec0
+            // New leaves since the last attempt: every time is worth trying again.
+            if leaves.count > rec.leavesTried {
+                rec.tried = []; rec.leavesTried = leaves.count; rec.cursor = 0
+                if rec.status == .exhausted { rec.status = .open }
+            }
             var found: (UInt64, Fr, UInt64)?
-            if let time = await chain.blockTime(rec0.height) {
-                var countries = [Self.countryOrZero(rec0.country)]
-                for c in Self.allCountries where c != countries[0] { countries.append(c) }
-                outer: for l in leaves {
-                    for c in countries where PrivacyHash.identityLeaf(idc: keys.idc, dscKey: rec0.dscKey, country: c, activatedAt: time) == l.leaf {
-                        found = (l.index, c, time)
-                        break outer
-                    }
+            var lcdTime: UInt64?
+            // 1. The indexer's block time.
+            if let t = rec.time, !rec.tried.contains(t) {
+                found = tryTime(rec, leaves, t)
+                rec.tried.append(t); rec.work &+= perTime * UInt64(leaves.count)
+            }
+            // 2. The LCD's, asked with a cover set.
+            if found == nil, rec.time.map({ rec.tried.contains($0) }) ?? true {
+                let (t, r) = await coverTime(rec)
+                rec = r
+                lcdTime = t
+                if let t, !rec.tried.contains(t) {
+                    found = tryTime(rec, leaves, t)
+                    rec.tried.append(t); rec.work &+= perTime * UInt64(leaves.count)
                 }
-                rec.status = found != nil ? .matched : .exhausted
-                rec.work += UInt64(countries.count * leaves.count)
-            } else {
-                let r = search(rec0, leaves, budget: UInt64(max(budget, 0)))
+                if found == nil, t != nil { rec.status = .exhausted }
+            }
+            // 3. The bounded fallback, only while no chain time is known.
+            if found == nil, lcdTime == nil, rec.status == .open {
+                let before = rec.work
+                let r = search(rec, leaves, budget: UInt64(max(budget, 0)))
                 found = r.found
                 rec = r.rec
-                budget -= Int64(rec.work - rec0.work)
+                budget -= Int64(clamping: rec.work &- before)
             }
+            if found != nil { rec.status = .matched }
             let updated = rec
             store.mutate { $0.regRecords[k] = updated }
             if let (index, country, at) = found {
@@ -711,6 +836,47 @@ public final class WalletSync {
             }
             if budget <= 0 { return }
         }
+    }
+
+    /// (index, country, `t`) if a leaf of `rec` is ours at activated_at = `t`.
+    private func tryTime(_ rec: RegRecord, _ leaves: [RegRecord.Leaf], _ t: UInt64) -> (UInt64, Fr, UInt64)? {
+        var countries = [Self.countryOrZero(rec.country)]
+        for c in Self.allCountries where c != countries[0] { countries.append(c) }
+        for l in leaves {
+            for c in countries where PrivacyHash.identityLeaf(idc: keys.idc, dscKey: rec.dscKey, country: c, activatedAt: t) == l.leaf {
+                return (l.index, c, t)
+            }
+        }
+        return nil
+    }
+
+    /// `rec`'s block time from the LCD, asked together with a cover set of
+    /// other heights (chosen once, uniformly over the chain so far, persisted
+    /// with the record so a retry asks the same set), in a shuffled order. At
+    /// most `maxCoverTries` fetches; once the LCD answered, its answer is kept
+    /// and never asked again.
+    private func coverTime(_ rec0: RegRecord) async -> (UInt64?, RegRecord) {
+        var rec = rec0
+        if let t = rec.chainTime { return (t, rec) }
+        if rec.coverTries >= Self.maxCoverTries { return (nil, rec) }
+        if rec.cover.isEmpty {
+            let top = max(store.state.notesHeight, rec.height)
+            var set: [UInt64] = [rec.height]
+            let want = Int(min(UInt64(Self.coverSet), max(top, 1)))
+            while set.count < want {
+                let h = UInt64.random(in: 1 ... max(top, 1))
+                if !set.contains(h) { set.append(h) }
+            }
+            rec.cover = set
+        }
+        var t: UInt64?
+        for h in rec.cover.shuffled() {
+            let x = await chain.blockTime(h)
+            if h == rec.height { t = x }
+        }
+        rec.coverTries += 1
+        rec.chainTime = t
+        return (t, rec)
     }
 
     /// The fallback search for `rec` from its persisted cursor, spending at

@@ -59,13 +59,13 @@ public struct EarthRest: Sendable {
     }
 
     public func get(_ path: String) async throws -> JSON {
-        try await request(URLRequest(url: lcd.appendingPath(path)))
+        try await request(URLRequest(url: try lcd.appendingPath(path)))
     }
 
     /// `get` of the state at block `height` (the gRPC gateway's
     /// `x-cosmos-block-height` header); a pruned height answers an error.
     public func get(_ path: String, height: UInt64) async throws -> JSON {
-        var r = URLRequest(url: lcd.appendingPath(path))
+        var r = URLRequest(url: try lcd.appendingPath(path))
         r.setValue(String(height), forHTTPHeaderField: "x-cosmos-block-height")
         return try await request(r)
     }
@@ -88,11 +88,11 @@ public struct EarthRest: Sendable {
     /// of blocks in a single request. Callers must tolerate it being absent.
     public func getRPC(_ path: String) async throws -> JSON {
         guard let rpc else { throw Error.rpcUnavailable }
-        return try await request(URLRequest(url: rpc.appendingPath(path)))
+        return try await request(URLRequest(url: try rpc.appendingPath(path)))
     }
 
     public func postJSON(_ path: String, body: [String: Any]) async throws -> JSON {
-        var request = URLRequest(url: lcd.appendingPath(path))
+        var request = URLRequest(url: try lcd.appendingPath(path))
         request.httpMethod = "POST"
         request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -113,9 +113,12 @@ public struct EarthRest: Sendable {
 
 private extension URL {
     /// `appendingPathComponent` escapes the separators in a multi-segment path
-    /// and drops any query string, so paths are joined textually instead.
-    func appendingPath(_ path: String) -> URL {
-        URL(string: absoluteString.trimmingTrailingSlash + path)!
+    /// and drops any query string, so paths are joined textually instead. A
+    /// path that does not parse (a tx hash or denom the node or user supplied)
+    /// throws rather than traps (audit 3).
+    func appendingPath(_ path: String) throws -> URL {
+        guard let u = URL(string: absoluteString.trimmingTrailingSlash + path) else { throw EarthRest.Error.missing(path) }
+        return u
     }
 
     /// `appendingPath` that answers nil instead of trapping on an unparsable path.

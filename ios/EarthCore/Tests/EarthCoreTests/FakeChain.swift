@@ -39,7 +39,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     var stakeRoots: Set<Fr> = []
     var height: UInt64 = 1
     let minFeeValue: UInt64 = 1000
-    let price = Decimal(string: "0.001")!
+    var price = Decimal(string: "0.001")!
     var maxActions = 16
     let prover = CheckingProver()
     /// receiver -> denom -> amount unshielded.
@@ -143,11 +143,23 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     func gasPrice() async throws -> Decimal { price }
     func minFee() async throws -> UInt64 { minFeeValue }
     func maxActionsPerBundle() async throws -> Int { maxActions }
+    func tipHeight() async throws -> UInt64 { height - 1 + tipAhead }
+
+    /// Every nullifier (pool, stake) the node saw in a simulated tx.
+    var simulatedNullifiers: [Fr] = []
+    /// Whether a committed tx must carry a timeout_height (the wallet always sets one).
+    var requireTimeout = true
+    /// The last checked tx's timeout_height.
+    var lastTimeoutHeight: UInt64 = 0
+    /// Broadcasts accepted (CheckTx) and then dropped: never in a block.
+    var dropNext = 0
 
     /// The ante charges per bundle and per action, before anything else: gas is the tx's shape.
     func simulate(_ tx: Data) async throws -> UInt64 {
         simulated += 1
         let m = try check(tx, simulate: true).0
+        for b in m.bundles { for a in b.actions { simulatedNullifiers.append(try Fr(bytes: a.nullifier)) } }
+        for n in m.stakeProof?.nullifiers ?? [] { simulatedNullifiers.append(try Fr(bytes: n)) }
         let actions = m.bundles.reduce(0) { $0 + $1.actions.count }
         return 200_000 + 100_000 * UInt64(m.bundles.count) + 350_000 * UInt64(actions) + (m.stakeProof != nil ? 400_000 : 0)
     }
@@ -172,6 +184,14 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             throw URLError(.networkConnectionLost)
         }
         let hash = "HASH\(height)"
+        if dropNext > 0 {
+            // Accepted by CheckTx, then never included (evicted from the mempool).
+            dropNext -= 1
+            _ = try check(tx, simulate: true)
+            accepted(hash)
+            prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll()
+            throw URLError(.timedOut)
+        }
         if failInBlockNext > 0 {
             failInBlockNext -= 1
             _ = try check(tx, simulate: true)
@@ -378,6 +398,10 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
                 try need(zero ? p.ciphertexts[i].isEmpty : p.ciphertexts[i].count == NoteCipher.stakeCiphertextBytes, "stake ciphertext \(i)")
             }
         }
+        // timeout_height: the block being built must not be past it (0: none).
+        try need(tx.txFields.timeoutHeight == 0 || height <= tx.txFields.timeoutHeight, "tx timed out")
+        if requireTimeout && !simulate { try need(tx.txFields.timeoutHeight > 0, "a private tx without timeout_height") }
+        lastTimeoutHeight = tx.txFields.timeoutHeight
         let total = m.totalFee
         try need(tx.feeCoins.count == 1 && tx.feeCoins[0].denom == "uerth" && tx.feeCoins[0].amount == String(total), "declared fee != msg fee")
         try need(total >= minFeeValue, "below min fee")
@@ -461,7 +485,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             for (i, c) in registeredIdc where c == idc || passportOf[i] == m.publicSignals[2] { zeroLeaf(i) }
             let idx = identityTree.append(PrivacyHash.identityLeaf(idc: idc, dscKey: dsc, country: PrivacyHash.countryField(registrationCountry),
                                                                    activatedAt: UInt64(now)))
-            identityRows.append(IdentityRow(index: idx, height: height, leaf: identityTree.leaf(idx), zeroedHeight: nil))
+            identityRows.append(IdentityRow(index: idx, height: height, leaf: identityTree.leaf(idx), zeroedHeight: nil, time: UInt64(now)))
             registeredIdc[idx] = idc; passportOf[idx] = m.publicSignals[2]
             mint("uanml", 1_000_000, try f(m.pcAnml), m.ciphertextAnml)
             mint("uerth", 5_000_000, try f(m.pcErth), m.ciphertextErth)
@@ -547,8 +571,11 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
 
     func nullifiers(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<Fr> { heights(nullifiers, fromHeight) }
 
+    /// Whether the indexer serves each identity row's block time (the fifth column); false: an indexer without it.
+    var identityRowTimes = true
+
     func identity(fromIndex: UInt64, limit: Int?) async throws -> IdentityPage {
-        let rows = Array(identityRows.dropFirst(Int(fromIndex)))
+        let rows = Array(identityRows.dropFirst(Int(fromIndex))).map { identityRowTimes ? $0 : $0.with(time: nil) }
         return IdentityPage(rows: rows, nextIndex: fromIndex + UInt64(rows.count), size: UInt64(identityRows.count), syncedHeight: height - 1)
     }
 
@@ -598,7 +625,13 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     /// Each block's time, as the LCD serves it (`blockTimesPruned`: the node has none).
     var blockTimes: [UInt64: UInt64] = [:]
     var blockTimesPruned = false
-    func blockTime(_ height: UInt64) async -> UInt64? { blockTimesPruned ? nil : blockTimes[height] }
+    /// Every height whose block time the LCD was asked for, in order.
+    var blockTimeAsks: [UInt64] = []
+
+    func blockTime(_ height: UInt64) async -> UInt64? {
+        blockTimeAsks.append(height)
+        return blockTimesPruned ? nil : blockTimes[height]
+    }
 
     /// What the LCD says block 1's hash prefix is (nil: the indexer's `genesis`); `lcdBlind`: it cannot say.
     var lcdGenesis: String?
@@ -617,7 +650,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         if identityTree.leaf(index) == .zero { return }
         identityTree.update(index, .zero)
         let r = identityRows[Int(index)]
-        identityRows[Int(index)] = IdentityRow(index: r.index, height: r.height, leaf: r.leaf, zeroedHeight: height)
+        identityRows[Int(index)] = IdentityRow(index: r.index, height: r.height, leaf: r.leaf, zeroedHeight: height, time: r.time)
         zeroed.append((height: height, index: index))
         registeredIdc.removeValue(forKey: index)
     }

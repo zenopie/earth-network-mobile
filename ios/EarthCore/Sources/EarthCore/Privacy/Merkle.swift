@@ -62,42 +62,68 @@ public final class MemNodeStore: NodeStore {
 public final class FileNodeStore: NodeStore {
     private let dir: URL
     private var handles: [Int: FileHandle] = [:]
+    /// The first I/O failure since the last `takeError` (audit 3: a tree
+    /// that could not be written is reported by the store's save, never
+    /// silently lost; no `try!` on a file that may not open).
+    private var error: String?
 
     public init(directory: URL) {
         dir = directory
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        do { try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) } catch { note(error) }
     }
 
     deinit { close() }
 
-    private func handle(_ level: Int) -> FileHandle {
+    private func note(_ e: Swift.Error) { if error == nil { error = String(describing: e) } }
+
+    /// The first failure since the last call, clearing it.
+    public func takeError() -> String? { defer { error = nil }; return error }
+
+    private func handle(_ level: Int) -> FileHandle? {
         if let h = handles[level] { return h }
         let url = dir.appendingPathComponent("level\(level)")
-        if !FileManager.default.fileExists(atPath: url.path) {
-            FileManager.default.createFile(atPath: url.path, contents: nil)
+        if !FileManager.default.fileExists(atPath: url.path), !FileManager.default.createFile(atPath: url.path, contents: nil) {
+            if error == nil { error = "could not create \(url.lastPathComponent)" }
+            return nil
         }
-        let h = try! FileHandle(forUpdating: url)
-        handles[level] = h
-        return h
+        do {
+            let h = try FileHandle(forUpdating: url)
+            handles[level] = h
+            return h
+        } catch {
+            note(error)
+            return nil
+        }
     }
 
     public func get(_ level: Int, _ index: UInt64) -> Fr? {
-        let h = handle(level)
-        let off = index * 32
-        guard let end = try? h.seekToEnd(), off + 32 <= end else { return nil }
-        try? h.seek(toOffset: off)
-        guard let b = try? h.read(upToCount: 32), b.count == 32 else { return nil }
-        if b.allSatisfy({ $0 == 0 }) { return level == 0 ? .zero : nil }
-        return try? Fr(bytes: b)
+        guard let h = handle(level) else { return nil }
+        let (off, o) = index.multipliedReportingOverflow(by: 32)
+        guard !o, let end = try? h.seekToEnd(), off <= end, end - off >= 32 else { return nil }
+        do {
+            try h.seek(toOffset: off)
+            guard let b = try h.read(upToCount: 32), b.count == 32 else { return nil }
+            if b.allSatisfy({ $0 == 0 }) { return level == 0 ? .zero : nil }
+            return try? Fr(bytes: b)
+        } catch {
+            note(error)
+            return nil
+        }
     }
 
     public func set(_ level: Int, _ index: UInt64, _ v: Fr) {
-        let h = handle(level)
-        try? h.seek(toOffset: index * 32)
-        try? h.write(contentsOf: v.bytes)
+        guard let h = handle(level) else { return }
+        do {
+            try h.seek(toOffset: index * 32)
+            try h.write(contentsOf: v.bytes)
+        } catch {
+            note(error)
+        }
     }
 
-    public func flush() { handles.values.forEach { try? $0.synchronize() } }
+    public func flush() {
+        for h in handles.values { do { try h.synchronize() } catch { note(error) } }
+    }
 
     public func close() {
         handles.values.forEach { try? $0.close() }
@@ -108,7 +134,7 @@ public final class FileNodeStore: NodeStore {
     public func clear() {
         close()
         let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
-        files.forEach { try? FileManager.default.removeItem(at: $0) }
+        for f in files { do { try FileManager.default.removeItem(at: f) } catch { note(error) } }
     }
 }
 

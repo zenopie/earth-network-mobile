@@ -17,10 +17,11 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// passport proof (3M) and DSC chain (300k), the fee bundle's two action
     /// proofs and note writes, and the tx's bytes.
     public static let registerGasEstimate: UInt64 = 7_000_000
-    /// A private tx's gas for the confirm sheet's estimate: a two-action
-    /// bundle and a stake proof plus note writes and size. The exact figure
-    /// comes from simulating at confirm time.
-    public static let privateGasEstimate: UInt64 = 5_000_000
+    /// A private tx's gas for the confirm sheet: what the sheet shows is the
+    /// most the tx may then pay without asking again (audit 3: a higher
+    /// simulated fee shows the sheet again at it). Two actions, a stake or
+    /// membership proof, the tx's bytes and the 10% headroom fit under it.
+    public static let privateGasEstimate: UInt64 = 10_000_000
     /// Slack against the chain's clock for bounds the wallet must stay under.
     public static let clockMargin: Int64 = 600
     /// x/shielded's default max_actions_per_bundle, until the chain is read.
@@ -80,8 +81,10 @@ public final class PrivacyWallet: @unchecked Sendable {
         public let rootsError: String?
         /// x/shielded max_actions_per_bundle: the most notes (and outputs) one bundle carries.
         public let maxActions: Int
+        /// Why the last save that could not throw failed (nil: saved).
+        public let saveError: String?
 
-        init(store: PrivacyStore, keys: PrivacyKeys, maxActions: Int) {
+        init(store: PrivacyStore, keys: PrivacyKeys, maxActions: Int, saveError: String? = nil) {
             let s = store.state
             notes = s.notes; stakeNotes = s.stakeNotes; identity = s.identity; claimedDays = s.claimedDays
             caretakerSplit = s.caretakerSplit; caretakerCastAt = s.caretakerCastAt
@@ -90,6 +93,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             pendingRegistration = s.pendingRegistration; rootsVerified = s.rootsVerified; rootsError = s.rootsError
             identityStatus = WalletSync.identityStatus(store: store, keys: keys)
             self.maxActions = maxActions
+            self.saveError = saveError
         }
 
         /// Spendable pool balance per denom (pending spends excluded).
@@ -146,6 +150,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     private let snapLock = NSLock()
     private var snapshotValue: Snapshot
     private var maxActionsValue = PrivacyWallet.defaultMaxActions
+    private var saveErrorValue: String?
 
     public var snapshot: Snapshot {
         snapLock.lock(); defer { snapLock.unlock() }
@@ -155,8 +160,9 @@ public final class PrivacyWallet: @unchecked Sendable {
     private func publish() {
         snapLock.lock()
         let m = maxActionsValue
+        let e = saveErrorValue
         snapLock.unlock()
-        let s = Snapshot(store: store, keys: keys, maxActions: m)
+        let s = Snapshot(store: store, keys: keys, maxActions: m, saveError: e)
         snapLock.lock(); snapshotValue = s; snapLock.unlock()
     }
 
@@ -225,7 +231,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         }
         let updated = p
         store.mutate { $0.pendingRegistration = updated }
-        store.save()
+        persistNoThrow()
     }
 
     /// A note the chain will mint to us: fresh secrets, their v2 ciphertext to our own address.
@@ -246,29 +252,56 @@ public final class PrivacyWallet: @unchecked Sendable {
         try requireVerified()
         // The spent notes are marked the moment the node accepts the tx
         // (K7), before the wait for its block: a wait that times out (the tx
-        // may still land) or a killed app never leaves them spendable.
-        let (result, _) = try await engine.run(assemble, memo: memo) { [self] hash, a in
-            markPending(a.spends, a.stakeSpends)
+        // may still land) or a killed app never leaves them spendable. They
+        // stay pending until the chain is past the tx's timeout_height.
+        let (result, _) = try await engine.run(assemble, memo: memo, shownFee: Self.shownFee) { [self] hash, a, timeout in
+            markPending(a.spends, a.stakeSpends, timeoutHeight: timeout)
             accepted(hash)
         }
         return result
     }
 
+    /// The fee the confirm sheet showed, for the private run in this task
+    /// (TxController binds it around the run): a fee above it throws
+    /// `PrivateTxEngine.FeeAboveQuote` and the sheet asks again (audit 3).
+    /// Unbound (automation, later stake-vote casts): only the cap applies.
+    @TaskLocal public static var shownFee: UInt64?
+
+    /// Audit 3: only on roots verified by the last sync, in that sync's own
+    /// generation (a sync that failed part way leaves them unverified).
     private func requireVerified() throws {
-        guard store.state.rootsVerified else {
-            throw PrivacyError(store.state.rootsError ?? "the wallet has not checked its notes against the chain yet; sync again")
+        let s = store.state
+        guard s.rootsVerified, s.verifiedGeneration == s.syncGeneration else {
+            throw PrivacyError(s.rootsError ?? "the wallet has not checked its notes against the chain yet; sync again")
         }
     }
 
-    private func markPending(_ spent: [OwnedNote], _ stake: [OwnedStakeNote]) {
+    /// What `send` would charge (simulated with placeholder nullifiers, nothing proven): for a confirm sheet.
+    public func quoteSend(to: ShieldedAddress, denom: String, amount: UInt64, memo: Data = Data()) async throws -> PrivateTxEngine.Quote {
+        try Self.requireTransferable(denom)
+        let m = await maxActions()
+        return try await locked {
+            let out = try NoteOut.to(to, denom: denom, value: amount, memo: memo)
+            return try await engine.quote { fee in
+                let b = try self.bundle([out], release: [Self.fee: fee], maxActions: m)
+                return Assembled(bundles: [b]) { bs, _, _ in MsgSend(bundle: bs[0], fee: fee) }
+            }
+        }
+    }
+
+    private func markPending(_ spent: [OwnedNote], _ stake: [OwnedStakeNote], timeoutHeight: UInt64) {
         let positions = Set(spent.map(\.position))
         let stakePositions = Set(stake.map(\.position))
         let t = now()
         store.mutate { s in
-            for i in s.notes.indices where positions.contains(s.notes[i].position) { s.notes[i].pendingAt = t }
-            for i in s.stakeNotes.indices where stakePositions.contains(s.stakeNotes[i].position) { s.stakeNotes[i].pendingAt = t }
+            for i in s.notes.indices where positions.contains(s.notes[i].position) {
+                s.notes[i].pendingAt = t; s.notes[i].pendingUntil = timeoutHeight
+            }
+            for i in s.stakeNotes.indices where stakePositions.contains(s.stakeNotes[i].position) {
+                s.stakeNotes[i].pendingAt = t; s.stakeNotes[i].pendingUntil = timeoutHeight
+            }
         }
-        store.save()
+        persistNoThrow()
     }
 
     /// A bundle releasing `release` (per denom, the fee included in uerth)
@@ -294,6 +327,11 @@ public final class PrivacyWallet: @unchecked Sendable {
 
     // MARK: - membership
 
+    /// The chain is ahead of the local trees for what is asked: sync, then try again.
+    public struct SyncFirst: Swift.Error, LocalizedError {
+        public var errorDescription: String? { "The proposal's stake snapshot is ahead of this wallet; sync first." }
+    }
+
     /// The identity is too recent for this action; it opens `waitSeconds` from now.
     public struct NotYet: Swift.Error, LocalizedError {
         public let waitSeconds: Int64
@@ -312,7 +350,7 @@ public final class PrivacyWallet: @unchecked Sendable {
 
     private func membership(scope: Fr, excludedDsc: Fr, excludedCountry: Fr, maxActivation: UInt64) throws -> MembershipWitnessSpec {
         let id = try identity()
-        if id.activatedAt > maxActivation { throw NotYet(waitSeconds: Int64(id.activatedAt - maxActivation)) }
+        if id.activatedAt > maxActivation { throw NotYet(waitSeconds: Int64(clamping: id.activatedAt - maxActivation)) }
         let tree = store.identityTree
         let path = tree.path(id.leafIndex)
         let root = tree.root()
@@ -455,7 +493,7 @@ public final class PrivacyWallet: @unchecked Sendable {
                         txHash: hash, leafIndex: nil, dscKey: dscKey, passportNullifier: publicSignals[2],
                         publicSignals: publicSignals, activatedAt: nil, countryHint: hint)
                 }
-                store.save()
+                persistNoThrow()
             }
             let result = try await run(accepted: pending) { fee in
                 Assembled(bundles: [try self.bundle([record], release: [Self.fee: fee], maxActions: mx)]) { bs, _, _ in
@@ -488,7 +526,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         p.leafIndex = index; p.activatedAt = UInt64(max(0, result.time)); p.failure = nil
         let updated = p
         store.mutate { $0.pendingRegistration = updated }
-        store.save()
+        try store.save()
     }
 
     /// The ISO alpha-2 of the DSC's issuer (C=): the wallet's guess at the
@@ -510,14 +548,14 @@ public final class PrivacyWallet: @unchecked Sendable {
             // Chain-minted: a v2 ciphertext, opened against the mint's public amount.
             let anml = try mint("uanml")
             let m = try membership(scope: PrivacyHash.claimScope(day: day), excludedDsc: .zero, excludedCountry: .zero,
-                                   maxActivation: (day - 1) * UInt64(Self.secondsPerDay))
+                                   maxActivation: (day - 1).multipliedReportingOverflow(by: UInt64(Self.secondsPerDay)).partialValue)
             let r = try await run { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], membership: m) { bs, _, mem in
                     MsgClaimAnmlPrivate(fee: bs[0], membership: mem!, day: day, pc: anml.pc.bytes, ciphertext: anml.ciphertext)
                 }
             }
             store.mutate { _ = $0.claimedDays.insert(day) }
-            store.save()
+            try store.save()
             return r
         }
     }
@@ -530,7 +568,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     public func claimOpensAt() -> Int64? {
         let snap = snapshot
         guard snap.identityStatus == .live, let id = snap.identity else { return nil }
-        let a = Int64(id.activatedAt)
+        let a = Int64(clamping: id.activatedAt)
         let firstDay = a / Self.secondsPerDay + 1 + (a % Self.secondsPerDay == 0 ? 0 : 1)
         let t = Int64(today())
         let day = max(t + (snap.claimedDays.contains(UInt64(t)) ? 1 : 0), firstDay)
@@ -563,7 +601,7 @@ public final class PrivacyWallet: @unchecked Sendable {
                 }
             }
             store.mutate { $0.caretakerCastAt = now(); $0.caretakerSplit = split }
-            store.save()
+            try store.save()
             return r
         }
     }
@@ -590,7 +628,7 @@ public final class PrivacyWallet: @unchecked Sendable {
                 }
             }
             store.mutate { $0.referrerAddress = address; $0.referrerBoundAt = address.isEmpty ? 0 : now() }
-            store.save()
+            try store.save()
             return r
         }
     }
@@ -826,8 +864,11 @@ public final class PrivacyWallet: @unchecked Sendable {
         try require(notes.allSatisfy { $0.denom == denom }, "one validator per stake vote")
         let validator = try Self.parseDerth(denom)
         let snap = try await reads.snapshot(proposalID: proposalID)
-        try require(notes.allSatisfy { $0.position < snap.treeSize }, "this stake arrived after the proposal's snapshot and cannot vote on it")
         let tree = store.stakeTree
+        // Audit 3: a snapshot past the local tree (stake landed since the last
+        // sync) cannot be checked here: "sync first", never a trap.
+        guard snap.treeSize <= tree.size else { throw SyncFirst() }
+        try require(notes.allSatisfy { $0.position < snap.treeSize }, "this stake arrived after the proposal's snapshot and cannot vote on it")
         guard tree.rootAt(snap.treeSize) == snap.root else {
             throw PrivacyError("the local stake tree disagrees with the proposal's snapshot root")
         }
@@ -848,7 +889,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// The positions that can vote on `proposalID`: created before the block
     /// it entered voting at (the chain refuses later ones).
     public static func votingPositions(_ positions: [PrivacyReads.Position], snapshot: PrivacyReads.Snapshot) -> [PrivacyReads.Position] {
-        positions.filter { snapshot.height == 0 || Int64($0.createdHeight) < snapshot.height }
+        positions.filter { snapshot.height <= 0 || $0.createdHeight < UInt64(snapshot.height) }
     }
 
     /// What a stake vote on a proposal weighs, in uerth.
@@ -967,7 +1008,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         let newNext = max(next, found)
         if newNext > store.state.nextOtagCounter {
             store.mutate { $0.nextOtagCounter = newNext }
-            store.save()
+            persistNoThrow()
         }
         return out.sorted { $0.position.id < $1.position.id }
     }
@@ -986,7 +1027,7 @@ public final class PrivacyWallet: @unchecked Sendable {
                 s.nextOtagCounter += 1
                 return c
             }
-            store.save()
+            try store.save()
             let stake = try stakePlan(denom, spends: ins, outAmounts: [try Self.sum(ins) - amount], vOut: amount,
                                       salt: keys.otagSalt(counter))
             let w = Self.weights(splits)
@@ -1140,7 +1181,23 @@ public final class PrivacyWallet: @unchecked Sendable {
     public func deferUnbondClaim(denom: String, until: Int64) async {
         await locked {
             store.mutate { $0.unbondRetryAt[denom] = until }
-            store.save()
+            persistNoThrow()
         }
     }
+
+    // MARK: - saving
+
+    /// Saves where nothing can be thrown (a broadcast's acceptance callback):
+    /// a failure is kept and shown (`Snapshot.saveError`), never dropped
+    /// (audit 3). The next save that succeeds clears it.
+    func persistNoThrow() {
+        do {
+            try store.save()
+            setSaveError(nil)
+        } catch {
+            setSaveError(error.localizedDescription)
+        }
+    }
+
+    private func setSaveError(_ e: String?) { snapLock.lock(); saveErrorValue = e; snapLock.unlock() }
 }

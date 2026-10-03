@@ -37,6 +37,8 @@ public final class StakeVoteController: @unchecked Sendable {
     private var task: Task<Void, Never>?
     private var progressValue: Progress?
     private var keepRun = false
+    /// Set from the moment a start is accepted until its task exists (audit 3: no double start).
+    private var starting = false
 
     /// `onProgress` hears every change (on no particular thread); `pause`
     /// waits between casts (milliseconds; tests pass a recorder).
@@ -57,21 +59,42 @@ public final class StakeVoteController: @unchecked Sendable {
 
     /// Plans and starts a run on `proposalID`, returning once the first cast
     /// is broadcast (its hash); the rest goes on in the background.
+    /// Claims the right to start a run: false while one runs or is starting.
+    private func claimStart() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if starting || task != nil { return false }
+        starting = true
+        return true
+    }
+
+    private func releaseStart() { lock.lock(); starting = false; lock.unlock() }
+
     public func startAndAwaitFirst(proposalID: UInt64, options: [WeightedVoteOption]) async throws -> String {
-        guard !isRunning else { throw PrivacyError("a stake vote is already running") }
-        let w = try wallet()
-        let total = try await w.stakeVoteItems(proposalID: proposalID).count
-        guard total > 0 else { throw PrivacyError("no stake from before this proposal's voting opened") }
-        await w.setStakeVoteRun(StakeVoteRun(proposalID: proposalID, options: options.map { .init(option: $0.option, weight: $0.weight) },
-                                             votedPositions: [], total: total))
+        guard claimStart() else { throw PrivacyError("a stake vote is already running") }
+        do {
+            let w = try wallet()
+            let total = try await w.stakeVoteItems(proposalID: proposalID).count
+            guard total > 0 else { throw PrivacyError("no stake from before this proposal's voting opened") }
+            guard await w.startStakeVoteRun(StakeVoteRun(proposalID: proposalID, options: options.map { .init(option: $0.option, weight: $0.weight) },
+                                                         votedPositions: [], total: total)) else {
+                throw PrivacyError("a stake vote is already running")
+            }
+        } catch {
+            releaseStart()
+            throw error
+        }
+        // The first cast is what the confirm sheet showed a fee for.
+        let shown = PrivacyWallet.shownFee
         return try await withCheckedThrowingContinuation { (c: CheckedContinuation<String, Error>) in
-            launch(first: c, resumed: false)
+            launch(first: c, resumed: false, shownFee: shown)
         }
     }
 
-    /// Picks up a persisted run the app lost (call on unlock).
-    public func resume() {
-        guard !isRunning, let w = try? wallet(), let run = w.store.state.stakeVoteRun else { return }
+    /// Picks up a persisted run the app lost (call on unlock): the selected
+    /// wallet's own, read from its store under its lock.
+    public func resume() async {
+        guard claimStart() else { return }
+        guard let w = try? wallet(), let run = await w.currentStakeVoteRun() else { releaseStart(); return }
         set(Progress(proposalID: run.proposalID, done: run.done, total: run.total))
         launch(first: nil, resumed: true)
     }
@@ -102,14 +125,24 @@ public final class StakeVoteController: @unchecked Sendable {
         return keep
     }
 
-    private func clearTask() { lock.lock(); task = nil; lock.unlock() }
+    /// The run whose task is (or is about to be) `task`.
+    private var runID: UUID?
 
-    private func launch(first: CheckedContinuation<String, Error>?, resumed: Bool) {
-        let t = Task { [self] in
+    private func clearTask(_ id: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        guard runID == id else { return }
+        task = nil; runID = nil; starting = false
+    }
+
+    private func launch(first: CheckedContinuation<String, Error>?, resumed: Bool, shownFee: UInt64? = nil) {
+        let id = UUID()
+        lock.lock(); runID = id; lock.unlock()
+        // Detached from the caller's task locals: only the first cast is bound by the sheet's fee.
+        let t = Task.detached { [self] in
             var pendingFirst = first
             func fail(_ e: Error) { pendingFirst?.resume(throwing: e); pendingFirst = nil }
-            guard let w = try? wallet(), var run = w.store.state.stakeVoteRun else {
-                fail(PrivacyError("no stake vote to run")); return
+            guard let w = try? wallet(), var run = await w.currentStakeVoteRun() else {
+                fail(PrivacyError("no stake vote to run")); clearTask(id); return
             }
             do {
                 let options = run.options.map { WeightedVoteOption(option: $0.option, weight: $0.weight) }
@@ -128,7 +161,15 @@ public final class StakeVoteController: @unchecked Sendable {
                     }
                     try Task.checkCancellation()
                     // As the last sync left it: a note voted (or pending) or a position gone is skipped.
-                    guard let r = try await w.castStakeVote(proposalID: run.proposalID, item: item, options: options) else { continue }
+                    let cast: TxResult?
+                    if pendingFirst != nil, let shownFee {
+                        cast = try await PrivacyWallet.$shownFee.withValue(shownFee) {
+                            try await w.castStakeVote(proposalID: run.proposalID, item: item, options: options)
+                        }
+                    } else {
+                        cast = try await w.castStakeVote(proposalID: run.proposalID, item: item, options: options)
+                    }
+                    guard let r = cast else { continue }
                     run.done += 1
                     if case let .position(id, _) = item { run.votedPositions.insert(id) }
                     await w.setStakeVoteRun(run)
@@ -147,21 +188,41 @@ public final class StakeVoteController: @unchecked Sendable {
             // Finished, cancelled or failed: nothing to resume (a suspended run is kept).
             let keep = takeKeepRun(cancelled: Task.isCancelled)
             if !keep { await w.clearStakeVoteRun(proposalID: run.proposalID) }
-            clearTask()
+            clearTask(id)
         }
-        lock.lock(); task = t; lock.unlock()
+        // A run that already ended (cleared its id) is not recorded as running.
+        lock.lock(); if runID == id { task = t; starting = false }; lock.unlock()
     }
 }
 
 extension PrivacyWallet {
     /// Persists the stake vote being cast (K5).
     func setStakeVoteRun(_ run: StakeVoteRun) async {
-        await lockedNoThrow { store.mutate { $0.stakeVoteRun = run }; store.save() }
+        await lockedNoThrow { store.mutate { $0.stakeVoteRun = run }; persistNoThrow() }
+    }
+
+    /// Persists a new run unless one is already persisted (audit 3: no double start).
+    func startStakeVoteRun(_ run: StakeVoteRun) async -> Bool {
+        var ok = false
+        await lockedNoThrow {
+            guard store.state.stakeVoteRun == nil else { return }
+            store.mutate { $0.stakeVoteRun = run }
+            persistNoThrow()
+            ok = true
+        }
+        return ok
+    }
+
+    /// The persisted run, read under the wallet's lock.
+    func currentStakeVoteRun() async -> StakeVoteRun? {
+        var r: StakeVoteRun?
+        await lockedNoThrow { r = store.state.stakeVoteRun }
+        return r
     }
 
     func clearStakeVoteRun(proposalID: UInt64) async {
         await lockedNoThrow {
-            if store.state.stakeVoteRun?.proposalID == proposalID { store.mutate { $0.stakeVoteRun = nil }; store.save() }
+            if store.state.stakeVoteRun?.proposalID == proposalID { store.mutate { $0.stakeVoteRun = nil }; persistNoThrow() }
         }
     }
 }

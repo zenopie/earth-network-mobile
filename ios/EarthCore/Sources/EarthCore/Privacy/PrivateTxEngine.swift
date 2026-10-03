@@ -46,6 +46,8 @@ public protocol PrivateChain: Sendable {
     func minFee() async throws -> UInt64
     /// x/shielded params.max_actions_per_bundle.
     func maxActionsPerBundle() async throws -> Int
+    /// The chain's latest block height: a private tx's timeout_height is set from it.
+    func tipHeight() async throws -> UInt64
 }
 
 /// A membership proof's statement, waiting for the sighash (its signal).
@@ -114,9 +116,69 @@ public struct PrivateTxEngine: Sendable {
     /// Covers a fee's varint growing by a byte or two between the simulated and the final tx.
     public static let minHeadroom: UInt64 = 20_000
     static let maxRelays = 4
+    /// Blocks past the chain's tip a private tx stays valid for (its timeout_height; audit 3).
+    public static let timeoutBlocks: UInt64 = 50
+    /// The absolute cap on a private fee: 2 ERTH (audit 3).
+    public static let maxPrivateFee: UInt64 = 2_000_000
 
-    public init(chainID: String, chain: PrivateChain, prover: PrivacyProver) {
-        self.chainID = chainID; self.chain = chain; self.prover = prover
+    // The chain's default gas schedule (x/shielded params, the proof
+    // modules' verification charges), for the wallet's own estimate.
+    public static let baseGas: UInt64 = 100_000
+    public static let txByteGas: UInt64 = 10
+    public static let bundleGas: UInt64 = 100_000
+    /// One action: its proof (2,000,000) and two note writes (150,000 each).
+    public static let actionGas: UInt64 = 2_300_000
+    /// A stake proof: its proof and four note writes.
+    public static let stakeGas: UInt64 = 2_600_000
+    /// A membership proof and its nullifier write.
+    public static let membershipGas: UInt64 = 2_150_000
+    /// MsgRegister: the passport proof (3,000,000), the DSC chain (300,000) and two minted notes.
+    public static let registerGas: UInt64 = 3_600_000
+
+    /// The absolute cap on any private fee, in uerth.
+    public let maxFee: UInt64
+
+    /// The fee the chain asks is more than the sheet showed: ask the user again at `fee`.
+    public struct FeeAboveQuote: Swift.Error, LocalizedError {
+        public let fee: UInt64
+        public let shown: UInt64
+        public var errorDescription: String? { "The fee is now \(fee)uerth, more than the \(shown)uerth shown; confirm again." }
+    }
+
+    /// The fee the node's pricing asks is past the wallet's cap: nothing is proven or sent.
+    public struct FeeAboveCap: Swift.Error, LocalizedError {
+        public let fee: UInt64
+        public let cap: UInt64
+        public var errorDescription: String? { "The node asks a \(fee)uerth fee, above this wallet's \(cap)uerth cap for this transaction." }
+    }
+
+    public init(chainID: String, chain: PrivateChain, prover: PrivacyProver, maxFee: UInt64 = PrivateTxEngine.maxPrivateFee) {
+        self.chainID = chainID; self.chain = chain; self.prover = prover; self.maxFee = maxFee
+    }
+
+    /// The wallet's estimate of `msg`'s gas from its shape alone.
+    public static func estimateGas(_ msg: any PrivateMsg, _ a: Assembled, txBytes: Int) -> UInt64 {
+        var g = baseGas &+ txByteGas &* UInt64(txBytes)
+        for b in msg.bundles { g = g &+ bundleGas &+ actionGas &* UInt64(b.actions.count) }
+        if msg.stakeProof != nil { g = g &+ stakeGas }
+        if a.membership != nil { g = g &+ membershipGas }
+        if msg is MsgRegisterPrivate { g = g &+ registerGas }
+        return g
+    }
+
+    /// The most this tx may pay (audit 3): twice the wallet's own estimate
+    /// from the tx's shape at the chain's default gas schedule, priced like
+    /// the node's quote (and at least min_fee), never more than `maxFee`.
+    public func feeCap(_ msg: any PrivateMsg, _ a: Assembled, txBytes: Int, minFee: UInt64, price: Decimal) -> UInt64 {
+        let estimate = max(minFee, Self.feeFor(price: price, gas: Self.estimateGas(msg, a, txBytes: txBytes)))
+        let (twice, o) = estimate.multipliedReportingOverflow(by: 2)
+        return min(maxFee, o ? UInt64.max : twice)
+    }
+
+    private func timeoutHeight() async throws -> UInt64 {
+        let (t, o) = try await chain.tipHeight().addingReportingOverflow(Self.timeoutBlocks)
+        guard !o else { throw PrivacyError("the chain's height is out of range") }
+        return t
     }
 
     public static func feeFor(price: Decimal, gas: UInt64) -> UInt64 {
@@ -126,18 +188,27 @@ public struct PrivateTxEngine: Sendable {
         return NSDecimalNumber(decimal: rounded).uint64Value
     }
 
-    /// Lays out, prices and simulates without proving: what the confirm sheet shows.
+    /// Lays out, prices and simulates without proving: what a confirm sheet
+    /// may show. Simulated with random placeholder nullifiers (audit 3): the
+    /// node learns nothing about which notes would be spent before the user
+    /// confirms (gas is the tx's shape, the same either way).
     public func quote(_ assemble: (UInt64) throws -> Assembled, memo: String = "") async throws -> Quote {
-        try await price(assemble, memo: memo).0
+        try await price(assemble, memo: memo, timeout: try await timeoutHeight(), placeholders: true).0
     }
 
-    /// Prices, proves and broadcasts. The tx's `memo`, timeout_height (none)
-    /// and the gas limit the pricing settled on are fixed first: the sighash
-    /// binds them, so every proof is made over the tx exactly as broadcast.
-    public func run(_ assemble: (UInt64) throws -> Assembled, memo: String = "",
-                    accepted: @Sendable (String, Assembled) -> Void = { _, _ in }) async throws -> (TxResult, Assembled) {
-        let (q, a) = try await price(assemble, memo: memo)
-        let tx = PrivateMsgs.TxFields(memo: memo, timeoutHeight: 0, gasLimit: q.gasLimit)
+    /// Prices, proves and broadcasts. The tx's `memo`, timeout_height (the
+    /// chain's tip + `timeoutBlocks`) and the gas limit the pricing settled
+    /// on are fixed first: the sighash binds them, so every proof is made
+    /// over the tx exactly as broadcast. The fee is capped (`feeCap`) and,
+    /// with `shownFee`, may not exceed what the confirm sheet showed.
+    /// `accepted` gets the timeout height: spent notes stay pending until the
+    /// chain is past it.
+    public func run(_ assemble: (UInt64) throws -> Assembled, memo: String = "", shownFee: UInt64? = nil,
+                    accepted: @Sendable (String, Assembled, UInt64) -> Void = { _, _, _ in }) async throws -> (TxResult, Assembled) {
+        let timeout = try await timeoutHeight()
+        let (q, a) = try await price(assemble, memo: memo, timeout: timeout, placeholders: false)
+        if let shownFee, q.fee > shownFee { throw FeeAboveQuote(fee: q.fee, shown: shownFee) }
+        let tx = PrivateMsgs.TxFields(memo: memo, timeoutHeight: timeout, gasLimit: q.gasLimit)
         let sighash = try draft(a).sighash(chainID: chainID, tx: tx)
         var bundles: [ShieldedBundle] = []
         for (i, plan) in a.bundles.enumerated() {
@@ -161,7 +232,7 @@ public struct PrivateTxEngine: Sendable {
         guard msg.totalFee == q.fee else { throw PrivacyError("the msg must pay exactly the quoted fee") }
         try Self.checkShape(msg)
         let assembled = a
-        return (try await chain.broadcast(UnsignedTx.build(msg, tx: tx)) { accepted($0, assembled) }, a)
+        return (try await chain.broadcast(UnsignedTx.build(msg, tx: tx)) { accepted($0, assembled, timeout) }, a)
     }
 
     /// The chain's wallet format rules (round 2), checked before broadcast:
@@ -190,14 +261,16 @@ public struct PrivateTxEngine: Sendable {
         return p
     }
 
-    private func price(_ assemble: (UInt64) throws -> Assembled, memo: String) async throws -> (Quote, Assembled) {
+    private func price(_ assemble: (UInt64) throws -> Assembled, memo: String, timeout: UInt64, placeholders: Bool) async throws -> (Quote, Assembled) {
         let minFee = try await chain.minFee()
         let price = try await chain.gasPrice()
         var fee = max(minFee, Self.feeFor(price: price, gas: Self.guessGas))
         var a = try assemble(fee)
         var first = true
         for _ in 0 ..< Self.maxRelays {
-            let gas = try await chain.simulate(UnsignedTx.build(try draft(a), gasLimit: 0, memo: memo))
+            let d = try draft(a, placeholders: placeholders)
+            let raw = UnsignedTx.build(d, gasLimit: 0, memo: memo, timeoutHeight: timeout)
+            let gas = try await chain.simulate(raw)
             let (limit, o) = gas.addingReportingOverflow(max(gas / 10, Self.minHeadroom))
             guard !o else { throw PrivacyError("the simulated gas is out of range") }
             let need = max(minFee, Self.feeFor(price: price, gas: limit))
@@ -205,7 +278,11 @@ public struct PrivateTxEngine: Sendable {
             // layout whose gas the fee covers is final (a fee needing one more
             // note, or one fewer leaving change, changes the action count, and
             // so the gas, so the fee may only rise from here).
-            if need == fee || (need < fee && !first) { return (Quote(gasLimit: limit, fee: fee), a) }
+            if need == fee || (need < fee && !first) {
+                let cap = feeCap(d, a, txBytes: raw.count, minFee: minFee, price: price)
+                if fee > cap { throw FeeAboveCap(fee: fee, cap: cap) }
+                return (Quote(gasLimit: limit, fee: fee), a)
+            }
             first = false
             fee = need
             a = try assemble(fee)
@@ -213,13 +290,24 @@ public struct PrivateTxEngine: Sendable {
         throw PrivacyError("the fee did not settle")
     }
 
-    private func draft(_ a: Assembled) throws -> any PrivateMsg {
-        try a.build(a.bundles.map { $0.proto() }, try a.stake?.proto(proof: Self.placeholder), try a.membership.map(placeholderMembership))
+    private func draft(_ a: Assembled, placeholders: Bool = false) throws -> any PrivateMsg {
+        var bundles = a.bundles.map { $0.proto() }
+        var stake = try a.stake?.proto(proof: Self.placeholder)
+        if placeholders {
+            for i in bundles.indices { for j in bundles[i].actions.indices { bundles[i].actions[j].nullifier = NotePlaintext.randomField().bytes } }
+            if var p = stake {
+                // A zero marks an unused slot and stays.
+                for i in p.nullifiers.indices where !p.nullifiers[i].allSatisfy({ $0 == 0 }) { p.nullifiers[i] = NotePlaintext.randomField().bytes }
+                stake = p
+            }
+        }
+        return try a.build(bundles, stake, try a.membership.map { try placeholderMembership($0, placeholders: placeholders) })
     }
 
     /// The membership's real root and nullifier (the chain checks both before any proof), a placeholder proof.
-    private func placeholderMembership(_ spec: MembershipWitnessSpec) throws -> Membership {
+    private func placeholderMembership(_ spec: MembershipWitnessSpec, placeholders: Bool) throws -> Membership {
         let w = try spec.witness(signal: .zero)
-        return Membership(proof: Self.placeholder, root: w.root.bytes, nullifier: w.nullifier.bytes)
+        return Membership(proof: Self.placeholder, root: w.root.bytes,
+                          nullifier: placeholders ? NotePlaintext.randomField().bytes : w.nullifier.bytes)
     }
 }

@@ -331,9 +331,9 @@ final class AuditFixesTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("earth-c4-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let store = PrivacyStore.open(root: root, walletID: "w1")
+        let store = try PrivacyStore.open(root: root, walletID: "w1")
         store.mutate { $0.chainID = "earth-1" }
-        store.save()
+        try store.save()
         for dir in [root.appendingPathComponent("privacy"), root.appendingPathComponent("privacy/w1")] {
             var u = dir
             u.removeAllCachedResourceValues()
@@ -387,6 +387,11 @@ final class WrappedIndexer: PrivacyIndexer, @unchecked Sendable {
     var rootsOverride: ((LatestRoots) -> LatestRoots)?
     var identityOverride: ((UInt64, Int?) throws -> IdentityPage?)?
     var nullifiersOverride: ((HeightPage<Fr>) -> HeightPage<Fr>)?
+    /// A nullifier page to serve instead, by its from height (nil: the inner indexer's).
+    var nullifiersFromOverride: ((UInt64) -> HeightPage<Fr>?)?
+    var stakeNullifiersFromOverride: ((UInt64) -> HeightPage<Fr>?)?
+    /// Rewrites every identity page served.
+    var identityMap: ((IdentityPage) -> IdentityPage)?
 
     init(_ inner: PrivacyIndexer) { self.inner = inner }
 
@@ -402,12 +407,14 @@ final class WrappedIndexer: PrivacyIndexer, @unchecked Sendable {
     }
 
     func nullifiers(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<Fr> {
+        if let o = nullifiersFromOverride, let p = o(fromHeight) { return p }
         let p = try await inner.nullifiers(fromHeight: fromHeight, limit: limit)
         return nullifiersOverride?(p) ?? p
     }
     func identity(fromIndex: UInt64, limit: Int?) async throws -> IdentityPage {
         if let o = identityOverride, let p = try o(fromIndex, limit) { return p }
-        return try await inner.identity(fromIndex: fromIndex, limit: limit)
+        let p = try await inner.identity(fromIndex: fromIndex, limit: limit)
+        return identityMap?(p) ?? p
     }
     func identityZeroed(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<UInt64> {
         try await inner.identityZeroed(fromHeight: fromHeight, limit: limit)
@@ -421,7 +428,8 @@ final class WrappedIndexer: PrivacyIndexer, @unchecked Sendable {
     func rates(epoch: UInt64?) async throws -> [RateRow] { try await inner.rates(epoch: epoch) }
     func stakeNotes(fromPos: UInt64, limit: Int?) async throws -> StakeNotesPage { try await inner.stakeNotes(fromPos: fromPos, limit: limit) }
     func stakeNullifiers(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<Fr> {
-        try await inner.stakeNullifiers(fromHeight: fromHeight, limit: limit)
+        if let o = stakeNullifiersFromOverride, let p = o(fromHeight) { return p }
+        return try await inner.stakeNullifiers(fromHeight: fromHeight, limit: limit)
     }
 }
 

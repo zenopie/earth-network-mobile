@@ -68,12 +68,26 @@ public struct RegRecord: Codable, Equatable, Sendable {
     public var cursor: UInt64 = 0
     /// Leaf hashes spent on this record so far (capped).
     public var work: UInt64 = 0
+    /// `height`'s block time as the indexer's identity rows carry it (nil: not served).
+    public var time: UInt64?
+    /// Exact activated_at candidates already tried (each at most 677 hashes a leaf): a new one is tried even after exhausted.
+    public var tried: [UInt64] = []
+    /// The cover set of heights whose block times were asked of the LCD with `height`'s (chosen once, reused).
+    public var cover: [UInt64] = []
+    /// LCD cover-set fetches made (bounded).
+    public var coverTries: Int = 0
+    /// `height`'s block time as the LCD answered it (nil: not asked, or it could not say).
+    public var chainTime: UInt64?
+    /// How many leaves `tried` was tried against: more leaves later reopen the record.
+    public var leavesTried: Int = 0
 
     public init(height: UInt64, position: UInt64, dscKey: Fr, country: String, builtAt: UInt64) {
         self.height = height; self.position = position; self.dscKey = dscKey; self.country = country; self.builtAt = builtAt
     }
 
-    enum CodingKeys: String, CodingKey { case height, position, dscKey, country, builtAt, leaves, status, cursor, work }
+    enum CodingKeys: String, CodingKey {
+        case height, position, dscKey, country, builtAt, leaves, status, cursor, work, time, tried, cover, coverTries, chainTime, leavesTried
+    }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -84,9 +98,20 @@ public struct RegRecord: Codable, Equatable, Sendable {
         status = try c.decodeIfPresent(RecordStatus.self, forKey: .status) ?? .open
         cursor = try c.decodeIfPresent(UInt64.self, forKey: .cursor) ?? 0
         work = try c.decodeIfPresent(UInt64.self, forKey: .work) ?? 0
+        time = try c.decodeIfPresent(UInt64.self, forKey: .time)
+        tried = try c.decodeIfPresent([UInt64].self, forKey: .tried) ?? []
+        cover = try c.decodeIfPresent([UInt64].self, forKey: .cover) ?? []
+        coverTries = try c.decodeIfPresent(Int.self, forKey: .coverTries) ?? 0
+        chainTime = try c.decodeIfPresent(UInt64.self, forKey: .chainTime)
+        leavesTried = try c.decodeIfPresent(Int.self, forKey: .leavesTried) ?? 0
     }
 }
 
+/// open: still searching; matched: the identity; exhausted: the bounded
+/// fallback search is spent, or the chain's time did not match. Exhausted
+/// never blocks a restore for good: an exact time not tried before (the
+/// indexer's, the LCD's) is still tried, and a store reset finds the record
+/// afresh (K13).
 public enum RecordStatus: String, Codable, Sendable { case open, matched, exhausted }
 
 /// A stake vote being cast (K5), persisted so a run the process lost resumes
@@ -132,6 +157,12 @@ public struct PrivacyState: Codable, Sendable {
     /// Whether the last sync's roots matched the chain's own (C3), and why not.
     public var rootsVerified: Bool = false
     public var rootsError: String?
+    /// Sync generations (audit 3): `syncGeneration` is bumped, with
+    /// `rootsVerified` cleared and persisted, before a sync's first request;
+    /// `verifiedGeneration` is set to it only when every stream and the root
+    /// checks of that same sync succeeded. Txs need the two equal.
+    public var syncGeneration: UInt64 = 0
+    public var verifiedGeneration: UInt64?
     /// UTC days a claim was broadcast for (so the automation does not repeat one).
     public var claimedDays: Set<UInt64> = []
     /// When the caretaker split was last cast (unix seconds), and the split (option -> percent).
@@ -161,7 +192,8 @@ public struct PrivacyState: Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case chainID, genesis, notesNext, notesHeight, nullifiersNext, identityNext, zeroedNext, notes, identity, pendingRegistration,
              regRecords, rootsVerified, rootsError, claimedDays, caretakerCastAt, caretakerSplit, referrerAddress, referrerBoundAt,
-             unbondRetryAt, nextOtagCounter, stakeNext, stakeHeight, stakeNullifiersNext, stakeNotes, denoms, closedOtagMax, stakeVoteRun
+             unbondRetryAt, nextOtagCounter, stakeNext, stakeHeight, stakeNullifiersNext, stakeNotes, denoms, closedOtagMax, stakeVoteRun,
+             syncGeneration, verifiedGeneration
     }
 
     /// Tolerates a state file from before the stake tree (missing keys keep their defaults).
@@ -182,6 +214,8 @@ public struct PrivacyState: Codable, Sendable {
         stakeNullifiersNext = try v(.stakeNullifiersNext, 0); stakeNotes = try v(.stakeNotes, []); denoms = try v(.denoms, [])
         closedOtagMax = try c.decodeIfPresent(UInt32.self, forKey: .closedOtagMax)
         stakeVoteRun = try c.decodeIfPresent(StakeVoteRun.self, forKey: .stakeVoteRun)
+        syncGeneration = try v(.syncGeneration, 0)
+        verifiedGeneration = try c.decodeIfPresent(UInt64.self, forKey: .verifiedGeneration)
     }
 }
 
@@ -199,31 +233,82 @@ public final class PrivacyStore {
     public let identityTree: MerkleTree
     public let stakeTree: MerkleTree
 
-    private init(dir: URL?) {
+    /// state.json exists but does not parse: shown as an error, never silently replaced by an empty state (audit 3).
+    public struct CorruptState: Swift.Error, LocalizedError {
+        public let message: String
+        public var errorDescription: String? { message }
+    }
+
+    /// A save failed (the state file, or a tree's files): surfaced, never silent (audit 3).
+    public struct SaveFailed: Swift.Error, LocalizedError {
+        public let message: String
+        public var errorDescription: String? { message }
+    }
+
+    private let fileStores: [FileNodeStore]
+
+    private init(dir: URL?) throws {
         self.dir = dir
-        let noteNodes: NodeStore = dir.map { FileNodeStore(directory: $0.appendingPathComponent("notes")) } ?? MemNodeStore()
-        let identityNodes: NodeStore = dir.map { FileNodeStore(directory: $0.appendingPathComponent("identity")) } ?? MemNodeStore()
-        let stakeNodes: NodeStore = dir.map { FileNodeStore(directory: $0.appendingPathComponent("stake")) } ?? MemNodeStore()
-        let loaded = dir.flatMap { try? Data(contentsOf: $0.appendingPathComponent(Self.stateFile)) }
-            .flatMap { try? JSONDecoder().decode(PrivacyState.self, from: $0) }
+        let files = dir.map { d in ["notes", "identity", "stake"].map { FileNodeStore(directory: d.appendingPathComponent($0)) } }
+        fileStores = files ?? []
+        let noteNodes: NodeStore = files?[0] ?? MemNodeStore()
+        let identityNodes: NodeStore = files?[1] ?? MemNodeStore()
+        let stakeNodes: NodeStore = files?[2] ?? MemNodeStore()
+        var loaded: PrivacyState?
+        if let dir {
+            let url = dir.appendingPathComponent(Self.stateFile)
+            if FileManager.default.fileExists(atPath: url.path) {
+                do {
+                    loaded = try JSONDecoder().decode(PrivacyState.self, from: Data(contentsOf: url))
+                } catch {
+                    throw CorruptState(message: "this wallet's private data (\(Self.stateFile)) is unreadable: \(error.localizedDescription)")
+                }
+            }
+        }
         state = loaded ?? PrivacyState()
         noteTree = MerkleTree(store: noteNodes, size: state.notesNext)
         identityTree = MerkleTree(store: identityNodes, size: state.identityNext)
         stakeTree = MerkleTree(store: stakeNodes, size: state.stakeNext)
     }
 
-    public static func memory() -> PrivacyStore { PrivacyStore(dir: nil) }
+    public static func memory() -> PrivacyStore { try! PrivacyStore(dir: nil) } // no file: nothing to fail
 
-    public static func open(root: URL, walletID: String) -> PrivacyStore {
+    public static func open(root: URL, walletID: String) throws -> PrivacyStore {
         let top = root.appendingPathComponent("privacy")
         let d = top.appendingPathComponent(walletID)
-        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
         // C4: the notes, trees and registration are derivable from the
         // mnemonic and the chain; a device backup (iCloud, iTunes/Finder)
         // would only carry this wallet's private history off the device.
         excludeFromBackup(top)
         excludeFromBackup(d)
-        return PrivacyStore(dir: d)
+        return try PrivacyStore(dir: d)
+    }
+
+    /// Deletes a wallet's private data (notes, identity, records, trees) when
+    /// the wallet is forgotten (audit 3): every file is overwritten with
+    /// zeros and synced before it is unlinked (best effort on flash; the
+    /// app's sandbox and Data Protection are the real boundary). `walletID`
+    /// nil: every wallet's.
+    public static func delete(root: URL, walletID: String? = nil) throws {
+        let top = root.appendingPathComponent("privacy")
+        let target = walletID.map { top.appendingPathComponent($0) } ?? top
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: target.path) else { return }
+        if let e = fm.enumerator(at: target, includingPropertiesForKeys: [.isRegularFileKey]) {
+            for case let url as URL in e where (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
+                if let h = try? FileHandle(forUpdating: url) {
+                    let n = (try? h.seekToEnd()) ?? 0
+                    try? h.seek(toOffset: 0)
+                    var left = n
+                    let zeros = Data(count: 64 * 1024)
+                    while left > 0 { let k = Int(min(left, UInt64(zeros.count))); try? h.write(contentsOf: zeros.prefix(k)); left -= UInt64(k) }
+                    try? h.synchronize()
+                    try? h.close()
+                }
+            }
+        }
+        try fm.removeItem(at: target)
     }
 
     /// Marks `url` (and so everything under it) as excluded from device backups.
@@ -237,11 +322,19 @@ public final class PrivacyStore {
     public func mutate<T>(_ body: (inout PrivacyState) throws -> T) rethrows -> T { try body(&state) }
 
     /// Persists state after the trees, so a crash between the two leaves
-    /// state behind (and resyncs) rather than ahead.
-    public func save() {
+    /// state behind (and resyncs) rather than ahead. The state is written
+    /// atomically (a temp file renamed over it); any failure, the trees'
+    /// included, throws (audit 3: never silent).
+    public func save() throws {
         noteTree.flush(); identityTree.flush(); stakeTree.flush()
-        guard let dir, let data = try? JSONEncoder().encode(state) else { return }
-        try? data.write(to: dir.appendingPathComponent(Self.stateFile), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        for f in fileStores { if let e = f.takeError() { throw SaveFailed(message: "could not save this wallet's private data: \(e)") } }
+        guard let dir else { return }
+        do {
+            let data = try JSONEncoder().encode(state)
+            try data.write(to: dir.appendingPathComponent(Self.stateFile), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        } catch {
+            throw SaveFailed(message: "could not save this wallet's private data: \(error.localizedDescription)")
+        }
     }
 
     /// Forgets the synced data. On the same chain (an inconsistent sync) it
@@ -249,9 +342,9 @@ public final class PrivacyStore {
     /// pending) and what the wallet itself cast (claims, caretaker split,
     /// referrer); a different chain or genesis (a relaunch under the same
     /// chain id) keeps only the owner-tag counter.
-    public func reset(chainID: String?) { reset(chainID: chainID, genesis: state.genesis) }
+    public func reset(chainID: String?) throws { try reset(chainID: chainID, genesis: state.genesis) }
 
-    public func reset(chainID: String?, genesis: String?) {
+    public func reset(chainID: String?, genesis: String?) throws {
         noteTree.clear()
         identityTree.clear()
         stakeTree.clear()
@@ -270,14 +363,14 @@ public final class PrivacyStore {
             s.referrerAddress = old.referrerAddress; s.referrerBoundAt = old.referrerBoundAt
         }
         state = s
-        save()
+        try save()
     }
 
     /// A relaunch of the same chain id under a new genesis, confirmed by the
     /// LCD (K6): the synced data goes, but the registration stays (the
     /// identity record, its passport nullifier, a pending registration) and
     /// so do the owner-tag counters; the old chain's bookkeeping does not.
-    public func switchGenesis(_ genesis: String) {
+    public func switchGenesis(_ genesis: String) throws {
         noteTree.clear()
         identityTree.clear()
         stakeTree.clear()
@@ -291,7 +384,7 @@ public final class PrivacyStore {
         s.pendingRegistration = old.pendingRegistration
         s.pendingRegistration?.failure = nil
         state = s
-        save()
+        try save()
     }
 }
 

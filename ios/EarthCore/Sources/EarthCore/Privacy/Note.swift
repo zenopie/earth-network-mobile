@@ -59,10 +59,13 @@ public struct OwnedNote: Hashable, Sendable, Codable {
     public var spentHeight: UInt64?
     /// When a tx spending this note was broadcast (unix seconds), until sync sees its nullifier.
     public var pendingAt: Int64?
+    /// That tx's timeout_height: the note is released only once the chain is past it (nil: a pre-timeout mark).
+    public var pendingUntil: UInt64?
 
-    public init(position: UInt64, height: UInt64, note: NotePlaintext, cm: Fr, nf: Fr, spentHeight: UInt64? = nil, pendingAt: Int64? = nil) {
+    public init(position: UInt64, height: UInt64, note: NotePlaintext, cm: Fr, nf: Fr, spentHeight: UInt64? = nil, pendingAt: Int64? = nil,
+                pendingUntil: UInt64? = nil) {
         self.position = position; self.height = height; self.note = note; self.cm = cm; self.nf = nf
-        self.spentHeight = spentHeight; self.pendingAt = pendingAt
+        self.spentHeight = spentHeight; self.pendingAt = pendingAt; self.pendingUntil = pendingUntil
     }
 
     public var unspent: Bool { spentHeight == nil }
@@ -86,11 +89,14 @@ public struct OwnedStakeNote: Hashable, Sendable, Codable {
     public let nf: Fr
     public var spentHeight: UInt64?
     public var pendingAt: Int64?
+    /// The spending tx's timeout_height (see OwnedNote.pendingUntil).
+    public var pendingUntil: UInt64?
 
     public init(position: UInt64, height: UInt64, denom: String, amount: UInt64, rho: Fr, rcm: Fr, cm: Fr, nf: Fr,
-                spentHeight: UInt64? = nil, pendingAt: Int64? = nil) {
+                spentHeight: UInt64? = nil, pendingAt: Int64? = nil, pendingUntil: UInt64? = nil) {
         self.position = position; self.height = height; self.denom = denom; self.amount = amount
         self.rho = rho; self.rcm = rcm; self.cm = cm; self.nf = nf; self.spentHeight = spentHeight; self.pendingAt = pendingAt
+        self.pendingUntil = pendingUntil
     }
 
     public var unspent: Bool { spentHeight == nil }

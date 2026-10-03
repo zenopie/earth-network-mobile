@@ -119,13 +119,31 @@ public struct PrivacyQueries: PrivacyChainReads {
     }
 
     public func shieldedMinFee() async throws -> UInt64 {
-        try await rest.get("/earth/shielded/v1/params").params.min_fee.uint64 ?? 1000
+        let v = try await rest.get("/earth/shielded/v1/params").params.min_fee
+        guard v.exists else { return 1000 }
+        guard let fee = v.uint64, fee <= UInt64(Int64.max) else { throw PrivacyError("x/shielded min_fee is not a fee") }
+        return fee
     }
 
-    /// x/shielded params.max_actions_per_bundle (default 16).
+    /// The most actions the wallet lays out in one bundle, whatever the node's param says.
+    public static let maxActionsBound = 64
+
+    /// x/shielded params.max_actions_per_bundle (default 16), bounded to [2, 64] whatever the node says.
     public func maxActionsPerBundle() async throws -> Int {
-        let v = try await rest.get("/earth/shielded/v1/params").params.max_actions_per_bundle.uint64.map(Int.init) ?? 16
-        return v >= 2 ? v : 16
+        guard let v = try await rest.get("/earth/shielded/v1/params").params.max_actions_per_bundle.uint64 else { return 16 }
+        return v >= 2 ? Int(min(v, UInt64(Self.maxActionsBound))) : 16
+    }
+
+    /// The longest chain duration the wallet takes (100 years): longer is refused, never wrapped or trapped on.
+    public static let maxDurationSeconds: Int64 = 100 * 365 * 86_400
+
+    /// A protobuf JSON duration ("1814400s", "0.5s") in whole seconds, nil unless finite, non-negative and at most `maxDurationSeconds`.
+    public static func durationSeconds(_ d: String) -> Int64? {
+        let t = d.hasSuffix("s") ? String(d.dropLast()) : d
+        guard let v = Decimal(string: t, locale: Locale(identifier: "en_US_POSIX")), !v.isNaN, v >= 0, v <= Decimal(maxDurationSeconds) else { return nil }
+        var x = v, r = Decimal()
+        NSDecimalRound(&r, &x, 0, .down)
+        return NSDecimalNumber(decimal: r).int64Value
     }
 
     public func personhoodParams() async throws -> PrivacyReads.PersonhoodParams {
@@ -171,8 +189,8 @@ public struct PrivacyQueries: PrivacyChainReads {
     public func stakingTiming() async throws -> PrivacyReads.StakingTiming {
         let es = try await rest.get("/earth/shieldedstaking/v1/params").params.epoch_seconds.int64(default: 0)
         let ub = try await rest.get("/cosmos/staking/v1beta1/params").params.unbonding_time.string(default: "1814400s")
-        let seconds = Int64(Double(ub.replacingOccurrences(of: "s", with: "")) ?? 1_814_400)
-        return PrivacyReads.StakingTiming(epochSeconds: es > 0 ? es : 86_400, unbondingSeconds: seconds)
+        guard let seconds = Self.durationSeconds(ub) else { throw PrivacyError("unbonding_time \(ub.prefix(40)) is not a duration") }
+        return PrivacyReads.StakingTiming(epochSeconds: es > 0 ? min(es, Self.maxDurationSeconds) : 86_400, unbondingSeconds: seconds)
     }
 
     /// Every Groundworks position (public); the wallet finds its own by owner tag.
@@ -235,7 +253,7 @@ public struct RESTPrivateChain: PrivateChain {
         }
         let code = j.tx_response.code.int64(default: 0)
         guard code == 0 else {
-            throw EarthClient.Error.rejected(code: Int(code), log: j.tx_response.raw_log.string(default: ""))
+            throw EarthClient.Error.rejected(code: Int(clamping: code), log: j.tx_response.raw_log.string(default: ""))
         }
         guard let hash = j.tx_response.txhash.string else { throw EarthClient.Error.notCommitted(hash: "") }
         accepted(hash)
@@ -257,6 +275,11 @@ public struct RESTPrivateChain: PrivateChain {
 
     public func maxActionsPerBundle() async throws -> Int { try await PrivacyQueries(rest: rest).maxActionsPerBundle() }
 
+    public func tipHeight() async throws -> UInt64 {
+        guard let h = await LCDChainRoots(rest: rest).latestHeight() else { throw PrivacyError("the node did not say its latest height") }
+        return h
+    }
+
     /// RFC 3339 block time to unix seconds.
     static func parseTime(_ ts: String) -> Int64 {
         let f = DateFormatter()
@@ -274,7 +297,7 @@ public struct RESTPrivateChain: PrivateChain {
              attributes: Dictionary(e.attributes.array.map { ($0.key.string(default: ""), $0.value.string(default: "")) }, uniquingKeysWith: { a, _ in a }))
         }
         return TxResult(hash: hash, height: tr.height.uint64(default: 0), time: Self.parseTime(tr.timestamp.string(default: "")), events: events,
-                        code: Int(tr.code.int64(default: 0)), log: tr.raw_log.string(default: ""))
+                        code: Int(clamping: tr.code.int64(default: 0)), log: tr.raw_log.string(default: ""))
     }
 }
 
