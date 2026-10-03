@@ -9,7 +9,7 @@ import network.erth.wallet.privacy.zk.Fr
 
 /**
  * On-device proofs of the privacy circuits (circuits/membership,
- * circuits/action, circuits/stake), through the same noir_android build as
+ * circuits/action, circuits/stake, circuits/vote), through the same noir_android build as
  * [network.erth.wallet.passport.PassportProver] — bb v5.0.0, in lockstep
  * with the chain's verifier; never float that pin.
  *
@@ -29,10 +29,12 @@ object PrivacyProver {
         // Every kind asks the same SRS: bb honours only a process's first SRS
         // initialization, so whichever proves first sizes it for all three
         // (twice the next power of two above the largest gate count, stake's
-        // 9,647; membership 5,645 and action 8,120 fit under it).
+        // 9,647; membership 5,645, action 8,120 and vote 9,046 fit under it:
+        // 2^14 circuits, which the bundled 2^15 + 1 points cover).
         MEMBERSHIP("membership", SRS_SIZE, 7),
         ACTION("action", SRS_SIZE, 6),
         STAKE("stake", SRS_SIZE, 11),
+        VOTE("vote", SRS_SIZE, 7),
     }
 
     /** The privacy circuits' SRS size hint (2^15: 32,769 points). */
@@ -87,6 +89,7 @@ object PrivacyProver {
     @Volatile var lastActionMs: Long = 0; private set
     @Volatile var lastStakeMs: Long = 0; private set
     @Volatile var lastMembershipMs: Long = 0; private set
+    @Volatile var lastVoteMs: Long = 0; private set
 
     @Synchronized
     private fun load(context: Context, k: Kind): Loaded = loaded.getOrPut(k) {
@@ -120,6 +123,15 @@ object PrivacyProver {
         return prove(context, Kind.MEMBERSHIP, w.noirInputs(), w.publicInputs()).also {
             lastMembershipMs = SystemClock.elapsedRealtime() - t0
             Log.i(TAG, "membership proved in ${lastMembershipMs}ms")
+        }
+    }
+
+    fun proveVote(context: Context, w: VoteWitness): ByteArray {
+        w.check()
+        val t0 = SystemClock.elapsedRealtime()
+        return prove(context, Kind.VOTE, w.noirInputs(), w.publicInputs()).also {
+            lastVoteMs = SystemClock.elapsedRealtime() - t0
+            Log.i(TAG, "vote proved in ${lastVoteMs}ms")
         }
     }
 

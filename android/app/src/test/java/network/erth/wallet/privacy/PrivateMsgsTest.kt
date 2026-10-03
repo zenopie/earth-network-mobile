@@ -147,7 +147,7 @@ class PrivateMsgsTest {
             "claim_unbonding_fee_bundle" to MsgClaimUnbonding.newBuilder().setBundle(fee(115, 2000)).setValidator(validator)
                 .setEpoch(17).setAmount(400000).setPc(fb(116)).setCiphertext(bct(116)).setStake(stake(117, 1, 1)).build(),
             "stake_vote" to MsgStakeVote.newBuilder().setBundle(fee(120, 2000)).setProposalId(5).setValidator(validator)
-                .addAllOptions(opts()).setWeight(400000).setStake(stake(120, 2, 0, mints = true)).build(),
+                .addAllOptions(opts()).setWeight(400000).setProof(ByteString.copyFrom(byteArrayOf(0x70, 0x7e))).setVoteNullifier(fb(121)).build(),
             "lock_position" to MsgLockPosition.newBuilder().setBundle(fee(140, 2000)).setValidator(validator).setAmount(400000)
                 .addSplits(w(2, 100)).setStake(stake(140, 1, 1)).build(),
             "update_position" to MsgUpdatePosition.newBuilder().setBundle(fee(150, 2000)).setPositionId(9)

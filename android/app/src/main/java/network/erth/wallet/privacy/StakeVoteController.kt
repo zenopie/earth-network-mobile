@@ -18,7 +18,8 @@ import network.erth.wallet.privacy.sync.StakeVoteRun
 
 /**
  * Casts a stake vote on a proposal the one way the app does (K5): every
- * eligible derth note pair and every position that may vote, in a shuffled
+ * eligible derth note (one vote proof each, nothing spent: ORCHARD_DESIGN
+ * 15) and every position that may vote, in a shuffled
  * order, one at a time, with a full sync and a random 20-120 s pause between
  * casts, so a vote's fee never spends the previous vote's change unseen and
  * the casts are not one burst that times them together.
@@ -28,7 +29,9 @@ import network.erth.wallet.privacy.sync.StakeVoteRun
  * says how far it got and when the next cast is due, [cancel] stops it at
  * once. The plan is persisted (PrivacyState.stakeVoteRun) so a run the
  * process lost is picked up by [resume] on the next unlock; positions
- * already voted are not voted twice, notes already voted are spent.
+ * already voted are not voted twice, notes already voted are known by their
+ * recorded vote nullifiers (PrivacyState.stakeVotes) and skipped. A note
+ * votes once per proposal and on every open proposal.
  *
  * The run lives no longer than the unlocked session (audit 3): [suspend]
  * (on lock, session end and wallet switch: PrivacySession.clear) stops it

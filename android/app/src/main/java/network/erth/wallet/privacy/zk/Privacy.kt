@@ -27,6 +27,9 @@ object Privacy {
     val TAG_SPC = tag("earth.spc")
     val TAG_SNF = tag("earth.snf")
     val TAG_OTAG = tag("earth.otag")
+    // The stake nullifier indexed tree and stake votes (circuits/vote, ORCHARD_DESIGN 15).
+    val TAG_SNFL = tag("earth.snfl")
+    val TAG_VNF = tag("earth.vnf")
     // Wallet-defined (PRIVACY_FORMATS.md 3a): the registration record note's tag.
     val TAG_RECTAG = tag("earth.rectag")
     // Wallet-defined (PRIVACY_FORMATS.md 1): an unlock's closed owner-tag counter.
@@ -76,6 +79,18 @@ object Privacy {
     fun stakeNf(nk: Fr, rho: Fr, position: Long): Fr {
         require(position in 0..0xffffffffL) { "position is a u32" }
         return h(TAG_SNF, nk, rho, u64(position))
+    }
+
+    /** A stake nullifier tree leaf: H(TAG_SNFL, value, next_value, next_index), next_index a u32. */
+    fun nfLeaf(value: Fr, nextValue: Fr, nextIndex: Long): Fr {
+        require(nextIndex in 0..0xffffffffL) { "next_index is a u32" }
+        return h(TAG_SNFL, value, nextValue, u64(nextIndex))
+    }
+
+    /** A stake note's vote nullifier on a proposal: H(TAG_VNF, nk, rho, position, proposal_id). */
+    fun voteNf(nk: Fr, rho: Fr, position: Long, proposalId: Long): Fr {
+        require(position in 0..0xffffffffL) { "position is a u32" }
+        return h(TAG_VNF, nk, rho, u64(position), u64(proposalId))
     }
 
     /** A Groundworks position's owner tag: H(TAG_OTAG, owner_pk, salt). */

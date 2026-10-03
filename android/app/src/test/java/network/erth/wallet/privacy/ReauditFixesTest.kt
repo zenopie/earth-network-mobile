@@ -26,7 +26,6 @@ import org.junit.Test
  */
 class ReauditFixesTest {
     private val alice = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-    private var snapshotSize: Long? = null
     private val yes = listOf(WeightedVoteOption.newBuilder().setOption(GovVoteOption.VOTE_OPTION_YES).setWeight("1").build())
 
     private fun reads(chain: FakeChain) = object : PrivacyChainReads {
@@ -34,7 +33,8 @@ class ReauditFixesTest {
         override fun ballotInputs(proposalId: Long, optionId: Long) =
             PrivacyChainReads.BallotInputs(Privacy.proposalScope(proposalId, 0), Fr.ZERO, Fr.ZERO, chain.now - 3600, 0, 0)
         override fun epochNumber() = chain.epoch
-        override fun snapshot(proposalId: Long) = (snapshotSize ?: chain.stakeTree.size).let { PrivacyChainReads.Snapshot(chain.stakeTree.rootAt(it), it) }
+        override fun snapshot(proposalId: Long) = chain.snapshotRead(proposalId)
+        override fun stakeNullifierTree(start: Long, limit: Int) = chain.nfTreeRead(start, limit)
         override fun positions() = chain.positionReads()
     }
 
@@ -381,7 +381,7 @@ class ReauditFixesTest {
         a.delegate(v1, 1_000_000); a.sync()
         a.delegate(v2, 1_000_000); a.sync()
         a.lockPosition(v1, 100_000, mapOf(2L to 100L)); a.sync()
-        snapshotSize = chain.stakeTree.size
+        chain.openProposal(12)
         return a
     }
 

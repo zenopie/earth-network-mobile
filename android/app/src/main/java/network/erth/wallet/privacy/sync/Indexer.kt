@@ -32,6 +32,14 @@ interface PrivacyIndexer {
     fun stakeNotes(fromPos: Long, limit: Int? = null): StakeNotesPage
     /** Its spent nullifiers, by height. */
     fun stakeNullifiers(fromHeight: Long, limit: Int? = null): HeightPage<Fr>
+    /**
+     * The stake nullifier tree's values by leaf index, in insertion order
+     * (leaf 1 is the first value; leaf 0, the sentinel, is never a row):
+     * what a stake vote rebuilds the snapshot's nullifier tree from.
+     */
+    fun stakeNullifierLeaves(fromIndex: Long, limit: Int? = null): StakeNfLeavesPage
+    /** Every proposal snapshot (what stake votes prove against), by height. */
+    fun stakeSnapshots(fromHeight: Long, limit: Int? = null): StakeSnapshotsPage
 }
 
 data class IndexerStatus(
@@ -84,6 +92,14 @@ data class StakeNoteRow(
 )
 
 data class StakeNotesPage(val rows: List<StakeNoteRow>, val nextPos: Long, val complete: Boolean, val syncedHeight: Long)
+
+/** [leaves]: (leaf index, value); [size] the tree's leaf count as the chain counts it (sentinel included, 0 when empty). */
+data class StakeNfLeavesPage(val leaves: List<Pair<Long, Fr>>, val nextIndex: Long, val complete: Boolean, val size: Long, val syncedHeight: Long)
+
+/** A proposal snapshot: the stake note tree's root and size and the stake nullifier tree's (null roots: none recorded). */
+data class StakeSnapshotRow(val height: Long, val proposalId: Long, val root: Fr?, val treeSize: Long, val nfRoot: Fr?, val nfSize: Long)
+
+data class StakeSnapshotsPage(val rows: List<StakeSnapshotRow>, val nextHeight: Long, val complete: Boolean, val syncedHeight: Long)
 
 data class RateRow(val validator: String, val rate: String, val supply: String, val epoch: Long?, val height: Long)
 
@@ -175,6 +191,12 @@ class HttpPrivacyIndexer(private val host: String, private val chainId: String =
     override fun stakeNullifiers(fromHeight: Long, limit: Int?): HeightPage<Fr> =
         parseHeights(stream("/stake/nullifiers?from_height=$fromHeight${q("limit", limit)}")) { Fr.fromHex(it as String) }
 
+    override fun stakeNullifierLeaves(fromIndex: Long, limit: Int?): StakeNfLeavesPage =
+        parseStakeNfLeaves(stream("/stake/nullifier-tree?from_index=$fromIndex${q("limit", limit)}"))
+
+    override fun stakeSnapshots(fromHeight: Long, limit: Int?): StakeSnapshotsPage =
+        parseStakeSnapshots(stream("/stake/snapshots?from_height=$fromHeight${q("limit", limit)}"))
+
     companion object {
         private val CHAIN_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
         private val GENESIS = Regex("[0-9a-f]{16}")
@@ -228,6 +250,25 @@ class HttpPrivacyIndexer(private val host: String, private val chainId: String =
                 )
             }
             return StakeNotesPage(rows, j.getLong("next_pos"), j.getBoolean("complete"), j.getLong("synced_height"))
+        }
+
+        /** /stake/nullifier-tree: rows [index, nullifier (hex), height]. */
+        fun parseStakeNfLeaves(j: JSONObject): StakeNfLeavesPage {
+            val a = j.getJSONArray("nullifiers")
+            val leaves = (0 until a.length()).map { i -> a.getJSONArray(i).let { r -> r.getLong(0) to Fr.fromHex(r.getString(1)) } }
+            return StakeNfLeavesPage(leaves, j.getLong("next_index"), j.getBoolean("complete"), j.optLong("size"), j.getLong("synced_height"))
+        }
+
+        private fun optField(hex: String): Fr? = if (hex.isEmpty()) null else Fr.fromHex(hex)
+
+        /** /stake/snapshots: rows [height, proposal_id, root, tree_size, nf_root, nf_size] ("" for a root not recorded). */
+        fun parseStakeSnapshots(j: JSONObject): StakeSnapshotsPage {
+            val a = j.getJSONArray("snapshots")
+            val rows = (0 until a.length()).map { i ->
+                val r = a.getJSONArray(i)
+                StakeSnapshotRow(r.getLong(0), r.getLong(1), optField(r.getString(2)), r.getLong(3), optField(r.getString(4)), r.getLong(5))
+            }
+            return StakeSnapshotsPage(rows, j.getLong("next_height"), j.getBoolean("complete"), j.getLong("synced_height"))
         }
 
         fun parseNotes(j: JSONObject): NotesPage {

@@ -38,6 +38,7 @@ import network.erth.wallet.privacy.sync.NoteRootRecord
 import network.erth.wallet.privacy.sync.TreeState
 import network.erth.wallet.privacy.sync.IdentityPage
 import network.erth.wallet.privacy.sync.IdentityRow
+import network.erth.wallet.privacy.sync.IndexerBaseMoved
 import network.erth.wallet.privacy.sync.IndexerStatus
 import network.erth.wallet.privacy.sync.LatestRoots
 import network.erth.wallet.privacy.sync.NoteRow
@@ -47,6 +48,11 @@ import network.erth.wallet.privacy.sync.RateRow
 import network.erth.wallet.privacy.sync.RootRecord
 import network.erth.wallet.privacy.sync.StakeNoteRow
 import network.erth.wallet.privacy.sync.StakeNotesPage
+import network.erth.wallet.privacy.sync.StakeNfLeavesPage
+import network.erth.wallet.privacy.sync.StakeSnapshotRow
+import network.erth.wallet.privacy.sync.StakeSnapshotsPage
+import network.erth.wallet.privacy.prove.VoteWitness
+import network.erth.wallet.privacy.zk.IndexedTree
 import network.erth.wallet.privacy.tx.PrivateChain
 import network.erth.wallet.privacy.tx.PrivateMsgs
 import network.erth.wallet.privacy.tx.Prover
@@ -94,7 +100,19 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     val stakeRows = ArrayList<StakeNoteRow>()
     val stakeTree = MerkleTree(MemNodeStore())
     val stakeNullifiers = LinkedHashMap<Fr, Long>()
+    /** The stake nullifier indexed tree's values in insertion order (leaf i + 1), ORCHARD_DESIGN 15. */
+    val stakeNfValues = ArrayList<Fr>()
     val stakeRoots = HashSet<Fr>()
+    /** Proposal snapshots: note root and size, nullifier tree root and size (sentinel included), block. */
+    data class Snap(val proposalId: Long, val root: Fr, val treeSize: Long, val nfRoot: Fr, val nfSize: Long, val height: Long)
+    val snapshots = LinkedHashMap<Long, Snap>()
+    /** (proposal, vote nullifier) of every stake vote. */
+    val voteNullifiers = HashSet<Pair<Long, Fr>>()
+    /** Whether the indexer serves the nullifier tree and snapshot streams (false: an older indexer; the wallet uses the LCD). */
+    var indexerNfTree = true
+    var indexerSnapshots = true
+    /** Every LCD StakeNullifierTree page asked (start). */
+    val nfTreeAsks = ArrayList<Long>()
     var height = 1L
     val minFee = 1000L
     var price = BigDecimal("0.001")
@@ -162,6 +180,31 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         return pos
     }
 
+    /** The stake nullifier tree's root now (indexed.EmptyRoot before the first insert). */
+    fun stakeNfRoot(): Fr = IndexedTree.build(stakeNfValues).root()
+
+    /** A proposal enters voting: its snapshot is the trees as the last block left them; the block it is taken in ends. */
+    fun openProposal(id: Long): Snap {
+        val s = Snap(id, if (stakeTree.size == 0L) Fr.ZERO else stakeTree.root(), stakeTree.size, stakeNfRoot(),
+            if (stakeNfValues.isEmpty()) 0 else stakeNfValues.size + 1L, height)
+        snapshots[id] = s
+        block()
+        return s
+    }
+
+    /** Query/Snapshot. */
+    fun snapshotRead(id: Long): PrivacyChainReads.Snapshot {
+        val s = snapshots[id] ?: error("no snapshot for proposal $id")
+        return PrivacyChainReads.Snapshot(s.root, s.treeSize, s.height, emptyMap(), s.nfRoot, s.nfSize)
+    }
+
+    /** Query/StakeNullifierTree. */
+    fun nfTreeRead(start: Long, limit: Int): PrivacyChainReads.NfTreePage {
+        nfTreeAsks.add(start)
+        val vs = stakeNfValues.drop(start.toInt()).take(minOf(limit, 1000))
+        return PrivacyChainReads.NfTreePage(vs, if (stakeNfValues.isEmpty()) 0 else stakeNfValues.size + 1L)
+    }
+
     /** MsgShield (a gas grant, a shield from a transparent account): its ciphertext is required. */
     fun shield(denom: String, value: Long, pc: Fr, ct: ByteArray) { mint(denom, value, pc, ct); block() }
 
@@ -223,7 +266,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         if (rejectNext > 0) {
             // The proofs made for it never reach the chain.
             rejectNext--
-            prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear()
+            prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear(); prover.votes.clear()
             throw java.io.IOException("broadcast refused (test)")
         }
         val hash = "HASH$height"
@@ -232,14 +275,14 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             dropNext--
             check(tx, simulate = true)
             accepted(hash)
-            prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear()
+            prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear(); prover.votes.clear()
             throw java.io.IOException("tx not committed (test)")
         }
         if (failInBlockNext > 0) {
             failInBlockNext--
             check(tx, simulate = true)
             accepted(hash)
-            prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear()
+            prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear(); prover.votes.clear()
             block()
             txs[hash] = TxResult(hash, height - 1, now, emptyList(), code = 5, log = "failed in block (test)")
             throw java.io.IOException("tx failed (code 5)")
@@ -346,7 +389,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     }
 
     /** Whether the msg has the chain mint a stake note to spc_mint (its blind stake ciphertext is then required). */
-    private fun mintsStake(m: MessageLite) = m is MsgDelegate || m is MsgUndelegate || m is MsgStakeVote || m is MsgUnlockPosition
+    private fun mintsStake(m: MessageLite) = m is MsgDelegate || m is MsgUndelegate || m is MsgUnlockPosition
 
     /** The stake proof's chain-supplied publics: asset, v_out. */
     private fun stakeStatement(m: MessageLite): Pair<String?, Long> = when (m) {
@@ -354,7 +397,6 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         is MsgRestake -> PrivacyWallet.derthDenom(m.validator) to 0L
         is MsgUndelegate -> PrivacyWallet.derthDenom(m.validator) to m.amount
         is MsgClaimUnbonding -> PrivacyWallet.unbondDenom(m.validator, m.epoch) to m.amount
-        is MsgStakeVote -> PrivacyWallet.derthDenom(m.validator) to m.weight
         is MsgLockPosition -> PrivacyWallet.derthDenom(m.validator) to m.amount
         else -> null to 0L
     }
@@ -366,7 +408,6 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     private fun stakeShape(m: MessageLite, p: StakeProof) {
         val (minSpends, creates) = when (m) {
             is MsgDelegate, is MsgUpdatePosition, is MsgUnlockPosition, is MsgPositionVote -> 0 to false
-            is MsgStakeVote -> 1 to false
             else -> 1 to true
         }
         val n = spent(p).size
@@ -421,7 +462,14 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             is MsgProposeRemoval -> require(m.optionId !in removalBallots) { "ballot already open" }
             is MsgClaimUnbonding -> require((m.hasBundle()) == (m.feeFromOutput == 0L))
             // Wave 3 (F3): option weights only in their canonical LegacyDec form.
-            is MsgStakeVote -> require(m.optionsList.all { it.weight == PrivateMsgs.legacyDec(it.weight) }) { "a vote weight is not canonical" }
+            is MsgStakeVote -> {
+                require(m.optionsList.all { it.weight == PrivateMsgs.legacyDec(it.weight) }) { "a vote weight is not canonical" }
+                val snap = snapshots[m.proposalId] ?: error("no open snapshot for proposal ${m.proposalId}")
+                require(m.weight in 1..Long.MAX_VALUE) { "weight must be positive" }
+                require(m.voteNullifier.size() == 32 && !f(m.voteNullifier).isZero) { "vote_nullifier" }
+                require((m.proposalId to f(m.voteNullifier)) !in voteNullifiers) { "this stake note already voted on this proposal (code 1119)" }
+                require(snap.nfSize >= 0)
+            }
             // Wave 3 (L6): binding an address needs its owner's consent (cosmos secp256k1 over SHA-256).
             is MsgBindReferrer -> if (m.address.isEmpty()) {
                 require(m.referrerPubKey.isEmpty && m.referrerSignature.isEmpty) { "clearing a binding carries no consent" }
@@ -525,6 +573,16 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 require(w.publicInputs() == expect) { "stake proof is for other public inputs" }
             }
         }
+        if (m is MsgStakeVote) {
+            require(m.proof.size() == PROOF_BYTES) { "a vote proof is exactly $PROOF_BYTES bytes" }
+            val snap = snapshots[m.proposalId] ?: error("no open snapshot for proposal ${m.proposalId}")
+            if (!simulate) {
+                val w = prover.votes.removeFirstOrNull() ?: error("no vote proof")
+                val expect = listOf(snap.root, snap.nfRoot, Privacy.assetId(PrivacyWallet.derthDenom(m.validator)),
+                    Privacy.u64(m.weight), Privacy.u64(m.proposalId), f(m.voteNullifier), sighash)
+                require(w.publicInputs() == expect) { "vote proof is for other public inputs" }
+            }
+        }
         val membership = membershipOf(m)
         if (membership != null) {
             require(Fr.fromBytes(membership.root.toByteArray()) in identityRoots) { "unknown identity anchor" }
@@ -548,7 +606,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             notes.add(NoteRow(pos, height, cm, a.ciphertext.toByteArray(), null))
         }
         if (stake != null) {
-            spent(stake).forEach { stakeNullifiers[it] = height }
+            spent(stake).forEach { stakeNullifiers[it] = height; stakeNfValues.add(it) }
             for ((i, cm) in created(stake)) {
                 val c = f(cm)
                 val pos = stakeTree.append(c)
@@ -584,8 +642,9 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 mint("uerth", m.amount - m.feeFromOutput, f(m.pc), m.ciphertext.toByteArray())
             }
             is MsgStakeVote -> {
+                voteNullifiers.add(m.proposalId to f(m.voteNullifier))
                 stakeVotes.add(Triple(m.proposalId, m.validator, m.weight))
-                mintStake(PrivacyWallet.derthDenom(m.validator), m.weight, spcMint!!, stake.spcCiphertext.toByteArray())
+                events.add("shieldedstaking_stake_vote" to mapOf("vote_nullifier" to f(m.voteNullifier).toHex()))
             }
             is MsgNoteSwap -> {
                 val (denomIn, amountIn) = rem.entries.single()
@@ -740,6 +799,22 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
 
     override fun stakeNullifiers(fromHeight: Long, limit: Int?): HeightPage<Fr> = heights(stakeNullifiers, fromHeight)
 
+    override fun stakeNullifierLeaves(fromIndex: Long, limit: Int?): StakeNfLeavesPage {
+        if (!indexerNfTree) throw IndexerBaseMoved("no /stake/nullifier-tree (test)")
+        val n = limit ?: 1000
+        val from = maxOf(fromIndex, 1L)
+        val rows = (from until from + n).takeWhile { it <= stakeNfValues.size }.map { it to stakeNfValues[(it - 1).toInt()] }
+        return StakeNfLeavesPage(rows, rows.lastOrNull()?.first?.plus(1) ?: from, rows.size == n,
+            if (stakeNfValues.isEmpty()) 0 else stakeNfValues.size + 1L, height - 1)
+    }
+
+    override fun stakeSnapshots(fromHeight: Long, limit: Int?): StakeSnapshotsPage {
+        if (!indexerSnapshots) throw IndexerBaseMoved("no /stake/snapshots (test)")
+        val rows = snapshots.values.filter { it.height in fromHeight until height }
+            .map { StakeSnapshotRow(it.height, it.proposalId, it.root, it.treeSize, it.nfRoot, it.nfSize) }
+        return StakeSnapshotsPage(rows, maxOf(fromHeight, height), false, height - 1)
+    }
+
     fun positionReads(): List<PrivacyChainReads.Position> =
         positions.values.map { PrivacyChainReads.Position(it.id, it.validator, it.derth, it.ownerTag, it.splits, it.createdHeight) }
 
@@ -757,6 +832,8 @@ class CheckingProver : Prover {
     val actions = ArrayDeque<ActionWitness>()
     val stakes = ArrayDeque<StakeWitness>()
     val memberships = ArrayDeque<MembershipWitness>()
+    val votes = ArrayDeque<VoteWitness>()
+    val allVotes = ArrayList<VoteWitness>()
     val allActions = ArrayList<ActionWitness>()
     val allStakes = ArrayList<StakeWitness>()
     val allMemberships = ArrayList<MembershipWitness>()
@@ -779,5 +856,11 @@ class CheckingProver : Prover {
         w.check()
         memberships.add(w); allMemberships.add(w)
         return ByteArray(14_656) { 2 }
+    }
+
+    override fun proveVote(w: VoteWitness): ByteArray {
+        w.check()
+        votes.add(w); allVotes.add(w)
+        return ByteArray(14_656) { 4 }
     }
 }

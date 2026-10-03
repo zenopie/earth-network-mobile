@@ -31,7 +31,7 @@ message StakeProof {
   bytes spc_mint = 6;
   bytes owner_tag = 7;
   // The blind stake ciphertext (177 bytes) of the note minted to spc_mint:
-  // required on Delegate, Undelegate, StakeVote, UnlockPosition; empty
+  // required on Delegate, Undelegate, UnlockPosition; empty
   // otherwise.
   bytes spc_ciphertext = 8;
 }
@@ -76,8 +76,12 @@ message MsgClaimUnbonding {
   StakeProof stake = 9;
 }
 
-// sighash fields: StakeFields, proposal_id, Bytes(validator),
-// Bytes(OptionsBytes(options)), weight.
+// A stake note's vote without spending it (ORCHARD_DESIGN 15): proof is
+// circuits/vote against the proposal's snapshot (note root, nullifier tree
+// root); vote_nullifier = H(TAG_VNF, nk, rho, position, proposal_id), refused
+// a second time on the proposal (code 1119). Nothing is spent or minted.
+// sighash fields (no StakeFields): proposal_id, Bytes(validator),
+// Bytes(OptionsBytes(options)), weight, vote_nullifier.
 message MsgStakeVote {
   earth.shielded.v1.Bundle bundle = 1;
   uint64 proposal_id = 2;
@@ -85,7 +89,10 @@ message MsgStakeVote {
   repeated cosmos.gov.v1.WeightedVoteOption options = 4;
   uint64 weight = 5;
   reserved 6;
-  StakeProof stake = 7;
+  // stake (7): the spend-to-vote stake proof, gone.
+  reserved 7;
+  bytes proof = 8;
+  bytes vote_nullifier = 9;
 }
 
 // sighash fields: StakeFields, Bytes(validator), amount,

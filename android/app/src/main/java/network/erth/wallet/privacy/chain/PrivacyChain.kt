@@ -117,6 +117,9 @@ object PrivacyQueries {
         val height: Long = 0,
         /** rate_v (ERTH per derth) per validator at the snapshot. */
         val rates: Map<String, BigDecimal> = emptyMap(),
+        /** The stake nullifier tree's root and size (sentinel included) then; null: a snapshot from before stake votes stopped spending. */
+        val nfRoot: Fr? = null,
+        val nfSize: Long = 0,
     )
 
     fun snapshot(proposalId: Long): Snapshot = get("/earth/shieldedstaking/v1/snapshots/$proposalId").getJSONObject("snapshot").let {
@@ -126,7 +129,21 @@ object PrivacyQueries {
             val v = vs!!.getJSONObject(i)
             v.optString("rate").toBigDecimalOrNull()?.let { r -> rates[v.optString("validator")] = r }
         }
-        Snapshot(proposalId, field(it.getString("root")), it.long("tree_size"), it.long("voting_end"), it.long("height"), rates)
+        val nfRoot = it.optString("nf_root").decodeBase64()?.toByteArray()?.takeIf { b -> b.isNotEmpty() }?.let { b -> Fr.fromBytes(b) }
+        Snapshot(proposalId, field(it.getString("root")), it.long("tree_size"), it.long("voting_end"), it.long("height"), rates, nfRoot, it.long("nf_size"))
+    }
+
+    /** Query/StakeNullifierTree: up to [limit] (at most 1000) values from leaf start+1, in insertion order, and the tree's size. */
+    data class NfTreePage(val values: List<Fr>, val size: Long)
+
+    fun stakeNullifierTree(start: Long, limit: Int): NfTreePage {
+        val j = get("/earth/shieldedstaking/v1/stake_nullifier_tree?start=$start&limit=${limit.coerceIn(1, 1000)}")
+        val a = j.optJSONArray("values")
+        val values = (0 until (a?.length() ?: 0)).map { i ->
+            val raw = a!!.getString(i).decodeBase64()?.toByteArray() ?: throw IOException("stake nullifier ${start + 1 + i} is not base64")
+            Fr.fromBytes(raw)
+        }
+        return NfTreePage(values.take(1000), j.long("size"))
     }
 
     /** shieldedstaking params.epoch_seconds and x/staking params.unbonding_time, in seconds. */

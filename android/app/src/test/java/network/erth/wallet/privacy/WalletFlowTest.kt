@@ -32,10 +32,7 @@ class WalletFlowTest {
     private val receiver = "earth1qqqsyqcyq5rqwzqfpg9scrgwpugpzysncc2uls"
     private val derth = PrivacyWallet.derthDenom(validator)
 
-    /** A proposal's snapshot (stake tree size), fixed once taken (null: the tree as it stands). */
-    private var snapshot: Long? = null
-
-    private fun reads(chain: FakeChain, snapshotSize: () -> Long = { snapshot ?: chain.stakeTree.size }) = object : PrivacyChainReads {
+    private fun reads(chain: FakeChain) = object : PrivacyChainReads {
         override fun personhoodParams() = PrivacyChainReads.PersonhoodParams(30L * 86_400, 3_600)
         override fun ballotInputs(proposalId: Long, optionId: Long) = if (proposalId != 0L) {
             PrivacyChainReads.BallotInputs(Privacy.proposalScope(proposalId, 0), Fr.ZERO, Fr.ZERO, chain.now - 3600, 0, 0)
@@ -44,7 +41,8 @@ class WalletFlowTest {
             PrivacyChainReads.BallotInputs(Privacy.removalScope(id), Fr.ZERO, Fr.ZERO, chain.now - 3600, 0, id)
         }
         override fun epochNumber() = chain.epoch
-        override fun snapshot(proposalId: Long) = snapshotSize().let { PrivacyChainReads.Snapshot(chain.stakeTree.rootAt(it), it) }
+        override fun snapshot(proposalId: Long) = chain.snapshotRead(proposalId)
+        override fun stakeNullifierTree(start: Long, limit: Int) = chain.nfTreeRead(start, limit)
         override fun positions() = chain.positionReads()
     }
 
@@ -133,10 +131,10 @@ class WalletFlowTest {
         assertThrows(IllegalArgumentException::class.java) { a.send(b.address, derth, 1) }
         assertThrows(IllegalArgumentException::class.java) { a.unshield(receiver, derth, 1) }
 
-        // A stake vote against a snapshot taken right after: the note is spent
-        // against the snapshot root and minted straight back.
-        val snap = chain.stakeTree.size
-        val fresh = wallet(chain, alice, reads(chain) { snap })
+        // A stake vote against a snapshot taken right after: the note proves
+        // itself unspent at the snapshot and is not spent (ORCHARD_DESIGN 15).
+        chain.openProposal(9)
+        val fresh = wallet(chain, alice)
         fresh.sync()
         // A later stake note moves the stake tree past the snapshot.
         fresh.delegate(validator, 100_000)
@@ -145,11 +143,12 @@ class WalletFlowTest {
         fresh.sync()
         assertEquals(Triple(9L, validator, 1_800_000L), chain.stakeVotes.single())
         assertEquals(1_890_000L, bal(fresh, derth))
-        // Final: the re-minted note is not in the snapshot.
+        assertEquals(2, fresh.stakeNotes.size)
+        // Final: the note voted on 9, the later one is not in its snapshot.
         assertTrue(fresh.stakeVoteItems(9).isEmpty())
 
         // A wallet restored from the mnemonic alone sees the same balances,
-        // the self-mints (gas, reward, derth, the vote's re-mint) included.
+        // the self-mints (gas, reward, derth) included.
         val restored = wallet(chain, alice)
         restored.sync()
         assertEquals(fresh.balances(), restored.balances())
@@ -274,18 +273,18 @@ class WalletFlowTest {
         assertTrue(a.positions().isEmpty())
         assertEquals(1_800_000L, bal(a, derth))
 
-        // Stake votes: every derth note from before the snapshot, two a tx.
+        // Stake votes: every derth note from before the snapshot, one a tx.
         a.sync()
-        snapshot = chain.stakeTree.size
+        chain.openProposal(11)
         val weight = a.stakeVoteWeight(11, emptyList())
-        assertEquals(2, weight.notes)
-        assertEquals(1_800_000L, weight.uerth)
+        val notes = a.stakeNotes.filter { it.spendable && it.denom == derth }
+        assertEquals(notes.size, weight.notes)
+        assertEquals(notes.sumOf { PrivacyWallet.voteWeight(it.amount) }, weight.uerth)
         val voted = a.stakeVoteItems(11).mapNotNull { a.castStakeVote(11, it, yes) }
-        snapshot = null
-        assertEquals(1, voted.size)
+        assertEquals(notes.size, voted.size)
         a.sync()
         assertEquals(1_800_000L, bal(a, derth))
-        assertEquals(1_800_000L, chain.stakeVotes.single().third)
+        assertEquals(notes.sumOf { PrivacyWallet.voteWeight(it.amount) }, chain.stakeVotes.sumOf { it.third })
 
         // Referrer binding (lapses after R; refreshed past R/2).
         chain.now += 31 * 86_400

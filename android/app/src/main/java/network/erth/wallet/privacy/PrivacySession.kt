@@ -76,6 +76,7 @@ object PrivacySession {
         override fun proveAction(w: ActionWitness): ByteArray = PrivacyProver.proveAction(context, w)
         override fun proveStake(w: StakeWitness): ByteArray = PrivacyProver.proveStake(context, w)
         override fun proveMembership(w: MembershipWitness): ByteArray = PrivacyProver.proveMembership(context, w)
+        override fun proveVote(w: network.erth.wallet.privacy.prove.VoteWitness): ByteArray = PrivacyProver.proveVote(context, w)
     }
 
     private object RestChainReads : PrivacyChainReads {
@@ -90,7 +91,11 @@ object PrivacySession {
         override fun epochNumber(): Long = PrivacyQueries.epoch().number
 
         override fun snapshot(proposalId: Long) = PrivacyQueries.snapshot(proposalId).let {
-            PrivacyChainReads.Snapshot(it.root, it.treeSize, it.height, it.rates)
+            PrivacyChainReads.Snapshot(it.root, it.treeSize, it.height, it.rates, it.nfRoot, it.nfSize)
+        }
+
+        override fun stakeNullifierTree(start: Long, limit: Int) = PrivacyQueries.stakeNullifierTree(start, limit).let {
+            PrivacyChainReads.NfTreePage(it.values, it.size)
         }
 
         override fun positions() = PrivacyQueries.positions().map {

@@ -33,6 +33,7 @@ import (
 	personhoodtypes "github.com/earth-network/earth/x/personhood/types"
 	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	stakingtypes "github.com/earth-network/earth/x/shieldedstaking/types"
+	"github.com/earth-network/earth/zk/indexed"
 	"github.com/earth-network/earth/zk/merkle"
 	"github.com/earth-network/earth/zk/orchard"
 	"github.com/earth-network/earth/zk/poseidon2"
@@ -173,6 +174,7 @@ func main() {
 		"reg": hx(privacy.TagReg), "asset": hx(privacy.TagAsset), "signal": hx(privacy.TagSignal),
 		"bytes": hx(privacy.TagBytes), "scope": hx(privacy.TagScope),
 		"stake": hx(privacy.TagStake), "spc": hx(privacy.TagSPC), "snf": hx(privacy.TagSNF), "otag": hx(privacy.TagOTag),
+		"snfl": hx(privacy.TagSNFL), "vnf": hx(privacy.TagVNF),
 		"gen": hx(orchard.TagGen), "cv_r": hx(orchard.TagCvR), "bsig": hx(orchard.TagBsig), "bundle": hx(orchard.TagBundle),
 	}
 	val := "earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
@@ -216,6 +218,10 @@ func main() {
 		"stake_nf":  hx(privacy.StakeNF(nk, rho, 4_000_000_000)),
 		"otag_salt": hx(fe(1006)),
 		"otag":      hx(privacy.OwnerTag(opk, fe(1006))),
+		"nf_leaf_1_2_3": hx(privacy.NFLeaf(u(1), u(2), 3)),
+		"nf_leaf":   hx(privacy.NFLeaf(fe(1007), fe(1008), 4_000_000_000)),
+		"vote_nf":   hx(privacy.VoteNF(nk, rho, 4_000_000_000, 5)),
+		"vote_nf_5eed": hx(privacy.VoteNF(u(0x5eed), u(0xa1), 1, 7)),
 	}
 	out["scopes"] = map[string]string{
 		"claim_20360":           hx(privacy.ClaimScope(20360)),
@@ -252,6 +258,50 @@ func main() {
 		}
 		paths[fmt.Sprint(idx)] = s
 	}
+	// ---- the stake nullifier indexed tree (zk/indexed) ----------------------
+	{
+		it := indexed.NewMem()
+		values := []string{}
+		iroots := map[string]string{}
+		r0, _ := it.Root()
+		iroots["0"] = hx(r0)
+		for i := uint64(0); i < 21; i++ {
+			v := fe(7000 + i)
+			_, err := it.Insert(v)
+			must(err)
+			values = append(values, hx(v))
+			if i == 0 || i == 1 || i == 4 || i == 20 {
+				r, _ := it.Root()
+				iroots[fmt.Sprint(i+1)] = hx(r)
+			}
+		}
+		type wit struct {
+			Value        string   `json:"value"`
+			LowValue     string   `json:"low_value"`
+			LowNextValue string   `json:"low_next_value"`
+			LowNextIndex uint64   `json:"low_next_index"`
+			LowIndex     uint64   `json:"low_index"`
+			LowPath      []string `json:"low_path"`
+		}
+		wits := []wit{}
+		root, _ := it.Root()
+		for _, v := range []fr.Element{fe(8000), fe(8001), fe(8002), u(1)} {
+			w, err := it.NonMembership(v)
+			must(err)
+			if !w.Verify(v, root) {
+				panic("non-membership witness does not verify")
+			}
+			p := make([]string, len(w.Path))
+			for i := range w.Path {
+				p[i] = hx(w.Path[i])
+			}
+			wits = append(wits, wit{hx(v), hx(w.Low.Value), hx(w.Low.NextValue), w.Low.NextIndex, w.Index, p})
+		}
+		out["indexed"] = map[string]any{
+			"empty_root": hx(indexed.EmptyRoot), "values": values, "roots": iroots, "witnesses": wits,
+		}
+	}
+
 	must(t.Update(5, fr.Element{}))
 	zr, _ := t.Root()
 	out["merkle"] = map[string]any{
@@ -457,7 +507,7 @@ func main() {
 	add("claim_unbonding_fee_bundle", &stakingtypes.MsgClaimUnbonding{Bundle: &cb, Validator: val, Epoch: 17, Amount: 400000, Pc: fb(116), Ciphertext: bct(116), Stake: stakeProof(117, 1, 1, false)})
 	// Wave 3 (F3): canonical LegacyDec weights only.
 	opts := []*govv1.WeightedVoteOption{{Option: govv1.OptionYes, Weight: "0.700000000000000000"}, {Option: govv1.OptionNo, Weight: "0.300000000000000000"}}
-	add("stake_vote", &stakingtypes.MsgStakeVote{Bundle: fee(120, 2000), ProposalId: 5, Validator: val, Options: opts, Weight: 400000, Stake: stakeProof(120, 2, 0, true)})
+	add("stake_vote", &stakingtypes.MsgStakeVote{Bundle: fee(120, 2000), ProposalId: 5, Validator: val, Options: opts, Weight: 400000, Proof: []byte{0x70, 0x7e}, VoteNullifier: fb(121)})
 	splits := []allocationtypes.AllocationWeight{{OptionId: 2, Percent: 100}}
 	add("lock_position", &stakingtypes.MsgLockPosition{Bundle: fee(140, 2000), Validator: val, Amount: 400000, Splits: splits, Stake: stakeProof(140, 1, 1, false)})
 	add("update_position", &stakingtypes.MsgUpdatePosition{Bundle: fee(150, 2000), PositionId: 9, Splits: splits, Stake: stakeProof(150, 0, 0, false)})

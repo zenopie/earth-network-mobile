@@ -10,6 +10,7 @@ import network.erth.wallet.privacy.note.OwnedStakeNote
 import network.erth.wallet.privacy.prove.ActionWitness
 import network.erth.wallet.privacy.prove.MembershipWitness
 import network.erth.wallet.privacy.prove.StakeWitness
+import network.erth.wallet.privacy.prove.VoteWitness
 import network.erth.wallet.privacy.zk.Fr
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -19,6 +20,7 @@ interface Prover {
     fun proveAction(w: ActionWitness): ByteArray
     fun proveStake(w: StakeWitness): ByteArray
     fun proveMembership(w: MembershipWitness): ByteArray
+    fun proveVote(w: VoteWitness): ByteArray
 }
 
 /** A committed tx, as much of it as the wallet reads back. */
@@ -63,12 +65,15 @@ interface PrivateChain {
  * A private msg in the making: its bundles, stake proof and membership
  * (everything but proofs, binding signatures and the sighash), and how to
  * assemble the msg once they exist. [build] gets the bundles (unproven or
- * proven, in [bundles] order), the stake proof and the membership.
+ * proven, in [bundles] order), the stake proof and the membership. A stake
+ * vote's [vote] proof and vote nullifier are set on the built msg by the
+ * engine (PrivateMsgs.withVote).
  */
 class Assembled(
     val bundles: List<BundlePlan>,
     val stake: StakePlan? = null,
     val membership: MembershipWitnessSpec? = null,
+    val vote: VoteWitnessSpec? = null,
     val build: (bundles: List<Bundle>, stake: StakeProof?, membership: Membership?) -> MessageLite,
 ) {
     /** The pool notes the msg spends. */
@@ -81,6 +86,11 @@ class Assembled(
 /** A membership proof's statement, waiting for the sighash (its signal). */
 class MembershipWitnessSpec(private val make: (signal: Fr) -> MembershipWitness) {
     fun witness(signal: Fr): MembershipWitness = make(signal)
+}
+
+/** A vote proof's statement, waiting for the sighash; [vnf] is known before (the sighash binds it). */
+class VoteWitnessSpec(val vnf: Fr, private val make: (sighash: Fr) -> VoteWitness) {
+    fun witness(sighash: Fr): VoteWitness = make(sighash).also { check(it.vnf == vnf) { "the vote witness is for another vote nullifier" } }
 }
 
 /**
@@ -161,7 +171,10 @@ class PrivateTxEngine(
                 .setNullifier(ByteString.copyFrom(w.nullifier.toBytes()))
                 .build()
         }
-        val msg = a.build(bundles, stake, membership)
+        val built = a.build(bundles, stake, membership)
+        val msg = a.vote?.let { v ->
+            PrivateMsgs.withVote(built, v.vnf, proofSized(prover.proveVote(v.witness(sighash).also { it.check() })))
+        } ?: built
         check(PrivateMsgs.sighash(msg, chainId, tx) == sighash)
         check(PrivateMsgs.totalFee(msg) == q.fee) { "the msg must pay exactly the quoted fee" }
         checkShape(msg)
@@ -237,7 +250,9 @@ class PrivateTxEngine(
     private fun draft(a: Assembled, placeholders: Boolean = false): MessageLite {
         val bundles = a.bundles.map { it.proto() }.map { if (placeholders) randomNullifiers(it) else it }
         val stake = a.stake?.proto(PLACEHOLDER)?.let { if (placeholders) randomNullifiers(it) else it }
-        return a.build(bundles, stake, a.membership?.let { placeholderMembership(it, placeholders) })
+        val msg = a.build(bundles, stake, a.membership?.let { placeholderMembership(it, placeholders) })
+        // A quote's vote nullifier is random too: the node learns nothing of the note before the user confirms.
+        return a.vote?.let { PrivateMsgs.withVote(msg, if (placeholders) Fr.fromBytes(randomField().toByteArray()) else it.vnf, PLACEHOLDER) } ?: msg
     }
 
     private fun randomField(): ByteString = ByteString.copyFrom(network.erth.wallet.privacy.note.NotePlaintext.randomField().toBytes())
@@ -286,8 +301,13 @@ class PrivateTxEngine(
         const val BUNDLE_GAS = 100_000L
         /** One action: its proof (2,000,000) and two note writes (150,000 each). */
         const val ACTION_GAS = 2_300_000L
-        /** A stake proof: its proof and four note writes. */
-        const val STAKE_GAS = 2_600_000L
+        /**
+         * A stake proof: its proof, four note writes and, since the stake
+         * nullifier tree is indexed, two more per nullifier slot (ORCHARD_DESIGN 15).
+         */
+        const val STAKE_GAS = 3_200_000L
+        /** A stake vote (fixed): 250,000, its proof and one note write; nothing spent or minted. */
+        const val VOTE_GAS = 2_400_000L
         /** A membership proof and its nullifier write. */
         const val MEMBERSHIP_GAS = 2_150_000L
         /** MsgRegister: the passport proof (3,000,000), the DSC chain (300,000) and two minted notes. */
@@ -299,6 +319,7 @@ class PrivateTxEngine(
             for (b in PrivateMsgs.bundles(msg)) g += BUNDLE_GAS + ACTION_GAS * b.actionsCount
             if (PrivateMsgs.stake(msg) != null) g += STAKE_GAS
             if (a.membership != null) g += MEMBERSHIP_GAS
+            if (a.vote != null) g += VOTE_GAS
             if (msg is network.erth.earth.proto.personhood.MsgRegister) g += REGISTER_GAS
             return g
         }

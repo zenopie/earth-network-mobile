@@ -5,6 +5,7 @@ import network.erth.wallet.privacy.Vectors.fr
 import network.erth.wallet.privacy.Vectors.json
 import network.erth.wallet.privacy.Vectors.unhex
 import network.erth.wallet.privacy.zk.Fr
+import network.erth.wallet.privacy.zk.IndexedTree
 import network.erth.wallet.privacy.zk.MemNodeStore
 import network.erth.wallet.privacy.zk.Merkle
 import network.erth.wallet.privacy.zk.MerkleTree
@@ -14,6 +15,8 @@ import network.erth.wallet.privacy.zk.Privacy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.math.BigInteger
 import java.nio.file.Files
@@ -57,6 +60,7 @@ class ZkVectorsTest {
             "pc" to Privacy.TAG_PC, "cm" to Privacy.TAG_CM, "nf" to Privacy.TAG_NF, "reg" to Privacy.TAG_REG,
             "asset" to Privacy.TAG_ASSET, "signal" to Privacy.TAG_SIGNAL, "bytes" to Privacy.TAG_BYTES, "scope" to Privacy.TAG_SCOPE,
             "stake" to Privacy.TAG_STAKE, "spc" to Privacy.TAG_SPC, "snf" to Privacy.TAG_SNF, "otag" to Privacy.TAG_OTAG,
+            "snfl" to Privacy.TAG_SNFL, "vnf" to Privacy.TAG_VNF,
             "gen" to network.erth.wallet.privacy.zk.Grumpkin.TAG_GEN, "cv_r" to network.erth.wallet.privacy.zk.Grumpkin.TAG_CV_R,
             "bsig" to network.erth.wallet.privacy.zk.Grumpkin.TAG_BSIG, "bundle" to network.erth.wallet.privacy.tx.PrivateMsgs.TAG_BUNDLE,
         )
@@ -104,6 +108,43 @@ class ZkVectorsTest {
         assertEquals(d.getString("stake_nf"), Privacy.stakeNf(nk, rho, 4_000_000_000).toHex())
         assertEquals(fe(1006), fr(d.getString("otag_salt")))
         assertEquals(d.getString("otag"), Privacy.ownerTag(opk, fe(1006)).toHex())
+        // Stake votes (ORCHARD_DESIGN 15), and the design's golden values (= Noir test_go_parity).
+        assertEquals(d.getString("nf_leaf_1_2_3"), Privacy.nfLeaf(Fr.of(1), Fr.of(2), 3).toHex())
+        assertEquals("0cdc3a81748c6389efaa3a6c29b7f4609a8e9f860230b70413e8bef512978276", d.getString("nf_leaf_1_2_3"))
+        assertEquals(d.getString("nf_leaf"), Privacy.nfLeaf(fe(1007), fe(1008), 4_000_000_000).toHex())
+        assertEquals(d.getString("vote_nf"), Privacy.voteNf(nk, rho, 4_000_000_000, 5).toHex())
+        assertEquals(d.getString("vote_nf_5eed"), Privacy.voteNf(Fr.of(0x5eed), Fr.of(0xa1), 1, 7).toHex())
+        assertEquals("1ada84dad3e6afde3f370e97edf4df2ee4eeb6b1400d5c5f41882552f578ba2f", d.getString("vote_nf_5eed"))
+    }
+
+    /** The stake nullifier indexed tree against zk/indexed: roots by insert count, non-membership witnesses. */
+    @Test
+    fun indexedTree() {
+        val ix = json.getJSONObject("indexed")
+        assertEquals(ix.getString("empty_root"), IndexedTree.EMPTY_ROOT.toHex())
+        assertEquals("18f5a2d2d3273f584793e90ac9bf77abf0ff2a05a101cd5943eaf7bbd0bd5b10", ix.getString("empty_root"))
+        val vs = ix.getJSONArray("values").let { a -> (0 until a.length()).map { fr(a.getString(it)) } }
+        val roots = ix.getJSONObject("roots")
+        for (k in roots.keys()) assertEquals(k, roots.getString(k), IndexedTree.build(vs.take(k.toInt())).root().toHex())
+        val t = IndexedTree.build(vs)
+        assertTrue(vs.all { t.contains(it) && t.nonMembership(it) == null })
+        assertNull(t.nonMembership(Fr.ZERO))
+        val ws = ix.getJSONArray("witnesses")
+        for (i in 0 until ws.length()) {
+            val w = ws.getJSONObject(i)
+            val v = fr(w.getString("value"))
+            val mine = t.nonMembership(v)!!
+            assertEquals(w.getString("low_value"), mine.lowValue.toHex())
+            assertEquals(w.getString("low_next_value"), mine.lowNextValue.toHex())
+            assertEquals(w.getLong("low_next_index"), mine.lowNextIndex)
+            assertEquals(w.getLong("low_index"), mine.lowIndex)
+            val p = w.getJSONArray("low_path")
+            assertEquals((0 until p.length()).map { p.getString(it) }, mine.lowPath.map { it.toHex() })
+            assertTrue(mine.proves(v, t.root()))
+        }
+        // The chain refuses what it never inserts.
+        assertThrows(IllegalArgumentException::class.java) { IndexedTree.build(listOf(vs[0], vs[0])) }
+        assertThrows(IllegalArgumentException::class.java) { IndexedTree.build(listOf(Fr.ZERO)) }
     }
 
     @Test

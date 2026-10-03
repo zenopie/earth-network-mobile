@@ -208,13 +208,18 @@ object PrivateMsgs {
         else -> throw IllegalArgumentException("not a private msg: ${msg.javaClass.simpleName}")
     }
 
+    /** A stake vote with its vote nullifier and proof set (the sighash binds the nullifier, not the proof). */
+    fun withVote(msg: MessageLite, vnf: Fr, proof: ByteArray): MessageLite = when (msg) {
+        is MsgStakeVote -> msg.toBuilder().setVoteNullifier(ByteString.copyFrom(vnf.toBytes())).setProof(ByteString.copyFrom(proof)).build()
+        else -> throw IllegalArgumentException("not a stake vote: ${msg.javaClass.simpleName}")
+    }
+
     /** The msg's stake proof, if it carries one. */
     fun stake(msg: MessageLite): StakeProof? = when (msg) {
         is MsgDelegate -> msg.stake
         is MsgRestake -> msg.stake
         is MsgUndelegate -> msg.stake
         is MsgClaimUnbonding -> msg.stake
-        is MsgStakeVote -> msg.stake
         is MsgLockPosition -> msg.stake
         is MsgUpdatePosition -> msg.stake
         is MsgUnlockPosition -> msg.stake
@@ -283,8 +288,9 @@ object PrivateMsgs {
         is MsgClaimUnbonding -> stakeFields(msg.stake) + listOf(
             bytes(msg.validator), u(msg.epoch), u(msg.amount), f(msg.pc), bytes(msg.ciphertext), u(msg.feeFromOutput),
         )
-        is MsgStakeVote -> stakeFields(msg.stake) + listOf(
-            u(msg.proposalId), bytes(msg.validator), Privacy.bytes(optionsBytes(msg.optionsList)), u(msg.weight),
+        // A vote carries no stake proof (ORCHARD_DESIGN 15): its vote proof's statement is the chain's.
+        is MsgStakeVote -> listOf(
+            u(msg.proposalId), bytes(msg.validator), Privacy.bytes(optionsBytes(msg.optionsList)), u(msg.weight), f(msg.voteNullifier),
         )
         is MsgLockPosition -> stakeFields(msg.stake) + listOf(
             bytes(msg.validator), u(msg.amount), Privacy.bytes(splitsBytes(msg.splitsList)),

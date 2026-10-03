@@ -29,6 +29,8 @@ import network.erth.wallet.privacy.keys.ShieldedAddress
 import network.erth.wallet.privacy.note.OwnedNote
 import network.erth.wallet.privacy.note.OwnedStakeNote
 import network.erth.wallet.privacy.prove.MembershipWitness
+import network.erth.wallet.privacy.prove.VoteWitness
+import network.erth.wallet.privacy.sync.StakeVoteRecord
 import network.erth.wallet.privacy.sync.ChainRoots
 import network.erth.wallet.privacy.sync.IdentityRecord
 import network.erth.wallet.privacy.sync.PendingRegistration
@@ -48,6 +50,8 @@ import network.erth.wallet.privacy.tx.Prover
 import network.erth.wallet.privacy.tx.StakePlan
 import network.erth.wallet.privacy.tx.StakeSelection
 import network.erth.wallet.privacy.tx.TxResult
+import network.erth.wallet.privacy.tx.VoteWitnessSpec
+import network.erth.wallet.privacy.zk.IndexedTree
 import network.erth.wallet.privacy.zk.Fr
 import network.erth.wallet.privacy.zk.Privacy
 import java.math.BigDecimal
@@ -58,15 +62,22 @@ interface PrivacyChainReads {
     data class BallotInputs(val scope: Fr, val excludedDsc: Fr, val excludedCountry: Fr, val maxActivation: Long, val round: Long, val ballotId: Long)
     /**
      * A proposal's stake-vote snapshot: the stake tree's root and size when it
-     * entered voting, the block it did (0 when unknown) and rate_v (ERTH per
-     * derth) per validator then, what a stake vote's derth weighs.
+     * entered voting, the block it did (0 when unknown), rate_v (ERTH per
+     * derth) per validator then, what a stake vote's derth weighs, and the
+     * stake nullifier tree's root and size (sentinel included) at the same
+     * moment (null: a snapshot from before votes stopped spending; it takes
+     * no stake vote).
      */
     data class Snapshot(
         val root: Fr,
         val treeSize: Long,
         val height: Long = 0,
         val rates: Map<String, BigDecimal> = emptyMap(),
+        val nfRoot: Fr? = null,
+        val nfSize: Long = 0,
     )
+    /** Query/StakeNullifierTree: the values at leaf start+1.. in insertion order, and the tree's current size. */
+    data class NfTreePage(val values: List<Fr>, val size: Long)
     /** A Groundworks position: public, its owner known only by [ownerTag]. */
     data class Position(
         val id: Long,
@@ -82,6 +93,8 @@ interface PrivacyChainReads {
     fun epochNumber(): Long
     fun snapshot(proposalId: Long): Snapshot
     fun positions(): List<Position>
+    /** x/shieldedstaking Query/StakeNullifierTree{start, limit} (at most 1000 a page). */
+    fun stakeNullifierTree(start: Long, limit: Int): NfTreePage
 }
 
 /**
@@ -174,7 +187,7 @@ class PrivacyWallet(
      * the chain anyway, and its notes may not exist.
      */
     @Synchronized
-    private fun run(memo: String = "", accepted: (hash: String) -> Unit = {}, assemble: (fee: Long) -> Assembled): TxResult {
+    private fun run(memo: String = "", accepted: (hash: String, timeoutHeight: Long) -> Unit = { _, _ -> }, assemble: (fee: Long) -> Assembled): TxResult {
         requireVerified()
         // The spent notes are marked the moment the node accepts the tx
         // (K7), before the wait for its block: a wait that times out (the tx
@@ -182,7 +195,7 @@ class PrivacyWallet(
         // stay pending until the chain is past the tx's timeout_height.
         val (result, _) = engine.run(assemble, memo, shownFee.get()) { hash, a, timeout ->
             markPending(a.spends, a.stakeSpends, timeout)
-            accepted(hash)
+            accepted(hash, timeout)
         }
         return result
     }
@@ -394,7 +407,7 @@ class PrivacyWallet(
         val dscKey = PrivateMsgs.decimalField(publicSignals[3])
         val hint = dscCountry(dscDer)
         val record = NoteOut.to(keys.address, FEE, 0, WalletSync.regMemo(keys.nk, dscKey, hint, now()))
-        val pending = { hash: String ->
+        val pending = { hash: String, _: Long ->
             // K7: by hash, the moment the node accepts it; the leaf comes later.
             store.state.pendingRegistration = PendingRegistration(
                 txHash = hash, leafIndex = null, dscKey = dscKey, passportNullifier = publicSignals.getOrElse(2) { "" },
@@ -694,82 +707,242 @@ class PrivacyWallet(
     fun unbondDenoms(): Set<String> = store.state.stakeNotes.filter { it.spendable && it.denom.startsWith(UNBOND_PREFIX) }.map { it.denom }.toSet()
 
     /**
-     * Spend-to-vote: [notes] (1-2 derth notes of one validator, in the stake
-     * tree at the proposal's snapshot) are spent against the snapshot root,
-     * their sum is the vote's weight, and the chain re-mints it to our stake
-     * self-mint pc. The fee bundle is against the pool's current roots.
+     * Votes one derth note on [proposalId] without spending it (ORCHARD_DESIGN
+     * 15): a vote proof that the note is under the proposal's snapshot root,
+     * that its spend nullifier is absent from the snapshot's stake nullifier
+     * tree (rebuilt here and checked against nf_root), with weight
+     * [voteWeight] of its amount, and its per-proposal vote nullifier. The
+     * note is untouched: it votes on every other open proposal and is spent
+     * as usual. The fee bundle is against the pool's current roots. The
+     * (proposal, vote nullifier) is remembered from the moment the node
+     * accepts the tx, so the note never votes twice on the proposal.
      */
-    fun stakeVote(proposalId: Long, notes: List<OwnedStakeNote>, options: List<WeightedVoteOption>): TxResult {
-        require(notes.size in 1..2)
-        val denom = notes.first().denom
-        require(notes.all { it.denom == denom }) { "one validator per stake vote" }
-        val validator = parseDerth(denom)
-        val snap = reads.snapshot(proposalId)
+    fun stakeVote(proposalId: Long, note: OwnedStakeNote, options: List<WeightedVoteOption>): TxResult {
+        val validator = parseDerth(note.denom)
+        require(note.amount > 0) { "an empty note has no vote" }
+        val snap = snapshot(proposalId)
         val tree = store.stakeTree
         // Audit 3: a snapshot past the local tree (stake landed since the last sync) cannot be checked here.
         if (snap.treeSize < 0 || snap.treeSize > tree.size) throw SyncFirst("the proposal's stake snapshot is ahead of this wallet; sync first")
-        require(notes.all { it.position < snap.treeSize }) { "this stake arrived after the proposal's snapshot and cannot vote on it" }
+        require(note.position < snap.treeSize) { "this stake arrived after the proposal's snapshot and cannot vote on it" }
         check(tree.rootAt(snap.treeSize) == snap.root) { "the local stake tree disagrees with the proposal's snapshot root" }
-        val weight = Amounts.exactSum(notes) { it.amount }
-        val stake = stakePlan(denom, notes, emptyList(), weight, mint = stakeMint(), anchor = snap.root,
-            paths = notes.map { tree.pathAt(it.position, snap.treeSize) })
-        return run { fee ->
-            Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
-                MsgStakeVote.newBuilder().setBundle(bs[0]).setProposalId(proposalId).setValidator(validator)
-                    .addAllOptions(PrivateMsgs.canonicalOptions(options)).setWeight(weight).setStake(sp).build()
+        val vnf = Privacy.voteNf(keys.nk, note.rho, note.position, proposalId)
+        resolveVotes()
+        if (voted(proposalId, vnf)) throw AlreadyVoted()
+        val nfRoot = snap.nfRoot!!
+        val low = snapshotNullifiers(snap).nonMembership(Privacy.stakeNf(keys.nk, note.rho, note.position))
+            ?: throw SpentBeforeSnapshot()
+        val weight = voteWeight(note.amount)
+        val path = tree.pathAt(note.position, snap.treeSize)
+        val asset = Privacy.assetId(note.denom)
+        val vote = VoteWitnessSpec(vnf) { sighash ->
+            VoteWitness(keys.nk, note.amount, note.rho, note.rcm, note.position, path, low, snap.root, nfRoot, asset, weight, proposalId, sighash)
+        }
+        try {
+            val r = run(accepted = { hash, timeout -> recordVote(StakeVoteRecord(proposalId, vnf, hash, timeout, confirmed = false)) }) { fee ->
+                Assembled(listOf(feeBundle(fee)), vote = vote) { bs, _, _ ->
+                    MsgStakeVote.newBuilder().setBundle(bs[0]).setProposalId(proposalId).setValidator(validator)
+                        .addAllOptions(PrivateMsgs.canonicalOptions(options)).setWeight(weight).build()
+                }
+            }
+            recordVote(StakeVoteRecord(proposalId, vnf, r.hash, null, confirmed = true))
+            return r
+        } catch (e: Exception) {
+            // Already voted (a restored wallet, a vote whose block the wallet missed): final either way.
+            if (alreadyVotedError(e)) { recordVote(StakeVoteRecord(proposalId, vnf, null, null, confirmed = true)); throw AlreadyVoted() }
+            throw e
+        }
+    }
+
+    private val snapshotRows = HashMap<Long, network.erth.wallet.privacy.sync.StakeSnapshotRow>()
+    private var snapshotsNext = 0L
+
+    /**
+     * [proposalId]'s snapshot: from the indexer's full snapshot stream (no
+     * request names the proposal), else the chain's Query/Snapshot (a
+     * legacy snapshot without a nullifier root, or one the indexer has not
+     * reached). Whatever the source, the note root is checked against the
+     * wallet's verified stake tree and the nullifier root against the tree
+     * the nullifiers rebuild; the chain proves against its own.
+     */
+    fun snapshot(proposalId: Long): PrivacyChainReads.Snapshot {
+        val row = synchronized(snapshotRows) {
+            if (proposalId !in snapshotRows) runCatching {
+                repeat(MAX_SNAPSHOT_PAGES) {
+                    val page = indexer.stakeSnapshots(snapshotsNext)
+                    page.rows.forEach { snapshotRows[it.proposalId] = it }
+                    snapshotsNext = maxOf(snapshotsNext, page.nextHeight)
+                    if (!page.complete) return@runCatching
+                }
+            }
+            snapshotRows[proposalId]
+        }
+        if (row?.root != null && row.nfRoot != null) {
+            return PrivacyChainReads.Snapshot(row.root, row.treeSize, row.height, emptyMap(), row.nfRoot, row.nfSize)
+        }
+        return reads.snapshot(proposalId)
+    }
+
+    /** This note already voted on this proposal (the chain's code 1119): votes are final. */
+    class AlreadyVoted : IllegalStateException("this stake note already voted on this proposal")
+
+    /** The note's nullifier is in the proposal's snapshot nullifier tree: it was spent before voting opened. */
+    class SpentBeforeSnapshot : IllegalStateException("this stake was spent before the proposal's snapshot and cannot vote on it")
+
+    private fun voted(proposalId: Long, vnf: Fr): Boolean = synchronized(store) {
+        store.state.stakeVotes.any { it.proposalId == proposalId && it.vnf == vnf }
+    }
+
+    private fun recordVote(v: StakeVoteRecord) = synchronized(store) {
+        val s = store.state.stakeVotes
+        s.removeAll { it.proposalId == v.proposalId && it.vnf == v.vnf }
+        s.add(v)
+        store.save()
+    }
+
+    /**
+     * Settles the votes still pending: committed (or refused as already
+     * voted) they are final; failed in their block, or unknown once the
+     * chain is past their timeout_height, they are forgotten and the note
+     * may vote again.
+     */
+    private fun resolveVotes() {
+        val pending = synchronized(store) { store.state.stakeVotes.filter { !it.confirmed } }
+        if (pending.isEmpty()) return
+        val tip by lazy { runCatching { chain.tipHeight() }.getOrNull() }
+        for (v in pending) {
+            val r = v.txHash?.let { h -> runCatching { chain.tx(h) }.getOrNull() }
+            val next = when {
+                r != null && (r.code == 0 || r.code == VOTE_NULLIFIER_USED) -> v.copy(confirmed = true)
+                r != null -> null
+                v.txHash == null || (v.until != null && tip != null && tip!! > v.until) -> null
+                else -> continue
+            }
+            synchronized(store) {
+                store.state.stakeVotes.removeAll { it.proposalId == v.proposalId && it.vnf == v.vnf }
+                if (next != null) store.state.stakeVotes.add(next)
+                store.save()
             }
         }
+    }
+
+    /** The stake nullifier tree's values in insertion order (leaf 1 on), as far as fetched: a prefix of the chain's. */
+    private val nfValues = ArrayList<Fr>()
+    private val nfTrees = LinkedHashMap<Fr, IndexedTree>()
+
+    /**
+     * The stake nullifier tree at [snap] (ORCHARD_DESIGN 15, wallet format 3):
+     * its first nf_size - 1 values in insertion order, from the indexer's
+     * stream by leaf index (full ranges only: nothing names a note of ours),
+     * the chain's Query/StakeNullifierTree for whatever the indexer lacks,
+     * inserted in order; its root must be the snapshot's nf_root. A mismatch
+     * drops what was fetched and rebuilds from the chain alone once.
+     */
+    private fun snapshotNullifiers(snap: PrivacyChainReads.Snapshot): IndexedTree = synchronized(nfValues) {
+        val nfRoot = snap.nfRoot ?: throw IllegalStateException("this proposal's snapshot has no stake nullifier root; it takes no stake vote")
+        nfTrees[nfRoot]?.let { return it }
+        require(snap.nfSize in 0..network.erth.wallet.privacy.zk.Merkle.CAPACITY && snap.nfSize - 1 < Int.MAX_VALUE) { "nf_size ${snap.nfSize}" }
+        val n = maxOf(0L, snap.nfSize - 1).toInt()
+        for (chainOnly in listOf(false, true)) {
+            val values = runCatching { fetchNullifiers(n, chainOnly) }.getOrElse { if (chainOnly) throw it else { nfValues.clear(); null } } ?: continue
+            val t = runCatching { IndexedTree.build(values) }.getOrNull()
+            if (t != null && t.root() == nfRoot) {
+                nfTrees[nfRoot] = t
+                while (nfTrees.size > 2) nfTrees.remove(nfTrees.keys.first())
+                return t
+            }
+            nfValues.clear()
+        }
+        throw IllegalStateException("the stake nullifiers served do not rebuild the proposal's snapshot nullifier root")
+    }
+
+    /** The first [n] stake nullifiers in insertion order (holding nfValues' lock). */
+    private fun fetchNullifiers(n: Int, chainOnly: Boolean): List<Fr> {
+        if (!chainOnly) runCatching {
+            while (nfValues.size < n) {
+                val page = indexer.stakeNullifierLeaves(nfValues.size + 1L, minOf(n - nfValues.size, NF_PAGE))
+                if (page.leaves.isEmpty()) break
+                for ((index, v) in page.leaves) {
+                    // Contiguous from where we are, or the page is not the tree's order.
+                    if (index != nfValues.size + 1L) throw WalletSync.Inconsistent("stake nullifier leaf $index out of order")
+                    nfValues.add(v)
+                }
+            }
+        }
+        while (nfValues.size < n) {
+            val page = reads.stakeNullifierTree(nfValues.size.toLong(), minOf(n - nfValues.size, LCD_NF_PAGE))
+            if (page.values.isEmpty()) break
+            nfValues.addAll(page.values.take(LCD_NF_PAGE))
+        }
+        check(nfValues.size >= n) { "only ${nfValues.size} of the snapshot's $n stake nullifiers were served" }
+        return nfValues.subList(0, n).toList()
     }
 
     /** What a stake vote on a proposal weighs: notes, positions that can vote, uerth. */
     data class StakeWeight(val notes: Int, val positionIds: Set<Long>, val uerth: Long)
 
     /**
-     * This wallet's weight on [proposalId]: every derth note that can
-     * stake-vote and every position created before the snapshot's block (the
-     * chain refuses later ones), each at its validator's rate at the snapshot.
+     * This wallet's weight on [proposalId]: every derth note that can still
+     * stake-vote on it (at its rounded [voteWeight]) and every position
+     * created before the snapshot's block (the chain refuses later ones),
+     * each at its validator's rate at the snapshot.
      */
     fun stakeVoteWeight(proposalId: Long, positions: List<PrivacyChainReads.Position>): StakeWeight {
-        val snap = reads.snapshot(proposalId)
-        val notes = eligible(snap)
+        val snap = snapshot(proposalId)
+        val notes = eligible(proposalId, snap)
         val ps = votingPositions(positions, snap)
         val total = Amounts.satAdd(
-            Amounts.satSum(notes) { derthValue(it.amount, snap.rates[parseDerth(it.denom)] ?: BigDecimal.ONE) },
+            Amounts.satSum(notes) { derthValue(voteWeight(it.amount), snap.rates[parseDerth(it.denom)] ?: BigDecimal.ONE) },
             Amounts.satSum(ps) { derthValue(it.derth, snap.rates[it.validator] ?: BigDecimal.ONE) },
         )
         return StakeWeight(notes.size, ps.map { it.id }.toSet(), total)
     }
 
-    private fun eligible(snap: PrivacyChainReads.Snapshot): List<OwnedStakeNote> =
-        store.state.stakeNotes.filter { it.spendable && it.denom.startsWith(DERTH_PREFIX) && it.position < snap.treeSize }
+    /**
+     * Derth notes that may vote on [proposalId]: in the stake tree at the
+     * snapshot, not spent before it as far as sync knows (the cast checks the
+     * snapshot's nullifier tree itself), and not already voted on it. A note
+     * spent after the snapshot still votes; its outputs cannot.
+     */
+    private fun eligible(proposalId: Long, snap: PrivacyChainReads.Snapshot): List<OwnedStakeNote> {
+        if (snap.nfRoot == null) return emptyList()
+        resolveVotes()
+        return store.state.stakeNotes.filter {
+            it.denom.startsWith(DERTH_PREFIX) && it.amount > 0 && it.position < snap.treeSize &&
+                (it.spentHeight == null || snap.height == 0L || it.spentHeight >= snap.height) &&
+                !voted(proposalId, Privacy.voteNf(keys.nk, it.rho, it.position, proposalId))
+        }
+    }
 
-
-    /** One cast of a stake vote: a pair (or one) of derth notes of one validator, or a position. */
+    /** One cast of a stake vote: one derth note, or a position. */
     sealed interface StakeVoteItem {
-        data class Notes(val positions: List<Long>) : StakeVoteItem
+        data class Note(val position: Long) : StakeVoteItem
         data class Position(val id: Long, val counter: Int) : StakeVoteItem
     }
 
     /**
-     * Every cast a stake vote on [proposalId] takes (K5): the eligible derth
-     * notes two of one validator at a time, and every position of ours that
-     * may vote (created before the snapshot's block). Cast them through
-     * [StakeVoteController], the one path the app uses: one at a time, a
-     * sync and a random pause between.
+     * Every cast a stake vote on [proposalId] takes (K5): each eligible derth
+     * note on its own, and every position of ours that may vote (created
+     * before the snapshot's block). Cast them through [StakeVoteController],
+     * the one path the app uses: one at a time, a sync and a random pause
+     * between.
      */
     fun stakeVoteItems(proposalId: Long): List<StakeVoteItem> {
-        val snap = reads.snapshot(proposalId)
-        val notes = eligible(snap).groupBy { it.denom }.values.flatMap { it.chunked(2) }.map { g -> StakeVoteItem.Notes(g.map { it.position }) }
+        val snap = snapshot(proposalId)
+        val notes = eligible(proposalId, snap).map { StakeVoteItem.Note(it.position) }
         val mine = positions()
         val voting = votingPositions(mine.map { it.first }, snap).map { it.id }.toSet()
         return notes + mine.filter { it.first.id in voting }.map { (p, c) -> StakeVoteItem.Position(p.id, c) }
     }
 
-    /** Casts [item] as the last sync left things; null when there is nothing left of it to cast. */
+    /**
+     * Casts [item] as the last sync left things; null when there is nothing
+     * left of it to cast (the note already voted on this proposal, or was
+     * spent before its snapshot).
+     */
     fun castStakeVote(proposalId: Long, item: StakeVoteItem, options: List<WeightedVoteOption>): String? = when (item) {
-        is StakeVoteItem.Notes -> {
-            val now = item.positions.mapNotNull { pos -> store.state.stakeNotes.firstOrNull { it.position == pos && it.spendable } }
-            if (now.isEmpty()) null else stakeVote(proposalId, now, options).hash
+        is StakeVoteItem.Note -> store.state.stakeNotes.firstOrNull { it.position == item.position }?.let { n ->
+            try { stakeVote(proposalId, n, options).hash } catch (e: AlreadyVoted) { null } catch (e: SpentBeforeSnapshot) { null }
         }
         is StakeVoteItem.Position -> positions().firstOrNull { it.first.id == item.id && it.second == item.counter }
             ?.let { (p, c) -> positionVote(p, c, proposalId, options).hash }
@@ -980,6 +1153,34 @@ class PrivacyWallet(
                 else -> v.toLong()
             }
         }
+
+        /**
+         * A stake vote's public weight for a note of [amount] uderth
+         * (PRIVACY_FORMATS 4e): the amount rounded down to three significant
+         * decimal digits (whole below 1000), so the published weight names a
+         * bucket rather than the note's exact amount (a delegation's minted
+         * amount is public). Gives up less than 1% of the note's voice.
+         */
+        fun voteWeight(amount: Long): Long {
+            require(amount > 0) { "an empty note has no vote" }
+            var unit = 1L
+            while (amount / unit >= 1000) unit *= 10
+            return amount / unit * unit
+        }
+
+        /** x/shieldedstaking ErrVoteNullifierUsed. */
+        const val VOTE_NULLIFIER_USED = 1119
+
+        /** Whether [e] is the chain refusing a vote nullifier already used on the proposal. */
+        fun alreadyVotedError(e: Throwable): Boolean {
+            val m = generateSequence(e) { it.cause }.mapNotNull { it.message }.joinToString(" ")
+            return "already voted on this proposal" in m || Regex("""code\s*$VOTE_NULLIFIER_USED\b""").containsMatchIn(m)
+        }
+
+        /** Stake nullifier leaves asked of the indexer a page, and of the LCD (its maximum). */
+        const val NF_PAGE = 5000
+        const val LCD_NF_PAGE = 1000
+        private const val MAX_SNAPSHOT_PAGES = 1000
 
         /** Positions created before the block the proposal entered voting at (all, when unknown). */
         fun votingPositions(positions: List<PrivacyChainReads.Position>, snap: PrivacyChainReads.Snapshot) =

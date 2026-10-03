@@ -219,6 +219,74 @@ data class MembershipWitness(
     fun proverToml(): String = toml(noirInputs())
 }
 
+/**
+ * The vote circuit's witness (circuits/vote): one derth stake note under the
+ * proposal's snapshot note root, its spend nullifier absent from the snapshot
+ * stake nullifier tree (a low leaf under nf_root), 0 < weight <= amount, and
+ * its vote nullifier on the proposal. Public inputs in the chain's order
+ * (MsgStakeVote.VotePublicInputs): note_root, nf_root, asset, weight,
+ * proposal_id, vnf, sighash.
+ */
+data class VoteWitness(
+    val nk: Fr,
+    val amount: Long,
+    val rho: Fr,
+    val rcm: Fr,
+    val pos: Long,
+    val path: List<Fr>,
+    val low: network.erth.wallet.privacy.zk.IndexedTree.Witness,
+    val noteRoot: Fr,
+    val nfRoot: Fr,
+    val asset: Fr,
+    val weight: Long,
+    val proposalId: Long,
+    val sighash: Fr,
+) {
+    init {
+        require(path.size == Merkle.DEPTH && low.lowPath.size == Merkle.DEPTH)
+        require(pos in 0..0xffffffffL && low.lowIndex in 0..0xffffffffL && low.lowNextIndex in 0..0xffffffffL) { "a u32" }
+    }
+
+    /** The note's spend nullifier: private, never published by a vote. */
+    val spendNf: Fr by lazy { Privacy.stakeNf(nk, rho, pos) }
+    val vnf: Fr by lazy { Privacy.voteNf(nk, rho, pos, proposalId) }
+
+    /** What the circuit asserts, checked before spending seconds on a proof that cannot verify. */
+    fun check() {
+        val cm = Privacy.stakeCm(asset, amount, Privacy.stakePc(Privacy.ownerPk(nk), rho, rcm))
+        require(Merkle.rootFromPath(cm, pos, path) == noteRoot) { "the stake note is not under the snapshot root" }
+        require(low.proves(spendNf, nfRoot)) { "the stake note was spent before the snapshot" }
+        require(weight != 0L) { "zero vote weight" }
+        require(java.lang.Long.compareUnsigned(weight, amount) <= 0) { "the vote weighs more than the note" }
+    }
+
+    fun publicInputs(): List<Fr> =
+        listOf(noteRoot, nfRoot, asset, Privacy.u64(weight), Privacy.u64(proposalId), vnf, sighash)
+
+    fun noirInputs(): Map<String, Any> = mapOf(
+        "nk" to nk.toNoir(),
+        "amount" to hex(amount),
+        "rho" to rho.toNoir(),
+        "rcm" to rcm.toNoir(),
+        "pos" to hex(pos),
+        "path" to path.map { it.toNoir() },
+        "low_value" to low.lowValue.toNoir(),
+        "low_next_value" to low.lowNextValue.toNoir(),
+        "low_next_index" to hex(low.lowNextIndex),
+        "low_index" to hex(low.lowIndex),
+        "low_path" to low.lowPath.map { it.toNoir() },
+        "note_root" to noteRoot.toNoir(),
+        "nf_root" to nfRoot.toNoir(),
+        "asset" to asset.toNoir(),
+        "weight" to hex(weight),
+        "proposal_id" to hex(proposalId),
+        "vnf" to vnf.toNoir(),
+        "sighash" to sighash.toNoir(),
+    )
+
+    fun proverToml(): String = toml(noirInputs())
+}
+
 private fun hex(v: Long): String = "0x" + java.lang.Long.toUnsignedString(v, 16)
 
 private fun toml(m: Map<String, Any>): String = buildString {

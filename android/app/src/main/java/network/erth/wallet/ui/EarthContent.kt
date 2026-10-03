@@ -561,9 +561,10 @@ internal fun EarthContent(
             // are separate standings and a wallet can hold either, both or
             // neither.
             // The stake house: private stake votes. Every derth note in the
-            // tree when voting opened is spent against that snapshot and
-            // minted straight back, its weight counted; each position votes
-            // with its key. Final: a note votes once.
+            // tree and unspent when voting opened proves so against that
+            // snapshot without being spent (its weight rounded down to three
+            // significant figures); each position votes with its key. Final:
+            // a note votes once per proposal, and on every open proposal.
             eligibility = if (privateStake <= 0) {
                 "Stake ERTH privately to vote here. Only stake held before voting opened counts."
             } else {

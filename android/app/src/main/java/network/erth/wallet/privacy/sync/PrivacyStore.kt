@@ -107,6 +107,14 @@ data class StakeVoteRun(
 )
 
 /**
+ * A stake vote this wallet cast (ORCHARD_DESIGN 15): its proposal and vote
+ * nullifier, recorded the moment the node accepted the tx ([confirmed]
+ * false, with its hash and timeout_height) and confirmed once committed or
+ * refused as already voted. One note votes once per proposal.
+ */
+data class StakeVoteRecord(val proposalId: Long, val vnf: Fr, val txHash: String?, val until: Long?, val confirmed: Boolean)
+
+/**
  * What the wallet keeps between syncs: cursors into each indexer stream, its
  * own notes, its registration, and the automations' bookkeeping. Small; the
  * trees live beside it in per-level files.
@@ -149,6 +157,8 @@ class PrivacyState {
     val unbondRetryAt: MutableMap<String, Long> = sortedMapOf()
     /** A stake vote being cast (K5), or null. */
     var stakeVoteRun: StakeVoteRun? = null
+    /** Every stake vote cast: (proposal, vote nullifier). */
+    val stakeVotes: MutableList<StakeVoteRecord> = ArrayList()
     /** Next unused Groundworks owner-tag counter (PrivacyKeys.otagSalt). */
     var nextOtagCounter: Int = 0
     /** The highest owner-tag counter of a position this wallet closed, from its unlock memos (-1: none; K11). */
@@ -198,6 +208,12 @@ class PrivacyState {
                 .put("options", JSONArray().apply { r.options.forEach { (o, w) -> put(JSONArray().put(o).put(w)) } })
                 .put("voted_positions", JSONArray(r.votedPositions.toList())).put("total", r.total).put("done", r.done))
         }
+        put("stake_votes", JSONArray().apply {
+            stakeVotes.forEach { v ->
+                put(JSONObject().put("proposal_id", v.proposalId).put("vnf", v.vnf.toHex()).put("tx_hash", v.txHash ?: JSONObject.NULL)
+                    .put("until", v.until ?: JSONObject.NULL).put("confirmed", v.confirmed))
+            }
+        })
         put("next_otag_counter", nextOtagCounter); put("closed_otag_max", closedOtagMax)
         put("stake_next", stakeNext); put("stake_height", stakeHeight); put("stake_nullifiers_next", stakeNullifiersNext)
         put("stake_notes", JSONArray().apply { stakeNotes.forEach { put(stakeJson(it)) } })
@@ -255,6 +271,12 @@ class PrivacyState {
                     (0 until (v?.length() ?: 0)).map { v!!.getLong(it) }.toSet(),
                     r.optInt("total"), r.optInt("done"),
                 )
+            }
+            j.optJSONArray("stake_votes")?.let { a ->
+                for (i in 0 until a.length()) a.getJSONObject(i).let {
+                    stakeVotes.add(StakeVoteRecord(it.getLong("proposal_id"), Fr.fromHex(it.getString("vnf")),
+                        if (it.isNull("tx_hash")) null else it.getString("tx_hash"), opt(it, "until"), it.optBoolean("confirmed")))
+                }
             }
             nextOtagCounter = j.optInt("next_otag_counter"); closedOtagMax = j.optInt("closed_otag_max", -1)
             stakeNext = j.optLong("stake_next"); stakeHeight = j.optLong("stake_height"); stakeNullifiersNext = j.optLong("stake_nullifiers_next")
