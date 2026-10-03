@@ -8,8 +8,10 @@ public struct NoteRootRecord: Sendable, Equatable {
 }
 
 /// A tree's state as the chain reports it: size and latest recorded root
-/// (nil for an empty tree); `pinned` when it was read at the height asked
-/// for, false when that height was unavailable and the latest was read.
+/// (nil for an empty tree); `pinned` only when the node answered at exactly
+/// the height asked for (its echoed `x-cosmos-block-height`), false when that
+/// height was unavailable or the echo differed and the state is some other
+/// height's (K9).
 public struct TreeState: Sendable, Equatable {
     public let size: UInt64
     public let root: Fr?
@@ -28,6 +30,31 @@ public protocol ChainRoots: Sendable {
     func identityTree(height: UInt64?) async throws -> TreeState
     /// x/shieldedstaking Query/StakeTree at `height` (latest when nil).
     func stakeTree(height: UInt64?) async throws -> TreeState
+    /// x/shielded Query/Nullifier: whether `nf` is spent (nil: the node could not say).
+    func nullifierSpent(_ nf: Fr) async -> Bool?
+    /// x/shieldedstaking Query/StakeNullifier likewise.
+    func stakeNullifierSpent(_ nf: Fr) async -> Bool?
+    /// The chain's latest block height (nil: unknown).
+    func latestHeight() async -> UInt64?
+    /// A block's time (unix seconds): a registration's activated_at (K1). Nil when the node cannot say.
+    func blockTime(_ height: UInt64) async -> UInt64?
+    /// The LCD's chain id and genesis key (first block hash, 16 hex); nil when it cannot say (K6).
+    func chainIdentity() async -> ChainIdentity?
+}
+
+public extension ChainRoots {
+    func nullifierSpent(_ nf: Fr) async -> Bool? { nil }
+    func stakeNullifierSpent(_ nf: Fr) async -> Bool? { nil }
+    func latestHeight() async -> UInt64? { nil }
+    func blockTime(_ height: UInt64) async -> UInt64? { nil }
+    func chainIdentity() async -> ChainIdentity? { nil }
+}
+
+/// Which chain the LCD serves: its chain id and the first 16 lowercase hex digits of its block 1 hash (nil: unavailable).
+public struct ChainIdentity: Sendable, Equatable {
+    public let chainID: String
+    public let genesis: String?
+    public init(chainID: String, genesis: String?) { self.chainID = chainID; self.genesis = genesis }
 }
 
 /// Brings a wallet's `PrivacyStore` up to the indexer's tip. Ports
@@ -61,6 +88,12 @@ public final class WalletSync {
         public var errorDescription: String? { message }
     }
 
+    /// The indexer names another genesis the LCD does not confirm: nothing is wiped, nothing synced (K6).
+    public struct GenesisUnverified: Swift.Error, LocalizedError {
+        public let message: String
+        public var errorDescription: String? { message }
+    }
+
     public struct Result: Sendable {
         public let syncedHeight: UInt64
         public let newNotes: [OwnedNote]
@@ -83,30 +116,128 @@ public final class WalletSync {
     /// The largest tree position the circuits take (u32).
     static let maxPosition: UInt64 = 0xffff_ffff
 
-    /// Registration record memo: "ER", version 1 (PRIVACY_FORMATS.md 3a).
-    static let regMagic = Data([0x45, 0x52, 0x01])
+    /// Nullifiers of this sync's streams (pool, stake) spot-checked against the chain (K9).
+    public static let nullifierSample = 4
+    /// Blocks the indexer may trail the chain by before what it served is labelled stale (K9).
+    public static let staleBlocks: UInt64 = 30
+
+    /// Registration record memo: "ER", version 2 (PRIVACY_FORMATS.md 3a). Version 1 (untagged) is ignored.
+    static let regMagic = Data([0x45, 0x52, 0x02])
+    /// Bytes of the record memo's tag.
+    static let regTagBytes = 16
+
+    /// The record's tag: the first 16 bytes of H(TAG_RECTAG, nk, dsc_key, U64(built_at)). Only the owner (nk) can make one.
+    public static func regTag(nk: Fr, dscKey: Fr, builtAt: UInt64) -> Data {
+        PrivacyHash.h(PrivacyHash.tagRecTag, nk, dscKey, PrivacyHash.u64(builtAt)).bytes.prefix(regTagBytes)
+    }
 
     /// The 64-byte memo of a registration record note.
-    public static func regMemo(dscKey: Fr, country: String, builtAt: UInt64) -> Data {
+    public static func regMemo(nk: Fr, dscKey: Fr, country: String, builtAt: UInt64) -> Data {
         var b = regMagic
         let c = country.uppercased()
         let valid = c.utf8.count == 2 && c.utf8.allSatisfy { (0x41 ... 0x5a).contains($0) }
         b += valid ? Data(c.utf8) : Data(count: 2)
         b += PrivateMsgs.be64(builtAt)
         b += dscKey.bytes
+        b += regTag(nk: nk, dscKey: dscKey, builtAt: builtAt)
         return b + Data(count: NoteCipher.memoBytes - b.count)
     }
 
-    /// (dsc_key, country, built_at) if `memo` is a registration record.
-    public static func parseRegMemo(_ memo: Data) -> (dscKey: Fr, country: String, builtAt: UInt64)? {
+    /// (dsc_key, country, built_at) if `memo` is a version-2 registration
+    /// record whose tag is `nk`'s (K1): anyone can send this wallet a value-0
+    /// note with any memo, and an untagged record would cost a leaf search
+    /// per leaf at its height. The tag is checked before anything else is
+    /// done with it.
+    public static func parseRegMemo(nk: Fr, _ memo: Data) -> (dscKey: Fr, country: String, builtAt: UInt64)? {
         guard memo.count <= NoteCipher.memoBytes else { return nil }
         let m = [UInt8](memo) + [UInt8](repeating: 0, count: NoteCipher.memoBytes - memo.count)
         guard Data(m[0 ..< 3]) == regMagic else { return nil }
         let c = m[3 ..< 5]
-        let country = c.allSatisfy { $0 == 0 } ? "" : (String(bytes: c, encoding: .ascii) ?? "")
+        let country: String
+        if c.allSatisfy({ $0 == 0 }) { country = "" } else if c.allSatisfy({ (0x41 ... 0x5a).contains($0) }) {
+            country = String(decoding: c, as: UTF8.self)
+        } else { return nil }
         let builtAt = m[5 ..< 13].reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
         guard let dsc = try? Fr(bytes: Data(m[13 ..< 45])) else { return nil }
+        let tag = Data(m[45 ..< 45 + regTagBytes])
+        guard m[(45 + regTagBytes)...].allSatisfy({ $0 == 0 }) else { return nil }
+        guard constantTimeEqual(tag, regTag(nk: nk, dscKey: dsc, builtAt: builtAt)) else { return nil }
         return (dsc, country, builtAt)
+    }
+
+    static func constantTimeEqual(_ a: Data, _ b: Data) -> Bool {
+        guard a.count == b.count else { return false }
+        return zip(a, b).reduce(UInt8(0)) { $0 | ($1.0 ^ $1.1) } == 0
+    }
+
+    /// Unlock memo: "EU", version 1 (PRIVACY_FORMATS.md 1, K11).
+    static let unlockMagic = Data([0x45, 0x55, 0x01])
+
+    static func unlockTag(nk: Fr, counter: UInt32) -> Data {
+        PrivacyHash.h(PrivacyHash.tagUnlockTag, nk, PrivacyHash.u64(UInt64(counter))).bytes.prefix(regTagBytes)
+    }
+
+    /// The memo of an unlock's re-minted stake note: the owner-tag counter of
+    /// the position it closed, so a wallet restored from the mnemonic knows
+    /// the tags of closed positions too and never locks under one again
+    /// (K11). Tagged like the record (only nk makes one): a gift of stake
+    /// carrying a huge counter cannot stretch the owner-tag scan.
+    public static func unlockMemo(nk: Fr, counter: UInt32) -> Data {
+        var b = unlockMagic
+        b += Data((0 ..< 4).map { UInt8(truncatingIfNeeded: counter >> UInt32(24 - 8 * $0)) })
+        b += unlockTag(nk: nk, counter: counter)
+        return b + Data(count: NoteCipher.memoBytes - b.count)
+    }
+
+    /// The closed counter if `memo` is this wallet's unlock memo.
+    public static func parseUnlockMemo(nk: Fr, _ memo: Data) -> UInt32? {
+        guard memo.count <= NoteCipher.memoBytes else { return nil }
+        let m = [UInt8](memo) + [UInt8](repeating: 0, count: NoteCipher.memoBytes - memo.count)
+        guard Data(m[0 ..< 3]) == unlockMagic else { return nil }
+        let counter = m[3 ..< 7].reduce(UInt32(0)) { $0 << 8 | UInt32($1) }
+        guard counter <= UInt32(Int32.max) else { return nil }
+        guard m[(7 + regTagBytes)...].allSatisfy({ $0 == 0 }) else { return nil }
+        guard constantTimeEqual(Data(m[7 ..< 7 + regTagBytes]), unlockTag(nk: nk, counter: counter)) else { return nil }
+        return counter
+    }
+
+    /// Record notes kept (newest first); only this wallet's own registrations carry a valid tag.
+    public static let maxRecords = 32
+    /// Identity leaves kept per record (registrations sharing its block).
+    public static let maxRecordLeaves = 64
+    /// Leaf hashes the fallback search may spend in one sync, across all
+    /// records: bounds how long a sync holds the wallet lock.
+    public static let syncSearchBudget: UInt64 = 50_000
+    /// Leaf hashes the fallback search may spend on one record before it is given up.
+    public static let recordSearchCap: UInt64 = 4_000_000
+    /// The fallback windows around built_at (seconds before, after): hinted countries, then every other.
+    static let narrowBefore: UInt64 = 3_600, narrowAfter: UInt64 = 86_400
+    static let wideBefore: UInt64 = 600, wideAfter: UInt64 = 3_600
+
+    /// The `i`th offset of an outward walk over [-before, after]: 0, +1, -1,
+    /// +2, -2, ..., then the longer side alone.
+    static func offsetAt(_ i: UInt64, before: UInt64, after: UInt64) -> Int64 {
+        let m = min(before, after)
+        if i <= 2 * m {
+            if i == 0 { return 0 }
+            return i % 2 == 1 ? Int64((i + 1) / 2) : -Int64(i / 2)
+        }
+        let k = Int64(m + (i - 2 * m))
+        return after >= before ? k : -k
+    }
+
+    /// A uniform sample of up to `n` of everything offered (reservoir): nothing about which are ours.
+    final class Reservoir {
+        private let n: Int
+        private(set) var items: [Fr] = []
+        private var seen: UInt64 = 0
+        init(_ n: Int) { self.n = n }
+        func offer(_ x: Fr) {
+            seen += 1
+            if items.count < n { items.append(x); return }
+            let j = UInt64.random(in: 0 ..< seen)
+            if j < UInt64(n) { items[Int(j)] = x }
+        }
     }
 
     /// Every country the chain's leaf may commit to: unknown (0), then each A..Z pair.
@@ -125,10 +256,14 @@ public final class WalletSync {
     private let chainID: String
     private let chain: ChainRoots
     private let now: () -> Int64
+    private let searchBudget: UInt64
+    private let poolSample = Reservoir(WalletSync.nullifierSample)
+    private let stakeSample = Reservoir(WalletSync.nullifierSample)
 
     public init(indexer: PrivacyIndexer, store: PrivacyStore, keys: PrivacyKeys, chainID: String, chain: ChainRoots,
-                now: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970) }) {
+                now: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970) }, searchBudget: UInt64 = WalletSync.syncSearchBudget) {
         self.indexer = indexer; self.store = store; self.keys = keys; self.chainID = chainID; self.chain = chain; self.now = now
+        self.searchBudget = searchBudget
     }
 
     /// Syncs; on an inconsistency with the indexer, starts over once from an empty store.
@@ -153,14 +288,9 @@ public final class WalletSync {
     private func syncOnce(_ limit: Int?) async throws -> Result {
         let status = try await indexer.status()
         if let h = status.halted { throw IndexerHalted(h) }
-        if let c = status.chainID, c != chainID {
-            throw PrivacyError("the privacy indexer follows \(c), not \(chainID)")
-        }
-        if store.state.chainID != chainID || store.state.genesis != status.genesis {
-            // A fresh genesis (a relaunch under the same chain id) or a first
-            // sync: nothing from another chain carries over.
-            store.reset(chainID: chainID, genesis: status.genesis)
-        }
+        guard let c = status.chainID else { throw PrivacyError("the privacy indexer names no chain yet") }
+        if c != chainID { throw PrivacyError("the privacy indexer follows \(c), not \(chainID)") }
+        if store.state.chainID != chainID || store.state.genesis != status.genesis { try await switchChain(status.genesis) }
         var newNotes: [OwnedNote] = []
         var spent: [OwnedNote] = []
         var newStake: [OwnedStakeNote] = []
@@ -177,6 +307,8 @@ public final class WalletSync {
             if try atIndexerTip(roots) || pass >= Self.maxPasses { break }
         }
         releaseStalePending()
+        // Once a sync, after every pass: the record search is budgeted per sync (K1).
+        await matchRecords()
         resolvePending()
         let verified = try await verifyRoots(roots)
         store.save()
@@ -184,13 +316,39 @@ public final class WalletSync {
                       identityRoot: store.identityTree.root(), newStake: newStake, identityStatus: identityStatus(), verified: verified)
     }
 
+    /// K6: the indexer names a (chain id, genesis) other than the store's.
+    /// The LCD must confirm it (its chain id, its block 1 hash) before
+    /// anything is wiped; an indexer's word alone never drops the identity.
+    /// A first sync goes ahead when the LCD cannot say (the root checks still
+    /// guard it) but not when it says otherwise. A confirmed relaunch keeps
+    /// the identity record (its leaf is re-verified against the new tree by
+    /// `identityStatus`), the pending registration and the passport
+    /// nullifier; everything else is the old chain's and goes.
+    private func switchChain(_ genesis: String?) async throws {
+        let old = store.state
+        let switching = old.chainID == chainID && old.genesis != nil
+        let id = await chain.chainIdentity()
+        let confirmed = id != nil && id!.chainID == chainID && id!.genesis != nil && id!.genesis == genesis
+        let contradicted = id != nil && (id!.chainID != chainID || (id!.genesis != nil && id!.genesis != genesis))
+        if genesis == nil || contradicted || (switching && !confirmed) {
+            let m = "unverified: the indexer names genesis \(genesis ?? "none"), which the chain does not confirm" +
+                (id.map { " (the LCD serves \($0.chainID), genesis \($0.genesis ?? "unknown"))" } ?? " (the LCD could not say)")
+            store.mutate { $0.rootsVerified = false; $0.rootsError = m }
+            store.save()
+            throw GenesisUnverified(message: m)
+        }
+        if switching { store.switchGenesis(genesis!) } else { store.reset(chainID: chainID, genesis: genesis) }
+    }
+
     /// Whether every local tree is the indexer's latest; a tree of the same
-    /// size with another root is inconsistent (the stream and the roots
-    /// disagree), a different size just means the indexer moved on.
+    /// size with another root, or a larger one, is inconsistent (the stream
+    /// and the roots disagree), a smaller one just means the indexer moved on.
     private func atIndexerTip(_ roots: LatestRoots) throws -> Bool {
         var tip = true
         func check(_ name: String, _ r: RootRecord?, _ tree: MerkleTree) throws {
             let size = r?.treeSize ?? 0
+            // More than the indexer now says it has: what it served before is not its tree.
+            if tree.size > size { throw Inconsistent(message: "\(name) tree holds \(tree.size) leaves, the indexer's latest \(size)") }
             if size != tree.size { tip = false; return }
             if let r, r.root != tree.root() { throw Inconsistent(message: "\(name) tree root differs from the indexer's at \(size)") }
         }
@@ -200,26 +358,34 @@ public final class WalletSync {
         return tip
     }
 
-    /// C3: every local root against the chain's own. The note root must be
-    /// one the chain recorded, at the local size; the identity and stake
-    /// trees must be the chain's at the height the indexer's root is from.
-    /// A disagreement wipes the synced data and throws `ChainMismatch`; a
-    /// check that cannot be pinned (the indexer moved on, a pruned height)
-    /// leaves the roots unverified, and the wallet builds nothing on them
-    /// until a later sync verifies them.
+    /// C3: every local root against the chain's own (the LCD:
+    /// PRIVACY_FORMATS 4b says what that trusts). Only a positive
+    /// contradiction is a mismatch, which wipes the synced data and throws
+    /// `ChainMismatch`: a note root the chain recorded at another tree size,
+    /// or an identity or stake tree that differs from the chain's read at
+    /// exactly the indexer's root height (the node echoed that height).
+    /// Everything that cannot be established leaves the roots unverified,
+    /// and the wallet builds nothing on them and labels what it shows until a
+    /// later sync verifies them (K8, K9): a note root the chain no longer
+    /// holds (pruned after its window: an indexer far behind, or a forged
+    /// root; the two look the same), a tree read at another height, the
+    /// indexer still moving, a sampled nullifier the chain does not hold
+    /// spent, or the indexer trailing the chain's tip.
     private func verifyRoots(_ roots: LatestRoots) async throws -> Bool {
         var problems: [String] = []
         var mismatch: String?
         if store.noteTree.size > 0 {
             let rec = try await chain.noteRoot(store.noteTree.root())
-            if rec == nil || rec!.treeSize != store.noteTree.size {
-                mismatch = "the chain never recorded the note root the indexer's notes give (\(store.noteTree.size) notes)"
+            if rec == nil {
+                problems.append("unverified: the chain no longer holds the indexer's note root (the indexer is behind, or its notes are not the chain's)")
+            } else if rec!.treeSize != store.noteTree.size {
+                mismatch = "the chain recorded the indexer's note root at \(rec!.treeSize) notes, not \(store.noteTree.size)"
             } else if !rec!.valid {
-                problems.append("the indexer is too far behind the chain: its note root is no longer an anchor")
+                problems.append("unverified: the indexer is too far behind the chain (its note root is no longer an anchor)")
             }
         }
         let tip = try atIndexerTip(roots)
-        if !tip { problems.append("the indexer kept moving; sync again") }
+        if !tip { problems.append("unverified: the indexer kept moving; sync again") }
         func tree(_ name: String, _ local: MerkleTree, _ r: RootRecord?, _ read: (UInt64?) async throws -> TreeState) async throws {
             // Pinned to the indexer's root height, which is only the local
             // tree's when the local tree is the indexer's latest.
@@ -229,10 +395,10 @@ public final class WalletSync {
             let localRoot: Fr? = local.size == 0 ? nil : local.root()
             if t.size == local.size && (t.root == localRoot || (local.size == 0 && t.root == nil)) {
                 return
-            } else if t.size == local.size || t.pinned {
-                mismatch = "the chain's \(name) tree (\(t.size)) differs from the indexer's (\(local.size))"
+            } else if t.pinned {
+                mismatch = "the chain's \(name) tree (\(t.size)) at height \(height.map(String.init) ?? "latest") differs from the indexer's (\(local.size))"
             } else {
-                problems.append("the \(name) tree could not be checked at the indexer's height")
+                problems.append("unverified: the \(name) tree could not be read at the indexer's height \(height.map(String.init) ?? "latest")")
             }
         }
         try await tree("identity", store.identityTree, roots.identity) { try await self.chain.identityTree(height: $0) }
@@ -242,6 +408,15 @@ public final class WalletSync {
             store.mutate { $0.rootsVerified = false; $0.rootsError = m }
             store.save()
             throw ChainMismatch(message: m)
+        }
+        // A sample of the spends this sync read, asked of the chain: an
+        // indexer inventing spends is caught without asking about ours.
+        var invented = false
+        for nf in poolSample.items where await chain.nullifierSpent(nf) == false { invented = true }
+        for nf in stakeSample.items where await chain.stakeNullifierSpent(nf) == false { invented = true }
+        if invented { problems.append("unverified: the indexer reported a spend the chain does not hold") }
+        if let tipHeight = await chain.latestHeight(), tipHeight > roots.syncedHeight, tipHeight - roots.syncedHeight > Self.staleBlocks {
+            problems.append("unverified: the indexer is \(tipHeight - roots.syncedHeight) blocks behind the chain")
         }
         store.mutate { $0.rootsVerified = problems.isEmpty; $0.rootsError = problems.first }
         return problems.isEmpty
@@ -302,9 +477,16 @@ public final class WalletSync {
         default:
             return nil
         }
+        // A value past 2^63-1 is not one the wallet holds (PRIVACY_FORMATS 3, amounts; as Android).
+        if note.value > UInt64(Int64.max) { return nil }
         if note.value == 0 {
-            if let m = Self.parseRegMemo(note.memo), !store.state.regRecords.contains(where: { $0.position == r.position }) {
-                store.mutate { $0.regRecords.append(RegRecord(height: r.height, position: r.position, dscKey: m.dscKey, country: m.country, builtAt: m.builtAt)) }
+            if let m = Self.parseRegMemo(nk: keys.nk, note.memo), !store.state.regRecords.contains(where: { $0.position == r.position }) {
+                store.mutate { s in
+                    s.regRecords.append(RegRecord(height: r.height, position: r.position, dscKey: m.dscKey, country: m.country, builtAt: m.builtAt))
+                    if s.regRecords.count > Self.maxRecords, let i = s.regRecords.indices.min(by: { s.regRecords[$0].height < s.regRecords[$1].height }) {
+                        s.regRecords.remove(at: i)
+                    }
+                }
             }
             return nil
         }
@@ -316,7 +498,7 @@ public final class WalletSync {
         guard let amount else { return nil }
         let digits = amount.prefix { $0.isASCII && $0.isNumber }
         let denom = amount.dropFirst(digits.count)
-        guard !digits.isEmpty, !denom.isEmpty, let v = UInt64(digits) else { return nil }
+        guard !digits.isEmpty, !denom.isEmpty, let v = UInt64(digits), v <= UInt64(Int64.max) else { return nil }
         return (v, String(denom))
     }
 
@@ -332,6 +514,7 @@ public final class WalletSync {
             try checkPage(page.blocks.reduce(0) { $0 + $1.items.count })
             for (h, nfs) in page.blocks {
                 if h > ceiling { break }
+                for nf in nfs { poolSample.offer(nf) }
                 for nf in nfs {
                     if let i = mine[nf] {
                         store.mutate { $0.notes[i].spentHeight = h }
@@ -396,12 +579,16 @@ public final class WalletSync {
             denom = AssetDenoms(store.state.denoms).resolve(o.asset); amount = o.amount; rho = o.rho; rcm = o.rcm
         case NoteCipher.blindCiphertextBytes:
             guard let d = r.denom, let a = r.amount,
-                  let o = NoteCipher.tryDecryptBlindStake(r.ciphertext, cm: r.cm, denom: d, amount: a, keys: keys) else { return nil }
+                  let o = NoteCipher.tryOpenBlindStake(r.ciphertext, cm: r.cm, denom: d, amount: a, keys: keys) else { return nil }
             denom = d; amount = a; rho = o.rho; rcm = o.rcm
+            if let c = Self.parseUnlockMemo(nk: keys.nk, o.memo), c > (store.state.closedOtagMax ?? 0) || store.state.closedOtagMax == nil {
+                store.mutate { $0.closedOtagMax = c }
+            }
         default:
             return nil
         }
-        guard amount > 0 else { return nil }
+        // Zero, or past 2^63-1: nothing the wallet holds (as Android).
+        guard amount > 0, amount <= UInt64(Int64.max) else { return nil }
         return OwnedStakeNote(position: r.position, height: r.height, denom: denom, amount: amount, rho: rho, rcm: rcm, cm: r.cm,
                               nf: PrivacyHash.stakeNF(nk: keys.nk, rho: rho, position: r.position))
     }
@@ -415,6 +602,7 @@ public final class WalletSync {
             try checkPage(page.blocks.reduce(0) { $0 + $1.items.count })
             for (h, nfs) in page.blocks {
                 if h > ceiling { break }
+                for nf in nfs { stakeSample.offer(nf) }
                 for nf in nfs { if let i = mine[nf] { store.mutate { $0.stakeNotes[i].spentHeight = h } } }
             }
             store.mutate { $0.stakeNullifiersNext = min(page.nextHeight, ceiling + 1) }
@@ -444,7 +632,6 @@ public final class WalletSync {
             if !page.complete { break }
         }
         let recordHeights = Set(store.state.regRecords.map(\.height))
-        var candidates: [UInt64: [(UInt64, Fr)]] = [:]
         while true {
             let page = try await indexer.identity(fromIndex: store.state.identityNext, limit: limit)
             try checkPage(page.rows.count)
@@ -454,65 +641,111 @@ public final class WalletSync {
             // A leaf zeroed at or below the ceiling is zero here; one zeroed
             // later is zeroed by a later pass's zeroed stream.
             store.identityTree.appendAll(take.map { r in r.zeroedHeight.map { $0 <= ceiling } == true ? .zero : r.leaf })
+            // Each record keeps the leaves of its block as they pass (persisted: never streamed again).
             for r in take where recordHeights.contains(r.height) {
-                candidates[r.height, default: []].append((r.index, store.identityTree.leaf(r.index)))
+                let leaf = store.identityTree.leaf(r.index)
+                store.mutate { s in
+                    for k in s.regRecords.indices where s.regRecords[k].height == r.height && s.regRecords[k].leaves.count < Self.maxRecordLeaves
+                        && !s.regRecords[k].leaves.contains(where: { $0.index == r.index }) {
+                        s.regRecords[k].leaves.append(RegRecord.Leaf(index: r.index, leaf: leaf))
+                    }
+                }
             }
             store.mutate { $0.identityNext += UInt64(take.count) }
             if take.count < page.rows.count || store.state.identityNext >= page.size { break }
         }
-        matchRecords(candidates)
     }
 
     /// Matches record notes to the leaves appended at their heights (several
-    /// registrations may share a block): every leaf with the hinted country
-    /// first, the full country search only if none matched. The newest match
-    /// becomes the identity.
-    private func matchRecords(_ candidates: [UInt64: [(UInt64, Fr)]]) {
-        for rec in store.state.regRecords.sorted(by: { $0.height > $1.height }) {
-            guard let leaves = candidates[rec.height]?.filter({ $0.1 != .zero }), !leaves.isEmpty else { continue }
-            func first(wide: Bool) -> (UInt64, (Fr, UInt64))? {
-                for (i, leaf) in leaves {
-                    if let f = findLeaf(leaf, dscKey: rec.dscKey, hint: rec.country, builtAt: rec.builtAt, wide: wide) { return (i, f) }
+    /// registrations may share a block), newest record first, stopping at the
+    /// newest that matched (it is the identity). K1, bounded:
+    ///
+    ///  1. activated_at is the registration block's time, so the chain's time
+    ///     for the record's height (the LCD) is tried first: every country
+    ///     (hint, unknown, then A..Z) at exactly that time, at most 677 hashes
+    ///     a leaf. Known and unmatched, the record is given up.
+    ///  2. Only when the chain cannot say (a pruned block), the device
+    ///     clock's built_at is searched outward, hinted countries over [-1h,
+    ///     +24h], then every other over [-10min, +1h], resumably: the cursor
+    ///     and the hashes spent are persisted, each sync spends at most
+    ///     `searchBudget` hashes over all records and a record at most
+    ///     `recordSearchCap` before it is given up.
+    private func matchRecords() async {
+        var budget = Int64(searchBudget)
+        for rec0 in store.state.regRecords.sorted(by: { $0.height > $1.height }) {
+            if rec0.status == .matched { return }
+            if rec0.status == .exhausted { continue }
+            let leaves = rec0.leaves.filter { $0.leaf != .zero }
+            if leaves.isEmpty { continue }
+            guard let k = store.state.regRecords.firstIndex(where: { $0.position == rec0.position }) else { continue }
+            var rec = rec0
+            var found: (UInt64, Fr, UInt64)?
+            if let time = await chain.blockTime(rec0.height) {
+                var countries = [Self.countryOrZero(rec0.country)]
+                for c in Self.allCountries where c != countries[0] { countries.append(c) }
+                outer: for l in leaves {
+                    for c in countries where PrivacyHash.identityLeaf(idc: keys.idc, dscKey: rec0.dscKey, country: c, activatedAt: time) == l.leaf {
+                        found = (l.index, c, time)
+                        break outer
+                    }
                 }
-                return nil
+                rec.status = found != nil ? .matched : .exhausted
+                rec.work += UInt64(countries.count * leaves.count)
+            } else {
+                let r = search(rec0, leaves, budget: UInt64(max(budget, 0)))
+                found = r.found
+                rec = r.rec
+                budget -= Int64(rec.work - rec0.work)
             }
-            guard let match = first(wide: false) ?? first(wide: true) else { continue }
-            let (index, found) = match
-            let cur = store.state.identity
-            if cur == nil || index > cur!.leafIndex {
-                let nullifier = (cur?.leafIndex == index ? cur?.passportNullifier : nil) ?? ""
-                store.mutate {
-                    $0.identity = IdentityRecord(leafIndex: index, dscKey: rec.dscKey, country: found.0, activatedAt: found.1,
-                                                 passportNullifier: nullifier)
+            let updated = rec
+            store.mutate { $0.regRecords[k] = updated }
+            if let (index, country, at) = found {
+                let cur = store.state.identity
+                if cur == nil || index > cur!.leafIndex {
+                    let nullifier = (cur?.leafIndex == index ? cur?.passportNullifier : nil) ?? ""
+                    store.mutate {
+                        $0.identity = IdentityRecord(leafIndex: index, dscKey: rec.dscKey, country: country, activatedAt: at, passportNullifier: nullifier)
+                    }
                 }
+                return
             }
-            return
+            if budget <= 0 { return }
         }
     }
 
-    /// (country, activated_at) with H(TAG_LEAF, idc, `dscKey`, country,
-    /// activated_at) == `leaf`: activated_at searched outward from `builtAt`
-    /// (the block came after the bundle was laid out; the clocks may differ),
-    /// the hinted country first, then every country over a narrower window.
-    func findLeaf(_ leaf: Fr, dscKey: Fr, hint: String, builtAt: UInt64, wide: Bool) -> (Fr, UInt64)? {
-        func scan(_ countries: [Fr], before: UInt64, after: UInt64) -> (Fr, UInt64)? {
-            for dt in 0 ... max(before, after) {
-                var ts: [UInt64] = []
-                if dt <= after, builtAt <= UInt64.max - dt { ts.append(builtAt + dt) }
-                if dt > 0, dt <= before, builtAt >= dt { ts.append(builtAt - dt) }
-                for t in ts {
-                    for c in countries where PrivacyHash.identityLeaf(idc: keys.idc, dscKey: dscKey, country: c, activatedAt: t) == leaf {
-                        return (c, t)
-                    }
+    /// The fallback search for `rec` from its persisted cursor, spending at
+    /// most `budget` hashes (and the record's cap).
+    private func search(_ rec: RegRecord, _ leaves: [RegRecord.Leaf], budget: UInt64) -> (found: (UInt64, Fr, UInt64)?, rec: RegRecord) {
+        var hinted = [Self.countryOrZero(rec.country)]
+        if hinted[0] != .zero { hinted.append(.zero) }
+        let hs = Set(hinted)
+        let others = Self.allCountries.filter { !hs.contains($0) }
+        let narrowSteps = Self.narrowBefore + Self.narrowAfter + 1
+        let total = narrowSteps + Self.wideBefore + Self.wideAfter + 1
+        var out = rec
+        var spent: UInt64 = 0
+        while out.cursor < total {
+            let narrow = out.cursor < narrowSteps
+            let countries = narrow ? hinted : others
+            let cost = UInt64(countries.count * leaves.count)
+            if spent > 0 && spent + cost > budget { break }
+            if out.work + cost > Self.recordSearchCap { out.status = .exhausted; return (nil, out) }
+            let off = narrow ? Self.offsetAt(out.cursor, before: Self.narrowBefore, after: Self.narrowAfter)
+                : Self.offsetAt(out.cursor - narrowSteps, before: Self.wideBefore, after: Self.wideAfter)
+            out.cursor += 1
+            out.work += cost
+            spent += cost
+            let t = Int64(clamping: rec.builtAt) + off
+            if t < 0 { continue }
+            for l in leaves {
+                for c in countries where PrivacyHash.identityLeaf(idc: keys.idc, dscKey: rec.dscKey, country: c, activatedAt: UInt64(t)) == l.leaf {
+                    out.status = .matched
+                    return ((l.index, c, UInt64(t)), out)
                 }
             }
-            return nil
         }
-        var hinted = [Self.countryOrZero(hint)]
-        if hinted[0] != .zero { hinted.append(.zero) }
-        if !wide { return scan(hinted, before: 3_600, after: 86_400) }
-        let hs = Set(hinted)
-        return scan(Self.allCountries.filter { !hs.contains($0) }, before: 600, after: 3_600)
+        out.status = out.cursor >= total ? .exhausted : .open
+        return (nil, out)
     }
 
     /// C2: a committed registration whose leaf the wallet has not matched
@@ -522,20 +755,22 @@ public final class WalletSync {
     /// unmatched: a failure is recorded for the UI and retried.
     private func resolvePending() {
         guard var p = store.state.pendingRegistration else { return }
-        if p.leafIndex >= store.identityTree.size {
+        // Not committed yet as far as the wallet knows (PrivacyWallet.sync looks it up by hash).
+        guard let index = p.leafIndex, let activatedAt = p.activatedAt else { return }
+        if index >= store.identityTree.size {
             p.failure = nil
             store.mutate { $0.pendingRegistration = p }
             return
         }
-        let leaf = store.identityTree.leaf(p.leafIndex)
-        if let country = countryFor(leaf: leaf, dscKey: p.dscKey, activatedAt: p.activatedAt, hint: p.countryHint) {
+        let leaf = store.identityTree.leaf(index)
+        if let country = countryFor(leaf: leaf, dscKey: p.dscKey, activatedAt: activatedAt, hint: p.countryHint) {
             store.mutate {
-                $0.identity = IdentityRecord(leafIndex: p.leafIndex, dscKey: p.dscKey, country: country, activatedAt: p.activatedAt,
+                $0.identity = IdentityRecord(leafIndex: index, dscKey: p.dscKey, country: country, activatedAt: activatedAt,
                                              passportNullifier: p.passportNullifier)
                 $0.pendingRegistration = nil
             }
         } else {
-            p.failure = leaf == .zero ? "the registration's leaf \(p.leafIndex) has been zeroed" : "leaf \(p.leafIndex) does not match this registration"
+            p.failure = leaf == .zero ? "the registration's leaf \(index) has been zeroed" : "leaf \(index) does not match this registration"
             store.mutate { $0.pendingRegistration = p }
         }
     }

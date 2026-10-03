@@ -27,6 +27,12 @@ public struct EarthRest: Sendable {
     /// Reads `request`'s response, refusing more than `max` bytes (after
     /// URLSession's own gzip decoding). Returns the body and HTTP status.
     static func boundedData(_ session: URLSession, _ request: URLRequest, max: Int = maxBodyBytes) async throws -> (Data, Int) {
+        let (d, s, _) = try await boundedResponse(session, request, max: max)
+        return (d, s)
+    }
+
+    /// `boundedData` with the response's headers.
+    static func boundedResponse(_ session: URLSession, _ request: URLRequest, max: Int = maxBodyBytes) async throws -> (Data, Int, HTTPURLResponse?) {
         let (bytes, response) = try await session.bytes(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         if response.expectedContentLength > Int64(max) { throw Error.tooLarge(max) }
@@ -36,7 +42,7 @@ public struct EarthRest: Sendable {
             out.append(b)
             if out.count > max { throw Error.tooLarge(max) }
         }
-        return (Data(out), status)
+        return (Data(out), status, response as? HTTPURLResponse)
     }
 
     public let lcd: URL
@@ -62,6 +68,20 @@ public struct EarthRest: Sendable {
         var r = URLRequest(url: lcd.appendingPath(path))
         r.setValue(String(height), forHTTPHeaderField: "x-cosmos-block-height")
         return try await request(r)
+    }
+
+    /// `get(_:height:)` with the height the node says it answered at (its
+    /// `x-cosmos-block-height` response header; nil when absent). A caller
+    /// pinning state to a height checks the two agree (K9).
+    public func getEcho(_ path: String, height: UInt64) async throws -> (JSON, UInt64?) {
+        guard let url = lcd.appendingPathChecked(path) else { throw Error.missing(path) }
+        var r = URLRequest(url: url)
+        r.setValue(String(height), forHTTPHeaderField: "x-cosmos-block-height")
+        let (data, status, resp) = try await Self.boundedResponse(session, r)
+        guard (200 ... 299).contains(status) else { throw Error.http(status: status, body: String(decoding: data, as: UTF8.self)) }
+        guard let object = try? JSONSerialization.jsonObject(with: data) else { throw Error.notJSON(String(decoding: data, as: UTF8.self)) }
+        let echo = (resp?.value(forHTTPHeaderField: "x-cosmos-block-height")).flatMap { UInt64($0.trimmingCharacters(in: .whitespaces)) }
+        return (JSON(object), echo)
     }
 
     /// The CometBFT RPC, which serves the one thing the LCD cannot: a *range*
@@ -96,6 +116,11 @@ private extension URL {
     /// and drops any query string, so paths are joined textually instead.
     func appendingPath(_ path: String) -> URL {
         URL(string: absoluteString.trimmingTrailingSlash + path)!
+    }
+
+    /// `appendingPath` that answers nil instead of trapping on an unparsable path.
+    func appendingPathChecked(_ path: String) -> URL? {
+        URL(string: absoluteString.trimmingTrailingSlash + path)
     }
 }
 

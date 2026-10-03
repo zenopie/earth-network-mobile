@@ -17,16 +17,14 @@ final class AuditFixesTests: XCTestCase {
     let validator2 = "earthvaloper1qyqszqgpqyqszqgpqyqszqgpqyqszqgpjnp7du"
     let receiver = "earth1qqqsyqcyq5rqwzqfpg9scrgwpugpzysncc2uls"
     let yes = [WeightedVoteOption(option: WeightedVoteOption.yes, weight: "1")]
-    let pauses = Pauses()
     var snapshot: UInt64?
 
     func wallet(_ chain: FakeChain, _ words: String? = nil, indexer: PrivacyIndexer? = nil,
                 store: PrivacyStore = .memory()) throws -> PrivacyWallet {
-        let p = pauses
         let reads = FakeReads(chain: chain, snapshotSize: { [unowned self] in self.snapshot ?? chain.stakeTree.size })
         return PrivacyWallet(keys: try PrivacyKeys.fromMnemonic(words ?? alice), store: store, indexer: indexer ?? chain, chain: chain,
                              reads: reads, prover: chain.prover, chainID: chain.chainID, roots: chain,
-                             now: { [unowned chain] in chain.now }, pause: { p.add($0) })
+                             now: { [unowned chain] in chain.now })
     }
 
     func bal(_ w: PrivacyWallet, _ d: String) -> UInt64 { w.balances()[d] ?? 0 }
@@ -134,21 +132,22 @@ final class AuditFixesTests: XCTestCase {
         dump(chain, "restore")
     }
 
-    /// The registration record memo round-trips, and only its own format parses.
+    /// The registration record memo (version 2) round-trips with its tag, and only its own format parses.
     func testRegistrationRecordMemo() throws {
-        let m = WalletSync.regMemo(dscKey: Fr(UInt64(77)), country: "fr", builtAt: 1_790_000_123)
+        let nk = try PrivacyKeys.fromMnemonic(alice).nk
+        let m = WalletSync.regMemo(nk: nk, dscKey: Fr(UInt64(77)), country: "fr", builtAt: 1_790_000_123)
         XCTAssertEqual(64, m.count)
-        XCTAssertEqual(Data([0x45, 0x52, 0x01, 0x46, 0x52]), m.prefix(5))
+        XCTAssertEqual(Data([0x45, 0x52, 0x02, 0x46, 0x52]), m.prefix(5))
         // A memo arrives with its trailing zeros dropped.
         var trimmed = m
         while trimmed.last == 0 { trimmed.removeLast() }
-        let back = try XCTUnwrap(WalletSync.parseRegMemo(trimmed))
+        let back = try XCTUnwrap(WalletSync.parseRegMemo(nk: nk, trimmed))
         XCTAssertEqual(Fr(UInt64(77)), back.dscKey)
         XCTAssertEqual("FR", back.country)
         XCTAssertEqual(1_790_000_123, back.builtAt)
-        XCTAssertEqual("", WalletSync.parseRegMemo(WalletSync.regMemo(dscKey: .one, country: "F1", builtAt: 0))?.country)
-        XCTAssertNil(WalletSync.parseRegMemo(Data("hi".utf8)))
-        XCTAssertNil(WalletSync.parseRegMemo(Data()))
+        XCTAssertEqual("", WalletSync.parseRegMemo(nk: nk, WalletSync.regMemo(nk: nk, dscKey: .one, country: "F1", builtAt: 0))?.country)
+        XCTAssertNil(WalletSync.parseRegMemo(nk: nk, Data("hi".utf8)))
+        XCTAssertNil(WalletSync.parseRegMemo(nk: nk, Data()))
     }
 
     /// The DSC's issuer country is the record note's hint.
@@ -184,7 +183,9 @@ final class AuditFixesTests: XCTestCase {
         XCTAssertEqual("123456789", a.snapshot.identity?.passportNullifier)
     }
 
-    /// C3: an indexer serving a note the chain never had (encrypted to us, with roots to match) is refused.
+    /// C3 (K8): an indexer serving a note the chain never had (encrypted to
+    /// us, with roots to match) leaves the wallet unverified: nothing is
+    /// built on it, and the honest indexer's stream replaces it.
     func testForgedIndexerTreesAreRefused() async throws {
         let chain = FakeChain()
         let a = try wallet(chain)
@@ -209,15 +210,38 @@ final class AuditFixesTests: XCTestCase {
                                identity: r.identity, syncedHeight: r.syncedHeight, stake: r.stake)
         }
         let w = try wallet(chain, indexer: idx)
-        await assertThrowsAsync({ try await w.sync() }) { $0 is WalletSync.ChainMismatch }
-        // Nothing synced from it is kept or spendable.
-        XCTAssertTrue(w.balances().isEmpty)
-        XCTAssertTrue(w.store.state.rootsError?.contains("never recorded") == true)
+        let r = try await w.sync()
+        XCTAssertFalse(r.verified)
+        XCTAssertTrue(w.store.state.rootsError?.contains("no longer holds") == true)
         await assertThrowsAsync({ try await w.unshield(receiver: self.receiver, denom: "uerth", amount: 1) }) { $0 is PrivacyError }
         forge = false
         try await w.sync()
         XCTAssertEqual(1_000_000, bal(w, "uerth"))
         XCTAssertTrue(w.store.state.rootsVerified)
+    }
+
+    /// C3: an identity tree the chain contradicts at the indexer's own height wipes what was synced.
+    func testForgedIdentityTreeIsAMismatch() async throws {
+        let chain = FakeChain()
+        let a = try wallet(chain)
+        let o = try a.shieldOutput(denom: "uerth", amount: 0)
+        chain.shield("uerth", 1_000_000, o.pc, o.ciphertext)
+        let leaf = Fr(UInt64(99))
+        let idx = WrappedIndexer(chain)
+        idx.identityOverride = { fromIndex, _ in
+            IdentityPage(rows: fromIndex == 0 ? [IdentityRow(index: 0, height: chain.height - 1, leaf: leaf, zeroedHeight: nil)] : [],
+                         nextIndex: 1, size: 1, syncedHeight: chain.height - 1)
+        }
+        idx.rootsOverride = { r in
+            let t = MerkleTree(store: MemNodeStore())
+            t.appendAll([leaf])
+            return LatestRoots(note: r.note, identity: RootRecord(root: t.root(), treeSize: 1, height: chain.height - 1, time: chain.now),
+                               syncedHeight: r.syncedHeight, stake: r.stake)
+        }
+        let w = try wallet(chain, indexer: idx)
+        await assertThrowsAsync({ try await w.sync() }) { $0 is WalletSync.ChainMismatch }
+        XCTAssertTrue(w.balances().isEmpty)
+        XCTAssertTrue(w.store.state.rootsError?.contains("identity tree") == true)
     }
 
     /// A halted indexer is not synced from; a new genesis under the same chain id wipes the local data.
@@ -275,9 +299,12 @@ final class AuditFixesTests: XCTestCase {
     func testHugeAmountsNeverTrap() async throws {
         let chain = FakeChain()
         let a = try wallet(chain)
+        // Past 2^63-1 a value is not one the wallet holds (K12, as Android): ignored, never wrapped.
+        let o0 = try a.shieldOutput(denom: "uerth", amount: 0)
+        chain.mint("uerth", UInt64.max - 5, o0.pc, o0.ciphertext)
         for _ in 0 ..< 3 {
             let o = try a.shieldOutput(denom: "uerth", amount: 0)
-            chain.mint("uerth", UInt64.max - 5, o.pc, o.ciphertext)
+            chain.mint("uerth", UInt64(Int64.max) - 5, o.pc, o.ciphertext)
         }
         chain.emptyBlock()
         try await a.sync()
@@ -297,32 +324,6 @@ final class AuditFixesTests: XCTestCase {
                                     stake: StakeProof(proof: Data(), anchor: Data(), nullifiers: [], commitments: [], ciphertexts: [], spcMint: Data(),
                                                       ownerTag: Data()))
         XCTAssertEqual(0, d.privateFee)
-    }
-
-    /// L4: stake votes go one at a time, a sync and a random pause between them.
-    func testStakeVotesAreSpacedOut() async throws {
-        let chain = FakeChain()
-        let a = try wallet(chain)
-        for _ in 0 ..< 3 {
-            let o = try a.shieldOutput(denom: "uerth", amount: 0)
-            chain.shield("uerth", 2_000_000, o.pc, o.ciphertext)
-        }
-        try await a.sync()
-        _ = try await a.delegate(validator: validator, amount: 1_000_000)
-        try await a.sync()
-        _ = try await a.delegate(validator: validator2, amount: 1_000_000)
-        try await a.sync()
-        snapshot = chain.stakeTree.size
-        let before = chain.height
-        let votes = try await a.stakeVoteAll(proposalID: 12, options: yes)
-        snapshot = nil
-        XCTAssertEqual(2, votes.count)
-        XCTAssertEqual(1, pauses.all.count)
-        XCTAssertTrue((PrivacyWallet.votePauseMinMs ... PrivacyWallet.votePauseMaxMs).contains(pauses.all[0]))
-        XCTAssertEqual([validator, validator2], Set(chain.stakeVotes.map(\.1)).sorted())
-        // Separate blocks, the second laid out after a sync saw the first.
-        XCTAssertEqual(before + 2, chain.height)
-        dump(chain, "votes")
     }
 
     /// C4: the privacy store's directory is excluded from iCloud and iTunes/Finder backups.
@@ -384,6 +385,8 @@ final class WrappedIndexer: PrivacyIndexer, @unchecked Sendable {
     /// A page to serve instead (nil: the inner indexer's).
     var notesOverride: ((UInt64, Int?) throws -> NotesPage?)?
     var rootsOverride: ((LatestRoots) -> LatestRoots)?
+    var identityOverride: ((UInt64, Int?) throws -> IdentityPage?)?
+    var nullifiersOverride: ((HeightPage<Fr>) -> HeightPage<Fr>)?
 
     init(_ inner: PrivacyIndexer) { self.inner = inner }
 
@@ -398,8 +401,14 @@ final class WrappedIndexer: PrivacyIndexer, @unchecked Sendable {
         return try await inner.notes(fromPos: fromPos, limit: limit)
     }
 
-    func nullifiers(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<Fr> { try await inner.nullifiers(fromHeight: fromHeight, limit: limit) }
-    func identity(fromIndex: UInt64, limit: Int?) async throws -> IdentityPage { try await inner.identity(fromIndex: fromIndex, limit: limit) }
+    func nullifiers(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<Fr> {
+        let p = try await inner.nullifiers(fromHeight: fromHeight, limit: limit)
+        return nullifiersOverride?(p) ?? p
+    }
+    func identity(fromIndex: UInt64, limit: Int?) async throws -> IdentityPage {
+        if let o = identityOverride, let p = try o(fromIndex, limit) { return p }
+        return try await inner.identity(fromIndex: fromIndex, limit: limit)
+    }
     func identityZeroed(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<UInt64> {
         try await inner.identityZeroed(fromHeight: fromHeight, limit: limit)
     }

@@ -165,24 +165,46 @@ public struct RateRow: Sendable {
     public let height: UInt64
 }
 
-/// `PrivacyIndexer` over HTTP.
+/// `PrivacyIndexer` over HTTP. Only ever talks to `host`: the status's
+/// `base` is accepted only as exactly `/privacy/<chain_id>/<genesis>` for
+/// `chainID` (K10), so a hostile status cannot point the stream requests
+/// anywhere else, and no path ever traps building its URL.
 public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
     public let host: URL
+    public let chainID: String
     private let session: URLSession
     private let lock = NSLock()
     private var _base: String?
 
-    public init(host: URL = Constants.backendBaseURL) {
-        self.host = host
+    public convenience init(host: URL = Constants.backendBaseURL, chainID: String = Constants.chainID) {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 60
         config.timeoutIntervalForResource = 120
         // URLSession inflates gzip itself; asking for it keeps a full sync small.
         config.httpAdditionalHeaders = ["Accept-Encoding": "gzip"]
-        session = URLSession(configuration: config)
+        self.init(host: host, chainID: chainID, configuration: config)
     }
 
-    public enum Error: Swift.Error { case http(Int, String), notJSON, noBase }
+    init(host: URL, chainID: String, configuration: URLSessionConfiguration) {
+        self.host = host
+        self.chainID = chainID
+        session = URLSession(configuration: configuration)
+    }
+
+    public enum Error: Swift.Error { case http(Int, String), notJSON, noBase, badBase(String), badPath(String) }
+
+    /// K10: `base` is exactly `/privacy/<chain_id>/<genesis>` for the chain
+    /// the wallet follows (`expected`), as the same status names it, with a
+    /// chain id of [A-Za-z0-9._-] (at most 64, first alphanumeric) and a
+    /// genesis of 16 lowercase hex digits. A nil chain id is refused.
+    public static func validBase(_ base: String, expected: String, chainID: String?, genesis: String?) -> Bool {
+        guard let chainID, let genesis, chainID == expected else { return false }
+        let idChars = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+        let alnum = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+        guard (1 ... 64).contains(chainID.count), chainID.allSatisfy(idChars.contains), alnum.contains(chainID.first!) else { return false }
+        guard genesis.count == 16, genesis.allSatisfy(Set("0123456789abcdef").contains) else { return false }
+        return base == "/privacy/\(chainID)/\(genesis)"
+    }
 
     private var base: String? {
         get { lock.lock(); defer { lock.unlock() }; return _base }
@@ -190,7 +212,11 @@ public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
     }
 
     private func get(_ path: String) async throws -> JSON {
-        let url = URL(string: host.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + path)!
+        guard path.hasPrefix("/"), !path.hasPrefix("//"),
+              let url = URL(string: host.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + path),
+              url.scheme == host.scheme, url.host == host.host, url.port == host.port, url.user == nil else {
+            throw Error.badPath(String(path.prefix(80)))
+        }
         let (data, code) = try await EarthRest.boundedData(session, URLRequest(url: url))
         if code == 404 { throw IndexerBaseMoved("indexer \(path): 404 \(String(decoding: data.prefix(200), as: UTF8.self))") }
         guard (200 ... 299).contains(code) else { throw Error.http(code, String(decoding: data.prefix(200), as: UTF8.self)) }
@@ -203,7 +229,7 @@ public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
         var b = base
         if b == nil { b = try await status().base }
         guard let b else { throw Error.noBase }
-        return try await get(b.trimmingCharacters(in: CharacterSet(charactersIn: "/")).withLeadingSlash + path)
+        return try await get(b + path)
     }
 
     private func q(_ name: String, _ v: Int?) -> String { v.map { "&\(name)=\($0)" } ?? "" }
@@ -221,6 +247,11 @@ public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
             genesis: str(j.genesis),
             base: str(j.base)
         )
+        // Refused before it is ever used: a base that is not exactly this
+        // chain's (another chain, a host, a scheme, '..', '@', '?').
+        if let b = st.base, !Self.validBase(b, expected: chainID, chainID: st.chainID, genesis: st.genesis) {
+            throw Error.badBase(String(b.prefix(80)))
+        }
         base = st.base
         return st
     }
@@ -262,7 +293,8 @@ public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
     static func parseStakeNotes(_ j: JSON) throws -> StakeNotesPage {
         let rows = try j.notes.array.map { r in
             StakeNoteRow(position: r[0].uint64(default: 0), height: r[1].uint64(default: 0), cm: try Fr(hex: r[2].string ?? ""),
-                         ciphertext: Data(base64Encoded: r[3].string ?? "") ?? Data(), denom: r[4].string, amount: r[5].uint64,
+                         ciphertext: Data(base64Encoded: r[3].string ?? "") ?? Data(), denom: r[4].string,
+                         amount: r[5].uint64.flatMap { $0 <= UInt64(Int64.max) ? $0 : nil },
                          spc: try r[6].string.map { try Fr(hex: $0) })
         }
         return StakeNotesPage(rows: rows, nextPos: j.next_pos.uint64(default: 0), complete: j.complete.bool(default: false),
@@ -301,8 +333,4 @@ public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
         return LatestRoots(note: try root(j.note), identity: try root(j.identity), syncedHeight: j.synced_height.uint64(default: 0),
                            stake: try root(j.stake))
     }
-}
-
-private extension String {
-    var withLeadingSlash: String { hasPrefix("/") ? self : "/" + self }
 }

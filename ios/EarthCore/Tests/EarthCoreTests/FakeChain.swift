@@ -95,6 +95,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         if stakeTree.size > 0 { stakeRoots.insert(stakeTree.root()) }
         identityAt[height] = TreeState(size: identityTree.size, root: identityTree.size == 0 ? nil : identityTree.root())
         stakeAt[height] = TreeState(size: stakeTree.size, root: stakeTree.size == 0 ? nil : stakeTree.root())
+        blockTimes[height] = UInt64(now)
         height += 1
     }
 
@@ -154,16 +155,43 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     /// Broadcasts to refuse (after the wallet proved them): a node down, a tx dropped.
     var rejectNext = 0
 
-    func broadcast(_ tx: Data) async throws -> TxResult {
+    /// Broadcasts accepted and committed whose wait then times out.
+    var unconfirmedNext = 0
+    /// Broadcasts accepted (CheckTx) that then fail in their block (DeliverTx code 5): nothing changes.
+    var failInBlockNext = 0
+    /// Every tx by hash, as Query/GetTx answers.
+    var txs: [String: TxResult] = [:]
+
+    func tx(_ hash: String) async throws -> TxResult? { txs[hash] }
+
+    func broadcast(_ tx: Data, accepted: @Sendable (String) -> Void) async throws -> TxResult {
         if rejectNext > 0 {
             // The proofs made for it never reach the chain.
             rejectNext -= 1
             prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll()
             throw URLError(.networkConnectionLost)
         }
+        let hash = "HASH\(height)"
+        if failInBlockNext > 0 {
+            failInBlockNext -= 1
+            _ = try check(tx, simulate: true)
+            accepted(hash)
+            prover.actions.removeAll(); prover.stakes.removeAll(); prover.memberships.removeAll()
+            block()
+            txs[hash] = TxResult(hash: hash, height: height - 1, time: now, events: [], code: 5, log: "failed in block (test)")
+            throw Refused(why: "tx failed (code 5)")
+        }
+        _ = try check(tx, simulate: true)
+        accepted(hash)
         let (_, events) = try check(tx, simulate: false)
         block()
-        return TxResult(hash: "HASH\(height - 1)", height: height - 1, time: now, events: events)
+        let r = TxResult(hash: hash, height: height - 1, time: now, events: events)
+        txs[hash] = r
+        if unconfirmedNext > 0 {
+            unconfirmedNext -= 1
+            throw EarthClient.Error.notCommitted(hash: hash)
+        }
+        return r
     }
 
     /// What the swap pays, as x/dex prices it.
@@ -338,6 +366,18 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         try need(tx.signatures == 0, "private txs are unsigned")
         try need(tx.signerInfos == 0, "no signer infos")
         let m = tx.msg
+        // Round 2 (R7): exactly the canonical encoding of what it decodes to.
+        try need(UnsignedTx.build(m, tx: tx.txFields) == txBytes, "tx bytes are not canonical")
+        // Every action's output ciphertext exactly 217 bytes, dummies included.
+        for b in m.bundles { for a in b.actions { try need(a.ciphertext.count == NoteCipher.ciphertextBytes, "action ciphertext \(a.ciphertext.count) bytes") } }
+        // Stake proofs: exactly two ciphertext slots, empty iff the commitment is zero, else 153 bytes.
+        if let p = m.stakeProof {
+            try need(p.ciphertexts.count == 2, "stake proof has \(p.ciphertexts.count) ciphertexts")
+            for i in 0 ..< 2 {
+                let zero = p.commitments.count > i && p.commitments[i].allSatisfy { $0 == 0 }
+                try need(zero ? p.ciphertexts[i].isEmpty : p.ciphertexts[i].count == NoteCipher.stakeCiphertextBytes, "stake ciphertext \(i)")
+            }
+        }
         let total = m.totalFee
         try need(tx.feeCoins.count == 1 && tx.feeCoins[0].denom == "uerth" && tx.feeCoins[0].amount == String(total), "declared fee != msg fee")
         try need(total >= minFeeValue, "below min fee")
@@ -413,6 +453,8 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         case let m as MsgRegisterPrivate:
             let binding = try PrivateMsgs.decimalField(m.publicSignals[1])
             try need(binding == (try m.binding()), "binding")
+            // Round 2 (R1): a landed binding is never used again.
+            try need(usedBindings.insert(binding).inserted, "binding already used (ErrBindingUsed)")
             let dsc = try PrivateMsgs.decimalField(m.publicSignals[3])
             let idc = try f(m.idc)
             // A switch: the holder's old leaf is zeroed, the new one appended.
@@ -532,12 +574,41 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         return keys.max().flatMap { m[$0] } ?? TreeState(size: 0, root: nil)
     }
 
-    func identityTree(height: UInt64?) async throws -> TreeState { Self.at(identityAt, height) }
-    func stakeTree(height: UInt64?) async throws -> TreeState { Self.at(stakeAt, height) }
+    /// Set to make the node answer a pinned query at another height than asked (echo differs).
+    var echoOtherHeight = false
+
+    private func read(_ m: [UInt64: TreeState], _ h: UInt64?) -> TreeState {
+        if h != nil && echoOtherHeight { let t = Self.at(m, nil); return TreeState(size: t.size, root: t.root, pinned: false) }
+        return Self.at(m, h)
+    }
+
+    func identityTree(height: UInt64?) async throws -> TreeState { read(identityAt, height) }
+    func stakeTree(height: UInt64?) async throws -> TreeState { read(stakeAt, height) }
+
+    /// Drops every recorded note root but the latest (x/shielded prunes roots past its window).
+    func pruneNoteRoots() { let keep = noteTree.root(); noteRootSizes = noteRootSizes.filter { $0.key == keep } }
+
+    func nullifierSpent(_ nf: Fr) async -> Bool? { nullifiers[nf] != nil }
+    func stakeNullifierSpent(_ nf: Fr) async -> Bool? { stakeNullifiers[nf] != nil }
+
+    /// The chain's tip as the LCD reports it; tests move it ahead of the indexer.
+    var tipAhead: UInt64 = 0
+    func latestHeight() async -> UInt64? { height - 1 + tipAhead }
+
+    /// Each block's time, as the LCD serves it (`blockTimesPruned`: the node has none).
+    var blockTimes: [UInt64: UInt64] = [:]
+    var blockTimesPruned = false
+    func blockTime(_ height: UInt64) async -> UInt64? { blockTimesPruned ? nil : blockTimes[height] }
+
+    /// What the LCD says block 1's hash prefix is (nil: the indexer's `genesis`); `lcdBlind`: it cannot say.
+    var lcdGenesis: String?
+    var lcdBlind = false
+    func chainIdentity() async -> ChainIdentity? { lcdBlind ? nil : ChainIdentity(chainID: chainID, genesis: lcdGenesis ?? genesis) }
 
     // MARK: registrations
 
     var registeredIdc: [UInt64: Fr] = [:]
+    var usedBindings: Set<Fr> = []
     var passportOf: [UInt64: String] = [:]
     /// (height, leaf index) of every zeroing.
     var zeroed: [(height: UInt64, index: UInt64)] = []

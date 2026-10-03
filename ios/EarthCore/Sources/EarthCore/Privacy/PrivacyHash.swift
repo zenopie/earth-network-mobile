@@ -24,6 +24,9 @@ public enum PrivacyHash {
     public static let tagSPC = tag("earth.spc")
     public static let tagSNF = tag("earth.snf")
     public static let tagOTag = tag("earth.otag")
+    // Wallet-defined (PRIVACY_FORMATS.md 3a, 1): the registration record's and an unlock memo's tags.
+    public static let tagRecTag = tag("earth.rectag")
+    public static let tagUnlockTag = tag("earth.unlocktag")
 
     /// The fee asset, privacy_core::ASSET_ERTH.
     public static let assetErth: Fr = assetID("uerth")

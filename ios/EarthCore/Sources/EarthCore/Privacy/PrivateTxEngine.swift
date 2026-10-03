@@ -16,9 +16,12 @@ public struct TxResult: Sendable {
     public let time: Int64
     /// (type, attributes) of every event the tx emitted.
     public let events: [(type: String, attributes: [String: String])]
+    /// DeliverTx code: 0 is success (a looked-up tx may have failed in its block).
+    public let code: Int
+    public let log: String
 
-    public init(hash: String, height: UInt64, time: Int64, events: [(type: String, attributes: [String: String])]) {
-        self.hash = hash; self.height = height; self.time = time; self.events = events
+    public init(hash: String, height: UInt64, time: Int64, events: [(type: String, attributes: [String: String])], code: Int = 0, log: String = "") {
+        self.hash = hash; self.height = height; self.time = time; self.events = events; self.code = code; self.log = log
     }
 
     public func attr(_ type: String, _ key: String) -> String? {
@@ -30,7 +33,13 @@ public struct TxResult: Sendable {
 public protocol PrivateChain: Sendable {
     /// Gas used by `tx`, from the simulate endpoint.
     func simulate(_ tx: Data) async throws -> UInt64
-    func broadcast(_ tx: Data) async throws -> TxResult
+    /// Broadcasts `tx` and waits for its block. `accepted` runs with the tx
+    /// hash as soon as the node accepts it into the mempool (CheckTx code 0),
+    /// before the wait (K7): the caller records what it spent there, so a
+    /// wait that times out or a killed app cannot lose it.
+    func broadcast(_ tx: Data, accepted: @Sendable (String) -> Void) async throws -> TxResult
+    /// A tx by hash: nil while the node does not know it (still in the mempool, or dropped).
+    func tx(_ hash: String) async throws -> TxResult?
     /// The node's min gas price in uerth (CheckTx holds a private fee to it).
     func gasPrice() async throws -> Decimal
     /// x/shielded params.min_fee: the consensus floor on any private fee.
@@ -125,7 +134,8 @@ public struct PrivateTxEngine: Sendable {
     /// Prices, proves and broadcasts. The tx's `memo`, timeout_height (none)
     /// and the gas limit the pricing settled on are fixed first: the sighash
     /// binds them, so every proof is made over the tx exactly as broadcast.
-    public func run(_ assemble: (UInt64) throws -> Assembled, memo: String = "") async throws -> (TxResult, Assembled) {
+    public func run(_ assemble: (UInt64) throws -> Assembled, memo: String = "",
+                    accepted: @Sendable (String, Assembled) -> Void = { _, _ in }) async throws -> (TxResult, Assembled) {
         let (q, a) = try await price(assemble, memo: memo)
         let tx = PrivateMsgs.TxFields(memo: memo, timeoutHeight: 0, gasLimit: q.gasLimit)
         let sighash = try draft(a).sighash(chainID: chainID, tx: tx)
@@ -149,7 +159,29 @@ public struct PrivateTxEngine: Sendable {
         let msg = try a.build(bundles, stake, membership)
         guard try msg.sighash(chainID: chainID, tx: tx) == sighash else { throw PrivacyError("the proven msg binds another sighash") }
         guard msg.totalFee == q.fee else { throw PrivacyError("the msg must pay exactly the quoted fee") }
-        return (try await chain.broadcast(UnsignedTx.build(msg, tx: tx)), a)
+        try Self.checkShape(msg)
+        let assembled = a
+        return (try await chain.broadcast(UnsignedTx.build(msg, tx: tx)) { accepted($0, assembled) }, a)
+    }
+
+    /// The chain's wallet format rules (round 2), checked before broadcast:
+    /// every action's output ciphertext exactly 217 bytes (dummies too); a
+    /// stake proof's ciphertexts exactly two, entry i empty iff commitment i
+    /// is zero, a non-empty one exactly 153 bytes.
+    static func checkShape(_ msg: any PrivateMsg) throws {
+        for b in msg.bundles {
+            for a in b.actions where a.ciphertext.count != NoteCipher.ciphertextBytes {
+                throw PrivacyError("an action ciphertext is \(a.ciphertext.count) bytes")
+            }
+        }
+        if let p = msg.stakeProof {
+            guard p.ciphertexts.count == 2, p.commitments.count == 2 else { throw PrivacyError("a stake proof carries two ciphertext slots") }
+            for i in 0 ..< 2 {
+                let zero = p.commitments[i].allSatisfy { $0 == 0 }
+                let n = p.ciphertexts[i].count
+                guard zero ? n == 0 : n == NoteCipher.stakeCiphertextBytes else { throw PrivacyError("stake ciphertext \(i) is \(n) bytes") }
+            }
+        }
     }
 
     /// The chain refuses any proof that is not exactly `proofBytes` (bb ignored trailing bytes).

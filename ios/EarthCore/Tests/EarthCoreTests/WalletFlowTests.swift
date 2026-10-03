@@ -26,15 +26,12 @@ final class WalletFlowTests: XCTestCase {
         FakeReads(chain: chain, snapshotSize: size ?? { [unowned self] in self.snapshot ?? chain.stakeTree.size })
     }
 
-    /// Pauses the wallet asked for (stake votes), in milliseconds.
-    let pauses = Pauses()
 
     func wallet(_ chain: FakeChain, _ words: String, reads r: FakeReads? = nil, indexer: PrivacyIndexer? = nil,
                 store: PrivacyStore = .memory()) throws -> PrivacyWallet {
-        let p = pauses
         return PrivacyWallet(keys: try PrivacyKeys.fromMnemonic(words), store: store, indexer: indexer ?? chain, chain: chain,
                              reads: r ?? reads(chain), prover: chain.prover, chainID: chain.chainID, roots: chain,
-                             now: { [unowned chain] in chain.now }, pause: { p.add($0) })
+                             now: { [unowned chain] in chain.now })
     }
 
     func signals(_ prep: PrivacyWallet.RegistrationPrep) -> [String] {
@@ -129,7 +126,8 @@ final class WalletFlowTests: XCTestCase {
         // A later stake note moves the stake tree past the snapshot.
         _ = try await fresh.delegate(validator: validator, amount: 100_000)
         try await fresh.sync()
-        _ = try await fresh.stakeVote(proposalID: 9, notes: try await fresh.stakeVoteNotes(proposalID: 9), options: yes)
+        let items9 = try await fresh.stakeVoteItems(proposalID: 9)
+        _ = try await fresh.castStakeVote(proposalID: 9, item: try XCTUnwrap(items9.first), options: yes)
         try await fresh.sync()
         XCTAssertEqual(1, chain.stakeVotes.count)
         XCTAssertEqual(9, chain.stakeVotes[0].0)
@@ -137,7 +135,7 @@ final class WalletFlowTests: XCTestCase {
         XCTAssertEqual(1_800_000, chain.stakeVotes[0].2)
         XCTAssertEqual(1_890_000, bal(fresh, derth))
         // Final: the re-minted note is not in the snapshot.
-        let left = try await fresh.stakeVoteNotes(proposalID: 9)
+        let left = try await fresh.stakeVoteItems(proposalID: 9)
         XCTAssertTrue(left.isEmpty)
 
         // A wallet restored from the mnemonic alone sees the same balances,
@@ -271,7 +269,10 @@ final class WalletFlowTests: XCTestCase {
         let weight = try await a.stakeVoteWeight(proposalID: 11, positions: [])
         XCTAssertEqual(2, weight.notes)
         XCTAssertEqual(1_800_000, weight.uerth)
-        let voted = try await a.stakeVoteAll(proposalID: 11, options: yes)
+        var voted: [TxResult] = []
+        for item in try await a.stakeVoteItems(proposalID: 11) {
+            if let r = try await a.castStakeVote(proposalID: 11, item: item, options: yes) { voted.append(r) }
+        }
         snapshot = nil
         XCTAssertEqual(1, voted.count)
         try await a.sync()

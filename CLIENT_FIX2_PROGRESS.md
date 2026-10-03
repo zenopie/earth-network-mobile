@@ -27,5 +27,15 @@ format or behavior change.
 
 - [x] Info: claimAnml refuses day 0 (parity with the iOS underflow fix). versionCode 40 (1.0.33). testDebugUnitTest (all) + assembleDebug pass.
 
-## iOS
-(not started)
+## iOS (EarthCore, byte-identical formats; golden record memo matches Android)
+- [x] K1 tagged record memo v2, chain block time first, bounded resumable fallback (searchBudget, persisted RegRecord state).
+- [x] K6 switchChain via LCDChainRoots.chainIdentity; switchGenesis keeps identity/pending/otag.
+- [x] K7 PrivateChain.broadcast(accepted:) + tx(hash); pending by hash at acceptance; fillPendingRegistration.
+- [x] K8/K9 verifyRoots as Android; EarthRest.getEcho (echoed height, no silent latest-as-pinned); nullifier sample; staleBlocks.
+- [x] K10 HTTPPrivacyIndexer.validBase, no force unwrap on paths, host pinned; nil chain id refused.
+- [x] K11 unlock memo, closedOtagMax.
+- [x] K12 values > Int64.max ignored (as Android); derthValue saturates at Int64.max.
+- [x] K5 StakeVoteController (Task, cancellable, progress, persisted resume); stakeVoteAll/stakeVoteNotes and the wallet pause removed.
+- [x] Round 2: engine checkShape; FakeChain canonical re-encode, slots, single-use binding.
+- [x] Info: claimAnml(day: 0) refused.
+- swift test: 88/88 (ReauditFixesTests 19).

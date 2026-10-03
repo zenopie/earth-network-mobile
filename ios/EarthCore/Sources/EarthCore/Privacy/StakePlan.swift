@@ -90,10 +90,10 @@ public struct StakePlan: Sendable {
     /// A stake note the chain will mint to us (spc_mint): fresh rho and rcm,
     /// and their blind stake ciphertext to our own address, which sync opens
     /// against the denom and amount the chain publishes.
-    public static func selfMint(_ keys: PrivacyKeys) throws -> SelfMint {
+    public static func selfMint(_ keys: PrivacyKeys, memo: Data = Data()) throws -> SelfMint {
         let rho = NotePlaintext.randomField()
         let rcm = NotePlaintext.randomField()
-        return SelfMint(rho: rho, rcm: rcm, ciphertext: try NoteCipher.encryptBlindStake(rho: rho, rcm: rcm, ekPub: keys.ekPub))
+        return SelfMint(rho: rho, rcm: rcm, ciphertext: try NoteCipher.encryptBlindStake(rho: rho, rcm: rcm, ekPub: keys.ekPub, memo: memo))
     }
 
     public struct SelfMint: Sendable {

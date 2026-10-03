@@ -224,8 +224,9 @@ public struct RESTPrivateChain: PrivateChain {
         }
     }
 
-    /// Broadcasts, waits for the block and reads the tx back. Throws on any non-zero code.
-    public func broadcast(_ tx: Data) async throws -> TxResult {
+    /// Broadcasts, waits for the block and reads the tx back. Throws on any
+    /// non-zero code. `accepted` runs at CheckTx code 0, before the wait (K7).
+    public func broadcast(_ tx: Data, accepted: @Sendable (String) -> Void) async throws -> TxResult {
         let j: JSON
         do {
             j = try await rest.postJSON("/cosmos/tx/v1beta1/txs", body: ["tx_bytes": tx.base64EncodedString(), "mode": "BROADCAST_MODE_SYNC"])
@@ -237,8 +238,17 @@ public struct RESTPrivateChain: PrivateChain {
             throw EarthClient.Error.rejected(code: Int(code), log: j.tx_response.raw_log.string(default: ""))
         }
         guard let hash = j.tx_response.txhash.string else { throw EarthClient.Error.notCommitted(hash: "") }
+        accepted(hash)
         _ = try await EarthClient(rest: rest).awaitCommit(hash)
         return try await fetch(hash)
+    }
+
+    public func tx(_ hash: String) async throws -> TxResult? {
+        do {
+            return try await fetch(hash)
+        } catch let EarthRest.Error.http(status, _) where status == 404 || status == 400 {
+            return nil
+        }
     }
 
     public func gasPrice() async throws -> Decimal { await Fees.price(rest: rest) }
@@ -263,15 +273,19 @@ public struct RESTPrivateChain: PrivateChain {
             (type: e.type.string(default: ""),
              attributes: Dictionary(e.attributes.array.map { ($0.key.string(default: ""), $0.value.string(default: "")) }, uniquingKeysWith: { a, _ in a }))
         }
-        return TxResult(hash: hash, height: tr.height.uint64(default: 0), time: Self.parseTime(tr.timestamp.string(default: "")), events: events)
+        return TxResult(hash: hash, height: tr.height.uint64(default: 0), time: Self.parseTime(tr.timestamp.string(default: "")), events: events,
+                        code: Int(tr.code.int64(default: 0)), log: tr.raw_log.string(default: ""))
     }
 }
 
 /// The chain's own view of the three trees (LCD), against which every root
 /// the indexer served is checked before the wallet builds anything on it
-/// (WalletSync.verifyRoots). The identity and stake trees are read at the
-/// height the indexer's root is from (`x-cosmos-block-height`), falling back
-/// to the latest state when that height is pruned. Ports LcdChainRoots.
+/// (WalletSync.verifyRoots; PRIVACY_FORMATS 4b says what this trusts). The
+/// identity and stake trees are read at the height the indexer's root is
+/// from (`x-cosmos-block-height`), pinned only when the node echoes exactly
+/// that height; otherwise (a pruned height, another height echoed) the
+/// latest state is read and marked unpinned, which can verify equal trees but
+/// never condemn different ones (K9). Ports LcdChainRoots.
 public struct LCDChainRoots: ChainRoots {
     public let rest: EarthRest
 
@@ -282,10 +296,42 @@ public struct LCDChainRoots: ChainRoots {
         return try? Fr(bytes: raw)
     }
 
-    /// (body, pinned): at `height` when the node still has it, else the latest state.
+    /// (body, pinned): at `height` when the node answers at exactly it (the
+    /// echoed header), else the latest state, never taken as pinned.
     private func at(_ path: String, _ height: UInt64?) async throws -> (JSON, Bool) {
-        if let height, height > 0, let j = try? await rest.get(path, height: height) { return (j, true) }
+        if let height, height > 0, let (j, echo) = try? await rest.getEcho(path, height: height) {
+            return (j, echo == height)
+        }
         return (try await rest.get(path), false)
+    }
+
+    private func spent(_ path: String) async -> Bool? {
+        guard let j = try? await rest.get(path) else { return nil }
+        return j.spent.bool(default: false)
+    }
+
+    public func nullifierSpent(_ nf: Fr) async -> Bool? { await spent("/earth/shielded/v1/nullifiers/\(nf.hex)") }
+
+    public func stakeNullifierSpent(_ nf: Fr) async -> Bool? { await spent("/earth/shieldedstaking/v1/stake_nullifiers/\(nf.hex)") }
+
+    public func latestHeight() async -> UInt64? {
+        (try? await rest.get("/cosmos/base/tendermint/v1beta1/blocks/latest")).flatMap { $0.block.header.height.uint64 }
+    }
+
+    public func blockTime(_ height: UInt64) async -> UInt64? {
+        guard let h = (try? await rest.get("/cosmos/base/tendermint/v1beta1/blocks/\(height)"))?.block.header,
+              h.height.uint64 == height else { return nil }
+        let t = RESTPrivateChain.parseTime(h.time.string(default: ""))
+        return t > 0 ? UInt64(t) : nil
+    }
+
+    /// node_info's network and block 1's hash (the indexer's genesis key: its first 16 hex digits).
+    public func chainIdentity() async -> ChainIdentity? {
+        guard let net = (try? await rest.get("/cosmos/base/tendermint/v1beta1/node_info"))?.default_node_info.network.string,
+              !net.isEmpty else { return nil }
+        let hash = (try? await rest.get("/cosmos/base/tendermint/v1beta1/blocks/1"))?.block_id.hash.string
+            .flatMap { Data(base64Encoded: $0) }.flatMap { $0.count == 32 ? $0 : nil }
+        return ChainIdentity(chainID: net, genesis: hash.map { String($0.map { String(format: "%02x", $0) }.joined().prefix(16)) })
     }
 
     public func noteRoot(_ root: Fr) async throws -> NoteRootRecord? {

@@ -17,42 +17,96 @@ public struct IdentityRecord: Codable, Equatable, Sendable {
     }
 }
 
-/// A registration broadcast and committed whose identity leaf the wallet has
-/// not resolved yet (C2): everything needed to rebuild the identity record,
-/// persisted before any sync so a lagging indexer cannot lose it. Each sync
-/// retries until the local identity tree holds `leafIndex`.
+/// A registration the node accepted whose identity leaf the wallet has not
+/// resolved yet (C2, K7): everything needed to rebuild the identity record,
+/// persisted the moment the broadcast is accepted (before the wait for its
+/// block), so neither a lagging indexer, a wait that times out nor a killed
+/// app can lose it. `leafIndex` and `activatedAt` come from the committed tx
+/// (its register event, its block time): nil until it is found by `txHash`.
 public struct PendingRegistration: Codable, Equatable, Sendable {
     public let txHash: String
-    public let leafIndex: UInt64
+    public var leafIndex: UInt64?
     public let dscKey: Fr
     public let passportNullifier: String
     public let publicSignals: [String]
-    /// The registration block's time: the leaf's activated_at.
-    public let activatedAt: UInt64
+    /// The registration block's time: the leaf's activated_at (nil until the tx is found).
+    public var activatedAt: UInt64?
     /// ISO alpha-2 guess at the verifying CSCA's country ("" for none).
     public let countryHint: String
     /// Why the last attempt to resolve it failed, for the UI (nil: waiting for the indexer).
     public var failure: String?
 
-    public init(txHash: String, leafIndex: UInt64, dscKey: Fr, passportNullifier: String, publicSignals: [String], activatedAt: UInt64,
+    public init(txHash: String, leafIndex: UInt64?, dscKey: Fr, passportNullifier: String, publicSignals: [String], activatedAt: UInt64?,
                 countryHint: String, failure: String? = nil) {
         self.txHash = txHash; self.leafIndex = leafIndex; self.dscKey = dscKey; self.passportNullifier = passportNullifier
         self.publicSignals = publicSignals; self.activatedAt = activatedAt; self.countryHint = countryHint; self.failure = failure
     }
 }
 
-/// A registration record note found by sync (PRIVACY_FORMATS.md 3a): what a
-/// wallet restored from the mnemonic finds its identity leaf by. `height` is
-/// the registration's block.
+/// A registration record note found by sync (PRIVACY_FORMATS.md 3a), its tag
+/// checked: what a wallet restored from the mnemonic finds its identity leaf
+/// by. `height` is the registration's block. The search for its leaf is
+/// persisted (K1): the leaves appended at `height` as the stream passed
+/// them, whether it matched or was given up, and how far the bounded
+/// fallback search got, so a killed app or a later sync resumes it and never
+/// repeats it.
 public struct RegRecord: Codable, Equatable, Sendable {
+    public struct Leaf: Codable, Equatable, Sendable {
+        public let index: UInt64
+        public let leaf: Fr
+    }
+
     public let height: UInt64
     public let position: UInt64
     public let dscKey: Fr
     public let country: String
     public let builtAt: UInt64
+    /// Every identity leaf appended at `height`.
+    public var leaves: [Leaf] = []
+    public var status: RecordStatus = .open
+    /// Fallback search steps done (one activated_at offset each).
+    public var cursor: UInt64 = 0
+    /// Leaf hashes spent on this record so far (capped).
+    public var work: UInt64 = 0
 
     public init(height: UInt64, position: UInt64, dscKey: Fr, country: String, builtAt: UInt64) {
         self.height = height; self.position = position; self.dscKey = dscKey; self.country = country; self.builtAt = builtAt
+    }
+
+    enum CodingKeys: String, CodingKey { case height, position, dscKey, country, builtAt, leaves, status, cursor, work }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        height = try c.decode(UInt64.self, forKey: .height); position = try c.decode(UInt64.self, forKey: .position)
+        dscKey = try c.decode(Fr.self, forKey: .dscKey); country = try c.decode(String.self, forKey: .country)
+        builtAt = try c.decode(UInt64.self, forKey: .builtAt)
+        leaves = try c.decodeIfPresent([Leaf].self, forKey: .leaves) ?? []
+        status = try c.decodeIfPresent(RecordStatus.self, forKey: .status) ?? .open
+        cursor = try c.decodeIfPresent(UInt64.self, forKey: .cursor) ?? 0
+        work = try c.decodeIfPresent(UInt64.self, forKey: .work) ?? 0
+    }
+}
+
+public enum RecordStatus: String, Codable, Sendable { case open, matched, exhausted }
+
+/// A stake vote being cast (K5), persisted so a run the process lost resumes
+/// on the next unlock: the options as (VoteOption number, weight), the
+/// positions already voted, casts done of `total`.
+public struct StakeVoteRun: Codable, Equatable, Sendable {
+    public struct Option: Codable, Equatable, Sendable {
+        public let option: Int
+        public let weight: String
+        public init(option: Int, weight: String) { self.option = option; self.weight = weight }
+    }
+
+    public let proposalID: UInt64
+    public let options: [Option]
+    public var votedPositions: Set<UInt64>
+    public var total: Int
+    public var done: Int = 0
+
+    public init(proposalID: UInt64, options: [Option], votedPositions: Set<UInt64>, total: Int, done: Int = 0) {
+        self.proposalID = proposalID; self.options = options; self.votedPositions = votedPositions; self.total = total; self.done = done
     }
 }
 
@@ -90,6 +144,10 @@ public struct PrivacyState: Codable, Sendable {
     public var unbondRetryAt: [String: Int64] = [:]
     /// Next unused Groundworks owner-tag counter (PrivacyKeys.otagSalt).
     public var nextOtagCounter: UInt32 = 0
+    /// The highest owner-tag counter of a position this wallet closed, from its unlock memos (nil: none; K11).
+    public var closedOtagMax: UInt32?
+    /// A stake vote being cast (K5), or nil.
+    public var stakeVoteRun: StakeVoteRun?
     /// The stake tree's stream cursors and this wallet's stake notes.
     public var stakeNext: UInt64 = 0
     public var stakeHeight: UInt64 = 0
@@ -103,7 +161,7 @@ public struct PrivacyState: Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case chainID, genesis, notesNext, notesHeight, nullifiersNext, identityNext, zeroedNext, notes, identity, pendingRegistration,
              regRecords, rootsVerified, rootsError, claimedDays, caretakerCastAt, caretakerSplit, referrerAddress, referrerBoundAt,
-             unbondRetryAt, nextOtagCounter, stakeNext, stakeHeight, stakeNullifiersNext, stakeNotes, denoms
+             unbondRetryAt, nextOtagCounter, stakeNext, stakeHeight, stakeNullifiersNext, stakeNotes, denoms, closedOtagMax, stakeVoteRun
     }
 
     /// Tolerates a state file from before the stake tree (missing keys keep their defaults).
@@ -122,6 +180,8 @@ public struct PrivacyState: Codable, Sendable {
         referrerAddress = try v(.referrerAddress, ""); referrerBoundAt = try v(.referrerBoundAt, 0); unbondRetryAt = try v(.unbondRetryAt, [:])
         nextOtagCounter = try v(.nextOtagCounter, 0); stakeNext = try v(.stakeNext, 0); stakeHeight = try v(.stakeHeight, 0)
         stakeNullifiersNext = try v(.stakeNullifiersNext, 0); stakeNotes = try v(.stakeNotes, []); denoms = try v(.denoms, [])
+        closedOtagMax = try c.decodeIfPresent(UInt32.self, forKey: .closedOtagMax)
+        stakeVoteRun = try c.decodeIfPresent(StakeVoteRun.self, forKey: .stakeVoteRun)
     }
 }
 
@@ -200,13 +260,36 @@ public final class PrivacyStore {
         s.chainID = chainID
         s.genesis = genesis
         s.nextOtagCounter = old.nextOtagCounter
+        s.closedOtagMax = old.closedOtagMax
         if old.chainID == chainID && old.genesis == genesis {
+            s.stakeVoteRun = old.stakeVoteRun
             s.identity = old.identity
             s.pendingRegistration = old.pendingRegistration
             s.claimedDays = old.claimedDays
             s.caretakerCastAt = old.caretakerCastAt; s.caretakerSplit = old.caretakerSplit
             s.referrerAddress = old.referrerAddress; s.referrerBoundAt = old.referrerBoundAt
         }
+        state = s
+        save()
+    }
+
+    /// A relaunch of the same chain id under a new genesis, confirmed by the
+    /// LCD (K6): the synced data goes, but the registration stays (the
+    /// identity record, its passport nullifier, a pending registration) and
+    /// so do the owner-tag counters; the old chain's bookkeeping does not.
+    public func switchGenesis(_ genesis: String) {
+        noteTree.clear()
+        identityTree.clear()
+        stakeTree.clear()
+        let old = state
+        var s = PrivacyState()
+        s.chainID = old.chainID
+        s.genesis = genesis
+        s.nextOtagCounter = old.nextOtagCounter
+        s.closedOtagMax = old.closedOtagMax
+        s.identity = old.identity
+        s.pendingRegistration = old.pendingRegistration
+        s.pendingRegistration?.failure = nil
         state = s
         save()
     }

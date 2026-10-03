@@ -197,9 +197,19 @@ public enum NoteCipher {
     }
 
     static func tryDecryptBlindStake(_ ct: Data, cm: Fr, denom: String, amount: UInt64, ek: SecretKey, ownerPK: Fr) -> (rho: Fr, rcm: Fr)? {
+        tryOpenBlindStake(ct, cm: cm, denom: denom, amount: amount, ek: ek, ownerPK: ownerPK).map { ($0.rho, $0.rcm) }
+    }
+
+    /// `tryDecryptBlindStake` with the memo (trailing zeros dropped).
+    public static func tryOpenBlindStake(_ ct: Data, cm: Fr, denom: String, amount: UInt64, keys: PrivacyKeys) -> (rho: Fr, rcm: Fr, memo: Data)? {
+        guard let ek = try? keys.ek() else { return nil }
+        return tryOpenBlindStake(ct, cm: cm, denom: denom, amount: amount, ek: ek, ownerPK: keys.ownerPK)
+    }
+
+    static func tryOpenBlindStake(_ ct: Data, cm: Fr, denom: String, amount: UInt64, ek: SecretKey, ownerPK: Fr) -> (rho: Fr, rcm: Fr, memo: Data)? {
         guard let o = openBlind(ct, ek: ek, salt: stakeSalt, version: stakeVersion) else { return nil }
         let spc = PrivacyHash.stakePC(ownerPK: ownerPK, rho: o.rho, rcm: o.rcm)
-        return PrivacyHash.stakeCM(asset: PrivacyHash.assetID(denom), amount: amount, spc: spc) == cm ? (o.rho, o.rcm) : nil
+        return PrivacyHash.stakeCM(asset: PrivacyHash.assetID(denom), amount: amount, spc: spc) == cm ? o : nil
     }
 
     // MARK: - stake notes (v3)
