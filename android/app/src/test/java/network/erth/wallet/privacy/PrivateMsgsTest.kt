@@ -97,7 +97,7 @@ class PrivateMsgsTest {
     private val validator = "earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
     private fun derth() = "derth/$validator"
     private fun opts() = listOf(
-        WeightedVoteOption.newBuilder().setOption(GovVoteOption.VOTE_OPTION_YES).setWeight("0.7").build(),
+        WeightedVoteOption.newBuilder().setOption(GovVoteOption.VOTE_OPTION_YES).setWeight("0.700000000000000000").build(),
         WeightedVoteOption.newBuilder().setOption(GovVoteOption.VOTE_OPTION_NO).setWeight("0.300000000000000000").build(),
     )
     private fun w(o: Long, p: Long) = AllocationWeight.newBuilder().setOptionId(o).setPercent(p).build()
@@ -125,7 +125,9 @@ class PrivateMsgsTest {
             "set_caretaker" to MsgSetCaretaker.newBuilder().setFee(fee(60, 2000)).setMembership(membership(60))
                 .addAllPercentages(listOf(w(1, 60), w(7, 40))).setMaxActivation(1_780_000_000).build(),
             "bind_referrer" to MsgBindReferrer.newBuilder().setFee(fee(70, 2000)).setMembership(membership(70))
-                .setAddress(addr(50)).setMaxActivation(1_780_000_000).build(),
+                .setAddress(addr(50)).setMaxActivation(1_780_000_000)
+                .setReferrerPubKey(com.google.protobuf.ByteString.copyFrom(ByteArray(33) { 2 }))
+                .setReferrerSignature(com.google.protobuf.ByteString.copyFrom(ByteArray(64) { 7 })).build(),
             "bind_referrer_clear" to MsgBindReferrer.newBuilder().setFee(fee(71, 2000)).setMembership(membership(71))
                 .setMaxActivation(1_780_000_000).build(),
             "vote_proposal" to MsgVoteProposal.newBuilder().setFee(fee(80, 2000)).setMembership(membership(80))
@@ -215,5 +217,27 @@ class PrivateMsgsTest {
         val m = msgs["claim_anml"]!!
         val raw = UnsignedTx.build(m, gasLimit = v.getLong("gas_limit"), memo = v.getString("memo"), timeoutHeight = v.getLong("timeout_height"))
         assertEquals(v.getString("tx_raw"), hex(raw))
+    }
+
+    /** Chain wave 3 (06ea4d6): the referrer consent bytes, the module accounts, canonical weights. */
+    @Test
+    fun wave3Vectors() {
+        val c = json.getJSONObject("referrer_consent")
+        val bytes = PrivateMsgs.referrerConsentBytes(json.getString("chain_id"), Vectors.unhex(c.getString("nullifier")),
+            network.erth.wallet.crypto.Bech32.decode(c.getString("address")))
+        assertEquals(c.getString("bytes"), hex(bytes))
+        val mods = json.getJSONObject("module_accounts")
+        assertEquals(PrivateMsgs.MODULE_ACCOUNTS.toSet(), mods.keys().asSequence().toSet())
+        for (name in PrivateMsgs.MODULE_ACCOUNTS) {
+            assertEquals(name, PrivateMsgs.moduleAccountOf(network.erth.wallet.crypto.Bech32.decode(mods.getString(name))))
+        }
+        val dec = json.getJSONObject("legacy_dec")
+        assertEquals(dec.getString("1"), PrivateMsgs.legacyDec("1"))
+        assertEquals(dec.getString("0.5"), PrivateMsgs.legacyDec("0.5"))
+        assertEquals(listOf("1.000000000000000000"), PrivateMsgs.canonicalOptions(listOf(WeightedVoteOption.newBuilder().setWeight("1").build())).map { it.weight })
+        assertEquals(true, PrivateMsgs.isCalendarDate("261001"))
+        assertEquals(false, PrivateMsgs.isCalendarDate("250231"))
+        assertEquals(true, PrivateMsgs.isCalendarDate("240229"))
+        assertEquals(false, PrivateMsgs.isCalendarDate("250229"))
     }
 }

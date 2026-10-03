@@ -101,6 +101,44 @@ object PrivateMsgs {
         return d.setScale(18, java.math.RoundingMode.UNNECESSARY).toPlainString()
     }
 
+    /** [opts] with every weight in its canonical LegacyDec form ("1" -> "1.000000000000000000"): the only form the chain takes (wave 3, F3). */
+    fun canonicalOptions(opts: List<WeightedVoteOption>): List<WeightedVoteOption> =
+        opts.map { it.toBuilder().setWeight(legacyDec(it.weight)).build() }
+
+    /** The bytes a referrer address's owner signs (secp256k1 over SHA-256) to consent to a binding (chain x/personhood ReferrerConsentBytes). */
+    const val REFERRER_CONSENT_DOMAIN = "earth.referrer.consent.v1"
+
+    fun referrerConsentBytes(chainId: String, nullifier: ByteArray, address: ByteArray): ByteArray {
+        val c = chainId.toByteArray(Charsets.UTF_8)
+        require(c.size <= 255) { "chain id too long" }
+        return REFERRER_CONSENT_DOMAIN.toByteArray(Charsets.US_ASCII) + byteArrayOf(c.size.toByte()) + c + nullifier + address
+    }
+
+    /**
+     * Every module account the chain declares (app_config moduleAccPerms):
+     * an unshield to one is refused (wave 3, B/F2). Address = the first 20
+     * bytes of SHA-256(name) (authtypes.NewModuleAddress).
+     */
+    val MODULE_ACCOUNTS = listOf(
+        "fee_collector", "distribution", "mint", "bonded_tokens_pool", "not_bonded_tokens_pool", "gov", "nft", "transfer",
+        "interchainaccounts", "shielded", "shieldedstaking", "dex", "allocation", "personhood", "earth", "wasm",
+    )
+
+    fun moduleAddress(name: String): ByteArray =
+        java.security.MessageDigest.getInstance("SHA-256").digest(name.toByteArray(Charsets.US_ASCII)).copyOf(20)
+
+    /** The module whose account [address] (20 raw bytes) is, or null. */
+    fun moduleAccountOf(address: ByteArray): String? = MODULE_ACCOUNTS.firstOrNull { moduleAddress(it).contentEquals(address) }
+
+    /** Whether YYMMDD [s] is a real calendar date (the chain refuses 250231; wave 3, I1). */
+    fun isCalendarDate(s: String): Boolean {
+        if (s.length != 6 || !s.all { it in '0'..'9' }) return false
+        val y = 2000 + s.substring(0, 2).toInt(); val m = s.substring(2, 4).toInt(); val d = s.substring(4, 6).toInt()
+        if (m !in 1..12 || d < 1) return false
+        val days = intArrayOf(31, if ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0) 29 else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+        return d <= days[m - 1]
+    }
+
     /** OptionsBytes: per option, u64 BE option, u32 BE length, the weight's LegacyDec string. */
     fun optionsBytes(opts: List<WeightedVoteOption>): ByteArray {
         val out = java.io.ByteArrayOutputStream()

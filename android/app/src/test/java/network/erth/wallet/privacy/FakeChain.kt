@@ -310,6 +310,8 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             is MsgSend -> {
                 require(m.fee > 0)
                 require(rem.isEmpty() == m.receiver.isEmpty()) { "receiver exactly when something is left" }
+                // Wave 3 (B/F2): never to a module account.
+                if (m.receiver.isNotEmpty()) require(PrivateMsgs.moduleAccountOf(network.erth.wallet.crypto.Bech32.decode(m.receiver)) == null) { "receiver is a module account" }
                 require(rem.keys.none { it.startsWith("dexlp/") }) { "LP shares cannot be unshielded" }
             }
             is MsgDelegate -> { only("uerth"); require(rem.getValue("uerth") == m.amount && m.amount > 0) { "delegate releases amount" } }
@@ -377,9 +379,10 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     private fun membershipStatement(m: MessageLite): Pair<Fr, Long>? = when (m) {
         is MsgClaimAnml -> Privacy.claimScope(m.day) to (m.day - 1) * 86_400
         is MsgVoteProposal -> Privacy.proposalScope(m.proposalId, 0) to now - 3600
-        is MsgSetCaretaker -> Privacy.caretakerScope() to m.maxActivation
-        is MsgBindReferrer -> Privacy.referrerScope() to m.maxActivation
-        is MsgProposeRemoval -> Privacy.proposeRemovalScope(m.optionId, now / 86_400) to now / 86_400 * 86_400 - 3600
+        // Wave 3 (L4/L5): a lease's max_activation is at most now - R - 86400 (R = 30 days here).
+        is MsgSetCaretaker -> Privacy.caretakerScope() to m.maxActivation.also { require(it <= now - 31 * 86_400) { "max_activation past now - R - 1d" } }
+        is MsgBindReferrer -> Privacy.referrerScope() to m.maxActivation.also { require(it <= now - 31 * 86_400) { "max_activation past now - R - 1d" } }
+        is MsgProposeRemoval -> Privacy.proposeRemovalScope(m.optionId, now / 86_400) to now / 86_400 * 86_400 - 86_400
         is MsgVoteRemoval -> Privacy.removalScope(removalBallots.getValue(m.optionId)) to now - 3600
         else -> null
     }
@@ -410,10 +413,28 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             }
             is MsgUpdatePosition -> require(positions.getValue(m.positionId).ownerTag == f(m.stake.ownerTag)) { "not the position's owner" }
             is MsgUnlockPosition -> require(positions.getValue(m.positionId).ownerTag == f(m.stake.ownerTag)) { "not the position's owner" }
-            is MsgPositionVote -> require(positions.getValue(m.positionId).ownerTag == f(m.stake.ownerTag)) { "not the position's owner" }
+            is MsgPositionVote -> {
+                require(positions.getValue(m.positionId).ownerTag == f(m.stake.ownerTag)) { "not the position's owner" }
+                require(m.optionsList.all { it.weight == PrivateMsgs.legacyDec(it.weight) }) { "a vote weight is not canonical" }
+            }
             is MsgVoteRemoval -> require(m.optionId in removalBallots) { "no open ballot" }
             is MsgProposeRemoval -> require(m.optionId !in removalBallots) { "ballot already open" }
             is MsgClaimUnbonding -> require((m.hasBundle()) == (m.feeFromOutput == 0L))
+            // Wave 3 (F3): option weights only in their canonical LegacyDec form.
+            is MsgStakeVote -> require(m.optionsList.all { it.weight == PrivateMsgs.legacyDec(it.weight) }) { "a vote weight is not canonical" }
+            // Wave 3 (L6): binding an address needs its owner's consent (cosmos secp256k1 over SHA-256).
+            is MsgBindReferrer -> if (m.address.isEmpty()) {
+                require(m.referrerPubKey.isEmpty && m.referrerSignature.isEmpty) { "clearing a binding carries no consent" }
+            } else {
+                require(m.referrerPubKey.size() == 33 && m.referrerSignature.size() == 64) { "no referrer consent" }
+                val pub = m.referrerPubKey.toByteArray()
+                require(network.erth.wallet.crypto.WalletCrypto.addressOfPubKey(pub) == m.address) { "consent key is not the address's" }
+                val sig = m.referrerSignature.toByteArray()
+                val r = java.math.BigInteger(1, sig.copyOfRange(0, 32)); val sv = java.math.BigInteger(1, sig.copyOfRange(32, 64))
+                require(sv <= org.bitcoinj.core.ECKey.HALF_CURVE_ORDER) { "high-S consent" }
+                val msg = PrivateMsgs.referrerConsentBytes(chainId, m.membership.nullifier.toByteArray(), network.erth.wallet.crypto.Bech32.decode(m.address))
+                require(org.bitcoinj.core.ECKey.verify(org.bitcoinj.core.Sha256Hash.hash(msg), org.bitcoinj.core.ECKey.ECDSASignature(r, sv), pub)) { "bad referrer consent" }
+            }
             is MsgRegister -> require(identityRows.none { it.leaf != Fr.ZERO && registeredIdc[it.index] == f(m.idc) }) { "a switch to the live idc is refused" }
             else -> {}
         }

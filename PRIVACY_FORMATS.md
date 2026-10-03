@@ -491,6 +491,39 @@ app tells the user).
   wallet shows a position's weight as derth × its validator's current rate
   (0 without a live split).
 
+## 4d. Chain wave 3 wallet rules (chain 06ea4d6)
+
+- **Vote weights.** Every option weight in MsgStakeVote / MsgPositionVote
+  is the canonical LegacyDec string, 18 decimals ("1.000000000000000000",
+  "0.500000000000000000"); the wallet canonicalizes whatever it is given
+  before laying the msg out (the sighash already bound the canonical form).
+- **Referrer consent.** MsgBindReferrer binding an address carries
+  `referrer_pub_key` (field 5: the 33-byte compressed secp256k1 key whose
+  address is `address`) and `referrer_signature` (field 6: 64-byte low-S
+  r||s, cosmos secp256k1 Sign = ECDSA over SHA-256) over
+
+      "earth.referrer.consent.v1" || u8 len(chain_id) || chain_id
+        || membership.nullifier (32) || the address's 20 raw bytes
+
+  Both empty when clearing; not sighash fields. The membership nullifier is
+  the referrer scope's, known before proving. The wallet signs with the
+  selected wallet's transparent key and binds only an address that key
+  controls (the automation's refresh signs the same way while unlocked).
+  Golden in vectors.json `referrer_consent`.
+- **Activation bounds.** Proposal and removal votes take BallotInputs'
+  max_activation (now the round/ballot open time − 86400);
+  MsgProposeRemoval proves the start of today (UTC) − 86400; caretaker
+  splits and referrer bindings name at most now − R − 86400 (less the
+  600 s clock margin, rounded down to the hour). New identities wait a day.
+- **No unshield to a module account.** The wallet refuses, before
+  proving, an unshield whose receiver is any module account the chain
+  declares (fee_collector, distribution, mint, bonded_tokens_pool,
+  not_bonded_tokens_pool, gov, nft, transfer, interchainaccounts, shielded,
+  shieldedstaking, dex, allocation, personhood, earth, wasm: address =
+  SHA-256(name)[:20]; vectors.json `module_accounts`).
+- **current_date** of a registration's passport proof must be a calendar
+  date (YYMMDD; 250231 is refused); the wallet checks before broadcast.
+
 ## 4a. Indexer URL scheme (backend README "URL scheme for wallets")
 
 1. `GET /privacy/status` → `chain_id`, `genesis` (16 hex), `base`

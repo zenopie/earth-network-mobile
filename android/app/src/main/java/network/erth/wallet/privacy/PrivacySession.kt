@@ -55,6 +55,17 @@ object PrivacySession {
 
     fun removeOnClear(l: () -> Unit) { clearListeners.remove(l) }
 
+    /**
+     * Signs a referrer consent with the selected wallet's transparent key
+     * (wave 3, L6): what lets the private side bind that wallet's own
+     * address. The mnemonic is read for the signature only.
+     */
+    fun referrerSigner(context: Context): PrivacyWallet.ReferrerSigner = PrivacyWallet.ReferrerSigner { message ->
+        SecureWalletManager.executeWithMnemonic(context.applicationContext) { m ->
+            network.erth.wallet.crypto.WalletCrypto.signConsent(network.erth.wallet.crypto.EarthWallet.deriveKey(m), message)
+        }
+    }
+
     /** Forget the cached wallet (lock, wallet switch); everything that held it is stopped first. */
     fun clear() {
         clearListeners.forEach { runCatching { it() } }

@@ -66,4 +66,7 @@ message MsgBindReferrer {
   Membership membership = 2;
   string address = 3;
   uint64 max_activation = 4;
+  // The address owner's consent (chain wave 3, L6): empty when clearing.
+  bytes referrer_pub_key = 5;
+  bytes referrer_signature = 6;
 }

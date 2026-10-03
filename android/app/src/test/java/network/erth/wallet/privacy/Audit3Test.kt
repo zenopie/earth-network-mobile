@@ -563,4 +563,35 @@ class Audit3Test {
         assertEquals(WalletSync.IdentityStatus.LIVE, a.identityStatus())
         assertEquals(chain.genesis, a.store.state.genesis)
     }
+
+    // ---- chain wave 3 (06ea4d6) ----
+
+    /** B/F2: an unshield to any module account is refused before anything is proven. */
+    @Test
+    fun unshieldToAModuleAccountIsRefused() {
+        val chain = FakeChain()
+        val a = wallet(chain)
+        funded(chain, a)
+        a.sync()
+        val staking = network.erth.wallet.crypto.Bech32.encode("earth",
+            network.erth.wallet.crypto.Bech32.convertBits(network.erth.wallet.privacy.tx.PrivateMsgs.moduleAddress("shieldedstaking"), 8, 5, true))
+        val e = assertThrows(IllegalArgumentException::class.java) { a.unshield(staking, "uerth", 1000) }
+        assertTrue(e.message!!.contains("shieldedstaking"))
+        assertEquals(0, chain.simulated)
+        a.unshield(receiver, "uerth", 1000)
+    }
+
+    /** I1: a passport proof whose current_date is not a calendar date is refused before broadcast. */
+    @Test
+    fun registrationNeedsACalendarDate() {
+        val chain = FakeChain()
+        val a = wallet(chain)
+        val prep = a.prepareRegistration(null)
+        chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
+        a.sync()
+        assertThrows(IllegalArgumentException::class.java) {
+            a.register(prep, ByteArray(14_656), listOf("250231", prep.binding.toBigInteger().toString(), "555", Fr.of(77).toBigInteger().toString()), "lean_poa", ByteArray(10))
+        }
+        assertEquals(0, chain.simulated)
+    }
 }

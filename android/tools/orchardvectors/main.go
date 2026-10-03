@@ -22,6 +22,7 @@ import (
 	addresscodec "github.com/cosmos/cosmos-sdk/codec/address"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
 	govv1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 	"github.com/cosmos/gogoproto/proto"
@@ -440,7 +441,9 @@ func main() {
 	add("claim_anml", &personhoodtypes.MsgClaimAnml{Fee: fee(50, 2000), Membership: membership(50), Day: 20360, Pc: fb(51), Ciphertext: bct(51)})
 	add("set_caretaker", &personhoodtypes.MsgSetCaretaker{Fee: fee(60, 2000), Membership: membership(60),
 		Percentages: []allocationtypes.AllocationWeight{{OptionId: 1, Percent: 60}, {OptionId: 7, Percent: 40}}, MaxActivation: 1_780_000_000})
-	add("bind_referrer", &personhoodtypes.MsgBindReferrer{Fee: fee(70, 2000), Membership: membership(70), Address: affStr, MaxActivation: 1_780_000_000})
+	// Wave 3 (L6): a binding carries its owner's consent (not sighash fields).
+	add("bind_referrer", &personhoodtypes.MsgBindReferrer{Fee: fee(70, 2000), Membership: membership(70), Address: affStr, MaxActivation: 1_780_000_000,
+		ReferrerPubKey: bytes.Repeat([]byte{0x02}, 33), ReferrerSignature: bytes.Repeat([]byte{0x07}, 64)})
 	add("bind_referrer_clear", &personhoodtypes.MsgBindReferrer{Fee: fee(71, 2000), Membership: membership(71), MaxActivation: 1_780_000_000})
 	add("vote_proposal", &assemblytypes.MsgVoteProposal{Fee: fee(80, 2000), Membership: membership(80), ProposalId: 5, Option: assemblytypes.VoteOption(1)})
 	add("propose_removal", &assemblytypes.MsgProposeRemoval{Fee: fee(81, 2000), Membership: membership(81), OptionId: 3})
@@ -452,7 +455,8 @@ func main() {
 	add("claim_unbonding", &stakingtypes.MsgClaimUnbonding{Validator: val, Epoch: 17, Amount: 400000, Pc: fb(111), Ciphertext: bct(111), FeeFromOutput: 2000, Stake: stakeProof(110, 2, 0, false)})
 	cb := fee(115, 2000)
 	add("claim_unbonding_fee_bundle", &stakingtypes.MsgClaimUnbonding{Bundle: &cb, Validator: val, Epoch: 17, Amount: 400000, Pc: fb(116), Ciphertext: bct(116), Stake: stakeProof(117, 1, 1, false)})
-	opts := []*govv1.WeightedVoteOption{{Option: govv1.OptionYes, Weight: "0.7"}, {Option: govv1.OptionNo, Weight: "0.300000000000000000"}}
+	// Wave 3 (F3): canonical LegacyDec weights only.
+	opts := []*govv1.WeightedVoteOption{{Option: govv1.OptionYes, Weight: "0.700000000000000000"}, {Option: govv1.OptionNo, Weight: "0.300000000000000000"}}
 	add("stake_vote", &stakingtypes.MsgStakeVote{Bundle: fee(120, 2000), ProposalId: 5, Validator: val, Options: opts, Weight: 400000, Stake: stakeProof(120, 2, 0, true)})
 	splits := []allocationtypes.AllocationWeight{{OptionId: 2, Percent: 100}}
 	add("lock_position", &stakingtypes.MsgLockPosition{Bundle: fee(140, 2000), Validator: val, Amount: 400000, Splits: splits, Stake: stakeProof(140, 1, 1, false)})
@@ -525,6 +529,24 @@ func main() {
 	rawBz, err := proto.Marshal(raw)
 	must(err)
 	out["unsigned_tx"] = map[string]any{"msg": "claim_anml", "gas_limit": 2_600_000, "memo": "deposit 42 ü", "timeout_height": 123456, "tx_raw": hex.EncodeToString(rawBz)}
+
+	// ---- chain wave 3 (06ea4d6) ---------------------------------------------
+	// The referrer consent's signed bytes (L6), the module accounts an
+	// unshield may not pay (B/F2), canonical vote weights (F3).
+	consentNf := membership(70).Nullifier
+	out["referrer_consent"] = map[string]string{
+		"nullifier": hex.EncodeToString(consentNf), "address": affStr,
+		"bytes": hex.EncodeToString(personhoodtypes.ReferrerConsentBytes(chainID, consentNf, affRaw)),
+	}
+	modules := map[string]string{}
+	for _, n := range []string{"fee_collector", "distribution", "mint", "bonded_tokens_pool", "not_bonded_tokens_pool", "gov", "nft",
+		"transfer", "interchainaccounts", "shielded", "shieldedstaking", "dex", "allocation", "personhood", "earth", "wasm"} {
+		s, err := ac.BytesToString(authtypes.NewModuleAddress(n))
+		must(err)
+		modules[n] = s
+	}
+	out["module_accounts"] = modules
+	out["legacy_dec"] = map[string]string{"1": math.LegacyMustNewDecFromStr("1").String(), "0.5": math.LegacyMustNewDecFromStr("0.5").String()}
 
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")

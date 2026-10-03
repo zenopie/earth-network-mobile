@@ -290,8 +290,13 @@ class WalletFlowTest {
         // Referrer binding (lapses after R; refreshed past R/2).
         chain.now += 31 * 86_400
         a.sync()
-        a.bindReferrer(receiver)
-        assertEquals(receiver, chain.referrers.values.single())
+        // Wave 3 (L6): the bound address is one this wallet controls; its key consents.
+        val key = network.erth.wallet.crypto.EarthWallet.deriveKey(alice)
+        val own = network.erth.wallet.crypto.EarthWallet.address(key)
+        org.junit.Assert.assertThrows(IllegalStateException::class.java) { a.bindReferrer(own) }
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) { a.bindReferrer(receiver) { m -> network.erth.wallet.crypto.WalletCrypto.signConsent(key, m) } }
+        a.bindReferrer(own) { m -> network.erth.wallet.crypto.WalletCrypto.signConsent(key, m) }
+        assertEquals(own, chain.referrers.values.single())
         assertTrue(!a.referrerDue())
         chain.now += 16 * 86_400
         assertTrue(a.referrerDue())

@@ -251,6 +251,11 @@ class PrivacyWallet(
         }
     }
 
+    /** Signs a referrer consent with a transparent account key: (33-byte compressed key, 64-byte low-S r||s over SHA-256 of the message). */
+    fun interface ReferrerSigner {
+        fun sign(message: ByteArray): Pair<ByteArray, ByteArray>
+    }
+
     /** The chain is ahead of the local trees for what is asked: sync, then try again. */
     class SyncFirst(message: String) : IllegalStateException(message)
 
@@ -284,6 +289,10 @@ class PrivacyWallet(
      */
     fun unshield(receiver: String, denom: String, amount: Long, feeFromAmount: Boolean = false, memo: String = ""): TxResult {
         requireTransferable(denom)
+        // Wave 3 (B/F2): the chain refuses an unshield to any module account.
+        PrivateMsgs.moduleAccountOf(network.erth.wallet.crypto.Bech32.decode(receiver))?.let {
+            throw IllegalArgumentException("$receiver is the $it module account; it cannot receive an unshield")
+        }
         require(!denom.startsWith(LP_PREFIX)) { "LP shares leave the pool only by a withdrawal" }
         require(!feeFromAmount || denom == FEE) { "only an ERTH unshield pays its fee from the amount" }
         // The memo (an exchange's deposit tag) is bound by the sighash.
@@ -380,6 +389,7 @@ class PrivacyWallet(
      */
     fun register(prep: RegistrationPrep, proof: ByteArray, publicSignals: List<String>, signatureAlgorithm: String, dscDer: ByteArray): TxResult {
         require(PrivateMsgs.decimalField(publicSignals[1]) == prep.binding) { "the passport proof is bound to other notes" }
+        require(PrivateMsgs.isCalendarDate(publicSignals[0])) { "the passport proof's current_date ${publicSignals[0]} is not a calendar date" }
         val base = registerMsg(prep, proof, publicSignals, signatureAlgorithm, dscDer)
         val dscKey = PrivateMsgs.decimalField(publicSignals[3])
         val hint = dscCountry(dscDer)
@@ -451,12 +461,13 @@ class PrivacyWallet(
 
     /**
      * The max_activation a caretaker split or referrer binding names: at most
-     * now - R - root window (the chain's bound), rounded down to the hour so it
-     * says nothing about when the tx was made, less a margin for clock skew.
+     * now - R - 86400 (the chain's bound since wave 3, L4/L5: the largest root
+     * window, not the live one), rounded down to the hour so it says nothing
+     * about when the tx was made, less a margin for clock skew.
      */
     private fun leaseBound(): Long {
         val p = reads.personhoodParams()
-        val bound = now() - p.caretakerVoteSeconds - p.identityRootWindowSeconds - CLOCK_MARGIN
+        val bound = now() - p.caretakerVoteSeconds - ACTIVATION_MARGIN - CLOCK_MARGIN
         return bound / 3600 * 3600
     }
 
@@ -486,12 +497,25 @@ class PrivacyWallet(
      * referral rewards are paid to. The binding is public (the address is),
      * the person behind it is not; it lapses after R unless refreshed.
      */
-    fun bindReferrer(address: String): TxResult {
+    fun bindReferrer(address: String, consent: ReferrerSigner? = null): TxResult {
         val maxAct = leaseBound()
         val m = membership(Privacy.referrerScope(), Fr.ZERO, Fr.ZERO, maxAct)
+        // Wave 3 (L6): binding an address needs its owner's consent, a
+        // secp256k1 signature over (domain, chain id, the membership's
+        // nullifier, the address) by the key whose address it is. The
+        // nullifier is the scope's, known before proving; not in the sighash.
+        val (pub, sig) = if (address.isEmpty()) ByteArray(0) to ByteArray(0) else {
+            val signer = consent ?: throw IllegalStateException("binding a referrer address needs its owner's signature")
+            val raw = network.erth.wallet.crypto.Bech32.decode(address)
+            val (p, s) = signer.sign(PrivateMsgs.referrerConsentBytes(chainId, m.witness(Fr.ZERO).nullifier.toBytes(), raw))
+            require(p.size == 33 && s.size == 64) { "a referrer consent is a 33-byte key and a 64-byte signature" }
+            require(network.erth.wallet.crypto.WalletCrypto.addressOfPubKey(p) == address) { "$address is not an address this wallet controls" }
+            p to s
+        }
         val r = run { fee ->
             Assembled(listOf(feeBundle(fee)), membership = m) { bs, _, mem ->
-                MsgBindReferrer.newBuilder().setFee(bs[0]).setMembership(mem).setAddress(address).setMaxActivation(maxAct).build()
+                MsgBindReferrer.newBuilder().setFee(bs[0]).setMembership(mem).setAddress(address).setMaxActivation(maxAct)
+                    .setReferrerPubKey(ByteString.copyFrom(pub)).setReferrerSignature(ByteString.copyFrom(sig)).build()
             }
         }
         store.state.referrerAddress = address; store.state.referrerBoundAt = if (address.isEmpty()) 0 else now(); store.save()
@@ -522,8 +546,8 @@ class PrivacyWallet(
 
     fun proposeRemoval(optionId: Long): TxResult {
         val day = today()
-        val window = reads.personhoodParams().identityRootWindowSeconds
-        val m = membership(Privacy.proposeRemovalScope(optionId, day), Fr.ZERO, Fr.ZERO, day * SECONDS_PER_DAY - window)
+        // Wave 3 (L4/L5): the start of today (UTC) less a day, whatever the root window.
+        val m = membership(Privacy.proposeRemovalScope(optionId, day), Fr.ZERO, Fr.ZERO, day * SECONDS_PER_DAY - ACTIVATION_MARGIN)
         return run { fee ->
             Assembled(listOf(feeBundle(fee)), membership = m) { bs, _, mem ->
                 MsgProposeRemoval.newBuilder().setFee(bs[0]).setMembership(mem).setOptionId(optionId).build()
@@ -692,7 +716,7 @@ class PrivacyWallet(
         return run { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
                 MsgStakeVote.newBuilder().setBundle(bs[0]).setProposalId(proposalId).setValidator(validator)
-                    .addAllOptions(options).setWeight(weight).setStake(sp).build()
+                    .addAllOptions(PrivateMsgs.canonicalOptions(options)).setWeight(weight).setStake(sp).build()
             }
         }
     }
@@ -832,7 +856,7 @@ class PrivacyWallet(
         return run { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
                 MsgPositionVote.newBuilder().setBundle(bs[0]).setPositionId(position.id).setProposalId(proposalId)
-                    .addAllOptions(options).setStake(sp).build()
+                    .addAllOptions(PrivateMsgs.canonicalOptions(options)).setStake(sp).build()
             }
         }
     }
@@ -989,6 +1013,9 @@ class PrivacyWallet(
 
         /** Slack against the chain's clock for bounds the wallet must stay under. */
         const val CLOCK_MARGIN = 600L
+
+        /** The day every activation bound keeps from now (wave 3: the largest identity root window). */
+        const val ACTIVATION_MARGIN = 86_400L
 
         fun derthDenom(valoper: String) = "$DERTH_PREFIX$valoper"
         fun unbondDenom(valoper: String, epoch: Long) = "$UNBOND_PREFIX$valoper/$epoch"

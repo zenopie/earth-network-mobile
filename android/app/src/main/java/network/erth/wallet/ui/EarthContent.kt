@@ -370,7 +370,7 @@ internal fun EarthContent(
                                 ),
                                 shieldedErth = loaded.shieldedErthUerth,
                                 onSuccess = { privacy.refresh() },
-                                run = { ctx -> PrivacySession.wallet(ctx).bindReferrer(walletAddress(ctx)).hash },
+                                run = { ctx -> PrivacySession.wallet(ctx).bindReferrer(walletAddress(ctx), PrivacySession.referrerSigner(ctx)).hash },
                             )
                         },
                         onShare = { onShare("Join Earth: https://erth.network/ref/${loaded.address}") },

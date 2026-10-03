@@ -209,7 +209,7 @@ object PrivacyAutomation {
                 when (a) {
                     is Action.ClaimAnml -> w.claimAnml(a.day)
                     Action.RefreshCaretaker -> w.setCaretaker(w.store.state.caretakerSplit)
-                    Action.RefreshReferrer -> w.bindReferrer(w.store.state.referrerAddress)
+                    Action.RefreshReferrer -> w.bindReferrer(w.store.state.referrerAddress, PrivacySession.referrerSigner(context))
                     is Action.ClaimUnbonding -> w.claimUnbonding(a.denom)
                 }
             },
