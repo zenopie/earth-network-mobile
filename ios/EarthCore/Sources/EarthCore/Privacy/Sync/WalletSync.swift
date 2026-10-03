@@ -258,6 +258,193 @@ public final class WalletSync {
         return counter
     }
 
+    // MARK: state records (PRIVACY_FORMATS.md 3b, audit 5 M1)
+
+    /// State records: value-0 notes whose memo says what this identity holds
+    /// in a scope, so a wallet restored from the mnemonic knows its handle
+    /// and caretaker split (or that it moved them away). "EH" handle, "EC"
+    /// caretaker, version 1.
+    static let handleMagic = Data([0x45, 0x48, 0x01])
+    static let caretakerMagic = Data([0x45, 0x43, 0x01])
+    /// The tag sits at `stateTagAt` and covers every byte before it.
+    static let stateTagAt = 48
+    public static let recordHolds: UInt8 = 1
+    /// Handle released / caretaker split cleared.
+    public static let recordNone: UInt8 = 2
+    public static let recordMovedOut: UInt8 = 3
+    /// OR'd into a caretaker HOLDS kind: the split did not fit the memo and is not recorded.
+    public static let splitUnrecorded: UInt8 = 0x80
+    /// Entries of a recorded split: (option uvarint, percent u8)..., zero padded.
+    static let splitAt = 8
+    /// The most options a caretaker split names (x/allocation MaxVoterOptions).
+    public static let maxSplitOptions = 20
+
+    public enum StateRecord: Equatable, Sendable {
+        case handle(kind: UInt8, handle: String)
+        /// `split` nil: held, but the split was not recorded.
+        case caretaker(kind: UInt8, expiresAt: Int64, split: [UInt64: UInt64]?)
+    }
+
+    static func stateTag(nk: Fr, _ body: [UInt8]) -> Data {
+        PrivacyHash.h(PrivacyHash.tagStateTag, nk, PrivacyHash.bytes(Data(body[0 ..< stateTagAt]))).bytes.prefix(regTagBytes)
+    }
+
+    private static func sealState(nk: Fr, _ body: [UInt8]) -> Data {
+        var m = body + [UInt8](repeating: 0, count: NoteCipher.memoBytes - body.count)
+        m.replaceSubrange(stateTagAt ..< stateTagAt + regTagBytes, with: stateTag(nk: nk, m))
+        return Data(m)
+    }
+
+    /// A handle record for the identity whose nk is `nk`: HOLDS `handle`, or RELEASED / MOVED_OUT (no handle).
+    public static func handleMemo(nk: Fr, kind: UInt8, handle: String = "") -> Data {
+        precondition((recordHolds ... recordMovedOut).contains(kind))
+        precondition(kind == recordHolds ? Handles.valid(handle) : handle.isEmpty)
+        var b = [UInt8](repeating: 0, count: stateTagAt)
+        b.replaceSubrange(0 ..< 3, with: handleMagic)
+        b[3] = kind
+        let h = Array(handle.utf8)
+        b.replaceSubrange(4 ..< 4 + h.count, with: h)
+        return sealState(nk: nk, b)
+    }
+
+    /// A caretaker record: HOLDS with the split and its expiry (u32 unix
+    /// seconds), or CLEARED / MOVED_OUT. A split whose entries do not fit 40
+    /// bytes is marked unrecorded (its expiry still is).
+    public static func caretakerMemo(nk: Fr, kind: UInt8, expiresAt: Int64 = 0, split: [UInt64: UInt64] = [:]) -> Data {
+        precondition((recordHolds ... recordMovedOut).contains(kind))
+        var b = [UInt8](repeating: 0, count: stateTagAt)
+        b.replaceSubrange(0 ..< 3, with: caretakerMagic)
+        var k = kind
+        if kind == recordHolds {
+            let e = UInt32(clamping: min(max(expiresAt, 1), 0xffff_ffff))
+            b.replaceSubrange(4 ..< 8, with: PrivateMsgs.be32(e))
+            var entries: [UInt8] = []
+            var fits = !split.isEmpty && split.count <= maxSplitOptions
+            for (option, percent) in split.sorted(by: { $0.key < $1.key }) {
+                if option > UInt64(Int64.max) || !(1 ... 100).contains(percent) { fits = false }
+                var v = option
+                while v >= 0x80 { entries.append(UInt8(v & 0x7f) | 0x80); v >>= 7 }
+                entries.append(UInt8(v))
+                entries.append(UInt8(truncatingIfNeeded: percent))
+            }
+            if !fits || entries.count > stateTagAt - splitAt { k = kind | splitUnrecorded }
+            else { b.replaceSubrange(splitAt ..< splitAt + entries.count, with: entries) }
+        }
+        b[3] = k
+        return sealState(nk: nk, b)
+    }
+
+    /// The record in `memo` if it is a well-formed state record whose tag is
+    /// `nk`'s (anyone can send this wallet a value-0 note with any memo;
+    /// only the holder of nk can tag one). Checked before use.
+    public static func parseStateMemo(nk: Fr, _ memo: Data) -> StateRecord? {
+        guard memo.count <= NoteCipher.memoBytes else { return nil }
+        let m = [UInt8](memo) + [UInt8](repeating: 0, count: NoteCipher.memoBytes - memo.count)
+        let head = Data(m[0 ..< 3])
+        let isHandle = head == handleMagic
+        guard isHandle || head == caretakerMagic else { return nil }
+        guard constantTimeEqual(Data(m[stateTagAt ..< stateTagAt + regTagBytes]), stateTag(nk: nk, m)) else { return nil }
+        guard m[(stateTagAt + regTagBytes)...].allSatisfy({ $0 == 0 }) else { return nil }
+        let kind = m[3]
+        if isHandle {
+            guard (recordHolds ... recordMovedOut).contains(kind) else { return nil }
+            let raw = Array(m[4 ..< 36])
+            guard m[36 ..< stateTagAt].allSatisfy({ $0 == 0 }) else { return nil }
+            let len = raw.firstIndex(of: 0) ?? raw.count
+            guard raw[len...].allSatisfy({ $0 == 0 }) else { return nil }
+            let h = String(decoding: raw[0 ..< len], as: UTF8.self)
+            if kind == recordHolds { guard Handles.valid(h) else { return nil } } else { guard h.isEmpty else { return nil } }
+            return .handle(kind: kind, handle: h)
+        }
+        let base = kind & ~splitUnrecorded
+        guard (recordHolds ... recordMovedOut).contains(base), kind == base || base == recordHolds else { return nil }
+        let exp = Int64(m[4 ..< 8].reduce(UInt32(0)) { $0 << 8 | UInt32($1) })
+        let entries = Array(m[splitAt ..< stateTagAt])
+        if base != recordHolds {
+            guard exp == 0, entries.allSatisfy({ $0 == 0 }) else { return nil }
+            return .caretaker(kind: base, expiresAt: 0, split: [:])
+        }
+        guard exp != 0 else { return nil }
+        if kind != base {
+            guard entries.allSatisfy({ $0 == 0 }) else { return nil }
+            return .caretaker(kind: base, expiresAt: exp, split: nil)
+        }
+        var split: [UInt64: UInt64] = [:]
+        var i = 0
+        var sum: UInt64 = 0
+        while i < entries.count, entries[i...].contains(where: { $0 != 0 }) {
+            var v: UInt64 = 0
+            var shift: UInt64 = 0
+            while true {
+                guard i < entries.count, shift <= 56 else { return nil }
+                let byte = entries[i]; i += 1
+                v |= UInt64(byte & 0x7f) << shift
+                if byte < 0x80 { break }
+                shift += 7
+            }
+            guard i < entries.count, v <= UInt64(Int64.max) else { return nil }
+            let pct = UInt64(entries[i]); i += 1
+            guard (1 ... 100).contains(pct), split[v] == nil else { return nil }
+            split[v] = pct; sum += pct
+        }
+        guard !split.isEmpty, split.count <= maxSplitOptions, sum == 100 else { return nil }
+        return .caretaker(kind: base, expiresAt: exp, split: split)
+    }
+
+    /// Applies a state record found at note `position` (audit 5, M1): the
+    /// newest record says what this identity holds, unless the wallet
+    /// already applied a newer one (or acted since: a reset keeps the
+    /// cursor), or the record's tx failed in its block (`height` void). A
+    /// held split's expiry is bounded like any other lease time.
+    public static func applyStateRecord(_ s: inout PrivacyState, position: UInt64, height: UInt64, _ rec: StateRecord, now: Int64) {
+        if s.voidRecordHeights.contains(height) { return }
+        switch rec {
+        case let .handle(kind, handle):
+            if let p = s.handleRecordPos, position <= p { return }
+            s.handleRecordPos = position
+            switch kind {
+            case recordHolds: if !s.handleMovedOut { s.handle = handle }
+            case recordNone: s.handle = ""
+            default: s.handle = ""; s.handleMovedOut = true
+            }
+            s.handleSetAt = now
+            // A move's record is in the chain: the move is no longer in doubt (audit 5, M2).
+            settleMoves(&s, kind: PendingMove.handleKind, recordKind: kind) { $0.handle == handle }
+        case let .caretaker(kind, expiresAt, split):
+            if let p = s.caretakerRecordPos, position <= p { return }
+            s.caretakerRecordPos = position
+            if kind == recordHolds {
+                if !s.caretakerMovedOut {
+                    let exp = min(expiresAt, Handles.satAdd(now, Handles.maxAheadSeconds))
+                    let same = split != nil && split == s.caretakerSplit
+                    // The chain's own expiry, when the wallet has it for this split, is later than the record's estimate.
+                    s.caretakerExpiresAt = same && s.caretakerExpiresAt > exp ? s.caretakerExpiresAt : exp
+                    s.caretakerSplit = split ?? [:]
+                    s.caretakerSplitUnknown = split == nil
+                }
+            } else {
+                s.caretakerSplit = [:]; s.caretakerExpiresAt = 0; s.caretakerSplitUnknown = false
+                if kind == recordMovedOut { s.caretakerMovedOut = true }
+            }
+            settleMoves(&s, kind: PendingMove.caretakerKind, recordKind: kind) { _ in true }
+        }
+    }
+
+    /// A HOLDS record settles an incoming move of `kind` (`matches` it), a
+    /// MOVED_OUT one an outgoing move (kept, confirmed, until recorded in its target).
+    private static func settleMoves(_ s: inout PrivacyState, kind: String, recordKind: UInt8, _ matches: (PendingMove) -> Bool) {
+        let incoming: Bool
+        switch recordKind {
+        case recordHolds: incoming = true
+        case recordMovedOut: incoming = false
+        default: return
+        }
+        for i in s.pendingMoves.indices where s.pendingMoves[i].kind == kind && s.pendingMoves[i].incoming == incoming && matches(s.pendingMoves[i]) {
+            s.pendingMoves[i].confirmed = true
+        }
+        s.pendingMoves.removeAll { $0.confirmed && ($0.incoming || $0.recorded) }
+    }
+
     /// Record notes kept (newest first); only this wallet's own registrations carry a valid tag.
     public static let maxRecords = 32
     /// Identity leaves kept per record (registrations sharing its block).
@@ -695,6 +882,10 @@ public final class WalletSync {
                         s.regRecords.remove(at: i)
                     }
                 }
+            }
+            if let rec = Self.parseStateMemo(nk: keys.nk, note.memo) {
+                let t = now()
+                store.mutate { Self.applyStateRecord(&$0, position: r.position, height: r.height, rec, now: t) }
             }
             return nil
         }

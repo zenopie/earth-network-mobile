@@ -25,6 +25,24 @@ public enum Handles {
     /// Seconds before expiry the reminder starts (and it stays through the renewal period).
     public static let reminderLeadSeconds: Int64 = 30 * 86400
 
+    /// The furthest ahead any lease time the wallet takes may lie (audit 5,
+    /// M4): a directory entry's expiry and renewal end, a caretaker split's
+    /// expiry, and the lease params themselves. Anything past it is a hostile
+    /// or broken answer, refused or clamped before it reaches any arithmetic.
+    public static let maxAheadSeconds: Int64 = 10 * 365 * 86400
+
+    /// a + b, clamped to the Int64 range rather than trapping.
+    public static func satAdd(_ a: Int64, _ b: Int64) -> Int64 {
+        let (r, o) = a.addingReportingOverflow(b)
+        return o ? (a < 0 ? .min : .max) : r
+    }
+
+    /// a - b, clamped likewise.
+    public static func satSub(_ a: Int64, _ b: Int64) -> Int64 {
+        let (r, o) = a.subtractingReportingOverflow(b)
+        return o ? (a < 0 ? .min : .max) : r
+    }
+
     /// Whether `h` is a handle as the chain spells one (ValidateHandle).
     public static func valid(_ h: String) -> Bool {
         let b = Array(h.utf8)
@@ -130,7 +148,9 @@ public actor HandleDirectory {
 
     /// Query/Handles' largest page, and the backend stream's page.
     public static let page = 1000
-    public static let maxPages = 10000
+    /// Audit 5 (L4): the most rows the wallet holds (the backend's own cap); more fails closed.
+    public static let maxRows = 1_000_000
+    public static let maxPages = maxRows / page
     public static let freshSeconds: Int64 = 60
     public static let streamRestarts = 3
     private static let statuses: Set<String> = [HandleEntry.live, HandleEntry.renewal, HandleEntry.free]
@@ -163,6 +183,17 @@ public actor HandleDirectory {
         return got
     }
 
+    /// 0 < expires_at <= renewal_until <= now + `Handles.maxAheadSeconds`.
+    public static func timesOk(_ e: HandleEntry, now: Int64) -> Bool {
+        e.expiresAt > 0 && e.expiresAt <= e.renewalUntil && e.renewalUntil <= Handles.satAdd(now, Handles.maxAheadSeconds)
+    }
+
+    /// The chain's own directory and when it was read (wallet clock): what the wallet squares its own handle with.
+    public func chainDirectoryRead(maxAge: Int64? = nil) async throws -> ([String: HandleEntry], Int64) {
+        let d = try await chainDirectory(maxAge: maxAge)
+        return (d, chainFetchedAt)
+    }
+
     /// The chain's own directory (Query/Handles, every page), from cache when younger than `maxAge`.
     public func chainDirectory(maxAge: Int64? = nil) async throws -> [String: HandleEntry] {
         let age = maxAge ?? maxAgeSeconds
@@ -177,6 +208,10 @@ public actor HandleDirectory {
         guard Handles.valid(e.handle) else { throw Inconsistent("the directory holds \(e.handle.prefix(40)), not a handle") }
         guard e.handle > after, out[e.handle] == nil else { throw Inconsistent("the directory is out of order at \(e.handle)") }
         guard Self.statuses.contains(e.status) else { throw Inconsistent("handle \(e.handle): status \(e.status.prefix(20))") }
+        // Audit 5 (M4): times a lease can have, 0 < expires_at <= renewal_until <= now + 10 years;
+        // anything else is refused before any reminder or status does arithmetic on it.
+        guard Self.timesOk(e, now: now()) else { throw Inconsistent("handle \(e.handle): times out of range") }
+        guard out.count < Self.maxRows else { throw Inconsistent("the directory has more than \(Self.maxRows) handles") }
     }
 
     private func readChain() async throws -> [String: HandleEntry] {
@@ -208,7 +243,10 @@ public actor HandleDirectory {
             while true {
                 let p = try await fetch(from, Self.page)
                 guard p.fromIndex == from, p.handles.count <= Self.page else { throw Inconsistent("the indexer's handle page is not the one asked for") }
-                if from == 0 { height = p.height } else if p.height != height { moved = true; break }
+                if from == 0 {
+                    height = p.height
+                    guard (0 ... Int64(Self.maxRows)).contains(p.size) else { throw Inconsistent("the indexer's directory claims \(p.size) handles") }
+                } else if p.height != height { moved = true; break }
                 for e in p.handles { try check(e, after: last, out); out[e.handle] = e; last = e.handle }
                 if p.lastPage || p.handles.count < Self.page {
                     guard Int64(out.count) == p.size else { throw Inconsistent("the indexer's directory holds \(out.count) of its \(p.size) handles") }

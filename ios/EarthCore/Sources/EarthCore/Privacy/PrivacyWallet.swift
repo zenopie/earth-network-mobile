@@ -76,6 +76,11 @@ public final class PrivacyWallet: @unchecked Sendable {
         /// This identity's handle ("" for none), and whether it moved one away.
         public let handle: String
         public let handleMovedOut: Bool
+        /// The split is held but was restored without its options (audit 5, M1).
+        public let caretakerSplitUnknown: Bool
+        /// Moves in flight, either way (audit 5, M2), and the wallet a switch's moves went to.
+        public let pendingMoves: [PendingMove]
+        public let switchTarget: String
         public let unbondRetryAt: [String: Int64]
         public let syncedHeight: UInt64
         /// A committed registration whose leaf is not matched yet (nil: none), and why, if it failed.
@@ -96,6 +101,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             caretakerSplit = s.caretakerSplit; caretakerCastAt = s.caretakerCastAt
             caretakerExpiresAt = s.caretakerExpiresAt; caretakerMovedOut = s.caretakerMovedOut
             handle = s.handle; handleMovedOut = s.handleMovedOut
+            caretakerSplitUnknown = s.caretakerSplitUnknown; pendingMoves = s.pendingMoves; switchTarget = s.switchTarget
             unbondRetryAt = s.unbondRetryAt; syncedHeight = s.notesHeight
             pendingRegistration = s.pendingRegistration; rootsVerified = s.rootsVerified; rootsError = s.rootsError
             identityStatus = WalletSync.identityStatus(store: store, keys: keys)
@@ -215,6 +221,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         _ = await maxActions()
         return try await locked {
             await fillPendingRegistration()
+            _ = await resolvePendingMovesLocked()
             return try await syncLocked()
         }
     }
@@ -249,6 +256,14 @@ public final class PrivacyWallet: @unchecked Sendable {
     private func stakeMint() throws -> StakePlan.SelfMint { try StakePlan.selfMint(keys) }
 
     private func today() -> UInt64 { UInt64(max(0, now()) / Self.secondsPerDay) }
+
+    /// Audit 5 (L2): the chain's time, the LCD tip's block time, for what the
+    /// chain checks against its own clock (predecessor bounds, the removal
+    /// day); the device clock only when the node cannot say.
+    private func chainNow() async -> Int64 {
+        if let t = await roots.latestBlock()?.time, t > 0, t <= UInt64(Int64.max) { return Int64(t) }
+        return now()
+    }
 
     // MARK: - running
 
@@ -360,10 +375,18 @@ public final class PrivacyWallet: @unchecked Sendable {
     }
 
     /// The identity is too recent for this action (or replaced another too recently); it opens `waitSeconds` from now.
+    /// `notHeld` (audit 5, M1): a renewal or refresh sent with no bound, by an identity whose own bound has not
+    /// passed, which the chain refused (in its ante, before any fee): this identity holds nothing there.
     public struct NotYet: Swift.Error, LocalizedError {
         public let waitSeconds: Int64
+        public var notHeld: Bool = false
+        public init(waitSeconds: Int64, notHeld: Bool = false) { self.waitSeconds = waitSeconds; self.notHeld = notHeld }
         public var errorDescription: String? {
-            waitSeconds > 2 * PrivacyWallet.secondsPerDay
+            if notHeld {
+                return "The chain says this identity holds none here (nothing was charged); it replaced another too recently to take a new one, "
+                    + "which opens in \(waitSeconds / PrivacyWallet.secondsPerDay + 1) days."
+            }
+            return waitSeconds > 2 * PrivacyWallet.secondsPerDay
                 ? "This identity replaced another too recently for this action; it opens in \(waitSeconds / PrivacyWallet.secondsPerDay + 1) days."
                 : "This registration is too recent for this action; try again in \(waitSeconds / 3600 + 1)h."
         }
@@ -658,22 +681,46 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// says nothing about when the tx was made, less a margin for clock skew.
     /// Every wallet names the same bound (a fresh registrant's predecessor_at
     /// 0 meets it), so the proof does not tell a fresh identity from an old one.
-    private func predecessorBound(lease: Int64) -> UInt64 {
-        let bound = now() - lease - Self.activationMargin - Self.clockMargin
+    private func predecessorBound(lease: Int64, now t: Int64) -> UInt64 {
+        let bound = Handles.satSub(Handles.satSub(t, lease), Self.activationMargin + Self.clockMargin)
         return UInt64(max(0, bound / 3600 * 3600))
     }
 
     /// The max_predecessor for a msg bounded only when the prover holds
-    /// nothing in its scope: the lease bound when this identity meets it (it
-    /// holds or not, the chain takes it), else no bound when it believes it
-    /// holds something there (a renewal or change, or what was moved to it),
-    /// else NotYet until the bound passes its predecessor_at.
-    private func leaseStatement(lease: Int64, holds: Bool) throws -> UInt64 {
-        let bound = predecessorBound(lease: lease)
+    /// nothing in its scope, and the wait it implies: the lease bound when
+    /// this identity meets it (it holds or not, the chain takes it); else no
+    /// bound (audit 5, M1). The chain checks that in its ante, before any fee
+    /// is taken: a renewal or refresh of what this identity holds (as the
+    /// store knows it, or as a restore lost it) goes through, and anything
+    /// else is refused at no cost (`boundAttempt` says why, with the wait,
+    /// returned here when the wallet does not believe it holds anything).
+    private func leaseStatement(lease: Int64, holds: Bool, now t: Int64) throws -> (UInt64, Int64?) {
+        let bound = predecessorBound(lease: lease, now: t)
         let id = try identity()
-        if id.predecessorAt <= bound { return bound }
-        if holds { return PrivacyHash.noBound }
-        throw NotYet(waitSeconds: Int64(clamping: id.predecessorAt - bound))
+        if id.predecessorAt <= bound { return (bound, nil) }
+        if holds { return (PrivacyHash.noBound, nil) }
+        return (PrivacyHash.noBound, Int64(clamping: id.predecessorAt - bound))
+    }
+
+    /// Runs `body`; a chain refusal of its unmet predecessor bound becomes NotYet(notHeld) when `wait` is set.
+    private func boundAttempt(_ wait: Int64?, _ body: () async throws -> TxResult) async throws -> TxResult {
+        guard let wait else { return try await body() }
+        do {
+            return try await body()
+        } catch {
+            if "\(error) \(error.localizedDescription)".contains("max_predecessor") { throw NotYet(waitSeconds: wait, notHeld: true) }
+            throw error
+        }
+    }
+
+    /// A value-0 state record note (PRIVACY_FORMATS.md 3b) to `to`'s own address, tagged with its nk.
+    private func stateRecord(_ to: PrivacyKeys, _ memo: (Fr) -> Data) throws -> NoteOut {
+        try NoteOut.to(to.address, denom: Self.fee, value: 0, memo: memo(to.nk))
+    }
+
+    private static func leaseParam(_ v: Int64, _ name: String) throws -> Int64 {
+        try require((1 ... Handles.maxAheadSeconds).contains(v), "the node's \(name) (\(v) s) is out of range")
+        return v
     }
 
     private static func weights(_ split: [UInt64: UInt64]) -> [Msg.AllocationWeight] {
@@ -683,7 +730,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// When the split lapses: the chain's expires_at, or its cast time + R. 0 for none.
     public func caretakerExpiresAt() async -> Int64 {
         let snap = snapshot
-        if snap.caretakerSplit.isEmpty { return 0 }
+        if snap.caretakerSplit.isEmpty && !snap.caretakerSplitUnknown { return 0 }
         if snap.caretakerExpiresAt > 0 { return snap.caretakerExpiresAt }
         guard let r = try? await reads.personhoodParams().caretakerVoteSeconds else { return 0 }
         let (v, o) = snap.caretakerCastAt.addingReportingOverflow(r)
@@ -692,7 +739,7 @@ public final class PrivacyWallet: @unchecked Sendable {
 
     /// Whether this wallet holds a caretaker split the chain still counts (as far as it knows).
     public func caretakerLive() async -> Bool {
-        if snapshot.caretakerSplit.isEmpty { return false }
+        if snapshot.caretakerSplit.isEmpty && !snapshot.caretakerSplitUnknown { return false }
         return await caretakerExpiresAt() > now()
     }
 
@@ -701,24 +748,38 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// unless its owner casts again (the app reminds them).
     public func setCaretaker(split: [UInt64: UInt64]) async throws -> TxResult {
         let mx = await maxActions()
-        let r0 = try await reads.personhoodParams().caretakerVoteSeconds
+        // Validated before anything is sent (audit 5, L6): nothing after the broadcast can trap on it.
+        let r0 = try Self.leaseParam(try await reads.personhoodParams().caretakerVoteSeconds, "caretaker lease")
         let holds = await caretakerLive()
+        let t = await chainNow()
         return try await locked {
             try require(!store.state.caretakerMovedOut || split.isEmpty, "this identity moved its caretaker vote to another; it cannot cast one again")
-            let maxPred = split.isEmpty ? PrivacyHash.noBound : try leaseStatement(lease: r0, holds: holds)
+            try checkNoMove(PendingMove.caretakerKind)
+            let (maxPred, wait) = split.isEmpty ? (PrivacyHash.noBound, nil) : try leaseStatement(lease: r0, holds: holds, now: t)
             let m = try membership(scope: PrivacyHash.caretakerScope(), excludedDsc: .zero, excludedCountry: .zero,
                                    maxActivation: PrivacyHash.noBound, maxPredecessor: maxPred)
             let w = Self.weights(split)
-            let r = try await run { fee in
-                Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], membership: m) { bs, _, mem in
-                    MsgSetCaretaker(fee: bs[0], membership: mem!, percentages: w, maxPredecessor: maxPred)
+            // The state record: what a wallet restored from the mnemonic finds (audit 5, M1). Its
+            // expiry is the wallet's estimate; the chain's own (from the result) replaces it here.
+            let estimate = Handles.satAdd(now(), r0)
+            let record = try stateRecord(keys) { nk in
+                split.isEmpty ? WalletSync.caretakerMemo(nk: nk, kind: WalletSync.recordNone)
+                    : WalletSync.caretakerMemo(nk: nk, kind: WalletSync.recordHolds, expiresAt: estimate, split: split)
+            }
+            let r = try await boundAttempt(wait) {
+                try await run { fee in
+                    Assembled(bundles: [try self.bundle([record], release: [Self.fee: fee], maxActions: mx)], membership: m) { bs, _, mem in
+                        MsgSetCaretaker(fee: bs[0], membership: mem!, percentages: w, maxPredecessor: maxPred)
+                    }
                 }
             }
-            let exp = r.attr("set_caretaker", "expires_at").flatMap(Int64.init)
+            // Audit 5 (M4, L6): the node's expires_at only within the lease range; else the block time + R, saturating.
+            let limit = Handles.satAdd(now(), Handles.maxAheadSeconds)
+            let exp = r.attr("set_caretaker", "expires_at").flatMap(Int64.init).flatMap { $0 > 0 && $0 <= limit ? $0 : nil }
             let at = r.time > 0 ? r.time : now()
             store.mutate {
-                $0.caretakerCastAt = now(); $0.caretakerSplit = split
-                $0.caretakerExpiresAt = split.isEmpty ? 0 : (exp ?? at.addingReportingOverflow(r0).partialValue)
+                $0.caretakerCastAt = now(); $0.caretakerSplit = split; $0.caretakerSplitUnknown = false
+                $0.caretakerExpiresAt = split.isEmpty ? 0 : (exp ?? Handles.satAdd(at, r0))
             }
             try store.save()
             return r
@@ -734,22 +795,180 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// caretaker-scope nullifier of the identity that is to hold it: how a
     /// switch of identity keeps its vote. This identity may never cast one
     /// again (ErrCaretakerMovedOut, 1126).
-    public func moveCaretaker(newOwner: Fr) async throws -> TxResult {
+    public func moveCaretaker(newOwner: Fr, target: PrivacyKeys? = nil, recorder: MoveRecorder? = nil) async throws -> TxResult {
         let mx = await maxActions()
         let live = await caretakerLive()
+        let exp = await caretakerExpiresAt()
         return try await locked {
             try require(live, "this identity holds no live caretaker vote to move")
             try require(newOwner != PrivacyHash.scopeNullifier(idSecret: keys.idSecret, scope: PrivacyHash.caretakerScope()), "the new owner is this identity")
+            if let target { try require(newOwner == Self.newOwner(target, scope: PrivacyHash.caretakerScope()), "new_owner is not the target wallet's") }
+            try checkNoMove(PendingMove.caretakerKind)
+            let st = store.state
+            let move = PendingMove(kind: PendingMove.caretakerKind, txHash: "", timeoutHeight: 0, incoming: false, split: st.caretakerSplit,
+                                   splitUnknown: st.caretakerSplitUnknown, expiresAt: exp, target: recorder?.targetID ?? "")
+            // State records: moved out for this identity, held (split, expiry) for the new one.
+            var outs = [try stateRecord(keys) { WalletSync.caretakerMemo(nk: $0, kind: WalletSync.recordMovedOut) }]
+            if let target {
+                outs.append(try stateRecord(target) {
+                    WalletSync.caretakerMemo(nk: $0, kind: WalletSync.recordHolds, expiresAt: move.expiresAt, split: move.splitUnknown ? [:] : move.split)
+                })
+            }
             let m = try membership(scope: PrivacyHash.caretakerScope(), excludedDsc: .zero, excludedCountry: .zero,
                                    maxActivation: PrivacyHash.noBound, maxPredecessor: PrivacyHash.noBound)
-            let r = try await run { fee in
-                Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], membership: m) { bs, _, mem in
+            let r = try await moveRun(move, recorder) { fee in
+                Assembled(bundles: [try self.bundle(outs, release: [Self.fee: fee], maxActions: mx)], membership: m) { bs, _, mem in
                     MsgMoveCaretaker(fee: bs[0], membership: mem!, newOwner: newOwner.bytes)
                 }
             }
-            store.mutate { $0.caretakerMovedOut = true; $0.caretakerSplit = [:]; $0.caretakerExpiresAt = 0 }
+            confirmMove(r.hash)
             try store.save()
             return r
+        }
+    }
+
+    /// Writes a move into the new identity's wallet (audit 5, M2): before the
+    /// broadcast, as pending, so neither a lost answer nor a killed app can
+    /// strand what moved; undone only on a definite refusal. `targetID` is
+    /// that wallet's store id.
+    public protocol MoveRecorder: Sendable {
+        var targetID: String { get }
+        func record(_ move: PendingMove) throws
+        func rollback(_ move: PendingMove) throws
+    }
+
+    private func checkNoMove(_ kind: String) throws {
+        try require(!store.state.pendingMoves.contains { !$0.incoming && $0.kind == kind && !$0.confirmed },
+                    "a move of this identity's \(kind) is waiting for the chain")
+    }
+
+    /// Runs a move: recorded here (outgoing) and in the target (incoming)
+    /// before the broadcast; a refusal undoes both; a confirmed tx is applied
+    /// by the caller (`confirmMove`); anything else (a wait that timed out, a
+    /// tx that may yet land or fail) stays pending for `resolvePendingMoves`.
+    private func moveRun(_ move: PendingMove, _ recorder: MoveRecorder?, _ assemble: (UInt64) throws -> Assembled) async throws -> TxResult {
+        if let rc = recorder {
+            let fixed = store.state.switchTarget
+            try require(fixed.isEmpty || fixed == rc.targetID, "this identity already moved to another wallet; switch to that one")
+        }
+        return try await run(accepted: { [self] hash, timeout in
+            var p = move
+            p.txHash = hash; p.timeoutHeight = timeout
+            var ok = true
+            if let rc = recorder {
+                var inc = p
+                inc.incoming = true; inc.target = ""; inc.recorded = true
+                ok = (try? rc.record(inc)) != nil
+            }
+            p.recorded = ok
+            let pm = p
+            store.mutate { s in
+                s.pendingMoves.append(pm)
+                if let rc = recorder, s.switchTarget.isEmpty { s.switchTarget = rc.targetID }
+            }
+            persistNoThrow()
+        }, rejected: { [self] hash in
+            store.mutate { s in s.pendingMoves.removeAll { $0.txHash == hash && !$0.incoming } }
+            persistNoThrow()
+            if let rc = recorder {
+                var inc = move
+                inc.txHash = hash; inc.incoming = true
+                try? rc.rollback(inc)
+            }
+        }, assemble)
+    }
+
+    /// The move `hash` is in a block and succeeded: this identity no longer holds what it moved.
+    private func confirmMove(_ hash: String) {
+        let t = now()
+        store.mutate { s in
+            guard let i = s.pendingMoves.firstIndex(where: { $0.txHash == hash }) else { return }
+            let p = s.pendingMoves[i]
+            if !p.incoming {
+                if p.kind == PendingMove.handleKind { s.handle = ""; s.handleMovedOut = true; s.handleSetAt = t }
+                else { s.caretakerSplit = [:]; s.caretakerSplitUnknown = false; s.caretakerExpiresAt = 0; s.caretakerMovedOut = true }
+            }
+            if p.incoming || p.recorded { s.pendingMoves.remove(at: i) } else { s.pendingMoves[i].confirmed = true }
+        }
+    }
+
+    /// The move `p` is definitely not in the chain (refused, failed in its block, or gone past its timeout_height).
+    private func dropMove(_ p: PendingMove) {
+        let t = now()
+        store.mutate { s in
+            s.pendingMoves.removeAll { $0.txHash == p.txHash && $0.incoming == p.incoming }
+            if p.incoming { Self.undoIncoming(&s, p, now: t) }
+        }
+    }
+
+    /// Settles every move in flight by its tx (audit 5, M2): committed, it is
+    /// applied; failed in its block, or unknown to the chain past its
+    /// timeout_height, it is undone (and its state records void). A move the
+    /// chain cannot say anything about yet stays. Returns whether any is
+    /// still unconfirmed.
+    @discardableResult
+    public func resolvePendingMoves() async -> Bool {
+        await locked { await resolvePendingMovesLocked() }
+    }
+
+    private func resolvePendingMovesLocked() async -> Bool {
+        for p in store.state.pendingMoves where !p.confirmed {
+            let r = try? await chain.tx(p.txHash)
+            if let r, r.code == 0 { confirmMove(p.txHash) }
+            else if let r { store.mutate { _ = $0.voidRecordHeights.insert(r.height) }; dropMove(p) }
+            else if let tip = try? await chain.tipHeight(), tip > p.timeoutHeight { dropMove(p) }
+        }
+        persistNoThrow()
+        return store.state.pendingMoves.contains { !$0.confirmed }
+    }
+
+    /// Moves away from this identity that the chain has not confirmed yet, and confirmed ones not yet recorded in their target.
+    public func outgoingMoves() -> [PendingMove] { snapshot.pendingMoves.filter { !$0.incoming } }
+
+    /// Marks a confirmed move recorded in its target (a retried `MoveRecorder.record` succeeded).
+    public func markRecorded(_ hash: String) async {
+        await lockedNoThrow {
+            store.mutate { s in
+                guard let i = s.pendingMoves.firstIndex(where: { $0.txHash == hash && !$0.incoming }) else { return }
+                if s.pendingMoves[i].confirmed { s.pendingMoves.remove(at: i) } else { s.pendingMoves[i].recorded = true }
+            }
+            persistNoThrow()
+        }
+    }
+
+    /// Writes `p` (a move to this store's identity) into `store`: what it now
+    /// holds, and the move as pending until its own wallet settles it by hash
+    /// (audit 5, M2). Used by the mover for the other wallet's store.
+    public static func recordIncoming(_ store: PrivacyStore, _ p: PendingMove, now: Int64) throws {
+        store.mutate { s in
+            if p.kind == PendingMove.handleKind { s.handle = p.handle; s.handleSetAt = now }
+            else {
+                s.caretakerSplit = p.split; s.caretakerSplitUnknown = p.splitUnknown || p.split.isEmpty
+                s.caretakerExpiresAt = min(max(p.expiresAt, 0), Handles.satAdd(now, Handles.maxAheadSeconds)); s.caretakerCastAt = now
+            }
+            if !p.txHash.isEmpty, !s.pendingMoves.contains(where: { $0.txHash == p.txHash && $0.incoming }) {
+                var inc = p
+                inc.incoming = true; inc.target = ""; inc.recorded = true; inc.confirmed = false
+                s.pendingMoves.append(inc)
+            }
+        }
+        try store.save()
+    }
+
+    /// Undoes `recordIncoming` for a move that definitely did not happen.
+    public static func rollbackIncoming(_ store: PrivacyStore, _ p: PendingMove, now: Int64) throws {
+        store.mutate { s in
+            s.pendingMoves.removeAll { $0.txHash == p.txHash && $0.incoming }
+            undoIncoming(&s, p, now: now)
+        }
+        try store.save()
+    }
+
+    static func undoIncoming(_ s: inout PrivacyState, _ p: PendingMove, now: Int64) {
+        if p.kind == PendingMove.handleKind {
+            if s.handle == p.handle { s.handle = ""; s.handleSetAt = now }
+        } else if s.caretakerSplit == p.split && s.caretakerSplitUnknown == (p.splitUnknown || p.split.isEmpty) {
+            s.caretakerSplit = [:]; s.caretakerSplitUnknown = false; s.caretakerExpiresAt = 0
         }
     }
 
@@ -763,21 +982,26 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// Nothing renews on its own: the app reminds the owner before expiry.
     public func bindHandle(_ handle: String, address: ShieldedAddress? = nil) async throws -> TxResult {
         let mx = await maxActions()
-        let lease = try await reads.personhoodParams().handleLeaseSeconds
+        let lease = try Self.leaseParam(try await reads.personhoodParams().handleLeaseSeconds, "handle lease")
+        let t = await chainNow()
         return try await locked {
             try require(Handles.valid(handle), "\"\(handle)\" is not a handle: 3-32 of a-z, 0-9 and -, no dash at either end")
             let holds = !store.state.handle.isEmpty
             try require(holds || !store.state.handleMovedOut, "this identity moved its handle to another; it cannot claim one again")
-            let maxPred = try leaseStatement(lease: lease, holds: holds)
+            try checkNoMove(PendingMove.handleKind)
+            let (maxPred, wait) = try leaseStatement(lease: lease, holds: holds, now: t)
             let addr = (address ?? keys.address).encode()
             let m = try membership(scope: PrivacyHash.handleScope(), excludedDsc: .zero, excludedCountry: .zero,
                                    maxActivation: PrivacyHash.noBound, maxPredecessor: maxPred)
-            let r = try await run { fee in
-                Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], membership: m) { bs, _, mem in
-                    MsgBindHandle(fee: bs[0], membership: mem!, handle: handle, address: addr, maxPredecessor: maxPred)
+            let record = try stateRecord(keys) { WalletSync.handleMemo(nk: $0, kind: WalletSync.recordHolds, handle: handle) }
+            let r = try await boundAttempt(wait) {
+                try await run { fee in
+                    Assembled(bundles: [try self.bundle([record], release: [Self.fee: fee], maxActions: mx)], membership: m) { bs, _, mem in
+                        MsgBindHandle(fee: bs[0], membership: mem!, handle: handle, address: addr, maxPredecessor: maxPred)
+                    }
                 }
             }
-            store.mutate { $0.handle = handle }
+            store.mutate { $0.handle = handle; $0.handleSetAt = now() }
             try store.save()
             return r
         }
@@ -787,14 +1011,18 @@ public final class PrivacyWallet: @unchecked Sendable {
     public func releaseHandle() async throws -> TxResult {
         let mx = await maxActions()
         return try await locked {
+            // Audit 5 (L12): the chain refuses a release by a holder of none only after taking the fee.
+            try require(!store.state.handle.isEmpty, "this identity holds no handle to release")
+            try checkNoMove(PendingMove.handleKind)
             let m = try membership(scope: PrivacyHash.handleScope(), excludedDsc: .zero, excludedCountry: .zero,
                                    maxActivation: PrivacyHash.noBound, maxPredecessor: PrivacyHash.noBound)
+            let record = try stateRecord(keys) { WalletSync.handleMemo(nk: $0, kind: WalletSync.recordNone) }
             let r = try await run { fee in
-                Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], membership: m) { bs, _, mem in
+                Assembled(bundles: [try self.bundle([record], release: [Self.fee: fee], maxActions: mx)], membership: m) { bs, _, mem in
                     MsgBindHandle(fee: bs[0], membership: mem!, handle: "", address: "", maxPredecessor: PrivacyHash.noBound)
                 }
             }
-            store.mutate { $0.handle = "" }
+            store.mutate { $0.handle = ""; $0.handleSetAt = now() }
             try store.save()
             return r
         }
@@ -803,20 +1031,27 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// Hands this identity's handle (lease unchanged) to `newOwner`, the
     /// handle-scope nullifier of the identity that is to hold it. This
     /// identity may never claim one again (ErrHandleMovedOut, 1125).
-    public func moveHandle(newOwner: Fr) async throws -> TxResult {
+    public func moveHandle(newOwner: Fr, target: PrivacyKeys? = nil, recorder: MoveRecorder? = nil) async throws -> TxResult {
         let mx = await maxActions()
         return try await locked {
             let handle = store.state.handle
             try require(!handle.isEmpty, "this identity holds no handle to move")
             try require(newOwner != PrivacyHash.scopeNullifier(idSecret: keys.idSecret, scope: PrivacyHash.handleScope()), "the new owner is this identity")
+            if let target { try require(newOwner == Self.newOwner(target, scope: PrivacyHash.handleScope()), "new_owner is not the target wallet's") }
+            try checkNoMove(PendingMove.handleKind)
+            let move = PendingMove(kind: PendingMove.handleKind, txHash: "", timeoutHeight: 0, incoming: false, handle: handle,
+                                   target: recorder?.targetID ?? "")
+            // State records: moved out for this identity, held for the new one.
+            var outs = [try stateRecord(keys) { WalletSync.handleMemo(nk: $0, kind: WalletSync.recordMovedOut) }]
+            if let target { outs.append(try stateRecord(target) { WalletSync.handleMemo(nk: $0, kind: WalletSync.recordHolds, handle: handle) }) }
             let m = try membership(scope: PrivacyHash.handleScope(), excludedDsc: .zero, excludedCountry: .zero,
                                    maxActivation: PrivacyHash.noBound, maxPredecessor: PrivacyHash.noBound)
-            let r = try await run { fee in
-                Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], membership: m) { bs, _, mem in
+            let r = try await moveRun(move, recorder) { fee in
+                Assembled(bundles: [try self.bundle(outs, release: [Self.fee: fee], maxActions: mx)], membership: m) { bs, _, mem in
                     MsgMoveHandle(fee: bs[0], membership: mem!, handle: handle, newOwner: newOwner.bytes)
                 }
             }
-            store.mutate { $0.handle = ""; $0.handleMovedOut = true }
+            confirmMove(r.hash)
             try store.save()
             return r
         }
@@ -827,11 +1062,42 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// its expiry. Its renewal or refresh then takes no predecessor bound.
     public func adoptMoved(handle: String?, split: [UInt64: UInt64]?, splitExpiresAt: Int64) async throws {
         try await locked {
-            store.mutate { st in
-                if let handle { st.handle = handle }
-                if let split, !split.isEmpty { st.caretakerSplit = split; st.caretakerExpiresAt = splitExpiresAt; st.caretakerCastAt = now() }
+            if let handle {
+                try Self.recordIncoming(store, PendingMove(kind: PendingMove.handleKind, txHash: "", timeoutHeight: 0, incoming: true, handle: handle), now: now())
             }
-            try store.save()
+            if let split, !split.isEmpty {
+                try Self.recordIncoming(store, PendingMove(kind: PendingMove.caretakerKind, txHash: "", timeoutHeight: 0, incoming: true,
+                                                           split: split, expiresAt: splitExpiresAt), now: now())
+            }
+        }
+    }
+
+    /// Audit 5 (M1, L11): squares the store's handle with the chain's
+    /// directory `dir`, read at `readAt` (wallet clock): a handle the chain
+    /// swept (absent or free) is dropped; with none held, a single entry
+    /// naming this wallet's own address is taken as held (a restore lost
+    /// it; renewing it is refused at no cost if it is not). Nothing changes
+    /// while a move is in flight or when the directory predates the store's
+    /// last change. Returns every non-free entry naming this wallet's
+    /// address, for the reminders.
+    public func reconcileHandle(_ dir: [String: HandleEntry], readAt: Int64) async -> [HandleEntry] {
+        await locked {
+            let t = now()
+            let own = keys.address.encode()
+            let addressed = dir.values.filter { $0.address == own && $0.status(at: t) != HandleEntry.free }.sorted { $0.handle < $1.handle }
+            let s = store.state
+            let moving = s.pendingMoves.contains { $0.kind == PendingMove.handleKind && !$0.confirmed }
+            if !moving, readAt > s.handleSetAt {
+                if !s.handle.isEmpty {
+                    if let e = dir[s.handle], e.status(at: t) != HandleEntry.free {} else {
+                        store.mutate { $0.handle = ""; $0.handleSetAt = t }; persistNoThrow()
+                    }
+                } else if !s.handleMovedOut, addressed.count == 1 {
+                    let h = addressed[0].handle
+                    store.mutate { $0.handle = h; $0.handleSetAt = t }; persistNoThrow()
+                }
+            }
+            return addressed
         }
     }
 
@@ -858,8 +1124,10 @@ public final class PrivacyWallet: @unchecked Sendable {
 
     public func proposeRemoval(optionID: UInt64) async throws -> TxResult {
         let mx = await maxActions()
+        let t = await chainNow()
         return try await locked {
-            let day = today()
+            // The chain's day (audit 5, L2): its scope is the including block's UTC day.
+            let day = UInt64(max(0, t) / Self.secondsPerDay)
             // The predecessor bound: the start of today (UTC) less a day, whatever the root window; no activation bound.
             let maxPred = UInt64(max(0, Int64(day) * Self.secondsPerDay - Self.activationMargin))
             let m = try membership(scope: PrivacyHash.proposeRemovalScope(optionID: optionID, day: day), excludedDsc: .zero,

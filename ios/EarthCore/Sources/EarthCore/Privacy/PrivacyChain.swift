@@ -175,9 +175,12 @@ public struct PrivacyQueries: PrivacyChainReads {
         let l = p.handle_lease_seconds.int64(default: 0)
         let n = p.handle_renewal_seconds.int64(default: 0)
         // Zero falls back to the chain's defaults (365 days; 30 days for the renewal period).
-        return PrivacyReads.PersonhoodParams(caretakerVoteSeconds: r > 0 ? r : 365 * 86_400, identityRootWindowSeconds: w > 0 ? w : 3_600,
-                                             handleLeaseSeconds: l > 0 ? l : Handles.defaultLeaseSeconds,
-                                             handleRenewalSeconds: n > 0 ? n : Handles.defaultRenewalSeconds)
+        // Audit 5 (L7): every duration at most Handles.maxAheadSeconds, so no sum of it with a
+        // time can trap (a node's 2^63 lease is not one).
+        let m = Handles.maxAheadSeconds
+        return PrivacyReads.PersonhoodParams(caretakerVoteSeconds: min(r > 0 ? r : 365 * 86_400, m), identityRootWindowSeconds: min(w > 0 ? w : 3_600, m),
+                                             handleLeaseSeconds: min(l > 0 ? l : Handles.defaultLeaseSeconds, m),
+                                             handleRenewalSeconds: min(n > 0 ? n : Handles.defaultRenewalSeconds, m))
     }
 
     public func ballotInputs(proposalID: UInt64, optionID: UInt64) async throws -> PrivacyReads.BallotInputs {

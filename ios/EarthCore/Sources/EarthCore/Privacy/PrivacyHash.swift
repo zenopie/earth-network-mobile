@@ -32,6 +32,8 @@ public enum PrivacyHash {
     // Wallet-defined (PRIVACY_FORMATS.md 3a, 1): the registration record's and an unlock memo's tags.
     public static let tagRecTag = tag("earth.rectag")
     public static let tagUnlockTag = tag("earth.unlocktag")
+    // Wallet-defined (PRIVACY_FORMATS.md 3b): a handle or caretaker state record's tag.
+    public static let tagStateTag = tag("earth.statetag")
 
     /// The fee asset, privacy_core::ASSET_ERTH.
     public static let assetErth: Fr = assetID("uerth")

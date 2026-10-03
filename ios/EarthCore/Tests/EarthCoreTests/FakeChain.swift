@@ -111,6 +111,8 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     var referralNotes: [(String, Fr)] = []
     /// Set to make the backend's handle stream lie about an address (the chain check must catch it).
     var forgeHandleAddress: String?
+    /// Set to make a set_caretaker event report this expires_at (a hostile node, audit 5 M4).
+    var forgeCaretakerExpiry: Int64?
     var claimedUnbonds: [String] = []
     /// The fake's epoch (9/10 derth minted per uerth at delegation).
     let epoch: UInt64 = 4
@@ -706,7 +708,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
                 caretakerVotes[n] = Dictionary(uniqueKeysWithValues: m.percentages.map { ($0.optionID, $0.percent) })
                 caretakerExpiry[n] = now + caretakerLease
             }
-            events.append((type: "set_caretaker", attributes: ["expires_at": String(caretakerExpiry[n] ?? 0)]))
+            events.append((type: "set_caretaker", attributes: ["expires_at": String(forgeCaretakerExpiry ?? caretakerExpiry[n] ?? 0)]))
         case let m as MsgMoveCaretaker:
             let n = try f(m.membership.nullifier), o = try f(m.newOwner)
             caretakerVotes[o] = caretakerVotes.removeValue(forKey: n); caretakerExpiry[o] = caretakerExpiry.removeValue(forKey: n)

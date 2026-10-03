@@ -171,6 +171,38 @@ public struct StakeVoteRecord: Codable, Equatable, Sendable {
     }
 }
 
+/// A move of a handle or caretaker split (audit 5, M2), recorded before its
+/// broadcast in both wallets: the mover's (`incoming` false: it still holds
+/// what it is moving until the tx is confirmed) and the new identity's
+/// (`incoming` true: it holds it already, rolled back only if the tx is
+/// refused, failed in its block, or missing past its timeout_height).
+/// `target` is the new wallet's store id (the mover's copy), `recorded`
+/// whether writing it there succeeded (retryable while false). Ports
+/// PendingMove in `privacy/sync/PrivacyStore.kt`.
+public struct PendingMove: Codable, Equatable, Sendable {
+    public static let handleKind = "handle"
+    public static let caretakerKind = "caretaker"
+    /// "handle" or "caretaker".
+    public var kind: String
+    public var txHash: String
+    public var timeoutHeight: UInt64
+    public var incoming: Bool
+    public var handle: String = ""
+    public var split: [UInt64: UInt64] = [:]
+    public var splitUnknown: Bool = false
+    public var expiresAt: Int64 = 0
+    public var target: String = ""
+    public var recorded: Bool = false
+    public var confirmed: Bool = false
+
+    public init(kind: String, txHash: String, timeoutHeight: UInt64, incoming: Bool, handle: String = "", split: [UInt64: UInt64] = [:],
+                splitUnknown: Bool = false, expiresAt: Int64 = 0, target: String = "", recorded: Bool = false, confirmed: Bool = false) {
+        self.kind = kind; self.txHash = txHash; self.timeoutHeight = timeoutHeight; self.incoming = incoming; self.handle = handle
+        self.split = split; self.splitUnknown = splitUnknown; self.expiresAt = expiresAt; self.target = target
+        self.recorded = recorded; self.confirmed = confirmed
+    }
+}
+
 /// What the wallet keeps between syncs: cursors into each indexer stream, its
 /// own notes, its registration, and the automations' bookkeeping. Small; the
 /// trees live beside it in per-level files. Ports PrivacyState in
@@ -212,6 +244,19 @@ public struct PrivacyState: Codable, Sendable {
     public var handle: String = ""
     /// This identity moved its handle away (MsgMoveHandle): it may never claim one again.
     public var handleMovedOut: Bool = false
+    /// When `handle` last changed here (wallet clock): a directory read before it says nothing about it.
+    public var handleSetAt: Int64 = 0
+    /// The caretaker split is held but its record did not carry it (restored from a state record).
+    public var caretakerSplitUnknown: Bool = false
+    /// The newest handle / caretaker state record applied (note position; nil: none).
+    public var handleRecordPos: UInt64?
+    public var caretakerRecordPos: UInt64?
+    /// Heights of this wallet's txs that failed in their block: their state records are void.
+    public var voidRecordHeights: Set<UInt64> = []
+    /// Moves in flight, either way (audit 5, M2).
+    public var pendingMoves: [PendingMove] = []
+    /// The store id of the wallet a switch moves to, fixed by its first move (audit 5, L8).
+    public var switchTarget: String = ""
     /// Unbond denoms whose claim the chain refused as not yet matured, to when the automation next tries.
     public var unbondRetryAt: [String: Int64] = [:]
     /// Next unused Groundworks owner-tag counter (PrivacyKeys.otagSalt).
@@ -239,7 +284,8 @@ public struct PrivacyState: Codable, Sendable {
         case chainID, genesis, notesNext, notesHeight, nullifiersNext, identityNext, zeroedNext, notes, identity, pendingRegistration,
              regRecords, rootsVerified, rootsError, claimedDays, caretakerCastAt, caretakerSplit, caretakerExpiresAt, caretakerMovedOut, handle, handleMovedOut,
              unbondRetryAt, nextOtagCounter, stakeNext, stakeHeight, stakeNullifiersNext, stakeNotes, denoms, closedOtagMax, stakeVoteRun,
-             syncGeneration, verifiedGeneration, stakeVotes, identityHeights, identityRowsSeen
+             syncGeneration, verifiedGeneration, stakeVotes, identityHeights, identityRowsSeen,
+             handleSetAt, caretakerSplitUnknown, handleRecordPos, caretakerRecordPos, voidRecordHeights, pendingMoves, switchTarget
     }
 
     /// Tolerates a state file from before the stake tree (missing keys keep their defaults).
@@ -265,6 +311,10 @@ public struct PrivacyState: Codable, Sendable {
         syncGeneration = try v(.syncGeneration, 0)
         verifiedGeneration = try c.decodeIfPresent(UInt64.self, forKey: .verifiedGeneration)
         identityHeights = try v(.identityHeights, []); identityRowsSeen = try v(.identityRowsSeen, 0)
+        handleSetAt = try v(.handleSetAt, 0); caretakerSplitUnknown = try v(.caretakerSplitUnknown, false)
+        handleRecordPos = try c.decodeIfPresent(UInt64.self, forKey: .handleRecordPos)
+        caretakerRecordPos = try c.decodeIfPresent(UInt64.self, forKey: .caretakerRecordPos)
+        voidRecordHeights = try v(.voidRecordHeights, []); pendingMoves = try v(.pendingMoves, []); switchTarget = try v(.switchTarget, "")
     }
 }
 
@@ -413,15 +463,29 @@ public final class PrivacyStore {
             s.caretakerCastAt = old.caretakerCastAt; s.caretakerSplit = old.caretakerSplit
             s.caretakerExpiresAt = old.caretakerExpiresAt; s.caretakerMovedOut = old.caretakerMovedOut
             s.handle = old.handle; s.handleMovedOut = old.handleMovedOut
+            Self.keepHandleState(old, &s)
         } else if old.chainID == nil {
             // Never synced: what a switch moved to this identity was
-            // recorded for the chain the app follows (adoptMoved).
+            // recorded for the chain the app follows (PrivacyWallet.recordIncoming).
             s.caretakerCastAt = old.caretakerCastAt; s.caretakerSplit = old.caretakerSplit
             s.caretakerExpiresAt = old.caretakerExpiresAt
             s.handle = old.handle
+            Self.keepHandleState(old, &s)
         }
         state = s
         try save()
+    }
+
+    /// What a reset keeps of the moves and state records: the records already
+    /// applied are not applied again over what the wallet did since (a resync
+    /// reads them from the start), and moves in flight stay in flight.
+    private static func keepHandleState(_ old: PrivacyState, _ s: inout PrivacyState) {
+        s.handleSetAt = old.handleSetAt
+        s.caretakerSplitUnknown = old.caretakerSplitUnknown
+        s.handleRecordPos = old.handleRecordPos; s.caretakerRecordPos = old.caretakerRecordPos
+        s.voidRecordHeights = old.voidRecordHeights
+        s.pendingMoves = old.pendingMoves
+        s.switchTarget = old.switchTarget
     }
 
     /// A relaunch of the same chain id under a new genesis, confirmed by the
