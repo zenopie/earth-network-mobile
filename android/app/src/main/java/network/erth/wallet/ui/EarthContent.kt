@@ -159,12 +159,13 @@ internal fun EarthContent(
     val privateStakeValue = derthHeld.entries.sumOf { (denom, amount) -> derthValue(amount, denom.removePrefix("derth/")) } +
         (privacyState?.positions?.sumOf { derthValue(it.position.derth, it.position.validator) } ?: 0L)
 
-    // LP shares arrive in the same balances call as everything else — they are
-    // ordinary coins, denominated dexlp/<pool>.
-    val shares = remember(loaded.holdings) {
-        loaded.holdings
-            .filter { it.denom.startsWith("dexlp/") }
-            .associate { (it.denom.removePrefix("dexlp/").toLongOrNull() ?: 0L) to it.amount }
+    // LP shares: public ones are ordinary coins (dexlp/<pool>) in the
+    // balances call; private ones (a shielded deposit's) are share notes of
+    // the same denom in the pool. Both count as this wallet's.
+    val shares = remember(loaded.holdings, loaded.shielded) {
+        val public = loaded.holdings.filter { it.denom.startsWith("dexlp/") }.map { it.denom to it.amount }
+        val private = loaded.shielded.filterKeys { it.startsWith("dexlp/") }.toList()
+        (public + private).groupBy({ it.first.removePrefix("dexlp/").toLongOrNull() ?: 0L }, { it.second }).mapValues { it.value.sum() }
     }
 
     when (route) {
@@ -784,8 +785,9 @@ internal fun EarthContent(
             // ante handler cannot charge for. A reserve rather than a single
             // fee, for the same reason as staking: withdrawing this liquidity
             // later is itself a transaction that has to be payable.
-            // Pool 1's token is ANML, which only notes hold: both legs come
-            // from shielded balances there, the fee from a separate ERTH note.
+            // Pool 1's token is ANML, which only notes hold: both legs and
+            // the fee come from shielded balances there, in one bundle, and
+            // its LP shares are share notes.
             erthAvailable = (
                 (if (pool.tokenDenom == Dex.SHIELDED_ONLY) loaded.shieldedErthUerth else loaded.balanceUerth) -
                     TxController.GAS_RESERVE_UERTH
@@ -799,7 +801,7 @@ internal fun EarthContent(
             shareBalance = if (pool.tokenDenom == Dex.SHIELDED_ONLY) {
                 loaded.shielded[Dex.shareDenom(pool.id)] ?: 0L
             } else {
-                shares[pool.id] ?: 0L
+                loaded.holdings.firstOrNull { it.denom == Dex.shareDenom(pool.id) }?.amount ?: 0L
             },
             unbondingSeconds = marketsState?.lpUnbondingSeconds ?: 0L,
             onDismiss = { liquidity = null },
