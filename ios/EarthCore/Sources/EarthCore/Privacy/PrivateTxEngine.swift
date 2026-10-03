@@ -118,16 +118,20 @@ public struct PrivateTxEngine: Sendable {
     }
 
     /// Lays out, prices and simulates without proving: what the confirm sheet shows.
-    public func quote(_ assemble: (UInt64) throws -> Assembled) async throws -> Quote {
-        try await price(assemble).0
+    public func quote(_ assemble: (UInt64) throws -> Assembled, memo: String = "") async throws -> Quote {
+        try await price(assemble, memo: memo).0
     }
 
-    public func run(_ assemble: (UInt64) throws -> Assembled) async throws -> (TxResult, Assembled) {
-        let (q, a) = try await price(assemble)
-        let sighash = try draft(a).sighash(chainID: chainID)
+    /// Prices, proves and broadcasts. The tx's `memo`, timeout_height (none)
+    /// and the gas limit the pricing settled on are fixed first: the sighash
+    /// binds them, so every proof is made over the tx exactly as broadcast.
+    public func run(_ assemble: (UInt64) throws -> Assembled, memo: String = "") async throws -> (TxResult, Assembled) {
+        let (q, a) = try await price(assemble, memo: memo)
+        let tx = PrivateMsgs.TxFields(memo: memo, timeoutHeight: 0, gasLimit: q.gasLimit)
+        let sighash = try draft(a).sighash(chainID: chainID, tx: tx)
         var bundles: [ShieldedBundle] = []
         for (i, plan) in a.bundles.enumerated() {
-            let b = try await plan.prove(sighash: sighash) { try await prover.proveAction($0) }
+            let b = try await plan.prove(sighash: sighash) { try Self.proofSized(try await prover.proveAction($0)) }
             guard PrivateMsgs.checkBalance(b, sighash: sighash) else { throw PrivacyError("bundle \(i) does not balance") }
             bundles.append(b)
         }
@@ -135,28 +139,35 @@ public struct PrivateTxEngine: Sendable {
         if let s = a.stake {
             let w = try s.witness(sighash: sighash)
             try w.check()
-            stake = try s.proto(proof: try await prover.proveStake(w))
+            stake = try s.proto(proof: try Self.proofSized(try await prover.proveStake(w)))
         }
         var membership: Membership?
         if let spec = a.membership {
             let w = try spec.witness(signal: sighash)
-            membership = Membership(proof: try await prover.proveMembership(w), root: w.root.bytes, nullifier: w.nullifier.bytes)
+            membership = Membership(proof: try Self.proofSized(try await prover.proveMembership(w)), root: w.root.bytes, nullifier: w.nullifier.bytes)
         }
         let msg = try a.build(bundles, stake, membership)
-        guard try msg.sighash(chainID: chainID) == sighash else { throw PrivacyError("the proven msg binds another sighash") }
+        guard try msg.sighash(chainID: chainID, tx: tx) == sighash else { throw PrivacyError("the proven msg binds another sighash") }
         guard msg.totalFee == q.fee else { throw PrivacyError("the msg must pay exactly the quoted fee") }
-        return (try await chain.broadcast(UnsignedTx.build(msg, gasLimit: q.gasLimit)), a)
+        return (try await chain.broadcast(UnsignedTx.build(msg, tx: tx)), a)
     }
 
-    private func price(_ assemble: (UInt64) throws -> Assembled) async throws -> (Quote, Assembled) {
+    /// The chain refuses any proof that is not exactly `proofBytes` (bb ignored trailing bytes).
+    static func proofSized(_ p: Data) throws -> Data {
+        guard p.count == proofBytes else { throw PrivacyError("a proof is \(proofBytes) bytes, got \(p.count)") }
+        return p
+    }
+
+    private func price(_ assemble: (UInt64) throws -> Assembled, memo: String) async throws -> (Quote, Assembled) {
         let minFee = try await chain.minFee()
         let price = try await chain.gasPrice()
         var fee = max(minFee, Self.feeFor(price: price, gas: Self.guessGas))
         var a = try assemble(fee)
         var first = true
         for _ in 0 ..< Self.maxRelays {
-            let gas = try await chain.simulate(UnsignedTx.build(try draft(a), gasLimit: 0))
-            let limit = gas + max(gas / 10, Self.minHeadroom)
+            let gas = try await chain.simulate(UnsignedTx.build(try draft(a), gasLimit: 0, memo: memo))
+            let (limit, o) = gas.addingReportingOverflow(max(gas / 10, Self.minHeadroom))
+            guard !o else { throw PrivacyError("the simulated gas is out of range") }
             let need = max(minFee, Self.feeFor(price: price, gas: limit))
             // The guess is re-laid at the fee its layout needs; after that a
             // layout whose gas the fee covers is final (a fee needing one more

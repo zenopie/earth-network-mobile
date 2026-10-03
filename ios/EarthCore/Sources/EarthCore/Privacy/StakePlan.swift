@@ -28,12 +28,14 @@ public struct StakePlan: Sendable {
     public let tagSalt: Fr
     public let anchor: Fr
     public let vOut: UInt64
+    /// The blind stake ciphertext of `mint`'s note: for a msg that mints one, empty otherwise.
+    public let mintCiphertext: Data
     public let asset: Fr
     private let dummyIn: [(Fr, Fr)]
     private let dummyOut: [(Fr, Fr)]
 
     public init(nk: Fr, denom: String?, spends: [OwnedStakeNote], paths: [[Fr]], outputs: [Out], mint: (rho: Fr, rcm: Fr), tagSalt: Fr,
-                anchor: Fr, vOut: UInt64) throws {
+                anchor: Fr, vOut: UInt64, mintCiphertext: Data = Data()) throws {
         try require(spends.count <= 2 && outputs.count <= 2 && paths.count == spends.count, "a stake proof spends and creates at most two notes")
         try require(spends.allSatisfy { $0.denom == denom && $0.amount > 0 }, "a stake proof spends notes of its own denom")
         try require(outputs.allSatisfy { $0.amount > 0 }, "a created stake note is positive")
@@ -42,6 +44,7 @@ public struct StakePlan: Sendable {
         try require(ins == outs, "stake amounts do not balance: in \(ins), out \(outs)")
         self.nk = nk; self.denom = denom; self.spends = spends; self.paths = paths; self.outputs = outputs
         self.mint = mint; self.tagSalt = tagSalt; self.anchor = anchor; self.vOut = vOut
+        self.mintCiphertext = mintCiphertext
         asset = denom.map(PrivacyHash.assetID) ?? .zero
         dummyIn = (0 ..< 2).map { _ in (NotePlaintext.randomField(), NotePlaintext.randomField()) }
         dummyOut = (0 ..< 2).map { _ in (NotePlaintext.randomField(), NotePlaintext.randomField()) }
@@ -71,7 +74,7 @@ public struct StakePlan: Sendable {
         let w = try witness(sighash: .zero) // every public value but the sighash
         return StakeProof(proof: proof, anchor: anchor.bytes, nullifiers: w.nullifiers.map(\.bytes), commitments: w.commitments.map(\.bytes),
                           ciphertexts: [0, 1].map { $0 < outputs.count ? outputs[$0].ciphertext : Data() },
-                          spcMint: w.spcMint.bytes, ownerTag: w.otag.bytes)
+                          spcMint: w.spcMint.bytes, ownerTag: w.otag.bytes, spcCiphertext: mintCiphertext)
     }
 
     /// A created stake note of `amount` `denom` back to `keys`, with its stake ciphertext.
@@ -82,6 +85,21 @@ public struct StakePlan: Sendable {
         let cm = PrivacyHash.stakeCM(asset: asset, amount: amount, spc: PrivacyHash.stakePC(ownerPK: keys.ownerPK, rho: rho, rcm: rcm))
         return Out(amount: amount, rho: rho, rcm: rcm,
                    ciphertext: try NoteCipher.encryptStake(.init(asset: asset, amount: amount, rho: rho, rcm: rcm), ekPub: keys.ekPub, cm: cm))
+    }
+
+    /// A stake note the chain will mint to us (spc_mint): fresh rho and rcm,
+    /// and their blind stake ciphertext to our own address, which sync opens
+    /// against the denom and amount the chain publishes.
+    public static func selfMint(_ keys: PrivacyKeys) throws -> SelfMint {
+        let rho = NotePlaintext.randomField()
+        let rcm = NotePlaintext.randomField()
+        return SelfMint(rho: rho, rcm: rcm, ciphertext: try NoteCipher.encryptBlindStake(rho: rho, rcm: rcm, ekPub: keys.ekPub))
+    }
+
+    public struct SelfMint: Sendable {
+        public let rho: Fr
+        public let rcm: Fr
+        public let ciphertext: Data
     }
 
     /// Secrets for a spc_mint or owner tag the msg does not use: fresh, so

@@ -17,12 +17,53 @@ public struct IdentityRecord: Codable, Equatable, Sendable {
     }
 }
 
+/// A registration broadcast and committed whose identity leaf the wallet has
+/// not resolved yet (C2): everything needed to rebuild the identity record,
+/// persisted before any sync so a lagging indexer cannot lose it. Each sync
+/// retries until the local identity tree holds `leafIndex`.
+public struct PendingRegistration: Codable, Equatable, Sendable {
+    public let txHash: String
+    public let leafIndex: UInt64
+    public let dscKey: Fr
+    public let passportNullifier: String
+    public let publicSignals: [String]
+    /// The registration block's time: the leaf's activated_at.
+    public let activatedAt: UInt64
+    /// ISO alpha-2 guess at the verifying CSCA's country ("" for none).
+    public let countryHint: String
+    /// Why the last attempt to resolve it failed, for the UI (nil: waiting for the indexer).
+    public var failure: String?
+
+    public init(txHash: String, leafIndex: UInt64, dscKey: Fr, passportNullifier: String, publicSignals: [String], activatedAt: UInt64,
+                countryHint: String, failure: String? = nil) {
+        self.txHash = txHash; self.leafIndex = leafIndex; self.dscKey = dscKey; self.passportNullifier = passportNullifier
+        self.publicSignals = publicSignals; self.activatedAt = activatedAt; self.countryHint = countryHint; self.failure = failure
+    }
+}
+
+/// A registration record note found by sync (PRIVACY_FORMATS.md 3a): what a
+/// wallet restored from the mnemonic finds its identity leaf by. `height` is
+/// the registration's block.
+public struct RegRecord: Codable, Equatable, Sendable {
+    public let height: UInt64
+    public let position: UInt64
+    public let dscKey: Fr
+    public let country: String
+    public let builtAt: UInt64
+
+    public init(height: UInt64, position: UInt64, dscKey: Fr, country: String, builtAt: UInt64) {
+        self.height = height; self.position = position; self.dscKey = dscKey; self.country = country; self.builtAt = builtAt
+    }
+}
+
 /// What the wallet keeps between syncs: cursors into each indexer stream, its
 /// own notes, its registration, and the automations' bookkeeping. Small; the
 /// trees live beside it in per-level files. Ports PrivacyState in
 /// `privacy/sync/PrivacyStore.kt`.
 public struct PrivacyState: Codable, Sendable {
     public var chainID: String?
+    /// The indexer's genesis key (first block hash prefix) the synced data is from.
+    public var genesis: String?
     public var notesNext: UInt64 = 0
     public var notesHeight: UInt64 = 0
     public var nullifiersNext: UInt64 = 0
@@ -30,6 +71,13 @@ public struct PrivacyState: Codable, Sendable {
     public var zeroedNext: UInt64 = 0
     public var notes: [OwnedNote] = []
     public var identity: IdentityRecord?
+    /// A committed registration not yet matched to its leaf (C2).
+    public var pendingRegistration: PendingRegistration?
+    /// Registration record notes found (restore, L8).
+    public var regRecords: [RegRecord] = []
+    /// Whether the last sync's roots matched the chain's own (C3), and why not.
+    public var rootsVerified: Bool = false
+    public var rootsError: String?
     /// UTC days a claim was broadcast for (so the automation does not repeat one).
     public var claimedDays: Set<UInt64> = []
     /// When the caretaker split was last cast (unix seconds), and the split (option -> percent).
@@ -42,10 +90,6 @@ public struct PrivacyState: Codable, Sendable {
     public var unbondRetryAt: [String: Int64] = [:]
     /// Next unused Groundworks owner-tag counter (PrivacyKeys.otagSalt).
     public var nextOtagCounter: UInt32 = 0
-    /// Next unused self-mint counter (PrivacyKeys.mintSecrets).
-    public var nextMintCounter: UInt32 = 0
-    /// Next unused stake self-mint counter (PrivacyKeys.stakeMintSecrets).
-    public var nextStakeMintCounter: UInt32 = 0
     /// The stake tree's stream cursors and this wallet's stake notes.
     public var stakeNext: UInt64 = 0
     public var stakeHeight: UInt64 = 0
@@ -57,9 +101,9 @@ public struct PrivacyState: Codable, Sendable {
     public init() {}
 
     enum CodingKeys: String, CodingKey {
-        case chainID, notesNext, notesHeight, nullifiersNext, identityNext, zeroedNext, notes, identity, claimedDays, caretakerCastAt,
-             caretakerSplit, referrerAddress, referrerBoundAt, unbondRetryAt, nextOtagCounter, nextMintCounter, nextStakeMintCounter,
-             stakeNext, stakeHeight, stakeNullifiersNext, stakeNotes, denoms
+        case chainID, genesis, notesNext, notesHeight, nullifiersNext, identityNext, zeroedNext, notes, identity, pendingRegistration,
+             regRecords, rootsVerified, rootsError, claimedDays, caretakerCastAt, caretakerSplit, referrerAddress, referrerBoundAt,
+             unbondRetryAt, nextOtagCounter, stakeNext, stakeHeight, stakeNullifiersNext, stakeNotes, denoms
     }
 
     /// Tolerates a state file from before the stake tree (missing keys keep their defaults).
@@ -67,13 +111,16 @@ public struct PrivacyState: Codable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         func v<T: Decodable>(_ k: CodingKeys, _ d: T) throws -> T { try c.decodeIfPresent(T.self, forKey: k) ?? d }
         chainID = try c.decodeIfPresent(String.self, forKey: .chainID)
+        genesis = try c.decodeIfPresent(String.self, forKey: .genesis)
+        pendingRegistration = try c.decodeIfPresent(PendingRegistration.self, forKey: .pendingRegistration)
+        regRecords = try v(.regRecords, []); rootsVerified = try v(.rootsVerified, false)
+        rootsError = try c.decodeIfPresent(String.self, forKey: .rootsError)
         notesNext = try v(.notesNext, 0); notesHeight = try v(.notesHeight, 0); nullifiersNext = try v(.nullifiersNext, 0)
         identityNext = try v(.identityNext, 0); zeroedNext = try v(.zeroedNext, 0); notes = try v(.notes, [])
         identity = try c.decodeIfPresent(IdentityRecord.self, forKey: .identity)
         claimedDays = try v(.claimedDays, []); caretakerCastAt = try v(.caretakerCastAt, 0); caretakerSplit = try v(.caretakerSplit, [:])
         referrerAddress = try v(.referrerAddress, ""); referrerBoundAt = try v(.referrerBoundAt, 0); unbondRetryAt = try v(.unbondRetryAt, [:])
-        nextOtagCounter = try v(.nextOtagCounter, 0); nextMintCounter = try v(.nextMintCounter, 0)
-        nextStakeMintCounter = try v(.nextStakeMintCounter, 0); stakeNext = try v(.stakeNext, 0); stakeHeight = try v(.stakeHeight, 0)
+        nextOtagCounter = try v(.nextOtagCounter, 0); stakeNext = try v(.stakeNext, 0); stakeHeight = try v(.stakeHeight, 0)
         stakeNullifiersNext = try v(.stakeNullifiersNext, 0); stakeNotes = try v(.stakeNotes, []); denoms = try v(.denoms, [])
     }
 }
@@ -108,9 +155,23 @@ public final class PrivacyStore {
     public static func memory() -> PrivacyStore { PrivacyStore(dir: nil) }
 
     public static func open(root: URL, walletID: String) -> PrivacyStore {
-        let d = root.appendingPathComponent("privacy").appendingPathComponent(walletID)
+        let top = root.appendingPathComponent("privacy")
+        let d = top.appendingPathComponent(walletID)
         try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        // C4: the notes, trees and registration are derivable from the
+        // mnemonic and the chain; a device backup (iCloud, iTunes/Finder)
+        // would only carry this wallet's private history off the device.
+        excludeFromBackup(top)
+        excludeFromBackup(d)
         return PrivacyStore(dir: d)
+    }
+
+    /// Marks `url` (and so everything under it) as excluded from device backups.
+    static func excludeFromBackup(_ url: URL) {
+        var u = url
+        var v = URLResourceValues()
+        v.isExcludedFromBackup = true
+        try? u.setResourceValues(v)
     }
 
     public func mutate<T>(_ body: (inout PrivacyState) throws -> T) rethrows -> T { try body(&state) }
@@ -123,22 +184,25 @@ public final class PrivacyStore {
         try? data.write(to: dir.appendingPathComponent(Self.stateFile), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 
-    /// Forgets the synced data, keeping the key counters, the registration's
-    /// leaf and what the wallet itself cast (claims, caretaker split,
-    /// referrer): a fresh chain, or an inconsistent sync.
-    public func reset(chainID: String?) {
+    /// Forgets the synced data. On the same chain (an inconsistent sync) it
+    /// keeps the owner-tag counter, the registration (its leaf, or the one
+    /// pending) and what the wallet itself cast (claims, caretaker split,
+    /// referrer); a different chain or genesis (a relaunch under the same
+    /// chain id) keeps only the owner-tag counter.
+    public func reset(chainID: String?) { reset(chainID: chainID, genesis: state.genesis) }
+
+    public func reset(chainID: String?, genesis: String?) {
         noteTree.clear()
         identityTree.clear()
         stakeTree.clear()
         let old = state
         var s = PrivacyState()
         s.chainID = chainID
+        s.genesis = genesis
         s.nextOtagCounter = old.nextOtagCounter
-        s.nextMintCounter = old.nextMintCounter
-        s.nextStakeMintCounter = old.nextStakeMintCounter
-        if old.chainID == chainID {
-            // The leaf index cannot be found again without the registration tx.
+        if old.chainID == chainID && old.genesis == genesis {
             s.identity = old.identity
+            s.pendingRegistration = old.pendingRegistration
             s.claimedDays = old.claimedDays
             s.caretakerCastAt = old.caretakerCastAt; s.caretakerSplit = old.caretakerSplit
             s.referrerAddress = old.referrerAddress; s.referrerBoundAt = old.referrerBoundAt

@@ -14,6 +14,29 @@ public struct EarthRest: Sendable {
         case missing(String)
         /// The RPC base is optional — a deployment may expose only the LCD.
         case rpcUnavailable
+        /// The response ran past `maxBodyBytes`.
+        case tooLarge(Int)
+    }
+
+    /// The most any response is read to: a node or proxy streaming without
+    /// end (or a hostile one) cannot exhaust memory. The largest legitimate
+    /// answers (a page of positions or validators, a 5000-row indexer page)
+    /// are far below it.
+    public static let maxBodyBytes = 8 * 1024 * 1024
+
+    /// Reads `request`'s response, refusing more than `max` bytes (after
+    /// URLSession's own gzip decoding). Returns the body and HTTP status.
+    static func boundedData(_ session: URLSession, _ request: URLRequest, max: Int = maxBodyBytes) async throws -> (Data, Int) {
+        let (bytes, response) = try await session.bytes(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if response.expectedContentLength > Int64(max) { throw Error.tooLarge(max) }
+        var out: [UInt8] = []
+        out.reserveCapacity(Swift.min(Swift.max(Int(response.expectedContentLength), 16 * 1024), max))
+        for try await b in bytes {
+            out.append(b)
+            if out.count > max { throw Error.tooLarge(max) }
+        }
+        return (Data(out), status)
     }
 
     public let lcd: URL
@@ -33,6 +56,14 @@ public struct EarthRest: Sendable {
         try await request(URLRequest(url: lcd.appendingPath(path)))
     }
 
+    /// `get` of the state at block `height` (the gRPC gateway's
+    /// `x-cosmos-block-height` header); a pruned height answers an error.
+    public func get(_ path: String, height: UInt64) async throws -> JSON {
+        var r = URLRequest(url: lcd.appendingPath(path))
+        r.setValue(String(height), forHTTPHeaderField: "x-cosmos-block-height")
+        return try await request(r)
+    }
+
     /// The CometBFT RPC, which serves the one thing the LCD cannot: a *range*
     /// of blocks in a single request. Callers must tolerate it being absent.
     public func getRPC(_ path: String) async throws -> JSON {
@@ -49,8 +80,7 @@ public struct EarthRest: Sendable {
     }
 
     private func request(_ request: URLRequest) async throws -> JSON {
-        let (data, response) = try await session.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        let (data, status) = try await Self.boundedData(session, request)
         guard (200 ... 299).contains(status) else {
             throw Error.http(status: status, body: String(decoding: data, as: UTF8.self))
         }

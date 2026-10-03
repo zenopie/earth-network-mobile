@@ -20,14 +20,14 @@ public struct NoteOut: Sendable {
         try to(keys.address, denom: denom, value: value)
     }
 
-    /// A note the chain will mint to us at a value we cannot know yet (a
-    /// reward, an unbonding payout, swap output, LP shares or refunds): its
-    /// pc is self-mint `counter`'s (PrivacyKeys.mintSecrets) and it carries
-    /// no ciphertext; sync finds it by its public mint amount.
-    public static func mintToSelf(_ keys: PrivacyKeys, denom: String, counter: UInt32) -> NoteOut {
-        let (rho, rcm) = keys.mintSecrets(counter)
-        let n = NotePlaintext(denom: denom, value: 0, rho: rho, rcm: rcm)
-        return NoteOut(denom: denom, value: 0, pc: n.pc(ownerPK: keys.ownerPK), ciphertext: Data(), note: n)
+    /// A note the chain will mint to us (a reward, a claim, a shield, an
+    /// unbonding payout, swap output, LP shares, refunds or withdrawal legs):
+    /// fresh rho and rcm and a value-blind (v2) ciphertext of them to our own
+    /// address, which sync opens against the amount the chain publishes with
+    /// the note. No counter: every such note is found by trial decryption alone.
+    public static func mintToSelf(_ keys: PrivacyKeys, denom: String, memo: Data = Data()) throws -> NoteOut {
+        let n = NotePlaintext.fresh(denom, 0, memo: memo)
+        return NoteOut(denom: denom, value: 0, pc: n.pc(ownerPK: keys.ownerPK), ciphertext: try NoteCipher.encryptBlind(n, to: keys.address), note: n)
     }
 
     /// A note the chain will mint to `to` at a value and asset it decides (a
@@ -201,12 +201,14 @@ public enum BundleBuilder {
         var outs = outputs
         for denom in need.keys.sorted(by: denomLess) {
             let amount = need[denom]!
-            let have = forced.filter { $0.note.denom == denom }.reduce(UInt64(0)) { $0 + $1.note.value }
+            let have = forced.filter { $0.note.denom == denom }.reduce(UInt64(0)) { PrivateMsgs.saturatingAdd($0, $1.note.value) }
             let chosen = have >= amount ? [] : try NoteSelection.cover(notes, denom: denom, amount: amount - have,
                                                                       exclude: exclude.union(spends.map(\.position)),
                                                                       maxNotes: maxActions - spends.count)
             spends += chosen
-            let change = have + chosen.reduce(UInt64(0)) { $0 + $1.note.value } - amount
+            let (total, o) = have.addingReportingOverflow(chosen.reduce(UInt64(0)) { PrivateMsgs.saturatingAdd($0, $1.note.value) })
+            try require(!o && total != .max, "note values overflow")
+            let change = total - amount
             if change > 0 { outs.append(try NoteOut.toSelf(keys, denom: denom, value: change)) }
         }
         return try fromNotes(keys: keys, tree: tree, spends: spends, outputs: outs, maxActions: maxActions)
@@ -241,7 +243,7 @@ public enum NoteSelection {
     /// spendable notes (max_actions_per_bundle; the whole balance unless it
     /// is spread over more notes than that).
     public static func maxSpendable(_ notes: [OwnedNote], denom: String, maxNotes: Int) -> UInt64 {
-        spendable(notes, denom: denom).map(\.note.value).sorted(by: >).prefix(maxNotes).reduce(0, +)
+        spendable(notes, denom: denom).map(\.note.value).sorted(by: >).prefix(maxNotes).reduce(0, PrivateMsgs.saturatingAdd)
     }
 
     /// Notes of `denom` covering `amount`: the smallest single note that
@@ -256,14 +258,14 @@ public enum NoteSelection {
         var sum: UInt64 = 0
         for n in c.reversed() {
             chosen.append(n)
-            sum += n.note.value
+            sum = PrivateMsgs.saturatingAdd(sum, n.note.value)
             if sum >= amount { break }
         }
         if sum < amount { throw Insufficient(message: "insufficient shielded \(denom)") }
         if chosen.count > maxNotes { throw Insufficient(message: "\(denom) is spread over too many notes for one transaction; merge them first") }
         let rest = sum - chosen.last!.note.value
         let taken = Set(chosen.map(\.position))
-        if let swap = c.first(where: { !taken.contains($0.position) && rest + $0.note.value >= amount }),
+        if let swap = c.first(where: { !taken.contains($0.position) && PrivateMsgs.saturatingAdd(rest, $0.note.value) >= amount }),
            swap.note.value < chosen.last!.note.value {
             chosen[chosen.count - 1] = swap
         }
@@ -284,12 +286,12 @@ public enum StakeSelection {
         var bestSum = UInt64.max
         for i in c.indices {
             for j in (i + 1) ..< c.count {
-                let s = c[i].amount + c[j].amount
+                let s = PrivateMsgs.saturatingAdd(c[i].amount, c[j].amount)
                 if s >= amount, s < bestSum { best = [c[i], c[j]]; bestSum = s }
             }
         }
         if let best { return best }
-        let total = c.reduce(UInt64(0)) { $0 + $1.amount }
+        let total = c.reduce(UInt64(0)) { PrivateMsgs.saturatingAdd($0, $1.amount) }
         throw NoteSelection.Insufficient(message: total >= amount ? "this stake is spread over more than two notes; merge them first"
             : "insufficient stake")
     }

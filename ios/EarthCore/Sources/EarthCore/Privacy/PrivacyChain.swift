@@ -266,3 +266,41 @@ public struct RESTPrivateChain: PrivateChain {
         return TxResult(hash: hash, height: tr.height.uint64(default: 0), time: Self.parseTime(tr.timestamp.string(default: "")), events: events)
     }
 }
+
+/// The chain's own view of the three trees (LCD), against which every root
+/// the indexer served is checked before the wallet builds anything on it
+/// (WalletSync.verifyRoots). The identity and stake trees are read at the
+/// height the indexer's root is from (`x-cosmos-block-height`), falling back
+/// to the latest state when that height is pruned. Ports LcdChainRoots.
+public struct LCDChainRoots: ChainRoots {
+    public let rest: EarthRest
+
+    public init(rest: EarthRest = EarthRest()) { self.rest = rest }
+
+    private static func field(_ j: JSON) -> Fr? {
+        guard let raw = Data(base64Encoded: j.string ?? ""), !raw.isEmpty else { return nil }
+        return try? Fr(bytes: raw)
+    }
+
+    /// (body, pinned): at `height` when the node still has it, else the latest state.
+    private func at(_ path: String, _ height: UInt64?) async throws -> (JSON, Bool) {
+        if let height, height > 0, let j = try? await rest.get(path, height: height) { return (j, true) }
+        return (try await rest.get(path), false)
+    }
+
+    public func noteRoot(_ root: Fr) async throws -> NoteRootRecord? {
+        let j = try await rest.get("/earth/shielded/v1/roots/\(root.hex)")
+        guard j.record.exists, Self.field(j.record.root) == root else { return nil }
+        return NoteRootRecord(valid: j.valid.bool(default: false), treeSize: j.record.tree_size.uint64(default: 0))
+    }
+
+    public func identityTree(height: UInt64?) async throws -> TreeState {
+        let (j, pinned) = try await at("/earth/personhood/v1/identity_tree", height)
+        return TreeState(size: j.size.uint64(default: 0), root: Self.field(j.latest_root), pinned: pinned)
+    }
+
+    public func stakeTree(height: UInt64?) async throws -> TreeState {
+        let (j, pinned) = try await at("/earth/shieldedstaking/v1/stake_tree", height)
+        return TreeState(size: j.size.uint64(default: 0), root: Self.field(j.root), pinned: pinned)
+    }
+}

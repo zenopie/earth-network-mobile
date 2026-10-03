@@ -116,20 +116,9 @@ public enum PrivacyHash {
     public static func removalScope(ballotID: UInt64) -> Fr { scope("removal", u64(ballotID)) }
     public static func proposeRemovalScope(optionID: UInt64, day: UInt64) -> Fr { scope("propose_removal", u64(optionID), u64(day)) }
 
-    /// The transparent gas grant's scope for month `yyyymm` (UTC, e.g. 202610):
-    /// one grant per nullifier per month.
-    public static func gasScope(yyyymm: UInt64) -> Fr { scope("gas", u64(yyyymm)) }
-
-    public static let gasTransparentSignalType = "earth.gas.transparent"
-
-    /// The transparent gas grant's signal, binding the paid account's raw
-    /// address bytes.
-    public static func gasTransparentSignal(chainID: String, address: Data) -> Fr {
-        signal(msgType: gasTransparentSignalType, chainID: chainID, fields: [bytes(address)])
-    }
-
-    /// The passport proof's `address` input: H(TAG_REG, idc, pc_anml, pc_erth, affiliate).
-    public static func registrationBinding(idc: Fr, pcAnml: Fr, pcErth: Fr, affiliate: Fr) -> Fr {
-        h(tagReg, idc, pcAnml, pcErth, affiliate)
+    /// The passport proof's `address` input:
+    /// H(TAG_REG, idc, pc_anml, Bytes(ct_anml), pc_erth, Bytes(ct_erth), affiliate).
+    public static func registrationBinding(idc: Fr, pcAnml: Fr, ctAnml: Data, pcErth: Fr, ctErth: Data, affiliate: Fr) -> Fr {
+        h(tagReg, idc, pcAnml, bytes(ctAnml), pcErth, bytes(ctErth), affiliate)
     }
 }

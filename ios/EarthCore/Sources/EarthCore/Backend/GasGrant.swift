@@ -17,22 +17,19 @@ public enum GasGrant {
 
     /// Which grant to ask for.
     public enum Request {
-        /// Gas for this registration, as a shielded note to `pcGas`. Carries
+        /// Gas for this registration, as a shielded note to `pcGas` with
+        /// `ciphertextGas`, its required 177-byte v2 ciphertext (the app finds
+        /// the note by it). It is the only grant. Carries
         /// the message itself (without its fee bundle): the backend judges
         /// the proof that will actually be broadcast, not a second one, and
         /// pays only if the chain would accept it, once per passport per
         /// month. It learns that a passport, public in the registration
         /// anyway, got a gas note; the note's spend is unlinkable to it.
         case register(MsgRegisterPrivate, pcGas: Data, ciphertextGas: Data)
-        /// ERTH in a transparent account, for a registered human, proved by
-        /// a membership proof (GasTransparent): once a month per person, and
-        /// the backend never learns which person.
-        case transparent(GasTransparent.Request)
 
         public var path: String {
             switch self {
             case .register: "/gas/register"
-            case .transparent: "/gas/transparent"
             }
         }
 
@@ -60,8 +57,6 @@ public enum GasGrant {
                     "pc_gas": pcGas.base64EncodedString(),
                     "ciphertext_gas": ciphertextGas.base64EncodedString(),
                 ]
-            case let .transparent(r):
-                GasTransparent.body(r)
             }
         }
     }

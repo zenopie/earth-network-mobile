@@ -30,6 +30,11 @@ public final class PrivacyWallet: @unchecked Sendable {
     public static let derthPrefix = "derth/"
     public static let unbondPrefix = "unbond/"
     public static let lpPrefix = "dexlp/"
+    /// Owner-tag counters scanned past the highest known (PRIVACY_FORMATS.md 1).
+    public static let otagGap: UInt32 = 1024
+    /// The random pause between stake votes, milliseconds (L4).
+    public static let votePauseMinMs: UInt64 = 20_000
+    public static let votePauseMaxMs: UInt64 = 120_000
 
     public let keys: PrivacyKeys
     let store: PrivacyStore
@@ -37,14 +42,20 @@ public final class PrivacyWallet: @unchecked Sendable {
     private let chain: PrivateChain
     private let reads: PrivacyChainReads
     public let chainID: String
+    /// The chain's own trees, every synced root is checked against (C3).
+    private let roots: ChainRoots
     private let now: @Sendable () -> Int64
+    /// Sleeps between stake votes (milliseconds); tests pass a no-op.
+    private let pause: @Sendable (UInt64) async throws -> Void
     private let engine: PrivateTxEngine
     private let mutex = AsyncMutex()
 
     public init(keys: PrivacyKeys, store: PrivacyStore, indexer: PrivacyIndexer, chain: PrivateChain, reads: PrivacyChainReads,
-                prover: PrivacyProver, chainID: String, now: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970) }) {
+                prover: PrivacyProver, chainID: String, roots: ChainRoots,
+                now: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970) },
+                pause: @escaping @Sendable (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0 * 1_000_000) }) {
         self.keys = keys; self.store = store; self.indexer = indexer; self.chain = chain; self.reads = reads
-        self.chainID = chainID; self.now = now
+        self.chainID = chainID; self.roots = roots; self.now = now; self.pause = pause
         engine = PrivateTxEngine(chainID: chainID, chain: chain, prover: prover)
         snapshotValue = Snapshot(store: store, keys: keys, maxActions: Self.defaultMaxActions)
     }
@@ -66,6 +77,11 @@ public final class PrivacyWallet: @unchecked Sendable {
         public let referrerBoundAt: Int64
         public let unbondRetryAt: [String: Int64]
         public let syncedHeight: UInt64
+        /// A committed registration whose leaf is not matched yet (nil: none), and why, if it failed.
+        public let pendingRegistration: PendingRegistration?
+        /// Whether the last sync's roots matched the chain's (C3); no private tx is built on unverified ones.
+        public let rootsVerified: Bool
+        public let rootsError: String?
         /// x/shielded max_actions_per_bundle: the most notes (and outputs) one bundle carries.
         public let maxActions: Int
 
@@ -75,6 +91,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             caretakerSplit = s.caretakerSplit; caretakerCastAt = s.caretakerCastAt
             referrerAddress = s.referrerAddress; referrerBoundAt = s.referrerBoundAt
             unbondRetryAt = s.unbondRetryAt; syncedHeight = s.notesHeight
+            pendingRegistration = s.pendingRegistration; rootsVerified = s.rootsVerified; rootsError = s.rootsError
             identityStatus = WalletSync.identityStatus(store: store, keys: keys)
             self.maxActions = maxActions
         }
@@ -82,19 +99,21 @@ public final class PrivacyWallet: @unchecked Sendable {
         /// Spendable pool balance per denom (pending spends excluded).
         public var poolBalances: [String: UInt64] {
             var out: [String: UInt64] = [:]
-            for n in notes where n.unspent && n.pendingAt == nil { out[n.note.denom, default: 0] += n.note.value }
+            for n in notes where n.unspent && n.pendingAt == nil {
+                out[n.note.denom] = PrivateMsgs.saturatingAdd(out[n.note.denom] ?? 0, n.note.value)
+            }
             return out
         }
 
         /// Stake (derth/<valoper>) and unbonding claims (unbond/<valoper>/<epoch>) per denom: owner-locked, never sendable.
         public var stakeBalances: [String: UInt64] {
             var out: [String: UInt64] = [:]
-            for n in stakeNotes where n.spendable { out[n.denom, default: 0] += n.amount }
+            for n in stakeNotes where n.spendable { out[n.denom] = PrivateMsgs.saturatingAdd(out[n.denom] ?? 0, n.amount) }
             return out
         }
 
         /// Everything held privately: the pool's denoms and the stake denoms.
-        public var balances: [String: UInt64] { poolBalances.merging(stakeBalances) { $0 + $1 } }
+        public var balances: [String: UInt64] { poolBalances.merging(stakeBalances, uniquingKeysWith: PrivateMsgs.saturatingAdd) }
 
         /// Spendable note counts per denom with more than one note.
         public var mergeable: [String: Int] {
@@ -160,6 +179,8 @@ public final class PrivacyWallet: @unchecked Sendable {
     public func stakeBalances() -> [String: UInt64] { snapshot.stakeBalances }
     public func mergeable() -> [String: Int] { snapshot.mergeable }
     public func identityStatus() -> WalletSync.IdentityStatus { snapshot.identityStatus }
+    /// A committed registration whose leaf is not matched yet (nil: none), and why, if it failed.
+    public var pendingRegistration: PendingRegistration? { snapshot.pendingRegistration }
 
     /// x/shielded max_actions_per_bundle, read from the chain (the last value on a read failure).
     public func maxActions() async -> Int {
@@ -183,39 +204,33 @@ public final class PrivacyWallet: @unchecked Sendable {
     }
 
     private func syncLocked() async throws -> WalletSync.Result {
-        try await WalletSync(indexer: indexer, store: store, keys: keys, chainID: chainID, now: now).sync()
+        try await WalletSync(indexer: indexer, store: store, keys: keys, chainID: chainID, chain: roots, now: now).sync()
     }
 
-    /// Allocates the next self-mint pc (see PrivacyKeys.mintSecrets).
-    private func mint(_ denom: String) -> NoteOut {
-        let c = store.mutate { s -> UInt32 in
-            let c = s.nextMintCounter
-            s.nextMintCounter += 1
-            return c
-        }
-        store.save()
-        return NoteOut.mintToSelf(keys, denom: denom, counter: c)
-    }
+    /// A note the chain will mint to us: fresh secrets, their v2 ciphertext to our own address.
+    private func mint(_ denom: String) throws -> NoteOut { try NoteOut.mintToSelf(keys, denom: denom) }
 
-    /// Allocates the next stake self-mint (PrivacyKeys.stakeMintSecrets): a spc_mint the chain mints to.
-    private func stakeMint() -> (rho: Fr, rcm: Fr) {
-        let c = store.mutate { s -> UInt32 in
-            let c = s.nextStakeMintCounter
-            s.nextStakeMintCounter += 1
-            return c
-        }
-        store.save()
-        return keys.stakeMintSecrets(c)
-    }
+    /// A stake note the chain will mint to us: spc_mint's fresh secrets and their blind stake ciphertext.
+    private func stakeMint() throws -> StakePlan.SelfMint { try StakePlan.selfMint(keys) }
 
     private func today() -> UInt64 { UInt64(max(0, now()) / Self.secondsPerDay) }
 
     // MARK: - running
 
-    private func run(_ assemble: (UInt64) throws -> Assembled) async throws -> TxResult {
-        let (result, a) = try await engine.run(assemble)
+    /// Proves and broadcasts. Only on trees the chain itself vouched for at
+    /// the last sync (C3): a proof over an indexer's forged tree is refused by
+    /// the chain anyway, and its notes may not exist.
+    private func run(memo: String = "", _ assemble: (UInt64) throws -> Assembled) async throws -> TxResult {
+        try requireVerified()
+        let (result, a) = try await engine.run(assemble, memo: memo)
         markPending(a.spends, a.stakeSpends)
         return result
+    }
+
+    private func requireVerified() throws {
+        guard store.state.rootsVerified else {
+            throw PrivacyError(store.state.rootsError ?? "the wallet has not checked its notes against the chain yet; sync again")
+        }
     }
 
     private func markPending(_ spent: [OwnedNote], _ stake: [OwnedStakeNote]) {
@@ -301,13 +316,14 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// from ERTH notes. With `feeFromAmount` (ERTH only) the receiver gets
     /// `amount` less the fee instead: the bundle releases exactly `amount`,
     /// so the most a wallet holds can leave in one go (Max).
-    public func unshield(receiver: String, denom: String, amount: UInt64, feeFromAmount: Bool = false) async throws -> TxResult {
+    public func unshield(receiver: String, denom: String, amount: UInt64, feeFromAmount: Bool = false, memo: String = "") async throws -> TxResult {
         try Self.requireTransferable(denom)
         try require(!denom.hasPrefix(Self.lpPrefix), "LP shares leave the pool only by a withdrawal")
         try require(!feeFromAmount || denom == Self.fee, "only an ERTH unshield pays its fee from the amount")
         let m = await maxActions()
         return try await locked {
-            try await run { fee in
+            // The memo (an exchange's deposit tag) is bound by the sighash.
+            try await run(memo: memo) { fee in
                 let release: [String: UInt64]
                 if feeFromAmount {
                     try require(amount > fee, "the amount must exceed the \(fee)uerth fee")
@@ -333,7 +349,8 @@ public final class PrivacyWallet: @unchecked Sendable {
                 let ns = Array(NoteSelection.spendable(self.store.state.notes, denom: denom).sorted(by: NoteSelection.ascending).prefix(budget))
                 try require(ns.count >= 2, "nothing to merge")
                 if denom == Self.fee {
-                    try require(ns.reduce(0) { $0 + $1.note.value } > fee, "these notes do not cover the \(fee)uerth fee")
+                    try require(ns.reduce(UInt64(0)) { PrivateMsgs.saturatingAdd($0, $1.note.value) } > fee,
+                                "these notes do not cover the \(fee)uerth fee")
                 }
                 let b = try self.bundle(release: [Self.fee: fee], forced: ns, maxActions: m)
                 return Assembled(bundles: [b]) { bs, _, _ in MsgSend(bundle: bs[0], fee: fee) }
@@ -342,8 +359,10 @@ public final class PrivacyWallet: @unchecked Sendable {
     }
 
     /// A note to self for MsgShield (transparent coins into the pool; signed,
-    /// so built by the caller's key).
-    public func shieldOutput(denom: String, amount: UInt64) throws -> NoteOut { try NoteOut.toSelf(keys, denom: denom, value: amount) }
+    /// so built by the caller's key): the chain mints it, so it carries a v2
+    /// ciphertext of fresh secrets, which sync opens against the shield's
+    /// public amount.
+    public func shieldOutput(denom: String, amount: UInt64) throws -> NoteOut { try mint(denom) }
 
     static func requireTransferable(_ denom: String) throws {
         try require(!denom.hasPrefix(derthPrefix) && !denom.hasPrefix(unbondPrefix), "stake is owner-locked: it cannot be sent or unshielded")
@@ -351,7 +370,12 @@ public final class PrivacyWallet: @unchecked Sendable {
 
     // MARK: - personhood
 
-    /// The notes a registration pays, and the binding its passport proof carries. Hold until `register`.
+    /// The notes a registration pays and the binding its passport proof
+    /// carries. Hold until `register`. Both notes are chain-minted, so each
+    /// carries a v2 ciphertext of fresh secrets to our own address; the
+    /// binding covers those ciphertexts, so they are written here, before the
+    /// passport is proven, and sent exactly as they are. `gas` is the
+    /// /gas/register note (its ciphertext is not bound).
     public struct RegistrationPrep: Sendable {
         public let anml: NoteOut
         public let erth: NoteOut
@@ -364,12 +388,11 @@ public final class PrivacyWallet: @unchecked Sendable {
     public func prepareRegistration(affiliate: String?) async throws -> RegistrationPrep {
         try await locked {
             let aff = affiliate?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let anml = try NoteOut.toSelf(keys, denom: "uanml", value: Self.anmlPerClaim)
-            // The reward's value is the chain's to decide: minted at its public amount.
-            let erth = mint("uerth")
-            let gas = mint("uerth")
-            let binding = PrivacyHash.registrationBinding(idc: keys.idc, pcAnml: anml.pc, pcErth: erth.pc,
-                                                          affiliate: try PrivateMsgs.affiliateField(aff))
+            let anml = try mint("uanml")
+            let erth = try mint("uerth")
+            let gas = try mint("uerth")
+            let binding = PrivacyHash.registrationBinding(idc: keys.idc, pcAnml: anml.pc, ctAnml: anml.ciphertext, pcErth: erth.pc,
+                                                          ctErth: erth.ciphertext, affiliate: try PrivateMsgs.affiliateField(aff))
             return RegistrationPrep(anml: anml, erth: erth, gas: gas, affiliate: aff, binding: binding, idc: keys.idc)
         }
     }
@@ -382,57 +405,64 @@ public final class PrivacyWallet: @unchecked Sendable {
     }
 
     /// Broadcasts the registration, its fee paid by a fee bundle (the gas
-    /// grant's note, on a first registration), and records the identity
-    /// leaf it wrote. `publicSignals` are the passport proof's: [current_date,
-    /// address, nullifier, dsc_key].
+    /// grant's note, on a first registration) that also carries the
+    /// registration record note (PRIVACY_FORMATS.md 3a: a value-0 note to
+    /// ourselves whose memo lets a wallet restored from the mnemonic find the
+    /// leaf), and records the registration as pending before anything else
+    /// (C2), then tries to resolve it. `publicSignals` are the passport
+    /// proof's: [current_date, address, nullifier, dsc_key].
     public func register(_ prep: RegistrationPrep, proof: Data, publicSignals: [String], signatureAlgorithm: String, dscDer: Data) async throws -> TxResult {
         let mx = await maxActions()
-        return try await locked {
+        let result: TxResult = try await locked {
             try require(publicSignals.count == 4, "a passport proof has four public signals")
             try require(try PrivateMsgs.decimalField(publicSignals[1]) == prep.binding, "the passport proof is bound to other notes")
             let base = registerMsg(prep, proof: proof, publicSignals: publicSignals, signatureAlgorithm: signatureAlgorithm, dscDer: dscDer)
+            let dscKey = try PrivateMsgs.decimalField(publicSignals[3])
+            let hint = Self.dscCountry(dscDer)
+            let record = try NoteOut.to(keys.address, denom: Self.fee, value: 0,
+                                        memo: WalletSync.regMemo(dscKey: dscKey, country: hint, builtAt: UInt64(max(0, now()))))
             let result = try await run { fee in
-                Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)]) { bs, _, _ in
+                Assembled(bundles: [try self.bundle([record], release: [Self.fee: fee], maxActions: mx)]) { bs, _, _ in
                     var m = base
                     m.fee = bs[0]
                     return m
                 }
             }
-            try await recordRegistrationLocked(result, dscKey: try PrivateMsgs.decimalField(publicSignals[3]), passportNullifier: publicSignals[2])
+            try recordPendingLocked(result, dscKey: dscKey, publicSignals: publicSignals, countryHint: hint)
             return result
         }
+        _ = try? await sync()
+        return result
     }
 
-    /// The leaf the registration appended: its index from the tx's register
-    /// event, activated_at the block time. The country (the verifying CSCA's,
-    /// which the chain records) is found by recomputing the leaf for every
-    /// ISO alpha-2 code and unknown, against the leaf the indexer serves at
-    /// that index: no query names this registration.
-    public func recordRegistration(_ result: TxResult, dscKey: Fr, passportNullifier: String) async throws {
-        try await locked { try await recordRegistrationLocked(result, dscKey: dscKey, passportNullifier: passportNullifier) }
+    /// Persists the committed registration as pending (C2) — its leaf index
+    /// from the tx's register event, activated_at its block time — before
+    /// syncing, so a lagging indexer can never lose it; every later sync
+    /// retries until the leaf is in the local identity tree and matches.
+    public func recordRegistration(_ result: TxResult, dscKey: Fr, publicSignals: [String], countryHint: String = "") async throws {
+        try await locked { try recordPendingLocked(result, dscKey: dscKey, publicSignals: publicSignals, countryHint: countryHint) }
+        _ = try? await sync()
     }
 
-    private func recordRegistrationLocked(_ result: TxResult, dscKey: Fr, passportNullifier: String) async throws {
+    private func recordPendingLocked(_ result: TxResult, dscKey: Fr, publicSignals: [String], countryHint: String) throws {
         guard let index = result.attr("register", "leaf_index").flatMap(UInt64.init) else {
             throw PrivacyError("registration tx \(result.hash) has no leaf_index")
         }
-        _ = try await syncLocked()
-        try require(index < store.identityTree.size, "the indexer has not seen leaf \(index) yet")
-        let leaf = store.identityTree.leaf(index)
-        let activatedAt = UInt64(max(0, result.time))
-        guard let country = countryFor(leaf: leaf, dscKey: dscKey, activatedAt: activatedAt) else {
-            throw PrivacyError("leaf \(index) does not match this registration")
+        store.mutate {
+            $0.pendingRegistration = PendingRegistration(
+                txHash: result.hash, leafIndex: index, dscKey: dscKey, passportNullifier: publicSignals.count > 2 ? publicSignals[2] : "",
+                publicSignals: publicSignals, activatedAt: UInt64(max(0, result.time)), countryHint: countryHint)
         }
-        store.mutate { $0.identity = IdentityRecord(leafIndex: index, dscKey: dscKey, country: country, activatedAt: activatedAt,
-                                                     passportNullifier: passportNullifier) }
         store.save()
     }
 
-    private func countryFor(leaf: Fr, dscKey: Fr, activatedAt: UInt64) -> Fr? {
-        var candidates: [Fr] = [.zero]
-        let az = (UInt8(ascii: "A") ... UInt8(ascii: "Z"))
-        for a in az { for b in az { candidates.append(PrivacyHash.countryField(String(bytes: [a, b], encoding: .ascii)!)) } }
-        return candidates.first { PrivacyHash.identityLeaf(idc: keys.idc, dscKey: dscKey, country: $0, activatedAt: activatedAt) == leaf }
+    /// The ISO alpha-2 of the DSC's issuer (C=): the wallet's guess at the
+    /// country the chain records for the registration (the verifying CSCA's).
+    /// "" when unparsable.
+    public static func dscCountry(_ dscDer: Data) -> String {
+        guard let c = try? Certificate.issuerCountry(der: dscDer) else { return "" }
+        let u = c.uppercased()
+        return u.utf8.count == 2 && u.utf8.allSatisfy({ (0x41 ... 0x5a).contains($0) }) ? u : ""
     }
 
     /// Today's ANML. Opens once the identity was activated before yesterday began.
@@ -440,7 +470,8 @@ public final class PrivacyWallet: @unchecked Sendable {
         let mx = await maxActions()
         return try await locked {
             let day = day ?? today()
-            let anml = try NoteOut.toSelf(keys, denom: "uanml", value: Self.anmlPerClaim)
+            // Chain-minted: a v2 ciphertext, opened against the mint's public amount.
+            let anml = try mint("uanml")
             let m = try membership(scope: PrivacyHash.claimScope(day: day), excludedDsc: .zero, excludedCountry: .zero,
                                    maxActivation: (day - 1) * UInt64(Self.secondsPerDay))
             let r = try await run { fee in
@@ -607,11 +638,13 @@ public final class PrivacyWallet: @unchecked Sendable {
     private func stakeAnchor() -> Fr { store.stakeTree.size == 0 ? .zero : store.stakeTree.root() }
 
     private func stakePlan(_ denom: String?, spends: [OwnedStakeNote], outAmounts: [UInt64], vOut: UInt64,
-                           mint: (rho: Fr, rcm: Fr) = StakePlan.throwaway(), salt: Fr = StakePlan.throwaway().rho,
+                           mint: StakePlan.SelfMint? = nil, salt: Fr = StakePlan.throwaway().rho,
                            anchor: Fr? = nil, paths: [[Fr]]? = nil) throws -> StakePlan {
+        // mint: a self-mint for a msg the chain mints a stake note for; nil: throwaway secrets, no ciphertext.
         let outs = try outAmounts.filter { $0 > 0 }.map { try StakePlan.out(keys, denom: denom!, amount: $0) }
         return try StakePlan(nk: keys.nk, denom: denom, spends: spends, paths: paths ?? spends.map { store.stakeTree.path($0.position) },
-                             outputs: outs, mint: mint, tagSalt: salt, anchor: anchor ?? stakeAnchor(), vOut: vOut)
+                             outputs: outs, mint: mint.map { ($0.rho, $0.rcm) } ?? StakePlan.throwaway(), tagSalt: salt,
+                             anchor: anchor ?? stakeAnchor(), vOut: vOut, mintCiphertext: mint?.ciphertext ?? Data())
     }
 
     /// Stake notes of `denom` this wallet can spend now.
@@ -626,11 +659,12 @@ public final class PrivacyWallet: @unchecked Sendable {
         try require(amount > 0, "the amount must be positive")
         let mx = await maxActions()
         return try await locked {
-            let stake = try stakePlan(Self.derthDenom(validator), spends: [], outAmounts: [], vOut: 0, mint: stakeMint())
+            let stake = try stakePlan(Self.derthDenom(validator), spends: [], outAmounts: [], vOut: 0, mint: try stakeMint())
             return try await run { fee in
+                // The fee is the bundle's uerth balance less amount.
                 let b = try self.bundle(release: try Self.plus([Self.fee: amount], Self.fee, fee), maxActions: mx)
                 return Assembled(bundles: [b], stake: stake) { bs, sp, _ in
-                    MsgShieldedDelegate(bundle: bs[0], validator: validator, fee: fee, stake: sp!)
+                    MsgShieldedDelegate(bundle: bs[0], validator: validator, amount: amount, stake: sp!)
                 }
             }
         }
@@ -649,11 +683,12 @@ public final class PrivacyWallet: @unchecked Sendable {
         let denom = Self.derthDenom(validator)
         try require((1 ... 2).contains(notes.count) && (1 ... 2).contains(amounts.count) && amounts.allSatisfy { $0 > 0 },
                     "a restake spends and creates one or two notes")
-        try require(notes.reduce(0) { $0 + $1.amount } == amounts.reduce(0, +), "a restake keeps the amount")
+        try require(notes.reduce(UInt64(0)) { PrivateMsgs.saturatingAdd($0, $1.amount) } == amounts.reduce(0, PrivateMsgs.saturatingAdd)
+                    && !amounts.contains(.max), "a restake keeps the amount")
         let stake = try stakePlan(denom, spends: notes, outAmounts: amounts, vOut: 0)
         return try await run { fee in
             Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
-                MsgRestake(bundle: bs[0], validator: validator, fee: fee, stake: sp!)
+                MsgRestake(bundle: bs[0], validator: validator, stake: sp!)
             }
         }
     }
@@ -668,7 +703,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         var out: [TxResult] = []
         while true {
             let ns = snapshot.stakeNotes.filter { $0.spendable && $0.denom == denom }
-            let top2 = ns.map(\.amount).sorted(by: >).prefix(2).reduce(0, +)
+            let top2 = ns.map(\.amount).sorted(by: >).prefix(2).reduce(0, PrivateMsgs.saturatingAdd)
             if top2 >= amount || ns.count < 3 { return out }
             out.append(try await mergeStake(denom: denom))
             try await sync()
@@ -681,7 +716,9 @@ public final class PrivacyWallet: @unchecked Sendable {
         return try await locked {
             let two = Array(spendableStake(denom).sorted { $0.amount < $1.amount }.prefix(2))
             try require(two.count == 2, "nothing to merge")
-            return try await restakeLocked(validator: try Self.parseDerth(denom), notes: two, amounts: [two[0].amount + two[1].amount], mx: mx)
+            let (sum, o) = two[0].amount.addingReportingOverflow(two[1].amount)
+            try require(!o, "stake amounts overflow")
+            return try await restakeLocked(validator: try Self.parseDerth(denom), notes: two, amounts: [sum], mx: mx)
         }
     }
 
@@ -693,27 +730,38 @@ public final class PrivacyWallet: @unchecked Sendable {
         return try await locked {
             let denom = Self.derthDenom(validator)
             let ins = try StakeSelection.cover(spendableStake(denom), amount: amount)
-            let stake = try stakePlan(denom, spends: ins, outAmounts: [ins.reduce(0) { $0 + $1.amount } - amount], vOut: amount, mint: stakeMint())
+            let stake = try stakePlan(denom, spends: ins, outAmounts: [try Self.sum(ins) - amount], vOut: amount, mint: try stakeMint())
             return try await run { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
-                    MsgShieldedUndelegate(bundle: bs[0], validator: validator, amount: amount, fee: fee, stake: sp!)
+                    MsgShieldedUndelegate(bundle: bs[0], validator: validator, amount: amount, stake: sp!)
                 }
             }
         }
     }
 
+    /// Stake notes' summed amount; an overflowing sum (a forged index) is an error, never a trap.
+    private static func sum(_ ns: [OwnedStakeNote]) throws -> UInt64 {
+        var t: UInt64 = 0
+        for n in ns {
+            let (s, o) = t.addingReportingOverflow(n.amount)
+            try require(!o, "stake amounts overflow")
+            t = s
+        }
+        return t
+    }
+
     /// Claims matured unbonding claims of `denom` (unbond/<valoper>/<epoch>,
-    /// up to two notes a claim): the chain mints their ERTH to our self-mint
-    /// pc in the pool, the fee out of it (fee_from_output), so the msg
-    /// carries no bundle at all.
+    /// up to two notes a claim): the chain mints their ERTH to a pc of ours in
+    /// the pool (v2 ciphertext), the fee out of it (fee_from_output, the one
+    /// msg that may), so the msg carries no bundle at all.
     public func claimUnbonding(denom: String) async throws -> TxResult {
         try await locked {
             let (validator, epoch) = try Self.parseUnbond(denom)
             let ins = Array(spendableStake(denom).sorted { $0.amount > $1.amount }.prefix(2))
             try require(!ins.isEmpty, "no unbonding claim of \(denom)")
-            let amount = ins.reduce(0) { $0 + $1.amount }
+            let amount = try Self.sum(ins)
             let stake = try stakePlan(denom, spends: ins, outAmounts: [], vOut: amount)
-            let erth = mint(Self.fee)
+            let erth = try mint(Self.fee)
             return try await run { fee in
                 Assembled(bundles: [], stake: stake) { _, sp, _ in
                     MsgClaimUnbonding(validator: validator, epoch: epoch, amount: amount, pc: erth.pc.bytes, ciphertext: erth.ciphertext,
@@ -746,12 +794,12 @@ public final class PrivacyWallet: @unchecked Sendable {
         guard tree.rootAt(snap.treeSize) == snap.root else {
             throw PrivacyError("the local stake tree disagrees with the proposal's snapshot root")
         }
-        let weight = notes.reduce(0) { $0 + $1.amount }
-        let stake = try stakePlan(denom, spends: notes, outAmounts: [], vOut: weight, mint: stakeMint(), anchor: snap.root,
+        let weight = try Self.sum(notes)
+        let stake = try stakePlan(denom, spends: notes, outAmounts: [], vOut: weight, mint: try stakeMint(), anchor: snap.root,
                                   paths: notes.map { tree.pathAt($0.position, size: snap.treeSize) })
         return try await run { fee in
             Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
-                MsgStakeVote(bundle: bs[0], proposalID: proposalID, validator: validator, options: options, weight: weight, fee: fee, stake: sp!)
+                MsgStakeVote(bundle: bs[0], proposalID: proposalID, validator: validator, options: options, weight: weight, stake: sp!)
             }
         }
     }
@@ -796,29 +844,40 @@ public final class PrivacyWallet: @unchecked Sendable {
         let notes = Self.eligible(snapshot.stakeNotes, snap)
         let ps = Self.votingPositions(positions, snapshot: snap)
         var total: UInt64 = 0
-        for n in notes { total += Self.derthValue(n.amount, rate: snap.rates[(try? Self.parseDerth(n.denom)) ?? ""] ?? 1) }
-        for p in ps { total += Self.derthValue(p.derth, rate: snap.rates[p.validator] ?? 1) }
+        for n in notes { total = PrivateMsgs.saturatingAdd(total, Self.derthValue(n.amount, rate: snap.rates[(try? Self.parseDerth(n.denom)) ?? ""] ?? 1)) }
+        for p in ps { total = PrivateMsgs.saturatingAdd(total, Self.derthValue(p.derth, rate: snap.rates[p.validator] ?? 1)) }
         return StakeWeight(notes: notes.count, positionIDs: Set(ps.map(\.id)), uerth: total)
     }
 
     /// Votes every eligible derth note on `proposalID`, two notes of one
     /// validator a tx. Final: the spent nullifiers and the re-minted notes'
     /// absence from the snapshot root stop a second vote.
+    ///
+    /// One vote at a time (L4): between votes a full sync (so the next fee
+    /// is laid out from the chain's view, never the previous vote's change
+    /// unseen) and a random pause of `votePauseMinMs`...`votePauseMaxMs`,
+    /// so the votes are not one burst that times them together.
     public func stakeVoteAll(proposalID: UInt64, options: [WeightedVoteOption]) async throws -> [TxResult] {
         let ns = try await stakeVoteNotes(proposalID: proposalID)
         try require(!ns.isEmpty, "no stake from before this proposal's snapshot")
         var byDenom: [String: [OwnedStakeNote]] = [:]
-        var order: [String] = []
-        for n in ns {
-            if byDenom[n.denom] == nil { order.append(n.denom) }
-            byDenom[n.denom, default: []].append(n)
+        for n in ns { byDenom[n.denom, default: []].append(n) }
+        var groups: [[OwnedStakeNote]] = []
+        for d in byDenom.keys.sorted() {
+            let g = byDenom[d]!
+            for i in stride(from: 0, to: g.count, by: 2) { groups.append(Array(g[i ..< min(i + 2, g.count)])) }
         }
+        groups.shuffle()
         var out: [TxResult] = []
-        for d in order {
-            let group = byDenom[d]!
-            for i in stride(from: 0, to: group.count, by: 2) {
-                out.append(try await stakeVote(proposalID: proposalID, notes: Array(group[i ..< min(i + 2, group.count)]), options: options))
+        for (i, g) in groups.enumerated() {
+            if i > 0 {
+                try await pause(UInt64.random(in: Self.votePauseMinMs ... Self.votePauseMaxMs))
+                try await sync()
             }
+            // The notes as the last sync left them (a pending one is skipped).
+            let current = snapshot.stakeNotes
+            let now = g.compactMap { n in current.first { $0.position == n.position && $0.spendable } }
+            if !now.isEmpty { out.append(try await stakeVote(proposalID: proposalID, notes: now, options: options)) }
         }
         return out
     }
@@ -826,49 +885,77 @@ public final class PrivacyWallet: @unchecked Sendable {
     // MARK: - Groundworks positions
 
     /// This wallet's Groundworks positions: the public positions whose owner
-    /// tag is one of ours (owner-tag counters 0 ... last+gap, so a wallet
-    /// restored from the mnemonic finds them too), each with its counter.
+    /// tag is one of ours (owner-tag counters 0 ... next + otagGap, extended
+    /// past every match, so a wallet restored from the mnemonic finds them
+    /// too), each with its counter, by position id.
     public func positions() async throws -> [(position: PrivacyReads.Position, counter: UInt32)] {
         let all = try await reads.positions()
-        return await locked {
-            let next = store.state.nextOtagCounter
+        return await locked { positionsLocked(all) }
+    }
+
+    private var otags: [UInt32: Fr] = [:]
+
+    private func ownerTag(_ c: UInt32) -> Fr {
+        if let t = otags[c] { return t }
+        let t = keys.ownerTag(c)
+        otags[c] = t
+        return t
+    }
+
+    private func positionsLocked(_ all: [PrivacyReads.Position]) -> [(position: PrivacyReads.Position, counter: UInt32)] {
+        let next = store.state.nextOtagCounter
+        // Closed positions vanish from the chain, so the window must cross a
+        // run of them (and of failed locks) to reach a live one.
+        var limit = next.addingReportingOverflow(Self.otagGap).overflow ? UInt32.max : next + Self.otagGap
+        var out: [(position: PrivacyReads.Position, counter: UInt32)] = []
+        var from: UInt32 = 0
+        while from < limit {
             var mine: [Fr: UInt32] = [:]
-            for c in 0 ..< next + WalletSync.mintGap { mine[keys.ownerTag(c)] = c }
-            let out = all.compactMap { p in mine[p.ownerTag].map { (position: p, counter: $0) } }
-            if let top = out.map(\.counter).max(), top + 1 > next {
-                store.mutate { $0.nextOtagCounter = top + 1 }
-                store.save()
+            for c in from ..< limit { mine[ownerTag(c)] = c }
+            let found = all.compactMap { p in mine[p.ownerTag].map { (position: p, counter: $0) } }
+            out += found
+            from = limit
+            if let top = found.map(\.counter).max() {
+                let (want, o) = top.addingReportingOverflow(1 + Self.otagGap)
+                if !o, want > limit { limit = want }
             }
-            return out
         }
+        if let top = out.map(\.counter).max(), top < UInt32.max, top + 1 > next {
+            store.mutate { $0.nextOtagCounter = top + 1 }
+            store.save()
+        }
+        return out.sorted { $0.position.id < $1.position.id }
     }
 
     /// Locks `amount` derth/`validator` into a new position split by `splits`, under a fresh owner tag.
     public func lockPosition(validator: String, amount: UInt64, splits: [UInt64: UInt64]) async throws -> TxResult {
         let mx = await maxActions()
+        let all = try await reads.positions()
         return try await locked {
             let denom = Self.derthDenom(validator)
             let ins = try StakeSelection.cover(spendableStake(denom), amount: amount)
+            // A restored wallet's counter starts past every tag it already holds.
+            _ = positionsLocked(all)
             let counter = store.mutate { s -> UInt32 in
                 let c = s.nextOtagCounter
                 s.nextOtagCounter += 1
                 return c
             }
             store.save()
-            let stake = try stakePlan(denom, spends: ins, outAmounts: [ins.reduce(0) { $0 + $1.amount } - amount], vOut: amount,
+            let stake = try stakePlan(denom, spends: ins, outAmounts: [try Self.sum(ins) - amount], vOut: amount,
                                       salt: keys.otagSalt(counter))
             let w = Self.weights(splits)
             return try await run { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
-                    MsgLockPosition(bundle: bs[0], validator: validator, amount: amount, splits: w, fee: fee, stake: sp!)
+                    MsgLockPosition(bundle: bs[0], validator: validator, amount: amount, splits: w, stake: sp!)
                 }
             }
         }
     }
 
-    private func ownerPlan(_ position: PrivacyReads.Position, counter: UInt32, mint: (rho: Fr, rcm: Fr)? = nil) throws -> StakePlan {
+    private func ownerPlan(_ position: PrivacyReads.Position, counter: UInt32, mint: StakePlan.SelfMint? = nil) throws -> StakePlan {
         guard keys.ownerTag(counter) == position.ownerTag else { throw PrivacyError("position \(position.id) is not owned by tag \(counter)") }
-        return try stakePlan(nil, spends: [], outAmounts: [], vOut: 0, mint: mint ?? StakePlan.throwaway(), salt: keys.otagSalt(counter))
+        return try stakePlan(nil, spends: [], outAmounts: [], vOut: 0, mint: mint, salt: keys.otagSalt(counter))
     }
 
     public func updatePosition(_ position: PrivacyReads.Position, counter: UInt32, splits: [UInt64: UInt64]) async throws -> TxResult {
@@ -878,7 +965,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             let w = Self.weights(splits)
             return try await run { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
-                    MsgUpdatePosition(bundle: bs[0], positionID: position.id, splits: w, fee: fee, stake: sp!)
+                    MsgUpdatePosition(bundle: bs[0], positionID: position.id, splits: w, stake: sp!)
                 }
             }
         }
@@ -888,10 +975,10 @@ public final class PrivacyWallet: @unchecked Sendable {
     public func unlockPosition(_ position: PrivacyReads.Position, counter: UInt32) async throws -> TxResult {
         let mx = await maxActions()
         return try await locked {
-            let stake = try ownerPlan(position, counter: counter, mint: stakeMint())
+            let stake = try ownerPlan(position, counter: counter, mint: try stakeMint())
             return try await run { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
-                    MsgUnlockPosition(bundle: bs[0], positionID: position.id, fee: fee, stake: sp!)
+                    MsgUnlockPosition(bundle: bs[0], positionID: position.id, stake: sp!)
                 }
             }
         }
@@ -903,7 +990,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             let stake = try ownerPlan(position, counter: counter)
             return try await run { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
-                    MsgPositionVote(bundle: bs[0], positionID: position.id, proposalID: proposalID, options: options, fee: fee, stake: sp!)
+                    MsgPositionVote(bundle: bs[0], positionID: position.id, proposalID: proposalID, options: options, stake: sp!)
                 }
             }
         }
@@ -912,12 +999,10 @@ public final class PrivacyWallet: @unchecked Sendable {
     // MARK: - dex
 
     /// Swaps `amountIn` `denomIn` from notes for at least `minOut` `denomOut`
-    /// (any pools, through the ERTH hub), the output minted to us or to `to`.
-    /// Its value is the pool's to decide: to us a self-mint found by its
-    /// public amount, to anyone else a value-blind (v2) ciphertext. A swap
-    /// into ERTH pays its fee out of the output (fee_from_output; the chain
-    /// needs min_out above the fee); any other pays from the bundle's ERTH
-    /// balance.
+    /// (any pools, through the ERTH hub), the output minted to us or to `to`
+    /// with a value-blind (v2) ciphertext opened against the amount the chain
+    /// publishes. The fee comes from the bundle's ERTH balance (the one fee
+    /// rule: a swap of ANML into ERTH needs an ERTH note for it too).
     public func noteSwap(denomIn: String, amountIn: UInt64, denomOut: String, minOut: UInt64, to: ShieldedAddress? = nil) async throws -> TxResult {
         try require(denomIn != denomOut && amountIn > 0 && minOut > 0, "a swap needs two denoms and positive amounts")
         try Self.requireTransferable(denomIn)
@@ -925,18 +1010,10 @@ public final class PrivacyWallet: @unchecked Sendable {
         return try await locked {
             let out = try payout(denomOut, to: to)
             return try await run { fee in
-                if denomOut == Self.fee {
-                    try require(minOut > fee, "the minimum received must exceed the \(fee)uerth fee paid from it")
-                    let b = try self.bundle(release: [denomIn: amountIn], maxActions: mx)
-                    return Assembled(bundles: [b]) { bs, _, _ in
-                        MsgNoteSwap(bundle: bs[0], denomOut: denomOut, minAmountOut: minOut, pc: out.pc.bytes, ciphertext: out.ciphertext,
-                                    feeFromOutput: fee, fee: 0)
-                    }
-                }
                 let b = try self.bundle(release: try Self.plus([denomIn: amountIn], Self.fee, fee), maxActions: mx)
                 return Assembled(bundles: [b]) { bs, _, _ in
-                    MsgNoteSwap(bundle: bs[0], denomOut: denomOut, minAmountOut: minOut, pc: out.pc.bytes, ciphertext: out.ciphertext,
-                                feeFromOutput: 0, fee: fee)
+                    MsgNoteSwap(bundle: bs[0], denomIn: denomIn, amountIn: amountIn, denomOut: denomOut, minAmountOut: minOut,
+                                pc: out.pc.bytes, ciphertext: out.ciphertext)
                 }
             }
         }
@@ -944,22 +1021,23 @@ public final class PrivacyWallet: @unchecked Sendable {
 
     /// Deposits `tokenAmount` `token` and `erthAmount` uerth from notes into
     /// `poolID`, in one bundle (its token balance the token leg, its uerth
-    /// balance less the fee the ERTH leg). The LP shares are private: minted
-    /// as a dexlp/<pool> note to our self-mint pc. Whatever the pool ratio
-    /// does not take is minted back to one self-mint pc (a note per asset).
+    /// balance less the fee the ERTH leg, named as erth_amount). The LP
+    /// shares are private: minted as a dexlp/<pool> note to a pc of ours.
+    /// Whatever the pool ratio does not take is minted back to one refund pc
+    /// (a note per asset, both opened by the one v2 refund ciphertext).
     public func addLiquidityShielded(poolID: UInt64, token: String, tokenAmount: UInt64, erthAmount: UInt64,
                                      minShares: String) async throws -> TxResult {
         try require(tokenAmount > 0 && erthAmount > 0 && token != Self.fee, "both legs must be positive")
         let mx = await maxActions()
         return try await locked {
-            let refund = mint(token)
-            let shares = mint(Self.lpDenom(poolID))
+            let refund = try mint(token)
+            let shares = try mint(Self.lpDenom(poolID))
             return try await run { fee in
                 let b = try self.bundle(release: try Self.plus([token: tokenAmount, Self.fee: erthAmount], Self.fee, fee), maxActions: mx)
                 return Assembled(bundles: [b]) { bs, _, _ in
                     MsgAddLiquidityShielded(bundle: bs[0], poolID: poolID, minShares: minShares, refundPC: refund.pc.bytes,
-                                            refundCiphertext: refund.ciphertext, fee: fee, sharePC: shares.pc.bytes,
-                                            shareCiphertext: shares.ciphertext)
+                                            refundCiphertext: refund.ciphertext, sharePC: shares.pc.bytes,
+                                            shareCiphertext: shares.ciphertext, erthAmount: erthAmount)
                 }
             }
         }
@@ -967,17 +1045,17 @@ public final class PrivacyWallet: @unchecked Sendable {
 
     /// Withdraws `shares` dexlp/`poolID` from share notes: escrowed for the
     /// dex's LP unbonding period with no account named, then both legs (ERTH
-    /// and `token`) minted to our self-mint pcs as notes.
+    /// and `token`) minted to pcs of ours as notes (v2 ciphertexts).
     public func removeLiquidityShielded(poolID: UInt64, token: String, shares: UInt64) async throws -> TxResult {
         try require(shares > 0, "the shares must be positive")
         let mx = await maxActions()
         return try await locked {
-            let erth = mint(Self.fee)
-            let tok = mint(token)
+            let erth = try mint(Self.fee)
+            let tok = try mint(token)
             return try await run { fee in
                 let b = try self.bundle(release: [Self.lpDenom(poolID): shares, Self.fee: fee], maxActions: mx)
                 return Assembled(bundles: [b]) { bs, _, _ in
-                    MsgRemoveLiquidityShielded(bundle: bs[0], poolID: poolID, fee: fee, erthPC: erth.pc.bytes, erthCiphertext: erth.ciphertext,
+                    MsgRemoveLiquidityShielded(bundle: bs[0], poolID: poolID, erthPC: erth.pc.bytes, erthCiphertext: erth.ciphertext,
                                                tokenPC: tok.pc.bytes, tokenCiphertext: tok.ciphertext)
                 }
             }
@@ -987,20 +1065,20 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// Private LP shares per pool id (dexlp/<id> notes).
     public func lpShares() -> [UInt64: UInt64] { snapshot.lpShares }
 
-    /// The pc a pool-1 MsgRemoveLiquidity names for its ANML leg (signed by
-    /// the provider's transparent key): a self-mint, since the payout is
-    /// priced when the withdrawal matures.
-    public func withdrawalPC() async throws -> Data {
-        try await locked { try payout("uanml", to: nil).pc.bytes }
+    /// The note a pool-1 MsgRemoveLiquidity names for its ANML leg (signed
+    /// by the provider's transparent key): pc and v2 ciphertext to us, since
+    /// the payout is priced when the withdrawal matures.
+    public func withdrawalNote() async throws -> NoteOut {
+        try await locked { try payout("uanml", to: nil) }
     }
 
     /// Where a chain-priced payment goes (a swap's or a MsgBuyAnml's output,
-    /// a withdrawal's token leg): to us, a self-mint pc; to `to`, `to`'s pc
-    /// with a value-blind (v2) ciphertext it can open once the chain
-    /// publishes the amount.
+    /// a withdrawal's token leg): a pc of fresh secrets, ours or `to`'s, with
+    /// a value-blind (v2) ciphertext the owner opens once the chain publishes
+    /// the amount.
     private func payout(_ denom: String, to: ShieldedAddress?) throws -> NoteOut {
         if let to, to.ownerPK != keys.ownerPK { return try NoteOut.blindTo(to, denom: denom) }
-        return mint(denom)
+        return try mint(denom)
     }
 
     /// The output for a MsgBuyAnml (signed by the caller's transparent key).
@@ -1015,16 +1093,6 @@ public final class PrivacyWallet: @unchecked Sendable {
         await locked {
             store.mutate { $0.unbondRetryAt[denom] = until }
             store.save()
-        }
-    }
-
-    /// The membership witness for a transparent gas grant (GasTransparent),
-    /// against the synced identity tree.
-    func gasWitness(scope: Fr, signal: Fr, maxActivation: UInt64) async throws -> MembershipWitness {
-        try await locked {
-            let w = try membership(scope: scope, excludedDsc: .zero, excludedCountry: .zero, maxActivation: maxActivation).witness(signal: signal)
-            try w.check()
-            return w
         }
     }
 }

@@ -44,7 +44,11 @@ private func checkRegistration() {
 
     let keys = try! PrivacyKeys.fromMnemonic(
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
-    let binding = PrivacyHash.registrationBinding(idc: keys.idc, pcAnml: keys.mintPC(0), pcErth: keys.mintPC(1), affiliate: .zero)
+    let anml = try! NoteOut.mintToSelf(keys, denom: "uanml")
+    let erth = try! NoteOut.mintToSelf(keys, denom: "uerth")
+    let gas = try! NoteOut.mintToSelf(keys, denom: "uerth")
+    let binding = PrivacyHash.registrationBinding(idc: keys.idc, pcAnml: anml.pc, ctAnml: anml.ciphertext, pcErth: erth.pc,
+                                                  ctErth: erth.ciphertext, affiliate: .zero)
 
     var seenAlgorithm: String?
     var seenAddress: String?
@@ -80,12 +84,15 @@ private func checkRegistration() {
     let dsc = try! PassportRegistration.dscDER(scan: scan)
     let msg = MsgRegisterPrivate(fee: nil, proof: proof!.proof, publicSignals: proof!.publicSignals,
                                  signatureAlgorithm: proof!.signatureAlgorithm, dscDer: dsc, idc: keys.idc.bytes,
-                                 pcAnml: keys.mintPC(0).bytes, ciphertextAnml: Data(), pcErth: keys.mintPC(1).bytes,
-                                 ciphertextErth: Data(), affiliate: "")
-    let request = GasGrant.Request.register(msg, pcGas: keys.mintPC(2).bytes, ciphertextGas: Data())
+                                 pcAnml: anml.pc.bytes, ciphertextAnml: anml.ciphertext, pcErth: erth.pc.bytes,
+                                 ciphertextErth: erth.ciphertext, affiliate: "")
+    let request = GasGrant.Request.register(msg, pcGas: gas.pc.bytes, ciphertextGas: gas.ciphertext)
     let body = request.body
     Check.equal("gas grant goes to /gas/register", request.path, "/gas/register")
-    Check.equal("gas body pc_gas is standard base64", body["pc_gas"] as? String, keys.mintPC(2).bytes.base64EncodedString())
+    Check.equal("gas body pc_gas is standard base64", body["pc_gas"] as? String, gas.pc.bytes.base64EncodedString())
+    Check.equal("gas body ciphertext_gas is the 177-byte v2 ciphertext",
+                (body["ciphertext_gas"] as? String).flatMap { Data(base64Encoded: $0) }, gas.ciphertext)
+    Check.equal("ciphertext_gas is 177 bytes", gas.ciphertext.count, 177)
     Check.equal("gas body proof is standard base64",
                 body["proof"] as? String, proof!.proof.base64EncodedString())
     Check.equal("gas body dsc_der is standard base64",

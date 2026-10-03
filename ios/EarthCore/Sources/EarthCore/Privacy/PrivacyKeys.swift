@@ -62,44 +62,13 @@ public final class PrivacyKeys: @unchecked Sendable {
         try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: ekSecret)
     }
 
-    /// rho and rcm of self-mint `counter`: a note the chain mints to us at a
-    /// value we cannot know when we name its pc (a registration reward, derth
-    /// at the live rate, an unbonding payout, a gas grant). Found by sync from
-    /// its public mint amount and a pc the mnemonic alone rederives:
-    ///
-    ///     rho = HMAC-SHA512("earth.privacy.v1", "mint-rho" || nk (32) || counter u32 BE) mod p
-    ///     rcm = HMAC-SHA512("earth.privacy.v1", "mint-rcm" || nk (32) || counter u32 BE) mod p
-    public func mintSecrets(_ counter: UInt32) -> (rho: Fr, rcm: Fr) {
-        (counted("mint-rho", counter), counted("mint-rcm", counter))
-    }
+    // No self-mint counters (removed for chain fced976): every note the
+    // chain mints to this wallet carries a blind ciphertext of fresh secrets
+    // (PRIVACY_FORMATS.md section 1), found by trial decryption.
 
     private func counted(_ label: String, _ counter: UInt32) -> Fr {
         let c = Data([UInt8(counter >> 24 & 0xff), UInt8(counter >> 16 & 0xff), UInt8(counter >> 8 & 0xff), UInt8(counter & 0xff)])
         return try! Fr.fromWideBytes(Self.hmac(Data(label.utf8) + nk.bytes + c))
-    }
-
-    /// pc of self-mint `counter`.
-    public func mintPC(_ counter: UInt32) -> Fr {
-        let (rho, rcm) = mintSecrets(counter)
-        return PrivacyHash.pc(ownerPK: ownerPK, rho: rho, rcm: rcm)
-    }
-
-    /// rho and rcm of stake self-mint `counter`: the stake pc a stake proof
-    /// names as spc_mint for a stake note the chain mints to us (a
-    /// delegation's derth, an undelegation's claim, a stake vote's re-mint,
-    /// an unlocked position). The chain publishes the minted note's denom,
-    /// amount and spc, so sync finds it by its spc alone:
-    ///
-    ///     rho = HMAC-SHA512("earth.privacy.v1", "stake-rho" || nk (32) || counter u32 BE) mod p
-    ///     rcm = HMAC-SHA512("earth.privacy.v1", "stake-rcm" || nk (32) || counter u32 BE) mod p
-    public func stakeMintSecrets(_ counter: UInt32) -> (rho: Fr, rcm: Fr) {
-        (counted("stake-rho", counter), counted("stake-rcm", counter))
-    }
-
-    /// spc of stake self-mint `counter`.
-    public func stakeMintPC(_ counter: UInt32) -> Fr {
-        let (rho, rcm) = stakeMintSecrets(counter)
-        return PrivacyHash.stakePC(ownerPK: ownerPK, rho: rho, rcm: rcm)
     }
 
     /// Groundworks position `counter`'s owner-tag salt: a position stores

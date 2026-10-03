@@ -5,7 +5,12 @@ import Foundation
 /// by a position, index or height, never by anything derived from this
 /// wallet's keys, so the server learns nothing about which notes or leaf are
 /// ours.
+///
+/// Streams live under a base keyed by the chain (`/privacy/<chain_id>/<genesis>`)
+/// that `status` names; a stream call naming another chain fails with
+/// `IndexerBaseMoved` (HTTP 404), and the caller reads `status` again.
 public protocol PrivacyIndexer: Sendable {
+    /// `/privacy/status`: the chain the index holds, its base, whether it halted. Also (re)selects the base.
     func status() async throws -> IndexerStatus
     func notes(fromPos: UInt64, limit: Int?) async throws -> NotesPage
     func nullifiers(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<Fr>
@@ -26,10 +31,30 @@ public struct IndexerStatus: Sendable {
     public let notes: UInt64
     public let identityLeaves: UInt64
     public let halted: String?
-    public init(chainID: String?, syncedHeight: UInt64, syncedTime: Int64?, notes: UInt64, identityLeaves: UInt64, halted: String?) {
+    /// First 16 hex digits of the chain's first block hash: with chainID, which chain this is.
+    public let genesis: String?
+    /// `/privacy/<chain_id>/<genesis>`, nil until the indexer met its chain.
+    public let base: String?
+    public init(chainID: String?, syncedHeight: UInt64, syncedTime: Int64?, notes: UInt64, identityLeaves: UInt64, halted: String?,
+                genesis: String? = nil, base: String? = nil) {
         self.chainID = chainID; self.syncedHeight = syncedHeight; self.syncedTime = syncedTime
         self.notes = notes; self.identityLeaves = identityLeaves; self.halted = halted
+        self.genesis = genesis; self.base = base
     }
+}
+
+/// A stream request named a chain the indexer no longer holds (404): re-read `PrivacyIndexer.status`.
+public struct IndexerBaseMoved: Swift.Error, LocalizedError {
+    public let message: String
+    public init(_ message: String) { self.message = message }
+    public var errorDescription: String? { message }
+}
+
+/// The indexer refuses to serve trees it cannot vouch for (`/privacy/status` halted).
+public struct IndexerHalted: Swift.Error, LocalizedError {
+    public let reason: String
+    public init(_ reason: String) { self.reason = reason }
+    public var errorDescription: String? { "the privacy indexer has halted: \(reason)" }
 }
 
 public struct NoteRow: Sendable {
@@ -105,8 +130,9 @@ public struct LatestRoots: Sendable {
 }
 
 /// A stake tree leaf. A note the chain minted carries its public `denom`,
-/// `amount` and stake pc `spc` and no ciphertext; a note a stake proof
-/// created carries a ciphertext and none of the three.
+/// `amount` and stake pc `spc` and its blind stake ciphertext (177 bytes); a
+/// note a stake proof created carries the wallet stake ciphertext and none of
+/// the three.
 public struct StakeNoteRow: Sendable {
     public let position: UInt64
     public let height: UInt64
@@ -140,12 +166,14 @@ public struct RateRow: Sendable {
 }
 
 /// `PrivacyIndexer` over HTTP.
-public struct HTTPPrivacyIndexer: PrivacyIndexer {
-    public let base: URL
+public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
+    public let host: URL
     private let session: URLSession
+    private let lock = NSLock()
+    private var _base: String?
 
-    public init(base: URL = Constants.backendBaseURL) {
-        self.base = base
+    public init(host: URL = Constants.backendBaseURL) {
+        self.host = host
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 60
         config.timeoutIntervalForResource = 120
@@ -154,51 +182,69 @@ public struct HTTPPrivacyIndexer: PrivacyIndexer {
         session = URLSession(configuration: config)
     }
 
-    public enum Error: Swift.Error { case http(Int, String), notJSON }
+    public enum Error: Swift.Error { case http(Int, String), notJSON, noBase }
+
+    private var base: String? {
+        get { lock.lock(); defer { lock.unlock() }; return _base }
+        set { lock.lock(); _base = newValue; lock.unlock() }
+    }
 
     private func get(_ path: String) async throws -> JSON {
-        let url = URL(string: base.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + path)!
-        let (data, response) = try await session.data(from: url)
-        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard (200 ... 299).contains(code) else { throw Error.http(code, String(decoding: data, as: UTF8.self)) }
+        let url = URL(string: host.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + path)!
+        let (data, code) = try await EarthRest.boundedData(session, URLRequest(url: url))
+        if code == 404 { throw IndexerBaseMoved("indexer \(path): 404 \(String(decoding: data.prefix(200), as: UTF8.self))") }
+        guard (200 ... 299).contains(code) else { throw Error.http(code, String(decoding: data.prefix(200), as: UTF8.self)) }
         guard let o = try? JSONSerialization.jsonObject(with: data) else { throw Error.notJSON }
         return JSON(o)
+    }
+
+    /// A stream path under the current base (from `status`, read first when unknown).
+    private func stream(_ path: String) async throws -> JSON {
+        var b = base
+        if b == nil { b = try await status().base }
+        guard let b else { throw Error.noBase }
+        return try await get(b.trimmingCharacters(in: CharacterSet(charactersIn: "/")).withLeadingSlash + path)
     }
 
     private func q(_ name: String, _ v: Int?) -> String { v.map { "&\(name)=\($0)" } ?? "" }
 
     public func status() async throws -> IndexerStatus {
         let j = try await get("/privacy/status")
-        return IndexerStatus(
-            chainID: j.chain_id.string.flatMap { $0.isEmpty ? nil : $0 },
+        func str(_ x: JSON) -> String? { x.string.flatMap { $0.isEmpty ? nil : $0 } }
+        let st = IndexerStatus(
+            chainID: str(j.chain_id),
             syncedHeight: j.synced_height.uint64(default: 0),
             syncedTime: j.synced_time.int64,
             notes: j.notes.uint64(default: 0),
             identityLeaves: j.identity_leaves.uint64(default: 0),
-            halted: j.halted.string
+            halted: str(j.halted),
+            genesis: str(j.genesis),
+            base: str(j.base)
         )
+        base = st.base
+        return st
     }
 
     public func notes(fromPos: UInt64, limit: Int?) async throws -> NotesPage {
-        try Self.parseNotes(await get("/privacy/notes?from_pos=\(fromPos)\(q("limit", limit))"))
+        try Self.parseNotes(await stream("/notes?from_pos=\(fromPos)\(q("limit", limit))"))
     }
 
     public func nullifiers(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<Fr> {
-        try Self.parseHeights(await get("/privacy/nullifiers?from_height=\(fromHeight)\(q("limit", limit))")) { try Fr(hex: $0.string ?? "") }
+        try Self.parseHeights(await stream("/nullifiers?from_height=\(fromHeight)\(q("limit", limit))")) { try Fr(hex: $0.string ?? "") }
     }
 
     public func identity(fromIndex: UInt64, limit: Int?) async throws -> IdentityPage {
-        try Self.parseIdentity(await get("/privacy/identity?from_index=\(fromIndex)\(q("limit", limit))"))
+        try Self.parseIdentity(await stream("/identity?from_index=\(fromIndex)\(q("limit", limit))"))
     }
 
     public func identityZeroed(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<UInt64> {
-        try Self.parseHeights(await get("/privacy/identity/zeroed?from_height=\(fromHeight)\(q("limit", limit))")) { $0.uint64(default: 0) }
+        try Self.parseHeights(await stream("/identity/zeroed?from_height=\(fromHeight)\(q("limit", limit))")) { $0.uint64(default: 0) }
     }
 
-    public func rootsLatest() async throws -> LatestRoots { try Self.parseRoots(await get("/privacy/roots/latest")) }
+    public func rootsLatest() async throws -> LatestRoots { try Self.parseRoots(await stream("/roots/latest")) }
 
     public func rates(epoch: UInt64?) async throws -> [RateRow] {
-        let j = try await get("/privacy/rates" + (epoch.map { "?epoch=\($0)" } ?? ""))
+        let j = try await stream("/rates" + (epoch.map { "?epoch=\($0)" } ?? ""))
         return j.rates.array.map { r in
             RateRow(validator: r[0].string(default: ""), rate: r[1].string(default: "0"), supply: r[2].string(default: "0"),
                     epoch: r[3].uint64, height: r[4].uint64(default: 0))
@@ -206,11 +252,11 @@ public struct HTTPPrivacyIndexer: PrivacyIndexer {
     }
 
     public func stakeNotes(fromPos: UInt64, limit: Int?) async throws -> StakeNotesPage {
-        try Self.parseStakeNotes(await get("/privacy/stake/notes?from_pos=\(fromPos)\(q("limit", limit))"))
+        try Self.parseStakeNotes(await stream("/stake/notes?from_pos=\(fromPos)\(q("limit", limit))"))
     }
 
     public func stakeNullifiers(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<Fr> {
-        try Self.parseHeights(await get("/privacy/stake/nullifiers?from_height=\(fromHeight)\(q("limit", limit))")) { try Fr(hex: $0.string ?? "") }
+        try Self.parseHeights(await stream("/stake/nullifiers?from_height=\(fromHeight)\(q("limit", limit))")) { try Fr(hex: $0.string ?? "") }
     }
 
     static func parseStakeNotes(_ j: JSON) throws -> StakeNotesPage {
@@ -255,4 +301,8 @@ public struct HTTPPrivacyIndexer: PrivacyIndexer {
         return LatestRoots(note: try root(j.note), identity: try root(j.identity), syncedHeight: j.synced_height.uint64(default: 0),
                            stake: try root(j.stake))
     }
+}
+
+private extension String {
+    var withLeadingSlash: String { hasPrefix("/") ? self : "/" + self }
 }

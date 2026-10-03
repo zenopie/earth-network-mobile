@@ -137,8 +137,26 @@ public enum NoteCipher {
     }
 
     private static func blindPlaintext(_ n: NotePlaintext) throws -> Data {
-        guard n.memo.count <= memoBytes else { throw Error.memoTooLong }
-        return Data([blindVersion]) + n.rho.bytes + n.rcm.bytes + n.memo + Data(count: memoBytes - n.memo.count)
+        try blindPlaintext(rho: n.rho, rcm: n.rcm, memo: n.memo, version: blindVersion)
+    }
+
+    private static func blindPlaintext(rho: Fr, rcm: Fr, memo: Data, version: UInt8) throws -> Data {
+        guard memo.count <= memoBytes else { throw Error.memoTooLong }
+        return Data([version]) + rho.bytes + rcm.bytes + memo + Data(count: memoBytes - memo.count)
+    }
+
+    /// Opens a 177-byte blind ciphertext under `salt` and `version`: (rho, rcm, memo with its padding dropped).
+    private static func openBlind(_ ct: Data, ek: SecretKey, salt: Data, version: UInt8) -> (rho: Fr, rcm: Fr, memo: Data)? {
+        guard ct.count == blindCiphertextBytes else { return nil }
+        let c = Data(ct)
+        let epk = c.prefix(32)
+        guard let key = try? kdf(esk: ek, peer: epk, salt: salt, info: epk),
+              let pt = try? open(c.suffix(from: 32), key: key),
+              pt.count == blindPlaintextBytes, pt[pt.startIndex] == version
+        else { return nil }
+        let p = [UInt8](pt)
+        guard let rho = try? Fr(bytes: Data(p[1 ..< 33])), let rcm = try? Fr(bytes: Data(p[33 ..< 65])) else { return nil }
+        return (rho, rcm, trimMemo(Array(p[65...])))
     }
 
     /// A v2 note: opens `ct` with our ek, and accepts it only if the secrets
@@ -150,17 +168,38 @@ public enum NoteCipher {
     }
 
     static func tryDecryptBlind(_ ct: Data, cm: Fr, denom: String, value: UInt64, ek: SecretKey, ownerPK: Fr) -> NotePlaintext? {
-        guard ct.count == blindCiphertextBytes else { return nil }
-        let c = Data(ct)
-        let epk = c.prefix(32)
-        guard let key = try? kdf(esk: ek, peer: epk, salt: blindSalt, info: epk),
-              let pt = try? open(c.suffix(from: 32), key: key),
-              pt.count == blindPlaintextBytes, pt[pt.startIndex] == blindVersion
-        else { return nil }
-        let p = [UInt8](pt)
-        guard let rho = try? Fr(bytes: Data(p[1 ..< 33])), let rcm = try? Fr(bytes: Data(p[33 ..< 65])) else { return nil }
-        let n = NotePlaintext(denom: denom, value: value, rho: rho, rcm: rcm, memo: trimMemo(Array(p[65...])))
+        guard let o = openBlind(ct, ek: ek, salt: blindSalt, version: blindVersion) else { return nil }
+        let n = NotePlaintext(denom: denom, value: value, rho: o.rho, rcm: o.rcm, memo: o.memo)
         return n.cm(ownerPK: ownerPK) == cm ? n : nil
+    }
+
+    // MARK: - blind stake ciphertext (chain zk/privacy EncryptBlindStakeNote)
+
+    /// The blind stake ciphertext of a stake note the chain will mint to
+    /// spc = StakePC(owner_pk, `rho`, `rcm`) (StakeProof.spc_ciphertext): as
+    /// v2, under salt "earth.stake.v1" and version 0x03, 177 bytes.
+    public static func encryptBlindStake(rho: Fr, rcm: Fr, ekPub: Data, memo: Data = Data()) throws -> Data {
+        try seal(esk: SecretKey(), ekPub: ekPub, salt: stakeSalt, info: { $0 }, pt: blindPlaintext(rho: rho, rcm: rcm, memo: memo, version: stakeVersion))
+    }
+
+    /// Deterministic blind stake encryption: for golden vectors only.
+    static func encryptBlindStakeWith(esk: Data, rho: Fr, rcm: Fr, ekPub: Data, memo: Data = Data()) throws -> Data {
+        try seal(esk: SecretKey(rawRepresentation: esk), ekPub: ekPub, salt: stakeSalt, info: { $0 },
+                 pt: blindPlaintext(rho: rho, rcm: rcm, memo: memo, version: stakeVersion))
+    }
+
+    /// A minted stake note: opens `ct` (177 bytes) with our ek and accepts it
+    /// only if StakeCM(AssetID(`denom`), `amount`, StakePC(owner_pk, rho, rcm))
+    /// is `cm`, with the denom and amount the chain published. (rho, rcm) or nil.
+    public static func tryDecryptBlindStake(_ ct: Data, cm: Fr, denom: String, amount: UInt64, keys: PrivacyKeys) -> (rho: Fr, rcm: Fr)? {
+        guard let ek = try? keys.ek() else { return nil }
+        return tryDecryptBlindStake(ct, cm: cm, denom: denom, amount: amount, ek: ek, ownerPK: keys.ownerPK)
+    }
+
+    static func tryDecryptBlindStake(_ ct: Data, cm: Fr, denom: String, amount: UInt64, ek: SecretKey, ownerPK: Fr) -> (rho: Fr, rcm: Fr)? {
+        guard let o = openBlind(ct, ek: ek, salt: stakeSalt, version: stakeVersion) else { return nil }
+        let spc = PrivacyHash.stakePC(ownerPK: ownerPK, rho: o.rho, rcm: o.rcm)
+        return PrivacyHash.stakeCM(asset: PrivacyHash.assetID(denom), amount: amount, spc: spc) == cm ? (o.rho, o.rcm) : nil
     }
 
     // MARK: - stake notes (v3)

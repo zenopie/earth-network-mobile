@@ -120,6 +120,24 @@ public struct Certificate {
         self.publicKey = try Certificate.parsePublicKey(spki)
     }
 
+    /// The issuer's countryName (C=, OID 2.5.4.6), as written; nil when absent.
+    public static func issuerCountry(der: Data) throws -> String? {
+        let certificate = try DER.parse(der).expect(tag: DER.Tag.sequence)
+        let fields = try certificate.child(0).expect(tag: DER.Tag.sequence).children()
+        let base = fields.first?.tag == DER.Tag.context(0) ? 1 : 0
+        guard fields.count > base + 2 else { throw DER.Error.missingElement("issuer") }
+        // Name ::= SEQUENCE OF RelativeDistinguishedName (SET OF AttributeTypeAndValue)
+        for rdn in try fields[base + 2].children() {
+            for atv in try rdn.children() where atv.isConstructed {
+                let parts = try atv.children()
+                if parts.count == 2, parts[0].tag == DER.Tag.objectIdentifier, (try? parts[0].oid) == "2.5.4.6" {
+                    return String(data: parts[1].content, encoding: .ascii)
+                }
+            }
+        }
+        return nil
+    }
+
     private static func parsePublicKey(_ spki: DER.Element) throws -> PublicKey {
         let algorithm = try spki.child(0).expect(tag: DER.Tag.sequence)
         let algorithmOID = try algorithm.child(0).expect(tag: DER.Tag.objectIdentifier).oid
