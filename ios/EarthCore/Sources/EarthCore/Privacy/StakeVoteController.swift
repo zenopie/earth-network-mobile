@@ -95,6 +95,15 @@ public final class StakeVoteController: @unchecked Sendable {
         await t?.value
     }
 
+    private func takeKeepRun(cancelled: Bool) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        let keep = keepRun && cancelled
+        keepRun = false
+        return keep
+    }
+
+    private func clearTask() { lock.lock(); task = nil; lock.unlock() }
+
     private func launch(first: CheckedContinuation<String, Error>?, resumed: Bool) {
         let t = Task { [self] in
             var pendingFirst = first
@@ -136,9 +145,9 @@ public final class StakeVoteController: @unchecked Sendable {
                 fail(error)
             }
             // Finished, cancelled or failed: nothing to resume (a suspended run is kept).
-            lock.lock(); let keep = keepRun && Task.isCancelled; keepRun = false; lock.unlock()
+            let keep = takeKeepRun(cancelled: Task.isCancelled)
             if !keep { await w.clearStakeVoteRun(proposalID: run.proposalID) }
-            lock.lock(); task = nil; lock.unlock()
+            clearTask()
         }
         lock.lock(); task = t; lock.unlock()
     }
