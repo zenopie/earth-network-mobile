@@ -92,6 +92,11 @@ PRIVACY_FORMATS.md.
   AuditFixesTests (C1 restore after 30 abandoned preps, failed broadcasts
   and 40 failed locks; C2; C3; C4; L1; halted/relaunch; moved base; L4; L6;
   L7; L8). CURRENT_PROJECT_VERSION 12.
+- Verified: swift test EarthCore 69/69; 281 dumped witnesses (211 action,
+  61 stake, 9 membership) pass `nargo execute` and are proven by ProverGate
+  (PRIVACY_TOML_DIR) with genesis-equal VKs; ProverGate swift test passes;
+  EarthUI typechecks (build-ios.sh); xcodebuild simulator build (ARCHS=arm64,
+  unsigned) succeeds.
 
 ## Open / notes
 - Device prove times for action/stake not measured on a phone (Mac: ~150ms
