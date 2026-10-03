@@ -137,6 +137,19 @@ object SessionManager {
 
     fun isSessionActive(): Boolean = isSessionActive
 
+    /**
+     * Whether [secret] is the one the open session was unlocked with (audit
+     * 5, M3): a fresh PIN or biometric before anything that reveals a
+     * recovery phrase. Compared in constant time; the caller counts a
+     * mismatch as a failed attempt (UnlockAttempts).
+     */
+    @Synchronized
+    fun verifySecret(secret: String): Boolean {
+        val held = sessionPin ?: return false
+        if (!isSessionActive) return false
+        return java.security.MessageDigest.isEqual(secret.toByteArray(Charsets.UTF_8), held.toByteArray(Charsets.UTF_8))
+    }
+
     /** The session's wallet list: a copy, written back with [saveWallets]. */
     fun wallets(): JSONArray {
         requireActive()
