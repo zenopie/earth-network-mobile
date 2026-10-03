@@ -209,6 +209,13 @@ class TxController : ViewModel() {
         const val PRIVATE_GAS_ESTIMATE = 10_000_000L
 
         /**
+         * A handle bind's: the chain prices it as nine note writes (chain
+         * 203d3b2, audit 5 L-P5), 1.2M more than [PRIVATE_GAS_ESTIMATE]'s
+         * membership, with a three-action fee bundle (the state record).
+         */
+        const val BIND_HANDLE_GAS_ESTIMATE = 12_500_000L
+
+        /**
          * The fee for [DEFAULT_GAS_LIMIT]. Derived rather than flat: a screen
          * that raises the gas limit and keeps a flat fee builds a transaction
          * the node rejects. Use [feeFor] wherever the gas is not the default.

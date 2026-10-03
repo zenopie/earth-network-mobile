@@ -116,6 +116,8 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
             val st = w.store.state
             val live = runCatching { w.identityStatus() == WalletSync.IdentityStatus.LIVE }.getOrDefault(false)
             val params = runCatching { PrivacyQueries.personhoodParams() }.getOrNull()
+            // The claim wait uses the lease the chain's bound uses (LeaseBounds: the longest ever in force), never Params.
+            val bounds = runCatching { PrivacyQueries.leaseBounds() }.getOrNull()
             var dirError: String? = null
             // Every wallet reads the chain's own directory, whole, holder or not (audit 5: L3, L5),
             // and squares its handle with it (M1, L11: a handle a restore lost, one the chain swept).
@@ -142,7 +144,7 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
                 handle = st.handle,
                 handleEntry = entry,
                 handleMovedOut = st.handleMovedOut,
-                handleLeaseSeconds = params?.handleLeaseSeconds ?: Handles.DEFAULT_LEASE_SECONDS,
+                handleLeaseSeconds = bounds?.handleLeaseSeconds?.takeIf { it in 1..Handles.MAX_AHEAD_SECONDS } ?: Handles.DEFAULT_LEASE_SECONDS,
                 handleRenewalSeconds = params?.handleRenewalSeconds ?: Handles.DEFAULT_RENEWAL_SECONDS,
                 caretakerExpiresAt = caretakerExp,
                 caretakerMovedOut = st.caretakerMovedOut,

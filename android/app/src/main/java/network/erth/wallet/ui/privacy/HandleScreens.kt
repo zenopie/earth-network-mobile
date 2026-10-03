@@ -137,6 +137,16 @@ fun HandleScreen(
                     )
                     EarthDetailRow("Expires", date(e.expiresAt))
                     EarthDetailRow("Renewable until", date(e.renewalUntil))
+                    if (st == HandleEntry.RENEWAL) {
+                        // Chain 203d3b2: past expiry, a renewal is bounded like a claim, and the handle cannot be moved.
+                        val claimFrom = if (state.predecessorAt > 0) Handles.satAdd(Handles.satAdd(state.predecessorAt, state.handleLeaseSeconds), 86_400 + 3_600) else 0L
+                        Spacer(Modifier.height(dimens.space8))
+                        Note(
+                            "Past its expiry, renewing counts as a new claim" +
+                                (if (claimFrom > now) ", which this identity can make from ${date(claimFrom)} (it replaced another); renew before ${date(e.renewalUntil)} or the handle is freed." else ".") +
+                                " A handle in this period cannot be moved.",
+                        )
+                    }
                     EarthDetailRow(
                         "Pays",
                         if (e.address == state.shieldedAddress) "this wallet (${Handles.truncate(e.address)})"
@@ -325,7 +335,9 @@ fun SwitchIdentityScreen(
         val unrecorded = outgoing.any { !it.recorded }
         val handleMoved = state?.handleMovedOut == true
         val voteMoved = state?.caretakerMovedOut == true
-        val holdsHandle = state?.handle?.isNotEmpty() == true && !handleInFlight
+        // Chain 203d3b2: only a live handle moves (not one in its renewal period).
+        val handleInRenewal = state?.handleEntry?.let { it.statusAt(now) == HandleEntry.RENEWAL } == true
+        val holdsHandle = state?.handle?.isNotEmpty() == true && !handleInFlight && !handleInRenewal
         val holdsVote = !voteInFlight && (state?.caretakerExpiresAt ?: 0L) > now &&
             (state?.caretakerSplit?.isNotEmpty() == true || state?.caretakerSplitUnknown == true)
         fun suffix(moved: Boolean, flying: Boolean) = when {
@@ -335,6 +347,9 @@ fun SwitchIdentityScreen(
         }
         if (holdsHandle || holdsVote || inFlight || handleMoved || voteMoved) {
             EarthLabel("Move first")
+            if (handleInRenewal && !handleInFlight) {
+                Note("@${state?.handle} is past its expiry (in its renewal period): only a live handle can be moved. Renew it first to move it.")
+            }
             if (holdsHandle || handleInFlight || handleMoved) Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = moveHandle && holdsHandle, onCheckedChange = { moveHandle = it }, enabled = holdsHandle)
                 val name = state?.handle?.takeIf { it.isNotEmpty() } ?: outgoing.firstOrNull { it.kind == PendingMove.HANDLE }?.handle.orEmpty()

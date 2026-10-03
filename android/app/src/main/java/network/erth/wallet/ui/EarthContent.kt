@@ -419,6 +419,7 @@ internal fun EarthContent(
                             recipient = "@$h · ${Handles.truncate(loaded.shieldedAddress)}",
                             recipientLabel = "Pays",
                         ),
+                        estimatedFee = TxController.feeFor(TxController.BIND_HANDLE_GAS_ESTIMATE),
                         shieldedErth = loaded.shieldedErthUerth,
                         onSuccess = { PrivacyQueries.handles.invalidate(); privacy.refreshPersonal() },
                         run = { ctx -> PrivacySession.wallet(ctx).bindHandle(h).hash },
@@ -434,6 +435,7 @@ internal fun EarthContent(
                             recipient = "@$h · ${Handles.truncate(loaded.shieldedAddress)}",
                             recipientLabel = "Pays",
                         ),
+                        estimatedFee = TxController.feeFor(TxController.BIND_HANDLE_GAS_ESTIMATE),
                         shieldedErth = loaded.shieldedErthUerth,
                         onSuccess = { PrivacyQueries.handles.invalidate(); privacy.refreshPersonal() },
                         run = { ctx -> PrivacySession.wallet(ctx).bindHandle(h).hash },
@@ -447,6 +449,7 @@ internal fun EarthContent(
                             msgTypeUrl = PrivateMsgs.BIND_HANDLE,
                             balanceUerth = 0L,
                         ),
+                        estimatedFee = TxController.feeFor(TxController.BIND_HANDLE_GAS_ESTIMATE),
                         shieldedErth = loaded.shieldedErthUerth,
                         onSuccess = { PrivacyQueries.handles.invalidate(); privacy.refreshPersonal() },
                         run = { ctx -> PrivacySession.wallet(ctx).releaseHandle().hash },
@@ -1027,6 +1030,11 @@ internal fun EarthContent(
                         shieldedErth = loaded.shieldedErthUerth,
                         onSuccess = { onRefresh(); markets.refresh() },
                         run = { ctx ->
+                            // Both legs are notes: refused here, before proving, when too large (chain 203d3b2).
+                            network.erth.wallet.privacy.PrivacyWallet.checkWithdrawalNoteLegs(
+                                sharesOut, network.erth.wallet.privacy.chain.PrivacyQueries.lpShareSupply(pool.id),
+                                pool.erthReserve.toBigInteger(), pool.tokenReserve.toBigInteger(), pool.tokenDenom, erthNote = true, tokenNote = true,
+                            )
                             PrivacySession.wallet(ctx).removeLiquidityShielded(pool.id, pool.tokenDenom, sharesOut.toLong()).hash
                         },
                     )
@@ -1068,7 +1076,13 @@ internal fun EarthContent(
                                 )
                             } else {
                                 // The ANML leg is paid as a note to us.
-                                val note = if (pool.tokenDenom == Dex.SHIELDED_ONLY) PrivacySession.wallet(ctx).withdrawalNote() else null
+                                val note = if (pool.tokenDenom == Dex.SHIELDED_ONLY) {
+                                    network.erth.wallet.privacy.PrivacyWallet.checkWithdrawalNoteLegs(
+                                        sharesOut, network.erth.wallet.privacy.chain.PrivacyQueries.lpShareSupply(pool.id),
+                                        pool.erthReserve.toBigInteger(), pool.tokenReserve.toBigInteger(), pool.tokenDenom, erthNote = false, tokenNote = true,
+                                    )
+                                    PrivacySession.wallet(ctx).withdrawalNote()
+                                } else null
                                 Dex.msgRemoveLiquidity(
                                     creator,
                                     pool.id,
