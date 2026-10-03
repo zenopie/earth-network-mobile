@@ -41,6 +41,10 @@ struct EarthWalletApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                // Referral links (audit 5, M5): only the verified universal link
+                // https://erth.network/ref/<handle> (associated domains); no custom scheme.
+                .onOpenURL { ReferralStore.capture($0) }
+                .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { ReferralStore.capture($0.webpageURL) }
                 // Cover the whole app in the multitasking snapshot rather than
                 // the phrase and PIN screens individually. iOS takes that
                 // snapshot on the way out of `.active`, so covering per screen

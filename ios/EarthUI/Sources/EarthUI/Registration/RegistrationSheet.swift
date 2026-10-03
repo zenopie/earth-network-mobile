@@ -24,7 +24,10 @@ struct RegistrationSheet: View {
     @State private var step = Step.intro
     @State private var key = MRZ.Key(documentNumber: "", dateOfBirth: "", dateOfExpiry: "")
 
-    @State private var referrer = ""
+    /// A referrer from a referral link is shown filled in (the person did not type it); they may
+    /// remove or replace it (audit 5, M5), and one that does not resolve is cleared.
+    @State private var referrer = ReferralStore.get().map { "@\($0)" } ?? ""
+    @State private var referrerLocked = ReferralStore.get() != nil
 
     /// What the chip gave up, held only until the proof is built from it.
     @State private var scan: PassportRegistration.Scan?
@@ -154,6 +157,16 @@ struct RegistrationSheet: View {
             }
 
             VStack(alignment: .leading, spacing: theme.space.x8) {
+                if referrerLocked {
+                    EarthLabel("Referred by")
+                    Text(Handles.parse(referrer).map { "@\($0)" } ?? referrer)
+                        .font(EarthType.mono)
+                        .foregroundStyle(theme.colors.textPrimary)
+                    HStack(spacing: theme.space.x8) {
+                        EarthButton(title: "Change", role: .secondary) { ReferralStore.clear(); referrerLocked = false }
+                        EarthButton(title: "Remove", role: .secondary) { ReferralStore.clear(); referrer = ""; referrerLocked = false }
+                    }
+                } else {
                 EarthLabel("Referred by (optional)")
                 TextField("@handle", text: $referrer)
                     .font(EarthType.mono)
@@ -165,6 +178,7 @@ struct RegistrationSheet: View {
                         RoundedRectangle(cornerRadius: theme.space.radiusMd)
                             .strokeBorder(theme.colors.strokePrimary, lineWidth: theme.space.stroke)
                     }
+                }
                 Text("Half the registration reward goes to whoever referred you, privately, as a note to their handle's shielded address. Leaving this blank costs you nothing. It is part of the proof, so it is fixed once the chip is read.")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
@@ -316,7 +330,13 @@ struct RegistrationSheet: View {
                 if !handle.isEmpty {
                     switch await model.resolveHandle(handle) {
                     case let .payable(e, a): resolved = PrivacyWallet.Referrer(handle: e.handle, address: a)
-                    case let .notPayable(why): throw PrivacyError(why)
+                    case let .notPayable(why):
+                        // A link's referrer that is not live never blocks the registration.
+                        if referrerLocked {
+                            ReferralStore.clear(); referrerLocked = false
+                            throw PrivacyError("\(why). It was removed: enter another handle or leave it blank.")
+                        }
+                        throw PrivacyError(why)
                     }
                 }
                 let prep = try await wallet.prepareRegistration(referrer: resolved)
