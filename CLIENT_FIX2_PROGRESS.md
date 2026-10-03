@@ -21,5 +21,7 @@ format or behavior change.
 
 - [x] K11 unlock re-mint memo "EU"|1|counter|tag(earth.unlocktag); sync raises closed_otag_max; scans and new locks start past closed counters (documented choice). ReauditFixesTest.
 
+- [x] K5 StakeVoteController is the only path: notes + positions shuffled, sync + 20-120 s random pause between, off-screen (activity VM, coroutine delay, no lock held), progress + Stop on the proposal, persisted run resumed on unlock; stakeVoteAll/stakeVoteNotes and the inline UI loop deleted; tests drive the controller the UI calls (spacing, cancel, resume).
+
 ## iOS
 (not started)

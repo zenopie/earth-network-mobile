@@ -15,6 +15,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import kotlinx.coroutines.flow.first
 import org.junit.Test
 
 /**
@@ -24,6 +25,7 @@ import org.junit.Test
  */
 class ReauditFixesTest {
     private val alice = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+    private var snapshotSize: Long? = null
     private val yes = listOf(WeightedVoteOption.newBuilder().setOption(GovVoteOption.VOTE_OPTION_YES).setWeight("1").build())
 
     private fun reads(chain: FakeChain) = object : PrivacyChainReads {
@@ -31,7 +33,7 @@ class ReauditFixesTest {
         override fun ballotInputs(proposalId: Long, optionId: Long) =
             PrivacyChainReads.BallotInputs(Privacy.proposalScope(proposalId, 0), Fr.ZERO, Fr.ZERO, chain.now - 3600, 0, 0)
         override fun epochNumber() = chain.epoch
-        override fun snapshot(proposalId: Long) = PrivacyChainReads.Snapshot(chain.stakeTree.rootAt(chain.stakeTree.size), chain.stakeTree.size)
+        override fun snapshot(proposalId: Long) = (snapshotSize ?: chain.stakeTree.size).let { PrivacyChainReads.Snapshot(chain.stakeTree.rootAt(it), it) }
         override fun positions() = chain.positionReads()
     }
 
@@ -361,6 +363,90 @@ class ReauditFixesTest {
         assertEquals(listOf(0, 3), restored.positions().map { it.second })
         // A gift of stake carrying someone else's (untagged) unlock memo is ignored.
         assertEquals(null, WalletSync.parseUnlockMemo(a.keys.nk, WalletSync.unlockMemo(Fr.of(9), 1_000_000)))
+    }
+
+    /** Two validators' derth and a position, all before proposal 12's snapshot. */
+    private fun staked(chain: FakeChain): PrivacyWallet {
+        val v1 = "earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+        val v2 = "earthvaloper1qyqszqgpqyqszqgpqyqszqgpqyqszqgpjnp7du"
+        val a = wallet(chain)
+        repeat(4) { funded(chain, a, 2_000_000) }
+        a.sync()
+        a.delegate(v1, 1_000_000); a.sync()
+        a.delegate(v2, 1_000_000); a.sync()
+        a.lockPosition(v1, 100_000, mapOf(2L to 100L)); a.sync()
+        snapshotSize = chain.stakeTree.size
+        return a
+    }
+
+    private fun <T> await(flow: kotlinx.coroutines.flow.StateFlow<T>, cond: (T) -> Boolean): T = kotlinx.coroutines.runBlocking {
+        kotlinx.coroutines.withTimeout(60_000) { flow.first { cond(it) } }
+    }
+
+    /**
+     * K5, through the UI's own entry point (StakeVoteController, what the
+     * proposal screen's confirm runs): notes and position votes shuffled,
+     * one at a time, a sync and a 20-120 s pause between each, progress
+     * reported, the persisted run cleared at the end.
+     */
+    @Test
+    fun stakeVotesFromTheUiAreSpacedOut() {
+        val chain = FakeChain()
+        val a = staked(chain)
+        val pauses = java.util.Collections.synchronizedList(ArrayList<Long>())
+        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default)
+        val c = StakeVoteController(scope, { a }, pause = { pauses.add(it) })
+        val before = chain.height
+        val first = c.startAndAwaitFirst(12, yes)
+        assertTrue(first.startsWith("HASH"))
+        val p = await(c.progress) { it?.finished == true }!!
+        assertEquals(3, p.total)
+        assertEquals(3, p.done)
+        assertEquals(2, chain.stakeVotes.size)
+        assertEquals(1, chain.positionVotes.size)
+        assertEquals(2, pauses.size)
+        assertTrue(pauses.all { it in StakeVoteController.VOTE_PAUSE_MIN_MS..StakeVoteController.VOTE_PAUSE_MAX_MS })
+        // Separate blocks: each cast laid out after a sync saw the last.
+        assertEquals(before + 3, chain.height)
+        assertEquals(null, a.store.state.stakeVoteRun)
+    }
+
+    /** K5: cancelled while it waits, nothing more is cast and nothing is resumed. */
+    @Test
+    fun stakeVoteCanBeCancelled() {
+        val chain = FakeChain()
+        val a = staked(chain)
+        val waiting = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default)
+        val c = StakeVoteController(scope, { a }, pause = { waiting.complete(Unit); kotlinx.coroutines.awaitCancellation() })
+        c.startAndAwaitFirst(12, yes)
+        kotlinx.coroutines.runBlocking { waiting.await() }
+        assertTrue(c.progress.value!!.nextAt != null)
+        c.cancel()
+        val p = await(c.progress) { it?.cancelled == true }!!
+        assertEquals(1, p.done)
+        assertEquals(1, chain.stakeVotes.size + chain.positionVotes.size)
+        assertEquals(null, a.store.state.stakeVoteRun)
+    }
+
+    /** K5: a run the process lost resumes on unlock, never voting a position twice. */
+    @Test
+    fun stakeVoteResumesAfterAKill() {
+        val chain = FakeChain()
+        val a = staked(chain)
+        val pos = a.positions().single()
+        a.positionVote(pos.first, pos.second, 12, yes)
+        a.sync()
+        a.store.state.stakeVoteRun = network.erth.wallet.privacy.sync.StakeVoteRun(12, listOf(1 to "1"), setOf(pos.first.id), 3, 1)
+        a.store.save()
+        val pauses = java.util.Collections.synchronizedList(ArrayList<Long>())
+        val c = StakeVoteController(kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default), { a }, pause = { pauses.add(it) })
+        c.resume()
+        val p = await(c.progress) { it?.finished == true }!!
+        assertEquals(3, p.done)
+        assertEquals(1, chain.positionVotes.size)
+        assertEquals(2, chain.stakeVotes.size)
+        assertEquals(2, pauses.size)
     }
 
     /** K10: a status naming no chain is refused. */

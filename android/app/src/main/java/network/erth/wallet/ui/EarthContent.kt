@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -144,6 +145,8 @@ internal fun EarthContent(
 
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
+    val stakeVotes: network.erth.wallet.ui.govern.StakeVoteViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    val stakeVoteProgress by stakeVotes.progress.collectAsStateWithLifecycle()
     val onShare = { text: String ->
         val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
             .putExtra(android.content.Intent.EXTRA_TEXT, text)
@@ -567,6 +570,8 @@ internal fun EarthContent(
                 null
             },
             stakeVoteFinal = true,
+            stakeVoteProgress = stakeVoteProgress?.takeIf { it.proposalId == route.id },
+            onCancelStakeVote = { stakeVotes.cancel() },
             onVote = { proposal, vote -> scope.launch {
                 // The weight the confirmation shows: each eligible derth note
                 // and position at the snapshot's rate. Read first, so the
@@ -593,19 +598,13 @@ internal fun EarthContent(
                     ),
                     shieldedErth = loaded.shieldedErthUerth,
                     onSuccess = onRefresh,
-                    run = { ctx ->
-                        val w = PrivacySession.wallet(ctx)
+                    // K5: the first cast is this sheet's result; the rest
+                    // follow in the background, shuffled, a sync and a
+                    // random 20-120 s apart, shown and cancellable on the
+                    // proposal.
+                    run = { _ ->
                         val opts = listOf(WeightedVoteOption.newBuilder().setOption(vote.proto).setWeight("1").build())
-                        val notes = runCatching { w.stakeVoteNotes(proposal.id) }.getOrDefault(emptyList())
-                        // Only positions from before voting opened: the chain
-                        // refuses the rest, and one refusal ends the loop.
-                        val mine = w.positions()
-                        val voting = w.stakeVoteWeight(proposal.id, mine.map { it.first }).positionIds
-                        // Two notes of one validator a vote.
-                        val hashes = notes.groupBy { it.denom }.values.flatMap { it.chunked(2) }.map { w.stakeVote(proposal.id, it, opts).hash } +
-                            mine.filter { it.first.id in voting }.map { (p, k) -> w.positionVote(p, k, proposal.id, opts).hash }
-                        check(hashes.isNotEmpty()) { "no stake from before this proposal's voting opened" }
-                        hashes.last()
+                        stakeVotes.controller.startAndAwaitFirst(proposal.id, opts)
                     },
                 )
             } },

@@ -76,6 +76,19 @@ data class RegRecord(
 enum class RecordStatus { OPEN, MATCHED, EXHAUSTED }
 
 /**
+ * A stake vote being cast (K5), persisted so a run the process lost resumes
+ * on the next unlock: the options as (VoteOption number, weight), the
+ * positions already voted, casts done of [total].
+ */
+data class StakeVoteRun(
+    val proposalId: Long,
+    val options: List<Pair<Int, String>>,
+    val votedPositions: Set<Long>,
+    val total: Int,
+    val done: Int = 0,
+)
+
+/**
  * What the wallet keeps between syncs: cursors into each indexer stream, its
  * own notes, its registration, and the automations' bookkeeping. Small; the
  * trees live beside it in per-level files.
@@ -107,6 +120,8 @@ class PrivacyState {
     var referrerBoundAt: Long = 0
     /** Unbond denoms whose claim the chain refused as not yet matured, to when the automation next tries. */
     val unbondRetryAt: MutableMap<String, Long> = sortedMapOf()
+    /** A stake vote being cast (K5), or null. */
+    var stakeVoteRun: StakeVoteRun? = null
     /** Next unused Groundworks owner-tag counter (PrivacyKeys.otagSalt). */
     var nextOtagCounter: Int = 0
     /** The highest owner-tag counter of a position this wallet closed, from its unlock memos (-1: none; K11). */
@@ -148,6 +163,11 @@ class PrivacyState {
         put("caretaker_split", JSONObject().apply { caretakerSplit.forEach { (k, v) -> put(k.toString(), v) } })
         put("referrer_address", referrerAddress); put("referrer_bound_at", referrerBoundAt)
         put("unbond_retry_at", JSONObject().apply { unbondRetryAt.forEach { (k, v) -> put(k, v) } })
+        stakeVoteRun?.let { r ->
+            put("stake_vote_run", JSONObject().put("proposal_id", r.proposalId)
+                .put("options", JSONArray().apply { r.options.forEach { (o, w) -> put(JSONArray().put(o).put(w)) } })
+                .put("voted_positions", JSONArray(r.votedPositions.toList())).put("total", r.total).put("done", r.done))
+        }
         put("next_otag_counter", nextOtagCounter); put("closed_otag_max", closedOtagMax)
         put("stake_next", stakeNext); put("stake_height", stakeHeight); put("stake_nullifiers_next", stakeNullifiersNext)
         put("stake_notes", JSONArray().apply { stakeNotes.forEach { put(stakeJson(it)) } })
@@ -193,6 +213,15 @@ class PrivacyState {
             caretakerSplit = j.optJSONObject("caretaker_split")?.let { o -> o.keys().asSequence().associate { it.toLong() to o.getLong(it) } } ?: emptyMap()
             referrerAddress = j.optString("referrer_address"); referrerBoundAt = j.optLong("referrer_bound_at")
             j.optJSONObject("unbond_retry_at")?.let { o -> o.keys().forEach { unbondRetryAt[it] = o.getLong(it) } }
+            j.optJSONObject("stake_vote_run")?.let { r ->
+                val o = r.optJSONArray("options"); val v = r.optJSONArray("voted_positions")
+                stakeVoteRun = StakeVoteRun(
+                    r.getLong("proposal_id"),
+                    (0 until (o?.length() ?: 0)).map { o!!.getJSONArray(it).let { p -> p.getInt(0) to p.getString(1) } },
+                    (0 until (v?.length() ?: 0)).map { v!!.getLong(it) }.toSet(),
+                    r.optInt("total"), r.optInt("done"),
+                )
+            }
             nextOtagCounter = j.optInt("next_otag_counter"); closedOtagMax = j.optInt("closed_otag_max", -1)
             stakeNext = j.optLong("stake_next"); stakeHeight = j.optLong("stake_height"); stakeNullifiersNext = j.optLong("stake_nullifiers_next")
             j.optJSONArray("stake_notes")?.let { a -> for (i in 0 until a.length()) stakeNotes.add(stakeFromJson(a.getJSONObject(i))) }
@@ -287,6 +316,7 @@ class PrivacyStore private constructor(private val dir: File?) {
                 claimedDays.addAll(old.claimedDays)
                 caretakerCastAt = old.caretakerCastAt; caretakerSplit = old.caretakerSplit
                 referrerAddress = old.referrerAddress; referrerBoundAt = old.referrerBoundAt
+                stakeVoteRun = old.stakeVoteRun
             }
         }
         save()

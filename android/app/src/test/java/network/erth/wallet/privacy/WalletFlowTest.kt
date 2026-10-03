@@ -49,7 +49,6 @@ class WalletFlowTest {
     }
 
     /** Pauses the wallet asked for (stake votes), in milliseconds. */
-    private val pauses = ArrayList<Long>()
 
     private fun wallet(
         chain: FakeChain,
@@ -59,7 +58,7 @@ class WalletFlowTest {
         store: PrivacyStore = PrivacyStore.memory(),
     ) = PrivacyWallet(
         PrivacyKeys.fromMnemonic(words), store, indexer, chain, reads, chain.prover, chain.chainId, chain,
-        now = { chain.now }, pause = { pauses.add(it) },
+        now = { chain.now },
     )
 
     private fun bal(w: PrivacyWallet, d: String) = w.balances()[d] ?: 0L
@@ -142,12 +141,12 @@ class WalletFlowTest {
         // A later stake note moves the stake tree past the snapshot.
         fresh.delegate(validator, 100_000)
         fresh.sync()
-        fresh.stakeVote(9, fresh.stakeVoteNotes(9), yes)
+        fresh.castStakeVote(9, fresh.stakeVoteItems(9).single(), yes)
         fresh.sync()
         assertEquals(Triple(9L, validator, 1_800_000L), chain.stakeVotes.single())
         assertEquals(1_890_000L, bal(fresh, derth))
         // Final: the re-minted note is not in the snapshot.
-        assertTrue(fresh.stakeVoteNotes(9).isEmpty())
+        assertTrue(fresh.stakeVoteItems(9).isEmpty())
 
         // A wallet restored from the mnemonic alone sees the same balances,
         // the self-mints (gas, reward, derth, the vote's re-mint) included.
@@ -281,7 +280,7 @@ class WalletFlowTest {
         val weight = a.stakeVoteWeight(11, emptyList())
         assertEquals(2, weight.notes)
         assertEquals(1_800_000L, weight.uerth)
-        val voted = a.stakeVoteAll(11, yes)
+        val voted = a.stakeVoteItems(11).mapNotNull { a.castStakeVote(11, it, yes) }
         snapshot = null
         assertEquals(1, voted.size)
         a.sync()

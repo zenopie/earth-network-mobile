@@ -58,6 +58,9 @@ fun ProposalDetailScreen(
     onVote: ((Gov.Proposal, Gov.Vote) -> Unit)? = null,
     /** Stake votes are private and final: each staked note votes once. */
     stakeVoteFinal: Boolean = false,
+    /** A stake vote being cast on this proposal (K5): casts done, the next one's time. */
+    stakeVoteProgress: network.erth.wallet.privacy.StakeVoteController.Progress? = null,
+    onCancelStakeVote: () -> Unit = {},
     /**
      * The human house's tally, or null when this chain has no assembly — which
      * is every node older than v0.9.0. Null hides the section rather than
@@ -304,6 +307,31 @@ fun ProposalDetailScreen(
                     fontWeight = FontWeight.SemiBold,
                     color = EarthColors.Text.textPrimary,
                 )
+                Spacer(Modifier.height(dimens.space8))
+            }
+            stakeVoteProgress?.let { p ->
+                val wait = p.nextAt?.let { ((it - System.currentTimeMillis()) / 1000).coerceAtLeast(0) }
+                Text(
+                    text = when {
+                        p.finished -> "Stake vote cast: ${p.done} of ${p.total}."
+                        p.cancelled -> "Stake vote stopped after ${p.done} of ${p.total}."
+                        p.error != null -> "Stake vote stopped after ${p.done} of ${p.total}: ${p.error}"
+                        wait != null -> "Casting your stake vote: ${p.done} of ${p.total} done, the next in about ${wait}s. " +
+                            "Votes are spaced out so they cannot be timed together; keep the app open."
+                        else -> "Casting your stake vote: ${p.done} of ${p.total} done."
+                    },
+                    style = EarthTypography.textSm,
+                    color = EarthColors.Text.textSecondary,
+                )
+                if (p.running) {
+                    Spacer(Modifier.height(dimens.space8))
+                    EarthButton(
+                        text = "Stop voting",
+                        onClick = onCancelStakeVote,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = EarthButtonDefaults.secondaryColors(),
+                    )
+                }
                 Spacer(Modifier.height(dimens.space8))
             }
             if (eligibility != null) {

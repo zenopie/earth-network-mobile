@@ -104,8 +104,6 @@ class PrivacyWallet(
     /** The chain's own trees, every synced root is checked against (C3). */
     private val roots: ChainRoots,
     private val now: () -> Long = { System.currentTimeMillis() / 1000 },
-    /** Sleeps between stake votes (milliseconds); tests pass a no-op. */
-    private val pause: (Long) -> Unit = { Thread.sleep(it) },
 ) {
     private val engine = PrivateTxEngine(chainId, chain, prover)
 
@@ -699,34 +697,36 @@ class PrivacyWallet(
     private fun eligible(snap: PrivacyChainReads.Snapshot): List<OwnedStakeNote> =
         store.state.stakeNotes.filter { it.spendable && it.denom.startsWith(DERTH_PREFIX) && it.position < snap.treeSize }
 
-    /** The derth notes that can stake-vote on [proposalId]: unspent, and in the stake tree at its snapshot. */
-    fun stakeVoteNotes(proposalId: Long): List<OwnedStakeNote> = eligible(reads.snapshot(proposalId))
+
+    /** One cast of a stake vote: a pair (or one) of derth notes of one validator, or a position. */
+    sealed interface StakeVoteItem {
+        data class Notes(val positions: List<Long>) : StakeVoteItem
+        data class Position(val id: Long, val counter: Int) : StakeVoteItem
+    }
 
     /**
-     * Votes every eligible derth note on [proposalId], two notes of one
-     * validator a tx. Final: the spent nullifiers and the re-minted notes'
-     * absence from the snapshot root stop a second vote.
-     *
-     * One vote at a time (L4): between votes a full sync (so the next fee
-     * is laid out from the chain's view, never the previous vote's change
-     * unseen) and a random pause of [VOTE_PAUSE_MIN_MS]..[VOTE_PAUSE_MAX_MS],
-     * so the votes are not one burst that times them together.
+     * Every cast a stake vote on [proposalId] takes (K5): the eligible derth
+     * notes two of one validator at a time, and every position of ours that
+     * may vote (created before the snapshot's block). Cast them through
+     * [StakeVoteController], the one path the app uses: one at a time, a
+     * sync and a random pause between.
      */
-    fun stakeVoteAll(proposalId: Long, options: List<WeightedVoteOption>): List<TxResult> {
-        val ns = stakeVoteNotes(proposalId)
-        require(ns.isNotEmpty()) { "no stake from before this proposal's snapshot" }
-        val groups = ns.groupBy { it.denom }.values.flatMap { it.chunked(2) }.shuffled(rng)
-        val out = ArrayList<TxResult>()
-        for ((i, g) in groups.withIndex()) {
-            if (i > 0) {
-                pause(VOTE_PAUSE_MIN_MS + (rng.nextDouble() * (VOTE_PAUSE_MAX_MS - VOTE_PAUSE_MIN_MS)).toLong())
-                sync()
-            }
-            // The notes as the last sync left them (a pending one is skipped).
-            val now = g.mapNotNull { n -> store.state.stakeNotes.firstOrNull { it.position == n.position && it.spendable } }
-            if (now.isNotEmpty()) out.add(stakeVote(proposalId, now, options))
+    fun stakeVoteItems(proposalId: Long): List<StakeVoteItem> {
+        val snap = reads.snapshot(proposalId)
+        val notes = eligible(snap).groupBy { it.denom }.values.flatMap { it.chunked(2) }.map { g -> StakeVoteItem.Notes(g.map { it.position }) }
+        val mine = positions()
+        val voting = votingPositions(mine.map { it.first }, snap).map { it.id }.toSet()
+        return notes + mine.filter { it.first.id in voting }.map { (p, c) -> StakeVoteItem.Position(p.id, c) }
+    }
+
+    /** Casts [item] as the last sync left things; null when there is nothing left of it to cast. */
+    fun castStakeVote(proposalId: Long, item: StakeVoteItem, options: List<WeightedVoteOption>): String? = when (item) {
+        is StakeVoteItem.Notes -> {
+            val now = item.positions.mapNotNull { pos -> store.state.stakeNotes.firstOrNull { it.position == pos && it.spendable } }
+            if (now.isEmpty()) null else stakeVote(proposalId, now, options).hash
         }
-        return out
+        is StakeVoteItem.Position -> positions().firstOrNull { it.first.id == item.id && it.second == item.counter }
+            ?.let { (p, c) -> positionVote(p, c, proposalId, options).hash }
     }
 
     /**
@@ -926,12 +926,6 @@ class PrivacyWallet(
 
         /** Owner-tag counters scanned past the highest known (PRIVACY_FORMATS.md 1). */
         const val OTAG_GAP = 1024
-
-        /** The random pause between stake votes (L4). */
-        const val VOTE_PAUSE_MIN_MS = 20_000L
-        const val VOTE_PAUSE_MAX_MS = 120_000L
-
-        private val rng = java.security.SecureRandom()
 
         /**
          * The ISO alpha-2 of the DSC's issuer (C=): the wallet's guess at the

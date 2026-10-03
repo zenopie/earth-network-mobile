@@ -377,10 +377,19 @@ app tells the user).
   snapshot's size. `spc_mint` and `spc_ciphertext` as in §3; `otag` a
   position's owner tag (lock: a new counter; update/unlock/vote: the
   position's) or random. A stake vote spends one or two derth notes of one
-  validator (weight = their sum). Voting several (stakeVoteAll): one vote at
-  a time, a full sync and a random 20-120 s pause between votes, so a vote's
-  fee never spends the previous vote's change unseen and the votes are not
-  one burst.
+  validator (weight = their sum). **Casting a stake vote (K5)** is one path
+  in the app (StakeVoteController, what the proposal screen's confirm
+  runs): every eligible derth note pair and every position of ours created
+  before the snapshot's block, in a shuffled order, one cast at a time, a
+  full sync and a random 20-120 s pause between casts (none before the
+  first; one before the first after a resume), so a vote's fee never spends
+  the previous vote's change unseen and the casts are not one burst that
+  times them together. It runs off the screen (the app-level view model;
+  never holding the wallet lock while it waits), shows its progress and the
+  next cast's time, and can be stopped. The plan is persisted (proposal,
+  options, positions voted, casts done) and a run the process lost resumes
+  on the next unlock (positions already voted are skipped; voted notes are
+  spent).
 - **Groundworks positions** are still per-user msgs with splits; the chain
   weighs them per validator and no longer stores a position's weight. The
   wallet shows a position's weight as derth × its validator's current rate

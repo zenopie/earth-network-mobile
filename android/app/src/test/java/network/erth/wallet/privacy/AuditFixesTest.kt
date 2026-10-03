@@ -39,7 +39,6 @@ class AuditFixesTest {
     private val validator = "earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
     private val validator2 = "earthvaloper1qyqszqgpqyqszqgpqyqszqgpqyqszqgpjnp7du"
     private val yes = listOf(WeightedVoteOption.newBuilder().setOption(GovVoteOption.VOTE_OPTION_YES).setWeight("1").build())
-    private val pauses = ArrayList<Long>()
     private var snapshot: Long? = null
 
     private fun reads(chain: FakeChain) = object : PrivacyChainReads {
@@ -54,7 +53,7 @@ class AuditFixesTest {
     private fun wallet(chain: FakeChain, words: String = alice, indexer: PrivacyIndexer = chain, store: PrivacyStore = PrivacyStore.memory()) =
         PrivacyWallet(
             PrivacyKeys.fromMnemonic(words), store, indexer, chain, reads(chain), chain.prover, chain.chainId, chain,
-            now = { chain.now }, pause = { pauses.add(it) },
+            now = { chain.now },
         )
 
     private fun bal(w: PrivacyWallet, d: String) = w.balances()[d] ?: 0L
@@ -299,32 +298,5 @@ class AuditFixesTest {
                 NotesPage(List(WalletSync.MAX_PAGE_ROWS + 1) { NoteRow(fromPos + it, 1, Fr.ONE, ByteArray(0), null) }, fromPos, false, 1)
         }
         assertThrows(WalletSync.Inconsistent::class.java) { wallet(chain, indexer = big).sync() }
-    }
-
-    /** L4: stake votes go one at a time, a sync and a random pause between them. */
-    @Test
-    fun stakeVotesAreSpacedOut() {
-        val chain = FakeChain()
-        val a = wallet(chain)
-        repeat(3) {
-            val o = a.shieldOutput("uerth", 0)
-            chain.shield("uerth", 2_000_000, o.pc, o.ciphertext)
-        }
-        a.sync()
-        a.delegate(validator, 1_000_000)
-        a.sync()
-        a.delegate(validator2, 1_000_000)
-        a.sync()
-        snapshot = chain.stakeTree.size
-        val before = chain.height
-        val votes = a.stakeVoteAll(12, yes)
-        snapshot = null
-        assertEquals(2, votes.size)
-        assertEquals(1, pauses.size)
-        assertTrue(pauses.single() in PrivacyWallet.VOTE_PAUSE_MIN_MS..PrivacyWallet.VOTE_PAUSE_MAX_MS)
-        assertEquals(setOf(validator, validator2), chain.stakeVotes.map { it.second }.toSet())
-        // Separate blocks, the second laid out after a sync saw the first.
-        assertEquals(before + 2, chain.height)
-        dump(chain, "votes")
     }
 }

@@ -98,6 +98,7 @@ fun EarthApp(
     val explore: ExploreViewModel = viewModel()
     val privacy: PrivacyActionsViewModel = viewModel()
     val tx: TxController = viewModel()
+    val stakeVotes: network.erth.wallet.ui.govern.StakeVoteViewModel = viewModel()
 
     val state by wallet.state.collectAsStateWithLifecycle()
     val activity by wallet.activity.collectAsStateWithLifecycle()
@@ -115,6 +116,7 @@ fun EarthApp(
     // unlocked shell does, and restart on a wallet switch.
     LaunchedEffect(walletEpoch) {
         PrivacySession.clear()
+        stakeVotes.resume()
         withContext(Dispatchers.IO) { PrivacyAutomation.loop(context.applicationContext) }
     }
 
