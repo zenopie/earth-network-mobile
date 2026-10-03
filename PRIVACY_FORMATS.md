@@ -219,11 +219,12 @@ dropped. It is never dropped unresolved (a leaf that does not match after
 the tree has it is an error shown to the user, the record kept).
 
 **Restore from the mnemonic (L8).** No query names the registration. For
-every record note found (newest first), with h its block height: for each
-identity leaf appended at height h, try `activated_at` over
-[built_at − 3600, built_at + 86400] with the hinted country, then (if none
-matches) the unknown country and every A..Z pair over [built_at − 600,
-built_at + 3600]. A match gives leaf_index, dsc_key, country and
+every record note found (newest first), with h its block height: over every
+identity leaf appended at height h (identity leaves are synced no higher
+than the notes, so the record is always seen first), try `activated_at`
+outward from built_at over [built_at − 3600, built_at + 86400] with the
+hinted country and unknown (0); only if no leaf matches, every other A..Z
+pair over [built_at − 600, built_at + 3600]. A match gives leaf_index, dsc_key, country and
 activated_at: the identity record (passport nullifier left empty; nothing
 needs it). A registration whose record note is missing (made by an older
 app) cannot be restored and must register again (a switch to the same

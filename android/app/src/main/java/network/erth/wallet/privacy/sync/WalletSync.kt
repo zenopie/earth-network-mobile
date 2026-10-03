@@ -430,6 +430,7 @@ class WalletSync(
             if (!page.complete) break
         }
         val recordHeights = s.regRecords.map { it.height }.toSet()
+        val candidates = HashMap<Long, MutableList<Pair<Long, Fr>>>()
         outer@ while (true) {
             val page = indexer.identity(s.identityNext, limit)
             checkPage(page.rows.size)
@@ -442,21 +443,29 @@ class WalletSync(
             // A leaf zeroed at or below the ceiling is zero here; one zeroed
             // later is zeroed by a later pass's zeroed stream.
             store.identityTree.appendAll(take.map { if (it.zeroedHeight != null && it.zeroedHeight <= ceiling) Fr.ZERO else it.leaf })
-            for (r in take) if (r.height in recordHeights) matchRecords(s, r.index, r.height, store.identityTree.leaf(r.index))
+            for (r in take) if (r.height in recordHeights) candidates.getOrPut(r.height) { ArrayList() }.add(r.index to store.identityTree.leaf(r.index))
             s.identityNext += take.size
             if (take.size < page.rows.size || s.identityNext >= page.size) break@outer
         }
+        matchRecords(s, candidates)
     }
 
-    /** Tries every record note found at [height] against the leaf at [index]; the newest match becomes the identity. */
-    private fun matchRecords(s: PrivacyState, index: Long, height: Long, leaf: Fr) {
-        if (leaf == Fr.ZERO) return
-        for (rec in s.regRecords.filter { it.height == height }) {
-            val found = findLeaf(leaf, rec.dscKey, rec.country, rec.builtAt) ?: continue
-            val (country, activatedAt) = found
+    /**
+     * Matches record notes to the leaves appended at their heights (several
+     * registrations may share a block): every leaf with the hinted country
+     * first, the full country search only if none matched. The newest match
+     * becomes the identity.
+     */
+    private fun matchRecords(s: PrivacyState, candidates: Map<Long, List<Pair<Long, Fr>>>) {
+        for (rec in s.regRecords.sortedByDescending { it.height }) {
+            val leaves = candidates[rec.height]?.filter { it.second != Fr.ZERO } ?: continue
+            val match = leaves.firstNotNullOfOrNull { (i, leaf) -> findLeaf(leaf, rec.dscKey, rec.country, rec.builtAt, wide = false)?.let { i to it } }
+                ?: leaves.firstNotNullOfOrNull { (i, leaf) -> findLeaf(leaf, rec.dscKey, rec.country, rec.builtAt, wide = true)?.let { i to it } }
+                ?: continue
+            val (index, found) = match
             val cur = s.identity
             if (cur == null || index > cur.leafIndex) {
-                s.identity = IdentityRecord(index, rec.dscKey, country, activatedAt, cur?.takeIf { it.leafIndex == index }?.passportNullifier ?: "")
+                s.identity = IdentityRecord(index, rec.dscKey, found.first, found.second, cur?.takeIf { it.leafIndex == index }?.passportNullifier ?: "")
             }
             return
         }
@@ -468,7 +477,7 @@ class WalletSync(
      * (the block came after the bundle was laid out; the clocks may differ),
      * the hinted country first, then every country over a narrower window.
      */
-    internal fun findLeaf(leaf: Fr, dscKey: Fr, hint: String, builtAt: Long): Pair<Fr, Long>? {
+    internal fun findLeaf(leaf: Fr, dscKey: Fr, hint: String, builtAt: Long, wide: Boolean): Pair<Fr, Long>? {
         fun scan(countries: List<Fr>, before: Long, after: Long): Pair<Fr, Long>? {
             for (dt in 0..maxOf(before, after)) {
                 for (t in listOf(builtAt + dt, builtAt - dt).distinct()) {
@@ -479,7 +488,7 @@ class WalletSync(
             return null
         }
         val hinted = listOf(countryOrZero(hint), Fr.ZERO).distinct()
-        return scan(hinted, 3_600, 86_400) ?: scan(ALL_COUNTRIES - hinted.toSet(), 600, 3_600)
+        return if (!wide) scan(hinted, 3_600, 86_400) else scan(ALL_COUNTRIES - hinted.toSet(), 600, 3_600)
     }
 
     /**
