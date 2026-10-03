@@ -154,7 +154,13 @@ struct IdentityScreen: View {
                             .font(EarthType.bodySmall)
                             .foregroundStyle(theme.colors.textTertiary)
                         ReferrerSection()
-                        TransparentGasSection()
+                        // Transparent fees (an LP, IBC, a contract call) come
+                        // from the public account: unshield ERTH there. The
+                        // membership-proved transparent gas grant is gone from
+                        // the chain and the backend.
+                        Text("Need ERTH in your public account for fees? Unshield some from Portfolio.")
+                            .font(EarthType.bodySmall)
+                            .foregroundStyle(theme.colors.textSecondary)
                     } else {
                         EarthButton(title: "Register with your passport") { registering = true }
                     }
@@ -218,49 +224,6 @@ struct ReferrerSection: View {
                     UIPasteboard.general.string = "https://erth.network/ref/\(model.address)"
                     shared = true
                 }
-            }
-        }
-    }
-}
-
-/// "Get ERTH for transparent fees": a registered human proves membership with
-/// this month's gas scope and the backend sends a little transparent ERTH to
-/// this wallet's account. Once a month; the backend learns the address, never
-/// which human asked.
-struct TransparentGasSection: View {
-    @Environment(\.earth) private var theme
-    @Environment(AppModel.self) private var model
-    @State private var busy = false
-    @State private var status: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: theme.space.x8) {
-            EarthLabel("Transparent fees")
-            Text("Signed transactions (liquidity, exchanges) pay their fee from the account, not from notes. Once a month, a registered person can have a little ERTH sent here.")
-                .font(EarthType.bodySmall)
-                .foregroundStyle(theme.colors.textTertiary)
-            EarthButton(title: "Get ERTH for transparent fees", busy: busy) {
-                guard let w = model.privacy else { return }
-                busy = true
-                status = nil
-                let address = model.address
-                Task {
-                    do {
-                        let req = try await GasTransparent.request(wallet: w, address: address, prove: { try await PrivacyProving.prover.proveMembership($0) })
-                        _ = try await GasGrant.request(.transparent(req))
-                        status = "ERTH is on its way to \(address)."
-                    } catch let refused as GasGrant.Refused {
-                        status = refused.message
-                    } catch {
-                        status = model.describe(error)
-                    }
-                    busy = false
-                }
-            }
-            if let status {
-                Text(status)
-                    .font(EarthType.bodySmall)
-                    .foregroundStyle(theme.colors.textSecondary)
             }
         }
     }

@@ -671,7 +671,9 @@ public final class AppModel {
     /// Private stake in derth, positions included. A count of notes' units,
     /// not ERTH: what decides whether the wallet can stake-vote at all.
     public var privateStakeTotal: UInt64 {
-        privateStake.values.reduce(0, +) + positions.reduce(0) { $0 + $1.position.derth }
+        // Saturating: amounts a node publishes never trap a sum (L1).
+        PrivateMsgs.saturatingAdd(privateStake.values.reduce(0, PrivateMsgs.saturatingAdd),
+                                  positions.reduce(0) { PrivateMsgs.saturatingAdd($0, $1.position.derth) })
     }
 
     /// What `derth` derth/`validator` is worth in uerth at the live rate:
@@ -684,8 +686,12 @@ public final class AppModel {
     /// Private stake in ERTH (uerth): every derth note and position at its
     /// validator's live rate.
     public var privateStakeValue: UInt64 {
-        privateStake.reduce(0) { $0 + derthValue($1.value, validator: String($1.key.dropFirst("derth/".count))) } +
-            positions.reduce(0) { $0 + derthValue($1.position.derth, validator: $1.position.validator) }
+        let notes = privateStake.reduce(UInt64(0)) {
+            PrivateMsgs.saturatingAdd($0, derthValue($1.value, validator: String($1.key.dropFirst("derth/".count))))
+        }
+        return PrivateMsgs.saturatingAdd(notes, positions.reduce(0) {
+            PrivateMsgs.saturatingAdd($0, derthValue($1.position.derth, validator: $1.position.validator))
+        })
     }
 
     /// Unbonding claims (unbond/<valoper>/<epoch> notes), paid out by the
@@ -755,9 +761,13 @@ public final class AppModel {
     /// wallet), then the public reads the private screens show.
     func syncPrivacy() async {
         guard let w = privacy else { return }
+        // A sync error, else roots the chain has not vouched for (no private
+        // tx is built on them), else a registration whose leaf did not match:
+        // each is shown, none is hidden.
         do {
             try await w.sync()
-            privacySyncError = nil
+            let snap = w.snapshot
+            privacySyncError = (snap.rootsVerified ? nil : snap.rootsError) ?? snap.pendingRegistration?.failure
         } catch {
             privacySyncError = describe(error)
         }
@@ -778,12 +788,20 @@ public final class AppModel {
         if let ballots = try? await PrivacyQueries(rest: client.rest).removalBallots() { removalBallots = ballots }
     }
 
-    /// The live rate of every bonded validator, and of any other this wallet
-    /// holds stake with. Every bonded one rather than only those held, so the
-    /// reads do not name which validators this wallet's stake sits with.
+    /// The live rate of every validator, in one read of the indexer (L5): a
+    /// per-validator query for the ones this wallet holds would tell the node
+    /// which they are. Falls back to asking about every bonded validator (and
+    /// any other held) alike.
     func refreshDerthRates() async {
         let held = Set(privateStake.keys.map { String($0.dropFirst("derth/".count)) } + positions.map(\.position.validator))
         guard !held.isEmpty else { return }
+        if let rows = try? await HTTPPrivacyIndexer().rates(epoch: nil) {
+            let indexed = Dictionary(rows.compactMap { r in Decimal(string: r.rate).map { (r.validator, $0) } }) { $1 }
+            if !indexed.isEmpty {
+                derthRates.merge(indexed) { $1 }
+                return
+            }
+        }
         let all = held.union(validators.map(\.operatorAddress))
         let queries = PrivacyQueries(rest: client.rest)
         let read = await withTaskGroup(of: (String, Decimal)?.self) { group in

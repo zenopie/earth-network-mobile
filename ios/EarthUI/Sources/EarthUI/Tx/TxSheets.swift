@@ -79,7 +79,7 @@ struct TxConfirmSheet: View {
                 // on chain, so the fee cannot be paid — and this is the moment
                 // that becomes true rather than a surprise at broadcast.
                 GasWarning(awaitingGas: tx.awaitingGas, error: tx.gasError, shielded: details.shielded,
-                           canGrant: details.registration != nil || (!details.shielded && model.isRegistered))
+                           canGrant: details.registration != nil)
             }
 
             HStack(spacing: theme.space.x12) {
@@ -88,7 +88,7 @@ struct TxConfirmSheet: View {
                     // `confirm` clears `pending` itself, which is what takes
                     // this card away — there is no dismissal to coordinate.
                     EarthButton(title: "Confirm") { Task { await tx.confirm(in: model) } }
-                } else if details.registration != nil || (!details.shielded && model.isRegistered) {
+                } else if details.registration != nil {
                     EarthButton(
                         title: tx.awaitingGas ? "Waiting for gas…" : "Get free gas",
                         busy: tx.requestingGas || tx.awaitingGas
@@ -135,7 +135,7 @@ struct GasWarning: View {
         if shielded && !canGrant {
             return "Not enough shielded ERTH for the fee. Private actions pay from your shielded balance: your registration reward, or ERTH sent to your shielded address."
         }
-        if !canGrant { return "Not enough ERTH for the fee. Register to get free gas, or shield nothing and send ERTH here." }
+        if !canGrant { return "Not enough ERTH in your public account for the fee. Unshield some from Portfolio, or send ERTH here." }
         return "Not enough ERTH for the fee. Tap to get free gas for this transaction."
     }
 

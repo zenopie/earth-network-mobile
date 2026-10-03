@@ -48,7 +48,9 @@ enum PrivacySession {
             chain: RESTPrivateChain(rest: client.rest),
             reads: PrivacyQueries(rest: client.rest),
             prover: PrivacyProving.prover,
-            chainID: Constants.chainID
+            chainID: Constants.chainID,
+            // Every root the indexer serves is checked against the chain's own (C3).
+            roots: LCDChainRoots(rest: client.rest)
         )
     }
 }

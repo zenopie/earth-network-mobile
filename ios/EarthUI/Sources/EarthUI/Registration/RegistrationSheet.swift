@@ -358,10 +358,11 @@ struct RegistrationSheet: View {
                     ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.registerGasEstimate))) ERTH, shielded"),
                 ],
                 gas: PrivacyWallet.registerGasEstimate,
-                // Free gas for a registration is a note shielded to pc_gas,
-                // paid against this message; the same proof is broadcast once
-                // it lands.
-                registration: (msg: message, pcGas: prep.gas.pc.bytes)
+                // Free gas for a registration is a note shielded to pc_gas
+                // (a fresh pc with its v2 ciphertext, found by trial
+                // decryption), paid against this message; the same proof is
+                // broadcast once it lands.
+                registration: (msg: message, pcGas: prep.gas.pc.bytes, ciphertextGas: prep.gas.ciphertext)
             ),
             onSuccess: { await model.refresh() }
         ) { w in

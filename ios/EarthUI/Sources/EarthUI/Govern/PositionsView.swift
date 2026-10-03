@@ -9,7 +9,7 @@ func positionSplit(_ positions: [PrivacyReads.Position]) -> [UInt64: UInt64] {
     var weight: [UInt64: Double] = [:]
     for p in positions { for (id, pct) in p.splits { weight[id, default: 0] += Double(p.derth) * Double(pct) } }
     let total = weight.values.reduce(0, +)
-    guard total > 0 else { return [:] }
+    guard total > 0, total.isFinite else { return [:] }
     let exact = weight.mapValues { $0 / total * 100 }
     var out = exact.mapValues { UInt64($0.rounded(.down)) }
     var left = 100 - Int(out.values.reduce(0, +))
@@ -80,7 +80,7 @@ struct PositionsView: View {
                     }
                 }
 
-                if model.privateStake.values.reduce(0, +) > 0 {
+                if model.privateStake.values.contains(where: { $0 > 0 }) {
                     EarthButton(title: "Lock stake in a position") { locking = true }
                 } else {
                     Text("Stake ERTH privately (Earn) to lock it in a position.")

@@ -40,17 +40,18 @@ public final class TxController {
         /// checked against is shielded ERTH, not the account's.
         public var shielded = false
 
-        /// Set only for registration, whose free gas is a shielded note paid
+        /// Set only for registration, whose free gas is a shielded note (pc and
+        /// its required 177-byte v2 ciphertext) paid
         /// against the registration itself: the backend checks this exact
         /// message the way the chain will, and shields the gas to `pcGas`.
-        public var registration: (msg: MsgRegisterPrivate, pcGas: Data)?
+        public var registration: (msg: MsgRegisterPrivate, pcGas: Data, ciphertextGas: Data)?
 
         public init(
             action: String,
             rows: [(String, String)],
             gasLimit: UInt64 = TransactionSigner.defaultGasLimit,
             shielded: Bool = false,
-            registration: (msg: MsgRegisterPrivate, pcGas: Data)? = nil
+            registration: (msg: MsgRegisterPrivate, pcGas: Data, ciphertextGas: Data)? = nil
         ) {
             self.action = action
             self.rows = rows
@@ -61,7 +62,7 @@ public final class TxController {
 
         /// A private action's sheet: its fee estimated from the private gas estimate.
         public static func `private`(action: String, rows: [(String, String)], gas: UInt64 = PrivacyWallet.privateGasEstimate,
-                                     registration: (msg: MsgRegisterPrivate, pcGas: Data)? = nil) -> Details {
+                                     registration: (msg: MsgRegisterPrivate, pcGas: Data, ciphertextGas: Data)? = nil) -> Details {
             Details(action: action, rows: rows, gasLimit: gas, shielded: true, registration: registration)
         }
     }
@@ -193,27 +194,22 @@ public final class TxController {
 
     /// Asks the backend for free gas, then waits for it to land.
     ///
-    /// Two grants exist. A registration's is a shielded note, paid against
-    /// the registration itself (the backend checks it as the chain will) to a
-    /// pc of our own, so its spend is unlinkable. Transparent ERTH, for a
-    /// signed tx, goes to a registered human once a month against a
-    /// membership proof — the backend never learns which human. A 202 is
-    /// treated like a 200: the chain is the only authority on arrival.
+    /// One grant exists: a registration's, a shielded note paid against the
+    /// registration itself (the backend checks it as the chain will) to a pc
+    /// of our own with its v2 ciphertext, so its spend is unlinkable. ERTH for
+    /// a signed tx's fee comes from unshielding. A 202 is treated like a 200:
+    /// the chain is the only authority on arrival.
     public func requestGas(in model: AppModel) async {
         guard !requestingGas, !awaitingGas, !model.address.isEmpty, let details = pending else { return }
         requestingGas = true
         gasError = nil
         do {
             if let reg = details.registration {
-                _ = try await GasGrant.request(.register(reg.msg, pcGas: reg.pcGas, ciphertextGas: Data()))
+                _ = try await GasGrant.request(.register(reg.msg, pcGas: reg.pcGas, ciphertextGas: reg.ciphertextGas))
             } else if details.shielded {
                 throw GasGrant.Refused(status: 0, message: "Fees for private actions are paid from shielded ERTH: your registration reward, or ERTH sent to your shielded address.")
             } else {
-                guard model.isRegistered, let w = model.privacy else {
-                    throw GasGrant.Refused(status: 403, message: "Register to get free gas.")
-                }
-                let req = try await GasTransparent.request(wallet: w, address: model.address, prove: { try await PrivacyProving.prover.proveMembership($0) })
-                _ = try await GasGrant.request(.transparent(req))
+                throw GasGrant.Refused(status: 0, message: "Need ERTH in your public account for fees? Unshield some from Portfolio.")
             }
         } catch {
             requestingGas = false

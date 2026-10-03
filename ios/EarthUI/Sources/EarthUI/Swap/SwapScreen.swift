@@ -52,9 +52,20 @@ struct SwapScreen: View {
                 Spacer().frame(height: theme.space.x16)
                 panels
                 details
+                if quote != nil && !erthIn {
+                    // The fee is paid from private ERTH whichever way the swap
+                    // goes (the chain's one fee rule: only an unbonding claim
+                    // pays from its output).
+                    Spacer().frame(height: theme.space.x8)
+                    Text(noErthForFee
+                         ? "The network fee is paid in ERTH, and you hold too little private ERTH to pay it."
+                         : "The network fee is paid from your private ERTH.")
+                        .font(EarthType.caption)
+                        .foregroundStyle(noErthForFee ? theme.colors.textError : theme.colors.textTertiary)
+                }
                 Spacer().frame(height: theme.space.x24)
                 EarthButton(title: "Review swap") { review() }
-                    .disabled(quote == nil || (quote?.amountOut ?? 0) <= 0)
+                    .disabled(quote == nil || (quote?.amountOut ?? 0) <= 0 || noErthForFee)
                 // No pool list here. Reserves and LP shares are what a
                 // liquidity provider needs; someone swapping needs the rate,
                 // the fee and what they get, all of which are above. Pools are
@@ -204,6 +215,9 @@ struct SwapScreen: View {
         erthIn ? max(0, fromUnits - Self.feeUerth) : fromUnits
     }
 
+    /// Selling ANML, the fee still needs an ERTH note.
+    private var noErthForFee: Bool { !erthIn && BigInt(model.shieldedErth) < Self.feeUerth }
+
     private var pool: Dex.Pool? { model.pool(for: .anml) }
 
     private var quote: SwapQuote? {
@@ -243,15 +257,14 @@ struct SwapScreen: View {
         let floor = minimumOut
         let paying = "\(Figures.balance(input)) \(fromToken.symbol)"
 
-        // Into ERTH the network fee comes out of the output (fee_from_output),
-        // so the chain needs the minimum to exceed it; otherwise it is paid
-        // from an ERTH note (for ERTH in, the same notes being spent).
+        // The network fee is paid from an ERTH note either way (for ERTH in,
+        // the same notes being spent; for ANML in, an ERTH note beside them).
         tx.requestPrivate(.private(
             action: "Swap",
             rows: [
                 ("You pay", paying),
                 ("You receive", "\(Amounts.fromBaseUnits(quote.amountOut)) \(toToken.symbol)"),
-                ("Minimum", "\(Amounts.fromBaseUnits(floor)) \(toToken.symbol)" + (outDenom == Constants.gasDenom ? " (network fee paid from it)" : "")),
+                ("Minimum", "\(Amounts.fromBaseUnits(floor)) \(toToken.symbol)"),
                 ("Pool fee", "\(Amounts.fromBaseUnits(quote.feeErth)) ERTH"),
                 ("Network fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
             ]
