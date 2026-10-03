@@ -190,7 +190,16 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         return 200_000L + 100_000L * PrivateMsgs.bundles(m).size + 350_000L * actions + (if (PrivateMsgs.stake(m) != null) 400_000 else 0)
     }
 
+    /** Broadcasts to refuse (after the wallet proved them): a node down, a tx dropped. */
+    var rejectNext = 0
+
     override fun broadcast(tx: ByteArray): TxResult {
+        if (rejectNext > 0) {
+            // The proofs made for it never reach the chain.
+            rejectNext--
+            prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear()
+            throw java.io.IOException("broadcast refused (test)")
+        }
         val (_, events) = check(tx, simulate = false)
         block()
         return TxResult("HASH${height - 1}", height - 1, now, events)
