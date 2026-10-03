@@ -6,7 +6,7 @@ and `zk/orchard` (Orchard-style bundles: ORCHARD_DESIGN.md sections 12-14 of
 the chain), and the Android code reproduces those byte for byte
 (`android/.../privacy/zk`, `privacy/tx`, tested against vectors generated from
 the chain by `android/tools/orchardvectors/gen.sh <chain checkout> [ref]`,
-last run against chain privacy/orchard **4a663d5**; `tools/privacyvectors` is
+last run against chain privacy/orchard **203d3b2**; `tools/privacyvectors` is
 the retired transfer-circuit generator, whose `dexamm_test.go.in` still
 writes the dex vectors).
 
@@ -68,6 +68,20 @@ reminder arithmetic saturates. Referrals come only from the verified
 `https://erth.network/ref/<handle>` link (App Link, universal link) or the
 Play install referrer, and the registrant can remove or replace one (one
 that does not resolve is cleared). Android and iOS identical.
+
+**Audit round 5 chain rules (chain 203d3b2, ORCHARD_DESIGN 16; clients
+round 6), summary.** MsgRegister names its referrer by handle alone (fields
+11/12 gone): the affiliate field is H("earth.affiliate", Bytes(handle)) and
+the **chain** mints the referral note to the handle's address with a public
+opening; the handle owner's wallet finds it in the notes stream (format 2:
+owner_pk, rho, rcm columns) by its own owner_pk, locally (§3a, §4h). An LP
+payout leg above 2^64 − 1 arrives as several notes sharing one ciphertext,
+each a note of its own. Every handle-claim and caretaker-cast bound comes
+from `Query/LeaseBounds`, never Params; a handle in its renewal period or a
+lapsed split is bounded like a claim, and only a live handle moves. Anchors
+are kept at least 30 minutes from lapsing; the swap fee rounds up; a
+withdrawal's note leg is bounded when it starts; a handle bind is priced as
+nine note writes (§4h). Android and iOS identical.
 
 **Stake votes without spending (chain 9b29f5d, ORCHARD_DESIGN 15),
 summary.** MsgStakeVote no longer carries a stake proof: one derth note
@@ -252,6 +266,12 @@ bytes as a blind stake note with the row's denom and amount. Value-0 notes
 are dropped, except the registration record note (§3a). Nothing else; a
 restore from the mnemonic alone finds every note.
 
+**Open notes (chain 203d3b2).** A note the chain mints with an opening it
+chose (today only the referral note, §3a) has no ciphertext at all: its
+notes-stream row carries `owner_pk`, `rho` and `rcm` instead, and it is
+ours iff owner_pk is our own and H(TAG_CM, AssetID(denom), amount,
+H(TAG_PC, owner_pk, rho, rcm)) is the row's cm (§4h).
+
 **Amounts (K12).** Every note value and stake amount is a u64 on chain.
 Both apps parse public amounts as unsigned decimal u64 (no sign, ASCII
 digits only) and take only values up to 2^63 − 1: a row, decrypted note or
@@ -267,29 +287,40 @@ saturates at 2^63 − 1 (a negative rate is 0).
     address = H(TAG_REG, idc, pc_anml, Bytes(ct_anml), pc_erth, Bytes(ct_erth), affiliate)
 
 with affiliate = 0 for no referrer, and for a referrer named by handle
+(chain 203d3b2)
 
-    affiliate = H(Tag("earth.affiliate"), Bytes(affiliate_handle), affiliate_pc, Bytes(affiliate_ciphertext))
+    affiliate = H(Tag("earth.affiliate"), Bytes(affiliate_handle))
 
-where affiliate_pc / affiliate_ciphertext are the referrer's half of the
-reward as a note to the handle's shielded address: a pc of its owner_pk with
-fresh rho/rcm and a 177-byte amount-blind (v2) ciphertext to its ek_pub,
-value 0 in the plaintext (the chain publishes the amount). MsgRegister
-carries `affiliate_handle` (15), `affiliate_pc` (11), `affiliate_ciphertext`
-(12), all three or none (`affiliate` 13 and `affiliate_code` 14 are
-reserved). The handle is resolved from the whole directory when the
-registrant confirms the passport details (§4g: live in a fresh copy and in
-the chain's own directory), and a wallet never names its own address. So
-the wallet picks fresh rho/rcm for all three notes and writes the
-ciphertexts **before** proving the passport, and sends exactly those
-ciphertexts in MsgRegister and to /gas/register. A referral link
+MsgRegister carries `affiliate_handle` (15) only, "" for none (11, 12, 13,
+14 are reserved; 11/12 were `affiliate_pc` / `affiliate_ciphertext`, the
+referral note the registrant's wallet used to make, which let a registrant
+pay the referral half to itself). The chain mints the referrer's half
+itself, at execution, to the address the handle resolves to then:
+
+    pc  = H(TAG_PC, handle owner_pk, rho, rcm)
+    rho = H(Tag("earth.referral"), passport nullifier, U64(leaf_index), U64(0))
+    rcm = H(Tag("earth.referral"), passport nullifier, U64(leaf_index), U64(1))
+
+(zk/privacy.ReferralOpening; leaf_index is the new identity leaf). The note
+has no ciphertext; its `shielded_mint` event carries owner_pk, rho and rcm
+(hex) with amount and position, and the handle owner's wallet takes it from
+the notes stream by its own owner_pk (§4h). Vectors: vectors.json
+`referral_opening` (five (nullifier, leaf_index) pairs with rho, rcm, and
+the pc and cm of 5 ERTH to OwnerPK(7100+i)). The handle is resolved from
+the whole directory when the registrant confirms the passport details (§4g:
+live in a fresh copy and in the chain's own directory), and a wallet never
+names its own address. The wallet picks fresh rho/rcm for its own two notes
+and writes their ciphertexts **before** proving the passport, and sends
+exactly those ciphertexts in MsgRegister and to /gas/register. A referral link
 (`https://erth.network/ref/<handle>`, `earth://ref/<handle>`, the Play
 install referrer `referrer=<handle>`) prefills the handle. Chain pinned vector: idc=1,
 pc_anml=2, ct_anml="anml", pc_erth=3, ct_erth="erth", affiliate=0 →
 `20ce5fccf5e6e20a8a7b80f7565e41a7c73dbb16ac5e53746e7234ba8b305b0c`.
 
 **Gas grant.** `POST /gas/register` takes MsgRegister's fields (no fee
-bundle; the referral as `affiliate_handle`, `affiliate_pc`,
-`affiliate_ciphertext` base64, all three or all "" for none, no `affiliate`)
+bundle; the referral as `affiliate_handle`, "" for none; never
+`affiliate_pc` / `affiliate_ciphertext`, which the backend refuses with a
+400 since chain 203d3b2; no `affiliate`)
 plus `pc_gas` and `ciphertext_gas`, a fresh v2 ciphertext to self
 (177 bytes, required). It is the only grant: `/gas/transparent`,
 `/gas/android`, `/gas/challenge`, `/gas/ios`, `/gas/human` are gone.
@@ -857,6 +888,100 @@ run is gone (a chain switch).
 - **timeout_height** stays the LCD tip + 50 (above the last committed
   height, as CheckTx now requires).
 
+## 4h. Audit round 5 chain rules (chain 203d3b2, ORCHARD_DESIGN 16)
+
+- **Notes stream format 2** (backend README "Note stream format 2"). Every
+  `/notes` page has `"format": 2` and `"fields": ["position", "height",
+  "cm", "ciphertext", "amount", "owner_pk", "rho", "rcm"]`; the wallet reads
+  columns by name and refuses a page of any other format (an old backend)
+  or one missing a column. Three kinds of row: a bundle output (`amount`
+  null, `ciphertext` set): trial-decrypt (§3); a minted or shielded note
+  (`amount` and `ciphertext` set): blind v2 against the row's amount; an
+  **open note** (`ciphertext` null; `amount`, `owner_pk`, `rho`, `rcm` set,
+  hex): ours iff owner_pk is our own and the opening with the amount
+  recomputes the row's cm. A row with part of an opening, an opening beside
+  a ciphertext, or an open row without an amount is refused (the page is
+  inconsistent). Matching is local over the whole stream the wallet reads
+  anyway; no request ever names an owner_pk. The note is then spent like
+  any other (nf = H(TAG_NF, nk, rho, position); the published opening
+  links nothing without nk).
+- **Split payouts.** x/dex pays a private LP withdrawal leg above 2^64 − 1
+  as ceil(v / (2^64 − 1)) notes (MintNoteSplit, at most 64): consecutive
+  rows with the **same** pc and ciphertext, each its own amount (2^64 − 1,
+  …, the remainder) and position. The blind v2 ciphertext binds no cm or
+  value, so each row decrypts to the same (rho, rcm) and its own amount
+  gives its cm; the nullifier includes the position, so every chunk is a
+  separate, separately spendable note. The wallet never dedupes by
+  ciphertext, pc or opening. **Residual (reported to the chain):** a chunk
+  of 2^64 − 1 is above the 2^63 − 1 every client holds (§3 Amounts), so
+  such chunks would be ignored; the wallet therefore refuses to start a
+  withdrawal whose note leg is above (2^63 − 1) / 4 at the current reserves
+  (a quarter, as x/dex keeps its own cap at a quarter of what a payout can
+  carry), which keeps every payout one holdable note. x/dex itself refuses
+  at start a leg above 16 × (2^64 − 1) (dex 1101, "the most one withdrawal
+  pays as notes"); the app explains it.
+- **Lease bounds** (`GET /earth/personhood/v1/lease_bounds`, int64s as
+  strings): block_time, activation_margin_seconds, handle_lease_seconds
+  (the longest ever in force), handle_claim_bound, caretaker_lease_seconds
+  (a held longer lease after a cut included), caretaker_cast_bound,
+  caretaker_lease_hold_until. Checked before use: leases in 1..10 years, the
+  margin in 0..10 years, and handle_claim_bound = block_time −
+  handle_lease_seconds − margin (likewise the caretaker bound), else
+  refused. L(lease) of §4g is now floor_hour(block_time − lease − margin −
+  600) with lease and margin from here (closes the mobile audit 5 L1: the
+  bound used Params); the UI's claim-wait date uses the same lease.
+- **Held but not live** (audit 5 P2). MsgBindHandle is unbounded only for a
+  prover holding a **live** handle: a renewal or change of a handle in its
+  renewal period is bounded like a claim. The wallet keeps the held handle's
+  expires_at (`handle_expires_at` for `handle_expires_for`, from its bind's
+  `handle_bound` event, else the block time + the lease, and refreshed from
+  the chain's directory on every scan); past it, an identity that does not
+  meet L gets `HandleNotLive` (iOS NotYet.lapsed .handle) before anything is
+  sent, with the date it may claim; with no expiry known it tries no bound
+  and the chain's no-fee refusal reads as NotHeld. MsgMoveHandle refuses a
+  handle that is not live: the wallet refuses it first (`HandleNotMovable`)
+  and the switch screen does not offer it, saying why; the chain's text
+  ("renew it before moving it", personhood 1116) is explained. A caretaker
+  split past the chain's own expiry is not held: refreshing it is a new
+  split, bounded (`CaretakerLapsed`, iOS NotYet.lapsed .caretaker).
+
+  | msg (replaces the §4g rows) | max_predecessor |
+  | --- | --- |
+  | MsgBindHandle, renew/change of a live handle held | L(handle lease) if met, else no bound |
+  | MsgBindHandle, renew/change of a handle in its renewal period | L(handle lease); not met: refused locally |
+  | MsgSetCaretaker, refresh of a live split | L(caretaker lease) if met, else no bound |
+  | MsgSetCaretaker, refresh of a lapsed split | L(caretaker lease); not met: refused locally |
+
+- **Anchors.** CheckTx/ReCheckTx refuse an anchor lapsing within 120 s of
+  the last block, and a proposer leaves out a tx whose anchor lapsed by its
+  block's time. Before laying out a private tx the wallet reads its local
+  root's record (`/earth/shielded/v1/roots/{root}`: `valid`, `expires_at`, 0
+  for the latest root); one lapsing within 1,800 s of the LCD tip's time
+  (the CheckTx margin, the 50-block timeout_height and phone proving) makes
+  it sync first (a newer root), and if that is still too old the tx is
+  refused before anything is proven (Android SyncFirst, iOS AnchorTooOld).
+  A node that does not say `expires_at` leaves the chain's own check. The
+  chain's "pick a newer anchor" refusal (shielded 1103) is explained.
+- **Gas.** A handle bind (claim, renew, change, release) is priced as nine
+  note writes: the fee cap's estimate adds 8 × 150,000 to the membership's
+  one write, and the confirm sheet estimates 12,500,000 gas (other private
+  txs 10,000,000). The fee itself is still simulated (gas + 10 %, at least
+  20,000). x/shielded's gas prices are capped (proof 10M, note 1M, bundle
+  1M); the wallet's fee cap stays twice its estimate at the defaults and
+  2 ERTH absolute.
+- **MsgShield** of a send-disabled denom is refused (bank 5, "send
+  transactions are disabled"); its simulate fails before signing and the
+  app says the token's transfers are switched off.
+- **Assembly.** An expedited proposal the chamber ratified and x/gov
+  demoted votes again in round 1, a new nullifier scope; BallotInputs
+  reports `round`, and the wallet recomputes the scope as
+  Scope("proposal", U64(id), U64(round)) and refuses a node's scope that
+  differs (unchanged code; vectors `proposal_5_0`, `proposal_5_1`).
+- **Dex.** The swap fee is LegacyDec(amount) × fee / 100 rounded half-even
+  at 18 places, then **up** to an integer (was truncated); quotes and
+  min-out use it (dex_amm.json and iOS corecheck re-derived from x/dex at
+  203d3b2; deposit vectors unchanged).
+
 ## 4a. Indexer URL scheme (backend README "URL scheme for wallets")
 
 1. `GET /privacy/status` → `chain_id`, `genesis` (16 hex), `base`
@@ -887,7 +1012,7 @@ run is gone (a chain switch).
    ahead when the LCD cannot say, never when it contradicts the status.
 3. Every stream is read under `base`:
 
-       GET {base}/notes?from_pos=&limit=               [position, height, cm, ciphertext, amount]
+       GET {base}/notes?from_pos=&limit=               format 2: [position, height, cm, ciphertext, amount, owner_pk, rho, rcm] (§4h)
        GET {base}/nullifiers?from_height=&limit=       [[height, [nf, ...]], ...]
        GET {base}/identity?from_index=&limit=          [index, height, leaf, zeroed_height]
        GET {base}/identity/zeroed?from_height=&limit=  [[height, [index, ...]], ...]
@@ -1089,3 +1214,11 @@ refused), a registration referred by a handle (the referral note found by
 the referrer), a switch that moves the handle and caretaker vote, and every
 predecessor bound; its membership witnesses (switched identities, no-bound
 inputs) pass `nargo execute` with the rest (231 witnesses).
+`Fix6Test` / `Fix6Tests` (chain 203d3b2) drive the open referral note (found
+by owner_pk and cm, a forged cm refused, spent), notes format 2 (by name,
+format 1 and partial openings refused), a split payout's shared ciphertext
+at three positions, a handle in its renewal period and a lapsed split
+(bounded or refused locally, nothing sent), lease bounds after a lease cut,
+inconsistent lease bounds, an anchor about to lapse, the rounded-up fee and
+the new errors. At 203d3b2 every witness of the Android suite (440) and of
+the iOS suite (416) passes `nargo execute`.
