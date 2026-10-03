@@ -40,45 +40,14 @@ class PrivacyKeys private constructor(
     /** The x25519 secret, for trial decryption only. */
     internal fun ek(): X25519PrivateKeyParameters = X25519PrivateKeyParameters(ekSecret, 0)
 
-    /**
-     * rho and rcm of self-mint [counter]: a note the chain mints to us at a
-     * value we cannot know when we name its pc (a registration reward, derth
-     * at the live rate, an unbonding payout, a gas grant). Its ciphertext
-     * cannot be written (the canonical format binds cm, which binds the value),
-     * so these notes are found instead by their public mint amount and a pc
-     * the wallet can rederive from the mnemonic alone (WalletSync):
-     *
-     *     rho = HMAC-SHA512("earth.privacy.v1", "mint-rho" || nk (32) || counter u32 BE) mod p
-     *     rcm = HMAC-SHA512("earth.privacy.v1", "mint-rcm" || nk (32) || counter u32 BE) mod p
-     */
-    fun mintSecrets(counter: Int): Pair<Fr, Fr> {
-        val c = java.nio.ByteBuffer.allocate(4).putInt(counter).array()
-        fun d(label: String) = Fr.fromWideBytes(hmac(label.toByteArray() + nk.toBytes() + c))
-        return d("mint-rho") to d("mint-rcm")
-    }
-
-    /** pc of self-mint [counter]. */
-    fun mintPc(counter: Int): Fr = mintSecrets(counter).let { (rho, rcm) -> Privacy.pc(ownerPk, rho, rcm) }
-
     private fun counted(label: String, nk: Fr, counter: Int): Fr {
         val c = java.nio.ByteBuffer.allocate(4).putInt(counter).array()
         return Fr.fromWideBytes(hmac(label.toByteArray() + nk.toBytes() + c))
     }
 
-    /**
-     * rho and rcm of stake self-mint [counter]: the stake pc a stake proof
-     * names as spc_mint for a stake note the chain mints to us (a
-     * delegation's derth, an undelegation's claim, a stake vote's re-mint, an
-     * unlocked position). The chain publishes the minted note's denom, amount
-     * and spc, so sync finds it by its spc alone:
-     *
-     *     rho = HMAC-SHA512("earth.privacy.v1", "stake-rho" || nk (32) || counter u32 BE) mod p
-     *     rcm = HMAC-SHA512("earth.privacy.v1", "stake-rcm" || nk (32) || counter u32 BE) mod p
-     */
-    fun stakeMintSecrets(counter: Int): Pair<Fr, Fr> = counted("stake-rho", nk, counter) to counted("stake-rcm", nk, counter)
-
-    /** spc of stake self-mint [counter]. */
-    fun stakeMintPc(counter: Int): Fr = stakeMintSecrets(counter).let { (rho, rcm) -> Privacy.stakePc(ownerPk, rho, rcm) }
+    // No self-mint counters (removed for chain fced976): every note the
+    // chain mints to this wallet carries a blind ciphertext of fresh secrets
+    // (PRIVACY_FORMATS.md section 1), found by trial decryption.
 
     /**
      * Groundworks position [counter]'s owner-tag salt: a position stores

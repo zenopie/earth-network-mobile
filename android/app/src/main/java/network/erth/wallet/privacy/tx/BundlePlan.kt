@@ -30,15 +30,16 @@ class NoteOut private constructor(val denom: String, val value: Long, val pc: Fr
         fun toSelf(keys: PrivacyKeys, denom: String, value: Long): NoteOut = to(keys.address, denom, value)
 
         /**
-         * A note the chain will mint to us at a value we cannot know yet (a
-         * reward, an unbonding payout, swap output, LP shares or refunds):
-         * its pc is self-mint [counter]'s (PrivacyKeys.mintSecrets) and it
-         * carries no ciphertext; sync finds it by its public mint amount.
+         * A note the chain will mint to us (a reward, a claim, a shield, an
+         * unbonding payout, swap output, LP shares, refunds or withdrawal
+         * legs): fresh rho and rcm and a value-blind (v2) ciphertext of them
+         * to our own address, which sync opens against the amount the chain
+         * publishes with the note. No counter: every such note is found by
+         * trial decryption alone.
          */
-        fun mintToSelf(keys: PrivacyKeys, denom: String, counter: Int): NoteOut {
-            val (rho, rcm) = keys.mintSecrets(counter)
-            val n = NotePlaintext(denom, 0, rho, rcm)
-            return NoteOut(denom, 0, n.pc(keys.ownerPk), ByteArray(0), n)
+        fun mintToSelf(keys: PrivacyKeys, denom: String, memo: ByteArray = ByteArray(0)): NoteOut {
+            val n = NotePlaintext.fresh(denom, 0, memo)
+            return NoteOut(denom, 0, n.pc(keys.ownerPk), NoteCipher.encryptBlind(n, keys.address), n)
         }
 
         /**

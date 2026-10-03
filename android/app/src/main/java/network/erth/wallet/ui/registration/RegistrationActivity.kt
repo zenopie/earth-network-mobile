@@ -250,10 +250,10 @@ class RegistrationActivity : ComponentActivity() {
                                     // checks this exact message, and it is
                                     // what gets broadcast once the gas lands.
                                     // The gas is shielded to a note of our own
-                                    // (a self-mint pc, found by its public
-                                    // amount), never to an address.
+                                    // (a fresh pc with its v2 ciphertext, found by
+                                    // trial decryption), never to an address.
                                     val msg = withContext(Dispatchers.IO) { PassportSession.registerMsg(ctx, ready) }
-                                    GasGrant.forRegistration(msg, ready.prep.gas.pc.toBytes())
+                                    GasGrant.forRegistration(msg, ready.prep.gas.pc.toBytes(), ready.prep.gas.ciphertext)
                                 } finally {
                                     requestingGas = false
                                 }

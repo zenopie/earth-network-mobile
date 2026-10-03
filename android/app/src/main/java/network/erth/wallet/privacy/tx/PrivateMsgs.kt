@@ -83,8 +83,9 @@ object PrivateMsgs {
     fun affiliateField(affiliate: String): Fr =
         if (affiliate.isEmpty()) Fr.ZERO else Privacy.bytes(addressBytes(affiliate))
 
-    fun registrationBinding(m: MsgRegister): Fr =
-        Privacy.registrationBinding(f(m.idc), f(m.pcAnml), f(m.pcErth), affiliateField(m.affiliate))
+    fun registrationBinding(m: MsgRegister): Fr = Privacy.registrationBinding(
+        f(m.idc), f(m.pcAnml), m.ciphertextAnml.toByteArray(), f(m.pcErth), m.ciphertextErth.toByteArray(), affiliateField(m.affiliate),
+    )
 
     /** SplitsBytes: option_id then percent, big-endian u64, per entry. */
     fun splitsBytes(splits: List<AllocationWeight>): ByteArray {
@@ -185,47 +186,40 @@ object PrivateMsgs {
 
     /**
      * StakeFields: anchor, nf_0, nf_1, cm_0, cm_1, Bytes(ct_0), Bytes(ct_1),
-     * spc_mint, owner_tag (an absent ciphertext is Bytes of nothing).
+     * spc_mint, owner_tag, Bytes(spc_ciphertext) (an absent ciphertext is
+     * Bytes of nothing).
      */
     fun stakeFields(p: StakeProof): List<Fr> = listOf(
         fieldOrZero(p.anchor), fieldOrZero(p.nullifiersList.getOrNull(0)), fieldOrZero(p.nullifiersList.getOrNull(1)),
         fieldOrZero(p.commitmentsList.getOrNull(0)), fieldOrZero(p.commitmentsList.getOrNull(1)),
         bytes(p.ciphertextsList.getOrNull(0) ?: ByteString.EMPTY), bytes(p.ciphertextsList.getOrNull(1) ?: ByteString.EMPTY),
-        fieldOrZero(p.spcMint), fieldOrZero(p.ownerTag),
+        fieldOrZero(p.spcMint), fieldOrZero(p.ownerTag), bytes(p.spcCiphertext),
     )
 
-    /** The fee bundle's uerth balance (shielded FeeBundleFee): a fee-only msg's fee. */
-    private fun feeOf(b: Bundle): Long = b.balancesList.firstOrNull { it.denom == "uerth" }?.amount ?: 0
+    /** The bundles' summed uerth balance (shielded UerthBalance). */
+    fun uerthBalance(msg: MessageLite): Long =
+        bundles(msg).sumOf { b -> b.balancesList.filter { it.denom == "uerth" }.sumOf { it.amount } }
 
-    /** The uerth the bundles pay to fee_collector (PrivateMsg.PrivateFee). */
+    /** The fee rule (shielded FeeAfter): the uerth balance less what the msg moves, 0 if it moves more. */
+    private fun feeAfter(msg: MessageLite, moved: Long): Long = (uerthBalance(msg) - moved).coerceAtLeast(0)
+
+    /**
+     * The uerth the bundles pay to fee_collector (PrivateMsg.PrivateFee): the
+     * one fee rule, every bundle's uerth balance less the uerth the msg moves
+     * itself (a delegation's amount, a uerth swap's amount in, an LP
+     * deposit's ERTH leg); MsgSend names its fee.
+     */
     fun privateFee(msg: MessageLite): Long = when (msg) {
         is MsgSend -> msg.fee
-        is MsgRegister -> feeOf(msg.fee)
-        is MsgClaimAnml -> feeOf(msg.fee)
-        is MsgSetCaretaker -> feeOf(msg.fee)
-        is MsgBindReferrer -> feeOf(msg.fee)
-        is MsgVoteProposal -> feeOf(msg.fee)
-        is MsgProposeRemoval -> feeOf(msg.fee)
-        is MsgVoteRemoval -> feeOf(msg.fee)
-        is MsgDelegate -> msg.fee
-        is MsgRestake -> msg.fee
-        is MsgUndelegate -> msg.fee
-        is MsgClaimUnbonding -> msg.fee
-        is MsgStakeVote -> msg.fee
-        is MsgLockPosition -> msg.fee
-        is MsgUpdatePosition -> msg.fee
-        is MsgUnlockPosition -> msg.fee
-        is MsgPositionVote -> msg.fee
-        is MsgNoteSwap -> msg.fee
-        is MsgAddLiquidityShielded -> msg.fee
-        is MsgRemoveLiquidityShielded -> msg.fee
-        else -> throw IllegalArgumentException("not a private msg: ${msg.javaClass.simpleName}")
+        is MsgDelegate -> feeAfter(msg, msg.amount)
+        is MsgNoteSwap -> feeAfter(msg, if (msg.denomIn == "uerth") msg.amountIn else 0)
+        is MsgAddLiquidityShielded -> feeAfter(msg, msg.erthAmount)
+        else -> feeAfter(msg, 0)
     }
 
-    /** fee_from_output, for the msgs that may pay their fee out of the ERTH they produce. */
+    /** fee_from_output: only an unbonding claim pays its fee out of what it produces. */
     fun feeFromOutput(msg: MessageLite): Long = when (msg) {
         is MsgClaimUnbonding -> msg.feeFromOutput
-        is MsgNoteSwap -> msg.feeFromOutput
         else -> 0
     }
 
@@ -245,40 +239,51 @@ object PrivateMsgs {
         is MsgVoteProposal -> listOf(u(msg.proposalId), u(msg.optionValue.toLong()))
         is MsgProposeRemoval -> listOf(u(msg.optionId))
         is MsgVoteRemoval -> listOf(u(msg.optionId), u(msg.optionValue.toLong()))
-        is MsgDelegate -> stakeFields(msg.stake) + listOf(bytes(msg.validator), u(msg.fee))
-        is MsgRestake -> stakeFields(msg.stake) + listOf(bytes(msg.validator), u(msg.fee))
-        is MsgUndelegate -> stakeFields(msg.stake) + listOf(bytes(msg.validator), u(msg.amount), u(msg.fee))
+        is MsgDelegate -> stakeFields(msg.stake) + listOf(bytes(msg.validator), u(msg.amount))
+        is MsgRestake -> stakeFields(msg.stake) + listOf(bytes(msg.validator))
+        is MsgUndelegate -> stakeFields(msg.stake) + listOf(bytes(msg.validator), u(msg.amount))
         is MsgClaimUnbonding -> stakeFields(msg.stake) + listOf(
-            bytes(msg.validator), u(msg.epoch), u(msg.amount), f(msg.pc), bytes(msg.ciphertext), u(msg.feeFromOutput), u(msg.fee),
+            bytes(msg.validator), u(msg.epoch), u(msg.amount), f(msg.pc), bytes(msg.ciphertext), u(msg.feeFromOutput),
         )
         is MsgStakeVote -> stakeFields(msg.stake) + listOf(
-            u(msg.proposalId), bytes(msg.validator), Privacy.bytes(optionsBytes(msg.optionsList)), u(msg.weight), u(msg.fee),
+            u(msg.proposalId), bytes(msg.validator), Privacy.bytes(optionsBytes(msg.optionsList)), u(msg.weight),
         )
         is MsgLockPosition -> stakeFields(msg.stake) + listOf(
-            bytes(msg.validator), u(msg.amount), Privacy.bytes(splitsBytes(msg.splitsList)), u(msg.fee),
+            bytes(msg.validator), u(msg.amount), Privacy.bytes(splitsBytes(msg.splitsList)),
         )
-        is MsgUpdatePosition -> stakeFields(msg.stake) + listOf(u(msg.positionId), Privacy.bytes(splitsBytes(msg.splitsList)), u(msg.fee))
-        is MsgUnlockPosition -> stakeFields(msg.stake) + listOf(u(msg.positionId), u(msg.fee))
+        is MsgUpdatePosition -> stakeFields(msg.stake) + listOf(u(msg.positionId), Privacy.bytes(splitsBytes(msg.splitsList)))
+        is MsgUnlockPosition -> stakeFields(msg.stake) + listOf(u(msg.positionId))
         is MsgPositionVote -> stakeFields(msg.stake) + listOf(
-            u(msg.positionId), u(msg.proposalId), Privacy.bytes(optionsBytes(msg.optionsList)), u(msg.fee),
+            u(msg.positionId), u(msg.proposalId), Privacy.bytes(optionsBytes(msg.optionsList)),
         )
-        is MsgNoteSwap -> listOf(bytes(msg.denomOut), u(msg.minAmountOut), f(msg.pc), bytes(msg.ciphertext), u(msg.feeFromOutput), u(msg.fee))
+        is MsgNoteSwap -> listOf(
+            bytes(msg.denomIn), u(msg.amountIn), bytes(msg.denomOut), u(msg.minAmountOut), f(msg.pc), bytes(msg.ciphertext),
+        )
         is MsgAddLiquidityShielded -> listOf(
-            u(msg.poolId), bytes(msg.minShares), f(msg.sharePc), bytes(msg.shareCiphertext), f(msg.refundPc), bytes(msg.refundCiphertext), u(msg.fee),
+            u(msg.poolId), bytes(msg.minShares), f(msg.sharePc), bytes(msg.shareCiphertext), f(msg.refundPc), bytes(msg.refundCiphertext),
+            u(msg.erthAmount),
         )
         is MsgRemoveLiquidityShielded -> listOf(
-            u(msg.poolId), f(msg.erthPc), bytes(msg.erthCiphertext), f(msg.tokenPc), bytes(msg.tokenCiphertext), u(msg.fee),
+            u(msg.poolId), f(msg.erthPc), bytes(msg.erthCiphertext), f(msg.tokenPc), bytes(msg.tokenCiphertext),
         )
         else -> throw IllegalArgumentException("not a private msg: ${msg.javaClass.simpleName}")
     }
 
     /**
-     * [msg]'s sighash on [chainId] (x/shielded types.Sighash):
-     * Signal(type URL, chain id, K, digest(bundle_0..K-1), fields...).
+     * The tx fields every private sighash binds (zk/orchard.TxFields): the
+     * body's memo and timeout_height (0: none) and the auth info's gas limit.
      */
-    fun sighash(msg: MessageLite, chainId: String): Fr {
+    data class TxFields(val memo: String = "", val timeoutHeight: Long = 0, val gasLimit: Long = 0)
+
+    /**
+     * [msg]'s sighash on [chainId] in a tx with fields [tx] (x/shielded
+     * types.Sighash): Signal(type URL, chain id, K, digest(bundle_0..K-1),
+     * Bytes(memo), timeout_height, gas_limit, fields...).
+     */
+    fun sighash(msg: MessageLite, chainId: String, tx: TxFields): Fr {
         val bs = bundles(msg)
-        return Privacy.signal(typeUrl(msg), chainId, listOf(u(bs.size.toLong())) + bs.map(::digest) + sighashFields(msg))
+        val txf = listOf(Privacy.bytes(tx.memo.toByteArray(Charsets.UTF_8)), u(tx.timeoutHeight), u(tx.gasLimit))
+        return Privacy.signal(typeUrl(msg), chainId, listOf(u(bs.size.toLong())) + bs.map(::digest) + txf + sighashFields(msg))
     }
 
     fun typeUrl(msg: MessageLite): String = when (msg) {

@@ -42,6 +42,7 @@ object PrivacySession {
             reads = RestChainReads,
             prover = AndroidProver(app),
             chainId = Constants.EARTH_CHAIN_ID,
+            roots = network.erth.wallet.privacy.chain.LcdChainRoots,
         )
         current = address to w
         return w

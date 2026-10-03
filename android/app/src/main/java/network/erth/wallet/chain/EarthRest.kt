@@ -17,13 +17,43 @@ object EarthRest {
     fun get(path: String): Pair<Int, String> = getFrom(Constants.EARTH_LCD_URL, path)
 
     /**
+     * [get] of the state at block [height] (the gRPC gateway's
+     * `x-cosmos-block-height` header); a pruned height answers an error.
+     */
+    fun getAt(path: String, height: Long): Pair<Int, String> = getFrom(Constants.EARTH_LCD_URL, path, height)
+
+    /**
+     * The most any response is read to: a node or proxy streaming without
+     * end (or a hostile one) cannot exhaust memory. The largest legitimate
+     * answers (a page of positions or validators) are far below it.
+     */
+    const val MAX_BODY_BYTES = 8 * 1024 * 1024
+
+    private fun readBounded(stream: java.io.InputStream?): String {
+        if (stream == null) return ""
+        return stream.use { s ->
+            val out = java.io.ByteArrayOutputStream()
+            val buf = ByteArray(16 * 1024)
+            var total = 0
+            while (true) {
+                val n = s.read(buf)
+                if (n < 0) break
+                total += n
+                if (total > MAX_BODY_BYTES) throw java.io.IOException("response exceeds $MAX_BODY_BYTES bytes")
+                out.write(buf, 0, n)
+            }
+            out.toString("UTF-8")
+        }
+    }
+
+    /**
      * Same as [get] but against the CometBFT RPC port, which serves the one
      * thing the LCD cannot: a range of blocks in a single request. Callers must
      * tolerate it being unreachable — see [Constants.EARTH_RPC_URL].
      */
     fun getRpc(path: String): Pair<Int, String> = getFrom(Constants.EARTH_RPC_URL, path)
 
-    private fun getFrom(base: String, path: String): Pair<Int, String> {
+    private fun getFrom(base: String, path: String, height: Long? = null): Pair<Int, String> {
         // An unset base is a supported configuration, not an error: the RPC is
         // optional and is left empty when the deployment exposes only the LCD.
         // Reported as a non-2xx so callers take their existing failure path
@@ -36,9 +66,10 @@ object EarthRest {
             conn.connectTimeout = 20000
             conn.readTimeout = 30000
             conn.requestMethod = "GET"
+            height?.let { conn.setRequestProperty("x-cosmos-block-height", it.toString()) }
             val code = conn.responseCode
             val stream = if (code >= 400) conn.errorStream else conn.inputStream
-            code to (stream?.readBytes()?.toString(Charsets.UTF_8) ?: "")
+            code to readBounded(stream)
         } finally {
             conn.disconnect()
         }
@@ -64,7 +95,7 @@ object EarthRest {
             conn.outputStream.use { it.write(out); it.flush() }
             val code = conn.responseCode
             val stream = if (code >= 400) conn.errorStream else conn.inputStream
-            code to (stream?.readBytes()?.toString(Charsets.UTF_8) ?: "")
+            code to readBounded(stream)
         } finally {
             conn.disconnect()
         }

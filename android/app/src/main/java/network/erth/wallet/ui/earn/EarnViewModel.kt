@@ -113,7 +113,14 @@ class EarnViewModel(app: Application) : AndroidViewModel(app) {
                         )
                     }
 
-                val rates = validators.mapNotNull { v ->
+                // Every validator's rate in one read of the indexer (L5): a
+                // per-validator query for the ones this wallet holds would
+                // tell the node which they are. Falls back to asking about
+                // every bonded validator alike.
+                val rates = runCatching {
+                    network.erth.wallet.privacy.sync.HttpPrivacyIndexer(network.erth.wallet.Constants.EARTH_API_URL).rates()
+                        .mapNotNull { r -> r.rate.toBigDecimalOrNull()?.let { r.validator to it } }.toMap()
+                }.getOrNull()?.takeIf { it.isNotEmpty() } ?: validators.mapNotNull { v ->
                     runCatching { PrivacyQueries.validator(v.operator).rate }.getOrNull()?.let { v.operator to it }
                 }.toMap()
 

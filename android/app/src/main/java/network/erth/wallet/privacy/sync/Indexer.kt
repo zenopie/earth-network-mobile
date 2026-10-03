@@ -14,8 +14,13 @@ import java.util.zip.GZIPInputStream
  * only: every request is addressed by a position, index or height, never by
  * anything derived from this wallet's keys, so the server learns nothing
  * about which notes or leaf are ours.
+ *
+ * Streams live under a base keyed by the chain (`/privacy/<chain_id>/<genesis>`)
+ * that [status] names; a stream call naming another chain fails with
+ * [IndexerBaseMoved] (HTTP 404), and the caller reads [status] again.
  */
 interface PrivacyIndexer {
+    /** `/privacy/status`: the chain the index holds, its base, whether it halted. Also (re)selects the base. */
     fun status(): IndexerStatus
     fun notes(fromPos: Long, limit: Int? = null): NotesPage
     fun nullifiers(fromHeight: Long, limit: Int? = null): HeightPage<Fr>
@@ -29,7 +34,24 @@ interface PrivacyIndexer {
     fun stakeNullifiers(fromHeight: Long, limit: Int? = null): HeightPage<Fr>
 }
 
-data class IndexerStatus(val chainId: String?, val syncedHeight: Long, val syncedTime: Long?, val notes: Long, val identityLeaves: Long, val halted: String?)
+data class IndexerStatus(
+    val chainId: String?,
+    val syncedHeight: Long,
+    val syncedTime: Long?,
+    val notes: Long,
+    val identityLeaves: Long,
+    val halted: String?,
+    /** First 16 hex digits of the chain's first block hash: with chainId, which chain this is. */
+    val genesis: String? = null,
+    /** `/privacy/<chain_id>/<genesis>`, null until the indexer met its chain. */
+    val base: String? = null,
+)
+
+/** A stream request named a chain the indexer no longer holds (404): re-read [PrivacyIndexer.status]. */
+class IndexerBaseMoved(message: String) : java.io.IOException(message)
+
+/** The indexer refuses to serve trees it cannot vouch for (`/privacy/status` halted). */
+class IndexerHalted(val reason: String) : java.io.IOException("the privacy indexer has halted: $reason")
 
 data class NoteRow(val position: Long, val height: Long, val cm: Fr, val ciphertext: ByteArray, val amount: String?)
 
@@ -65,10 +87,11 @@ data class StakeNotesPage(val rows: List<StakeNoteRow>, val nextPos: Long, val c
 data class RateRow(val validator: String, val rate: String, val supply: String, val epoch: Long?, val height: Long)
 
 /** [PrivacyIndexer] over HTTP. Blocking; call from an IO thread. */
-class HttpPrivacyIndexer(private val base: String) : PrivacyIndexer {
+class HttpPrivacyIndexer(private val host: String) : PrivacyIndexer {
+    @Volatile private var base: String? = null
 
     private fun get(path: String): JSONObject {
-        val c = URL(base.trimEnd('/') + path).openConnection() as HttpURLConnection
+        val c = URL(host.trimEnd('/') + path).openConnection() as HttpURLConnection
         c.connectTimeout = 15_000
         c.readTimeout = 60_000
         c.setRequestProperty("Accept-Encoding", "gzip")
@@ -76,12 +99,19 @@ class HttpPrivacyIndexer(private val base: String) : PrivacyIndexer {
             val code = c.responseCode
             val raw = if (code in 200..299) c.inputStream else c.errorStream
             val stream = if (c.contentEncoding == "gzip") GZIPInputStream(raw) else raw
-            val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
-            if (code !in 200..299) throw IOException("indexer $path: $code $body")
+            val body = stream?.let { readBounded(it, MAX_BODY_BYTES) }.orEmpty()
+            if (code == 404) throw IndexerBaseMoved("indexer $path: 404 ${body.take(200)}")
+            if (code !in 200..299) throw IOException("indexer $path: $code ${body.take(200)}")
             return JSONObject(body)
         } finally {
             c.disconnect()
         }
+    }
+
+    /** A stream path under the current base (from [status], read first when unknown). */
+    private fun stream(path: String): JSONObject {
+        val b = base ?: status().base ?: throw IOException("the privacy indexer has not met its chain yet")
+        return get(b.trimEnd('/') + path)
     }
 
     private fun q(name: String, v: Any?): String = if (v == null) "" else "&$name=$v"
@@ -93,26 +123,28 @@ class HttpPrivacyIndexer(private val base: String) : PrivacyIndexer {
             syncedTime = if (j.isNull("synced_time")) null else j.optLong("synced_time"),
             notes = j.optLong("notes"),
             identityLeaves = j.optLong("identity_leaves"),
-            halted = if (j.isNull("halted")) null else j.optString("halted"),
-        )
+            halted = if (j.isNull("halted")) null else j.optString("halted").ifEmpty { null },
+            genesis = if (j.isNull("genesis")) null else j.optString("genesis").ifEmpty { null },
+            base = if (j.isNull("base")) null else j.optString("base").ifEmpty { null },
+        ).also { base = it.base }
     }
 
     override fun notes(fromPos: Long, limit: Int?): NotesPage =
-        parseNotes(get("/privacy/notes?from_pos=$fromPos${q("limit", limit)}"))
+        parseNotes(stream("/notes?from_pos=$fromPos${q("limit", limit)}"))
 
     override fun nullifiers(fromHeight: Long, limit: Int?): HeightPage<Fr> =
-        parseHeights(get("/privacy/nullifiers?from_height=$fromHeight${q("limit", limit)}")) { Fr.fromHex(it as String) }
+        parseHeights(stream("/nullifiers?from_height=$fromHeight${q("limit", limit)}")) { Fr.fromHex(it as String) }
 
     override fun identity(fromIndex: Long, limit: Int?): IdentityPage =
-        parseIdentity(get("/privacy/identity?from_index=$fromIndex${q("limit", limit)}"))
+        parseIdentity(stream("/identity?from_index=$fromIndex${q("limit", limit)}"))
 
     override fun identityZeroed(fromHeight: Long, limit: Int?): HeightPage<Long> =
-        parseHeights(get("/privacy/identity/zeroed?from_height=$fromHeight${q("limit", limit)}")) { (it as Number).toLong() }
+        parseHeights(stream("/identity/zeroed?from_height=$fromHeight${q("limit", limit)}")) { (it as Number).toLong() }
 
-    override fun rootsLatest(): LatestRoots = parseRoots(get("/privacy/roots/latest"))
+    override fun rootsLatest(): LatestRoots = parseRoots(stream("/roots/latest"))
 
     override fun rates(epoch: Long?): List<RateRow> {
-        val j = get("/privacy/rates" + (epoch?.let { "?epoch=$it" } ?: ""))
+        val j = stream("/rates" + (epoch?.let { "?epoch=$it" } ?: ""))
         val rows = j.getJSONArray("rates")
         return (0 until rows.length()).map { i ->
             val r = rows.getJSONArray(i)
@@ -121,12 +153,34 @@ class HttpPrivacyIndexer(private val base: String) : PrivacyIndexer {
     }
 
     override fun stakeNotes(fromPos: Long, limit: Int?): StakeNotesPage =
-        parseStakeNotes(get("/privacy/stake/notes?from_pos=$fromPos${q("limit", limit)}"))
+        parseStakeNotes(stream("/stake/notes?from_pos=$fromPos${q("limit", limit)}"))
 
     override fun stakeNullifiers(fromHeight: Long, limit: Int?): HeightPage<Fr> =
-        parseHeights(get("/privacy/stake/nullifiers?from_height=$fromHeight${q("limit", limit)}")) { Fr.fromHex(it as String) }
+        parseHeights(stream("/stake/nullifiers?from_height=$fromHeight${q("limit", limit)}")) { Fr.fromHex(it as String) }
 
     companion object {
+        /**
+         * The most a response may hold, decompressed: a full 5000-row note
+         * page is about 2 MB of JSON. A larger body (a hostile or broken
+         * server, a gzip bomb) is refused rather than read into memory.
+         */
+        const val MAX_BODY_BYTES = 8L * 1024 * 1024
+
+        /** Reads [input] as UTF-8, refusing more than [max] bytes. */
+        fun readBounded(input: java.io.InputStream, max: Long): String = input.use { s ->
+            val out = java.io.ByteArrayOutputStream()
+            val buf = ByteArray(16 * 1024)
+            var total = 0L
+            while (true) {
+                val n = s.read(buf)
+                if (n < 0) break
+                total += n
+                if (total > max) throw IOException("indexer response exceeds $max bytes")
+                out.write(buf, 0, n)
+            }
+            out.toString("UTF-8")
+        }
+
         fun parseStakeNotes(j: JSONObject): StakeNotesPage {
             val a = j.getJSONArray("notes")
             val rows = (0 until a.length()).map { i ->

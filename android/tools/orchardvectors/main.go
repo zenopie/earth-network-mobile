@@ -96,8 +96,11 @@ func membership(seed uint64) personhoodtypes.Membership {
 	return personhoodtypes.Membership{Proof: []byte{0xbe, 0xef, byte(seed)}, Root: fb(seed + 100), Nullifier: fb(seed + 101)}
 }
 
-func stakeProof(seed uint64, spends, creates int) stakingtypes.StakeProof {
+func stakeProof(seed uint64, spends, creates int, mints bool) stakingtypes.StakeProof {
 	p := stakingtypes.StakeProof{Proof: []byte{0x5e, byte(seed)}, Anchor: fb(seed), SpcMint: fb(seed + 7), OwnerTag: fb(seed + 8)}
+	if mints {
+		p.SpcCiphertext = bct(byte(seed))
+	}
 	for i := 0; i < 2; i++ {
 		nf, cm := make([]byte, 32), make([]byte, 32)
 		var ct []byte
@@ -116,10 +119,23 @@ func stakeProof(seed uint64, spends, creates int) stakingtypes.StakeProof {
 }
 
 type msgVec struct {
-	TypeURL  string `json:"type_url"`
-	Proto    string `json:"proto"`
-	Sighash  string `json:"sighash,omitempty"`
-	TotalFee string `json:"total_fee,omitempty"`
+	TypeURL       string `json:"type_url"`
+	Proto         string `json:"proto"`
+	Sighash       string `json:"sighash,omitempty"`
+	TotalFee      string `json:"total_fee,omitempty"`
+	PrivateFee    string `json:"private_fee,omitempty"`
+	Memo          string `json:"memo"`
+	TimeoutHeight uint64 `json:"timeout_height"`
+	GasLimit      uint64 `json:"gas_limit"`
+}
+
+// bct is a deterministic 177-byte stand-in for an amount-blind ciphertext.
+func bct(seed byte) []byte {
+	b := make([]byte, privacy.BlindNoteCiphertextBytes)
+	for i := range b {
+		b[i] = seed + byte(i)
+	}
+	return b
 }
 
 func main() {
@@ -192,7 +208,8 @@ func main() {
 		"pc":        hx(pc),
 		"cm":        hx(privacy.CM(privacy.AssetID("uanml"), 1_000_000, pc)),
 		"nf":        hx(privacy.NF(nk, rho, 4_000_000_000)),
-		"reg_none":  hx(privacy.RegistrationBinding(privacy.IDC(idSecret), fe(1), fe(2), fr.Element{})),
+		"reg_none":  hx(privacy.RegistrationBinding(privacy.IDC(idSecret), fe(1), []byte("anml"), fe(2), []byte("erth"), fr.Element{})),
+		"reg_pinned": hx(privacy.RegistrationBinding(u(1), u(2), []byte("anml"), u(3), []byte("erth"), fr.Element{})),
 		"spc":       hx(spc),
 		"stake_cm":  hx(privacy.StakeCM(privacy.AssetID(stakingtypes.DerthDenom(val)), 1_800_000, spc)),
 		"stake_nf":  hx(privacy.StakeNF(nk, rho, 4_000_000_000)),
@@ -207,7 +224,6 @@ func main() {
 		"proposal_5_1":          hx(privacy.ProposalScope(5, 1)),
 		"removal_3":             hx(privacy.RemovalScope(3)),
 		"propose_removal_2_100": hx(privacy.ProposeRemovalScope(2, 100)),
-		"gas_202610":            hx(privacy.GasScope(202610)),
 	}
 
 	// ---- merkle -------------------------------------------------------------
@@ -335,7 +351,9 @@ func main() {
 		})
 	}
 	ob.Balances = []orchard.Balance{{Asset: privacy.AssetID("uerth"), Value: 10_000}}
-	sighash := orchard.Sighash("/earth.shielded.v1.MsgSend", chainID, []*orchard.Bundle{ob}, privacy.Bytes(nil), u(10_000))
+	sighash := orchard.Sighash("/earth.shielded.v1.MsgSend", chainID, orchard.TxFields{}, []*orchard.Bundle{ob}, privacy.Bytes(nil), u(10_000))
+	sighashTx := orchard.Sighash("/earth.shielded.v1.MsgSend", chainID, orchard.TxFields{Memo: "deposit 42 ü", TimeoutHeight: 123456, GasLimit: 2_600_000},
+		[]*orchard.Bundle{ob}, privacy.Bytes(nil), u(10_000))
 	bsk := orchard.BindingSigningKey(rcvs)
 	sig0, err := orchard.SignBinding(bsk, sighash, bytes.NewReader(make([]byte, 32)))
 	must(err)
@@ -362,6 +380,7 @@ func main() {
 		"balances": []map[string]any{{"denom": "uerth", "value": 10_000}},
 		"digest":   hx(ob.Digest()),
 		"sighash":  hx(sighash),
+		"sighash_tx": map[string]any{"memo": "deposit 42 ü", "timeout_height": 123456, "gas_limit": 2_600_000, "sighash": hx(sighashTx)},
 		"bsk":      scalarHex(bsk),
 		"bvk":      pt(bvk),
 		"sig_rnd0": hex.EncodeToString(sig0),
@@ -379,29 +398,35 @@ func main() {
 
 	// ---- msgs ---------------------------------------------------------------
 	msgs := map[string]msgVec{}
-	add := func(name string, m sdk.Msg) {
+	txf := orchard.TxFields{GasLimit: 2_600_000}
+	addTx := func(name string, m sdk.Msg, tx orchard.TxFields) {
 		bz, err := proto.Marshal(m)
 		must(err)
-		v := msgVec{TypeURL: sdk.MsgTypeURL(m), Proto: hex.EncodeToString(bz)}
+		v := msgVec{TypeURL: sdk.MsgTypeURL(m), Proto: hex.EncodeToString(bz), Memo: tx.Memo, TimeoutHeight: tx.TimeoutHeight, GasLimit: tx.GasLimit}
 		if pm, ok := m.(shieldedtypes.PrivateMsg); ok {
-			s, err := shieldedtypes.Sighash(pm, chainID, ac)
+			s, err := shieldedtypes.Sighash(pm, chainID, tx, ac)
 			must(err)
 			v.Sighash = hx(s)
 			v.TotalFee = shieldedtypes.TotalFee(pm).String()
+			v.PrivateFee = fmt.Sprint(pm.PrivateFee())
 		}
 		msgs[name] = v
 	}
+	add := func(name string, m sdk.Msg) { addTx(name, m, txf) }
 	affStr, affRaw := addr(50)
 	recvStr, _ := addr(1)
 	senderStr, _ := addr(30)
 	add("send", &shieldedtypes.MsgSend{Bundle: fee(10, 1500), Fee: 1500})
+	addTx("send_tx_fields", &shieldedtypes.MsgSend{Bundle: fee(11, 1500), Fee: 1500},
+		orchard.TxFields{Memo: "deposit 42 ü", TimeoutHeight: 123456, GasLimit: 2_600_000})
+	addTx("send_no_gas", &shieldedtypes.MsgSend{Bundle: fee(12, 1500), Fee: 1500}, orchard.TxFields{})
 	add("unshield", &shieldedtypes.MsgSend{Bundle: bundle(20, shieldedtypes.ValueBalance{Denom: "uanml", Amount: 5000}, shieldedtypes.ValueBalance{Denom: "uerth", Amount: 2000}),
 		Receiver: recvStr, Fee: 2000})
-	add("shield", &shieldedtypes.MsgShield{Sender: senderStr, Amount: sdk.NewCoin("uerth", math.NewInt(100000)), Pc: fb(31), Ciphertext: []byte("gas")})
+	add("shield", &shieldedtypes.MsgShield{Sender: senderStr, Amount: sdk.NewCoin("uerth", math.NewInt(100000)), Pc: fb(31), Ciphertext: bct(31)})
 	reg := &personhoodtypes.MsgRegister{
 		Fee: fee(40, 2000), Proof: []byte{1, 2, 3}, PublicSignals: []string{"250930", "12345", "678", "9"},
-		SignatureAlgorithm: "lean_poa", DscDer: []byte{0x30, 0x03, 1, 2, 3}, Idc: fb(41), PcAnml: fb(42), CiphertextAnml: []byte("anml"),
-		PcErth: fb(43), CiphertextErth: []byte("erth"), Affiliate: affStr,
+		SignatureAlgorithm: "lean_poa", DscDer: []byte{0x30, 0x03, 1, 2, 3}, Idc: fb(41), PcAnml: fb(42), CiphertextAnml: bct(42),
+		PcErth: fb(43), CiphertextErth: bct(43), Affiliate: affStr,
 	}
 	add("register", reg)
 	bind, err := reg.Binding(ac)
@@ -412,7 +437,7 @@ func main() {
 	bind0, err := reg0.Binding(ac)
 	must(err)
 	out["registration_binding"] = map[string]string{"with_affiliate": hx(bind), "affiliate_bytes_field": hx(privacy.Bytes(affRaw)), "none": hx(bind0)}
-	add("claim_anml", &personhoodtypes.MsgClaimAnml{Fee: fee(50, 2000), Membership: membership(50), Day: 20360, Pc: fb(51), Ciphertext: []byte("claim")})
+	add("claim_anml", &personhoodtypes.MsgClaimAnml{Fee: fee(50, 2000), Membership: membership(50), Day: 20360, Pc: fb(51), Ciphertext: bct(51)})
 	add("set_caretaker", &personhoodtypes.MsgSetCaretaker{Fee: fee(60, 2000), Membership: membership(60),
 		Percentages: []allocationtypes.AllocationWeight{{OptionId: 1, Percent: 60}, {OptionId: 7, Percent: 40}}, MaxActivation: 1_780_000_000})
 	add("bind_referrer", &personhoodtypes.MsgBindReferrer{Fee: fee(70, 2000), Membership: membership(70), Address: affStr, MaxActivation: 1_780_000_000})
@@ -421,20 +446,20 @@ func main() {
 	add("propose_removal", &assemblytypes.MsgProposeRemoval{Fee: fee(81, 2000), Membership: membership(81), OptionId: 3})
 	add("vote_removal", &assemblytypes.MsgVoteRemoval{Fee: fee(82, 2000), Membership: membership(82), OptionId: 3, Option: assemblytypes.VoteOption(2)})
 
-	add("delegate", &stakingtypes.MsgDelegate{Bundle: fee(90, 502000), Validator: val, Fee: 2000, Stake: stakeProof(90, 0, 0)})
-	add("restake", &stakingtypes.MsgRestake{Bundle: fee(95, 2000), Validator: val, Fee: 2000, Stake: stakeProof(95, 2, 1)})
-	add("undelegate", &stakingtypes.MsgUndelegate{Bundle: fee(100, 2000), Validator: val, Amount: 400000, Fee: 2000, Stake: stakeProof(100, 1, 1)})
-	add("claim_unbonding", &stakingtypes.MsgClaimUnbonding{Validator: val, Epoch: 17, Amount: 400000, Pc: fb(111), FeeFromOutput: 2000, Stake: stakeProof(110, 2, 0)})
+	add("delegate", &stakingtypes.MsgDelegate{Bundle: fee(90, 502000), Validator: val, Amount: 500000, Stake: stakeProof(90, 0, 0, true)})
+	add("restake", &stakingtypes.MsgRestake{Bundle: fee(95, 2000), Validator: val, Stake: stakeProof(95, 2, 1, false)})
+	add("undelegate", &stakingtypes.MsgUndelegate{Bundle: fee(100, 2000), Validator: val, Amount: 400000, Stake: stakeProof(100, 1, 1, true)})
+	add("claim_unbonding", &stakingtypes.MsgClaimUnbonding{Validator: val, Epoch: 17, Amount: 400000, Pc: fb(111), Ciphertext: bct(111), FeeFromOutput: 2000, Stake: stakeProof(110, 2, 0, false)})
 	cb := fee(115, 2000)
-	add("claim_unbonding_fee_bundle", &stakingtypes.MsgClaimUnbonding{Bundle: &cb, Validator: val, Epoch: 17, Amount: 400000, Pc: fb(116), Ciphertext: []byte("c"), Fee: 2000, Stake: stakeProof(117, 1, 1)})
+	add("claim_unbonding_fee_bundle", &stakingtypes.MsgClaimUnbonding{Bundle: &cb, Validator: val, Epoch: 17, Amount: 400000, Pc: fb(116), Ciphertext: bct(116), Stake: stakeProof(117, 1, 1, false)})
 	opts := []*govv1.WeightedVoteOption{{Option: govv1.OptionYes, Weight: "0.7"}, {Option: govv1.OptionNo, Weight: "0.300000000000000000"}}
-	add("stake_vote", &stakingtypes.MsgStakeVote{Bundle: fee(120, 2000), ProposalId: 5, Validator: val, Options: opts, Weight: 400000, Fee: 2000, Stake: stakeProof(120, 2, 0)})
+	add("stake_vote", &stakingtypes.MsgStakeVote{Bundle: fee(120, 2000), ProposalId: 5, Validator: val, Options: opts, Weight: 400000, Stake: stakeProof(120, 2, 0, true)})
 	splits := []allocationtypes.AllocationWeight{{OptionId: 2, Percent: 100}}
-	add("lock_position", &stakingtypes.MsgLockPosition{Bundle: fee(140, 2000), Validator: val, Amount: 400000, Splits: splits, Fee: 2000, Stake: stakeProof(140, 1, 1)})
-	add("update_position", &stakingtypes.MsgUpdatePosition{Bundle: fee(150, 2000), PositionId: 9, Splits: splits, Fee: 2000, Stake: stakeProof(150, 0, 0)})
-	add("unlock_position", &stakingtypes.MsgUnlockPosition{Bundle: fee(160, 2000), PositionId: 9, Fee: 2000, Stake: stakeProof(160, 0, 0)})
-	add("position_vote", &stakingtypes.MsgPositionVote{Bundle: fee(170, 2000), PositionId: 9, ProposalId: 5, Options: opts, Fee: 2000, Stake: stakeProof(170, 0, 0)})
-	sp := stakeProof(100, 1, 1)
+	add("lock_position", &stakingtypes.MsgLockPosition{Bundle: fee(140, 2000), Validator: val, Amount: 400000, Splits: splits, Stake: stakeProof(140, 1, 1, false)})
+	add("update_position", &stakingtypes.MsgUpdatePosition{Bundle: fee(150, 2000), PositionId: 9, Splits: splits, Stake: stakeProof(150, 0, 0, false)})
+	add("unlock_position", &stakingtypes.MsgUnlockPosition{Bundle: fee(160, 2000), PositionId: 9, Stake: stakeProof(160, 0, 0, true)})
+	add("position_vote", &stakingtypes.MsgPositionVote{Bundle: fee(170, 2000), PositionId: 9, ProposalId: 5, Options: opts, Stake: stakeProof(170, 0, 0, false)})
+	sp := stakeProof(100, 1, 1, true)
 	sf := sp.StakeFields()
 	sfs := make([]string, len(sf))
 	for i := range sf {
@@ -444,18 +469,16 @@ func main() {
 
 	// x/dex note paths.
 	add("note_swap", &dextypes.MsgNoteSwap{Bundle: bundle(180, shieldedtypes.ValueBalance{Denom: "uanml", Amount: 300000}, shieldedtypes.ValueBalance{Denom: "uerth", Amount: 2000}),
-		DenomOut: "uerth", MinAmountOut: 123456, Pc: fb(181), Fee: 2000})
-	add("note_swap_fee_from_output", &dextypes.MsgNoteSwap{Bundle: bundle(190, shieldedtypes.ValueBalance{Denom: "uanml", Amount: 300000}),
-		DenomOut: "uerth", MinAmountOut: 123456, Pc: fb(191), Ciphertext: []byte("s"), FeeFromOutput: 3000})
-	add("note_swap_to_anml", &dextypes.MsgNoteSwap{Bundle: fee(200, 302000), DenomOut: "uanml", MinAmountOut: 1, Pc: fb(201), Fee: 2000})
+		DenomIn: "uanml", AmountIn: 300000, DenomOut: "uerth", MinAmountOut: 123456, Pc: fb(181), Ciphertext: bct(181)})
+	add("note_swap_to_anml", &dextypes.MsgNoteSwap{Bundle: fee(200, 302000), DenomIn: "uerth", AmountIn: 300000, DenomOut: "uanml", MinAmountOut: 1, Pc: fb(201), Ciphertext: bct(201)})
 	add("add_liquidity_shielded", &dextypes.MsgAddLiquidityShielded{Bundle: bundle(210, shieldedtypes.ValueBalance{Denom: "uanml", Amount: 700000}, shieldedtypes.ValueBalance{Denom: "uerth", Amount: 902500}),
-		PoolId: 1, MinShares: "777", RefundPc: fb(211), Fee: 2500, SharePc: fb(212)})
+		PoolId: 1, MinShares: "777", RefundPc: fb(211), RefundCiphertext: bct(211), ErthAmount: 900000, SharePc: fb(212), ShareCiphertext: bct(212)})
 	add("add_liquidity_shielded_no_min", &dextypes.MsgAddLiquidityShielded{Bundle: bundle(230, shieldedtypes.ValueBalance{Denom: "uanml", Amount: 700000}, shieldedtypes.ValueBalance{Denom: "uerth", Amount: 902500}),
-		PoolId: 1, RefundPc: fb(231), RefundCiphertext: []byte("r"), Fee: 2500, SharePc: fb(232), ShareCiphertext: []byte("sh")})
+		PoolId: 1, RefundPc: fb(231), RefundCiphertext: bct(231), ErthAmount: 900000, SharePc: fb(232), ShareCiphertext: bct(232)})
 	add("remove_liquidity_shielded", &dextypes.MsgRemoveLiquidityShielded{Bundle: bundle(240, shieldedtypes.ValueBalance{Denom: "dexlp/1", Amount: 4242}, shieldedtypes.ValueBalance{Denom: "uerth", Amount: 2000}),
-		PoolId: 1, Fee: 2000, ErthPc: fb(241), TokenPc: fb(242), TokenCiphertext: []byte("t")})
-	add("remove_liquidity_pc", &dextypes.MsgRemoveLiquidity{Creator: senderStr, PoolId: 1, Shares: sdk.NewCoin("dexlp/1", math.NewInt(4242)), Pc: fb(250)})
-	add("buy_anml", &dextypes.MsgBuyAnml{Creator: senderStr, TokenIn: sdk.NewCoin("uerth", math.NewInt(5000000)), MinAmountOut: "99", Pc: fb(260)})
+		PoolId: 1, ErthPc: fb(241), ErthCiphertext: bct(241), TokenPc: fb(242), TokenCiphertext: bct(242)})
+	add("remove_liquidity_pc", &dextypes.MsgRemoveLiquidity{Creator: senderStr, PoolId: 1, Shares: sdk.NewCoin("dexlp/1", math.NewInt(4242)), Pc: fb(250), Ciphertext: bct(250)})
+	add("buy_anml", &dextypes.MsgBuyAnml{Creator: senderStr, TokenIn: sdk.NewCoin("uerth", math.NewInt(5000000)), MinAmountOut: "99", Pc: fb(260), Ciphertext: bct(4)})
 	out["msgs"] = msgs
 	out["validator"] = val
 	out["derth_denom"] = stakingtypes.DerthDenom(val)
@@ -463,11 +486,36 @@ func main() {
 	out["options_bytes"] = hex.EncodeToString(stakingtypes.OptionsBytes(opts))
 	out["splits_bytes"] = hex.EncodeToString(stakingtypes.SplitsBytes([]allocationtypes.AllocationWeight{{OptionId: 1, Percent: 60}, {OptionId: 7, Percent: 40}}))
 
+	// ---- blind ciphertexts (chain goldenKeys: ek 01..20, esk 40..5f, owner_pk OwnerPK(7), rho 11, rcm 13, memo "golden memo")
+	{
+		var ek, esk [32]byte
+		for i := range ek {
+			ek[i] = byte(i + 1)
+			esk[i] = byte(0x40 + i)
+		}
+		ekPub, err := privacy.EKPub(ek)
+		must(err)
+		bn := privacy.BlindNote{Rho: u(11), Rcm: u(13)}
+		copy(bn.Memo[:], "golden memo")
+		note, err := privacy.EncryptBlindNote(bn, ekPub, esk)
+		must(err)
+		stake, err := privacy.EncryptBlindStakeNote(bn, ekPub, esk)
+		must(err)
+		opk := privacy.OwnerPK(u(7))
+		spc := bn.SPC(opk)
+		out["blind"] = map[string]string{
+			"ek": hex.EncodeToString(ek[:]), "esk": hex.EncodeToString(esk[:]), "ek_pub": hex.EncodeToString(ekPub[:]),
+			"owner_pk": hx(opk), "rho": hx(bn.Rho), "rcm": hx(bn.Rcm), "memo": "golden memo",
+			"note_ct": hex.EncodeToString(note), "stake_ct": hex.EncodeToString(stake),
+			"spc": hx(spc), "stake_cm_derth_1800000": hx(privacy.StakeCM(privacy.AssetID(stakingtypes.DerthDenom(val)), 1_800_000, spc)),
+		}
+	}
+
 	// ---- an unsigned private tx ---------------------------------------------
-	claim := &personhoodtypes.MsgClaimAnml{Fee: fee(50, 2000), Membership: membership(50), Day: 20360, Pc: fb(51), Ciphertext: []byte("claim")}
+	claim := &personhoodtypes.MsgClaimAnml{Fee: fee(50, 2000), Membership: membership(50), Day: 20360, Pc: fb(51), Ciphertext: bct(51)}
 	anyMsg, err := codectypes.NewAnyWithValue(claim)
 	must(err)
-	body := &txtypes.TxBody{Messages: []*codectypes.Any{anyMsg}}
+	body := &txtypes.TxBody{Messages: []*codectypes.Any{anyMsg}, Memo: "deposit 42 ü", TimeoutHeight: 123456}
 	authInfo := &txtypes.AuthInfo{Fee: &txtypes.Fee{Amount: sdk.NewCoins(sdk.NewCoin("uerth", math.NewInt(2000))), GasLimit: 2_600_000}}
 	bodyBz, err := proto.Marshal(body)
 	must(err)
@@ -476,7 +524,7 @@ func main() {
 	raw := &txtypes.TxRaw{BodyBytes: bodyBz, AuthInfoBytes: authBz}
 	rawBz, err := proto.Marshal(raw)
 	must(err)
-	out["unsigned_tx"] = map[string]any{"msg": "claim_anml", "gas_limit": 2_600_000, "tx_raw": hex.EncodeToString(rawBz)}
+	out["unsigned_tx"] = map[string]any{"msg": "claim_anml", "gas_limit": 2_600_000, "memo": "deposit 42 ü", "timeout_height": 123456, "tx_raw": hex.EncodeToString(rawBz)}
 
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")

@@ -886,17 +886,15 @@ internal fun EarthContent(
                                     tokenIn.toString(),
                                 )
                             } else {
+                                // The ANML leg is paid as a note to us.
+                                val note = if (pool.tokenDenom == Dex.SHIELDED_ONLY) PrivacySession.wallet(ctx).withdrawalNote() else null
                                 Dex.msgRemoveLiquidity(
                                     creator,
                                     pool.id,
                                     Dex.shareDenom(pool.id),
                                     sharesOut.toString(),
-                                    // The ANML leg is paid as a note to us.
-                                    pc = if (pool.tokenDenom == Dex.SHIELDED_ONLY) {
-                                        PrivacySession.wallet(ctx).withdrawalPc()
-                                    } else {
-                                        null
-                                    },
+                                    pc = note?.pc?.toBytes(),
+                                    ciphertext = note?.ciphertext,
                                 )
                             },
                         )

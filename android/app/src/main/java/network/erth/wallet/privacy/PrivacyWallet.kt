@@ -29,7 +29,9 @@ import network.erth.wallet.privacy.keys.ShieldedAddress
 import network.erth.wallet.privacy.note.OwnedNote
 import network.erth.wallet.privacy.note.OwnedStakeNote
 import network.erth.wallet.privacy.prove.MembershipWitness
+import network.erth.wallet.privacy.sync.ChainRoots
 import network.erth.wallet.privacy.sync.IdentityRecord
+import network.erth.wallet.privacy.sync.PendingRegistration
 import network.erth.wallet.privacy.sync.PrivacyIndexer
 import network.erth.wallet.privacy.sync.PrivacyStore
 import network.erth.wallet.privacy.sync.WalletSync
@@ -99,16 +101,23 @@ class PrivacyWallet(
     private val reads: PrivacyChainReads,
     prover: Prover,
     val chainId: String,
+    /** The chain's own trees, every synced root is checked against (C3). */
+    private val roots: ChainRoots,
     private val now: () -> Long = { System.currentTimeMillis() / 1000 },
+    /** Sleeps between stake votes (milliseconds); tests pass a no-op. */
+    private val pause: (Long) -> Unit = { Thread.sleep(it) },
 ) {
     private val engine = PrivateTxEngine(chainId, chain, prover)
 
     val address: ShieldedAddress get() = keys.address
 
     @Synchronized
-    fun sync(): WalletSync.Result = WalletSync(indexer, store, keys, chainId).sync()
+    fun sync(): WalletSync.Result = WalletSync(indexer, store, keys, chainId, roots).sync()
 
-    fun identityStatus(): WalletSync.IdentityStatus = WalletSync(indexer, store, keys, chainId).identityStatus()
+    fun identityStatus(): WalletSync.IdentityStatus = WalletSync(indexer, store, keys, chainId, roots).identityStatus()
+
+    /** A committed registration whose leaf is not matched yet (null: none), and why, if it failed. */
+    val pendingRegistration: PendingRegistration? get() = store.state.pendingRegistration
 
     val notes: List<OwnedNote> get() = store.state.notes.toList()
 
@@ -129,31 +138,33 @@ class PrivacyWallet(
     /** x/shielded max_actions_per_bundle: the most notes (and outputs) one bundle carries. */
     fun maxActions(): Int = chain.maxActionsPerBundle()
 
-    /** Allocates the next self-mint pc (see PrivacyKeys.mintSecrets). */
-    @Synchronized
-    private fun mint(denom: String): NoteOut {
-        val c = store.state.nextMintCounter++
-        store.save()
-        return NoteOut.mintToSelf(keys, denom, c)
-    }
+    /** A note the chain will mint to us: fresh secrets, their v2 ciphertext to our own address. */
+    private fun mint(denom: String): NoteOut = NoteOut.mintToSelf(keys, denom)
 
-    /** Allocates the next stake self-mint (PrivacyKeys.stakeMintSecrets): a spc_mint the chain mints to. */
-    @Synchronized
-    private fun stakeMint(): Pair<Fr, Fr> {
-        val c = store.state.nextStakeMintCounter++
-        store.save()
-        return keys.stakeMintSecrets(c)
-    }
+    /** A stake note the chain will mint to us: spc_mint's fresh secrets and their blind stake ciphertext. */
+    private fun stakeMint(): Pair<Pair<Fr, Fr>, ByteArray> = StakePlan.selfMint(keys)
 
     private fun today(): Long = now() / SECONDS_PER_DAY
 
     // ---- running ------------------------------------------------------------
 
+    /**
+     * Proves and broadcasts. Only on trees the chain itself vouched for at
+     * the last sync (C3): a proof over an indexer's forged tree is refused by
+     * the chain anyway, and its notes may not exist.
+     */
     @Synchronized
-    private fun run(assemble: (fee: Long) -> Assembled): TxResult {
-        val (result, a) = engine.run(assemble)
+    private fun run(memo: String = "", assemble: (fee: Long) -> Assembled): TxResult {
+        requireVerified()
+        val (result, a) = engine.run(assemble, memo)
         markPending(a.spends, a.stakeSpends)
         return result
+    }
+
+    private fun requireVerified() {
+        check(store.state.rootsVerified) {
+            store.state.rootsError ?: "the wallet has not checked its notes against the chain yet; sync again"
+        }
     }
 
     /** What [run] would charge, without proving: for the confirm sheet. */
@@ -227,11 +238,12 @@ class PrivacyWallet(
      * less the fee instead: the bundle releases exactly [amount], so the most
      * a wallet holds can leave in one go (Max).
      */
-    fun unshield(receiver: String, denom: String, amount: Long, feeFromAmount: Boolean = false): TxResult {
+    fun unshield(receiver: String, denom: String, amount: Long, feeFromAmount: Boolean = false, memo: String = ""): TxResult {
         requireTransferable(denom)
         require(!denom.startsWith(LP_PREFIX)) { "LP shares leave the pool only by a withdrawal" }
         require(!feeFromAmount || denom == FEE) { "only an ERTH unshield pays its fee from the amount" }
-        return run { fee ->
+        // The memo (an exchange's deposit tag) is bound by the sighash.
+        return run(memo) { fee ->
             val release = if (feeFromAmount) {
                 require(amount > fee) { "the amount must exceed the ${fee}uerth fee" }
                 mapOf(FEE to amount)
@@ -264,8 +276,14 @@ class PrivacyWallet(
             .groupBy { it.note.denom }.mapValues { it.value.size }
             .filter { (_, n) -> n >= 2 }
 
-    /** A note to self for MsgShield (transparent coins into the pool; signed, so built by the caller's key). */
-    fun shieldOutput(denom: String, amount: Long): NoteOut = NoteOut.toSelf(keys, denom, amount)
+    /**
+     * A note to self for MsgShield (transparent coins into the pool; signed,
+     * so built by the caller's key): the chain mints it, so it carries a v2
+     * ciphertext of fresh secrets, which sync opens against the shield's
+     * public amount.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun shieldOutput(denom: String, amount: Long): NoteOut = mint(denom)
 
     private fun requireTransferable(denom: String) {
         require(!denom.startsWith(DERTH_PREFIX) && !denom.startsWith(UNBOND_PREFIX)) { "stake is owner-locked: it cannot be sent or unshielded" }
@@ -273,16 +291,22 @@ class PrivacyWallet(
 
     // ---- personhood ---------------------------------------------------------
 
-    /** The notes a registration pays, and the binding its passport proof carries. Hold until [register]. */
+    /**
+     * The notes a registration pays and the binding its passport proof
+     * carries. Hold until [register]. Both notes are chain-minted, so each
+     * carries a v2 ciphertext of fresh secrets to our own address; the
+     * binding covers those ciphertexts, so they are written here, before the
+     * passport is proven, and sent exactly as they are. [gas] is the
+     * /gas/register note (its ciphertext is not bound).
+     */
     class RegistrationPrep(val anml: NoteOut, val erth: NoteOut, val gas: NoteOut, val affiliate: String, val binding: Fr, val idc: Fr)
 
     fun prepareRegistration(affiliate: String?): RegistrationPrep {
         val aff = affiliate?.trim().orEmpty()
-        val anml = NoteOut.toSelf(keys, "uanml", ANML_PER_CLAIM)
-        // The reward's value is the chain's to decide: minted at its public amount.
+        val anml = mint("uanml")
         val erth = mint(FEE)
         val gas = mint(FEE)
-        val binding = Privacy.registrationBinding(keys.idc, anml.pc, erth.pc, PrivateMsgs.affiliateField(aff))
+        val binding = Privacy.registrationBinding(keys.idc, anml.pc, anml.ciphertext, erth.pc, erth.ciphertext, PrivateMsgs.affiliateField(aff))
         return RegistrationPrep(anml, erth, gas, aff, binding, keys.idc)
     }
 
@@ -303,47 +327,49 @@ class PrivacyWallet(
 
     /**
      * Broadcasts the registration, its fee paid by a fee bundle (the gas
-     * grant's note, on a first registration), and records the identity leaf
-     * it wrote. [publicSignals] are the passport proof's: [current_date,
-     * address, nullifier, dsc_key].
+     * grant's note, on a first registration) that also carries the
+     * registration record note (PRIVACY_FORMATS.md 3a: a value-0 note to
+     * ourselves whose memo lets a wallet restored from the mnemonic find the
+     * leaf), and records the registration as pending before anything else
+     * (C2), then tries to resolve it. [publicSignals] are the passport
+     * proof's: [current_date, address, nullifier, dsc_key].
      */
     fun register(prep: RegistrationPrep, proof: ByteArray, publicSignals: List<String>, signatureAlgorithm: String, dscDer: ByteArray): TxResult {
         require(PrivateMsgs.decimalField(publicSignals[1]) == prep.binding) { "the passport proof is bound to other notes" }
         val base = registerMsg(prep, proof, publicSignals, signatureAlgorithm, dscDer)
+        val dscKey = PrivateMsgs.decimalField(publicSignals[3])
+        val hint = dscCountry(dscDer)
+        val record = NoteOut.to(keys.address, FEE, 0, WalletSync.regMemo(dscKey, hint, now()))
         val result = run { fee ->
-            Assembled(listOf(feeBundle(fee))) { bs, _, _ -> base.toBuilder().setFee(bs[0]).build() }
+            Assembled(listOf(bundle(listOf(record), mapOf(FEE to fee)))) { bs, _, _ -> base.toBuilder().setFee(bs[0]).build() }
         }
-        recordRegistration(result, PrivateMsgs.decimalField(publicSignals[3]), publicSignals[2])
+        recordRegistration(result, dscKey, publicSignals, hint)
         return result
     }
 
     /**
-     * The leaf the registration appended: its index from the tx's register
-     * event, activated_at the block time. The country (the verifying CSCA's,
-     * which the chain records) is found by recomputing the leaf for every
-     * ISO alpha-2 code and unknown, against the leaf the indexer serves at
-     * that index: no query names this registration.
+     * Persists the committed registration as pending (C2) — its leaf index
+     * from the tx's register event, activated_at its block time — before
+     * syncing, so a lagging indexer can never lose it; every later sync
+     * retries until the leaf is in the local identity tree and matches.
      */
-    fun recordRegistration(result: TxResult, dscKey: Fr, passportNullifier: String) {
+    fun recordRegistration(result: TxResult, dscKey: Fr, publicSignals: List<String>, countryHint: String = "") {
         val index = result.attr("register", "leaf_index")?.toLongOrNull()
             ?: throw IllegalStateException("registration tx ${result.hash} has no leaf_index")
-        sync()
-        require(index < store.identityTree.size) { "the indexer has not seen leaf $index yet" }
-        val leaf = store.identityTree.leaf(index)
-        val country = countryFor(leaf, dscKey, result.time)
-            ?: throw IllegalStateException("leaf $index does not match this registration")
-        store.state.identity = IdentityRecord(index, dscKey, country, result.time, passportNullifier)
-        store.save()
-    }
-
-    private fun countryFor(leaf: Fr, dscKey: Fr, activatedAt: Long): Fr? {
-        val candidates = sequenceOf(Fr.ZERO) + ('A'..'Z').asSequence().flatMap { a -> ('A'..'Z').asSequence().map { b -> Privacy.countryField("$a$b") } }
-        return candidates.firstOrNull { Privacy.identityLeaf(keys.idc, dscKey, it, activatedAt) == leaf }
+        synchronized(this) {
+            store.state.pendingRegistration = PendingRegistration(
+                txHash = result.hash, leafIndex = index, dscKey = dscKey, passportNullifier = publicSignals.getOrElse(2) { "" },
+                publicSignals = publicSignals, activatedAt = result.time, countryHint = countryHint,
+            )
+            store.save()
+        }
+        runCatching { sync() }
     }
 
     /** Today's ANML. Opens once the identity was activated before yesterday began. */
     fun claimAnml(day: Long = today()): TxResult {
-        val anml = NoteOut.toSelf(keys, "uanml", ANML_PER_CLAIM)
+        // Chain-minted: a v2 ciphertext, opened against the mint's public amount.
+        val anml = mint("uanml")
         val m = membership(Privacy.claimScope(day), Fr.ZERO, Fr.ZERO, (day - 1) * SECONDS_PER_DAY)
         val r = run { fee ->
             Assembled(listOf(feeBundle(fee)), membership = m) { bs, _, mem ->
@@ -474,12 +500,14 @@ class PrivacyWallet(
         spends: List<OwnedStakeNote>,
         outAmounts: List<Long>,
         vOut: Long,
-        mint: Pair<Fr, Fr> = StakePlan.throwaway(),
+        /** A self-mint (StakePlan.selfMint) for a msg the chain mints a stake note for; null: throwaway secrets, no ciphertext. */
+        mint: Pair<Pair<Fr, Fr>, ByteArray>? = null,
         salt: Fr = StakePlan.throwaway().first,
         anchor: Fr = stakeAnchor(),
         paths: List<List<Fr>> = spends.map { store.stakeTree.path(it.position) },
     ): StakePlan = StakePlan(
-        keys.nk, denom, spends, paths, outAmounts.filter { it > 0 }.map { StakePlan.out(keys, denom!!, it) }, mint, salt, anchor, vOut,
+        keys.nk, denom, spends, paths, outAmounts.filter { it > 0 }.map { StakePlan.out(keys, denom!!, it) },
+        mint?.first ?: StakePlan.throwaway(), salt, anchor, vOut, mint?.second ?: ByteArray(0),
     )
 
     /** Stake notes of [denom] this wallet can spend now. */
@@ -494,9 +522,10 @@ class PrivacyWallet(
         require(amount > 0)
         val stake = stakePlan(derthDenom(validator), emptyList(), emptyList(), 0, mint = stakeMint())
         return run { fee ->
+            // The fee is the bundle's uerth balance less amount.
             val b = bundle(release = mapOf(FEE to Math.addExact(amount, fee)))
             Assembled(listOf(b), stake) { bs, sp, _ ->
-                MsgDelegate.newBuilder().setBundle(bs[0]).setValidator(validator).setFee(fee).setStake(sp).build()
+                MsgDelegate.newBuilder().setBundle(bs[0]).setValidator(validator).setAmount(amount).setStake(sp).build()
             }
         }
     }
@@ -514,7 +543,7 @@ class PrivacyWallet(
         val stake = stakePlan(denom, notes, amounts, 0)
         return run { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
-                MsgRestake.newBuilder().setBundle(bs[0]).setValidator(validator).setFee(fee).setStake(sp).build()
+                MsgRestake.newBuilder().setBundle(bs[0]).setValidator(validator).setStake(sp).build()
             }
         }
     }
@@ -557,16 +586,16 @@ class PrivacyWallet(
         val stake = stakePlan(denom, ins, listOf(ins.sumOf { it.amount } - amount), amount, mint = stakeMint())
         return run { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
-                MsgUndelegate.newBuilder().setBundle(bs[0]).setValidator(validator).setAmount(amount).setFee(fee).setStake(sp).build()
+                MsgUndelegate.newBuilder().setBundle(bs[0]).setValidator(validator).setAmount(amount).setStake(sp).build()
             }
         }
     }
 
     /**
      * Claims matured unbonding claims of [denom] (unbond/<valoper>/<epoch>,
-     * up to two notes a claim): the chain mints their ERTH to our self-mint pc
-     * in the pool, the fee out of it (fee_from_output), so the msg carries no
-     * bundle at all.
+     * up to two notes a claim): the chain mints their ERTH to a pc of ours in
+     * the pool (v2 ciphertext), the fee out of it (fee_from_output, the one
+     * msg that may), so the msg carries no bundle at all.
      */
     fun claimUnbonding(denom: String): TxResult {
         val (validator, epoch) = parseUnbond(denom)
@@ -608,7 +637,7 @@ class PrivacyWallet(
         return run { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
                 MsgStakeVote.newBuilder().setBundle(bs[0]).setProposalId(proposalId).setValidator(validator)
-                    .addAllOptions(options).setWeight(weight).setFee(fee).setStake(sp).build()
+                    .addAllOptions(options).setWeight(weight).setStake(sp).build()
             }
         }
     }
@@ -640,11 +669,27 @@ class PrivacyWallet(
      * Votes every eligible derth note on [proposalId], two notes of one
      * validator a tx. Final: the spent nullifiers and the re-minted notes'
      * absence from the snapshot root stop a second vote.
+     *
+     * One vote at a time (L4): between votes a full sync (so the next fee
+     * is laid out from the chain's view, never the previous vote's change
+     * unseen) and a random pause of [VOTE_PAUSE_MIN_MS]..[VOTE_PAUSE_MAX_MS],
+     * so the votes are not one burst that times them together.
      */
     fun stakeVoteAll(proposalId: Long, options: List<WeightedVoteOption>): List<TxResult> {
         val ns = stakeVoteNotes(proposalId)
         require(ns.isNotEmpty()) { "no stake from before this proposal's snapshot" }
-        return ns.groupBy { it.denom }.values.flatMap { it.chunked(2) }.map { stakeVote(proposalId, it, options) }
+        val groups = ns.groupBy { it.denom }.values.flatMap { it.chunked(2) }.shuffled(rng)
+        val out = ArrayList<TxResult>()
+        for ((i, g) in groups.withIndex()) {
+            if (i > 0) {
+                pause(VOTE_PAUSE_MIN_MS + (rng.nextDouble() * (VOTE_PAUSE_MAX_MS - VOTE_PAUSE_MIN_MS)).toLong())
+                sync()
+            }
+            // The notes as the last sync left them (a pending one is skipped).
+            val now = g.mapNotNull { n -> store.state.stakeNotes.firstOrNull { it.position == n.position && it.spendable } }
+            if (now.isNotEmpty()) out.add(stakeVote(proposalId, now, options))
+        }
+        return out
     }
 
     /**
@@ -654,30 +699,47 @@ class PrivacyWallet(
      */
     fun positions(): List<Pair<PrivacyChainReads.Position, Int>> {
         val s = store.state
-        val mine = (0 until s.nextOtagCounter + WalletSync.MINT_GAP).associateBy { keys.ownerTag(it) }
-        val out = reads.positions().mapNotNull { p -> mine[p.ownerTag]?.let { p to it } }
+        val all = reads.positions()
+        // Counters 0 ... next + OTAG_GAP, extended past every match: closed
+        // positions vanish from the chain, so the window must cross a run of
+        // them (and of failed locks) to reach a live one.
+        var limit = s.nextOtagCounter + OTAG_GAP
+        val out = ArrayList<Pair<PrivacyChainReads.Position, Int>>()
+        var from = 0
+        while (from < limit) {
+            val mine = (from until limit).associateBy { ownerTag(it) }
+            val found = all.mapNotNull { p -> mine[p.ownerTag]?.let { p to it } }
+            out += found
+            from = limit
+            found.maxOfOrNull { it.second }?.let { top -> if (top + 1 + OTAG_GAP > limit) limit = top + 1 + OTAG_GAP }
+        }
         out.maxOfOrNull { it.second }?.let { top ->
             if (top + 1 > s.nextOtagCounter) { s.nextOtagCounter = top + 1; store.save() }
         }
-        return out
+        return out.sortedBy { it.first.id }
     }
+
+    private val otags = HashMap<Int, Fr>()
+
+    private fun ownerTag(c: Int): Fr = synchronized(otags) { otags.getOrPut(c) { keys.ownerTag(c) } }
 
     /** Locks [amount] derth/[validator] into a new position split by [splits], under a fresh owner tag. */
     fun lockPosition(validator: String, amount: Long, splits: Map<Long, Long>): TxResult {
         val denom = derthDenom(validator)
         val ins = StakeSelection.cover(spendableStake(denom), amount)
+        positions() // a restored wallet's counter starts past every tag it already holds
         val counter = synchronized(this) { store.state.nextOtagCounter.also { store.state.nextOtagCounter = it + 1; store.save() } }
         val stake = stakePlan(denom, ins, listOf(ins.sumOf { it.amount } - amount), amount, salt = keys.otagSalt(counter))
         val w = weights(splits)
         return run { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
                 MsgLockPosition.newBuilder().setBundle(bs[0]).setValidator(validator).setAmount(amount)
-                    .addAllSplits(w).setFee(fee).setStake(sp).build()
+                    .addAllSplits(w).setStake(sp).build()
             }
         }
     }
 
-    private fun ownerPlan(position: PrivacyChainReads.Position, counter: Int, mint: Pair<Fr, Fr> = StakePlan.throwaway()): StakePlan {
+    private fun ownerPlan(position: PrivacyChainReads.Position, counter: Int, mint: Pair<Pair<Fr, Fr>, ByteArray>? = null): StakePlan {
         check(keys.ownerTag(counter) == position.ownerTag) { "position ${position.id} is not owned by tag $counter" }
         return stakePlan(null, emptyList(), emptyList(), 0, mint = mint, salt = keys.otagSalt(counter))
     }
@@ -687,7 +749,7 @@ class PrivacyWallet(
         val w = weights(splits)
         return run { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
-                MsgUpdatePosition.newBuilder().setBundle(bs[0]).setPositionId(position.id).addAllSplits(w).setFee(fee).setStake(sp).build()
+                MsgUpdatePosition.newBuilder().setBundle(bs[0]).setPositionId(position.id).addAllSplits(w).setStake(sp).build()
             }
         }
     }
@@ -697,7 +759,7 @@ class PrivacyWallet(
         val stake = ownerPlan(position, counter, mint = stakeMint())
         return run { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
-                MsgUnlockPosition.newBuilder().setBundle(bs[0]).setPositionId(position.id).setFee(fee).setStake(sp).build()
+                MsgUnlockPosition.newBuilder().setBundle(bs[0]).setPositionId(position.id).setStake(sp).build()
             }
         }
     }
@@ -707,7 +769,7 @@ class PrivacyWallet(
         return run { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
                 MsgPositionVote.newBuilder().setBundle(bs[0]).setPositionId(position.id).setProposalId(proposalId)
-                    .addAllOptions(options).setFee(fee).setStake(sp).build()
+                    .addAllOptions(options).setStake(sp).build()
             }
         }
     }
@@ -719,39 +781,32 @@ class PrivacyWallet(
 
     /**
      * Swaps [amountIn] [denomIn] from notes for at least [minOut] [denomOut]
-     * (any pools, through the ERTH hub), the output minted to us or to [to].
-     * Its value is the pool's to decide: to us a self-mint found by its public
-     * amount, to anyone else a value-blind (v2) ciphertext. A swap into ERTH
-     * pays its fee out of the output (fee_from_output; the chain needs min_out
-     * above the fee); any other pays from the bundle's ERTH balance.
+     * (any pools, through the ERTH hub), the output minted to us or to [to]
+     * with a value-blind (v2) ciphertext opened against the amount the chain
+     * publishes. The fee comes from the bundle's ERTH balance (the one fee
+     * rule: a swap of ANML into ERTH needs an ERTH note for it too).
      */
     fun noteSwap(denomIn: String, amountIn: Long, denomOut: String, minOut: Long, to: ShieldedAddress? = null): TxResult {
         require(denomIn != denomOut && amountIn > 0 && minOut > 0)
         requireTransferable(denomIn)
         val out = payout(denomOut, to)
         return run { fee ->
-            if (denomOut == FEE) {
-                require(minOut > fee) { "the minimum received must exceed the ${fee}uerth fee paid from it" }
-                val b = bundle(release = mapOf(denomIn to amountIn))
-                Assembled(listOf(b)) { bs, _, _ -> swapMsg(bs[0], denomOut, minOut, out, feeFromOutput = fee, fee = 0) }
-            } else {
-                val b = bundle(release = plus(mapOf(denomIn to amountIn), FEE, fee))
-                Assembled(listOf(b)) { bs, _, _ -> swapMsg(bs[0], denomOut, minOut, out, feeFromOutput = 0, fee = fee) }
+            val b = bundle(release = plus(mapOf(denomIn to amountIn), FEE, fee))
+            Assembled(listOf(b)) { bs, _, _ ->
+                MsgNoteSwap.newBuilder().setBundle(bs[0]).setDenomIn(denomIn).setAmountIn(amountIn)
+                    .setDenomOut(denomOut).setMinAmountOut(minOut)
+                    .setPc(ByteString.copyFrom(out.pc.toBytes())).setCiphertext(ByteString.copyFrom(out.ciphertext)).build()
             }
         }
     }
 
-    private fun swapMsg(b: network.erth.earth.proto.shielded.Bundle, denomOut: String, minOut: Long, out: NoteOut, feeFromOutput: Long, fee: Long) =
-        MsgNoteSwap.newBuilder().setBundle(b).setDenomOut(denomOut).setMinAmountOut(minOut)
-            .setPc(ByteString.copyFrom(out.pc.toBytes())).setCiphertext(ByteString.copyFrom(out.ciphertext))
-            .setFeeFromOutput(feeFromOutput).setFee(fee).build()
-
     /**
      * Deposits [tokenAmount] [token] and [erthAmount] uerth from notes into
      * [poolId], in one bundle (its token balance the token leg, its uerth
-     * balance less the fee the ERTH leg). The LP shares are private: minted as
-     * a dexlp/<pool> note to our self-mint pc. Whatever the pool ratio does
-     * not take is minted back to one self-mint pc (a note per asset).
+     * balance less the fee the ERTH leg, named as erth_amount). The LP shares
+     * are private: minted as a dexlp/<pool> note to a pc of ours. Whatever the
+     * pool ratio does not take is minted back to one refund pc (a note per
+     * asset, both opened by the one v2 refund ciphertext).
      */
     fun addLiquidityShielded(poolId: Long, token: String, tokenAmount: Long, erthAmount: Long, minShares: String): TxResult {
         require(tokenAmount > 0 && erthAmount > 0 && token != FEE)
@@ -763,7 +818,7 @@ class PrivacyWallet(
                 MsgAddLiquidityShielded.newBuilder().setBundle(bs[0]).setPoolId(poolId).setMinShares(minShares)
                     .setRefundPc(ByteString.copyFrom(refund.pc.toBytes())).setRefundCiphertext(ByteString.copyFrom(refund.ciphertext))
                     .setSharePc(ByteString.copyFrom(shares.pc.toBytes())).setShareCiphertext(ByteString.copyFrom(shares.ciphertext))
-                    .setFee(fee).build()
+                    .setErthAmount(erthAmount).build()
             }
         }
     }
@@ -771,7 +826,7 @@ class PrivacyWallet(
     /**
      * Withdraws [shares] dexlp/[poolId] from share notes: escrowed for the
      * dex's LP unbonding period with no account named, then both legs
-     * (ERTH and [token]) minted to our self-mint pcs as notes.
+     * (ERTH and [token]) minted to pcs of ours as notes (v2 ciphertexts).
      */
     fun removeLiquidityShielded(poolId: Long, token: String, shares: Long): TxResult {
         require(shares > 0)
@@ -780,7 +835,7 @@ class PrivacyWallet(
         return run { fee ->
             val b = bundle(release = mapOf(lpDenom(poolId) to shares, FEE to fee))
             Assembled(listOf(b)) { bs, _, _ ->
-                MsgRemoveLiquidityShielded.newBuilder().setBundle(bs[0]).setPoolId(poolId).setFee(fee)
+                MsgRemoveLiquidityShielded.newBuilder().setBundle(bs[0]).setPoolId(poolId)
                     .setErthPc(ByteString.copyFrom(erth.pc.toBytes())).setErthCiphertext(ByteString.copyFrom(erth.ciphertext))
                     .setTokenPc(ByteString.copyFrom(tok.pc.toBytes())).setTokenCiphertext(ByteString.copyFrom(tok.ciphertext))
                     .build()
@@ -793,17 +848,17 @@ class PrivacyWallet(
         .mapNotNull { (d, v) -> d.removePrefix(LP_PREFIX).toLongOrNull()?.let { it to v } }.toMap()
 
     /**
-     * The pc a pool-1 MsgRemoveLiquidity names for its ANML leg (signed by
-     * the provider's transparent key): a self-mint, since the payout is
-     * priced when the withdrawal matures.
+     * The note a pool-1 MsgRemoveLiquidity names for its ANML leg (signed by
+     * the provider's transparent key): pc and v2 ciphertext to us, since the
+     * payout is priced when the withdrawal matures.
      */
-    fun withdrawalPc(): ByteArray = payout("uanml", null).pc.toBytes()
+    fun withdrawalNote(): NoteOut = payout("uanml", null)
 
     /**
      * Where a chain-priced payment goes (a swap's or a MsgBuyAnml's output,
-     * a withdrawal's token leg): to us, a self-mint pc; to [to], [to]'s pc
-     * with a value-blind (v2) ciphertext it can open once the chain
-     * publishes the amount.
+     * a withdrawal's token leg): a pc of fresh secrets, ours or [to]'s, with
+     * a value-blind (v2) ciphertext the owner opens once the chain publishes
+     * the amount.
      */
     fun payout(denom: String, to: ShieldedAddress?): NoteOut =
         if (to == null || to.ownerPk == keys.ownerPk) mint(denom) else NoteOut.blindTo(to, denom)
@@ -821,6 +876,27 @@ class PrivacyWallet(
         /** Positions created before the block the proposal entered voting at (all, when unknown). */
         fun votingPositions(positions: List<PrivacyChainReads.Position>, snap: PrivacyChainReads.Snapshot) =
             positions.filter { snap.height == 0L || it.createdHeight < snap.height }
+
+        /** Owner-tag counters scanned past the highest known (PRIVACY_FORMATS.md 1). */
+        const val OTAG_GAP = 1024
+
+        /** The random pause between stake votes (L4). */
+        const val VOTE_PAUSE_MIN_MS = 20_000L
+        const val VOTE_PAUSE_MAX_MS = 120_000L
+
+        private val rng = java.security.SecureRandom()
+
+        /**
+         * The ISO alpha-2 of the DSC's issuer (C=): the wallet's guess at the
+         * country the chain records for the registration (the verifying
+         * CSCA's). "" when unparsable.
+         */
+        fun dscCountry(dscDer: ByteArray): String = runCatching {
+            val cert = java.security.cert.CertificateFactory.getInstance("X.509")
+                .generateCertificate(java.io.ByteArrayInputStream(dscDer)) as java.security.cert.X509Certificate
+            val dn = cert.issuerX500Principal.getName(javax.security.auth.x500.X500Principal.RFC2253)
+            Regex("""(?:^|,)\s*C=([A-Za-z]{2})\s*(?:,|$)""").find(dn)?.groupValues?.get(1)?.uppercase()
+        }.getOrNull() ?: ""
 
         const val SECONDS_PER_DAY = 86_400L
         const val ANML_PER_CLAIM = 1_000_000L

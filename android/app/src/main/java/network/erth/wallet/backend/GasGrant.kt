@@ -45,10 +45,11 @@ object GasGrant {
 
     /**
      * Gas for [msg], the registration about to be broadcast (without its fee
-     * transfer), to the note [pcGas]. A refusal carries the chain's own
-     * reason (an expired passport, say).
+     * transfer), to the note [pcGas] with [ciphertextGas], its required
+     * 177-byte v2 ciphertext (MsgShield's; the app finds the note by it). A
+     * refusal carries the chain's own reason (an expired passport, say).
      */
-    suspend fun forRegistration(msg: MsgRegister, pcGas: ByteArray, ciphertextGas: ByteArray = ByteArray(0)): Result =
+    suspend fun forRegistration(msg: MsgRegister, pcGas: ByteArray, ciphertextGas: ByteArray): Result =
         post("/gas/register", registerBody(msg, pcGas, ciphertextGas), onRefused = { it })
 
     /**
@@ -57,7 +58,7 @@ object GasGrant {
      * The backend rebuilds the message from this and checks it as the chain
      * would, so anything reformatted here is a message the chain never sees.
      */
-    internal fun registerBody(msg: MsgRegister, pcGas: ByteArray, ciphertextGas: ByteArray = ByteArray(0)): JSONObject = JSONObject()
+    internal fun registerBody(msg: MsgRegister, pcGas: ByteArray, ciphertextGas: ByteArray): JSONObject = JSONObject()
         .put("proof", msg.proof.toByteArray().toByteString().base64())
         .put("public_signals", JSONArray(msg.publicSignalsList))
         .put("signature_algorithm", msg.signatureAlgorithm)

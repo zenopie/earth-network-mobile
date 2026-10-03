@@ -97,36 +97,48 @@ class PrivateTxEngine(
     data class Quote(val gasLimit: Long, val fee: Long)
 
     /** Lays out, prices and simulates without proving: what the confirm sheet shows. */
-    fun quote(assemble: (fee: Long) -> Assembled): Quote = price(assemble).first
+    fun quote(assemble: (fee: Long) -> Assembled, memo: String = ""): Quote = price(assemble, memo).first
 
-    fun run(assemble: (fee: Long) -> Assembled): Pair<TxResult, Assembled> {
-        val (q, a) = price(assemble)
-        val sighash = PrivateMsgs.sighash(draft(a), chainId)
-        val bundles = a.bundles.map { it.prove(sighash, prover::proveAction) }
+    /**
+     * Prices, proves and broadcasts. The tx's [memo], timeout_height (none)
+     * and the gas limit the pricing settled on are fixed first: the sighash
+     * binds them, so every proof is made over the tx exactly as broadcast.
+     */
+    fun run(assemble: (fee: Long) -> Assembled, memo: String = ""): Pair<TxResult, Assembled> {
+        val (q, a) = price(assemble, memo)
+        val tx = PrivateMsgs.TxFields(memo = memo, timeoutHeight = 0, gasLimit = q.gasLimit)
+        val sighash = PrivateMsgs.sighash(draft(a), chainId, tx)
+        val bundles = a.bundles.map { it.prove(sighash) { w -> proofSized(prover.proveAction(w)) } }
         bundles.forEachIndexed { i, b -> check(PrivateMsgs.checkBalance(b, sighash)) { "bundle $i does not balance" } }
-        val stake = a.stake?.let { s -> s.proto(prover.proveStake(s.witness(sighash).also { it.check() })) }
+        val stake = a.stake?.let { s -> s.proto(proofSized(prover.proveStake(s.witness(sighash).also { it.check() }))) }
         val membership = a.membership?.let { spec ->
             val w = spec.witness(sighash)
             Membership.newBuilder()
-                .setProof(ByteString.copyFrom(prover.proveMembership(w)))
+                .setProof(ByteString.copyFrom(proofSized(prover.proveMembership(w))))
                 .setRoot(ByteString.copyFrom(w.root.toBytes()))
                 .setNullifier(ByteString.copyFrom(w.nullifier.toBytes()))
                 .build()
         }
         val msg = a.build(bundles, stake, membership)
-        check(PrivateMsgs.sighash(msg, chainId) == sighash)
+        check(PrivateMsgs.sighash(msg, chainId, tx) == sighash)
         check(PrivateMsgs.totalFee(msg) == q.fee) { "the msg must pay exactly the quoted fee" }
-        return chain.broadcast(UnsignedTx.build(msg, q.gasLimit)) to a
+        return chain.broadcast(UnsignedTx.build(msg, tx)) to a
     }
 
-    private fun price(assemble: (fee: Long) -> Assembled): Pair<Quote, Assembled> {
+    /** The chain refuses any proof that is not exactly PROOF_BYTES (bb ignored trailing bytes). */
+    private fun proofSized(p: ByteArray): ByteArray {
+        check(p.size == PLACEHOLDER.size) { "a proof is ${PLACEHOLDER.size} bytes, got ${p.size}" }
+        return p
+    }
+
+    private fun price(assemble: (fee: Long) -> Assembled, memo: String): Pair<Quote, Assembled> {
         val minFee = chain.minFee()
         val price = chain.gasPrice()
         var fee = maxOf(minFee, feeFor(price, GUESS_GAS))
         var a = assemble(fee)
         var first = true
         repeat(MAX_RELAYS) {
-            val gas = chain.simulate(UnsignedTx.build(draft(a), 0))
+            val gas = chain.simulate(UnsignedTx.build(draft(a), 0, memo))
             val limit = gas + maxOf(gas / 10, MIN_HEADROOM)
             val need = maxOf(minFee, feeFor(price, limit))
             // The guess is re-laid at the fee its layout needs; after that a

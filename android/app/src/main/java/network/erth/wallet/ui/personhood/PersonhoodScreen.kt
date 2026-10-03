@@ -126,7 +126,16 @@ fun PersonhoodScreen(
                 colors = brandButtonColors(),
             )
             Spacer(Modifier.height(dimens.space16))
-            TransparentGasAction()
+            // Transparent fees (an LP, IBC, a contract call) come from the
+            // public account: unshield ERTH there. The membership-proved
+            // transparent gas grant is gone from the chain and the backend.
+            Text(
+                "Need ERTH in your public account for fees? Unshield some from Portfolio.",
+                style = EarthTypography.textSm,
+                color = EarthColors.Text.textSecondary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
             if (referrals != null) {
                 Spacer(Modifier.height(dimens.space24))
                 referrals()

@@ -219,3 +219,54 @@ object RestPrivateChain : PrivateChain {
         )
     }
 }
+
+/**
+ * The chain's own view of the three trees (LCD), against which every root
+ * the indexer served is checked before the wallet builds anything on it
+ * (WalletSync.verifyRoots). The identity and stake trees are read at the
+ * height the indexer's root is from (`x-cosmos-block-height`), falling back
+ * to the latest state when that height is pruned.
+ */
+object LcdChainRoots : network.erth.wallet.privacy.sync.ChainRoots {
+    private fun json(code: Int, body: String, path: String): JSONObject {
+        if (code !in 200..299) throw IOException("$path: $code ${body.take(200)}")
+        return JSONObject(body)
+    }
+
+    private fun b64Field(s: String?): Fr? {
+        val raw = s?.decodeBase64()?.toByteArray() ?: return null
+        return if (raw.isEmpty()) null else Fr.fromBytes(raw)
+    }
+
+    private fun at(path: String, height: Long?): JSONObject {
+        if (height != null && height > 0) {
+            val (code, body) = EarthRest.getAt(path, height)
+            if (code in 200..299) return JSONObject(body)
+        }
+        val (code, body) = EarthRest.get(path)
+        return json(code, body, path).put("_latest", true)
+    }
+
+    override fun noteRoot(root: Fr): network.erth.wallet.privacy.sync.NoteRootRecord? {
+        val path = "/earth/shielded/v1/roots/${root.toHex()}"
+        val (code, body) = EarthRest.get(path)
+        val j = json(code, body, path)
+        val rec = j.optJSONObject("record") ?: return null
+        if (b64Field(rec.optString("root")) != root) return null
+        return network.erth.wallet.privacy.sync.NoteRootRecord(j.optBoolean("valid"), rec.optString("tree_size", "0").toLong())
+    }
+
+    override fun identityTree(height: Long?): network.erth.wallet.privacy.sync.TreeState {
+        val j = at("/earth/personhood/v1/identity_tree", height)
+        return network.erth.wallet.privacy.sync.TreeState(
+            j.optString("size", "0").ifEmpty { "0" }.toLong(), b64Field(j.optString("latest_root")), !j.has("_latest"),
+        )
+    }
+
+    override fun stakeTree(height: Long?): network.erth.wallet.privacy.sync.TreeState {
+        val j = at("/earth/shieldedstaking/v1/stake_tree", height)
+        return network.erth.wallet.privacy.sync.TreeState(
+            j.optString("size", "0").ifEmpty { "0" }.toLong(), b64Field(j.optString("root")), !j.has("_latest"),
+        )
+    }
+}

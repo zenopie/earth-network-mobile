@@ -13,16 +13,20 @@ import java.io.IOException
 
 /**
  * A private tx: exactly one private msg, no signer infos, no signatures, a fee
- * of exactly the msg's total fee in uerth, no payer, granter, memo extension
- * or unordered flag (x/shielded/ante NewRouter and ValidateTxDecorator). The
+ * of exactly the msg's total fee in uerth, no payer, granter, extension,
+ * timeout_timestamp or unordered flag (x/shielded/ante NewRouter and
+ * ValidateTxDecorator). The memo, timeout_height and gas limit are bound by
+ * the msg's sighash (PrivateMsgs.TxFields), so they are fixed before proving. The
  * SDK's CLI cannot build one (`--gas auto` signs), so the wallet encodes the
  * raw bytes itself and the REST broadcast takes them as they are.
  */
 object UnsignedTx {
 
-    fun build(msg: MessageLite, gasLimit: Long): ByteArray {
+    fun build(msg: MessageLite, gasLimit: Long, memo: String = "", timeoutHeight: Long = 0): ByteArray {
         val body = Tx.TxBody.newBuilder()
             .addMessages(ProtoAny.newBuilder().setTypeUrl(PrivateMsgs.typeUrl(msg)).setValue(msg.toByteString()))
+            .setMemo(memo)
+            .setTimeoutHeight(timeoutHeight)
             .build()
         val coin = CoinOuterClass.Coin.newBuilder()
             .setDenom(Constants.UERTH_DENOM)
@@ -36,6 +40,8 @@ object UnsignedTx {
             .build()
             .toByteArray()
     }
+
+    fun build(msg: MessageLite, tx: PrivateMsgs.TxFields): ByteArray = build(msg, tx.gasLimit, tx.memo, tx.timeoutHeight)
 
     /**
      * Gas the chain charges this tx. In simulate mode the private ante charges

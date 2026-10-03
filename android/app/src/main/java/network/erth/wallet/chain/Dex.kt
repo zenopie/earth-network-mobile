@@ -161,14 +161,20 @@ object Dex {
     }
 
     /**
-     * [pc] receives the token leg as a shielded note: required for a pool
-     * whose token is shielded-only (ANML, pool 1), refused for any other.
+     * [pc] receives the token leg as a shielded note, [ciphertext] its
+     * 177-byte blind ciphertext: required for a pool whose token is
+     * shielded-only (ANML, pool 1), refused for any other.
      */
-    fun msgRemoveLiquidity(creator: String, poolId: Long, sharesDenom: String, sharesAmount: String, pc: ByteArray? = null): ProtoAny {
+    fun msgRemoveLiquidity(
+        creator: String, poolId: Long, sharesDenom: String, sharesAmount: String,
+        pc: ByteArray? = null, ciphertext: ByteArray? = null,
+    ): ProtoAny {
         val b = MsgRemoveLiquidity.newBuilder()
             .setCreator(creator).setPoolId(poolId)
             .setShares(coin(sharesDenom, sharesAmount))
+        // The note's amount-blind (v2) ciphertext is required with the pc.
         if (pc != null) b.setPc(com.google.protobuf.ByteString.copyFrom(pc))
+        if (ciphertext != null) b.setCiphertext(com.google.protobuf.ByteString.copyFrom(ciphertext))
         val msg = b.build()
         return EarthTx.anyOf("/earth.dex.v1.MsgRemoveLiquidity", msg)
     }

@@ -32,6 +32,8 @@ class StakePlan(
     val tagSalt: Fr,
     val anchor: Fr,
     val vOut: Long,
+    /** The blind stake ciphertext of [mint]'s note: for a msg that mints one, empty otherwise. */
+    val mintCiphertext: ByteArray = ByteArray(0),
 ) {
     /** A created stake note: its amount, secrets and ciphertext (to ourselves). */
     class Out(val amount: Long, val rho: Fr, val rcm: Fr, val ciphertext: ByteArray)
@@ -75,6 +77,7 @@ class StakePlan(
             .addAllCiphertexts((0..1).map { ByteString.copyFrom(outputs.getOrNull(it)?.ciphertext ?: ByteArray(0)) })
             .setSpcMint(ByteString.copyFrom(w.spcMint.toBytes()))
             .setOwnerTag(ByteString.copyFrom(w.otag.toBytes()))
+            .setSpcCiphertext(ByteString.copyFrom(mintCiphertext))
             .build()
     }
 
@@ -86,6 +89,17 @@ class StakePlan(
             val asset = Privacy.assetId(denom)
             val cm = Privacy.stakeCm(asset, amount, Privacy.stakePc(keys.ownerPk, rho, rcm))
             return Out(amount, rho, rcm, NoteCipher.encryptStake(NoteCipher.StakeOpening(asset, amount, rho, rcm), keys.ekPub, cm))
+        }
+
+        /**
+         * A stake note the chain will mint to us (spc_mint): fresh rho and
+         * rcm, and their blind stake ciphertext to our own address, which
+         * sync opens against the denom and amount the chain publishes.
+         */
+        fun selfMint(keys: PrivacyKeys): Pair<Pair<Fr, Fr>, ByteArray> {
+            val rho = NotePlaintext.randomField()
+            val rcm = NotePlaintext.randomField()
+            return (rho to rcm) to NoteCipher.encryptBlindStake(rho, rcm, keys.ekPub)
         }
 
         /**

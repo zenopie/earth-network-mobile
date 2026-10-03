@@ -135,17 +135,63 @@ object NoteCipher {
     internal fun encryptBlindWith(esk: ByteArray, note: NotePlaintext, ekPub: ByteArray): ByteArray =
         sealBlind(X25519PrivateKeyParameters(esk, 0), ekPub, blindPlaintext(note))
 
-    private fun sealBlind(esk: X25519PrivateKeyParameters, ekPub: ByteArray, pt: ByteArray): ByteArray {
+    private fun sealBlind(esk: X25519PrivateKeyParameters, ekPub: ByteArray, pt: ByteArray, salt: ByteArray = BLIND_SALT): ByteArray {
         val epk = esk.generatePublicKey().encoded
         val shared = ByteArray(32)
         X25519Agreement().apply { init(esk) }.calculateAgreement(X25519PublicKeyParameters(ekPub, 0), shared, 0)
-        return epk + aead(true, hkdf(shared, BLIND_SALT, epk), pt)
+        return epk + aead(true, hkdf(shared, salt, epk), pt)
     }
 
-    private fun blindPlaintext(n: NotePlaintext): ByteArray {
-        require(n.memo.size <= MEMO_BYTES) { "memo exceeds $MEMO_BYTES bytes" }
+    private fun blindPlaintext(n: NotePlaintext, version: Byte = BLIND_VERSION): ByteArray =
+        blindPlaintext(n.rho, n.rcm, n.memo, version)
+
+    private fun blindPlaintext(rho: Fr, rcm: Fr, memo: ByteArray, version: Byte): ByteArray {
+        require(memo.size <= MEMO_BYTES) { "memo exceeds $MEMO_BYTES bytes" }
         return ByteBuffer.allocate(BLIND_PLAINTEXT_BYTES)
-            .put(BLIND_VERSION).put(n.rho.toBytes()).put(n.rcm.toBytes()).put(n.memo.copyOf(MEMO_BYTES)).array()
+            .put(version).put(rho.toBytes()).put(rcm.toBytes()).put(memo.copyOf(MEMO_BYTES)).array()
+    }
+
+    /** Opens a 177-byte blind ciphertext under [salt] and [version]: (rho, rcm, memo with its padding dropped). */
+    private fun openBlind(ct: ByteArray, ek: X25519PrivateKeyParameters, salt: ByteArray, version: Byte): Triple<Fr, Fr, ByteArray>? {
+        if (ct.size != BLIND_CIPHERTEXT_BYTES) return null
+        return try {
+            val epk = ct.copyOf(32)
+            val shared = ByteArray(32)
+            X25519Agreement().apply { init(ek) }.calculateAgreement(X25519PublicKeyParameters(epk, 0), shared, 0)
+            val pt = aead(false, hkdf(shared, salt, epk), ct.copyOfRange(32, ct.size))
+            if (pt.size != BLIND_PLAINTEXT_BYTES || pt[0] != version) return null
+            val memo = pt.copyOfRange(65, pt.size)
+            Triple(Fr.fromBytes(pt.copyOfRange(1, 33)), Fr.fromBytes(pt.copyOfRange(33, 65)), memo.copyOf(memo.indexOfLast { it.toInt() != 0 } + 1))
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // ---- blind stake ciphertext (chain zk/privacy EncryptBlindStakeNote) ----
+
+    /**
+     * The blind stake ciphertext of a stake note the chain will mint to
+     * spc = StakePC(owner_pk, [rho], [rcm]) (StakeProof.spc_ciphertext): as v2,
+     * under salt "earth.stake.v1" and version 0x03, 177 bytes.
+     */
+    fun encryptBlindStake(rho: Fr, rcm: Fr, ekPub: ByteArray, memo: ByteArray = ByteArray(0)): ByteArray =
+        sealBlind(X25519PrivateKeyParameters(rng), ekPub, blindPlaintext(rho, rcm, memo, STAKE_VERSION), STAKE_SALT)
+
+    /** Deterministic blind stake encryption: for golden vectors only. */
+    internal fun encryptBlindStakeWith(esk: ByteArray, rho: Fr, rcm: Fr, ekPub: ByteArray, memo: ByteArray = ByteArray(0)): ByteArray =
+        sealBlind(X25519PrivateKeyParameters(esk, 0), ekPub, blindPlaintext(rho, rcm, memo, STAKE_VERSION), STAKE_SALT)
+
+    /**
+     * A minted stake note: opens [ct] (177 bytes) with our ek and accepts it
+     * only if StakeCM(AssetID([denom]), [amount], StakePC(owner_pk, rho, rcm))
+     * is [cm], with the denom and amount the chain published. (rho, rcm) or null.
+     */
+    fun tryDecryptBlindStake(ct: ByteArray, cm: Fr, denom: String, amount: Long, keys: PrivacyKeys): Pair<Fr, Fr>? =
+        tryDecryptBlindStake(ct, cm, denom, amount, keys.ek(), keys.ownerPk)
+
+    internal fun tryDecryptBlindStake(ct: ByteArray, cm: Fr, denom: String, amount: Long, ek: X25519PrivateKeyParameters, ownerPk: Fr): Pair<Fr, Fr>? {
+        val (rho, rcm, _) = openBlind(ct, ek, STAKE_SALT, STAKE_VERSION) ?: return null
+        return if (Privacy.stakeCm(Privacy.assetId(denom), amount, Privacy.stakePc(ownerPk, rho, rcm)) == cm) rho to rcm else null
     }
 
     /**
@@ -157,21 +203,9 @@ object NoteCipher {
         tryDecryptBlind(ct, cm, denom, value, keys.ek(), keys.ownerPk)
 
     internal fun tryDecryptBlind(ct: ByteArray, cm: Fr, denom: String, value: Long, ek: X25519PrivateKeyParameters, ownerPk: Fr): NotePlaintext? {
-        if (ct.size != BLIND_CIPHERTEXT_BYTES) return null
-        return try {
-            val epk = ct.copyOf(32)
-            val shared = ByteArray(32)
-            X25519Agreement().apply { init(ek) }.calculateAgreement(X25519PublicKeyParameters(epk, 0), shared, 0)
-            val pt = aead(false, hkdf(shared, BLIND_SALT, epk), ct.copyOfRange(32, ct.size))
-            if (pt.size != BLIND_PLAINTEXT_BYTES || pt[0] != BLIND_VERSION) return null
-            val rho = Fr.fromBytes(pt.copyOfRange(1, 33))
-            val rcm = Fr.fromBytes(pt.copyOfRange(33, 65))
-            val memo = pt.copyOfRange(65, pt.size)
-            val n = NotePlaintext(denom, value, rho, rcm, memo.copyOf(memo.indexOfLast { it.toInt() != 0 } + 1))
-            if (n.cm(ownerPk) != cm) null else n
-        } catch (e: Exception) {
-            null
-        }
+        val (rho, rcm, memo) = openBlind(ct, ek, BLIND_SALT, BLIND_VERSION) ?: return null
+        val n = NotePlaintext(denom, value, rho, rcm, memo)
+        return if (n.cm(ownerPk) != cm) null else n
     }
 
     // ---- stake notes ----

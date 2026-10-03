@@ -27,12 +27,41 @@ data class IdentityRecord(
 )
 
 /**
+ * A registration broadcast and committed whose identity leaf the wallet has
+ * not resolved yet (C2): everything needed to rebuild the identity record,
+ * persisted before any sync so a lagging indexer cannot lose it. Each sync
+ * retries until the local identity tree holds [leafIndex].
+ */
+data class PendingRegistration(
+    val txHash: String,
+    val leafIndex: Long,
+    val dscKey: Fr,
+    val passportNullifier: String,
+    val publicSignals: List<String>,
+    /** The registration block's time: the leaf's activated_at. */
+    val activatedAt: Long,
+    /** ISO alpha-2 guess at the verifying CSCA's country ("" for none). */
+    val countryHint: String,
+    /** Why the last attempt to resolve it failed, for the UI (null: waiting for the indexer). */
+    val failure: String? = null,
+)
+
+/**
+ * A registration record note found by sync (PRIVACY_FORMATS.md 3a): what a
+ * wallet restored from the mnemonic finds its identity leaf by. [height] is
+ * the registration's block.
+ */
+data class RegRecord(val height: Long, val position: Long, val dscKey: Fr, val country: String, val builtAt: Long)
+
+/**
  * What the wallet keeps between syncs: cursors into each indexer stream, its
  * own notes, its registration, and the automations' bookkeeping. Small; the
  * trees live beside it in per-level files.
  */
 class PrivacyState {
     var chainId: String? = null
+    /** The indexer's genesis key (first block hash prefix) the synced data is from. */
+    var genesis: String? = null
     var notesNext: Long = 0
     var notesHeight: Long = 0
     var nullifiersNext: Long = 0
@@ -40,7 +69,13 @@ class PrivacyState {
     var zeroedNext: Long = 0
     val notes: MutableList<OwnedNote> = ArrayList()
     var identity: IdentityRecord? = null
-    /** UTC days a claim was broadcast for (so the automation does not repeat one). */
+    /** A committed registration not yet matched to its leaf (C2). */
+    var pendingRegistration: PendingRegistration? = null
+    /** Registration record notes found (restore, L8). */
+    val regRecords: MutableList<RegRecord> = ArrayList()
+    /** Whether the last sync's roots matched the chain's own (C3), and why not. */
+    var rootsVerified: Boolean = false
+    var rootsError: String? = null    /** UTC days a claim was broadcast for (so the automation does not repeat one). */
     val claimedDays: MutableSet<Long> = sortedSetOf()
     /** When the caretaker split was last cast (unix seconds), and the split (option -> percent). */
     var caretakerCastAt: Long = 0
@@ -52,10 +87,6 @@ class PrivacyState {
     val unbondRetryAt: MutableMap<String, Long> = sortedMapOf()
     /** Next unused Groundworks owner-tag counter (PrivacyKeys.otagSalt). */
     var nextOtagCounter: Int = 0
-    /** Next unused self-mint counter (PrivacyKeys.mintSecrets). */
-    var nextMintCounter: Int = 0
-    /** Next unused stake self-mint counter (PrivacyKeys.stakeMintSecrets). */
-    var nextStakeMintCounter: Int = 0
     /** The stake tree's stream cursors and this wallet's stake notes. */
     var stakeNext: Long = 0
     var stakeHeight: Long = 0
@@ -66,6 +97,19 @@ class PrivacyState {
 
     fun toJson(): JSONObject = JSONObject().apply {
         put("chain_id", chainId)
+        put("genesis", genesis)
+        pendingRegistration?.let { p ->
+            put("pending_registration", JSONObject().put("tx_hash", p.txHash).put("leaf_index", p.leafIndex).put("dsc_key", p.dscKey.toHex())
+                .put("passport_nullifier", p.passportNullifier).put("public_signals", JSONArray(p.publicSignals))
+                .put("activated_at", p.activatedAt).put("country_hint", p.countryHint).put("failure", p.failure ?: JSONObject.NULL))
+        }
+        put("reg_records", JSONArray().apply {
+            regRecords.forEach {
+                put(JSONObject().put("height", it.height).put("position", it.position).put("dsc_key", it.dscKey.toHex())
+                    .put("country", it.country).put("built_at", it.builtAt))
+            }
+        })
+        put("roots_verified", rootsVerified); put("roots_error", rootsError ?: JSONObject.NULL)
         put("notes_next", notesNext); put("notes_height", notesHeight)
         put("nullifiers_next", nullifiersNext); put("identity_next", identityNext); put("zeroed_next", zeroedNext)
         put("notes", JSONArray().apply { notes.forEach { put(noteJson(it)) } })
@@ -79,8 +123,6 @@ class PrivacyState {
         put("referrer_address", referrerAddress); put("referrer_bound_at", referrerBoundAt)
         put("unbond_retry_at", JSONObject().apply { unbondRetryAt.forEach { (k, v) -> put(k, v) } })
         put("next_otag_counter", nextOtagCounter)
-        put("next_mint_counter", nextMintCounter)
-        put("next_stake_mint_counter", nextStakeMintCounter)
         put("stake_next", stakeNext); put("stake_height", stakeHeight); put("stake_nullifiers_next", stakeNullifiersNext)
         put("stake_notes", JSONArray().apply { stakeNotes.forEach { put(stakeJson(it)) } })
         put("denoms", JSONArray(denoms.toList()))
@@ -89,6 +131,22 @@ class PrivacyState {
     companion object {
         fun fromJson(j: JSONObject): PrivacyState = PrivacyState().apply {
             chainId = j.optString("chain_id").ifEmpty { null }
+            genesis = if (j.isNull("genesis")) null else j.optString("genesis").ifEmpty { null }
+            j.optJSONObject("pending_registration")?.let { p ->
+                val sigs = p.optJSONArray("public_signals")
+                pendingRegistration = PendingRegistration(
+                    p.getString("tx_hash"), p.getLong("leaf_index"), Fr.fromHex(p.getString("dsc_key")), p.optString("passport_nullifier"),
+                    (0 until (sigs?.length() ?: 0)).map { sigs!!.getString(it) }, p.getLong("activated_at"), p.optString("country_hint"),
+                    if (p.isNull("failure")) null else p.optString("failure"),
+                )
+            }
+            j.optJSONArray("reg_records")?.let { a ->
+                for (i in 0 until a.length()) a.getJSONObject(i).let {
+                    regRecords.add(RegRecord(it.getLong("height"), it.getLong("position"), Fr.fromHex(it.getString("dsc_key")), it.optString("country"), it.getLong("built_at")))
+                }
+            }
+            rootsVerified = j.optBoolean("roots_verified")
+            rootsError = if (j.isNull("roots_error")) null else j.optString("roots_error").ifEmpty { null }
             notesNext = j.optLong("notes_next"); notesHeight = j.optLong("notes_height")
             nullifiersNext = j.optLong("nullifiers_next"); identityNext = j.optLong("identity_next"); zeroedNext = j.optLong("zeroed_next")
             j.optJSONArray("notes")?.let { a -> for (i in 0 until a.length()) notes.add(noteFromJson(a.getJSONObject(i))) }
@@ -102,8 +160,6 @@ class PrivacyState {
             referrerAddress = j.optString("referrer_address"); referrerBoundAt = j.optLong("referrer_bound_at")
             j.optJSONObject("unbond_retry_at")?.let { o -> o.keys().forEach { unbondRetryAt[it] = o.getLong(it) } }
             nextOtagCounter = j.optInt("next_otag_counter")
-            nextMintCounter = j.optInt("next_mint_counter")
-            nextStakeMintCounter = j.optInt("next_stake_mint_counter")
             stakeNext = j.optLong("stake_next"); stakeHeight = j.optLong("stake_height"); stakeNullifiersNext = j.optLong("stake_nullifiers_next")
             j.optJSONArray("stake_notes")?.let { a -> for (i in 0 until a.length()) stakeNotes.add(stakeFromJson(a.getJSONObject(i))) }
             j.optJSONArray("denoms")?.let { a -> for (i in 0 until a.length()) denoms.add(a.getString(i)) }
@@ -174,24 +230,25 @@ class PrivacyStore private constructor(private val dir: File?) {
     }
 
     /**
-     * Forgets the synced data, keeping the key counters, the registration's
-     * leaf and what the wallet itself cast (claims, caretaker split, referrer): a fresh chain, or an
-     * inconsistent sync.
+     * Forgets the synced data. On the same chain (an inconsistent sync) it
+     * keeps the owner-tag counter, the registration (its leaf, or the one
+     * pending) and what the wallet itself cast (claims, caretaker split,
+     * referrer); a different chain or genesis (a relaunch under the same
+     * chain id) keeps only the owner-tag counter.
      */
     @Synchronized
-    fun reset(chainId: String?) {
+    fun reset(chainId: String?, genesis: String? = state.genesis) {
         noteTree.clear()
         identityTree.clear()
         stakeTree.clear()
         val old = state
         state = PrivacyState().apply {
             this.chainId = chainId
+            this.genesis = genesis
             nextOtagCounter = old.nextOtagCounter
-            nextMintCounter = old.nextMintCounter
-            nextStakeMintCounter = old.nextStakeMintCounter
-            if (old.chainId == chainId) {
-                // The leaf index cannot be found again without the registration tx.
+            if (old.chainId == chainId && old.genesis == genesis) {
                 identity = old.identity
+                pendingRegistration = old.pendingRegistration
                 claimedDays.addAll(old.claimedDays)
                 caretakerCastAt = old.caretakerCastAt; caretakerSplit = old.caretakerSplit
                 referrerAddress = old.referrerAddress; referrerBoundAt = old.referrerBoundAt
