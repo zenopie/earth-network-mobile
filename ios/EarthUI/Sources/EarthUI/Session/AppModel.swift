@@ -831,7 +831,9 @@ public final class AppModel {
         }
         await refreshRemovalBallots()
         await refreshDerthRates()
-        if let p = try? await queries.personhoodParams() { leaseSeconds = p.caretakerVoteSeconds; handleLeaseSeconds = p.handleLeaseSeconds }
+        if let p = try? await queries.personhoodParams() { leaseSeconds = p.caretakerVoteSeconds }
+        // The claim wait uses the lease the chain's bound uses (LeaseBounds: the longest ever in force), never Params.
+        if let b = try? await queries.leaseBounds(), (1 ... Handles.maxAheadSeconds).contains(b.handleLeaseSeconds) { handleLeaseSeconds = b.handleLeaseSeconds }
         await refreshPersonal()
     }
 

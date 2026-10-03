@@ -112,6 +112,14 @@ struct HandleScreen: View {
                 : st == HandleEntry.renewal ? "Expired: renewal period (only you may renew it)" : "Released")
             EarthDetailRow(label: "Expires", value: day(e.expiresAt))
             EarthDetailRow(label: "Renewable until", value: day(e.renewalUntil))
+            if st == HandleEntry.renewal {
+                // Chain 203d3b2: past expiry, a renewal is bounded like a claim, and the handle cannot be moved.
+                let claimFrom = model.predecessorAt > 0
+                    ? Handles.satAdd(Handles.satAdd(Int64(clamping: model.predecessorAt), model.handleLeaseSeconds), 86_400 + 3_600) : 0
+                note("Past its expiry, renewing counts as a new claim"
+                     + (claimFrom > now ? ", which this identity can make from \(day(claimFrom)) (it replaced another); renew before \(day(e.renewalUntil)) or the handle is freed." : ".")
+                     + " A handle in this period cannot be moved.")
+            }
             EarthDetailRow(label: "Pays", value: e.address == model.shieldedAddress
                 ? "this wallet (\(Handles.truncate(e.address)))" : "another address (\(Handles.truncate(e.address)))")
         } else {
@@ -126,7 +134,7 @@ struct HandleScreen: View {
         }
         EarthButton(title: "Release @\(model.handle)", role: .destructive) {
             let h = model.handle
-            tx.requestPrivate(.private(action: "Release @\(h)", rows: []), host: .handle, onSuccess: { await refreshed() }) { w in
+            tx.requestPrivate(.private(action: "Release @\(h)", rows: [], gas: PrivacyWallet.bindHandleGasEstimate), host: .handle, onSuccess: { await refreshed() }) { w in
                 try await w.releaseHandle()
             }
         }
@@ -163,7 +171,8 @@ struct HandleScreen: View {
             EarthButton(title: model.handle.isEmpty ? "Claim \(parsed.map { "@\($0)" } ?? "handle")" : "Change to \(parsed.map { "@\($0)" } ?? "…")") {
                 guard let h = parsed else { return }
                 let pays = "@\(h) · \(Handles.truncate(model.shieldedAddress))"
-                tx.requestPrivate(.private(action: model.handle.isEmpty ? "Claim @\(h)" : "Change handle to @\(h)", rows: [("Pays", pays)]),
+                tx.requestPrivate(.private(action: model.handle.isEmpty ? "Claim @\(h)" : "Change handle to @\(h)", rows: [("Pays", pays)],
+                                           gas: PrivacyWallet.bindHandleGasEstimate),
                                   host: .handle, onSuccess: { input = ""; await refreshed() }) { w in
                     try await w.bindHandle(h)
                 }
@@ -173,7 +182,8 @@ struct HandleScreen: View {
     }
 
     private func bind(_ h: String) {
-        tx.requestPrivate(.private(action: "Renew @\(h) for a year", rows: [("Pays", "@\(h) · \(Handles.truncate(model.shieldedAddress))")]),
+        tx.requestPrivate(.private(action: "Renew @\(h) for a year", rows: [("Pays", "@\(h) · \(Handles.truncate(model.shieldedAddress))")],
+                                   gas: PrivacyWallet.bindHandleGasEstimate),
                           host: .handle, onSuccess: { await refreshed() }) { w in
             try await w.bindHandle(h)
         }
@@ -182,7 +192,8 @@ struct HandleScreen: View {
     private func renew() {
         let h = model.handle
         guard !h.isEmpty else { return }
-        tx.requestPrivate(.private(action: "Renew @\(h) for a year", rows: [("Pays", "@\(h) · \(Handles.truncate(model.shieldedAddress))")]),
+        tx.requestPrivate(.private(action: "Renew @\(h) for a year", rows: [("Pays", "@\(h) · \(Handles.truncate(model.shieldedAddress))")],
+                                   gas: PrivacyWallet.bindHandleGasEstimate),
                           host: .handle, onSuccess: { await refreshed() }) { w in
             try await w.bindHandle(h)
         }
@@ -254,7 +265,9 @@ struct SwitchIdentityScreen: View {
     private var voteInFlight: Bool { model.outgoingMoves.contains { $0.kind == PendingMove.caretakerKind && !$0.confirmed } }
     private var inFlight: Bool { handleInFlight || voteInFlight }
     private var unrecorded: Bool { model.outgoingMoves.contains { !$0.recorded } }
-    private var holdsHandle: Bool { !model.handle.isEmpty && !handleInFlight }
+    /// Chain 203d3b2: only a live handle moves (not one in its renewal period).
+    private var handleInRenewal: Bool { model.handleEntry.map { $0.status(at: now) == HandleEntry.renewal } ?? false }
+    private var holdsHandle: Bool { !model.handle.isEmpty && !handleInFlight && !handleInRenewal }
     private var holdsVote: Bool {
         !voteInFlight && model.caretakerExpiresAt > now && (!(model.privacy?.snapshot.caretakerSplit.isEmpty ?? true) || model.caretakerSplitUnknown)
     }
@@ -307,8 +320,12 @@ struct SwitchIdentityScreen: View {
                 }
                 if let targetWarning { Text(targetWarning).font(EarthType.bodySmall).foregroundStyle(theme.colors.textTertiary) }
                 if frozenTarget == nil { EarthButton(title: "Create a new wallet", role: .secondary) { adding = true } }
-                if holdsHandle || holdsVote || inFlight || model.handleMovedOut || model.caretakerMovedOut {
+                if holdsHandle || handleInRenewal || holdsVote || inFlight || model.handleMovedOut || model.caretakerMovedOut {
                     EarthLabel("Move first")
+                    if handleInRenewal && !handleInFlight {
+                        Text("@\(model.handle) is past its expiry (in its renewal period): only a live handle can be moved. Renew it first to move it.")
+                            .font(EarthType.bodySmall).foregroundStyle(theme.colors.textTertiary)
+                    }
                     if holdsHandle || handleInFlight || model.handleMovedOut {
                         let name = !model.handle.isEmpty ? model.handle : model.outgoingMoves.first { $0.kind == PendingMove.handleKind }?.handle ?? ""
                         Toggle("Move " + (name.isEmpty ? "my handle" : "@\(name)") + suffix(model.handleMovedOut, handleInFlight),
