@@ -229,6 +229,107 @@ class ReauditFixesTest {
         assertEquals(WalletSync.IdentityStatus.LIVE, a.identityStatus())
     }
 
+    /** K1: the record memo, version 2 with its tag (PRIVACY_FORMATS 3a golden). */
+    @Test
+    fun recordMemoGolden() {
+        val k = PrivacyKeys.fromMnemonic(alice)
+        val m = WalletSync.regMemo(k.nk, Fr.of(77), "FR", 1_790_000_000L)
+        assertEquals(
+            "4552024652000000006ab13b80" + "00".repeat(31) + "4d" + "1d3756b83dfd918fa510770bc257079b" + "000000",
+            m.joinToString("") { "%02x".format(it.toInt() and 0xff) },
+        )
+        assertEquals(Triple(Fr.of(77), "FR", 1_790_000_000L), WalletSync.parseRegMemo(k.nk, m))
+        // Another wallet's nk, a flipped tag bit, version 1, or junk past the tag: not a record.
+        assertEquals(null, WalletSync.parseRegMemo(Fr.of(5), m))
+        assertEquals(null, WalletSync.parseRegMemo(k.nk, m.copyOf().also { it[50] = (it[50].toInt() xor 1).toByte() }))
+        assertEquals(null, WalletSync.parseRegMemo(k.nk, m.copyOf().also { it[2] = 1 }))
+        assertEquals(null, WalletSync.parseRegMemo(k.nk, m.copyOf().also { it[63] = 1 }))
+    }
+
+    /** Appends a note row (a v1 note someone sent) at the block being built. */
+    private fun sendNote(chain: FakeChain, to: network.erth.wallet.privacy.keys.ShieldedAddress, memo: ByteArray) {
+        val n = network.erth.wallet.privacy.note.NotePlaintext.fresh("uerth", 0, memo)
+        val cm = n.cm(to.ownerPk)
+        val pos = chain.noteTree.append(cm)
+        chain.notes.add(network.erth.wallet.privacy.sync.NoteRow(pos, chain.height, cm, network.erth.wallet.privacy.note.NoteCipher.encrypt(n, to), null))
+    }
+
+    /**
+     * K1: forged record notes (untagged version 1, or version 2 with a
+     * guessed tag) in the registration's block cost the restore nothing: not
+     * one is kept or searched, and the real record still finds the identity.
+     */
+    @Test
+    fun forgedRecordSpamIsIgnored() {
+        val chain = FakeChain()
+        val a = wallet(chain)
+        val prep = a.prepareRegistration(null)
+        chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
+        a.sync()
+        val k = PrivacyKeys.fromMnemonic(alice)
+        repeat(16) { i ->
+            val forged = WalletSync.regMemo(Fr.of(1000L + i), Fr.of(77), "DE", chain.now + i)
+            sendNote(chain, a.address, forged)
+            sendNote(chain, a.address, forged.copyOf().also { it[2] = 1 }.copyOf(45).copyOf(64))
+        }
+        a.register(prep, ByteArray(14_656), listOf("261001", prep.binding.toBigInteger().toString(), "9", Fr.of(77).toBigInteger().toString()), "lean_poa", ByteArray(10))
+        a.sync()
+        val restored = wallet(chain)
+        val t0 = System.nanoTime()
+        restored.sync()
+        val ms = (System.nanoTime() - t0) / 1_000_000
+        assertEquals(1, restored.store.state.regRecords.size)
+        assertEquals(WalletSync.IdentityStatus.LIVE, restored.identityStatus())
+        // The chain's block time: one country pass for one leaf, nothing like the 3M-hash search per forged record.
+        assertTrue(restored.store.state.regRecords.single().work <= 677)
+        assertTrue("restore took $ms ms", ms < 20_000)
+        assertEquals(k.nk, a.keys.nk)
+    }
+
+    /**
+     * K1: with no block time from the node, the fallback search is bounded
+     * per sync and resumes from its persisted cursor after a kill, never
+     * redoing work, and still finds a registration whose device clock was
+     * 22 hours behind (83,601 steps of the outward walk).
+     */
+    @Test
+    fun fallbackSearchIsBoundedAndResumes() {
+        val chain = FakeChain()
+        // The country the record hints (none: the DSC is unparsable here), so the narrow pass finds it.
+        chain.registrationCountry = ""
+        val skewed = PrivacyWallet(
+            PrivacyKeys.fromMnemonic(alice), PrivacyStore.memory(), chain, chain, reads(chain), chain.prover, chain.chainId, chain,
+            now = { chain.now - 80_000 },
+        )
+        val prep = skewed.prepareRegistration(null)
+        chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
+        skewed.sync()
+        skewed.register(prep, ByteArray(14_656), listOf("261001", prep.binding.toBigInteger().toString(), "9", Fr.of(77).toBigInteger().toString()), "lean_poa", ByteArray(10))
+        chain.blockTimesPruned = true
+        val dir = java.nio.file.Files.createTempDirectory("k1").toFile()
+        val keys = PrivacyKeys.fromMnemonic(alice)
+        val budget = 30_000L
+        var works = ArrayList<Long>()
+        var syncs = 0
+        while (true) {
+            // A fresh store object each time: what a killed and restarted app reads back from disk.
+            val store = PrivacyStore.open(dir, "w")
+            WalletSync(chain, store, keys, chain.chainId, chain, { chain.now }, searchBudget = budget).sync()
+            val rec = store.state.regRecords.single()
+            works.add(rec.work)
+            syncs++
+            if (rec.status != network.erth.wallet.privacy.sync.RecordStatus.OPEN) break
+            assertTrue(syncs < 20)
+        }
+        val store = PrivacyStore.open(dir, "w")
+        assertEquals(network.erth.wallet.privacy.sync.RecordStatus.MATCHED, store.state.regRecords.single().status)
+        assertTrue(syncs >= 3)
+        // Each sync spent at most its budget (plus one step), and none started over.
+        works.zipWithNext().forEach { (x, y) -> assertTrue(y - x in 1..budget + 2) }
+        assertTrue(works.first() <= budget + 2)
+        assertEquals(chain.identityTree.leaf(store.state.identity!!.leafIndex), Privacy.identityLeaf(keys.idc, store.state.identity!!.dscKey, store.state.identity!!.country, store.state.identity!!.activatedAt))
+    }
+
     /** K10: a status naming no chain is refused. */
     @Test
     fun nullChainIdIsRefused() {

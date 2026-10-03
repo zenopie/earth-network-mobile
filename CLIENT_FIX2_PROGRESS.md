@@ -17,5 +17,7 @@ format or behavior change.
 
 - [x] K7 PrivateChain.broadcast(accepted:) runs at CheckTx code 0: spends marked pending and the registration recorded by tx hash before awaitCommit; leaf/activated_at filled from the result or looked up by hash (PrivateChain.tx) on later syncs; failed-in-block kept as failure. Also: WalletSync stamps/releases pending with the wallet clock. ReauditFixesTest (timeout + killed app; failed in block).
 
+- [x] K1 record memo v2 with 16-byte tag H(Tag("earth.rectag"), nk, dsc_key, U64(built_at)) checked before any search (v1 ignored); records keep their block's leaves, status, cursor and work (persisted); match by the LCD's block time first (<=677 hashes a leaf), else a resumable outward search capped at 50k hashes a sync and 4M a record, once a sync after all passes. Golden vector pinned; forged-spam, bounded-resume tests (ReauditFixesTest).
+
 ## iOS
 (not started)

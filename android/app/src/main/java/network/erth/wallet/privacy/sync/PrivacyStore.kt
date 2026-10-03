@@ -50,11 +50,30 @@ data class PendingRegistration(
 )
 
 /**
- * A registration record note found by sync (PRIVACY_FORMATS.md 3a): what a
- * wallet restored from the mnemonic finds its identity leaf by. [height] is
- * the registration's block.
+ * A registration record note found by sync (PRIVACY_FORMATS.md 3a), its tag
+ * checked: what a wallet restored from the mnemonic finds its identity leaf
+ * by. [height] is the registration's block. The search for its leaf is
+ * persisted (K1): the leaves appended at [height] as the stream passed
+ * them, whether it matched or was given up, and how far the bounded
+ * fallback search got, so a killed app or a later sync resumes it and never
+ * repeats it.
  */
-data class RegRecord(val height: Long, val position: Long, val dscKey: Fr, val country: String, val builtAt: Long)
+data class RegRecord(
+    val height: Long,
+    val position: Long,
+    val dscKey: Fr,
+    val country: String,
+    val builtAt: Long,
+    /** (index, leaf) of every identity leaf appended at [height]. */
+    val leaves: List<Pair<Long, Fr>> = emptyList(),
+    val status: RecordStatus = RecordStatus.OPEN,
+    /** Fallback search steps done (one activated_at offset each). */
+    val cursor: Long = 0,
+    /** Leaf hashes spent on this record so far (capped). */
+    val work: Long = 0,
+)
+
+enum class RecordStatus { OPEN, MATCHED, EXHAUSTED }
 
 /**
  * What the wallet keeps between syncs: cursors into each indexer stream, its
@@ -109,7 +128,9 @@ class PrivacyState {
         put("reg_records", JSONArray().apply {
             regRecords.forEach {
                 put(JSONObject().put("height", it.height).put("position", it.position).put("dsc_key", it.dscKey.toHex())
-                    .put("country", it.country).put("built_at", it.builtAt))
+                    .put("country", it.country).put("built_at", it.builtAt)
+                    .put("leaves", JSONArray().apply { it.leaves.forEach { (i, l) -> put(JSONArray().put(i).put(l.toHex())) } })
+                    .put("status", it.status.name).put("cursor", it.cursor).put("work", it.work))
             }
         })
         put("roots_verified", rootsVerified); put("roots_error", rootsError ?: JSONObject.NULL)
@@ -145,7 +166,15 @@ class PrivacyState {
             }
             j.optJSONArray("reg_records")?.let { a ->
                 for (i in 0 until a.length()) a.getJSONObject(i).let {
-                    regRecords.add(RegRecord(it.getLong("height"), it.getLong("position"), Fr.fromHex(it.getString("dsc_key")), it.optString("country"), it.getLong("built_at")))
+                    val ls = it.optJSONArray("leaves")
+                    regRecords.add(
+                        RegRecord(
+                            it.getLong("height"), it.getLong("position"), Fr.fromHex(it.getString("dsc_key")), it.optString("country"), it.getLong("built_at"),
+                            (0 until (ls?.length() ?: 0)).map { k -> ls!!.getJSONArray(k).let { l -> l.getLong(0) to Fr.fromHex(l.getString(1)) } },
+                            runCatching { RecordStatus.valueOf(it.optString("status")) }.getOrDefault(RecordStatus.OPEN),
+                            it.optLong("cursor"), it.optLong("work"),
+                        ),
+                    )
                 }
             }
             rootsVerified = j.optBoolean("roots_verified")

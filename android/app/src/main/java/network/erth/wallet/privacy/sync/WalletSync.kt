@@ -40,6 +40,8 @@ interface ChainRoots {
     fun stakeNullifierSpent(nf: Fr): Boolean? = null
     /** The chain's latest block height (null: unknown). */
     fun latestHeight(): Long? = null
+    /** A block's time (unix seconds): a registration's activated_at (K1). Null when the node cannot say. */
+    fun blockTime(height: Long): Long? = null
     /** The LCD's chain id and genesis key (first block hash, 16 hex); null when it cannot say (K6). */
     fun chainIdentity(): ChainIdentity? = null
 }
@@ -75,6 +77,8 @@ class WalletSync(
     private val chain: ChainRoots,
     /** The wallet's clock (unix seconds): what pending marks are stamped with. */
     private val now: () -> Long = { System.currentTimeMillis() / 1000 },
+    /** Leaf hashes the record fallback search may spend this sync (K1). */
+    private val searchBudget: Long = SYNC_SEARCH_BUDGET,
 ) {
     class Inconsistent(message: String) : Exception(message)
 
@@ -132,30 +136,87 @@ class WalletSync(
         /** The largest tree position the circuits take (u32). */
         private const val MAX_POSITION = 0xffffffffL
 
-        /** Registration record memo: "ER", version 1 (PRIVACY_FORMATS.md 3a). */
-        val REG_MAGIC = byteArrayOf(0x45, 0x52, 0x01)
+        /** Registration record memo: "ER", version 2 (PRIVACY_FORMATS.md 3a). Version 1 (untagged) is ignored. */
+        val REG_MAGIC = byteArrayOf(0x45, 0x52, 0x02)
+
+        /** Bytes of the record memo's tag. */
+        const val REG_TAG_BYTES = 16
+
+        /** The record's tag: the first 16 bytes of H(TAG_RECTAG, nk, dsc_key, U64(built_at)). Only the owner (nk) can make one. */
+        fun regTag(nk: Fr, dscKey: Fr, builtAt: Long): ByteArray =
+            Privacy.h(Privacy.TAG_RECTAG, nk, dscKey, Privacy.u64(builtAt)).toBytes().copyOf(REG_TAG_BYTES)
 
         /** The 64-byte memo of a registration record note. */
-        fun regMemo(dscKey: Fr, country: String, builtAt: Long): ByteArray {
+        fun regMemo(nk: Fr, dscKey: Fr, country: String, builtAt: Long): ByteArray {
             val b = java.nio.ByteBuffer.allocate(NoteCipher.MEMO_BYTES)
             b.put(REG_MAGIC)
             val c = country.uppercase().takeIf { it.length == 2 && it.all { ch -> ch in 'A'..'Z' } }
             b.put(c?.toByteArray(Charsets.US_ASCII) ?: ByteArray(2))
             b.putLong(builtAt)
             b.put(dscKey.toBytes())
+            b.put(regTag(nk, dscKey, builtAt))
             return b.array()
         }
 
-        /** (dsc_key, country, built_at) if [memo] is a registration record. */
-        fun parseRegMemo(memo: ByteArray): Triple<Fr, String, Long>? {
+        /**
+         * (dsc_key, country, built_at) if [memo] is a version-2 registration
+         * record whose tag is [nk]'s (K1): anyone can send this wallet a
+         * value-0 note with any memo, and an untagged record would cost a
+         * leaf search per leaf at its height. The tag is checked before
+         * anything else is done with it.
+         */
+        fun parseRegMemo(nk: Fr, memo: ByteArray): Triple<Fr, String, Long>? {
             val m = memo.copyOf(NoteCipher.MEMO_BYTES)
             if (!m.copyOf(3).contentEquals(REG_MAGIC)) return null
             val b = java.nio.ByteBuffer.wrap(m, 3, m.size - 3)
             val c = ByteArray(2).also { b.get(it) }
-            val country = if (c.all { it.toInt() == 0 }) "" else String(c, Charsets.US_ASCII)
+            val country = when {
+                c.all { it.toInt() == 0 } -> ""
+                c.all { it in 'A'.code.toByte()..'Z'.code.toByte() } -> String(c, Charsets.US_ASCII)
+                else -> return null
+            }
             val builtAt = b.long
             val dsc = runCatching { Fr.fromBytes(ByteArray(32).also { b.get(it) }) }.getOrNull() ?: return null
+            val tag = ByteArray(REG_TAG_BYTES).also { b.get(it) }
+            if (m.copyOfRange(3 + 2 + 8 + 32 + REG_TAG_BYTES, m.size).any { it.toInt() != 0 }) return null
+            if (!java.security.MessageDigest.isEqual(tag, regTag(nk, dsc, builtAt))) return null
             return Triple(dsc, country, builtAt)
+        }
+
+        /** Record notes kept (newest first); only this wallet's own registrations carry a valid tag. */
+        const val MAX_RECORDS = 32
+
+        /** Identity leaves kept per record (registrations sharing its block). */
+        const val MAX_RECORD_LEAVES = 64
+
+        /**
+         * Leaf hashes the fallback search may spend in one sync, across all
+         * records: bounds how long a sync holds the wallet lock (a few
+         * seconds on a phone at ~50-100 us a Poseidon2 hash).
+         */
+        const val SYNC_SEARCH_BUDGET = 50_000L
+
+        /** Leaf hashes the fallback search may spend on one record before it is given up. */
+        const val RECORD_SEARCH_CAP = 4_000_000L
+
+        /** The fallback windows around built_at (seconds before, after): hinted countries, then every other. */
+        const val NARROW_BEFORE = 3_600L
+        const val NARROW_AFTER = 86_400L
+        const val WIDE_BEFORE = 600L
+        const val WIDE_AFTER = 3_600L
+
+        /**
+         * The [i]th offset of an outward walk over [-before, after]: 0, +1,
+         * -1, +2, -2, ..., then the longer side alone.
+         */
+        internal fun offsetAt(i: Long, before: Long, after: Long): Long {
+            val m = minOf(before, after)
+            return if (i <= 2 * m) {
+                if (i == 0L) 0L else if (i % 2 == 1L) (i + 1) / 2 else -(i / 2)
+            } else {
+                val k = m + (i - 2 * m)
+                if (after >= before) k else -k
+            }
         }
 
         /** Every country the chain's leaf may commit to: unknown (0), then each A..Z pair. */
@@ -203,6 +264,8 @@ class WalletSync(
             if (atIndexerTip(roots) || ++pass >= MAX_PASSES) break
         }
         releaseStalePending(s)
+        // Once a sync, after every pass: the record search is budgeted per sync (K1).
+        matchRecords(s)
         resolvePending(s)
         val verified = verifyRoots(s, roots)
         store.save()
@@ -366,8 +429,11 @@ class WalletSync(
         // A value past 2^63-1 is not one the wallet can hold (Amounts).
         if (note.value < 0L) return null
         if (note.value == 0L) {
-            parseRegMemo(note.memo)?.let { (dsc, country, builtAt) ->
-                if (s.regRecords.none { it.position == r.position }) s.regRecords.add(RegRecord(r.height, r.position, dsc, country, builtAt))
+            parseRegMemo(keys.nk, note.memo)?.let { (dsc, country, builtAt) ->
+                if (s.regRecords.none { it.position == r.position }) {
+                    s.regRecords.add(RegRecord(r.height, r.position, dsc, country, builtAt))
+                    if (s.regRecords.size > MAX_RECORDS) s.regRecords.remove(s.regRecords.minBy { it.height })
+                }
             }
             return null
         }
@@ -513,7 +579,6 @@ class WalletSync(
             if (!page.complete) break
         }
         val recordHeights = s.regRecords.map { it.height }.toSet()
-        val candidates = HashMap<Long, MutableList<Pair<Long, Fr>>>()
         outer@ while (true) {
             val page = indexer.identity(s.identityNext, limit)
             checkPage(page.rows.size)
@@ -526,52 +591,99 @@ class WalletSync(
             // A leaf zeroed at or below the ceiling is zero here; one zeroed
             // later is zeroed by a later pass's zeroed stream.
             store.identityTree.appendAll(take.map { if (it.zeroedHeight != null && it.zeroedHeight <= ceiling) Fr.ZERO else it.leaf })
-            for (r in take) if (r.height in recordHeights) candidates.getOrPut(r.height) { ArrayList() }.add(r.index to store.identityTree.leaf(r.index))
+            // Each record keeps the leaves of its block as they pass (persisted: never streamed again).
+            for (r in take) if (r.height in recordHeights) {
+                val leaf = store.identityTree.leaf(r.index)
+                for (k in s.regRecords.indices) {
+                    val rec = s.regRecords[k]
+                    if (rec.height == r.height && rec.leaves.size < MAX_RECORD_LEAVES && rec.leaves.none { it.first == r.index }) {
+                        s.regRecords[k] = rec.copy(leaves = rec.leaves + (r.index to leaf))
+                    }
+                }
+            }
             s.identityNext += take.size
             if (take.size < page.rows.size || s.identityNext >= page.size) break@outer
         }
-        matchRecords(s, candidates)
     }
 
     /**
      * Matches record notes to the leaves appended at their heights (several
-     * registrations may share a block): every leaf with the hinted country
-     * first, the full country search only if none matched. The newest match
-     * becomes the identity.
+     * registrations may share a block), newest record first, stopping at the
+     * newest that matched (it is the identity). K1, bounded:
+     *
+     *  1. activated_at is the registration block's time, so the chain's time
+     *     for the record's height (the LCD) is tried first: every country
+     *     (hint, unknown, then A..Z) at exactly that time, at most 677 hashes
+     *     a leaf. Known and unmatched, the record is given up.
+     *  2. Only when the chain cannot say (a pruned block), the device clock's
+     *     built_at is searched outward, hinted countries over [-1h, +24h],
+     *     then every other over [-10min, +1h], resumably: the cursor and the
+     *     hashes spent are persisted, each sync spends at most
+     *     [SYNC_SEARCH_BUDGET] hashes over all records and a record at most
+     *     [RECORD_SEARCH_CAP] before it is given up.
      */
-    private fun matchRecords(s: PrivacyState, candidates: Map<Long, List<Pair<Long, Fr>>>) {
-        for (rec in s.regRecords.sortedByDescending { it.height }) {
-            val leaves = candidates[rec.height]?.filter { it.second != Fr.ZERO } ?: continue
-            val match = leaves.firstNotNullOfOrNull { (i, leaf) -> findLeaf(leaf, rec.dscKey, rec.country, rec.builtAt, wide = false)?.let { i to it } }
-                ?: leaves.firstNotNullOfOrNull { (i, leaf) -> findLeaf(leaf, rec.dscKey, rec.country, rec.builtAt, wide = true)?.let { i to it } }
-                ?: continue
-            val (index, found) = match
-            val cur = s.identity
-            if (cur == null || index > cur.leafIndex) {
-                s.identity = IdentityRecord(index, rec.dscKey, found.first, found.second, cur?.takeIf { it.leafIndex == index }?.passportNullifier ?: "")
+    private fun matchRecords(s: PrivacyState) {
+        var budget = searchBudget
+        for (rec0 in s.regRecords.sortedByDescending { it.height }) {
+            if (rec0.status == RecordStatus.MATCHED) return
+            if (rec0.status == RecordStatus.EXHAUSTED) continue
+            val leaves = rec0.leaves.filter { it.second != Fr.ZERO }
+            if (leaves.isEmpty()) continue
+            val k = s.regRecords.indexOfFirst { it.position == rec0.position }
+            val time = runCatching { chain.blockTime(rec0.height) }.getOrNull()
+            val (found, rec) = if (time != null) {
+                val countries = (listOf(countryOrZero(rec0.country)) + ALL_COUNTRIES).distinct()
+                val m = leaves.firstNotNullOfOrNull { (i, leaf) -> countries.firstOrNull { Privacy.identityLeaf(keys.idc, rec0.dscKey, it, time) == leaf }?.let { Triple(i, it, time) } }
+                m to rec0.copy(status = if (m != null) RecordStatus.MATCHED else RecordStatus.EXHAUSTED, work = rec0.work + countries.size.toLong() * leaves.size)
+            } else {
+                val r = search(rec0, leaves, budget)
+                budget -= r.second.work - rec0.work
+                r
             }
-            return
+            s.regRecords[k] = rec
+            if (found != null) {
+                val (index, country, at) = found
+                val cur = s.identity
+                if (cur == null || index > cur.leafIndex) {
+                    s.identity = IdentityRecord(index, rec.dscKey, country, at, cur?.takeIf { it.leafIndex == index }?.passportNullifier ?: "")
+                }
+                return
+            }
+            if (budget <= 0) return
         }
     }
 
     /**
-     * (country, activated_at) with H(TAG_LEAF, idc, [dscKey], country,
-     * activated_at) == [leaf]: activated_at searched outward from [builtAt]
-     * (the block came after the bundle was laid out; the clocks may differ),
-     * the hinted country first, then every country over a narrower window.
+     * The fallback search for [rec] from its persisted cursor, spending at
+     * most [budget] hashes (and the record's cap): (index, country,
+     * activated_at) if found, with the record's new state.
      */
-    internal fun findLeaf(leaf: Fr, dscKey: Fr, hint: String, builtAt: Long, wide: Boolean): Pair<Fr, Long>? {
-        fun scan(countries: List<Fr>, before: Long, after: Long): Pair<Fr, Long>? {
-            for (dt in 0..maxOf(before, after)) {
-                for (t in listOf(builtAt + dt, builtAt - dt).distinct()) {
-                    if (t < 0 || (t > builtAt && t - builtAt > after) || (t < builtAt && builtAt - t > before)) continue
-                    for (c in countries) if (Privacy.identityLeaf(keys.idc, dscKey, c, t) == leaf) return c to t
+    private fun search(rec: RegRecord, leaves: List<Pair<Long, Fr>>, budget: Long): Pair<Triple<Long, Fr, Long>?, RegRecord> {
+        val hinted = listOf(countryOrZero(rec.country), Fr.ZERO).distinct()
+        val others = ALL_COUNTRIES - hinted.toSet()
+        val narrowSteps = NARROW_BEFORE + NARROW_AFTER + 1
+        val total = narrowSteps + WIDE_BEFORE + WIDE_AFTER + 1
+        var cursor = rec.cursor
+        var work = rec.work
+        var spent = 0L
+        while (cursor < total) {
+            val narrow = cursor < narrowSteps
+            val countries = if (narrow) hinted else others
+            val cost = countries.size.toLong() * leaves.size
+            if (spent > 0 && spent + cost > budget) break
+            if (work + cost > RECORD_SEARCH_CAP) return null to rec.copy(status = RecordStatus.EXHAUSTED, cursor = cursor, work = work)
+            val t = rec.builtAt + if (narrow) offsetAt(cursor, NARROW_BEFORE, NARROW_AFTER) else offsetAt(cursor - narrowSteps, WIDE_BEFORE, WIDE_AFTER)
+            cursor++
+            work += cost
+            spent += cost
+            if (t < 0) continue
+            for ((i, leaf) in leaves) for (c in countries) {
+                if (Privacy.identityLeaf(keys.idc, rec.dscKey, c, t) == leaf) {
+                    return Triple(i, c, t) to rec.copy(status = RecordStatus.MATCHED, cursor = cursor, work = work)
                 }
             }
-            return null
         }
-        val hinted = listOf(countryOrZero(hint), Fr.ZERO).distinct()
-        return if (!wide) scan(hinted, 3_600, 86_400) else scan(ALL_COUNTRIES - hinted.toSet(), 600, 3_600)
+        return null to rec.copy(status = if (cursor >= total) RecordStatus.EXHAUSTED else RecordStatus.OPEN, cursor = cursor, work = work)
     }
 
     /**

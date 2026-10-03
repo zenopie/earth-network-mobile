@@ -27,6 +27,8 @@ object Privacy {
     val TAG_SPC = tag("earth.spc")
     val TAG_SNF = tag("earth.snf")
     val TAG_OTAG = tag("earth.otag")
+    // Wallet-defined (PRIVACY_FORMATS.md 3a): the registration record note's tag.
+    val TAG_RECTAG = tag("earth.rectag")
 
     /** The fee asset, privacy_core::ASSET_ERTH. */
     val ASSET_ERTH: Fr by lazy { assetId("uerth") }

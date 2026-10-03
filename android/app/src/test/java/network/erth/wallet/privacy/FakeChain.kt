@@ -81,6 +81,8 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     /** (height -> tree state) after each block, for queries pinned to a height. */
     val identityAt = java.util.TreeMap<Long, TreeState>()
     val stakeAt = java.util.TreeMap<Long, TreeState>()
+    /** Each block's time, as the LCD serves it ([blockTimesPruned]: the node has none). */
+    val blockTimes = HashMap<Long, Long>()
     val notes = ArrayList<NoteRow>()
     val noteTree = MerkleTree(MemNodeStore())
     val identityTree = MerkleTree(MemNodeStore())
@@ -137,6 +139,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         if (stakeTree.size > 0) stakeRoots.add(stakeTree.root())
         identityAt[height] = TreeState(identityTree.size, if (identityTree.size == 0L) null else identityTree.root())
         stakeAt[height] = TreeState(stakeTree.size, if (stakeTree.size == 0L) null else stakeTree.root())
+        blockTimes[height] = now
         height++
     }
 
@@ -627,6 +630,10 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     var tipAhead = 0L
 
     override fun latestHeight(): Long = height - 1 + tipAhead
+
+    var blockTimesPruned = false
+
+    override fun blockTime(height: Long): Long? = if (blockTimesPruned) null else blockTimes[height]
 
     /** What the LCD says block 1's hash prefix is (null: the indexer's [genesis]); [lcdBlind]: it cannot say. */
     var lcdGenesis: String? = null

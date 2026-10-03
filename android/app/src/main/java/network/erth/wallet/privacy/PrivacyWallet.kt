@@ -366,7 +366,7 @@ class PrivacyWallet(
         val base = registerMsg(prep, proof, publicSignals, signatureAlgorithm, dscDer)
         val dscKey = PrivateMsgs.decimalField(publicSignals[3])
         val hint = dscCountry(dscDer)
-        val record = NoteOut.to(keys.address, FEE, 0, WalletSync.regMemo(dscKey, hint, now()))
+        val record = NoteOut.to(keys.address, FEE, 0, WalletSync.regMemo(keys.nk, dscKey, hint, now()))
         val pending = { hash: String ->
             // K7: by hash, the moment the node accepts it; the leaf comes later.
             store.state.pendingRegistration = PendingRegistration(

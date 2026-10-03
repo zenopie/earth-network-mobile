@@ -196,17 +196,33 @@ bundle) plus `pc_gas` and `ciphertext_gas`, a fresh v2 ciphertext to self
 (177 bytes, required). It is the only grant: `/gas/transparent`,
 `/gas/android`, `/gas/challenge`, `/gas/ios`, `/gas/human` are gone.
 
-**Registration record note.** MsgRegister's fee bundle always carries, as
-one of its outputs, a value-0 uerth note to the wallet's own address (v1
-ciphertext) whose 64-byte memo is the registration record:
+**Registration record note (version 2, K1).** MsgRegister's fee bundle
+always carries, as one of its outputs, a value-0 uerth note to the wallet's
+own address (v1 ciphertext) whose 64-byte memo is the registration record:
 
-    memo = "ER" (0x45 0x52) || 0x01 || country (2 ASCII bytes, 0x0000 unknown)
+    memo = "ER" (0x45 0x52) || 0x02 || country (2 ASCII bytes A-Z, 0x0000 unknown)
            || built_at (u64 BE unix seconds, the wallet's clock when the bundle was laid out)
-           || dsc_key (32 BE) || zero padding                                   (45 bytes used)
+           || dsc_key (32 BE) || tag (16) || zero padding (3)          (61 bytes used)
+    tag  = first 16 bytes of BE32( H(Tag("earth.rectag"), nk, dsc_key, U64(built_at)) )
 
-`country` is the wallet's guess at the verifying CSCA's ISO alpha-2 (the
-DSC's issuer C=, else the passport's issuing state). Sync keeps every record
-note it finds (they are value 0, never spent).
+H is Poseidon2 as everywhere (Tag(s) = the ASCII bytes of s as a field
+element, U64 as in the chain's zk/privacy). Only the holder of nk can make
+a tag, so a record anyone else sends (anyone can send this wallet a value-0
+note with any memo) is ignored. A memo is a record only if the magic and
+version match, the country is 0x0000 or two A-Z letters, dsc_key is
+canonical, the padding is zero and the tag recomputes (compared before
+anything else is done with it). Version 1 records (untagged, written by
+builds before this format) are ignored: such a registration cannot be
+restored from the mnemonic (register again). `country` is the wallet's
+guess at the verifying CSCA's ISO alpha-2 (the DSC's issuer C=, else the
+passport's issuing state). Sync keeps the 32 newest tagged records (they
+are value 0, never spent). Golden (mnemonic `abandon ×11 about`, dsc_key =
+77, country "FR", built_at = 1790000000), pinned in `ReauditFixesTest` and
+`ReauditFixesTests`:
+
+    4552024652000000006ab13b8000000000000000000000000000000000000000000000000000000000000000
+    4d1d3756b83dfd918fa510770bc257079b000000
+    (tag 1d3756b83dfd918fa510770bc257079b)
 
 **Recording (C2, K7).** The moment the node accepts the registration
 (broadcast returns code 0, before waiting for its block) the wallet persists
@@ -225,18 +241,37 @@ tree has the leaf, the country is found by recomputing
 dropped. It is never dropped unresolved (a leaf that does not match after
 the tree has it is an error shown to the user, the record kept).
 
-**Restore from the mnemonic (L8).** No query names the registration. For
-every record note found (newest first), with h its block height: over every
-identity leaf appended at height h (identity leaves are synced no higher
-than the notes, so the record is always seen first), try `activated_at`
-outward from built_at over [built_at − 3600, built_at + 86400] with the
-hinted country and unknown (0); only if no leaf matches, every other A..Z
-pair over [built_at − 600, built_at + 3600]. A match gives leaf_index, dsc_key, country and
-activated_at: the identity record (passport nullifier left empty; nothing
-needs it). A registration whose record note is missing (made by an older
-app) cannot be restored and must register again (a switch to the same
-passport is allowed, a switch to the same idc is refused by the chain only
-while the old leaf is live; the app tells the user).
+**Restore from the mnemonic (L8, K1).** No query names the registration.
+Every tagged record found keeps, as the identity stream passes them, the
+identity leaves appended at its block height h (identity leaves are synced
+no higher than the notes, so the record is always seen first; at most 64).
+Then, once a sync, newest record first, stopping at the newest that
+matched:
+
+1. **Chain time.** activated_at is exactly the registration block's time,
+   so the wallet asks the LCD for block h
+   (`GET /cosmos/base/tendermint/v1beta1/blocks/{h}`, `block.header.time`,
+   the header's height must be h) and tries every country (the hint,
+   unknown, then every A..Z pair: at most 677 hashes a leaf) at exactly that
+   time. Known and unmatched, the record is given up. The device clock's
+   built_at plays no part, so a skewed phone clock does not matter.
+2. **Fallback (block unavailable).** built_at is searched outward
+   (0, +1, -1, +2, ...), the hint and unknown over [built_at − 3600,
+   built_at + 86400], then every other country over [built_at − 600,
+   built_at + 3600]. The search is resumable and bounded: the cursor and
+   the hashes spent are persisted with the record (a killed app or a later
+   sync continues, never repeats), each sync spends at most 50,000 leaf
+   hashes over all records (a few seconds on a phone, so the wallet lock is
+   never held long), and a record that spent 4,000,000 is given up. A
+   device clock off by more than the windows (a day slow, an hour fast) is
+   only found by step 1.
+
+A match gives leaf_index, dsc_key, country and activated_at: the identity
+record (passport nullifier left empty; nothing needs it). A registration
+whose record note is missing (made by an older app) cannot be restored and
+must register again (a switch to the same passport is allowed, a switch to
+the same idc is refused by the chain only while the old leaf is live; the
+app tells the user).
 
 ## 4. Private tx assembly (follows x/shielded/ante)
 
