@@ -74,8 +74,9 @@ private fun date(unix: Long): String = SimpleDateFormat("d MMM yyyy, HH:mm", Loc
 /**
  * Groundworks positions: the private way to direct the Groundworks Fund.
  *
- * A position locks staked ERTH (derth) at a validator under a one-time key
- * the wallet derives; its split is public and weighted by the stake, its
+ * A position locks staked ERTH (derth) at a validator under an owner tag
+ * (a commitment to this wallet the stake proof opens again to update,
+ * vote or unlock it); its split is public and weighted by the stake, its
  * owner is not. The stake keeps earning while locked.
  */
 @Composable

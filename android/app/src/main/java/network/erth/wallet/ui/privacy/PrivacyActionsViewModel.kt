@@ -17,6 +17,7 @@ import network.erth.wallet.privacy.PrivacySession
 import network.erth.wallet.privacy.chain.PrivacyQueries
 
 /** One of this wallet's Groundworks positions and the key index that signs for it. */
+/** A position of ours and its owner-tag counter (PrivacyKeys.otagSalt). */
 data class PositionRow(val position: PrivacyChainReads.Position, val keyIndex: Int)
 
 data class PrivacyActionsState(
