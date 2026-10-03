@@ -257,6 +257,28 @@ class PrivacyStore private constructor(private val dir: File?) {
         save()
     }
 
+    /**
+     * A relaunch of the same chain id under a new genesis, confirmed by the
+     * LCD (K6): the synced data goes, but the registration stays (the
+     * identity record, its passport nullifier, a pending registration) and
+     * so do the owner-tag counters; the old chain's bookkeeping does not.
+     */
+    @Synchronized
+    fun switchGenesis(genesis: String) {
+        noteTree.clear()
+        identityTree.clear()
+        stakeTree.clear()
+        val old = state
+        state = PrivacyState().apply {
+            chainId = old.chainId
+            this.genesis = genesis
+            nextOtagCounter = old.nextOtagCounter
+            identity = old.identity
+            pendingRegistration = old.pendingRegistration?.copy(failure = null)
+        }
+        save()
+    }
+
     companion object {
         private const val STATE = "state.json"
 

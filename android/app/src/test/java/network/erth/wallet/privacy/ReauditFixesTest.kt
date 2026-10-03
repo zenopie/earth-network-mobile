@@ -124,6 +124,69 @@ class ReauditFixesTest {
         assertTrue(w.store.state.rootsError!!.contains("spend the chain does not hold"))
     }
 
+    private fun registered(chain: FakeChain, w: PrivacyWallet, nullifier: String = "555") {
+        val prep = w.prepareRegistration(null)
+        chain.shield("uerth", 100_000, prep.gas.pc, prep.gas.ciphertext)
+        w.sync()
+        w.register(prep, ByteArray(14_656), listOf("261001", prep.binding.toBigInteger().toString(), nullifier, Fr.of(77).toBigInteger().toString()), "lean_poa", ByteArray(10))
+        w.sync()
+        assertEquals(WalletSync.IdentityStatus.LIVE, w.identityStatus())
+    }
+
+    /** K6: a relaunch the LCD confirms keeps the registration (record, passport nullifier) and re-verifies its leaf. */
+    @Test
+    fun genesisSwitchKeepsIdentity() {
+        val chain = FakeChain()
+        val a = wallet(chain)
+        registered(chain, a)
+        val id = a.store.state.identity!!
+        a.store.state.claimedDays.add(7)
+        chain.genesis = "fedcba9876543210"
+        a.sync()
+        assertEquals("fedcba9876543210", a.store.state.genesis)
+        assertEquals(id, a.store.state.identity)
+        assertEquals("555", a.store.state.identity!!.passportNullifier)
+        assertEquals(WalletSync.IdentityStatus.LIVE, a.identityStatus())
+        assertTrue(a.store.state.claimedDays.isEmpty())
+        assertTrue(a.store.state.rootsVerified)
+    }
+
+    /** K6: an indexer's new genesis the LCD does not confirm (or cannot) wipes nothing and syncs nothing. */
+    @Test
+    fun unverifiedGenesisSwitchKeepsEverything() {
+        val chain = FakeChain()
+        val a = wallet(chain)
+        registered(chain, a)
+        val before = a.balances()
+        val id = a.store.state.identity
+        chain.lcdGenesis = chain.genesis
+        chain.genesis = "fedcba9876543210"
+        assertThrows(WalletSync.GenesisUnverified::class.java) { a.sync() }
+        chain.lcdGenesis = null
+        chain.lcdBlind = true
+        assertThrows(WalletSync.GenesisUnverified::class.java) { a.sync() }
+        assertEquals("0123456789abcdef", a.store.state.genesis)
+        assertEquals(before, a.balances())
+        assertEquals(id, a.store.state.identity)
+        assertFalse(a.store.state.rootsVerified)
+        assertTrue(a.store.state.rootsError!!.contains("does not confirm"))
+        // A first sync goes ahead when the LCD cannot say, never when it contradicts.
+        wallet(chain).sync()
+        chain.lcdBlind = false
+        chain.lcdGenesis = "1111111111111111"
+        assertThrows(WalletSync.GenesisUnverified::class.java) { wallet(chain).sync() }
+    }
+
+    /** K10: a status naming no chain is refused. */
+    @Test
+    fun nullChainIdIsRefused() {
+        val chain = FakeChain()
+        val idx = object : Wrapped(chain) {
+            override fun status() = inner.status().copy(chainId = null)
+        }
+        assertThrows(IllegalStateException::class.java) { wallet(chain, indexer = idx).sync() }
+    }
+
     /** K9: an indexer trailing the chain's tip is labelled unverified. */
     @Test
     fun indexerBehindTipIsUnverified() {

@@ -40,7 +40,12 @@ interface ChainRoots {
     fun stakeNullifierSpent(nf: Fr): Boolean? = null
     /** The chain's latest block height (null: unknown). */
     fun latestHeight(): Long? = null
+    /** The LCD's chain id and genesis key (first block hash, 16 hex); null when it cannot say (K6). */
+    fun chainIdentity(): ChainIdentity? = null
 }
+
+/** Which chain the LCD serves: its chain id and the first 16 lowercase hex digits of its block 1 hash (null: unavailable). */
+data class ChainIdentity(val chainId: String, val genesis: String?)
 
 /**
  * Brings a wallet's [PrivacyStore] up to the indexer's tip:
@@ -87,6 +92,9 @@ class WalletSync(
 
     /** The chain disagrees with what the indexer served: nothing synced is trusted (C3). */
     class ChainMismatch(message: String) : Exception(message)
+
+    /** The indexer names another genesis the LCD does not confirm: nothing is wiped, nothing synced (K6). */
+    class GenesisUnverified(message: String) : Exception(message)
 
     data class Result(
         val syncedHeight: Long,
@@ -176,11 +184,7 @@ class WalletSync(
         status.halted?.let { throw IndexerHalted(it) }
         if (status.chainId == null) throw IllegalStateException("the privacy indexer names no chain yet")
         if (status.chainId != chainId) throw IllegalStateException("the privacy indexer follows ${status.chainId}, not $chainId")
-        if (store.state.chainId != chainId || store.state.genesis != status.genesis) {
-            // A fresh genesis (a relaunch under the same chain id) or a first
-            // sync: nothing from another chain carries over.
-            store.reset(chainId, status.genesis)
-        }
+        if (store.state.chainId != chainId || store.state.genesis != status.genesis) switchChain(status.genesis)
         val s = store.state
         val newNotes = ArrayList<OwnedNote>()
         val spent = ArrayList<OwnedNote>()
@@ -201,6 +205,32 @@ class WalletSync(
         val verified = verifyRoots(s, roots)
         store.save()
         return Result(s.notesHeight, newNotes, spent, store.noteTree.root(), store.identityTree.root(), newStake, identityStatus(), verified)
+    }
+
+    /**
+     * K6: the indexer names a (chain id, genesis) other than the store's.
+     * The LCD must confirm it (its chain id, its block 1 hash) before
+     * anything is wiped; an indexer's word alone never drops the identity.
+     * A first sync goes ahead when the LCD cannot say (the root checks still
+     * guard it) but not when it says otherwise. A confirmed relaunch keeps
+     * the identity record (its leaf is re-verified against the new tree by
+     * [identityStatus]), the pending registration and the passport
+     * nullifier; everything else is the old chain's and goes.
+     */
+    private fun switchChain(genesis: String?) {
+        val old = store.state
+        val switching = old.chainId == chainId && old.genesis != null
+        val id = runCatching { chain.chainIdentity() }.getOrNull()
+        val confirmed = id != null && id.chainId == chainId && id.genesis != null && id.genesis == genesis
+        val contradicted = id != null && (id.chainId != chainId || (id.genesis != null && id.genesis != genesis))
+        if (genesis == null || contradicted || (switching && !confirmed)) {
+            old.rootsVerified = false
+            old.rootsError = "unverified: the indexer names genesis ${genesis ?: "none"}, which the chain does not confirm" +
+                (id?.let { " (the LCD serves ${it.chainId}, genesis ${it.genesis ?: "unknown"})" } ?: " (the LCD could not say)")
+            store.save()
+            throw GenesisUnverified(old.rootsError!!)
+        }
+        if (switching) store.switchGenesis(genesis) else store.reset(chainId, genesis)
     }
 
     /**

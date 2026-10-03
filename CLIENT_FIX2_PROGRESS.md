@@ -13,5 +13,7 @@ format or behavior change.
 - [x] K8 a note root the chain no longer holds is unverified (no wipe); only positive contradictions wipe; local tree larger than the indexer's latest is inconsistent.
 - [x] K9 LCD trust documented (4b); pinned reads need the echoed x-cosmos-block-height; unpinned reads verify only equal trees; 4+4 sampled nullifiers checked via Query/Nullifier; indexer >30 blocks behind the tip is unverified; home screen shows the reason next to the private side. ReauditFixesTest; AuditFixesTest forged-notes now unverified, forged identity tree a mismatch.
 
+- [x] K6 genesis switch confirmed by the LCD (node_info network + block 1 hash) before any wipe; confirmed switch keeps identity record, passport nullifier, pending registration, otag counters and re-verifies the leaf; unconfirmed claim wipes nothing (GenesisUnverified). ReauditFixesTest.
+
 ## iOS
 (not started)

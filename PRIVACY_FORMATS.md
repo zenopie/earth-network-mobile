@@ -339,10 +339,21 @@ while the old leaf is live; the app tells the user).
    any stream request, and every request URL must keep the indexer's own
    scheme, host and port. A status whose `chain_id` is null or another
    chain's is refused (no sync).
-2. The wallet's store records (chain_id, genesis). If either differs from
-   the status, the local trees, notes, cursors and pending registration are
-   wiped and everything resyncs from zero (the identity record is kept only
-   if its leaf verifies again).
+2. The wallet's store records (chain_id, genesis). If the status names
+   another genesis for the same chain id (a relaunch), the wallet first asks
+   the LCD (K6): `GET /cosmos/base/tendermint/v1beta1/node_info`
+   (`default_node_info.network` must be the chain id) and
+   `GET /cosmos/base/tendermint/v1beta1/blocks/1` (the first 16 lowercase
+   hex digits of `block_id.hash` must be the status's genesis). Only a
+   confirmed switch wipes the local trees, notes, cursors, records and the
+   old chain's bookkeeping (claimed days, caretaker split, referrer); it
+   keeps the identity record (with its passport nullifier), the pending
+   registration and the owner-tag counters, and the identity's leaf is
+   re-verified against the resynced tree (shown as not live if it does not
+   match; the record is never dropped). An unconfirmed switch (the LCD says
+   otherwise, or cannot say: block 1 pruned, LCD down) wipes nothing, syncs
+   nothing and is shown as unverified. A first sync (nothing stored) goes
+   ahead when the LCD cannot say, never when it contradicts the status.
 3. Every stream is read under `base`:
 
        GET {base}/notes?from_pos=&limit=               [position, height, cm, ciphertext, amount]

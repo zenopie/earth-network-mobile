@@ -31,6 +31,7 @@ import network.erth.wallet.privacy.prove.ActionWitness
 import network.erth.wallet.privacy.prove.MembershipWitness
 import network.erth.wallet.privacy.prove.StakeWitness
 import network.erth.wallet.privacy.note.NoteCipher
+import network.erth.wallet.privacy.sync.ChainIdentity
 import network.erth.wallet.privacy.sync.ChainRoots
 import network.erth.wallet.privacy.sync.HeightPage
 import network.erth.wallet.privacy.sync.NoteRootRecord
@@ -599,6 +600,12 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     var tipAhead = 0L
 
     override fun latestHeight(): Long = height - 1 + tipAhead
+
+    /** What the LCD says block 1's hash prefix is (null: the indexer's [genesis]); [lcdBlind]: it cannot say. */
+    var lcdGenesis: String? = null
+    var lcdBlind = false
+
+    override fun chainIdentity(): ChainIdentity? = if (lcdBlind) null else ChainIdentity(chainId, lcdGenesis ?: genesis)
 
     // ---- registrations ----
 

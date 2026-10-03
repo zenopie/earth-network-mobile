@@ -259,6 +259,19 @@ object LcdChainRoots : network.erth.wallet.privacy.sync.ChainRoots {
 
     override fun stakeNullifierSpent(nf: Fr): Boolean? = spent("/earth/shieldedstaking/v1/stake_nullifiers/${nf.toHex()}")
 
+    /** node_info's network and block 1's hash (the indexer's genesis key: its first 16 hex digits). */
+    override fun chainIdentity(): network.erth.wallet.privacy.sync.ChainIdentity? = runCatching {
+        val (code, body) = EarthRest.get("/cosmos/base/tendermint/v1beta1/node_info")
+        if (code !in 200..299) return@runCatching null
+        val net = JSONObject(body).optJSONObject("default_node_info")?.optString("network")?.takeIf { it.isNotEmpty() }
+            ?: return@runCatching null
+        val (bc, bb) = EarthRest.get("/cosmos/base/tendermint/v1beta1/blocks/1")
+        val genesis = if (bc !in 200..299) null else JSONObject(bb).optJSONObject("block_id")?.optString("hash")
+            ?.decodeBase64()?.toByteArray()?.takeIf { it.size == 32 }
+            ?.joinToString("") { "%02x".format(it.toInt() and 0xff) }?.take(16)
+        network.erth.wallet.privacy.sync.ChainIdentity(net, genesis)
+    }.getOrNull()
+
     override fun latestHeight(): Long? = runCatching {
         val (code, body) = EarthRest.get("/cosmos/base/tendermint/v1beta1/blocks/latest")
         if (code !in 200..299) null
