@@ -14,7 +14,8 @@ import network.erth.wallet.privacy.zk.Privacy
  * anchor, its tree size, and the height of the block that produced it (null:
  * the node did not say).
  */
-data class NoteRootRecord(val valid: Boolean, val treeSize: Long, val height: Long? = null)
+/** [expiresAt]: when the root stops being an anchor (0: the latest root, which does not lapse; null: the node did not say). */
+data class NoteRootRecord(val valid: Boolean, val treeSize: Long, val height: Long? = null, val expiresAt: Long? = null)
 
 /** The chain's latest block: its height and time (unix seconds; null when the node did not say). */
 data class ChainTip(val height: Long, val time: Long?)
@@ -76,7 +77,10 @@ data class ChainIdentity(val chainId: String, val genesis: String?)
  *     (chain id, genesis) wipes the local data;
  *  2. every note commitment, appended to the local note tree, every
  *     ciphertext trial-decrypted with this wallet's ek (v1, or v2 against
- *     the row's public amount: one note-discovery rule, no counters);
+ *     the row's public amount: one note-discovery rule, no counters), and
+ *     every open note (no ciphertext: the referral note) whose owner_pk is
+ *     ours checked against its cm; a split payout's rows sharing one
+ *     ciphertext are each a note of their own;
  *  3. every nullifier, up to the height the notes reached;
  *  4. the stake tree the same way (the wallet's own stake ciphertexts, and
  *     the blind stake ciphertexts of the notes the chain minted);
@@ -866,6 +870,20 @@ class WalletSync(
         val amount = publicAmount(r.amount)
         amount?.let { s.denoms.add(it.second) }
         val note: NotePlaintext = when (r.ciphertext.size) {
+            // An open mint (chain 203d3b2: the referral note to a handle we
+            // hold): no ciphertext, the opening on the row. Ours if its
+            // owner_pk is ours and the opening with the public amount
+            // recomputes the row's cm (which the tree check pins to the
+            // chain's root). Matched here, over the whole stream: no query
+            // ever names our owner_pk.
+            0 -> {
+                val (v, denom) = amount ?: return null
+                val owner = r.ownerPk ?: return null
+                val rho = r.rho ?: return null
+                val rcm = r.rcm ?: return null
+                if (owner != keys.ownerPk) return null
+                NotePlaintext(denom, v, rho, rcm).takeIf { it.cm(keys.ownerPk) == r.cm } ?: return null
+            }
             NoteCipher.BLIND_CIPHERTEXT_BYTES -> {
                 val (v, denom) = amount ?: return null
                 NoteCipher.tryDecryptBlind(r.ciphertext, r.cm, denom, v, keys) ?: return null

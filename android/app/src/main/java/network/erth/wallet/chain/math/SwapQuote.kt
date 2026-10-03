@@ -65,9 +65,11 @@ object SwapMath {
     }
 
     /**
-     * The chain's feeOf: LegacyDec(amount).Mul(fee).Quo(100).TruncateInt().
-     * Mul is exact for an 18-place fee; Quo rounds its 18th place half-even
-     * (chopPrecisionAndRound) before the truncation, which only matters for a
+     * The chain's feeOf (chain 203d3b2, audit 5 L-DX4: rounded up, so a small
+     * swap cannot pay nothing):
+     * LegacyDec(amount).Mul(fee).Quo(100).Ceil().TruncateInt(). Mul is exact
+     * for an 18-place fee; Quo rounds its 18th place half-even
+     * (chopPrecisionAndRound) before the ceiling, which only matters for a
      * fee whose quotient lands within 1e-18 of an integer.
      */
     fun feeOf(amount: BigInteger, feePercent: BigDecimal): BigInteger =
@@ -75,7 +77,7 @@ object SwapMath {
             .multiply(feePercent)
             .divide(BigDecimal(100))
             .setScale(18, RoundingMode.HALF_EVEN)
-            .setScale(0, RoundingMode.DOWN)
+            .setScale(0, RoundingMode.CEILING)
             .toBigInteger()
 
     /** One pool's reserves, ERTH and its token. */

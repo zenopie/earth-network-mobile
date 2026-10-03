@@ -53,6 +53,7 @@ class Audit4Test {
     private fun reads(chain: FakeChain, snapshot: (Long) -> PrivacyChainReads.Snapshot = chain::snapshotRead,
                       nfTree: (Long, Int) -> PrivacyChainReads.NfTreePage = chain::nfTreeRead) = object : PrivacyChainReads {
         override fun personhoodParams() = PrivacyChainReads.PersonhoodParams(30L * 86_400, 3_600)
+        override fun leaseBounds() = chain.leaseBounds()
         override fun ballotInputs(proposalId: Long, optionId: Long) =
             PrivacyChainReads.BallotInputs(Privacy.proposalScope(proposalId, 0), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, 0, 0, chain.ballotMaxPredecessor())
         override fun epochNumber() = chain.epoch
@@ -598,7 +599,7 @@ class Audit4Test {
     fun poc4_redirectsAreNotFollowed() {
         val hits = java.util.Collections.synchronizedList(ArrayList<String>())
         val other = serve { p -> hits.add(p); "HTTP/1.0 200 OK\r\nContent-Type: application/json" to
-            """{"notes":[],"next_pos":0,"complete":false,"synced_height":1}""".toByteArray() }
+            """{"format":2,"fields":["position","height","cm","ciphertext","amount","owner_pk","rho","rcm"],"notes":[],"next_pos":0,"complete":false,"synced_height":1}""".toByteArray() }
         val s = serve { p ->
             if (p == "/privacy/status") "HTTP/1.0 200 OK\r\nContent-Type: application/json" to status
             else "HTTP/1.0 302 Found\r\nLocation: http://127.0.0.1:${other.localPort}/elsewhere$p" to ByteArray(0)
@@ -698,7 +699,7 @@ class Audit4Test {
             when {
                 p == "/privacy/status" -> "HTTP/1.0 200 OK\r\nContent-Type: application/json" to status
                 busy-- > 0 -> "HTTP/1.0 503 Service Unavailable\r\nRetry-After: 3" to ByteArray(0)
-                else -> "HTTP/1.0 200 OK\r\nContent-Type: application/json" to """{"notes":[],"next_pos":0,"complete":false,"synced_height":1}""".toByteArray()
+                else -> "HTTP/1.0 200 OK\r\nContent-Type: application/json" to """{"format":2,"fields":["position","height","cm","ciphertext","amount","owner_pk","rho","rcm"],"notes":[],"next_pos":0,"complete":false,"synced_height":1}""".toByteArray()
             }
         }
         val slept = ArrayList<Long>()

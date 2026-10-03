@@ -52,13 +52,33 @@ class ZkVectorsTest {
         }
     }
 
+    /**
+     * Chain 203d3b2: the referral note's opening the chain derives
+     * (zk/privacy.ReferralOpening) and the pc / cm a handle owner's wallet
+     * recomputes from the mint row (5 ERTH to OwnerPK(7100+i)).
+     */
+    @Test
+    fun referralOpening() {
+        val a = json.getJSONArray("referral_opening")
+        assertEquals(5, a.length())
+        for (i in 0 until a.length()) {
+            val v = a.getJSONObject(i)
+            val (rho, rcm) = Privacy.referralOpening(fr(v.getString("nullifier")), v.getLong("leaf_index"))
+            assertEquals("rho $i", v.getString("rho"), rho.toHex())
+            assertEquals("rcm $i", v.getString("rcm"), rcm.toHex())
+            val owner = fr(v.getString("owner_pk"))
+            assertEquals("pc $i", v.getString("pc"), Privacy.pc(owner, rho, rcm).toHex())
+            assertEquals("cm $i", v.getString("cm"), Privacy.cm(Privacy.assetId("uerth"), 5_000_000, Privacy.pc(owner, rho, rcm)).toHex())
+        }
+    }
+
     @Test
     fun tagsAssetsBytesCountry() {
         val tags = json.getJSONObject("tags")
         val mine = mapOf(
             "id" to Privacy.TAG_ID, "owner" to Privacy.TAG_OWNER, "leaf" to Privacy.TAG_LEAF, "sn" to Privacy.TAG_SN,
             "pc" to Privacy.TAG_PC, "cm" to Privacy.TAG_CM, "nf" to Privacy.TAG_NF, "reg" to Privacy.TAG_REG,
-            "asset" to Privacy.TAG_ASSET, "signal" to Privacy.TAG_SIGNAL, "bytes" to Privacy.TAG_BYTES, "scope" to Privacy.TAG_SCOPE, "affiliate" to Privacy.TAG_AFFILIATE,
+            "asset" to Privacy.TAG_ASSET, "signal" to Privacy.TAG_SIGNAL, "bytes" to Privacy.TAG_BYTES, "scope" to Privacy.TAG_SCOPE, "affiliate" to Privacy.TAG_AFFILIATE, "referral" to Privacy.TAG_REFERRAL,
             "stake" to Privacy.TAG_STAKE, "spc" to Privacy.TAG_SPC, "snf" to Privacy.TAG_SNF, "otag" to Privacy.TAG_OTAG,
             "snfl" to Privacy.TAG_SNFL, "vnf" to Privacy.TAG_VNF,
             "gen" to network.erth.wallet.privacy.zk.Grumpkin.TAG_GEN, "cv_r" to network.erth.wallet.privacy.zk.Grumpkin.TAG_CV_R,

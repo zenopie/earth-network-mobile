@@ -87,13 +87,12 @@ object PrivateMsgs {
     /**
      * The registration binding's affiliate field (personhood
      * MsgRegister.AffiliateField): 0 when the registration names no
-     * referrer, else H(TAG_AFFILIATE, Bytes(handle), affiliate_pc,
-     * Bytes(affiliate_ciphertext)). All three set, or none.
+     * referrer, else H(TAG_AFFILIATE, Bytes(affiliate_handle)).
      */
     fun affiliateField(m: MsgRegister): Fr {
-        if (m.affiliateHandle.isEmpty() && m.affiliatePc.isEmpty && m.affiliateCiphertext.isEmpty) return Fr.ZERO
+        if (m.affiliateHandle.isEmpty()) return Fr.ZERO
         require(Handles.valid(m.affiliateHandle)) { "affiliate_handle ${m.affiliateHandle} is not a handle" }
-        return Privacy.affiliateField(m.affiliateHandle, f(m.affiliatePc), m.affiliateCiphertext.toByteArray())
+        return Privacy.affiliateField(m.affiliateHandle)
     }
 
     fun registrationBinding(m: MsgRegister): Fr = Privacy.registrationBinding(

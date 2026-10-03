@@ -30,7 +30,7 @@ class IndexerBaseTest {
                     val target = line.split(" ")[1]
                     paths.add(target)
                     val body = (if (target == "/privacy/status") status.toString()
-                    else """{"notes":[],"next_pos":0,"complete":true,"synced_height":1}""").toByteArray()
+                    else """{"format":2,"fields":["position","height","cm","ciphertext","amount","owner_pk","rho","rcm"],"notes":[],"next_pos":0,"complete":true,"synced_height":1}""").toByteArray()
                     c.getOutputStream().apply {
                         write("HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${body.size}\r\n\r\n".toByteArray())
                         write(body); flush()

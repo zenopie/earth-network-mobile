@@ -41,13 +41,13 @@ message MsgRegister {
   bytes ciphertext_anml = 8;
   bytes pc_erth = 9;
   bytes ciphertext_erth = 10;
-  // The referrer's half, as a note to the live handle's shielded address
-  // (a pc of its owner_pk, a 177-byte blind ciphertext to its ek_pub). All
-  // three of affiliate_handle, affiliate_pc, affiliate_ciphertext, or none.
-  bytes affiliate_pc = 11;
-  bytes affiliate_ciphertext = 12;
+  // The referrer: a live handle, empty for none. The chain mints the
+  // referrer's half itself, to the handle's address (privacy
+  // ReferralOpening); the registrant's wallet makes no note for it.
   string affiliate_handle = 15;
-  reserved 13, 14;
+  // affiliate_pc / affiliate_ciphertext (chain 203d3b2), affiliate,
+  // affiliate_code: removed.
+  reserved 11, 12, 13, 14;
 }
 
 // sighash fields: day, pc, Bytes(ciphertext).

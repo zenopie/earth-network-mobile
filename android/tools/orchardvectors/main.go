@@ -172,7 +172,7 @@ func main() {
 		"id": hx(privacy.TagID), "owner": hx(privacy.TagOwner), "leaf": hx(privacy.TagLeaf),
 		"sn": hx(privacy.TagSN), "pc": hx(privacy.TagPC), "cm": hx(privacy.TagCM), "nf": hx(privacy.TagNF),
 		"reg": hx(privacy.TagReg), "asset": hx(privacy.TagAsset), "signal": hx(privacy.TagSignal),
-		"bytes": hx(privacy.TagBytes), "scope": hx(privacy.TagScope), "affiliate": hx(privacy.TagAffiliate),
+		"bytes": hx(privacy.TagBytes), "scope": hx(privacy.TagScope), "affiliate": hx(privacy.TagAffiliate), "referral": hx(privacy.TagReferral),
 		"stake": hx(privacy.TagStake), "spc": hx(privacy.TagSPC), "snf": hx(privacy.TagSNF), "otag": hx(privacy.TagOTag),
 		"snfl": hx(privacy.TagSNFL), "vnf": hx(privacy.TagVNF),
 		"gen": hx(orchard.TagGen), "cv_r": hx(orchard.TagCvR), "bsig": hx(orchard.TagBsig), "bundle": hx(orchard.TagBundle),
@@ -486,17 +486,38 @@ func main() {
 		Fee: fee(40, 2000), Proof: []byte{1, 2, 3}, PublicSignals: []string{"250930", "12345", "678", "9"},
 		SignatureAlgorithm: "lean_poa", DscDer: []byte{0x30, 0x03, 1, 2, 3}, Idc: fb(41), PcAnml: fb(42), CiphertextAnml: bct(42),
 		PcErth: fb(43), CiphertextErth: bct(43),
-		AffiliateHandle: "alice-01", AffiliatePc: fb(44), AffiliateCiphertext: bct(44),
+		AffiliateHandle: "alice-01",
 	}
 	add("register", reg)
 	bind, err := reg.Binding(ac)
 	must(err)
 	reg0 := *reg
-	reg0.AffiliateHandle, reg0.AffiliatePc, reg0.AffiliateCiphertext = "", nil, nil
+	reg0.AffiliateHandle = ""
 	add("register_no_affiliate", &reg0)
 	bind0, err := reg0.Binding(ac)
 	must(err)
-	out["registration_binding"] = map[string]string{"with_affiliate": hx(bind), "affiliate_field": hx(privacy.AffiliateField("alice-01", fe(44), bct(44))), "none": hx(bind0)}
+	out["registration_binding"] = map[string]string{"with_affiliate": hx(bind), "affiliate_field": hx(privacy.AffiliateField("alice-01")), "none": hx(bind0)}
+	// The referral note's opening (chain 203d3b2: the chain mints it to the handle's owner_pk).
+	type refV struct {
+		Nullifier string `json:"nullifier"`
+		LeafIndex uint64 `json:"leaf_index"`
+		Rho       string `json:"rho"`
+		Rcm       string `json:"rcm"`
+		OwnerPk   string `json:"owner_pk"`
+		Pc        string `json:"pc"`
+		Cm        string `json:"cm"`
+	}
+	var refs []refV
+	for i, c := range []struct {
+		nf   fr.Element
+		leaf uint64
+	}{{fe(7001), 0}, {fe(7002), 1}, {fe(7003), 41}, {fe(7004), 1 << 32}, {fe(7005), 1 << 40}} {
+		r0, r1 := privacy.ReferralOpening(c.nf, c.leaf)
+		owner := privacy.OwnerPK(fe(uint64(7100 + i)))
+		pc := privacy.PC(owner, r0, r1)
+		refs = append(refs, refV{hx(c.nf), c.leaf, hx(r0), hx(r1), hx(owner), hx(pc), hx(privacy.CM(privacy.AssetID("uerth"), 5_000_000, pc))})
+	}
+	out["referral_opening"] = refs
 	add("claim_anml", &personhoodtypes.MsgClaimAnml{Fee: fee(50, 2000), Membership: membership(50), Day: 20360, Pc: fb(51), Ciphertext: bct(51)})
 	add("set_caretaker", &personhoodtypes.MsgSetCaretaker{Fee: fee(60, 2000), Membership: membership(60),
 		Percentages: []allocationtypes.AllocationWeight{{OptionId: 1, Percent: 60}, {OptionId: 7, Percent: 40}}, MaxPredecessor: 1_750_000_000})

@@ -201,6 +201,14 @@ class PrivacyState {
     var handleMovedOut: Boolean = false
     /** When [handle] last changed here (wallet clock): a directory read before it says nothing about it. */
     var handleSetAt: Long = 0
+    /**
+     * When the handle [handleExpiresFor] stops being live (the chain's
+     * expires_at, from its bind or the chain's directory). Counts only while
+     * it is [handle]; otherwise unknown. Past it, a renewal or change is
+     * bounded like a claim and a move is refused (chain 203d3b2).
+     */
+    var handleExpiresAt: Long = 0
+    var handleExpiresFor: String = ""
     /** The caretaker split is held but its record did not carry it (restored from a state record). */
     var caretakerSplitUnknown: Boolean = false
     /** The newest handle / caretaker state record applied (note position; -1: none). */
@@ -265,7 +273,7 @@ class PrivacyState {
         put("caretaker_cast_at", caretakerCastAt)
         put("caretaker_split", JSONObject().apply { caretakerSplit.forEach { (k, v) -> put(k.toString(), v) } })
         put("caretaker_expires_at", caretakerExpiresAt); put("caretaker_moved_out", caretakerMovedOut)
-        put("handle", handle); put("handle_moved_out", handleMovedOut); put("handle_set_at", handleSetAt)
+        put("handle", handle); put("handle_moved_out", handleMovedOut); put("handle_set_at", handleSetAt); put("handle_expires_at", handleExpiresAt); put("handle_expires_for", handleExpiresFor)
         put("caretaker_split_unknown", caretakerSplitUnknown)
         put("handle_record_pos", handleRecordPos); put("caretaker_record_pos", caretakerRecordPos)
         put("void_record_heights", JSONArray(voidRecordHeights.toList()))
@@ -332,7 +340,7 @@ class PrivacyState {
             caretakerCastAt = j.optLong("caretaker_cast_at")
             caretakerSplit = j.optJSONObject("caretaker_split")?.let { o -> o.keys().asSequence().associate { it.toLong() to o.getLong(it) } } ?: emptyMap()
             caretakerExpiresAt = j.optLong("caretaker_expires_at"); caretakerMovedOut = j.optBoolean("caretaker_moved_out")
-            handle = j.optString("handle"); handleMovedOut = j.optBoolean("handle_moved_out"); handleSetAt = j.optLong("handle_set_at")
+            handle = j.optString("handle"); handleMovedOut = j.optBoolean("handle_moved_out"); handleSetAt = j.optLong("handle_set_at"); handleExpiresAt = j.optLong("handle_expires_at"); handleExpiresFor = j.optString("handle_expires_for")
             caretakerSplitUnknown = j.optBoolean("caretaker_split_unknown")
             handleRecordPos = j.optLong("handle_record_pos", -1); caretakerRecordPos = j.optLong("caretaker_record_pos", -1)
             voidRecordHeights.addAll(longs(j.optJSONArray("void_record_heights")))
@@ -520,6 +528,7 @@ class PrivacyStore private constructor(private val dir: File?) {
      */
     private fun keepHandleState(old: PrivacyState, s: PrivacyState) {
         s.handleSetAt = old.handleSetAt
+        s.handleExpiresAt = old.handleExpiresAt; s.handleExpiresFor = old.handleExpiresFor
         s.caretakerSplitUnknown = old.caretakerSplitUnknown
         s.handleRecordPos = old.handleRecordPos; s.caretakerRecordPos = old.caretakerRecordPos
         s.voidRecordHeights.addAll(old.voidRecordHeights)

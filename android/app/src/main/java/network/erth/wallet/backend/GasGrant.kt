@@ -162,9 +162,9 @@ object GasGrant {
         .put("pc_erth", msg.pcErth.toByteArray().toByteString().base64())
         .put("ciphertext_anml", msg.ciphertextAnml.toByteArray().toByteString().base64())
         .put("ciphertext_erth", msg.ciphertextErth.toByteArray().toByteString().base64())
+        // The referrer by handle alone ("" for none); the backend refuses
+        // affiliate_pc / affiliate_ciphertext, which MsgRegister lost (chain 203d3b2).
         .put("affiliate_handle", msg.affiliateHandle)
-        .put("affiliate_pc", msg.affiliatePc.toByteArray().toByteString().base64())
-        .put("affiliate_ciphertext", msg.affiliateCiphertext.toByteArray().toByteString().base64())
         .put("pc_gas", pcGas.toByteString().base64())
         .put("ciphertext_gas", ciphertextGas.toByteString().base64())
 

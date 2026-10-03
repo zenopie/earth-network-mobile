@@ -20,18 +20,11 @@ class GasGrantRegisterBodyTest {
     // Leading zeros and a value past Long: passed through, never parsed.
     private val signals = listOf("260929", "0012", "21888242871839275222246405745257275088548364400416034343698204186575808495617", "0")
 
-    private val affPc = ByteArray(32) { 6 }
-    private val affCt = ByteArray(177) { 7 }
-
     private fun msg(affiliate: String) = MsgRegister.newBuilder()
         .setProof(ByteString.copyFrom(proof)).addAllPublicSignals(signals).setSignatureAlgorithm("rsa_2048_sha256")
         .setDscDer(ByteString.copyFrom(dscDer)).setIdc(ByteString.copyFrom(ByteArray(32) { 1 }))
         .setPcAnml(ByteString.copyFrom(ByteArray(32) { 2 })).setPcErth(ByteString.copyFrom(ByteArray(32) { 3 }))
-        .apply {
-            if (affiliate.isNotEmpty()) {
-                setAffiliateHandle(affiliate).setAffiliatePc(ByteString.copyFrom(affPc)).setAffiliateCiphertext(ByteString.copyFrom(affCt))
-            }
-        }.build()
+        .setAffiliateHandle(affiliate).build()
 
     private val pcGas = ByteArray(32) { 4 }
     private val ctGas = ByteArray(177) { 5 }
@@ -60,19 +53,19 @@ class GasGrantRegisterBodyTest {
         assertEquals("BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=", body.getString("pc_gas"))
         assertEquals(java.util.Base64.getEncoder().encodeToString(ctGas), body.getString("ciphertext_gas"))
         assertEquals("rsa_2048_sha256", body.getString("signature_algorithm"))
-        // A referral by handle: the handle, the referral note's pc and its 177-byte blind ciphertext; no address.
+        // A referral by handle alone (chain 203d3b2): the backend refuses affiliate_pc / affiliate_ciphertext.
         assertEquals("alice-01", body.getString("affiliate_handle"))
-        assertEquals(java.util.Base64.getEncoder().encodeToString(affPc), body.getString("affiliate_pc"))
-        assertEquals(java.util.Base64.getEncoder().encodeToString(affCt), body.getString("affiliate_ciphertext"))
+        assertEquals(false, body.has("affiliate_pc"))
+        assertEquals(false, body.has("affiliate_ciphertext"))
         assertEquals(false, body.has("affiliate"))
     }
 
     @Test
     fun noReferrerIsEmptyString() {
         val unreferred = GasGrant.registerBody(msg(""), pcGas, ctGas)
-        // All three empty: none (the backend takes "" as absent).
+        // "" is none (the backend takes "" as absent).
         assertEquals("", unreferred.getString("affiliate_handle"))
-        assertEquals("", unreferred.getString("affiliate_pc"))
-        assertEquals("", unreferred.getString("affiliate_ciphertext"))
+        assertEquals(false, unreferred.has("affiliate_pc"))
+        assertEquals(false, unreferred.has("affiliate_ciphertext"))
     }
 }

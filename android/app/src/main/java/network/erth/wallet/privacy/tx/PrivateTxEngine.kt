@@ -330,6 +330,13 @@ class PrivateTxEngine(
         const val VOTE_GAS = 2_400_000L
         /** A membership proof and its nullifier write. */
         const val MEMBERSHIP_GAS = 2_150_000L
+        /** One note write (x/shielded note_gas default). */
+        const val NOTE_GAS = 150_000L
+        /**
+         * MsgBindHandle's writes beyond the one in [MEMBERSHIP_GAS]: the chain
+         * prices a bind as nine note writes (chain 203d3b2, audit 5 L-P5).
+         */
+        const val BIND_HANDLE_EXTRA_GAS = 8 * NOTE_GAS
         /** MsgRegister: the passport proof (3,000,000), the DSC chain (300,000) and two minted notes. */
         const val REGISTER_GAS = 3_600_000L
 
@@ -341,6 +348,7 @@ class PrivateTxEngine(
             if (a.membership != null) g += MEMBERSHIP_GAS
             if (a.vote != null) g += VOTE_GAS
             if (msg is network.erth.earth.proto.personhood.MsgRegister) g += REGISTER_GAS
+            if (msg is network.erth.earth.proto.personhood.MsgBindHandle) g += BIND_HANDLE_EXTRA_GAS
             return g
         }
 

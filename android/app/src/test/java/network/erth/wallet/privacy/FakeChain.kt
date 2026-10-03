@@ -167,6 +167,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     val predecessorOf = HashMap<Long, Long>()
     /** Referral notes minted (handle, pc). */
     val referralNotes = ArrayList<Pair<String, Fr>>()
+    val referralPositions = ArrayList<Long>()
     val claimedUnbonds = ArrayList<String>()
     /** The fake's epoch and derth rate (uerth per derth = 10/9 at delegation: 9/10 minted). */
     val epoch = 4L
@@ -196,6 +197,25 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         notes.add(NoteRow(pos, height, cm, ct, "$value$denom"))
         return pos
     }
+
+    /**
+     * MintOpenNote: a note whose opening the chain chose, no ciphertext; the
+     * row carries owner_pk, rho and rcm (the shielded_mint event's).
+     */
+    fun mintOpen(denom: String, value: Long, ownerPk: Fr, rho: Fr, rcm: Fr): Long {
+        val cm = Privacy.cm(Privacy.assetId(denom), value, Privacy.pc(ownerPk, rho, rcm))
+        val pos = noteTree.append(cm)
+        notes.add(NoteRow(pos, height, cm, ByteArray(0), "$value$denom", ownerPk, rho, rcm))
+        return pos
+    }
+
+    /**
+     * MintNoteSplit: a value past a note's u64 as ceil(v / (2^64-1)) notes,
+     * all to one pc with one ciphertext, each its own amount and position.
+     * [values] are the chunks as the chain cuts them (the test chooses ones a
+     * wallet can hold).
+     */
+    fun mintSplit(denom: String, values: List<Long>, pc: Fr, ct: ByteArray): List<Long> = values.map { mint(denom, it, pc, ct) }
 
     fun mintStake(denom: String, amount: Long, spc: Fr, ct: ByteArray): Long {
         require(ct.size == NoteCipher.BLIND_CIPHERTEXT_BYTES) { "a minted stake note needs its blind stake ciphertext" }
@@ -408,10 +428,8 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             is MsgRegister -> {
                 only(null)
                 require(m.ciphertextAnml.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES && m.ciphertextErth.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES)
-                // All three of the referral, or none; its note is a 177-byte blind ciphertext.
-                val any = m.affiliateHandle.isNotEmpty() || !m.affiliatePc.isEmpty || !m.affiliateCiphertext.isEmpty
-                if (any) require(network.erth.wallet.privacy.handles.Handles.valid(m.affiliateHandle) && m.affiliatePc.size() == 32 &&
-                    m.affiliateCiphertext.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES) { "affiliate: all three, or none" }
+                // The referral is the handle alone (chain 203d3b2); the chain makes its note.
+                if (m.affiliateHandle.isNotEmpty()) require(network.erth.wallet.privacy.handles.Handles.valid(m.affiliateHandle)) { "affiliate_handle" }
             }
             is MsgBindHandle -> {
                 only(null)
@@ -458,11 +476,34 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     fun ballotMaxPredecessor(): Long = now - 86_400
 
     /** The handle claim bound: now - the longest lease - 86400. */
-    private fun handleClaimBound(): Long = now - handleLease - 86_400
+    /**
+     * The longest handle lease ever in force (x/personhood handle_lease_max),
+     * and a caretaker lease held after a cut (lease_hold): what LeaseBounds
+     * reports and the bounds use, never the current param alone.
+     */
+    var handleLeaseMax = 0L
+    var caretakerLeaseHold = 0L
+    private fun effectiveHandleLease(): Long = maxOf(handleLease, handleLeaseMax)
+    private fun effectiveCaretakerLease(): Long = maxOf(caretakerLease, caretakerLeaseHold)
+    private fun handleClaimBound(): Long = now - effectiveHandleLease() - 86_400
+
+    /** Query/LeaseBounds at the chain's last block time. */
+    fun leaseBounds() = network.erth.wallet.privacy.PrivacyChainReads.LeaseBounds(
+        now, 86_400, effectiveHandleLease(), handleClaimBound(), effectiveCaretakerLease(), now - effectiveCaretakerLease() - 86_400,
+    ).also { leaseBoundsReads++ }
+
+    /** Every LeaseBounds read (the wallet must use it for every bound). */
+    var leaseBoundsReads = 0
 
     private fun nf(m: Membership): Fr = Fr.fromBytes(m.nullifier.toByteArray())
 
     private fun caretakerHolds(n: Fr): Boolean = n in caretakerVotes
+
+    /** Audit 5 P2: a lapsed split the sweep has not reached is not held. */
+    private fun caretakerHoldsLive(n: Fr): Boolean = caretakerHolds(n) && (caretakerExpiry[n] ?: 0L) > now
+
+    /** Audit 5 P2: a handle held and live (not in its renewal period). */
+    private fun holdsLiveHandle(n: Fr): Boolean = handleOf(n)?.let { now < it.expiresAt } == true
 
     private fun handleOf(n: Fr): HandleRec? = handles.values.firstOrNull { it.nullifier == n }
 
@@ -480,9 +521,9 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         is MsgVoteProposal -> Triple(Privacy.proposalScope(m.proposalId, 0), Privacy.NO_BOUND, ballotMaxPredecessor())
         is MsgSetCaretaker -> {
             val n = nf(m.membership)
-            if (!caretakerHolds(n) && m.percentagesCount > 0) {
+            if (!caretakerHoldsLive(n) && m.percentagesCount > 0) {
                 require(n !in caretakerMovedOut) { "this identity moved its caretaker split away (code 1126)" }
-                predecessorBound(m.maxPredecessor, now - caretakerLease - 86_400)
+                predecessorBound(m.maxPredecessor, now - effectiveCaretakerLease() - 86_400)
             }
             Triple(Privacy.caretakerScope(), Privacy.NO_BOUND, m.maxPredecessor)
         }
@@ -501,7 +542,8 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             if (m.handle.isNotEmpty()) {
                 require(network.erth.wallet.privacy.handles.Handles.valid(m.handle)) { "not a handle" }
                 handles[m.handle]?.let { h -> require(h.nullifier == n || now >= h.expiresAt + handleRenewal) { "handle is held by another human (code 1122)" } }
-                if (!holds) {
+                // Audit 5 P2: only a live handle renews or changes unbounded.
+                if (!holdsLiveHandle(n)) {
                     require(n !in handleMovedOut) { "this identity moved its handle away (code 1125)" }
                     predecessorBound(m.maxPredecessor, handleClaimBound())
                 }
@@ -511,6 +553,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         is MsgMoveHandle -> {
             val n = nf(m.membership)
             require(handles[m.handle]?.nullifier == n) { "the prover does not hold ${m.handle}" }
+            require(now < handles.getValue(m.handle).expiresAt) { "\"${m.handle}\" is not live (renewal): renew it before moving it" }
             val o = f(m.newOwner)
             require(handleOf(o) == null) { "new_owner already holds a handle" }
             require(o !in handleMovedOut) { "this identity moved its handle away (code 1125)" }
@@ -726,10 +769,14 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 mint("uanml", 1_000_000, f(m.pcAnml), m.ciphertextAnml.toByteArray())
                 if (!switched) {
                     mint("uerth", 5_000_000, f(m.pcErth), m.ciphertextErth.toByteArray())
-                    // The referrer's half, as a note to the handle's address.
+                    // The referrer's half: the chain's own note to the handle's address, its
+                    // opening derived from the passport nullifier and the leaf (ReferralOpening).
                     if (m.affiliateHandle.isNotEmpty()) {
-                        mint("uerth", 5_000_000, f(m.affiliatePc), m.affiliateCiphertext.toByteArray())
-                        referralNotes.add(m.affiliateHandle to f(m.affiliatePc))
+                        val to = network.erth.wallet.privacy.keys.ShieldedAddress.decode(handles.getValue(m.affiliateHandle).address)
+                        val (rho, rcm) = Privacy.referralOpening(Fr.of(java.math.BigInteger(m.publicSignalsList[2])), idx)
+                        val pos = mintOpen("uerth", 5_000_000, to.ownerPk, rho, rcm)
+                        referralNotes.add(m.affiliateHandle to Privacy.pc(to.ownerPk, rho, rcm))
+                        referralPositions.add(pos)
                     }
                 }
                 events.add("register" to mapOf("leaf_index" to idx.toString(), "switched" to switched.toString()))
@@ -869,7 +916,10 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
 
     // ---- the chain's own queries (LCD), for the wallet's root checks ----
 
-    override fun noteRoot(root: Fr): NoteRootRecord? = noteRootSizes[root]?.let { NoteRootRecord(true, it, noteRootHeights[root]) }
+    override fun noteRoot(root: Fr): NoteRootRecord? = noteRootSizes[root]?.let { NoteRootRecord(true, it, noteRootHeights[root], rootExpiresAt?.invoke(root)) }
+
+    /** Query/Root's expires_at per root (null: not said, as before 203d3b2's wallets read it). */
+    var rootExpiresAt: ((Fr) -> Long?)? = null
 
     override fun noteTree(height: Long?): TreeState = at(noteAt, height)
 

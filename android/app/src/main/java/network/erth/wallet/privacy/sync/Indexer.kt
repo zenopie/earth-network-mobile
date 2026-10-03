@@ -68,7 +68,23 @@ class IndexerBaseMoved(message: String) : java.io.IOException(message)
 /** The indexer refuses to serve trees it cannot vouch for (`/privacy/status` halted). */
 class IndexerHalted(val reason: String) : java.io.IOException("the privacy indexer has halted: $reason")
 
-data class NoteRow(val position: Long, val height: Long, val cm: Fr, val ciphertext: ByteArray, val amount: String?)
+/**
+ * A note tree leaf. [amount] is set for a note whose value is public (a
+ * shield, a module mint). A note the chain minted with an opening it chose
+ * (MintOpenNote: the referral note a registration pays its referrer handle)
+ * has no ciphertext and carries the opening from its `shielded_mint` event,
+ * [ownerPk], [rho] and [rcm]; every other row has them null.
+ */
+data class NoteRow(
+    val position: Long,
+    val height: Long,
+    val cm: Fr,
+    val ciphertext: ByteArray,
+    val amount: String?,
+    val ownerPk: Fr? = null,
+    val rho: Fr? = null,
+    val rcm: Fr? = null,
+)
 
 data class NotesPage(val rows: List<NoteRow>, val nextPos: Long, val complete: Boolean, val syncedHeight: Long)
 
@@ -336,16 +352,41 @@ class HttpPrivacyIndexer(
             return StakeSnapshotsPage(rows, j.getLong("next_height"), j.getBoolean("complete"), j.getLong("synced_height"))
         }
 
+        /** The notes stream format this wallet reads (backend README "Note stream format 2", chain 203d3b2). */
+        const val NOTE_FORMAT = 2
+        private val NOTE_FIELDS = listOf("position", "height", "cm", "ciphertext", "amount", "owner_pk", "rho", "rcm")
+
+        /**
+         * /notes, format 2: columns by name from `fields` (position, height,
+         * cm, ciphertext, amount, owner_pk, rho, rcm). `ciphertext` is null
+         * exactly for an open note, whose owner_pk, rho and rcm (hex) are
+         * then all set; they are null on every other row. A page of another
+         * format (an old backend) or one missing a column is refused.
+         */
         fun parseNotes(j: JSONObject): NotesPage {
+            if (j.optInt("format", 1) != NOTE_FORMAT) throw IOException("the privacy indexer serves notes format ${j.opt("format")}, not $NOTE_FORMAT; it needs an update")
+            val fields = j.getJSONArray("fields").let { f -> (0 until f.length()).map { f.getString(it) } }
+            val col = NOTE_FIELDS.associateWith { name -> fields.indexOf(name).also { if (it < 0) throw IOException("the notes page has no $name column") } }
             val a = j.getJSONArray("notes")
             val rows = (0 until a.length()).map { i ->
                 val r = a.getJSONArray(i)
+                fun isNull(name: String) = col.getValue(name).let { r.length() <= it || r.isNull(it) }
+                fun str(name: String): String = r.getString(col.getValue(name))
+                fun hex(name: String): Fr? = if (isNull(name)) null else Fr.fromHex(str(name))
+                val opening = listOf(hex("owner_pk"), hex("rho"), hex("rcm"))
+                val open = isNull("ciphertext")
+                if (opening.any { it == null } && opening.any { it != null }) throw IOException("a note row carries part of an opening")
+                if (open != (opening[0] != null)) throw IOException("a note row has ${if (open) "neither a ciphertext nor an opening" else "both a ciphertext and an opening"}")
+                if (open && isNull("amount")) throw IOException("an open note row has no amount")
                 NoteRow(
-                    position = r.getLong(0),
-                    height = r.getLong(1),
-                    cm = Fr.fromHex(r.getString(2)),
-                    ciphertext = r.getString(3).decodeBase64()?.toByteArray() ?: ByteArray(0),
-                    amount = if (r.isNull(4)) null else r.getString(4),
+                    position = r.getLong(col.getValue("position")),
+                    height = r.getLong(col.getValue("height")),
+                    cm = Fr.fromHex(str("cm")),
+                    ciphertext = if (open) ByteArray(0) else str("ciphertext").decodeBase64()?.toByteArray() ?: ByteArray(0),
+                    amount = if (isNull("amount")) null else str("amount"),
+                    ownerPk = opening[0],
+                    rho = opening[1],
+                    rcm = opening[2],
                 )
             }
             return NotesPage(rows, j.getLong("next_pos"), j.getBoolean("complete"), j.getLong("synced_height"))

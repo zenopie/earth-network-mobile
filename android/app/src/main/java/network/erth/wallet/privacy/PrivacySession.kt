@@ -141,6 +141,8 @@ object PrivacySession {
             PrivacyChainReads.PersonhoodParams(it.caretakerVoteSeconds, it.identityRootWindowSeconds, it.handleLeaseSeconds, it.handleRenewalSeconds)
         }
 
+        override fun leaseBounds() = PrivacyQueries.leaseBounds()
+
         override fun ballotInputs(proposalId: Long, optionId: Long) = PrivacyQueries.ballotInputs(proposalId, optionId).let {
             PrivacyChainReads.BallotInputs(it.scope, it.excludedDsc, it.excludedCountry, it.maxActivation, it.round, it.ballotId, it.maxPredecessor)
         }

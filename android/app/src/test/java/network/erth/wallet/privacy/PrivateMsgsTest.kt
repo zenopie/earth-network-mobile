@@ -110,7 +110,7 @@ class PrivateMsgsTest {
         .addAllPublicSignals(listOf("250930", "12345", "678", "9")).setSignatureAlgorithm("lean_poa")
         .setDscDer(ByteString.copyFrom(byteArrayOf(0x30, 0x03, 1, 2, 3))).setIdc(fb(41)).setPcAnml(fb(42))
         .setCiphertextAnml(bct(42)).setPcErth(fb(43)).setCiphertextErth(bct(43))
-        .apply { if (handle.isNotEmpty()) setAffiliateHandle(handle).setAffiliatePc(fb(44)).setAffiliateCiphertext(bct(44)) }
+        .setAffiliateHandle(handle)
         .build()
 
     /** The handle vectors' shielded address (owner_pk OwnerPK(7), ek_pub of ek 01..20). */
@@ -217,7 +217,7 @@ class PrivateMsgsTest {
         val b = json.getJSONObject("registration_binding")
         assertEquals(b.getString("with_affiliate"), PrivateMsgs.registrationBinding(msgs["register"] as MsgRegister).toHex())
         assertEquals(b.getString("none"), PrivateMsgs.registrationBinding(msgs["register_no_affiliate"] as MsgRegister).toHex())
-        assertEquals(b.getString("affiliate_field"), Privacy.affiliateField("alice-01", Fr.fromBytes(fb(44).toByteArray()), bct(44).toByteArray()).toHex())
+        assertEquals(b.getString("affiliate_field"), Privacy.affiliateField("alice-01").toHex())
         assertEquals(b.getString("affiliate_field"), PrivateMsgs.affiliateField(msgs["register"] as MsgRegister).toHex())
         assertEquals(json.getString("options_bytes"), hex(PrivateMsgs.optionsBytes(opts())))
         assertEquals(json.getString("splits_bytes"), hex(PrivateMsgs.splitsBytes(listOf(w(1, 60), w(7, 40)))))

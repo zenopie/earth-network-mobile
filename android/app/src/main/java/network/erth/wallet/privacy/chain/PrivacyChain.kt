@@ -92,6 +92,25 @@ object PrivacyQueries {
         )
     }
 
+    /**
+     * x/personhood Query/LeaseBounds: what every predecessor bound is
+     * computed from (never Params). int64 fields arrive as JSON strings; a
+     * bound may in principle be negative (a chain younger than its lease).
+     */
+    fun leaseBounds(): network.erth.wallet.privacy.PrivacyChainReads.LeaseBounds {
+        val j = get("/earth/personhood/v1/lease_bounds")
+        fun i64(k: String): Long = j.optString(k, "0").ifEmpty { "0" }.toLongOrNull() ?: throw IOException("lease_bounds $k is not an int64")
+        return network.erth.wallet.privacy.PrivacyChainReads.LeaseBounds(
+            blockTime = i64("block_time"),
+            activationMarginSeconds = i64("activation_margin_seconds"),
+            handleLeaseSeconds = i64("handle_lease_seconds"),
+            handleClaimBound = i64("handle_claim_bound"),
+            caretakerLeaseSeconds = i64("caretaker_lease_seconds"),
+            caretakerCastBound = i64("caretaker_cast_bound"),
+            caretakerLeaseHoldUntil = i64("caretaker_lease_hold_until"),
+        )
+    }
+
     /** x/assembly BallotInputs: the membership statement of a proposal's current round or an option's removal ballot. */
     data class BallotInputs(
         val scope: Fr,
@@ -420,7 +439,8 @@ object LcdChainRoots : network.erth.wallet.privacy.sync.ChainRoots {
         if (b64Field(rec.optString("root")) != root) return null
         val size = network.erth.wallet.privacy.Amounts.parseU64(rec.optString("tree_size", "0")) ?: throw IOException("$path: tree_size")
         val height = rec.optString("height").toLongOrNull()
-        return network.erth.wallet.privacy.sync.NoteRootRecord(j.optBoolean("valid"), size, height)
+        val expiresAt = if (j.has("expires_at")) j.optString("expires_at").toLongOrNull() else null
+        return network.erth.wallet.privacy.sync.NoteRootRecord(j.optBoolean("valid"), size, height, expiresAt)
     }
 
     override fun identityTree(height: Long?): network.erth.wallet.privacy.sync.TreeState {

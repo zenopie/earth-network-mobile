@@ -22,8 +22,10 @@ object Privacy {
     val TAG_SIGNAL = tag("earth.signal")
     val TAG_BYTES = tag("earth.bytes")
     val TAG_SCOPE = tag("earth.scope")
-    // A registration's referrer: H(TAG_AFFILIATE, Bytes(handle), pc, Bytes(ct)).
+    // A registration's referrer: H(TAG_AFFILIATE, Bytes(handle)).
     val TAG_AFFILIATE = tag("earth.affiliate")
+    // The opening of the referral note the chain mints to a referrer handle's address.
+    val TAG_REFERRAL = tag("earth.referral")
     // The stake note tree (x/shieldedstaking, circuits/stake).
     val TAG_STAKE = tag("earth.stake")
     val TAG_SPC = tag("earth.spc")
@@ -147,12 +149,22 @@ object Privacy {
 
     /**
      * The registration binding's affiliate field for a referrer named by
-     * handle, with the referral note minted to it:
-     * H(TAG_AFFILIATE, Bytes(handle), affiliate_pc, Bytes(affiliate_ct)).
-     * A registration naming no referrer carries 0.
+     * handle: H(TAG_AFFILIATE, Bytes(handle)). A registration naming no
+     * referrer carries 0. The chain makes the referral note itself
+     * ([referralOpening]), so the handle is all the registrant binds.
      */
-    fun affiliateField(handle: String, pc: Fr, ct: ByteArray): Fr =
-        h(TAG_AFFILIATE, bytes(handle.toByteArray(Charsets.US_ASCII)), pc, bytes(ct))
+    fun affiliateField(handle: String): Fr =
+        h(TAG_AFFILIATE, bytes(handle.toByteArray(Charsets.US_ASCII)))
+
+    /**
+     * The (rho, rcm) of the referral note a registration mints to its
+     * referrer handle's owner_pk (chain zk/privacy.ReferralOpening):
+     * H(TAG_REFERRAL, nullifier, leaf_index, 0) and (..., 1), nullifier the
+     * passport nullifier, leaf_index the new identity leaf's. Public: the
+     * mint event carries them.
+     */
+    fun referralOpening(nullifier: Fr, leafIndex: Long): Pair<Fr, Fr> =
+        h(TAG_REFERRAL, nullifier, u64(leafIndex), u64(0)) to h(TAG_REFERRAL, nullifier, u64(leafIndex), u64(1))
 
     /** The membership bound that bounds nothing (max_activation / max_predecessor): 2^63 - 1. */
     const val NO_BOUND: Long = Long.MAX_VALUE

@@ -28,6 +28,7 @@ class HandlesTest {
 
     private fun reads(chain: FakeChain) = object : PrivacyChainReads {
         override fun personhoodParams() = PrivacyChainReads.PersonhoodParams(chain.caretakerLease, 3_600, chain.handleLease, chain.handleRenewal)
+        override fun leaseBounds() = chain.leaseBounds()
         override fun ballotInputs(proposalId: Long, optionId: Long) =
             PrivacyChainReads.BallotInputs(Privacy.proposalScope(proposalId, 0), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, 0, 0, chain.ballotMaxPredecessor())
         override fun epochNumber() = chain.epoch
@@ -161,18 +162,26 @@ class HandlesTest {
         val b = wallet(chain, bob)
         val res = chain.handleDirectory().resolveForPayment("@alice") as HandleDirectory.Resolution.Payable
         val prep = register(chain, b, passport = "222", referrer = PrivacyWallet.Referrer(res.entry.handle, res.address))
-        // The binding commits to the handle and the referral note made to it.
-        val ref = prep.referral!!
-        assertEquals(177, ref.ciphertext.size)
+        // The binding commits to the handle alone (chain 203d3b2): the chain makes the referral note.
         assertEquals(
-            Privacy.registrationBinding(b.keys.idc, prep.anml.pc, prep.anml.ciphertext, prep.erth.pc, prep.erth.ciphertext,
-                Privacy.affiliateField("alice", ref.pc, ref.ciphertext)),
+            Privacy.registrationBinding(b.keys.idc, prep.anml.pc, prep.anml.ciphertext, prep.erth.pc, prep.erth.ciphertext, Privacy.affiliateField("alice")),
             prep.binding,
         )
-        assertEquals("alice" to ref.pc, chain.referralNotes.single())
-        // The referrer finds its half as a note, privately.
+        // Minted to the handle's owner_pk with the opening derived from the passport nullifier and the leaf.
+        val leaf = b.store.state.identity!!.leafIndex
+        val (rho, rcm) = Privacy.referralOpening(Fr.of(java.math.BigInteger("222")), leaf)
+        assertEquals("alice" to Privacy.pc(a.keys.ownerPk, rho, rcm), chain.referralNotes.single())
+        // The referrer's wallet finds it in the stream (no ciphertext: by owner_pk, cm checked), privately.
         a.sync()
         assertEquals(before + 5_000_000, bal(a))
+        val note = a.notes.single { it.position == chain.referralPositions.single() }
+        assertEquals(rho, note.note.rho)
+        assertEquals(rcm, note.note.rcm)
+        // ... and can spend it (its nullifier is the usual one: nk, rho, position).
+        assertEquals(Privacy.nf(a.keys.nk, rho, note.position), note.nf)
+        // Nobody else's wallet takes it.
+        b.sync()
+        assertTrue(b.notes.none { it.position == note.position })
 
         // A lapsed handle is refused (1121); a registration cannot name its own wallet.
         chain.now += chain.handleLease + 10
