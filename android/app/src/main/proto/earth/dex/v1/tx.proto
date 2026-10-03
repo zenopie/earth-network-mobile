@@ -40,18 +40,20 @@ message MsgRemoveLiquidity {
   bytes ciphertext = 5;
 }
 
-// Private (unsigned): bundle releases one asset in (plus the uerth fee, or
-// none with fee_from_output) into the dex, swapped for denom_out and minted
-// (less fee_from_output) to pc. sighash fields: Bytes(denom_out),
-// min_amount_out, pc, Bytes(ciphertext), fee_from_output, fee.
+// Private (unsigned): bundle releases amount_in of denom_in into the dex
+// plus the uerth fee (the bundle's uerth balance, less amount_in when
+// denom_in is uerth), swapped for denom_out and minted to pc with a 177-byte
+// blind ciphertext. sighash fields: Bytes(denom_in), amount_in,
+// Bytes(denom_out), min_amount_out, pc, Bytes(ciphertext).
 message MsgNoteSwap {
   earth.shielded.v1.Bundle bundle = 1;
   string denom_out = 2;
   uint64 min_amount_out = 3;
   bytes pc = 4;
   bytes ciphertext = 5;
-  uint64 fee_from_output = 6;
-  uint64 fee = 7;
+  reserved 6, 7;
+  string denom_in = 8;
+  uint64 amount_in = 9;
 }
 
 message MsgBuyAnml {
@@ -63,30 +65,32 @@ message MsgBuyAnml {
 }
 
 // Private (unsigned, one bundle): the bundle's token balance is the token leg,
-// its uerth balance less fee the ERTH leg; the LP shares (dexlp/<pool_id>)
+// erth_amount the ERTH leg, the rest of its uerth balance the fee; the LP shares (dexlp/<pool_id>)
 // are minted as a note to share_pc; what the ratio does not take is minted
 // back to refund_pc. sighash fields: pool_id, Bytes(min_shares), share_pc,
-// Bytes(share_ciphertext), refund_pc, Bytes(refund_ciphertext), fee.
+// Bytes(share_ciphertext), refund_pc, Bytes(refund_ciphertext), erth_amount.
 message MsgAddLiquidityShielded {
   earth.shielded.v1.Bundle bundle = 1;
   uint64 pool_id = 3;
   string min_shares = 5;
   bytes refund_pc = 6;
   bytes refund_ciphertext = 7;
-  uint64 fee = 8;
+  reserved 8;
   bytes share_pc = 9;
   bytes share_ciphertext = 10;
+  uint64 erth_amount = 11;
   reserved 2, 4;
 }
 
 // MsgRemoveLiquidityShielded begins a private withdrawal: bundle releases
 // dexlp/<pool_id> shares and the uerth fee; at maturity both legs are minted
 // as notes to erth_pc and token_pc. sighash fields: pool_id, erth_pc,
-// Bytes(erth_ciphertext), token_pc, Bytes(token_ciphertext), fee.
+// Bytes(erth_ciphertext), token_pc, Bytes(token_ciphertext). The fee is the
+// bundle's uerth balance.
 message MsgRemoveLiquidityShielded {
   earth.shielded.v1.Bundle bundle = 1;
   uint64 pool_id = 2;
-  uint64 fee = 3;
+  reserved 3;
   bytes erth_pc = 4;
   bytes erth_ciphertext = 5;
   bytes token_pc = 6;

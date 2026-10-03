@@ -13,8 +13,10 @@ import "earth/shielded/v1/tx.proto";
 // (a delegation's also releasing the ERTH it stakes), a stake proof over the
 // module's owner-locked stake note tree. Every sighash binds the stake
 // proof's StakeFields first (anchor, nf_0, nf_1, cm_0, cm_1, Bytes(ct_0),
-// Bytes(ct_1), spc_mint, owner_tag), then the msg's own fields, ending with
-// its fee.
+// Bytes(ct_1), spc_mint, owner_tag, Bytes(spc_ciphertext)), then the msg's
+// own fields. No msg names a fee: it is the bundle's uerth balance less what
+// the msg moves (a delegation's amount); only MsgClaimUnbonding may instead
+// pay fee_from_output.
 
 // StakeProof is a circuits/stake proof and its public values. The chain
 // supplies asset, v_in (0), v_out and the sighash. Public input order:
@@ -28,35 +30,40 @@ message StakeProof {
   repeated bytes ciphertexts = 5;
   bytes spc_mint = 6;
   bytes owner_tag = 7;
+  // The blind stake ciphertext (177 bytes) of the note minted to spc_mint:
+  // required on Delegate, Undelegate, StakeVote, UnlockPosition; empty
+  // otherwise.
+  bytes spc_ciphertext = 8;
 }
 
-// sighash fields: StakeFields, Bytes(validator), fee.
+// sighash fields: StakeFields, Bytes(validator), amount.
 message MsgDelegate {
   earth.shielded.v1.Bundle bundle = 1;
   string validator = 2;
-  uint64 fee = 3;
+  reserved 3;
   StakeProof stake = 4;
+  uint64 amount = 5;
 }
 
-// sighash fields: StakeFields, Bytes(validator), fee.
+// sighash fields: StakeFields, Bytes(validator).
 message MsgRestake {
   earth.shielded.v1.Bundle bundle = 1;
   string validator = 2;
-  uint64 fee = 3;
+  reserved 3;
   StakeProof stake = 4;
 }
 
-// sighash fields: StakeFields, Bytes(validator), amount, fee.
+// sighash fields: StakeFields, Bytes(validator), amount.
 message MsgUndelegate {
   earth.shielded.v1.Bundle bundle = 1;
   string validator = 2;
   uint64 amount = 3;
-  uint64 fee = 4;
+  reserved 4;
   StakeProof stake = 5;
 }
 
 // bundle is absent with fee_from_output. sighash fields: StakeFields,
-// Bytes(validator), epoch, amount, pc, Bytes(ciphertext), fee_from_output, fee.
+// Bytes(validator), epoch, amount, pc, Bytes(ciphertext), fee_from_output.
 message MsgClaimUnbonding {
   earth.shielded.v1.Bundle bundle = 1;
   string validator = 2;
@@ -65,57 +72,57 @@ message MsgClaimUnbonding {
   bytes pc = 5;
   bytes ciphertext = 6;
   uint64 fee_from_output = 7;
-  uint64 fee = 8;
+  reserved 8;
   StakeProof stake = 9;
 }
 
 // sighash fields: StakeFields, proposal_id, Bytes(validator),
-// Bytes(OptionsBytes(options)), weight, fee.
+// Bytes(OptionsBytes(options)), weight.
 message MsgStakeVote {
   earth.shielded.v1.Bundle bundle = 1;
   uint64 proposal_id = 2;
   string validator = 3;
   repeated cosmos.gov.v1.WeightedVoteOption options = 4;
   uint64 weight = 5;
-  uint64 fee = 6;
+  reserved 6;
   StakeProof stake = 7;
 }
 
 // sighash fields: StakeFields, Bytes(validator), amount,
-// Bytes(SplitsBytes(splits)), fee.
+// Bytes(SplitsBytes(splits)).
 message MsgLockPosition {
   earth.shielded.v1.Bundle bundle = 1;
   string validator = 2;
   uint64 amount = 3;
   repeated earth.allocation.v1.AllocationWeight splits = 4;
-  uint64 fee = 5;
+  reserved 5;
   StakeProof stake = 6;
 }
 
-// sighash fields: StakeFields, position_id, Bytes(SplitsBytes(splits)), fee.
+// sighash fields: StakeFields, position_id, Bytes(SplitsBytes(splits)).
 message MsgUpdatePosition {
   earth.shielded.v1.Bundle bundle = 1;
   uint64 position_id = 2;
   repeated earth.allocation.v1.AllocationWeight splits = 3;
-  uint64 fee = 4;
+  reserved 4;
   StakeProof stake = 5;
 }
 
-// sighash fields: StakeFields, position_id, fee.
+// sighash fields: StakeFields, position_id.
 message MsgUnlockPosition {
   earth.shielded.v1.Bundle bundle = 1;
   uint64 position_id = 2;
-  uint64 fee = 3;
+  reserved 3;
   StakeProof stake = 4;
 }
 
 // sighash fields: StakeFields, position_id, proposal_id,
-// Bytes(OptionsBytes(options)), fee.
+// Bytes(OptionsBytes(options)).
 message MsgPositionVote {
   earth.shielded.v1.Bundle bundle = 1;
   uint64 position_id = 2;
   uint64 proposal_id = 3;
   repeated cosmos.gov.v1.WeightedVoteOption options = 4;
-  uint64 fee = 5;
+  reserved 5;
   StakeProof stake = 6;
 }
