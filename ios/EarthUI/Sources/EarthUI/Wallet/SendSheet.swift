@@ -277,7 +277,12 @@ struct SendSheet: View {
                     try await w.send(to: address, denom: denom, amount: amount)
                 }
             } else {
-                guard let w = model.privacy, let out = try? w.shieldOutput(denom: denom, to: address) else { return }
+                // Audit 5 (L12): a note that cannot be built is said, not dropped.
+                guard let w = model.privacy else { resolution = .notPayable("This wallet's private side is not open; unlock and try again."); return }
+                let out: NoteOut
+                do { out = try w.shieldOutput(denom: denom, to: address) } catch {
+                    resolution = .notPayable("Couldn't make the note to @\(entry.handle): \(model.describe(error))"); return
+                }
                 tx.request(.init(action: "Pay @\(entry.handle) from your public balance", rows: [
                     ("Amount", display), ("To handle", label), ("Fee", "\(Token.erth.format(TransactionSigner.defaultFeeUerth)) ERTH"),
                 ]), onSuccess: { await model.syncPrivacy() }) { key in

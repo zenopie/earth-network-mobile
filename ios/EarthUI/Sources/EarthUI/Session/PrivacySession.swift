@@ -56,11 +56,35 @@ enum PrivacySession {
                                fetchStream: { from, limit in try await indexer.handles(fromIndex: from, limit: limit) })
     }()
 
+    /// A wallet's store directory: named by a hash of the owner key, not the
+    /// address, so nothing on disk pairs the transparent address with the shielded one.
+    static func storeID(_ keys: PrivacyKeys) -> String { String(PrivacyHash.h(PrivacyHash.tagOwner, keys.ownerPK).hex.prefix(16)) }
+
+    /// Writes a switch's moves into another wallet's private store (audit 5,
+    /// M2): before the broadcast, as pending; undone only on a definite
+    /// refusal. Addressed by store id, so a retry needs no recovery phrase.
+    struct Recorder: PrivacyWallet.MoveRecorder {
+        let targetID: String
+        func record(_ move: PendingMove) throws {
+            try PrivacyWallet.recordIncoming(try PrivacyStore.open(root: try PrivacySession.dataRoot(), walletID: targetID), move,
+                                             now: Int64(Date().timeIntervalSince1970))
+        }
+        func rollback(_ move: PendingMove) throws {
+            try PrivacyWallet.rollbackIncoming(try PrivacyStore.open(root: try PrivacySession.dataRoot(), walletID: targetID), move,
+                                               now: Int64(Date().timeIntervalSince1970))
+        }
+    }
+
+    /// What a switch target already holds (audit 5, L8): a registration, a handle.
+    static func targetInfo(_ keys: PrivacyKeys) -> (storeID: String, registered: Bool, handle: String) {
+        let id = storeID(keys)
+        let st = (try? PrivacyStore.open(root: try dataRoot(), walletID: id))?.state
+        return (id, st?.identity != nil || st?.pendingRegistration != nil, st?.handle ?? "")
+    }
+
     static func open(mnemonic: String, client: EarthClient) throws -> PrivacyWallet {
         let keys = try PrivacyKeys.fromMnemonic(mnemonic)
-        // Named by a hash of the owner key, not the address: nothing on disk
-        // pairs the transparent address with the shielded one.
-        let id = String(PrivacyHash.h(PrivacyHash.tagOwner, keys.ownerPK).hex.prefix(16))
+        let id = storeID(keys)
         return PrivacyWallet(
             keys: keys,
             // An unreadable store is an error the user sees, never an empty wallet (audit 3).

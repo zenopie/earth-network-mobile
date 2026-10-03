@@ -84,6 +84,15 @@ public final class AppModel {
     public private(set) var predecessorAt: UInt64 = 0
     /// What is due (a claim, a renewal): reminders, never actions taken unasked.
     public private(set) var reminders: [Reminders.Reminder] = []
+    /// Non-free directory entries naming this wallet's address (audit 5, M1).
+    public private(set) var addressedHandles: [HandleEntry] = []
+    /// The split is held but was restored without its options.
+    public private(set) var caretakerSplitUnknown = false
+    /// Moves away from this identity not yet confirmed or not yet recorded in the new wallet, and moves to it
+    /// the chain has not confirmed (audit 5, M2); the store id of the wallet the moves went to ("" none yet).
+    public private(set) var outgoingMoves: [PendingMove] = []
+    public private(set) var incomingMoves: [PendingMove] = []
+    public private(set) var switchTarget = ""
     private var automation: Task<Void, Never>?
     /// The stake vote being cast (K5): one cast at a time, spaced out, in the background.
     public private(set) var stakeVoteProgress: StakeVoteController.Progress?
@@ -778,6 +787,7 @@ public final class AppModel {
         derthRates = [:]
         handle = ""; handleEntry = nil; handleMovedOut = false; handleDirectoryError = nil
         caretakerExpiresAt = 0; caretakerMovedOut = false; predecessorAt = 0; reminders = []
+        addressedHandles = []; caretakerSplitUnknown = false; outgoingMoves = []; incomingMoves = []; switchTarget = ""
         PrivacyProving.registrationMayFollow = true
     }
 
@@ -791,7 +801,9 @@ public final class AppModel {
         mergeable = snap.mergeable.merging(snap.stakeMergeable) { a, _ in a }
         unshieldableErth = snap.unshieldableErth
         handle = snap.handle; handleMovedOut = snap.handleMovedOut
-        caretakerMovedOut = snap.caretakerMovedOut
+        caretakerMovedOut = snap.caretakerMovedOut; caretakerSplitUnknown = snap.caretakerSplitUnknown
+        outgoingMoves = snap.pendingMoves.filter { !$0.incoming }; incomingMoves = snap.pendingMoves.filter(\.incoming)
+        switchTarget = snap.switchTarget
         predecessorAt = snap.identity?.predecessorAt ?? 0
         // A registered wallet still may register in this launch if it can
         // switch to another wallet, which may not be.
@@ -827,21 +839,51 @@ public final class AppModel {
     /// query for it alone) and caretaker standing, and the reminders due.
     func refreshPersonal() async {
         guard let w = privacy else { return }
+        // Every wallet reads the chain's own directory, whole, holder or not (audit 5: L3, L5),
+        // and squares its handle with it (M1, L11: a handle a restore lost, one the chain swept).
+        var addressed: [HandleEntry] = []
+        var dir: [String: HandleEntry]?
+        do {
+            let (d, at) = try await PrivacySession.handles.chainDirectoryRead()
+            dir = d
+            addressed = await w.reconcileHandle(d, readAt: at)
+            handleDirectoryError = nil
+        } catch {
+            handleDirectoryError = describe(error)
+        }
+        publishPrivacy()
         let snap = w.snapshot
         handle = snap.handle
-        if !snap.handle.isEmpty {
-            do {
-                handleEntry = try await PrivacySession.handles.lookup(snap.handle)
-                handleDirectoryError = nil
-            } catch {
-                handleDirectoryError = describe(error)
-            }
-        } else { handleEntry = nil }
+        handleEntry = snap.handle.isEmpty ? nil : dir?[snap.handle]
+        addressedHandles = addressed
         caretakerExpiresAt = await w.caretakerExpiresAt()
         reminders = Reminders.due(Reminders.Inputs(
             now: Int64(Date().timeIntervalSince1970), identityLive: snap.identityStatus == .live, claimOpensAt: w.claimOpensAt(),
-            claimedToday: w.claimedToday(), caretakerExpiresAt: caretakerExpiresAt, handle: snap.handle, handleEntry: handleEntry))
+            claimedToday: w.claimedToday(), caretakerExpiresAt: caretakerExpiresAt, handle: snap.handle, handleEntry: handleEntry,
+            addressed: addressed, ownAddress: w.address.encode()))
     }
+
+    /// Settles moves in flight by their tx and retries recording confirmed ones in the new wallet (audit 5, M2).
+    func checkMoves() async {
+        guard let w = privacy else { return }
+        await w.resolvePendingMoves()
+        for p in w.outgoingMoves() where !p.recorded && !p.target.isEmpty {
+            var inc = p
+            inc.incoming = true; inc.target = ""; inc.recorded = true
+            if (try? PrivacySession.Recorder(targetID: p.target).record(inc)) != nil { await w.markRecorded(p.txHash) }
+        }
+        publishPrivacy()
+        await refreshPersonal()
+    }
+
+    /// The store id of the wallet at `index` and what it already holds (audit 5, L8).
+    func switchTargetInfo(ofWallet index: Int) -> (storeID: String, registered: Bool, handle: String)? {
+        guard let keys = try? privacyKeys(ofWallet: index) else { return nil }
+        return PrivacySession.targetInfo(keys)
+    }
+
+    /// The recorder that writes moves into the wallet whose keys are `keys` (audit 5, M2).
+    func moveRecorder(for keys: PrivacyKeys) -> PrivacyWallet.MoveRecorder { PrivacySession.Recorder(targetID: PrivacySession.storeID(keys)) }
 
     /// The handle directory's verdict on paying `input` ("@alice", "alice"):
     /// the whole directory, fresh, and the entry checked against the chain's own.
@@ -860,14 +902,6 @@ public final class AppModel {
         return try PrivacyKeys.fromMnemonic(wallets[index].mnemonic)
     }
 
-    /// Records in the wallet at `index`'s private store what a switch moved
-    /// to its identity (PrivacyWallet.adoptMoved): its own wallet, when it is
-    /// next opened, renews and refreshes them with no predecessor wait.
-    func adoptMoved(intoWallet index: Int, handle: String?, split: [UInt64: UInt64]?, splitExpiresAt: Int64) async throws {
-        guard wallets.indices.contains(index) else { throw WalletStore.Error.notFound }
-        let other = try PrivacySession.open(mnemonic: wallets[index].mnemonic, client: client)
-        try await other.adoptMoved(handle: handle, split: split, splitExpiresAt: splitExpiresAt)
-    }
 
     /// x/assembly's open removal ballots, on their own: public and cheap, so
     /// the Govern tab re-reads them on every appearance and pull rather than

@@ -66,7 +66,7 @@ struct WalletScreen: View {
             tx.requestPrivate(.private(action: "Claim", rows: [("Token", "ANML"), ("Amount", "1 ANML"), ("Paid as", "a private note")]),
                               onSuccess: { await model.syncPrivacy() }) { w in try await w.claimAnml() }
         case .caretakerExpiring: model.tab = .govern
-        case .handleExpiring: handleOpen = true
+        case .handleExpiring, .handlePaysElsewhere: handleOpen = true
         }
     }
 }
