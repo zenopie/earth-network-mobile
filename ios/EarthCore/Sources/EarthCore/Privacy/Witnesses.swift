@@ -273,73 +273,100 @@ public struct MembershipWitness: Sendable {
     public func proverToml() -> String { toml(noirInputs(), order: Self.inputOrder) }
 }
 
-/// The vote circuit's witness (circuits/vote): one derth stake note under the
-/// proposal's snapshot note root, its spend nullifier absent from the
-/// snapshot stake nullifier tree (a low leaf under nf_root), 0 < weight <=
-/// amount, and its vote nullifier on the proposal. Public inputs in the
-/// chain's order (MsgStakeVote.VotePublicInputs): note_root, nf_root, asset,
-/// weight, proposal_id, vnf, sighash.
-public struct VoteWitness: Sendable {
-    public let nk: Fr
+/// One used slot of a vote witness: a derth stake note under the proposal's
+/// snapshot note root and the low leaf proving its spend nullifier absent
+/// from the snapshot stake nullifier tree.
+public struct VoteSlot: Sendable {
     public let amount: UInt64
     public let rho: Fr
     public let rcm: Fr
     public let pos: UInt64
     public let path: [Fr]
     public let low: IndexedTree.Witness
+
+    public init(amount: UInt64, rho: Fr, rcm: Fr, pos: UInt64, path: [Fr], low: IndexedTree.Witness) throws {
+        try require(path.count == Merkle.depth && low.lowPath.count == Merkle.depth, "a path is \(Merkle.depth) siblings")
+        try require(pos <= 0xffff_ffff && low.lowIndex <= 0xffff_ffff && low.lowNextIndex <= 0xffff_ffff, "a u32")
+        try require(amount > 0, "a used slot holds a note")
+        self.amount = amount; self.rho = rho; self.rcm = rcm; self.pos = pos; self.path = path; self.low = low
+    }
+}
+
+/// The vote circuit's witness (circuits/vote, ORCHARD_DESIGN 18.2): up to
+/// `maxNotes` derth stake notes of one owner (one nk) at one validator, each
+/// under the proposal's snapshot note root with its spend nullifier absent
+/// from the snapshot stake nullifier tree, and one weight, 0 < weight <=
+/// their sum. `slots` are the used slots, in order; the rest are unused
+/// (amount 0, vote nullifier 0, every other field 0). Public inputs in the
+/// chain's order (MsgStakeVote.VotePublicInputs): note_root, nf_root, asset,
+/// weight, proposal_id, vnf[0..3], sighash.
+public struct VoteWitness: Sendable {
+    /// circuits/vote MAX_NOTES: the most notes one vote proof carries.
+    public static let maxNotes = 4
+    public let nk: Fr
+    public let slots: [VoteSlot]
     public let noteRoot: Fr
     public let nfRoot: Fr
     public let asset: Fr
     public let weight: UInt64
     public let proposalID: UInt64
     public let sighash: Fr
-    /// The note's spend nullifier: private, never published by a vote.
-    public let spendNF: Fr
-    public let vnf: Fr
+    /// The used slots' spend nullifiers: private, never published by a vote.
+    public let spendNFs: [Fr]
+    /// Every slot's vote nullifier: the used ones', then 0 for each unused slot.
+    public let vnfs: [Fr]
 
-    public init(nk: Fr, amount: UInt64, rho: Fr, rcm: Fr, pos: UInt64, path: [Fr], low: IndexedTree.Witness, noteRoot: Fr, nfRoot: Fr,
-                asset: Fr, weight: UInt64, proposalID: UInt64, sighash: Fr) throws {
-        try require(path.count == Merkle.depth && low.lowPath.count == Merkle.depth, "a path is \(Merkle.depth) siblings")
-        try require(pos <= 0xffff_ffff && low.lowIndex <= 0xffff_ffff && low.lowNextIndex <= 0xffff_ffff, "a u32")
-        self.nk = nk; self.amount = amount; self.rho = rho; self.rcm = rcm; self.pos = pos; self.path = path; self.low = low
-        self.noteRoot = noteRoot; self.nfRoot = nfRoot; self.asset = asset; self.weight = weight; self.proposalID = proposalID
-        self.sighash = sighash
-        spendNF = PrivacyHash.stakeNF(nk: nk, rho: rho, position: pos)
-        vnf = PrivacyHash.voteNF(nk: nk, rho: rho, position: pos, proposalID: proposalID)
+    public init(nk: Fr, slots: [VoteSlot], noteRoot: Fr, nfRoot: Fr, asset: Fr, weight: UInt64, proposalID: UInt64, sighash: Fr) throws {
+        try require((1 ... Self.maxNotes).contains(slots.count), "a vote carries 1..\(Self.maxNotes) notes")
+        self.nk = nk; self.slots = slots; self.noteRoot = noteRoot; self.nfRoot = nfRoot; self.asset = asset; self.weight = weight
+        self.proposalID = proposalID; self.sighash = sighash
+        spendNFs = slots.map { PrivacyHash.stakeNF(nk: nk, rho: $0.rho, position: $0.pos) }
+        vnfs = slots.map { PrivacyHash.voteNF(nk: nk, rho: $0.rho, position: $0.pos, proposalID: proposalID) }
+            + Array(repeating: Fr.zero, count: Self.maxNotes - slots.count)
     }
 
     /// What the circuit asserts, checked before spending seconds on a proof that cannot verify.
     public func check() throws {
-        let cm = PrivacyHash.stakeCM(asset: asset, amount: amount, spc: PrivacyHash.stakePC(ownerPK: PrivacyHash.ownerPK(nk), rho: rho, rcm: rcm))
-        try require(Merkle.rootFromPath(leaf: cm, index: pos, siblings: path) == noteRoot, "the stake note is not under the snapshot root")
-        try require(low.proves(spendNF, root: nfRoot), "the stake note was spent before the snapshot")
+        let opk = PrivacyHash.ownerPK(nk)
+        for (i, sl) in slots.enumerated() {
+            let cm = PrivacyHash.stakeCM(asset: asset, amount: sl.amount, spc: PrivacyHash.stakePC(ownerPK: opk, rho: sl.rho, rcm: sl.rcm))
+            try require(Merkle.rootFromPath(leaf: cm, index: sl.pos, siblings: sl.path) == noteRoot, "stake note \(i) is not under the snapshot root")
+            try require(sl.low.proves(spendNFs[i], root: nfRoot), "stake note \(i) was spent before the snapshot")
+        }
+        try require(Set(vnfs.prefix(slots.count)).count == slots.count, "the same note twice")
         try require(weight != 0, "zero vote weight")
-        try require(weight <= amount, "the vote weighs more than the note")
+        // The sum as the circuit takes it (u128): four notes of up to 2^63-1 overflow a u64.
+        let sum = slots.reduce(BigUInt(0)) { $0 + BigUInt($1.amount) }
+        try require(BigUInt(weight) <= sum, "the vote weighs more than its notes")
     }
 
     public func publicInputs() -> [Fr] {
-        [noteRoot, nfRoot, asset, PrivacyHash.u64(weight), PrivacyHash.u64(proposalID), vnf, sighash]
+        [noteRoot, nfRoot, asset, PrivacyHash.u64(weight), PrivacyHash.u64(proposalID)] + vnfs + [sighash]
     }
 
     public func noirInputs() -> [String: Any] {
-        [
+        let zero = Fr.zero.noir
+        let zeros = Array(repeating: zero, count: Merkle.depth)
+        func slot<T>(_ i: Int, _ used: (VoteSlot) -> T, _ unused: T) -> T { i < slots.count ? used(slots[i]) : unused }
+        let idx = 0 ..< Self.maxNotes
+        return [
             "nk": nk.noir,
-            "amount": noirHex(amount),
-            "rho": rho.noir,
-            "rcm": rcm.noir,
-            "pos": noirHex(pos),
-            "path": path.map(\.noir),
-            "low_value": low.lowValue.noir,
-            "low_next_value": low.lowNextValue.noir,
-            "low_next_index": noirHex(low.lowNextIndex),
-            "low_index": noirHex(low.lowIndex),
-            "low_path": low.lowPath.map(\.noir),
+            "amount": idx.map { slot($0, { noirHex($0.amount) }, "0x0") },
+            "rho": idx.map { slot($0, { $0.rho.noir }, zero) },
+            "rcm": idx.map { slot($0, { $0.rcm.noir }, zero) },
+            "pos": idx.map { slot($0, { noirHex($0.pos) }, "0x0") },
+            "path": idx.map { slot($0, { $0.path.map(\.noir) }, zeros) },
+            "low_value": idx.map { slot($0, { $0.low.lowValue.noir }, zero) },
+            "low_next_value": idx.map { slot($0, { $0.low.lowNextValue.noir }, zero) },
+            "low_next_index": idx.map { slot($0, { noirHex($0.low.lowNextIndex) }, "0x0") },
+            "low_index": idx.map { slot($0, { noirHex($0.low.lowIndex) }, "0x0") },
+            "low_path": idx.map { slot($0, { $0.low.lowPath.map(\.noir) }, zeros) },
             "note_root": noteRoot.noir,
             "nf_root": nfRoot.noir,
             "asset": asset.noir,
             "weight": noirHex(weight),
             "proposal_id": noirHex(proposalID),
-            "vnf": vnf.noir,
+            "vnf": vnfs.map(\.noir),
             "sighash": sighash.noir,
         ]
     }

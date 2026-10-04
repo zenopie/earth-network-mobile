@@ -208,15 +208,12 @@ public protocol PrivateMsg: ProtoMessage {
     var movedUerth: UInt64 { get }
     /// The uerth the bundles pay to fee_collector (PrivateMsg.PrivateFee; the one fee rule by default).
     var privateFee: UInt64 { get }
-    /// fee_from_output: only an unbonding claim pays its fee out of what it produces.
-    var feeFromOutput: UInt64 { get }
     /// The msg's own fields, bound after the bundle digests (the msg's Go SighashFields).
     func sighashFields() throws -> [Fr]
 }
 
 public extension PrivateMsg {
     var stakeProof: StakeProof? { nil }
-    var feeFromOutput: UInt64 { 0 }
     var movedUerth: UInt64 { 0 }
     var typeURL: String { Self.typeURL }
 
@@ -237,8 +234,10 @@ public extension PrivateMsg {
         return o ? 0 : d
     }
 
-    /// The whole fee the tx declares (types.TotalFee).
-    var totalFee: UInt64 { PrivateMsgs.saturatingAdd(privateFee, feeFromOutput) }
+    /// The whole fee the tx declares (types.TotalFee): the private fee alone
+    /// since the chain retired MsgClaimUnbonding, the one msg that paid
+    /// fee_from_output (chain 48b631c).
+    var totalFee: UInt64 { privateFee }
     func asAny() -> ProtoAny { asAny(typeURL: Self.typeURL) }
 
     /// The msg's sighash on `chainID` in a tx with fields `tx` (x/shielded
@@ -426,7 +425,7 @@ public enum PrivateMsgs {
             MsgSend.self, MsgRegisterPrivate.self, MsgClaimAnmlPrivate.self, MsgSetCaretaker.self, MsgMoveCaretaker.self,
             MsgBindHandle.self, MsgMoveHandle.self,
             MsgVoteProposalPrivate.self, MsgProposeRemoval.self, MsgVoteRemoval.self, MsgShieldedDelegate.self, MsgRestake.self,
-            MsgShieldedUndelegate.self, MsgClaimUnbonding.self, MsgStakeVote.self, MsgLockPosition.self, MsgUpdatePosition.self,
+            MsgShieldedUndelegate.self, MsgStakeVote.self, MsgLockPosition.self, MsgUpdatePosition.self,
             MsgUnlockPosition.self, MsgPositionVote.self, MsgNoteSwap.self, MsgAddLiquidityShielded.self, MsgRemoveLiquidityShielded.self,
         ]
         guard let t = types.first(where: { $0.typeURL == typeURL }) else { throw Error.unknownType(typeURL) }
@@ -561,9 +560,9 @@ public struct MsgRegisterPrivate: DecodablePrivateMsg, FeeBundleMsg, Equatable {
         try PrivateMsgs.affiliateField(handle: affiliateHandle)
     }
 
-    /// The passport proof's `address` input this msg must carry.
-    public func binding() throws -> Fr {
-        PrivacyHash.registrationBinding(idc: try PrivateMsgs.f(idc), pcAnml: try PrivateMsgs.f(pcAnml), ctAnml: ciphertextAnml,
+    /// The passport proof's `address` input this msg must carry on [chainID].
+    public func binding(chainID: String) throws -> Fr {
+        PrivacyHash.registrationBinding(chainID: chainID, idc: try PrivateMsgs.f(idc), pcAnml: try PrivateMsgs.f(pcAnml), ctAnml: ciphertextAnml,
                                         pcErth: try PrivateMsgs.f(pcErth), ctErth: ciphertextErth,
                                         affiliate: try affiliateField())
     }
@@ -930,16 +929,24 @@ public struct MsgRestake: DecodablePrivateMsg, StakingMsg, Equatable {
     }
 }
 
-/// sighash fields: StakeFields, Bytes(validator), amount.
+/// The chain pays the undelegation out by itself at maturity (chain
+/// 48b631c): value x payout / requested uerth as pool notes to `pc` with
+/// `ciphertext` (several notes sharing it past 2^63-1). No stake note is
+/// minted: stake.spcCiphertext is empty, stake.spcMint unused. sighash
+/// fields: StakeFields, Bytes(validator), amount, pc, Bytes(ciphertext).
 public struct MsgShieldedUndelegate: DecodablePrivateMsg, StakingMsg, Equatable {
     public static let typeURL = "/earth.shieldedstaking.v1.MsgUndelegate"
     public var bundle: ShieldedBundle
     public var validator: String
     public var amount: UInt64
     public var stake: StakeProof
+    /// The payout notes' pc (32 bytes) and v2 amount-blind ciphertext (177 bytes).
+    public var pc: Data
+    public var ciphertext: Data
 
-    public init(bundle: ShieldedBundle, validator: String, amount: UInt64, stake: StakeProof) {
+    public init(bundle: ShieldedBundle, validator: String, amount: UInt64, stake: StakeProof, pc: Data, ciphertext: Data) {
         self.bundle = bundle; self.validator = validator; self.amount = amount; self.stake = stake
+        self.pc = pc; self.ciphertext = ciphertext
     }
 
     public func encoded() -> Data {
@@ -948,92 +955,48 @@ public struct MsgShieldedUndelegate: DecodablePrivateMsg, StakingMsg, Equatable 
         w.string(2, validator)
         w.uint64(3, amount)
         w.message(5, stake)
+        w.bytes(6, pc)
+        w.bytes(7, ciphertext)
         return w.data
     }
 
     public static func decodeMsg(_ d: Data) throws -> Self {
         let f = try ProtoFields(d)
         return Self(bundle: try f.message(1, ShieldedBundle.decode), validator: f.string(2), amount: f.uint64(3),
-                    stake: try f.message(5, StakeProof.decode))
+                    stake: try f.message(5, StakeProof.decode), pc: f.bytes(6), ciphertext: f.bytes(7))
     }
 
     public func sighashFields() throws -> [Fr] {
-        try PrivateMsgs.stakeFields(stake) + [PrivateMsgs.bytes(validator), PrivateMsgs.u(amount)]
+        try PrivateMsgs.stakeFields(stake) + [PrivateMsgs.bytes(validator), PrivateMsgs.u(amount), try PrivateMsgs.f(pc),
+                                              PrivateMsgs.bytes(ciphertext)]
     }
 }
 
-/// Claims matured unbonding claims. Usually carries no bundle: its fee comes
-/// out of the ERTH it pays (fee_from_output, the one msg that may). sighash
-/// fields: StakeFields, Bytes(validator), epoch, amount, pc, Bytes(ciphertext),
-/// fee_from_output.
-public struct MsgClaimUnbonding: DecodablePrivateMsg, Equatable {
-    public static let typeURL = "/earth.shieldedstaking.v1.MsgClaimUnbonding"
-    public var bundle: ShieldedBundle?
-    public var validator: String
-    public var epoch: UInt64
-    public var amount: UInt64
-    public var pc: Data
-    public var ciphertext: Data
-    public var feeFromOutput: UInt64
-    public var stake: StakeProof
-
-    public init(bundle: ShieldedBundle? = nil, validator: String, epoch: UInt64, amount: UInt64, pc: Data, ciphertext: Data = Data(),
-                feeFromOutput: UInt64 = 0, stake: StakeProof) {
-        self.bundle = bundle; self.validator = validator; self.epoch = epoch; self.amount = amount; self.pc = pc
-        self.ciphertext = ciphertext; self.feeFromOutput = feeFromOutput; self.stake = stake
-    }
-
-    public var bundles: [ShieldedBundle] { bundle.map { [$0] } ?? [] }
-    public var stakeProof: StakeProof? { stake }
-
-    public func encoded() -> Data {
-        var w = ProtoWriter()
-        if let bundle { w.message(1, bundle) }
-        w.string(2, validator)
-        w.uint64(3, epoch)
-        w.uint64(4, amount)
-        w.bytes(5, pc)
-        w.bytes(6, ciphertext)
-        w.uint64(7, feeFromOutput)
-        w.message(9, stake)
-        return w.data
-    }
-
-    public static func decodeMsg(_ d: Data) throws -> Self {
-        let f = try ProtoFields(d)
-        return Self(bundle: f.has(1) ? try f.message(1, ShieldedBundle.decode) : nil, validator: f.string(2), epoch: f.uint64(3),
-                    amount: f.uint64(4), pc: f.bytes(5), ciphertext: f.bytes(6), feeFromOutput: f.uint64(7),
-                    stake: try f.message(9, StakeProof.decode))
-    }
-
-    public func sighashFields() throws -> [Fr] {
-        try PrivateMsgs.stakeFields(stake) + [
-            PrivateMsgs.bytes(validator), PrivateMsgs.u(epoch), PrivateMsgs.u(amount), try PrivateMsgs.f(pc),
-            PrivateMsgs.bytes(ciphertext), PrivateMsgs.u(feeFromOutput),
-        ]
-    }
-}
-
-/// A stake note's vote without spending it (ORCHARD_DESIGN 15): `proof` is
-/// circuits/vote against the proposal's snapshot, `voteNullifier` =
-/// H(TAG_VNF, nk, rho, position, proposal_id), refused a second time on the
-/// proposal (code 1119). No stake proof, nothing spent or minted (field 7,
-/// the old stake proof, is reserved). sighash fields: proposal_id,
-/// Bytes(validator), Bytes(OptionsBytes(options)), weight, vote_nullifier.
+/// Up to four stake notes of one owner at one validator vote with ONE
+/// weight, without being spent (ORCHARD_DESIGN 18.2): `proof` is
+/// circuits/vote against the proposal's snapshot; `voteNullifiers` is
+/// exactly four, the used slots' H(TAG_VNF, nk, rho, position, proposal_id)
+/// first (distinct), then zeros, each refused a second time on the proposal
+/// (code 1119). No stake proof, nothing spent or minted (fields 7, the old
+/// stake proof, and 9, the single vote nullifier, are reserved). sighash
+/// fields: proposal_id, Bytes(validator), Bytes(OptionsBytes(options)),
+/// weight, vote_nullifiers[0..3].
 public struct MsgStakeVote: DecodablePrivateMsg, Equatable {
     public static let typeURL = "/earth.shieldedstaking.v1.MsgStakeVote"
+    /// Vote nullifier slots in every msg (x/shieldedstaking MaxVoteNotes, circuits/vote MAX_NOTES).
+    public static let maxVoteNotes = 4
     public var bundle: ShieldedBundle
     public var proposalID: UInt64
     public var validator: String
     public var options: [WeightedVoteOption]
     public var weight: UInt64
     public var proof: Data
-    public var voteNullifier: Data
+    public var voteNullifiers: [Data]
 
     public init(bundle: ShieldedBundle, proposalID: UInt64, validator: String, options: [WeightedVoteOption], weight: UInt64,
-                proof: Data = Data(), voteNullifier: Data = Data()) {
+                proof: Data = Data(), voteNullifiers: [Data] = []) {
         self.bundle = bundle; self.proposalID = proposalID; self.validator = validator; self.options = options
-        self.weight = weight; self.proof = proof; self.voteNullifier = voteNullifier
+        self.weight = weight; self.proof = proof; self.voteNullifiers = voteNullifiers
     }
 
     public var bundles: [ShieldedBundle] { [bundle] }
@@ -1046,7 +1009,7 @@ public struct MsgStakeVote: DecodablePrivateMsg, Equatable {
         w.repeatedMessage(4, options)
         w.uint64(5, weight)
         w.bytes(8, proof)
-        w.bytes(9, voteNullifier)
+        w.repeatedBytes(10, voteNullifiers)
         return w.data
     }
 
@@ -1054,14 +1017,17 @@ public struct MsgStakeVote: DecodablePrivateMsg, Equatable {
         let f = try ProtoFields(d)
         return Self(bundle: try f.message(1, ShieldedBundle.decode), proposalID: f.uint64(2), validator: f.string(3),
                     options: try f.repeatedMessage(4, WeightedVoteOption.decode), weight: f.uint64(5),
-                    proof: f.bytes(8), voteNullifier: f.bytes(9))
+                    proof: f.bytes(8), voteNullifiers: f.repeatedBytes(10))
     }
 
     public func sighashFields() throws -> [Fr] {
-        [
+        guard voteNullifiers.count == Self.maxVoteNotes else {
+            throw PrivateMsgs.Error.shape("a stake vote carries exactly \(Self.maxVoteNotes) vote nullifiers")
+        }
+        return [
             PrivateMsgs.u(proposalID), PrivateMsgs.bytes(validator), PrivacyHash.bytes(try PrivateMsgs.optionsBytes(options)),
-            PrivateMsgs.u(weight), try PrivateMsgs.f(voteNullifier),
-        ]
+            PrivateMsgs.u(weight),
+        ] + (try voteNullifiers.map(PrivateMsgs.f))
     }
 }
 

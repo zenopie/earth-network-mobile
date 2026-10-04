@@ -9,7 +9,7 @@ import ProverGateCore
 /// barretenberg honours only the **first** SRS initialization of a process: a
 /// later, larger request is silently not met, and a proof that needs it fails.
 /// The passport circuits run to ~425k gates (brainpool512) and the privacy
-/// circuits to ~10k (stake, the largest of action, stake and membership), so whichever proves first decides for the rest of the
+/// circuits to ~28k (vote, the largest of action, stake, membership and vote), so whichever proves first decides for the rest of the
 /// launch. Everything that proves goes through here, so the decision is made
 /// once, knowingly.
 public enum SRS {
@@ -83,7 +83,7 @@ public enum SRS {
     }
 
     /// The privacy circuits' SRS: 2^15 (32,769 points), every privacy circuit
-    /// fits (stake, the largest, is 9,672 gates).
+    /// fits (vote, the largest, is 27,543 gates: a 2^15 circuit).
     public static let privacyPoints: UInt32 = 1 << 15
 }
 
@@ -107,14 +107,16 @@ public final class PrivacyCircuitProver: @unchecked Sendable {
             case .membership: 8
             case .action: 6
             case .stake: 11
-            case .vote: 7
+            // note_root, nf_root, asset, weight, proposal_id, vnf[0..3], sighash (chain 48b631c).
+            case .vote: 10
             }
         }
 
         /// The largest privacy circuit (gates: membership 5,659, action
-        /// 8,098, vote 9,072, stake 9,672): its SRS holds the others (all 2^14
-        /// circuits, under the bundled 2^15 + 1 points).
-        public static let largest: Kind = .stake
+        /// 8,098, stake 9,672, vote 27,543 since its four note slots): its
+        /// SRS holds the others. Vote is a 2^15 circuit, the others 2^14;
+        /// all fit the bundled 2^15 + 1 points.
+        public static let largest: Kind = .vote
     }
 
     public enum Failure: Error, CustomStringConvertible {
@@ -162,9 +164,9 @@ public final class PrivacyCircuitProver: @unchecked Sendable {
     private func load(_ k: Kind) throws -> (circuit: Circuit, vk: Data) {
         lock.lock(); defer { lock.unlock() }
         if let l = loaded[k] { return l }
-        // At least the largest privacy circuit's SRS (stake), whichever
+        // At least the largest privacy circuit's SRS (vote, 2^15), whichever
         // circuit proves first: a membership- or action-sized SRS (a gas
-        // grant, a send) cannot be grown for a stake proof later in the same
+        // grant, a send) cannot be grown for a vote proof later in the same
         // process (bb: errorSettingUpSRS).
         if !SRS.isProvisioned {
             if let big = reserve() {

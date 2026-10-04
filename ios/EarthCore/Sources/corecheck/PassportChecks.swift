@@ -47,7 +47,7 @@ private func checkRegistration() {
     let anml = try! NoteOut.mintToSelf(keys, denom: "uanml")
     let erth = try! NoteOut.mintToSelf(keys, denom: "uerth")
     let gas = try! NoteOut.mintToSelf(keys, denom: "uerth")
-    let binding = PrivacyHash.registrationBinding(idc: keys.idc, pcAnml: anml.pc, ctAnml: anml.ciphertext, pcErth: erth.pc,
+    let binding = PrivacyHash.registrationBinding(chainID: Constants.chainID, idc: keys.idc, pcAnml: anml.pc, ctAnml: anml.ciphertext, pcErth: erth.pc,
                                                   ctErth: erth.ciphertext, affiliate: .zero)
 
     var seenAlgorithm: String?
@@ -104,7 +104,7 @@ private func checkRegistration() {
     Check.equal("gas body has no affiliate_pc / affiliate_ciphertext (chain 203d3b2)", body["affiliate_pc"] == nil && body["affiliate_ciphertext"] == nil, true)
     Check.equal("gas body has no affiliate address", body["affiliate"] == nil, true)
     Check.that("gas body is valid JSON", JSONSerialization.isValidJSONObject(body))
-    Check.equal("the binding matches the msg's fields", try? msg.binding(), binding)
+    Check.equal("the binding matches the msg's fields", try? msg.binding(chainID: Constants.chainID), binding)
 
     Check.throwsError("refuses a malformed referrer") {
         _ = try PassportRegistration.normalizeReferrer("not a handle!")

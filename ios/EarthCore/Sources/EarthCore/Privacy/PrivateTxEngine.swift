@@ -61,14 +61,21 @@ public struct MembershipWitnessSpec: Sendable {
     public func witness(signal: Fr) throws -> MembershipWitness { try make(signal) }
 }
 
-/// A vote proof's statement, waiting for the sighash; `vnf` is known before (the sighash binds it).
+/// A vote proof's statement, waiting for the sighash; `vnfs` (all four
+/// slots, the used ones first, then zeros) are known before: the sighash
+/// binds them.
 public struct VoteWitnessSpec: Sendable {
-    public let vnf: Fr
+    public let vnfs: [Fr]
     let make: @Sendable (Fr) throws -> VoteWitness
-    public init(vnf: Fr, _ make: @escaping @Sendable (Fr) throws -> VoteWitness) { self.vnf = vnf; self.make = make }
+    public init(vnfs: [Fr], _ make: @escaping @Sendable (Fr) throws -> VoteWitness) throws {
+        guard vnfs.count == MsgStakeVote.maxVoteNotes else { throw PrivacyError("a vote has \(MsgStakeVote.maxVoteNotes) vote nullifier slots") }
+        self.vnfs = vnfs; self.make = make
+    }
+    /// How many slots carry a note (the chain charges a note write for each).
+    public var used: Int { vnfs.filter { !$0.isZero }.count }
     public func witness(sighash: Fr) throws -> VoteWitness {
         let w = try make(sighash)
-        guard w.vnf == vnf else { throw PrivacyError("the vote witness is for another vote nullifier") }
+        guard w.vnfs == vnfs else { throw PrivacyError("the vote witness is for other vote nullifiers") }
         return w
     }
 }
@@ -161,8 +168,10 @@ public struct PrivateTxEngine: Sendable {
     /// A stake proof: its proof, four note writes and, since the stake
     /// nullifier tree is indexed, two more per nullifier slot (ORCHARD_DESIGN 15).
     public static let stakeGas: UInt64 = 3_200_000
-    /// A stake vote (fixed): 250,000, its proof and one note write; nothing spent or minted.
-    public static let voteGas: UInt64 = 2_400_000
+    /// A stake vote's fixed part: gasVote (250,000) and its proof; the chain
+    /// adds a note write for the vote and one per used vote nullifier (chain
+    /// 48b631c: gasVote + proof + (1 + used) x note_gas).
+    public static let voteGas: UInt64 = 2_250_000
     /// A membership proof and its nullifier write.
     public static let membershipGas: UInt64 = 2_150_000
     /// MsgRegister: the passport proof (3,000,000), the DSC chain (300,000) and two minted notes.
@@ -209,7 +218,7 @@ public struct PrivateTxEngine: Sendable {
         for b in msg.bundles { g = g &+ bundleGas &+ actionGas &* UInt64(b.actions.count) }
         if msg.stakeProof != nil { g = g &+ stakeGas }
         if a.membership != nil { g = g &+ membershipGas }
-        if a.vote != nil { g = g &+ voteGas }
+        if let v = a.vote { g = g &+ voteGas &+ (1 &+ UInt64(v.used)) &* noteGas }
         if msg is MsgRegisterPrivate { g = g &+ registerGas }
         if msg is MsgBindHandle { g = g &+ bindHandleExtraGas }
         return g
@@ -289,7 +298,7 @@ public struct PrivateTxEngine: Sendable {
         if let v = a.vote {
             let w = try v.witness(sighash: sighash)
             try w.check()
-            msg = try Self.withVote(msg, vnf: v.vnf, proof: try Self.proofSized(try await prover.proveVote(w)))
+            msg = try Self.withVote(msg, vnfs: v.vnfs, proof: try Self.proofSized(try await prover.proveVote(w)))
         }
         guard try msg.sighash(chainID: chainID, tx: tx) == sighash else { throw PrivacyError("the proven msg binds another sighash") }
         guard msg.totalFee == q.fee else { throw PrivacyError("the msg must pay exactly the quoted fee") }
@@ -387,15 +396,21 @@ public struct PrivateTxEngine: Sendable {
             }
         }
         let msg = try a.build(bundles, stake, try a.membership.map { try placeholderMembership($0, placeholders: placeholders) })
-        // A quote's vote nullifier is random too: the node learns nothing of the note before the user confirms.
+        // A quote's vote nullifiers are random too (the used slots'; an unused
+        // slot stays 0, as the gas counts them): the node learns nothing of
+        // the notes before the user confirms.
         guard let v = a.vote else { return msg }
-        return try Self.withVote(msg, vnf: placeholders ? NotePlaintext.randomField() : v.vnf, proof: Self.placeholder)
+        let vnfs = placeholders ? v.vnfs.map { $0.isZero ? $0 : NotePlaintext.randomField() } : v.vnfs
+        return try Self.withVote(msg, vnfs: vnfs, proof: Self.placeholder)
     }
 
-    /// A stake vote with its vote nullifier and proof set (the sighash binds the nullifier, not the proof).
-    static func withVote(_ msg: any PrivateMsg, vnf: Fr, proof: Data) throws -> any PrivateMsg {
+    /// A stake vote with its vote nullifiers and proof set (the sighash binds
+    /// the nullifiers, not the proof): exactly four, the used slots' first,
+    /// then zeros.
+    static func withVote(_ msg: any PrivateMsg, vnfs: [Fr], proof: Data) throws -> any PrivateMsg {
         guard var m = msg as? MsgStakeVote else { throw PrivacyError("not a stake vote") }
-        m.voteNullifier = vnf.bytes
+        guard vnfs.count == MsgStakeVote.maxVoteNotes else { throw PrivacyError("a stake vote carries exactly \(MsgStakeVote.maxVoteNotes) vote nullifiers") }
+        m.voteNullifiers = vnfs.map(\.bytes)
         m.proof = proof
         return m
     }

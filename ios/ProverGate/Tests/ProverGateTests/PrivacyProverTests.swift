@@ -113,7 +113,7 @@ final class PrivacyProverTests: XCTestCase {
             .action: ["anchor", "nf", "cm_out", "cv_x", "cv_y", "sighash"],
             .stake: ["anchor", "asset", "nf_0", "nf_1", "cm_out_0", "cm_out_1", "v_in", "v_out", "spc_mint", "otag", "sighash"],
             .membership: ["root", "scope", "nullifier", "signal", "excluded_dsc", "excluded_country", "max_activation", "max_predecessor"],
-            .vote: ["note_root", "nf_root", "asset", "weight", "proposal_id", "vnf", "sighash"],
+            .vote: ["note_root", "nf_root", "asset", "weight", "proposal_id", "vnf", "sighash"],  // vnf: four slots
         ]
         var proved = 0
         for kind in [PrivacyCircuitProver.Kind.stake, .action, .membership, .vote] {
