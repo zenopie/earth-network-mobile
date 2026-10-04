@@ -9,9 +9,12 @@ chain built on proof-of-personhood. A user proves they are a unique human by
 reading their ePassport's NFC chip and generating a zero-knowledge proof
 **on device**, which the chain verifies. No custodian, no server sees the
 passport. Registered humans claim a daily ANML token and direct the chain's
-emissions by vote.
+emissions by vote. Balances, stake and votes are private: ERTH and ANML are
+shielded notes, stake is stake notes, and every private tx is proven on the
+phone (formats: `PRIVACY_FORMATS.md`; audit rounds: `AUDIT_HISTORY.md`).
 
-Android ships; iOS is a port in progress.
+Android is the behavioural reference; iOS is a port of it with the same
+privacy core, checked against the same vectors.
 
 ## Layout
 
@@ -19,7 +22,8 @@ Android ships; iOS is a port in progress.
     ios/        the port — see ios/README.md
     circuits/   Noir circuits (nargo workspace) for the personhood proof
     tools/      registry-builder (DSC trust store), chainverify (proof checking),
-                keycheck + txcheck + certcheck (Go ground truth for the iOS port)
+                keycheck + txcheck + certcheck (Go ground truth for the iOS port),
+                privacyvectors (golden vectors from the chain's own code)
 
 Gradle lives in `android/`, so **every `./gradlew` command runs from there**.
 
@@ -34,7 +38,8 @@ Gradle lives in `android/`, so **every `./gradlew` command runs from there**.
 
 JVM unit tests (`./gradlew :app:testDebugUnitTest`) cover the gas-grant
 request body and the privacy core (`privacy/`): golden vectors from the
-chain's own Go code (`tools/privacyvectors/gen.sh <chain checkout>`), the
+chain's own Go code (`tools/privacyvectors/gen.sh <chain checkout> [ref]`,
+which writes the Android copy and the identical iOS copy), the
 chain's witness fixtures, every private msg's encoding and signal, and an
 end-to-end wallet flow against an in-memory chain. The formats the chain
 does not pin (keys, shielded address, note ciphertext) are in
@@ -81,7 +86,8 @@ Source is under `app/src/main/java/network/erth/wallet/`, package
     crypto/             BIP-39/44 keys, Bech32, signing
     wallet/             key storage, session, unlock (PIN, biometric), attestation
     passport/           headless passport read + proof generation
-    referral/           deep-link and install-referrer capture
+    privacy/            the shielded wallet: keys, notes, sync, proving, private txs
+    referral/           referrer handle from the App Link and the install referrer
     ui/                 MainActivity, UpdateCheckActivity (launcher), EarthApp root
     ui/<feature>/       home, wallet, earn, swap, govern, explore, personhood,
                         settings, onboarding, unlock, registration
@@ -115,7 +121,11 @@ about versions; `app/build.gradle` carries deliberate excludes and pins.
 Changing a crypto or passport dependency usually means re-doing that work.
 
 **Compiled circuits are checked in** at `app/src/main/assets/circuits/*.json`
-(~14MB, seven signature-algorithm variants). They carry a `noir_version` that
+(~14MB: seven passport signature-algorithm variants plus action, stake, vote
+and membership). Their bytecode fixes the VKs the chain's genesis pins, so
+they are never regenerated casually: a comment-only change to `circuits/`
+must recompile to identical bytecode and ABI (the `hash`, `debug_symbols` and
+`file_map` fields follow the source text and paths). They carry a `noir_version` that
 must match the prover's Noir. Recompiling means `nargo` at that version.
 
 **Where a comment explains something surprising, read it before changing the
