@@ -273,7 +273,15 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     override fun gasPrice(): BigDecimal = price
     override fun minFee(): Long = minFee
     override fun maxActionsPerBundle(): Int = maxActions
-    override fun tipHeight(): Long = height - 1 + tipAhead
+    override fun tipHeight(): Long = height - 1 + tipAhead + sendTipAhead
+
+    /** How far the tip a tx's timeout is set from runs ahead (audit 6, M4: a node inflating it at send only). */
+    var sendTipAhead = 0L
+
+    /** x/shielded Query/Assets as the node serves it (audit 6, M2): null says nothing. */
+    var assetList: List<Pair<String, Fr>>? = null
+
+    override fun assets(): List<Pair<String, Fr>>? = assetList
 
     /** The ante charges per bundle and per action, before anything else: gas is the tx's shape. */
     /** Every nullifier (pool, stake, membership) the node saw in a simulated tx. */

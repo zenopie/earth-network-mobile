@@ -419,6 +419,32 @@ object LcdChainRoots : network.erth.wallet.privacy.sync.ChainRoots {
         network.erth.wallet.privacy.sync.TreeState(size, null, !j.has("_latest"))
     }.getOrNull()
 
+    /**
+     * x/shielded Query/Assets, every page, at most Denoms.MAX entries (audit
+     * 6, M2). The caller learns an entry only if its id is the denom's own.
+     */
+    override fun assets(): List<Pair<String, Fr>>? = runCatching {
+        val out = ArrayList<Pair<String, Fr>>()
+        var key = ""
+        while (out.size < network.erth.wallet.privacy.note.Denoms.MAX) {
+            val q = "pagination.limit=500" + if (key.isEmpty()) "" else "&pagination.key=" + java.net.URLEncoder.encode(key, "UTF-8")
+            val path = "/earth/shielded/v1/assets?$q"
+            val (code, body) = EarthRest.get(path)
+            val j = json(code, body, path)
+            val a = j.optJSONArray("assets") ?: break
+            for (i in 0 until a.length()) {
+                if (out.size >= network.erth.wallet.privacy.note.Denoms.MAX) break
+                val e = a.optJSONObject(i) ?: continue
+                val id = runCatching { b64Field(e.optString("asset_id")) }.getOrNull() ?: continue
+                out.add(e.optString("denom") to id)
+            }
+            val next = j.optJSONObject("pagination")?.optString("next_key").orEmpty()
+            if (next.isEmpty() || next == "null" || next == key || a.length() == 0) break
+            key = next
+        }
+        out
+    }.getOrNull()
+
     /** A tx this wallet broadcast, by hash: 404 missing, a non-zero code failed (audit 4). */
     override fun txStatus(hash: String): network.erth.wallet.privacy.sync.TxStatus? = runCatching {
         val (code, body) = EarthRest.get("/cosmos/tx/v1beta1/txs/$hash")

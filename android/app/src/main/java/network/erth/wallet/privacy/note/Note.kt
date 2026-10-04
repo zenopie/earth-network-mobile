@@ -66,23 +66,50 @@ data class OwnedNote(
 
 /**
  * Asset id -> denom, for the ids note ciphertexts carry. Seeded with the fee
- * and personhood denoms; every public amount the indexer serves (shields and
- * mints, which name their denom) teaches it more, and the first note of any
- * derth/ or unbond/ denom is always a public mint, so a wallet learns a denom
- * before it can be sent one privately.
+ * and personhood denoms. Audit 6 (M2, M3): it learns only denoms the wallet
+ * has reason to trust (a note of its own whose cm the denom reproduces, or
+ * the chain's asset list, each entry checked against its id), never a public
+ * amount an indexer merely serves; only well-formed denoms ([Denoms.valid]),
+ * and at most [Denoms.MAX] of them. Built once per sync and grown as it goes:
+ * every learn costs one hash, every resolve none.
  */
 class AssetDenoms(known: Collection<String> = emptyList()) {
     private val byId = HashMap<Fr, String>()
 
     init { (listOf("uerth", "uanml") + known).forEach(::learn) }
 
-    fun learn(denom: String) {
-        if (denom.isNotEmpty() && !denom.startsWith(NotePlaintext.UNRESOLVED_PREFIX)) byId[Privacy.assetId(denom)] = denom
+    /** Whether [denom] is new here (false: invalid, known already, or the set is full). */
+    fun learn(denom: String): Boolean {
+        if (!Denoms.valid(denom) || byId.size >= Denoms.MAX) return false
+        return byId.put(Privacy.assetId(denom), denom) == null
+    }
+
+    /** Learn [denom] under an id the chain stated for it: only if the id is the denom's own. */
+    fun learn(denom: String, id: Fr): Boolean {
+        if (!Denoms.valid(denom) || byId.size >= Denoms.MAX || byId[id] != null) return false
+        if (Privacy.assetId(denom) != id) return false
+        byId[id] = denom
+        return true
     }
 
     fun denoms(): Set<String> = byId.values.toSet()
 
     fun resolve(asset: Fr): String = byId[asset] ?: (NotePlaintext.UNRESOLVED_PREFIX + asset.toHex())
+}
+
+/**
+ * Which denoms the wallet accepts from outside (audit 6, M2, M3): the SDK's
+ * own denom rule (`[a-zA-Z][a-zA-Z0-9/:._-]{2,127}`), and never the wallet's
+ * internal "asset/<hex>" name for an id it cannot resolve: an indexer that
+ * served one would relabel a note so no planner picks it.
+ */
+object Denoms {
+    /** The most denoms a wallet keeps (learned and persisted). */
+    const val MAX = 4096
+
+    private val SDK = Regex("^[a-zA-Z][a-zA-Z0-9/:._-]{2,127}$")
+
+    fun valid(denom: String): Boolean = SDK.matches(denom) && !denom.startsWith(NotePlaintext.UNRESOLVED_PREFIX)
 }
 
 /**

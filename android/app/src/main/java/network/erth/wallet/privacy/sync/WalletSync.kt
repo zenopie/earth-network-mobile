@@ -2,6 +2,7 @@ package network.erth.wallet.privacy.sync
 
 import network.erth.wallet.privacy.keys.PrivacyKeys
 import network.erth.wallet.privacy.note.AssetDenoms
+import network.erth.wallet.privacy.note.Denoms
 import network.erth.wallet.privacy.note.NoteCipher
 import network.erth.wallet.privacy.note.NotePlaintext
 import network.erth.wallet.privacy.note.OwnedNote
@@ -65,6 +66,13 @@ interface ChainRoots {
      * only on MISSING or FAILED (audit 4).
      */
     fun txStatus(hash: String): TxStatus? = null
+    /**
+     * x/shielded Query/Assets: (denom, asset id) pairs, at most
+     * [network.erth.wallet.privacy.note.Denoms.MAX]; null when the node
+     * cannot say. Each is learned only if the id is the denom's own hash
+     * (audit 6, M2).
+     */
+    fun assets(): List<Pair<String, Fr>>? = null
 }
 
 /** Which chain the LCD serves: its chain id and the first 16 lowercase hex digits of its block 1 hash (null: unavailable). */
@@ -122,6 +130,15 @@ class WalletSync(
 
     /** Our own tx landed but the indexer never reported its spend: what it served is not the chain's (audit 4). */
     private var ownSpendMissing = false
+
+    /**
+     * Audit 6 (M2): the asset-id lookup, built once per sync from the
+     * persisted denoms and grown as notes of our own name new ones.
+     */
+    private var assetDenoms = AssetDenoms()
+
+    /** Whether this sync has read the chain's asset list (at most once a sync, and only when a note of ours needs it). */
+    private var chainAssetsRead = false
 
     private fun readTip(): ChainTip =
         (runCatching { chain.latestBlock() }.getOrNull() ?: throw java.io.IOException("the node did not say its latest height; nothing was synced"))
@@ -624,6 +641,7 @@ class WalletSync(
         readTip()
         ownSpendMissing = false
         val s = store.state
+        beginDenoms(s)
         val newNotes = ArrayList<OwnedNote>()
         val spent = ArrayList<OwnedNote>()
         val newStake = ArrayList<OwnedStakeNote>()
@@ -847,8 +865,13 @@ class WalletSync(
             checkPositions("note", from, page.rows.size, page.nextPos, page.complete)
             val rows = fresh("note", page.rows, from, s.notesNext, { it.position }) { store.noteTree.leaf(it.position) == it.cm }
             if (rows.isNotEmpty()) {
+                // Audit 6 (M3): every row is opened before the tree grows, and
+                // a row that cannot be opened is skipped, never thrown on: a
+                // throw between the append and the cursor would add the
+                // page's notes again on the retry.
+                val mine = rows.mapNotNull { r -> openTotal(r) }
                 store.noteTree.appendAll(rows.map { it.cm })
-                for (r in rows) open(r)?.let { found.add(it); s.notes.add(it) }
+                for (n in mine) { found.add(n); s.notes.add(n) }
                 s.notesNext += rows.size
             }
             s.notesHeight = maxOf(s.notesHeight, page.syncedHeight)
@@ -865,11 +888,20 @@ class WalletSync(
      * v2, so the mnemonic alone finds everything. A value-0 v1 note is kept
      * only as a registration record (its memo).
      */
+    /** [open], total: a row it cannot read is not ours (audit 6, M3). */
+    private fun openTotal(r: NoteRow): OwnedNote? = try {
+        open(r)
+    } catch (e: RuntimeException) {
+        null
+    }
+
     internal fun open(r: NoteRow): OwnedNote? {
         val s = store.state
+        // Audit 6 (M2, M3): the row's amount is only checked here, never
+        // learned from: a denom is learned once a note of ours reproduces
+        // its cm with it.
         val amount = publicAmount(r.amount)
-        amount?.let { s.denoms.add(it.second) }
-        val note: NotePlaintext = when (r.ciphertext.size) {
+        val opened: NotePlaintext = when (r.ciphertext.size) {
             // An open mint (chain 203d3b2: the referral note to a handle we
             // hold): no ciphertext, the opening on the row. Ours if its
             // owner_pk is ours and the opening with the public amount
@@ -888,9 +920,10 @@ class WalletSync(
                 val (v, denom) = amount ?: return null
                 NoteCipher.tryDecryptBlind(r.ciphertext, r.cm, denom, v, keys) ?: return null
             }
-            NoteCipher.CIPHERTEXT_BYTES -> NoteCipher.tryDecrypt(r.ciphertext, r.cm, keys, AssetDenoms(s.denoms)) ?: return null
+            NoteCipher.CIPHERTEXT_BYTES -> NoteCipher.tryDecrypt(r.ciphertext, r.cm, keys, assetDenoms) ?: return null
             else -> return null
         }
+        val note = if (opened.value > 0L) resolved(s, opened) else opened
         // A value past 2^63-1 is not one the wallet can hold (Amounts).
         if (note.value < 0L) return null
         if (note.value == 0L) {
@@ -910,8 +943,52 @@ class WalletSync(
         if (amount == null) return null
         val digits = amount.takeWhile { it in '0'..'9' }
         val denom = amount.substring(digits.length)
-        if (digits.isEmpty() || denom.isEmpty()) return null
+        // Audit 6 (M3): an SDK denom only; never the wallet's own "asset/" name.
+        if (digits.isEmpty() || !Denoms.valid(denom)) return null
         return (network.erth.wallet.privacy.Amounts.parseU64(digits) ?: return null) to denom
+    }
+
+    /**
+     * Audit 6 (M2): the persisted denoms are the ones of notes this wallet
+     * holds (anything else a store learned before is dropped), at most
+     * [Denoms.MAX], and the lookup is built from them once for the sync.
+     * A held note named "asset/<hex>" whose id is now known is renamed
+     * (same asset, same cm), which also undoes audit 6 M3's relabel.
+     */
+    private fun beginDenoms(s: PrivacyState) {
+        chainAssetsRead = false
+        val own = (s.notes.map { it.note.denom } + s.stakeNotes.map { it.denom }).filterTo(sortedSetOf(), Denoms::valid)
+        s.denoms.clear()
+        own.take(Denoms.MAX).forEach { s.denoms.add(it) }
+        assetDenoms = AssetDenoms(s.denoms)
+        for (i in s.notes.indices) {
+            val n = s.notes[i]
+            if (n.note.denom.startsWith(NotePlaintext.UNRESOLVED_PREFIX)) {
+                val r = resolved(s, n.note)
+                if (r.denom != n.note.denom) s.notes[i] = n.copy(note = r)
+            }
+        }
+    }
+
+    /**
+     * A note of ours, its denom resolved: one already a denom is learned
+     * (its cm, checked by the caller, binds it); an "asset/<hex>" one is
+     * looked up in the chain's asset list, read at most once a sync.
+     */
+    private fun resolved(s: PrivacyState, n: NotePlaintext): NotePlaintext {
+        if (!n.denom.startsWith(NotePlaintext.UNRESOLVED_PREFIX)) {
+            if (assetDenoms.learn(n.denom) && s.denoms.size < Denoms.MAX) s.denoms.add(n.denom)
+            return n
+        }
+        val asset = runCatching { n.asset }.getOrNull() ?: return n
+        if (!chainAssetsRead) {
+            chainAssetsRead = true
+            runCatching { chain.assets() }.getOrNull()?.forEach { (d, id) -> assetDenoms.learn(d, id) }
+        }
+        val d = assetDenoms.resolve(asset)
+        if (d.startsWith(NotePlaintext.UNRESOLVED_PREFIX)) return n
+        if (s.denoms.size < Denoms.MAX) s.denoms.add(d)
+        return n.copy(denom = d)
     }
 
     private fun syncNullifiers(s: PrivacyState, limit: Int): List<OwnedNote> {
@@ -990,8 +1067,10 @@ class WalletSync(
             checkPositions("stake note", from, page.rows.size, page.nextPos, page.complete)
             val rows = fresh("stake note", page.rows, from, s.stakeNext, { it.position }) { store.stakeTree.leaf(it.position) == it.cm }
             if (rows.isNotEmpty()) {
+                // As syncNotes (audit 6, M3): opened first, a bad row skipped.
+                val mine = rows.mapNotNull { r -> try { openStake(r) } catch (e: RuntimeException) { null } }
                 store.stakeTree.appendAll(rows.map { it.cm })
-                for (r in rows) openStake(r)?.let { found.add(it); s.stakeNotes.add(it) }
+                for (n in mine) { found.add(n); s.stakeNotes.add(n) }
                 s.stakeNext += rows.size
             }
             s.stakeHeight = maxOf(s.stakeHeight, page.syncedHeight)
@@ -1009,14 +1088,14 @@ class WalletSync(
      */
     internal fun openStake(r: StakeNoteRow): OwnedStakeNote? {
         val s = store.state
-        r.denom?.let { s.denoms.add(it) }
         val (denom, amount, rho, rcm) = when (r.ciphertext.size) {
             NoteCipher.STAKE_CIPHERTEXT_BYTES -> {
                 val o = NoteCipher.tryDecryptStake(r.ciphertext, r.cm, keys) ?: return null
-                StakeOpen(AssetDenoms(s.denoms).resolve(o.asset), o.amount, o.rho, o.rcm)
+                StakeOpen(assetDenoms.resolve(o.asset), o.amount, o.rho, o.rcm)
             }
             NoteCipher.BLIND_CIPHERTEXT_BYTES -> {
-                val denom = r.denom ?: return null
+                // Audit 6 (M2, M3): an SDK denom, learned only once the note opens as ours.
+                val denom = r.denom?.takeIf(Denoms::valid) ?: return null
                 val amount = r.amount ?: return null
                 val (rho, rcm, memo) = NoteCipher.tryOpenBlindStake(r.ciphertext, r.cm, denom, amount, keys) ?: return null
                 parseUnlockMemo(keys.nk, memo)?.let { c -> if (c > s.closedOtagMax) s.closedOtagMax = c }
@@ -1026,6 +1105,7 @@ class WalletSync(
         }
         // Zero, or past 2^63-1 (negative as a Long): nothing the wallet holds (Amounts).
         if (amount <= 0L) return null
+        if (assetDenoms.learn(denom) && s.denoms.size < Denoms.MAX) s.denoms.add(denom)
         return OwnedStakeNote(r.position, r.height, denom, amount, rho, rcm, r.cm, Privacy.stakeNf(keys.nk, rho, r.position))
     }
 
