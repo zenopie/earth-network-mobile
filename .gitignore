@@ -58,6 +58,9 @@ Thumbs.db
 # VS Code
 .vscode/
 
+# Claude Code per-user settings
+.claude/settings.local.json
+
 # Misc local env/config files
 *.local
 .env
@@ -76,11 +79,6 @@ Thumbs.db
 # Ignore lint/analysis reports if not under build (most are in build already)
 lint-results.*
 
-# Android build outputs often placed under module dirs; already covered by **/build/
-# Loose .class files from an extracted jar used to sit in the repo root
-# (io/, org/, META-INF/) — left over from the Secret Network dependency and
-# invisible to git status because of the *.class rule above. Removed; the rule
-# stays so it cannot happen again silently.
 
 # --- iOS / Swift ---
 
