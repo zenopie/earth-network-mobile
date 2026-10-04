@@ -6,9 +6,9 @@ import SwiftUI
 ///
 /// Staking spends shielded ERTH into the pool's delegation to a validator and
 /// comes back as derth/<validator> notes, worth more ERTH each epoch as
-/// rewards compound; unstaking turns derth into an unbonding note, which the
-/// wallet claims on its own once its epoch's undelegation matures. Only a
-/// validator's own self-bond is a transparent delegation now.
+/// rewards compound; unstaking names a note of ours the chain pays the ERTH to
+/// once the unbonding period ends: nothing more to send. Only a validator's
+/// own self-bond is a transparent delegation now.
 ///
 /// One sheet for both directions because the fields are the same and the
 /// difference is a word — two screens would drift apart on the amount rules,
@@ -78,7 +78,7 @@ struct StakeSheet: View {
                             // the stake stops earning immediately and arrives
                             // weeks later, with nothing on screen in between
                             // but the unbonding row.
-                            Text("Unstaking becomes an unbonding claim at this epoch's rate, also locked to this wallet. It earns nothing while the chain's unbonding period runs, and the wallet claims it as private ERTH on its own once it matures.")
+                            Text("Unstaked ERTH arrives in this wallet as private ERTH once the unbonding period ends. Nothing more to do or pay.")
                                 .font(EarthType.bodySmall)
                                 .foregroundStyle(theme.colors.textTertiary)
                         } else {
@@ -156,8 +156,9 @@ struct StakeSheet: View {
             ]
         ), onSuccess: { await model.refresh() }) { w in
             if taking {
-                // A stake proof spends two notes: merge first if needed.
-                _ = try await w.consolidateStake(denom: PrivacyWallet.derthDenom(validator), amount: amount)
+                // A stake proof spends two notes: spread over more, it is
+                // refused with "merge first" (a merge is the user's own tx,
+                // on the Notes screen).
                 return try await w.undelegate(validator: validator, amount: amount)
             }
             return try await w.delegate(validator: validator, amount: amount)

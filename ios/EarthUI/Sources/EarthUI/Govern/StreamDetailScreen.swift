@@ -394,6 +394,21 @@ struct ProposalDetailScreen: View {
     /// This wallet's stake-vote weight on the proposal, at the snapshot's
     /// rates. Nil until read (or when the proposal is not open).
     @State private var weight: PrivacyWallet.StakeWeight?
+    /// A stake vote waiting on the user's choice for a validator with more
+    /// notes than one vote holds (vote in parts, or merge first).
+    @State private var partsChoice: StakeVoting?
+    /// Why the stake votes could not be laid out, if they could not.
+    @State private var voteError: String?
+
+    /// The stake votes still to confirm (one sheet each), and the validators
+    /// the user chose to vote in parts.
+    struct StakeVoting {
+        let vote: Gov.Vote
+        var items: [PrivacyWallet.StakeVoteItem]
+        var inParts: Set<String> = []
+        /// The validator whose choice is asked, if any.
+        var asking: String?
+    }
 
     var body: some View {
         ScrollView {
@@ -455,6 +470,20 @@ struct ProposalDetailScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .background(theme.colors.bgPrimary)
         .scrollContentBackground(.hidden)
+        .confirmationDialog(
+            partsChoice?.asking.map { v in
+                let n = partsChoice?.items.compactMap { if case let .validator(x, c) = $0, x == v { return c }; return nil }.first ?? 0
+                return "\(n) stake notes at \(name(v))"
+            } ?? "",
+            isPresented: Binding(get: { partsChoice != nil }, set: { if !$0 { partsChoice = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Vote in parts") { voteInParts() }
+            Button("Merge notes") { mergeFirst() }
+            Button("Cancel", role: .cancel) { partsChoice = nil }
+        } message: {
+            Text(partsChoiceText)
+        }
         .task {
             async let tally = model.client.assemblyTally(proposalID: proposal.id)
             await loadWeight()
@@ -540,13 +569,15 @@ struct ProposalDetailScreen: View {
                 }
             } else {
                 if weight != nil { EarthDetailRow(label: "Your weight", value: weightText) }
-                Text("Every staked-ERTH note held before voting opened votes once, one transaction and fee each, and each of your positions votes too. A stake vote is final.")
+                Text("Your stake at each validator votes once, as one vote (up to four notes) you confirm yourself, and each of your positions votes too. Nothing is spent. A stake vote is final.")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
             }
 
-            if let p = model.stakeVoteProgress, p.proposalID == proposal.id {
-                stakeVoteStatus(p)
+            if let voteError {
+                Text(voteError)
+                    .font(EarthType.bodySmall)
+                    .foregroundStyle(theme.colors.textSecondary)
             }
 
             ForEach(Gov.Vote.allCases, id: \.rawValue) { option in
@@ -554,7 +585,7 @@ struct ProposalDetailScreen: View {
                     title: option.label,
                     role: option == .yes ? .primary : .secondary
                 ) { cast(option) }
-                .disabled(model.privateStakeTotal == 0 || weight?.uerth == 0 || model.stakeVoteProgress?.running == true)
+                .disabled(model.privateStakeTotal == 0 || weight?.uerth == 0)
             }
 
             // The human house. A separate vote on the same proposal, not a
@@ -611,55 +642,114 @@ struct ProposalDetailScreen: View {
         String(proposal.votingEndTime.prefix(10))
     }
 
-    /// A stake vote being cast (K5): how far it got, when the next cast is
-    /// due, and a way to stop it.
-    @ViewBuilder
-    private func stakeVoteStatus(_ p: StakeVoteController.Progress) -> some View {
-        EarthCard {
-            TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                Text(stakeVoteText(p, now: ctx.date))
-                    .font(EarthType.bodySmall)
-                    .foregroundStyle(theme.colors.textSecondary)
-            }
-            if p.running {
-                EarthButton(title: "Stop voting", role: .secondary) { model.stakeVotes?.cancel() }
-            }
-        }
+    /// The validator's name, for the sheets.
+    private func name(_ valoper: String) -> String {
+        model.validators.first { $0.operatorAddress == valoper }?.moniker ?? valoper
     }
 
-    private func stakeVoteText(_ p: StakeVoteController.Progress, now: Date) -> String {
-        if p.finished { return "Stake vote cast: \(p.done) of \(p.total)." }
-        if p.cancelled { return "Stake vote stopped after \(p.done) of \(p.total)." }
-        if let e = p.error { return "Stake vote stopped after \(p.done) of \(p.total): \(e)" }
-        if let next = p.nextAt {
-            let s = max(0, Int(next.timeIntervalSince(now)))
-            return "Casting your stake vote: \(p.done) of \(p.total) done, the next in about \(s)s. Votes are spaced out so they cannot be timed together; keep the app open."
-        }
-        return "Casting your stake vote: \(p.done) of \(p.total) done."
-    }
-
-    /// Stake votes without spending: every derth note in the tree and unspent
-    /// when voting opened proves so against that snapshot, untouched (its
-    /// weight rounded down to three significant figures), one note a vote;
-    /// each position votes by its owner tag. Final: a note votes once per
-    /// proposal, and on every open proposal. Cast through the one path (K5): the
-    /// first cast is this sheet's result, the rest follow in the background,
-    /// shuffled, a sync and a random 20-120 s apart, shown and stoppable.
+    /// Stake votes without spending (chain 48b631c): one vote per validator,
+    /// up to four of its notes with one weight (their sum rounded down to
+    /// three significant figures), and one per position. Each is its own
+    /// confirm sheet and tx, raised one after the other and sent only on its
+    /// own tap; nothing is cast in the background. A validator with more than
+    /// four notes is asked about first: vote in parts, or merge.
     private func cast(_ option: Gov.Vote) {
-        let id = proposal.id
-        let title = proposal.title
-        tx.requestPrivate(.private(
-            action: "Vote \(option.label) with stake (final)",
-            rows: [
-                ("Proposal", "#\(id) \(title)"),
-                ("Vote", option.label),
-                ("Weight", weightText),
+        voteError = nil
+        Task { @MainActor in
+            guard let w = model.privacy else { return }
+            do {
+                let items = try await w.stakeVoteItems(proposalID: proposal.id)
+                guard !items.isEmpty else {
+                    voteError = "No stake from before voting opened is left to vote on this proposal."
+                    return
+                }
+                start(StakeVoting(vote: option, items: items))
+            } catch {
+                voteError = model.describe(error)
+            }
+        }
+    }
+
+    /// Asks about the first validator that needs a choice, else raises the first sheet.
+    private func start(_ v: StakeVoting) {
+        var v = v
+        for item in v.items {
+            if case let .validator(valoper, _) = item, item.parts > 1, !v.inParts.contains(valoper) {
+                v.asking = valoper
+                partsChoice = v
+                return
+            }
+        }
+        let tx = self.tx, model = self.model, id = proposal.id, title = proposal.title
+        Self.next(v, proposalID: id, title: title, tx: tx, model: model, name: name)
+        onVoted()
+    }
+
+    /// Raises the sheet for `v`'s first vote; its success raises the next.
+    @MainActor
+    private static func next(_ v: StakeVoting, proposalID: UInt64, title: String, tx: TxController, model: AppModel, name: @escaping (String) -> String) {
+        guard let item = v.items.first, let w = model.privacy else { return }
+        var rest = v
+        rest.items = Array(v.items.dropFirst())
+        let left = rest.items.count
+        let opts = [WeightedVoteOption(option: v.vote.proto, weight: "1")]
+        Task { @MainActor in
+            let preview = try? await w.stakeVotePreview(proposalID: proposalID, item: item)
+            let whereText: String
+            switch item {
+            case let .validator(valoper, _): whereText = "at \(name(valoper))"
+            case let .position(id, _): whereText = "with position #\(id)"
+            }
+            var rows: [(String, String)] = [
+                ("Proposal", "#\(proposalID) \(title)"),
+                ("Vote", v.vote.label),
+                ("Weight", preview.map { p in
+                    "\(Figures.balance(BigInt(p.uerth))) ERTH" + (p.notes > 0 ? " (" + Figures.count(p.notes, "note") + ")" : "")
+                } ?? "Private stake from before voting opened"),
             ]
-        ), onSuccess: { await model.refresh(); await loadWeight() }) { _ in
-            let opts = [WeightedVoteOption(option: option.proto, weight: "1")]
-            guard let votes = await model.stakeVotes else { throw PrivacyError("The wallet is locked.") }
-            let hash = try await votes.startAndAwaitFirst(proposalID: id, options: opts)
-            return TxResult(hash: hash, height: 0, time: 0, events: [])
+            if left > 0 { rows.append(("Then", "\(Figures.count(left, "more vote")) after this one, each confirmed on its own")) }
+            tx.requestPrivate(.private(action: "Vote \(v.vote.label) with stake \(whereText) (final)", rows: rows), onSuccess: {
+                await model.refresh()
+                if !rest.items.isEmpty { next(rest, proposalID: proposalID, title: title, tx: tx, model: model, name: name) }
+            }) { w in
+                // The last vote's fee change lands as a note: sync before the next.
+                try await w.sync()
+                guard let r = try await w.castStakeVote(proposalID: proposalID, item: item, options: opts) else {
+                    throw PrivacyError("Nothing of this stake is left to vote on this proposal.")
+                }
+                return r
+            }
+        }
+    }
+
+    /// The choice for a validator with more notes than one vote holds.
+    private var partsChoiceText: String {
+        guard let v = partsChoice, let valoper = v.asking,
+              let item = v.items.first(where: { if case let .validator(x, _) = $0 { return x == valoper }; return false }) else { return "" }
+        return "One vote holds up to \(MsgStakeVote.maxVoteNotes) notes.\n\n"
+            + "Vote in parts: \(item.parts) votes, a fee each. Each part shows its own weight, and the parts can be linked to each other.\n\n"
+            + "Merge notes: one fee merges two notes, so later proposals take this stake in fewer votes. "
+            + "This proposal's voting opened before the merge, so it still counts these notes as they were: vote here afterwards, in parts."
+    }
+
+    private func voteInParts() {
+        guard var v = partsChoice, let valoper = v.asking else { return }
+        partsChoice = nil
+        v.items = v.items.flatMap { item -> [PrivacyWallet.StakeVoteItem] in
+            if case let .validator(x, _) = item, x == valoper { return Array(repeating: item, count: item.parts) }
+            return [item]
+        }
+        v.inParts.insert(valoper)
+        v.asking = nil
+        start(v)
+    }
+
+    private func mergeFirst() {
+        guard let valoper = partsChoice?.asking else { return }
+        partsChoice = nil
+        tx.requestPrivate(.private(action: "Merge two stake notes", rows: [("Validator", name(valoper))]),
+                          onSuccess: { await model.refresh() }) { w in
+            try await w.mergeStake(denom: PrivacyWallet.derthDenom(valoper))
         }
         onVoted()
     }

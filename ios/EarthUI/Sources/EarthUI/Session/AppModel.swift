@@ -46,7 +46,7 @@ public final class AppModel {
     /// Built from the selected wallet's mnemonic when it is unlocked or
     /// switched to, and dropped on lock. Nil while locked.
     public private(set) var privacy: PrivacyWallet?
-    /// Shielded balances by denom (uerth, uanml, derth/<valoper>, unbond/<valoper>/<epoch>), spendable notes only.
+    /// Shielded balances by denom (uerth, uanml, derth/<valoper>, ...), spendable notes only.
     public private(set) var shielded: [String: UInt64] = [:]
     public private(set) var shieldedAddress: String = ""
     public private(set) var identityStatus: WalletSync.IdentityStatus = .none
@@ -93,10 +93,8 @@ public final class AppModel {
     public private(set) var outgoingMoves: [PendingMove] = []
     public private(set) var incomingMoves: [PendingMove] = []
     public private(set) var switchTarget = ""
-    private var automation: Task<Void, Never>?
-    /// The stake vote being cast (K5): one cast at a time, spaced out, in the background.
-    public private(set) var stakeVoteProgress: StakeVoteController.Progress?
-    private(set) var stakeVotes: StakeVoteController?
+    /// Undelegations waiting for their payout, from this wallet's own record (nothing asked of the chain).
+    public private(set) var pendingUnbonds: [PendingUnbond] = []
 
     public struct OwnedPosition: Identifiable, Sendable {
         public let position: PrivacyReads.Position
@@ -723,20 +721,13 @@ public final class AppModel {
         })
     }
 
-    /// Unbonding claims (unbond/<valoper>/<epoch> notes), paid out by the
-    /// automation once their epoch matures (the one automatic tx: it
-    /// completes an undelegation the user started).
-    public var privateUnbonding: [String: UInt64] {
-        shielded.filter { $0.key.hasPrefix("unbond/") }
-    }
-
     // MARK: - privacy
 
-    /// Builds the selected wallet's private side from its mnemonic and starts
-    /// the one automation (claiming matured unbonding claims, the end of an
-    /// undelegation the user started), which runs only while unlocked: it
-    /// needs the keys. Nothing else spends a fee unasked: the ANML claim, the
-    /// caretaker vote and the handle are reminders (`reminders`).
+    /// Builds the selected wallet's private side from its mnemonic. Nothing
+    /// here sends anything: every tx the app makes is one the user confirmed
+    /// on a sheet. Undelegations pay out by themselves (the chain mints the
+    /// payout); the ANML claim, the caretaker vote and the handle are
+    /// reminders (`reminders`).
 
     private func openPrivacy() {
         guard privacy == nil, wallets.indices.contains(selected) || !wallets.isEmpty else { return }
@@ -746,40 +737,14 @@ public final class AppModel {
             privacy = w
             shieldedAddress = w.address.encode()
             publishPrivacy()
-            // One controller per wallet (audit 6, M8): a resumed run waits for the cast the lock suspended.
-            let votes = PrivacySession.stakeVotes(for: w) {
-                StakeVoteController(wallet: { w }, onProgress: { [weak self] p in
-                    Task { @MainActor in
-                        self?.stakeVoteProgress = p
-                        if p?.running == false { await self?.syncPrivacy() }
-                    }
-                })
-            }
-            stakeVotes = votes
-            // A stake vote the app lost (killed in the background) goes on.
-            Task { await votes.resume() }
-            let queries = PrivacyQueries(rest: client.rest)
-            automation = Task.detached(priority: .utility) { [weak self] in
-                while !Task.isCancelled {
-                    try? await Task.sleep(for: .seconds(20))
-                    if Task.isCancelled { break }
-                    try? await PrivacyAutomation.runOnce(wallet: w, queries: queries)
-                    await self?.publishPrivacy()
-                    try? await Task.sleep(for: PrivacyAutomation.interval)
-                }
-            }
         } catch {
             privacySyncError = describe(error)
         }
     }
 
     private func closePrivacy() {
-        automation?.cancel()
-        automation = nil
-        stakeVotes?.suspend()
-        stakeVotes = nil
-        stakeVoteProgress = nil
         privacy = nil
+        pendingUnbonds = []
         shielded = [:]
         shieldedAddress = ""
         identityStatus = .none
@@ -799,6 +764,7 @@ public final class AppModel {
         guard let w = privacy else { return }
         let snap = w.snapshot
         shielded = snap.balances
+        pendingUnbonds = snap.pendingUnbonds
         identityStatus = snap.identityStatus
         claimOpensAt = w.claimOpensAt()
         mergeable = snap.mergeable.merging(snap.stakeMergeable) { a, _ in a }

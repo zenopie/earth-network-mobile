@@ -433,7 +433,7 @@ struct HomePanel: View {
     private var portfolio: some View {
         let others = model.holdings.filter { $0.token != .erth && $0.token != .anml && $0.amount > 0 }
         let hasPosition = model.totalStaked > 0 || model.rewards > 0 || model.unbondingTotal > 0 ||
-            model.privateStakeTotal > 0 || !model.privateUnbonding.isEmpty
+            model.privateStakeTotal > 0 || !model.pendingUnbonds.isEmpty
 
         if others.isEmpty, !hasPosition {
             Text("Nothing else yet. Staked ERTH, rewards, and any token other than ERTH and ANML appear here — including your share of a pool you provide liquidity to.")
@@ -459,9 +459,14 @@ struct HomePanel: View {
                             "square.stack.3d.up.fill",
                             Figures.balance(BigInt(model.derthValue(p.position.derth, validator: p.position.validator))) + " ERTH")
             }
-            ForEach(model.privateUnbonding.sorted(by: { $0.key < $1.key }), id: \.key) { denom, amount in
-                positionRow("Unbonding (private)", "Claimed automatically once matured", "clock.arrow.circlepath",
-                            Figures.balance(BigInt(amount)) + " ERTH")
+            // An undelegation waiting for its payout, from this wallet's own
+            // record until the chain mints the payout to it.
+            ForEach(model.pendingUnbonds, id: \.txHash) { u in
+                positionRow("Unstaking (private)",
+                            u.dueBy.map { "Arrives by about " + Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .abbreviated, time: .shortened) }
+                                ?? "Arrives once the unbonding period ends",
+                            "clock.arrow.circlepath",
+                            Figures.balance(BigInt(u.value ?? model.derthValue(u.derth, validator: u.validator))) + " ERTH")
             }
             if model.rewards > 0 {
                 positionRow("Rewards", "Claimable", "sparkles",

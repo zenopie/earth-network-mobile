@@ -140,8 +140,7 @@ struct PositionsView: View {
                 ("Validator", moniker(draft.validator)),
             ] + split.sorted { $0.key < $1.key }.map { (optionName($0.key), "\($0.value)%") }
         ), host: .allocation, onSuccess: { await done() }) { w in
-            // A stake proof spends two notes: merge first if needed.
-            _ = try await w.consolidateStake(denom: PrivacyWallet.derthDenom(draft.validator), amount: draft.amount)
+            // A stake proof spends two notes: spread over more, it is refused with "merge first".
             return try await w.lockPosition(validator: draft.validator, amount: draft.amount, splits: split)
         }
     }

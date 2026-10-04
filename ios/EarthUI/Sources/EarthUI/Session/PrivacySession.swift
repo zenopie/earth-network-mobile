@@ -43,7 +43,7 @@ enum PrivacySession {
     /// Deletes every wallet's private data (notes, identity, records, trees):
     /// forgetting the wallets forgets what they held privately too (audit 3).
     static func forgetAll() throws {
-        lock.lock(); wallets = [:]; controllers = [:]; lock.unlock()
+        lock.lock(); wallets = [:]; lock.unlock()
         try PrivacyStore.delete(root: try dataRoot())
     }
 
@@ -53,20 +53,7 @@ enum PrivacySession {
     /// store a resumed run reads, and the wallet's lock orders them. Dropped
     /// only when the private data is forgotten.
     nonisolated(unsafe) private static var wallets: [String: PrivacyWallet] = [:]
-    /// The stake-vote controller of each wallet (by store id), so a resumed
-    /// run waits for the task the lock suspended (audit 6, M8).
-    nonisolated(unsafe) private static var controllers: [String: StakeVoteController] = [:]
     private static let lock = NSLock()
-
-    /// `w`'s one stake-vote controller, made by `make` the first time.
-    static func stakeVotes(for w: PrivacyWallet, make: () -> StakeVoteController) -> StakeVoteController {
-        let id = storeID(w.keys)
-        lock.lock(); defer { lock.unlock() }
-        if let c = controllers[id] { return c }
-        let c = make()
-        controllers[id] = c
-        return c
-    }
 
     /// The app's one handle directory (see HandleDirectory): the privacy
     /// backend's whole-directory stream first, the chain's own pages to fall

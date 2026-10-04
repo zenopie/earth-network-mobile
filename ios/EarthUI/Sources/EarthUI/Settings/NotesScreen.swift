@@ -99,7 +99,6 @@ struct NotesScreen: View {
         if denom == "uerth" { return "ERTH" }
         if denom == "uanml" { return "ANML" }
         if denom.hasPrefix("derth/") { return "Staked ERTH · " + String(denom.dropFirst(6).prefix(20)) + "…" }
-        if denom.hasPrefix("unbond/") { return "Unbonding · epoch " + (denom.split(separator: "/").last.map(String.init) ?? "") }
         if denom.hasPrefix("dexlp/") { return "LP shares · pool " + String(denom.dropFirst(6)) }
         return denom
     }

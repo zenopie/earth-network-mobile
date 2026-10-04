@@ -101,16 +101,18 @@ struct EarnScreen: View {
                     }
                 }
 
-                if !model.privateUnbonding.isEmpty {
+                if !model.pendingUnbonds.isEmpty {
+                    // Paid out by the chain itself once the unbonding period
+                    // ends: nothing to claim. From this wallet's own record.
                     Spacer().frame(height: theme.space.x24)
-                    EarthLabel("Unbonding (private)")
-                    ForEach(model.privateUnbonding.sorted { $0.key < $1.key }, id: \.key) { denom, amount in
-                        let parsed = try? PrivacyWallet.parseUnbond(denom)
+                    EarthLabel("Unstaking (private)")
+                    ForEach(model.pendingUnbonds, id: \.txHash) { u in
                         EarthListRow(
-                            initial: String(moniker(parsed?.validator ?? "").prefix(1)).uppercased(),
-                            name: moniker(parsed?.validator ?? denom),
-                            subtitle: "Epoch \(parsed?.epoch ?? 0) · claimed automatically when mature",
-                            value: Figures.balance(BigInt(amount)),
+                            initial: String(moniker(u.validator).prefix(1)).uppercased(),
+                            name: moniker(u.validator),
+                            subtitle: u.dueBy.map { "Arrives by about " + Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .abbreviated, time: .shortened) }
+                                ?? "Arrives once the unbonding period ends",
+                            value: Figures.balance(BigInt(u.value ?? model.derthValue(u.derth, validator: u.validator))),
                             badgeBackground: theme.colors.bgSecondary,
                             badgeForeground: theme.colors.textTertiary
                         )
