@@ -23,7 +23,7 @@ public struct NoteOut: Sendable {
     }
 
     /// A note the chain will mint to us (a reward, a claim, a shield, an
-    /// unbonding payout, swap output, LP shares, refunds or withdrawal legs):
+    /// undelegation's payout, swap output, LP shares, refunds or withdrawal legs):
     /// fresh rho and rcm and a value-blind (v2) ciphertext of them to our own
     /// address, which sync opens against the amount the chain publishes with
     /// the note. No counter: every such note is found by trial decryption alone.
@@ -279,7 +279,8 @@ public enum NoteSelection {
 public enum StakeSelection {
     /// Notes covering `amount`: the smallest single one that does, else the
     /// pair with the smallest sufficient sum. A balance spread over more than
-    /// two notes is merged first (PrivacyWallet.mergeStake).
+    /// two notes is refused: the user merges first (PrivacyWallet.mergeStake,
+    /// its own tx), never the wallet on its own.
     public static func cover(_ notes: [OwnedStakeNote], amount: UInt64) throws -> [OwnedStakeNote] {
         try require(amount > 0, "the amount must be positive")
         let c = notes.filter(\.spendable).sorted { $0.amount != $1.amount ? $0.amount < $1.amount : $0.position < $1.position }
@@ -294,7 +295,7 @@ public enum StakeSelection {
         }
         if let best { return best }
         let total = c.reduce(UInt64(0)) { PrivateMsgs.saturatingAdd($0, $1.amount) }
-        throw NoteSelection.Insufficient(message: total >= amount ? "this stake is spread over more than two notes; merge them first"
+        throw NoteSelection.Insufficient(message: total >= amount ? "this stake is spread over more than two notes; merge them on the Notes screen first (one fee each), then try again"
             : "insufficient stake")
     }
 }

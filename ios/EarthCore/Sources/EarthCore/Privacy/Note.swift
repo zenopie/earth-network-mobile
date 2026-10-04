@@ -83,7 +83,7 @@ public struct OwnedNote: Hashable, Sendable, Codable {
 }
 
 /// A stake note the wallet owns (x/shieldedstaking's stake tree): delegated
-/// stake (derth/<valoper>) or an unbonding claim (unbond/<valoper>/<epoch>).
+/// stake (derth/<valoper>).
 /// Owner-locked: it can be merged, split, undelegated, voted or locked by its
 /// owner, never sent.
 ///

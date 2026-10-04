@@ -135,24 +135,30 @@ public struct RegRecord: Codable, Equatable, Sendable {
 /// afresh (K13).
 public enum RecordStatus: String, Codable, Sendable { case open, matched, exhausted }
 
-/// A stake vote being cast (K5), persisted so a run the process lost resumes
-/// on the next unlock: the options as (VoteOption number, weight), the
-/// positions already voted, casts done of `total`.
-public struct StakeVoteRun: Codable, Equatable, Sendable {
-    public struct Option: Codable, Equatable, Sendable {
-        public let option: Int
-        public let weight: String
-        public init(option: Int, weight: String) { self.option = option; self.weight = weight }
-    }
+/// An undelegation of this wallet whose payout has not arrived (chain
+/// 48b631c, ORCHARD_DESIGN 18.1): recorded when the node takes the tx
+/// (`until` its timeout_height), confirmed with the committed event's
+/// `epoch`, `value` (uerth) and `payoutID`, dropped once a note to `pc` is
+/// synced (paid) or the tx failed. Local only: what the wallet shows while
+/// it waits, never a query key.
+public struct PendingUnbond: Codable, Equatable, Sendable {
+    public let txHash: String
+    public let validator: String
+    public let derth: UInt64
+    public let pc: Fr
+    public let startedAt: Int64
+    public let until: UInt64?
+    public var confirmed: Bool = false
+    public var epoch: UInt64?
+    public var value: UInt64?
+    public var payoutID: UInt64?
+    /// About when the chain pays it (PrivacyWallet.unbondDueBy at confirmation; nil: unknown).
+    public var dueBy: Int64?
 
-    public let proposalID: UInt64
-    public let options: [Option]
-    public var votedPositions: Set<UInt64>
-    public var total: Int
-    public var done: Int = 0
-
-    public init(proposalID: UInt64, options: [Option], votedPositions: Set<UInt64>, total: Int, done: Int = 0) {
-        self.proposalID = proposalID; self.options = options; self.votedPositions = votedPositions; self.total = total; self.done = done
+    public init(txHash: String, validator: String, derth: UInt64, pc: Fr, startedAt: Int64, until: UInt64?, confirmed: Bool = false,
+                epoch: UInt64? = nil, value: UInt64? = nil, payoutID: UInt64? = nil, dueBy: Int64? = nil) {
+        self.txHash = txHash; self.validator = validator; self.derth = derth; self.pc = pc; self.startedAt = startedAt; self.until = until
+        self.confirmed = confirmed; self.epoch = epoch; self.value = value; self.payoutID = payoutID; self.dueBy = dueBy
     }
 }
 
@@ -204,7 +210,7 @@ public struct PendingMove: Codable, Equatable, Sendable {
 }
 
 /// What the wallet keeps between syncs: cursors into each indexer stream, its
-/// own notes, its registration, and the automations' bookkeeping. Small; the
+/// own notes, its registration, and its own txs' bookkeeping. Small; the
 /// trees live beside it in per-level files. Ports PrivacyState in
 /// `privacy/sync/PrivacyStore.kt`.
 public struct PrivacyState: Codable, Sendable {
@@ -268,14 +274,12 @@ public struct PrivacyState: Codable, Sendable {
     public var pendingMoves: [PendingMove] = []
     /// The store id of the wallet a switch moves to, fixed by its first move (audit 5, L8).
     public var switchTarget: String = ""
-    /// Unbond denoms whose claim the chain refused as not yet matured, to when the automation next tries.
-    public var unbondRetryAt: [String: Int64] = [:]
+    /// Undelegations whose payout has not arrived yet.
+    public var pendingUnbonds: [PendingUnbond] = []
     /// Next unused Groundworks owner-tag counter (PrivacyKeys.otagSalt).
     public var nextOtagCounter: UInt32 = 0
     /// The highest owner-tag counter of a position this wallet closed, from its unlock memos (nil: none; K11).
     public var closedOtagMax: UInt32?
-    /// A stake vote being cast (K5), or nil.
-    public var stakeVoteRun: StakeVoteRun?
     /// Every stake vote cast: (proposal, vote nullifier).
     public var stakeVotes: [StakeVoteRecord] = []
     /// The stake tree's stream cursors and this wallet's stake notes.
@@ -294,7 +298,7 @@ public struct PrivacyState: Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case chainID, genesis, notesNext, notesHeight, nullifiersNext, identityNext, zeroedNext, notes, identity, pendingRegistration,
              regRecords, rootsVerified, rootsError, claimedDays, caretakerCastAt, caretakerSplit, caretakerExpiresAt, caretakerMovedOut, handle, handleMovedOut,
-             unbondRetryAt, nextOtagCounter, stakeNext, stakeHeight, stakeNullifiersNext, stakeNotes, denoms, closedOtagMax, stakeVoteRun,
+             pendingUnbonds, nextOtagCounter, stakeNext, stakeHeight, stakeNullifiersNext, stakeNotes, denoms, closedOtagMax,
              syncGeneration, verifiedGeneration, verifiedHeight, stakeVotes, identityHeights, identityRowsSeen,
              handleSetAt, caretakerSplitUnknown, handleRecordPos, caretakerRecordPos, voidRecordHeights, pendingMoves, switchTarget,
              handleExpiresAt, handleExpiresFor
@@ -314,11 +318,10 @@ public struct PrivacyState: Codable, Sendable {
         identity = try c.decodeIfPresent(IdentityRecord.self, forKey: .identity)
         claimedDays = try v(.claimedDays, []); caretakerCastAt = try v(.caretakerCastAt, 0); caretakerSplit = try v(.caretakerSplit, [:])
         caretakerExpiresAt = try v(.caretakerExpiresAt, 0); caretakerMovedOut = try v(.caretakerMovedOut, false)
-        handle = try v(.handle, ""); handleMovedOut = try v(.handleMovedOut, false); unbondRetryAt = try v(.unbondRetryAt, [:])
+        handle = try v(.handle, ""); handleMovedOut = try v(.handleMovedOut, false); pendingUnbonds = try v(.pendingUnbonds, [])
         nextOtagCounter = try v(.nextOtagCounter, 0); stakeNext = try v(.stakeNext, 0); stakeHeight = try v(.stakeHeight, 0)
         stakeNullifiersNext = try v(.stakeNullifiersNext, 0); stakeNotes = try v(.stakeNotes, []); denoms = try v(.denoms, [])
         closedOtagMax = try c.decodeIfPresent(UInt32.self, forKey: .closedOtagMax)
-        stakeVoteRun = try c.decodeIfPresent(StakeVoteRun.self, forKey: .stakeVoteRun)
         stakeVotes = try v(.stakeVotes, [])
         syncGeneration = try v(.syncGeneration, 0)
         verifiedGeneration = try c.decodeIfPresent(UInt64.self, forKey: .verifiedGeneration)
@@ -488,7 +491,7 @@ public final class PrivacyStore {
         s.nextOtagCounter = old.nextOtagCounter
         s.closedOtagMax = old.closedOtagMax
         if old.chainID == chainID && old.genesis == genesis {
-            s.stakeVoteRun = old.stakeVoteRun
+            s.pendingUnbonds = old.pendingUnbonds
             s.identity = old.identity?.verified == true ? old.identity : nil
             s.pendingRegistration = old.pendingRegistration
             s.stakeVotes = old.stakeVotes

@@ -7,8 +7,8 @@ import Foundation
 /// pc the chain may mint to (`mint`) and the owner tag's salt. Everything the
 /// sighash binds (the StakeFields) is final once built.
 ///
-/// `denom` is the msg's stake denom (derth/<valoper> or
-/// unbond/<valoper>/<epoch>), nil for a position's update, unlock or vote,
+/// `denom` is the msg's stake denom (derth/<valoper>), nil for a
+/// position's update, unlock or vote,
 /// whose public asset is 0.
 public struct StakePlan: Sendable {
     /// A created stake note: its amount, secrets and ciphertext (to ourselves).

@@ -13,6 +13,14 @@ public protocol PrivacyChainReads: Sendable {
     func positions() async throws -> [PrivacyReads.Position]
     /// x/shieldedstaking Query/StakeNullifierTree{start, limit} (at most 1000 a page).
     func stakeNullifierTree(start: UInt64, limit: Int) async throws -> PrivacyReads.NfTreePage
+    /// About when an undelegation booked in `epoch` is paid, from chain-wide
+    /// timing alone (the current epoch, epoch length, x/staking's unbonding
+    /// time): never a query about this wallet's undelegation. Nil: unknown.
+    func unbondDueBy(epoch: UInt64) async -> Int64?
+}
+
+public extension PrivacyChainReads {
+    func unbondDueBy(epoch: UInt64) async -> Int64? { nil }
 }
 
 public enum PrivacyReads {
@@ -257,6 +265,12 @@ public struct PrivacyQueries: PrivacyChainReads {
 
     public func epochNumber() async throws -> UInt64 { try await epoch().number }
 
+    public func unbondDueBy(epoch e: UInt64) async -> Int64? {
+        guard let cur = try? await epoch(), let t = try? await stakingTiming() else { return nil }
+        return PrivacyWallet.unbondDueBy(epoch: e, current: cur.number, currentStart: cur.startTime, currentEnd: cur.endTime,
+                                         epochSeconds: t.epochSeconds, unbondingSeconds: t.unbondingSeconds)
+    }
+
     public func validator(_ valoper: String) async throws -> PrivacyReads.ValidatorBook {
         let j = try await rest.get("/earth/shieldedstaking/v1/validators/\(valoper)")
         return PrivacyReads.ValidatorBook(validator: valoper, rate: Decimal(string: j.rate.string(default: "1")) ?? 1, supply: j.supply.uint64(default: 0))
@@ -285,8 +299,8 @@ public struct PrivacyQueries: PrivacyChainReads {
     }
 
     /// Chain-wide timing, the same answer for everyone: with the epoch it says
-    /// when every epoch's unbond notes mature, so the wallet never has to ask
-    /// the node about the (validator, epoch) records it holds.
+    /// about when an undelegation is paid, so the wallet never has to ask the
+    /// node about its own undelegation.
     public func stakingTiming() async throws -> PrivacyReads.StakingTiming {
         let es = try await rest.get("/earth/shieldedstaking/v1/params").params.epoch_seconds.int64(default: 0)
         let ub = try await rest.get("/cosmos/staking/v1beta1/params").params.unbonding_time.string(default: "1814400s")
