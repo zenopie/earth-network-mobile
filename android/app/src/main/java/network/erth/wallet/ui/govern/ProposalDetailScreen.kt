@@ -59,8 +59,6 @@ fun ProposalDetailScreen(
     /** Stake votes are private and final: each staked note votes once. */
     stakeVoteFinal: Boolean = false,
     /** A stake vote being cast on this proposal (K5): casts done, the next one's time. */
-    stakeVoteProgress: network.erth.wallet.privacy.StakeVoteController.Progress? = null,
-    onCancelStakeVote: () -> Unit = {},
     /**
      * The human house's tally, or null when this chain has no assembly — which
      * is every node older than v0.9.0. Null hides the section rather than
@@ -309,31 +307,6 @@ fun ProposalDetailScreen(
                 )
                 Spacer(Modifier.height(dimens.space8))
             }
-            stakeVoteProgress?.let { p ->
-                val wait = p.nextAt?.let { ((it - System.currentTimeMillis()) / 1000).coerceAtLeast(0) }
-                Text(
-                    text = when {
-                        p.finished -> "Stake vote cast: ${p.done} of ${p.total}."
-                        p.cancelled -> "Stake vote stopped after ${p.done} of ${p.total}."
-                        p.error != null -> "Stake vote stopped after ${p.done} of ${p.total}: ${p.error}"
-                        wait != null -> "Casting your stake vote: ${p.done} of ${p.total} done, the next in about ${wait}s. " +
-                            "Votes are spaced out so they cannot be timed together; keep the app open."
-                        else -> "Casting your stake vote: ${p.done} of ${p.total} done."
-                    },
-                    style = EarthTypography.textSm,
-                    color = EarthColors.Text.textSecondary,
-                )
-                if (p.running) {
-                    Spacer(Modifier.height(dimens.space8))
-                    EarthButton(
-                        text = "Stop voting",
-                        onClick = onCancelStakeVote,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = EarthButtonDefaults.secondaryColors(),
-                    )
-                }
-                Spacer(Modifier.height(dimens.space8))
-            }
             if (eligibility != null) {
                 Text(
                     text = eligibility,
@@ -382,9 +355,10 @@ fun ProposalDetailScreen(
                 Spacer(Modifier.height(dimens.space8))
                 Text(
                     text = if (stakeVoteFinal) {
-                        "Your vote is private and final. Each staked note held when voting " +
-                            "opened votes once, with its full weight, and comes straight back to " +
-                            "you; it cannot be changed afterwards. Stake added since does not count."
+                        "Your vote is private and final. Your stake at each validator votes " +
+                            "once, as one vote (up to four notes) you confirm yourself; nothing is " +
+                            "spent and it cannot be changed afterwards. Stake added since voting " +
+                            "opened does not count."
                     } else {
                         "Voting again replaces your previous vote."
                     },

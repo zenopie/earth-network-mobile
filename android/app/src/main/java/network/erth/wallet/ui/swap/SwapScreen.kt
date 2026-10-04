@@ -125,7 +125,7 @@ fun SwapScreen(
      * Selling ERTH, the fee comes out of the same ERTH notes, so the fee's
      * worth stays behind. Selling ANML for ERTH, the whole ANML balance is
      * available, but the fee is paid from an ERTH note (the chain's one fee
-     * rule: only an unbonding claim pays from its output).
+     * rule: the fee is the bundle's ERTH balance).
      */
     val spendable = when {
         fromUnits == null -> null

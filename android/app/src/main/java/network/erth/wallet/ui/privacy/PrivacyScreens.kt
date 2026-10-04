@@ -257,6 +257,5 @@ private fun String.label(): String = when {
     this == "uerth" -> "ERTH"
     this == "uanml" -> "ANML"
     startsWith("derth/") -> "Staked ERTH · ${removePrefix("derth/").take(20)}…"
-    startsWith("unbond/") -> "Unbonding · ${split("/").getOrNull(2)?.let { "epoch $it" }.orEmpty()}"
     else -> this
 }

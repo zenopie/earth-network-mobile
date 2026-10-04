@@ -23,8 +23,10 @@ data class WalletUiState(
     val anmlClaimableAt: Long? = null,
     /** Shielded ERTH: what private fees are paid from. */
     val shieldedErthUerth: Long = 0,
-    /** Shielded holdings per denom (uerth, uanml, derth/<valoper>, unbond/...). */
+    /** Shielded holdings per denom (uerth, uanml, derth/<valoper>, ...). */
     val shielded: Map<String, Long> = emptyMap(),
+    /** Undelegations waiting for their payout, from this wallet's own record (nothing asked of the chain). */
+    val unstaking: List<network.erth.wallet.privacy.sync.PendingUnbond> = emptyList(),
     /** This wallet's shielded address (erthz1...), for receiving. */
     val shieldedAddress: String = "",
     /** Why the last privacy sync failed, if it did. */

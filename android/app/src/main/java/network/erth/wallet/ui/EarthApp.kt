@@ -35,7 +35,6 @@ import kotlinx.coroutines.withContext
 import network.erth.wallet.Constants
 import network.erth.wallet.R
 import network.erth.wallet.chain.Bank
-import network.erth.wallet.privacy.PrivacyAutomation
 import network.erth.wallet.privacy.PrivacySession
 import network.erth.wallet.ui.privacy.PrivacyActionsViewModel
 import network.erth.wallet.privacy.tx.PrivateMsgs
@@ -98,7 +97,6 @@ fun EarthApp(
     val explore: ExploreViewModel = viewModel()
     val privacy: PrivacyActionsViewModel = viewModel()
     val tx: TxController = viewModel()
-    val stakeVotes: network.erth.wallet.ui.govern.StakeVoteViewModel = viewModel()
 
     val state by wallet.state.collectAsStateWithLifecycle()
     val activity by wallet.activity.collectAsStateWithLifecycle()
@@ -111,15 +109,13 @@ fun EarthApp(
     val draftMnemonic by wallets.draftMnemonic.collectAsStateWithLifecycle()
     val walletsError by wallets.error.collectAsStateWithLifecycle()
 
-    // The one private automation (claiming matured unbonding claims, the end
-    // of an undelegation the user started) needs the keys, so it lives
-    // exactly as long as this unlocked shell does, and restarts on a wallet
-    // switch. Nothing else spends a fee unasked: the ANML claim, the caretaker
-    // vote and the handle are reminders (Reminders), acted on by the user.
+    // A wallet switch drops the previous wallet's private session. Nothing
+    // here sends anything: every tx the app makes is one the user confirmed
+    // on a sheet. Undelegations pay out by themselves (the chain mints the
+    // payout); the ANML claim, the caretaker vote and the handle are
+    // reminders (Reminders), acted on by the user.
     LaunchedEffect(walletEpoch) {
         PrivacySession.clear()
-        stakeVotes.resume()
-        withContext(Dispatchers.IO) { PrivacyAutomation.loop(context.applicationContext) }
     }
 
     // Each tab loads when it is first shown rather than all at once on start.

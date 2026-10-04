@@ -184,6 +184,11 @@ class TxController : ViewModel() {
         gasError = "Free gas is granted once, with your registration. Fees are paid from your shielded ERTH."
     }
 
+    /** Reports a failure that happened before any sheet (a read the action needed): nothing was sent. */
+    fun showFailure(action: String, e: Throwable) {
+        outcome = TxOutcome.Failure(action, e)
+    }
+
     fun cancel() {
         pending = null
         build = null

@@ -135,6 +135,7 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
                         anmlClaimableAt = privacy?.let { runCatching { it.claimOpensAt() }.getOrNull() },
                         shieldedErthUerth = shielded["uerth"] ?: 0L,
                         shielded = shielded,
+                        unstaking = privacy?.pendingUnbonds.orEmpty(),
                         shieldedAddress = privacy?.address?.encode().orEmpty(),
                         privacySyncError = syncError,
                         unshieldableErthUerth = privacy?.let {

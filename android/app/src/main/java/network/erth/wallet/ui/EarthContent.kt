@@ -1,6 +1,7 @@
 package network.erth.wallet.ui
 
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -152,8 +153,11 @@ internal fun EarthContent(
 
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
-    val stakeVotes: network.erth.wallet.ui.govern.StakeVoteViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
-    val stakeVoteProgress by stakeVotes.progress.collectAsStateWithLifecycle()
+    // A stake vote in the making: the votes still to confirm, one sheet each
+    // (one per validator, one per position), each sent only on its own tap.
+    var stakeVoting by remember { mutableStateOf<StakeVoting?>(null) }
+    // A validator with more notes than one vote holds: the user picks how.
+    var partsChoice by remember { mutableStateOf<StakeVoting?>(null) }
     // This identity's handle, caretaker vote and what is due (reminders only).
     val personal by privacy.personal.collectAsStateWithLifecycle()
     val now = System.currentTimeMillis() / 1000
@@ -214,23 +218,27 @@ internal fun EarthContent(
                     is Reminders.Reminder.HandleExpiring, is Reminders.Reminder.HandlePaysElsewhere -> { { nav.push(EarthRoute.Handle) } }
                 }
             },
-            // Private stake (derth) and unbonding claims are notes, not bank
-            // balances, so they join the portfolio here.
-            // Private stake shows its ERTH value, the derth amount beneath.
+            // Private stake (derth) is notes, not bank balances, so it joins
+            // the portfolio here: its ERTH value, the derth amount beneath.
+            // An undelegation waiting for its payout shows from this wallet's
+            // own record until the chain mints the payout to it.
             holdings = state?.holdings.orEmpty() + state?.shielded.orEmpty()
-                .filterKeys { it.startsWith("derth/") || it.startsWith("unbond/") }
+                .filterKeys { it.startsWith("derth/") }
                 .map { (denom, amount) ->
-                    if (denom.startsWith("derth/")) {
-                        val op = denom.removePrefix("derth/")
-                        Holding(
-                            denom = denom,
-                            symbol = "Staked (private)",
-                            amount = derthValue(amount, op),
-                            detail = "${formatUerth(amount)} derth · $op",
-                        )
-                    } else {
-                        Holding(denom = denom, symbol = "Unbonding (private)", amount = amount)
-                    }
+                    val op = denom.removePrefix("derth/")
+                    Holding(
+                        denom = denom,
+                        symbol = "Staked (private)",
+                        amount = derthValue(amount, op),
+                        detail = "${formatUerth(amount)} derth · $op",
+                    )
+                } + state?.unstaking.orEmpty().map { u ->
+                    Holding(
+                        denom = "unstaking/${u.txHash}",
+                        symbol = "Unstaking (private)",
+                        amount = u.value ?: derthValue(u.derth, u.validator),
+                        detail = u.dueBy?.let { "Arrives by about ${network.erth.wallet.ui.privacy.date(it)}" } ?: "Arrives once the unbonding period ends",
+                    )
                 } + privacyState?.positions.orEmpty().map { row ->
                     Holding(
                         denom = "position/${row.position.id}",
@@ -756,43 +764,20 @@ internal fun EarthContent(
                 null
             },
             stakeVoteFinal = true,
-            stakeVoteProgress = stakeVoteProgress?.takeIf { it.proposalId == route.id },
-            onCancelStakeVote = { stakeVotes.cancel() },
             onVote = { proposal, vote -> scope.launch {
-                // The weight the confirmation shows: each eligible derth note
-                // and position at the snapshot's rate. Read first, so the
-                // sheet says what the vote is worth rather than describing it.
-                val weight = withContext(Dispatchers.IO) {
-                    runCatching {
-                        val w = PrivacySession.wallet(context)
-                        w.stakeVoteWeight(proposal.id, w.positions().map { it.first })
-                    }.getOrNull()
+                // Every vote this wallet's stake takes: one per validator
+                // (its notes, up to four a vote) and one per position. Each
+                // is its own confirm sheet and its own tx, sent on its tap.
+                val items = withContext(Dispatchers.IO) {
+                    runCatching { PrivacySession.wallet(context).stakeVoteItems(proposal.id) }
                 }
-                tx.requestPrivate(
-                    details = TxConfirmDetails(
-                        action = "Vote ${vote.label} with stake on #${proposal.id} (final)",
-                        msgTypeUrl = PrivateMsgs.STAKE_VOTE,
-                        balanceUerth = 0L,
-                        amountLabel = "Weight",
-                        amountValue = weight?.let { wt ->
-                            val parts = listOfNotNull(
-                                wt.notes.takeIf { it > 0 }?.let { "$it note${if (it == 1) "" else "s"}" },
-                                wt.positionIds.size.takeIf { it > 0 }?.let { "$it position${if (it == 1) "" else "s"}" },
-                            )
-                            "${formatUerth(wt.uerth)} ERTH" + if (parts.isEmpty()) "" else " (${parts.joinToString()})"
-                        } ?: "Private stake from before voting opened",
-                    ),
-                    shieldedErth = loaded.shieldedErthUerth,
-                    onSuccess = onRefresh,
-                    // K5: the first cast is this sheet's result; the rest
-                    // follow in the background, shuffled, a sync and a
-                    // random 20-120 s apart, shown and cancellable on the
-                    // proposal.
-                    run = { _ ->
-                        val opts = listOf(WeightedVoteOption.newBuilder().setOption(vote.proto).setWeight("1").build())
-                        stakeVotes.controller.startAndAwaitFirst(proposal.id, opts)
-                    },
-                )
+                items.onSuccess {
+                    if (it.isEmpty()) {
+                        tx.showFailure("Vote with stake", IllegalStateException("No stake from before voting opened is left to vote on this proposal."))
+                    } else {
+                        stakeVoting = StakeVoting(proposal.id, vote, it)
+                    }
+                }.onFailure { tx.showFailure("Vote with stake", it) }
             } },
             // Absent on a chain without an assembly, which hides the whole
             // second house rather than explaining one that is not there yet.
@@ -836,9 +821,103 @@ internal fun EarthContent(
 
     // Staking is private: ERTH is spent from shielded notes into the pool's
     // delegation to a validator and comes back as derth/<validator> notes
-    // (worth more ERTH each epoch as rewards compound). Unstaking turns derth
-    // into an unbonding claim, paid out automatically once it matures. Only a
-    // validator's own self-bond is a transparent delegation now.
+    // (worth more ERTH each epoch as rewards compound). Unstaking names a
+    // note of ours the chain pays the ERTH to once the unbonding period ends:
+    // nothing more to send. Only a validator's own self-bond is a transparent
+    // delegation now.
+    // One stake vote sheet at a time: the next item's sheet is raised only
+    // once the last one's tx went through, and only shown: nothing is sent
+    // until its own Confirm is tapped. Cancelling a sheet ends the run.
+    LaunchedEffect(stakeVoting) {
+        val v = stakeVoting ?: return@LaunchedEffect
+        stakeVoting = null
+        val item = v.items.firstOrNull() ?: return@LaunchedEffect
+        if (item is PrivacyWallet.StakeVoteItem.Validator && item.parts > 1 && item.validator !in v.inParts) {
+            partsChoice = v
+            return@LaunchedEffect
+        }
+        val rest = v.copy(items = v.items.drop(1))
+        val preview = withContext(Dispatchers.IO) {
+            runCatching { PrivacySession.wallet(context).stakeVotePreview(v.proposalId, item) }.getOrNull()
+        }
+        val where = when (item) {
+            is PrivacyWallet.StakeVoteItem.Validator -> "at ${earnState?.validators?.firstOrNull { it.validatorOperator == item.validator }?.moniker ?: item.validator}"
+            is PrivacyWallet.StakeVoteItem.Position -> "with position #${item.id}"
+        }
+        val left = rest.items.size
+        tx.requestPrivate(
+            details = TxConfirmDetails(
+                action = "Vote ${v.vote.label} with stake $where on #${v.proposalId} (final)",
+                msgTypeUrl = if (item is PrivacyWallet.StakeVoteItem.Position) PrivateMsgs.POSITION_VOTE else PrivateMsgs.STAKE_VOTE,
+                balanceUerth = 0L,
+                amountLabel = "Weight",
+                amountValue = preview?.let { p ->
+                    "${formatUerth(p.uerth)} ERTH" + if (p.notes > 0) " (${p.notes} note${if (p.notes == 1) "" else "s"})" else ""
+                } ?: "Private stake from before voting opened",
+                recipient = if (left > 0) "$left more vote${if (left == 1) "" else "s"} after this one, each confirmed on its own" else null,
+                recipientLabel = "Then",
+            ),
+            shieldedErth = loaded.shieldedErthUerth,
+            onSuccess = {
+                onRefresh()
+                if (rest.items.isNotEmpty()) stakeVoting = rest
+            },
+            run = { ctx ->
+                val w = PrivacySession.wallet(ctx)
+                // The last vote's fee change lands as a note: sync before the next.
+                w.sync()
+                val opts = listOf(WeightedVoteOption.newBuilder().setOption(v.vote.proto).setWeight("1").build())
+                w.castStakeVote(v.proposalId, item, opts) ?: throw IllegalStateException("Nothing of this stake is left to vote on this proposal.")
+            },
+        )
+    }
+
+    partsChoice?.let { v ->
+        val item = v.items.first() as PrivacyWallet.StakeVoteItem.Validator
+        val name = earnState?.validators?.firstOrNull { it.validatorOperator == item.validator }?.moniker ?: item.validator
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { partsChoice = null },
+            title = { androidx.compose.material3.Text("${item.notes} stake notes at $name") },
+            text = {
+                androidx.compose.material3.Text(
+                    "One vote holds up to ${PrivateMsgs.MAX_VOTE_NOTES} notes.\n\n" +
+                        "Vote in parts: ${item.parts} votes, a fee each. Each part shows its own weight, and the parts can be linked to each other.\n\n" +
+                        "Merge notes: one fee merges two notes, so later proposals take this stake in fewer votes. " +
+                        "This proposal's voting opened before the merge, so it still counts these notes as they were: vote here afterwards, in parts.",
+                )
+            },
+            confirmButton = {
+                Row {
+                    androidx.compose.material3.TextButton(onClick = {
+                        partsChoice = null
+                        stakeVoting = v.copy(
+                            items = List(item.parts) { item } + v.items.drop(1),
+                            inParts = v.inParts + item.validator,
+                        )
+                    }) { androidx.compose.material3.Text("Vote in parts") }
+                    androidx.compose.material3.TextButton(onClick = {
+                        partsChoice = null
+                        tx.requestPrivate(
+                            details = TxConfirmDetails(
+                                action = "Merge two stake notes",
+                                msgTypeUrl = PrivateMsgs.RESTAKE,
+                                balanceUerth = 0L,
+                                recipient = name,
+                                recipientLabel = "Validator",
+                            ),
+                            shieldedErth = loaded.shieldedErthUerth,
+                            onSuccess = { onRefresh(); privacy.refresh() },
+                            run = { ctx -> PrivacySession.wallet(ctx).mergeStake(PrivacyWallet.derthDenom(item.validator)).hash },
+                        )
+                    }) { androidx.compose.material3.Text("Merge notes") }
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { partsChoice = null }) { androidx.compose.material3.Text("Cancel") }
+            },
+        )
+    }
+
     staking?.let { intent ->
         val stake = intent == StakeIntent.Stake
         val derthRows = loaded.shielded.filterKeys { it.startsWith("derth/") }.map { (denom, amount) ->
@@ -868,7 +947,7 @@ internal fun EarthContent(
             note = if (stake) {
                 "Staked ERTH stays locked to this wallet: it can't be sent, unshielded or traded, only unstaked."
             } else {
-                "Unstaking turns it into a claim, also locked to this wallet, paid out as private ERTH when it matures."
+                "Unstaked ERTH arrives in this wallet as private ERTH once the unbonding period ends. Nothing more to do or pay."
             },
             onDismiss = { staking = null },
             onConfirm = { validator, amount ->
@@ -894,8 +973,9 @@ internal fun EarthContent(
                         if (stake) {
                             w.delegate(validator, amount).hash
                         } else {
-                            // A stake proof spends two notes: merge first if needed.
-                            w.consolidateStake(PrivacyWallet.derthDenom(validator), amount)
+                            // A stake proof spends two notes: spread over more,
+                            // it is refused with "merge them first" (a merge is
+                            // the user's own tx, on the Notes screen).
                             w.undelegate(validator, amount).hash
                         }
                     },
@@ -1188,9 +1268,7 @@ internal fun EarthContent(
                         shieldedErth = loaded.shieldedErthUerth,
                         onSuccess = { onRefresh(); privacy.refresh(); allocation.refresh() },
                         run = { ctx ->
-                            val w = PrivacySession.wallet(ctx)
-                            w.consolidateStake(PrivacyWallet.derthDenom(validator), amount)
-                            w.lockPosition(validator, amount, weights.filterValues { it > 0 }).hash
+                            PrivacySession.wallet(ctx).lockPosition(validator, amount, weights.filterValues { it > 0 }).hash
                         },
                     )
                 },
@@ -1304,3 +1382,14 @@ private fun settingsItems(nav: EarthNavController, state: WalletUiState?, person
     )
 
 /** The title the detail bar shows for a pushed route. */
+
+/**
+ * The stake votes still to confirm on [proposalId] (one sheet each), and the
+ * validators the user chose to vote in parts.
+ */
+private data class StakeVoting(
+    val proposalId: Long,
+    val vote: Gov.Vote,
+    val items: List<PrivacyWallet.StakeVoteItem>,
+    val inParts: Set<String> = emptySet(),
+)
