@@ -62,14 +62,12 @@ final class FeeTests: PrivacyTestCase {
         dump(chain, "gas")
     }
 
-    func testTheVoteGasEstimateCountsItsNotes() throws {
-        func spec(_ used: Int) throws -> VoteWitnessSpec {
-            try VoteWitnessSpec(vnfs: (0 ..< 2).map { $0 < used ? Fr(UInt64($0 + 1)) : .zero }) { _ in throw PrivacyError("unused") }
-        }
+    func testTheVoteGasEstimateIsTheSameForEveryVote() throws {
+        // Every vote carries two vote nullifiers (padding included): one gas, whatever it votes.
+        let spec = try VoteWitnessSpec(vnfs: [Fr(UInt64(1)), Fr(UInt64(2))]) { _ in throw PrivacyError("unused") }
         let msg = MsgStakeVote(bundle: ShieldedBundle(actions: [], balances: [], bindingSig: Data()), proposalID: 1, validator: validator, options: [], weight: 1)
-        let g1 = PrivateTxEngine.estimateGas(msg, Assembled(bundles: [], vote: try spec(1)) { _, _, _ in msg }, txBytes: 0)
-        let g2 = PrivateTxEngine.estimateGas(msg, Assembled(bundles: [], vote: try spec(2)) { _, _, _ in msg }, txBytes: 0)
-        XCTAssertEqual(PrivateTxEngine.noteGas, g2 - g1)
-        XCTAssertEqual(PrivateTxEngine.baseGas + PrivateTxEngine.bundleGas + 250_000 + 2_000_000 + 2 * PrivateTxEngine.noteGas, g1)
+        let g = PrivateTxEngine.estimateGas(msg, Assembled(bundles: [], vote: spec) { _, _, _ in msg }, txBytes: 0)
+        XCTAssertEqual(PrivateTxEngine.baseGas + PrivateTxEngine.bundleGas + 250_000 + 2_000_000 + 3 * PrivateTxEngine.noteGas, g)
+        XCTAssertThrowsError(try VoteWitnessSpec(vnfs: [Fr(UInt64(1)), .zero]) { _ in throw PrivacyError("unused") })
     }
 }

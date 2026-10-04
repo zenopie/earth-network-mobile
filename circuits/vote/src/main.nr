@@ -22,7 +22,11 @@
 //!      debt_retained(move_key, exposed) against `debt_root`, the CURRENT slash
 //!      debt tree (a slash after the snapshot still counts);
 //!
-//! an unused slot (amount_i = 0) has vnf_i = 0 and proves nothing; and
+//! an unused slot (amount_i = 0) proves no note and publishes a padding
+//! nullifier vnf_i = H(TAG_VPAD, nk, r_i, proposal_id) (r_i = rho_i, a fresh
+//! random value per vote): it looks like a real vote nullifier, and by its
+//! tag and arity can never equal one, so every vote publishes two vote
+//! nullifiers and the number of notes voted is hidden; and
 //!
 //!   5. 0 < weight <= sum of the values (the vote's one public weight; the
 //!      wallet publishes the sum rounded down to three significant digits).
@@ -37,8 +41,8 @@
 //! Nothing is spent and nothing is created: the notes stay where they are and
 //! can vote on every other open proposal (each with its own vnfs) and be
 //! spent as usual. No nf_i is published: votes are unlinkable to one another
-//! and to the notes' spends, except through their public weight, validator
-//! and the number of slots used. Binding: the msg's sighash (options,
+//! and to the notes' spends, except through their public weight and
+//! validator. Binding: the msg's sighash (options,
 //! proposal, validator, fee bundle, ...).
 //!
 //! Public input order:
@@ -47,7 +51,7 @@
 
 use privacy_core::{
     assert_not_in_indexed, bind, debt_retained, DEPTH, merkle_root, owner_pk, stake_cm, stake_label,
-    stake_nf, stake_pc, vote_nf,
+    stake_nf, stake_pc, vote_nf, vote_pad_nf,
 };
 
 /// The most notes one vote proof carries. With one stake note per validator
@@ -128,7 +132,7 @@ fn main(
             assert(vnf[i] == vote_nf(nk, rho[i], pos[i], proposal_id), "bad vote nullifier");
             total += value as u128;
         } else {
-            assert(vnf[i] == 0, "unused slot has a vote nullifier");
+            assert(vnf[i] == vote_pad_nf(nk, rho[i], proposal_id), "bad padding nullifier");
         }
     }
     assert(weight != 0, "zero weight");
@@ -208,7 +212,7 @@ fn unused() -> Slot {
         low_index: 0,
         low_path: [0; DEPTH],
         debt: no_debt(),
-        vnf: 0,
+        vnf: vote_pad_nf(NK, 0x77, PROPOSAL),
     }
 }
 
@@ -481,8 +485,7 @@ fn test_two_notes_rounded_weight() {
 
 #[test]
 fn test_used_slot_second() {
-    // An unused slot may come first (the chain asks for a prefix, the circuit
-    // does not care).
+    // The padding may come first: wallets put it in a random slot.
     let mut v = two();
     v.slots[0] = unused();
     v.weight = 300;
@@ -667,11 +670,57 @@ fn test_labelled_understated_exposure() {
     prove(v);
 }
 
-#[test(should_fail_with = "unused slot has a vote nullifier")]
-fn test_unused_slot_with_vnf() {
+#[test(should_fail_with = "bad padding nullifier")]
+fn test_unused_slot_zero_vnf() {
+    // A zero (the old padding) shows the slot unused: refused.
     let mut v = honest();
-    v.slots[1].vnf = vote_nf(NK, 0xd1, 0, PROPOSAL);
+    v.slots[1].vnf = 0;
     prove(v);
+}
+
+#[test(should_fail_with = "bad padding nullifier")]
+fn test_unused_slot_with_a_real_vnf() {
+    // A padding slot cannot publish a note's vote nullifier (its own or
+    // anyone's): it would burn that vnf without proving the note.
+    let mut v = honest();
+    v.slots[1].vnf = vote_nf(NK, RHOS[2], 2, PROPOSAL);
+    prove(v);
+}
+
+#[test(should_fail_with = "bad padding nullifier")]
+fn test_padding_of_another_proposal() {
+    let mut v = honest();
+    v.slots[1].vnf = vote_pad_nf(NK, 0x77, PROPOSAL + 1);
+    prove(v);
+}
+
+#[test(should_fail_with = "bad padding nullifier")]
+fn test_padding_of_another_owner() {
+    let mut v = honest();
+    v.slots[1].vnf = vote_pad_nf(0xbad, 0x77, PROPOSAL);
+    prove(v);
+}
+
+#[test(should_fail_with = "bad padding nullifier")]
+fn test_padding_free_value() {
+    let mut v = honest();
+    v.slots[1].vnf = 0x1234;
+    prove(v);
+}
+
+#[test]
+fn test_padding_never_a_vote_nullifier() {
+    // Same (nk, value, proposal) as a real slot's (nk, rho, proposal): the
+    // tags and arities differ, so the padding is a different value.
+    let v = honest();
+    let mut p = v;
+    p.slots[1].rho = 0xa1;
+    p.slots[1].vnf = vote_pad_nf(NK, 0xa1, PROPOSAL);
+    prove(p);
+    assert(p.slots[1].vnf != v.slots[0].vnf);
+    assert(p.slots[1].vnf != 0);
+    // A fresh value gives a fresh padding nullifier.
+    assert(vote_pad_nf(NK, 0x77, PROPOSAL) != vote_pad_nf(NK, 0x78, PROPOSAL));
 }
 
 #[test(should_fail_with = "note not in snapshot stake tree")]
@@ -874,6 +923,10 @@ fn test_go_parity() {
     assert(
         vote_nf(NK, 0xa1, 1, 7)
             == 0x1ada84dad3e6afde3f370e97edf4df2ee4eeb6b1400d5c5f41882552f578ba2f,
+    );
+    assert(
+        vote_pad_nf(NK, 0x77, 7)
+            == 0x08d195db55c5c0006ae0d2e8ee33df8cd5286226124074ad37c1d5ebe74b6235,
     );
     // indexed.EmptyRoot: the sentinel alone.
     let (empty, _) = empty_nullifiers();

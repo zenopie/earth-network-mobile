@@ -34,6 +34,7 @@ object Privacy {
     // The stake nullifier indexed tree and stake votes (circuits/vote, ORCHARD_DESIGN 15).
     val TAG_SNFL = tag("earth.snfl")
     val TAG_VNF = tag("earth.vnf")
+    val TAG_VPAD = tag("earth.vpad")
     // Stake note slash labels and the slash debt tree (circuits/stake, circuits/vote; ORCHARD_DESIGN 20).
     val TAG_SLABEL = tag("earth.slabel")
     val TAG_DEBTL = tag("earth.debtl")
@@ -124,6 +125,12 @@ object Privacy {
         require(position in 0..0xffffffffL) { "position is a u32" }
         return h(TAG_VNF, nk, rho, u64(position), u64(proposalId))
     }
+
+    /**
+     * An unused vote slot's padding nullifier: H(TAG_VPAD, nk, r, proposal_id),
+     * r fresh random per vote. Looks like a [voteNf] and never equals one.
+     */
+    fun votePadNf(nk: Fr, r: Fr, proposalId: Long): Fr = h(TAG_VPAD, nk, r, u64(proposalId))
 
     /** A Groundworks position's owner tag: H(TAG_OTAG, owner_pk, salt). */
     fun ownerTag(ownerPk: Fr, salt: Fr): Fr = h(TAG_OTAG, ownerPk, salt)

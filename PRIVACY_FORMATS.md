@@ -104,6 +104,7 @@ else, as the chain's `FieldFromBytes` does).
 | TAG_OTAG | `earth.otag` | position owner tag |
 | TAG_SNFL | `earth.snfl` | stake nullifier tree leaf |
 | TAG_VNF | `earth.vnf` | stake vote nullifier |
+| TAG_VPAD | `earth.vpad` | padding vote nullifier of an unused vote slot |
 | TAG_SLABEL | `earth.slabel` | stake note slash label |
 | TAG_DEBTL | `earth.debtl` | slash debt tree leaf |
 | TAG_GEN | `earth.gen` | Grumpkin value base |
@@ -526,8 +527,10 @@ in the nullifier tree at nf_root (a low leaf with low.value < nf <
 low.next_value, or low.next_value = 0); vnf = H(TAG_VNF, nk, rho, pos,
 proposal_id); its value is its amount, or for a labelled note amount −
 exposed + retained against the current `debt_root`. An unused slot (amount
-0, every field zero) has vnf 0 and cannot be padded, so the slot count is
-public. 0 < weight ≤ the sum of the values. Vector `public_inputs.stake_vote`.
+0, rho = r, every other field zero) publishes the padding nullifier
+vnf = H(TAG_VPAD, nk, r, proposal_id), r fresh random per vote: it looks
+like a note's vnf and never equals one (tag and arity differ), so the
+number of notes voted is hidden. 0 < weight ≤ the sum of the values. Vector `public_inputs.stake_vote`.
 
 **membership** (anonymous proof of a live registration):
 
@@ -675,7 +678,7 @@ ERTH note for its fee.
    2,300,000 per action; + 3,150,000 for a stake proof (+ 750,000 for a
    credit lane and 1,024 × 5,000 + 128 × 20,000 for MsgRedelegate's
    x/staking record at its worst); + 2,150,000 for a membership; +
-   3,600,000 for MsgRegister; + 2,250,000 + (1 + used slots) × 150,000 for
+   3,600,000 for MsgRegister; + 2,250,000 + (1 + 2) × 150,000 (both slots, padding included) for
    a stake vote; + 8 × 150,000 for MsgBindHandle (a bind is priced as nine
    note writes). x/shielded's gas prices are capped (proof 10M, note 1M,
    bundle 1M). A node asking more is refused (FeeAboveCap; nothing proven
@@ -687,7 +690,7 @@ ERTH note for its fee.
    for a registration; these are never declared as a gas limit.
 5. **Quotes** (simulate without proving, for a sheet) carry random
    nullifiers in place of the wallet's (pool, stake lane A and credit, the
-   membership's, a vote's used slots; zeros stay zero), so the node learns
+   membership's, both of a vote's vote nullifiers; other zeros stay zero), so the node learns
    nothing about the notes before the user confirms.
 6. Fix memo, timeout_height and gas limit; compute the sighash; prove every
    action, the stake proof, the membership and the vote over it; sign every
@@ -1233,8 +1236,12 @@ re-minted, so a note votes on every concurrently open proposal.
    voted on the proposal. Taken largest first, then by position, two a
    msg; a note slashed to nothing is skipped. A labelled note votes at
    amount − exposed + retained under the current debt root.
-6. **vote_nullifiers** is exactly two: the used slots' H(TAG_VNF, nk, rho,
-   pos, proposal_id) in slot order, then 32 zero bytes for an unused slot.
+6. **vote_nullifiers** is exactly two, non-zero and distinct, in the
+   proof's slot order: each note's H(TAG_VNF, nk, rho, pos, proposal_id)
+   and, for a one-note vote, a padding nullifier H(TAG_VPAD, nk, r,
+   proposal_id) with r a fresh CSPRNG field element (never reused). The
+   padding goes in a random slot (`VoteLayout.random`). Only the notes'
+   vnfs are remembered as voted; the chain records both.
    `debt_root` (11) is the current root on every vote.
 7. **Weight [wallet].** RoundVoteWeight of the sum of the notes' values
    (the sum saturates at 2^63 − 1): rounded DOWN to three significant
@@ -1250,8 +1257,8 @@ re-minted, so a note votes on every concurrently open proposal.
    weight names a bucket, not the exact amount, and gives up less than 1 %
    of the notes' voice. The sheet shows the weight at the snapshot rate.
 8. **Prove** circuits/vote (§9); a quote simulates with random vote
-   nullifiers in the used slots. Gas (estimate, fee cap): 250,000 + proof
-   (2,000,000) + (1 + used slots) × note_gas (150,000).
+   nullifiers in both slots. Gas (estimate, fee cap): 250,000 + proof
+   (2,000,000) + (1 + 2) × note_gas (150,000), the same for every vote.
 9. **Remember** each used slot's (proposal, vnf) the moment the node
    accepts the tx (`stake_votes`: proposal_id, vnf, tx_hash, until =
    timeout_height, confirmed); confirmed once committed. A vote that failed

@@ -418,19 +418,25 @@ final class StakeVoteFlowTests: PrivacyTestCase {
         let m = try XCTUnwrap(chain.lastMsg as? MsgStakeVote)
         XCTAssertEqual(2, m.voteNullifiers.count)
         let vs = try m.voteNullifiers.map { try Fr(bytes: $0) }
-        XCTAssertEqual([false, true], vs.map(\.isZero))
+        // One note, two non-zero vote nullifiers: the note's and a padding one.
+        XCTAssertEqual([false, false], vs.map(\.isZero))
+        XCTAssertEqual(2, Set(vs).count)
         XCTAssertEqual(chain.debtRoot(), try Fr(bytes: m.debtRoot))
         let w = chain.prover.allVotes.last!
         XCTAssertEqual(9, w.publicInputs().count)
         XCTAssertEqual(vs, w.vnfs)
+        let padAt = try XCTUnwrap(w.layout.order.firstIndex(where: { $0 == nil }))
+        XCTAssertEqual(PrivacyHash.votePadNF(nk: w.nk, r: w.layout.padR(padAt), proposalID: 7), vs[padAt])
+        XCTAssertEqual(PrivacyHash.voteNF(nk: w.nk, rho: note.rho, position: note.position, proposalID: 7), vs[1 - padAt])
         let inputs = w.noirInputs()
         for k in ["amount", "rho", "rcm", "pos", "path", "move_key", "move_time", "exposed", "low_value", "low_next_value", "low_next_index",
                   "low_index", "low_path", "debt_low_key", "debt_low_next_key", "debt_low_next_index", "debt_low_retained", "debt_low_index",
                   "debt_low_path", "vnf"] {
             XCTAssertEqual(2, (inputs[k] as! [Any]).count, k)
         }
-        XCTAssertEqual(["0x0"], Array((inputs["amount"] as! [String]).suffix(1)))
-        XCTAssertEqual(32, ((inputs["path"] as! [[String]])[1]).count)
+        XCTAssertEqual("0x0", (inputs["amount"] as! [String])[padAt])
+        XCTAssertEqual(w.layout.padR(padAt).noir, (inputs["rho"] as! [String])[padAt])
+        XCTAssertEqual(32, ((inputs["path"] as! [[String]])[padAt]).count)
         XCTAssertEqual(m.weight, try PrivacyWallet.voteWeight(note.amount))
         // The msg's own checks: two slots.
         XCTAssertThrowsError(try PrivateTxEngine.withVote(m, vnfs: Array(vs.prefix(1)), proof: Data()))
@@ -445,11 +451,12 @@ final class StakeVoteFlowTests: PrivacyTestCase {
         _ = try await a.stakeVote(proposalID: 8, validator: validator, options: yes)
         let w = chain.prover.allVotes.last!
         // The same note twice; more weight than the notes; three slots.
-        XCTAssertThrowsError(try VoteWitness(nk: w.nk, slots: w.slots + w.slots, noteRoot: w.noteRoot, nfRoot: w.nfRoot, debtRoot: w.debtRoot,
+        let two = try VoteLayout.inOrder(used: 2, pads: [])
+        XCTAssertThrowsError(try VoteWitness(nk: w.nk, slots: w.slots + w.slots, layout: two, noteRoot: w.noteRoot, nfRoot: w.nfRoot, debtRoot: w.debtRoot,
                                              asset: w.asset, weight: w.weight, proposalID: w.proposalID, sighash: w.sighash).check())
-        XCTAssertThrowsError(try VoteWitness(nk: w.nk, slots: w.slots, noteRoot: w.noteRoot, nfRoot: w.nfRoot, debtRoot: w.debtRoot, asset: w.asset,
+        XCTAssertThrowsError(try VoteWitness(nk: w.nk, slots: w.slots, layout: w.layout, noteRoot: w.noteRoot, nfRoot: w.nfRoot, debtRoot: w.debtRoot, asset: w.asset,
                                              weight: w.slots.reduce(0) { $0 + $1.amount } + 1, proposalID: w.proposalID, sighash: w.sighash).check())
-        XCTAssertThrowsError(try VoteWitness(nk: w.nk, slots: Array(repeating: w.slots[0], count: 3), noteRoot: w.noteRoot, nfRoot: w.nfRoot,
+        XCTAssertThrowsError(try VoteWitness(nk: w.nk, slots: Array(repeating: w.slots[0], count: 3), layout: two, noteRoot: w.noteRoot, nfRoot: w.nfRoot,
                                              debtRoot: w.debtRoot, asset: w.asset, weight: w.weight, proposalID: w.proposalID, sighash: w.sighash))
         XCTAssertEqual(VoteWitness.maxNotes, MsgStakeVote.maxVoteNotes)
     }

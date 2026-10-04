@@ -61,18 +61,17 @@ public struct MembershipWitnessSpec: Sendable {
     public func witness(signal: Fr) throws -> MembershipWitness { try make(signal) }
 }
 
-/// A vote proof's statement, waiting for the sighash; `vnfs` (both slots,
-/// the used ones first, then zeros) are known before: the sighash binds
-/// them.
+/// A vote proof's statement, waiting for the sighash; `vnfs` (both slots:
+/// the notes' and the padding's, in the layout's order) are known before:
+/// the sighash binds them.
 public struct VoteWitnessSpec: Sendable {
     public let vnfs: [Fr]
     let make: @Sendable (Fr) throws -> VoteWitness
     public init(vnfs: [Fr], _ make: @escaping @Sendable (Fr) throws -> VoteWitness) throws {
         guard vnfs.count == MsgStakeVote.maxVoteNotes else { throw PrivacyError("a vote has \(MsgStakeVote.maxVoteNotes) vote nullifier slots") }
+        guard !vnfs.contains(where: \.isZero) else { throw PrivacyError("every vote slot carries a vote nullifier (padding included)") }
         self.vnfs = vnfs; self.make = make
     }
-    /// How many slots carry a note (the chain charges a note write for each).
-    public var used: Int { vnfs.filter { !$0.isZero }.count }
     public func witness(sighash: Fr) throws -> VoteWitness {
         let w = try make(sighash)
         guard w.vnfs == vnfs else { throw PrivacyError("the vote witness is for other vote nullifiers") }
@@ -182,8 +181,8 @@ public struct PrivateTxEngine: Sendable {
     /// the move is sent. As Android.
     public static let redelegateRecordGas: UInt64 = 1_024 * (2_500 + 2_500) + 128 * 20_000
     /// A stake vote's fixed part: gasVote (250,000) and its proof (2,000,000);
-    /// the chain adds a note write for the vote and one per used vote
-    /// nullifier: gasVote + proof + (1 + used) x note_gas (PRIVACY_FORMATS 11).
+    /// the chain adds a note write for the vote and one per vote nullifier,
+    /// padding included: gasVote + proof + (1 + 2) x note_gas (PRIVACY_FORMATS 11).
     public static let voteGas: UInt64 = 2_250_000
     /// A membership proof and its nullifier write.
     public static let membershipGas: UInt64 = 2_150_000
@@ -234,7 +233,7 @@ public struct PrivateTxEngine: Sendable {
             if !p.creditNullifier.allSatisfy({ $0 == 0 }) { g = g &+ creditGas &+ redelegateRecordGas }
         }
         if a.membership != nil { g = g &+ membershipGas }
-        if let v = a.vote { g = g &+ voteGas &+ (1 &+ UInt64(v.used)) &* noteGas }
+        if let v = a.vote { g = g &+ voteGas &+ (1 &+ UInt64(v.vnfs.count)) &* noteGas }
         if msg is MsgRegisterPrivate { g = g &+ registerGas }
         if msg is MsgBindHandle { g = g &+ bindHandleExtraGas }
         return g
@@ -417,11 +416,10 @@ public struct PrivateTxEngine: Sendable {
             }
         }
         let msg = try a.build(bundles, stake, try a.membership.map { try placeholderMembership($0, placeholders: placeholders) })
-        // A quote's vote nullifiers are random too (the used slots'; an unused
-        // slot stays 0, as the gas counts them): the node learns nothing of
-        // the notes before the user confirms.
+        // A quote's vote nullifiers are random too: the node learns nothing
+        // of the notes before the user confirms.
         guard let v = a.vote else { return msg }
-        let vnfs = placeholders ? v.vnfs.map { $0.isZero ? $0 : NotePlaintext.randomField() } : v.vnfs
+        let vnfs = placeholders ? v.vnfs.map { _ in NotePlaintext.randomField() } : v.vnfs
         return try Self.withVote(msg, vnfs: vnfs, proof: Self.placeholder)
     }
 

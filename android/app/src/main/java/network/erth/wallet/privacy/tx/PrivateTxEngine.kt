@@ -91,16 +91,18 @@ class MembershipWitnessSpec(private val make: (signal: Fr) -> MembershipWitness)
 }
 
 /**
- * A vote proof's statement, waiting for the sighash; [vnfs] (both slots, the
- * used ones first, then zeros) are known before: the sighash binds them.
+ * A vote proof's statement, waiting for the sighash; [vnfs] (both slots: the
+ * notes' and the padding's, in the layout's order) are known before: the
+ * sighash binds them.
  */
 class VoteWitnessSpec(val vnfs: List<Fr>, private val make: (sighash: Fr) -> VoteWitness) {
     init {
         require(vnfs.size == PrivateMsgs.MAX_VOTE_NOTES) { "a vote has ${PrivateMsgs.MAX_VOTE_NOTES} vote nullifier slots" }
     }
 
-    /** How many slots carry a note (the chain charges a note write for each). */
-    val used: Int get() = vnfs.count { !it.isZero }
+    init {
+        require(vnfs.none { it.isZero }) { "every vote slot carries a vote nullifier (padding included)" }
+    }
 
     fun witness(sighash: Fr): VoteWitness = make(sighash).also { check(it.vnfs == vnfs) { "the vote witness is for other vote nullifiers" } }
 }
@@ -305,11 +307,10 @@ class PrivateTxEngine(
         val bundles = a.bundles.map { it.proto() }.map { if (placeholders) randomNullifiers(it) else it }
         val stake = a.stake?.proto(PLACEHOLDER)?.let { if (placeholders) randomNullifiers(it) else it }
         val msg = a.build(bundles, stake, a.membership?.let { placeholderMembership(it, placeholders) })
-        // A quote's vote nullifiers are random too (the used slots'; an unused
-        // slot stays 0, as the gas counts them): the node learns nothing of
-        // the notes before the user confirms.
+        // A quote's vote nullifiers are random too: the node learns nothing
+        // of the notes before the user confirms.
         return a.vote?.let { v ->
-            val vnfs = if (placeholders) v.vnfs.map { if (it.isZero) it else Fr.fromBytes(randomField().toByteArray()) } else v.vnfs
+            val vnfs = if (placeholders) v.vnfs.map { Fr.fromBytes(randomField().toByteArray()) } else v.vnfs
             PrivateMsgs.withVote(msg, vnfs, PLACEHOLDER)
         } ?: msg
     }
@@ -394,8 +395,8 @@ class PrivateTxEngine(
         const val REDELEGATE_RECORD_GAS = 1_024 * (2_500L + 2_500L) + 128 * 20_000L
         /**
          * A stake vote's fixed part: gasVote (250,000) and its proof; the
-         * chain adds a note write for the vote and one per used vote
-         * nullifier (gasVote + proof + (1 + used) x note_gas).
+         * chain adds a note write for the vote and one per vote nullifier,
+         * padding included (gasVote + proof + (1 + 2) x note_gas).
          */
         const val VOTE_GAS = 2_250_000L
         /** A membership proof and its nullifier write. */
@@ -419,7 +420,7 @@ class PrivateTxEngine(
                 if (!Fr.fromBytes(p.creditNullifier.toByteArray()).isZero) g += CREDIT_GAS + REDELEGATE_RECORD_GAS
             }
             if (a.membership != null) g += MEMBERSHIP_GAS
-            a.vote?.let { g += VOTE_GAS + (1L + it.used) * NOTE_GAS }
+            a.vote?.let { g += VOTE_GAS + (1L + it.vnfs.size) * NOTE_GAS }
             if (msg is network.erth.earth.proto.personhood.MsgRegister) g += REGISTER_GAS
             if (msg is network.erth.earth.proto.personhood.MsgBindHandle) g += BIND_HANDLE_EXTRA_GAS
             return g

@@ -9,6 +9,7 @@ import network.erth.wallet.privacy.tx.PrivateMsgs
 import network.erth.wallet.privacy.tx.UnsignedTx
 import network.erth.wallet.privacy.zk.Fr
 import network.erth.wallet.privacy.zk.IndexedTree
+import network.erth.wallet.privacy.zk.Privacy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -118,19 +119,25 @@ class StakeVoteTest : WalletTest() {
         val m = chain.lastMsg as network.erth.earth.proto.shieldedstaking.MsgStakeVote
         assertEquals(2, m.voteNullifiersCount)
         val vs = m.voteNullifiersList.map { Fr.fromBytes(it.toByteArray()) }
-        assertEquals(listOf(false, true), vs.map { it.isZero })
+        // One note, two non-zero vote nullifiers: the note's and a padding one.
+        assertEquals(listOf(false, false), vs.map { it.isZero })
+        assertEquals(2, vs.toSet().size)
         assertEquals(chain.debtRoot(), Fr.fromBytes(m.debtRoot.toByteArray()))
         val w = chain.prover.allVotes.last()
         assertEquals(9, w.publicInputs().size)
         assertEquals(vs, w.vnfs)
+        val padAt = w.layout.order.indexOf(null)
+        assertEquals(Privacy.votePadNf(w.nk, w.layout.padR(padAt), 7), vs[padAt])
+        assertEquals(Privacy.voteNf(w.nk, note.rho, note.position, 7), vs[1 - padAt])
         val inputs = w.noirInputs()
         for (k in listOf("amount", "rho", "rcm", "pos", "path", "move_key", "move_time", "exposed", "low_value", "low_next_value",
             "low_next_index", "low_index", "low_path", "debt_low_key", "debt_low_next_key", "debt_low_next_index", "debt_low_retained",
             "debt_low_index", "debt_low_path", "vnf")) {
             assertEquals(k, 2, (inputs.getValue(k) as List<*>).size)
         }
-        assertEquals(listOf("0x0"), (inputs.getValue("amount") as List<*>).drop(1))
-        assertEquals(32, ((inputs.getValue("path") as List<*>)[1] as List<*>).size)
+        assertEquals("0x0", (inputs.getValue("amount") as List<*>)[padAt])
+        assertEquals(w.layout.padR(padAt).toNoir(), (inputs.getValue("rho") as List<*>)[padAt])
+        assertEquals(32, ((inputs.getValue("path") as List<*>)[padAt] as List<*>).size)
         assertEquals(m.weight, PrivacyWallet.voteWeight(note.amount))
         dumpWitnesses(chain, "fix7VoteSlots")
         // The msg's own checks: two slots, used first, distinct.

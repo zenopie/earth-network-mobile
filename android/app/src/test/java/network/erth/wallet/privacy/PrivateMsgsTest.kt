@@ -161,7 +161,7 @@ class PrivateMsgsTest {
                 .setStake(stake(102, 2, true)).setPc(fb(103)).setCiphertext(bct(103)).build(),
             "stake_vote" to MsgStakeVote.newBuilder().setBundle(fee(120, 2000)).setProposalId(5).setValidator(validator)
                 .addAllOptions(opts()).setWeight(400000).setProof(ByteString.copyFrom(byteArrayOf(0x70, 0x7e)))
-                .addAllVoteNullifiers(listOf(fb(121), zero32)).setDebtRoot(ByteString.copyFrom(network.erth.wallet.privacy.zk.DebtTree.EMPTY_ROOT.toBytes())).build(),
+                .addAllVoteNullifiers(listOf(fb(121), fb(122))).setDebtRoot(ByteString.copyFrom(network.erth.wallet.privacy.zk.DebtTree.EMPTY_ROOT.toBytes())).build(),
             "stake_vote_two" to MsgStakeVote.newBuilder().setBundle(fee(127, 2000)).setProposalId(6).setValidator(validator)
                 .addAllOptions(opts()).setWeight(999).setProof(ByteString.copyFrom(byteArrayOf(0x70, 0x7e)))
                 .addAllVoteNullifiers(listOf(fb(128), fb(129))).setDebtRoot(fb(130)).build(),

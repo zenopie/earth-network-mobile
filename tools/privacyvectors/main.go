@@ -246,6 +246,8 @@ func main() {
 		"nf_leaf":   hx(privacy.NFLeaf(fe(1007), fe(1008), 4_000_000_000)),
 		"vote_nf":   hx(privacy.VoteNF(nk, rho, 4_000_000_000, 5)),
 		"vote_nf_5eed": hx(privacy.VoteNF(u(0x5eed), u(0xa1), 1, 7)),
+		"vote_pad_nf":  hx(privacy.VotePadNF(nk, rho, 5)),
+		"vote_pad_nf_5eed": hx(privacy.VotePadNF(u(0x5eed), u(0x77), 7)),
 	}
 	out["scopes"] = map[string]string{
 		"claim_20360":           hx(privacy.ClaimScope(20360)),
@@ -625,10 +627,9 @@ func main() {
 	add("undelegate_whole", &stakingtypes.MsgUndelegate{Bundle: fee(102, 2000), Validator: val, Amount: 400000, Stake: stakeProof(102, 2, true, false, true), Pc: fb(103), Ciphertext: bct(103)})
 	// Wave 3 (F3): canonical LegacyDec weights only.
 	opts := []*govv1.WeightedVoteOption{{Option: govv1.OptionYes, Weight: "0.700000000000000000"}, {Option: govv1.OptionNo, Weight: "0.300000000000000000"}}
-	// Chain dff3a9b: two vote nullifier slots, the used ones first, then zeros; the current debt root.
-	zero := make([]byte, 32)
+	// Two vote nullifiers, non-zero and distinct (an unused slot carries a padding nullifier); the current debt root.
 	add("stake_vote", &stakingtypes.MsgStakeVote{Bundle: fee(120, 2000), ProposalId: 5, Validator: val, Options: opts, Weight: 400000, Proof: []byte{0x70, 0x7e},
-		VoteNullifiers: [][]byte{fb(121), zero}, DebtRoot: privacy.FieldBytes(debt.EmptyRoot)})
+		VoteNullifiers: [][]byte{fb(121), fb(122)}, DebtRoot: privacy.FieldBytes(debt.EmptyRoot)})
 	add("stake_vote_two", &stakingtypes.MsgStakeVote{Bundle: fee(127, 2000), ProposalId: 6, Validator: val, Options: opts, Weight: 999, Proof: []byte{0x70, 0x7e},
 		VoteNullifiers: [][]byte{fb(128), fb(129)}, DebtRoot: fb(130)})
 	// RoundVoteWeight (C-L3): three significant digits, rounded down.

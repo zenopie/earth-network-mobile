@@ -1938,8 +1938,9 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// shows every note under the proposal's snapshot root, its spend
     /// nullifier absent from the snapshot's stake nullifier tree (rebuilt here
     /// and checked against nf_root), a labelled note's value under the
-    /// current debt root, and each note's vote nullifier; unused slots carry
-    /// 0. Nothing is spent: a note spent since the snapshot (a top-up, a move)
+    /// current debt root, and each note's vote nullifier; an unused slot
+    /// carries a padding nullifier (fresh r, random slot), so every vote looks
+    /// alike. Nothing is spent: a note spent since the snapshot (a top-up, a move)
     /// still votes the value it held then, its opening kept for that; the
     /// merged note it became cannot vote on this proposal. The fee bundle is
     /// against the pool's current roots. Each note's (proposal, vote
@@ -2028,12 +2029,13 @@ public final class PrivacyWallet: @unchecked Sendable {
         let weight = try Self.voteWeight(slots.reduce(UInt64(0)) { Snapshot.satAdd63($0, $1.value(debtRoot: d.root) ?? 0) })
         let nk = keys.nk
         let used = chosen.map { PrivacyHash.voteNF(nk: nk, rho: $0.rho, position: $0.position, proposalID: proposalID) }
-        let vnfs = used + Array(repeating: Fr.zero, count: MsgStakeVote.maxVoteNotes - used.count)
+        let layout = try VoteLayout.random(used: slots.count)
+        let vnfs = layout.vnfs(nk: nk, slots: slots, proposalID: proposalID)
         let asset = PrivacyHash.assetID(denom)
         let voteSlots = slots
         let debtRoot = d.root
         let vote = try VoteWitnessSpec(vnfs: vnfs) { sighash in
-            try VoteWitness(nk: nk, slots: voteSlots, noteRoot: snap.root, nfRoot: nfRoot, debtRoot: debtRoot, asset: asset, weight: weight,
+            try VoteWitness(nk: nk, slots: voteSlots, layout: layout, noteRoot: snap.root, nfRoot: nfRoot, debtRoot: debtRoot, asset: asset, weight: weight,
                             proposalID: proposalID, sighash: sighash)
         }
         let sent = Sent()

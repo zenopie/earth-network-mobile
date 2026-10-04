@@ -32,6 +32,7 @@ import network.erth.wallet.privacy.note.OwnedNote
 import network.erth.wallet.privacy.note.OwnedStakeNote
 import network.erth.wallet.privacy.note.StakeLabel
 import network.erth.wallet.privacy.prove.MembershipWitness
+import network.erth.wallet.privacy.prove.VoteLayout
 import network.erth.wallet.privacy.prove.VoteSlot
 import network.erth.wallet.privacy.prove.VoteWitness
 import network.erth.wallet.privacy.sync.PendingUnbond
@@ -1702,7 +1703,8 @@ class PrivacyWallet(
      * shows every note under the proposal's snapshot root, its spend
      * nullifier absent from the snapshot's stake nullifier tree (rebuilt here
      * and checked against nf_root), a labelled note's value under the current
-     * debt root, and each note's vote nullifier; unused slots carry 0.
+     * debt root, and each note's vote nullifier; an unused slot carries a
+     * padding nullifier (fresh r, random slot), so every vote looks alike.
      * Nothing is spent: a note spent since the snapshot (a top-up, a move)
      * still votes the value it held then, its opening kept for that; the
      * merged note it became cannot vote on this proposal. The fee bundle is
@@ -1767,10 +1769,11 @@ class PrivacyWallet(
         if (chosen.isEmpty()) throw SpentBeforeSnapshot()
         val weight = voteWeight(Amounts.satSum(slots) { it.value(d.root)!! })
         val used = chosen.map { Privacy.voteNf(keys.nk, it.rho, it.position, proposalId) }
-        val vnfs = used + List(PrivateMsgs.MAX_VOTE_NOTES - used.size) { Fr.ZERO }
+        val layout = VoteLayout.random(slots.size)
+        val vnfs = layout.vnfs(keys.nk, slots, proposalId)
         val asset = Privacy.assetId(denom)
         val vote = VoteWitnessSpec(vnfs) { sighash ->
-            VoteWitness(keys.nk, slots, snap.root, nfRoot, d.root, asset, weight, proposalId, sighash)
+            VoteWitness(keys.nk, slots, layout, snap.root, nfRoot, d.root, asset, weight, proposalId, sighash)
         }
         // Whether the tx reached a mempool (and so may have landed, fee paid).
         var sent = false

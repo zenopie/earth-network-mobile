@@ -393,7 +393,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     func gasOf(_ m: any PrivateMsg) -> UInt64 {
         let actions = m.bundles.reduce(0) { $0 + $1.actions.count }
         var vote: UInt64 = 0
-        if let v = m as? MsgStakeVote { vote = 2_250_000 + (1 + UInt64(v.voteNullifiers.filter { !$0.allSatisfy { $0 == 0 } }.count)) * 150_000 }
+        if let v = m as? MsgStakeVote { vote = 2_250_000 + (1 + UInt64(v.voteNullifiers.count)) * 150_000 }
         return 200_000 + 100_000 * UInt64(m.bundles.count) + 350_000 * UInt64(actions) + (m.stakeProof != nil ? 400_000 : 0) + vote
     }
 
@@ -676,14 +676,13 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             try need(m.weight > 0, "weight must be positive")
             // At most three significant digits.
             try need((try? PrivacyWallet.voteWeight(m.weight)) == m.weight, "weight has more than 3 significant digits")
-            // Exactly two slots, used ones first (at least one), distinct, zeros after.
+            // Exactly two, non-zero (an unused slot carries a padding nullifier), distinct.
             try need(m.voteNullifiers.count == MsgStakeVote.maxVoteNotes, "a stake vote carries exactly 2 vote nullifiers")
             try need(m.voteNullifiers.allSatisfy { $0.count == 32 }, "vote_nullifiers")
             let vs = try m.voteNullifiers.map(f)
-            let used = Array(vs.prefix { !$0.isZero })
-            try need(!used.isEmpty && vs.dropFirst(used.count).allSatisfy(\.isZero), "used vote nullifiers first, then zeros")
-            try need(Set(used).count == used.count, "repeated vote nullifier")
-            if let v = used.first(where: { voteNullifiers.contains([PrivacyHash.u64(m.proposalID), $0]) }) {
+            try need(!vs.contains(where: \.isZero), "a zero vote nullifier: an unused slot carries a padding nullifier")
+            try need(Set(vs).count == vs.count, "repeated vote nullifier")
+            if let v = vs.first(where: { voteNullifiers.contains([PrivacyHash.u64(m.proposalID), $0]) }) {
                 throw Refused(why: "this stake note already voted on this proposal (code 1119): proposal \(m.proposalID), vote nullifier \(v.hex.uppercased())")
             }
         case let m as MsgVoteRemoval: try need(removalBallots[m.optionID] != nil, "no open ballot")
@@ -898,10 +897,11 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             events.append((type: "shieldedstaking_undelegate", attributes: ["validator": m.validator, "derth": String(m.amount),
                                                                             "value": String(value), "epoch": String(epoch), "payout_id": String(id)]))
         case let m as MsgStakeVote:
-            let used = try m.voteNullifiers.map(f).filter { !$0.isZero }
-            for v in used { voteNullifiers.insert([PrivacyHash.u64(m.proposalID), v]) }
+            let vs = try m.voteNullifiers.map(f)
+            for v in vs { voteNullifiers.insert([PrivacyHash.u64(m.proposalID), v]) }
             stakeVotes.append((m.proposalID, m.validator, m.weight))
-            stakeVoteSlots.append(used.count)
+            // How many notes it voted is not on chain: the proof's witness says.
+            stakeVoteSlots.append(prover.allVotes.last!.slots.count)
             events.append((type: "shieldedstaking_stake_vote", attributes: ["vote_nullifiers": try m.voteNullifiers.map { try f($0).hex }.joined(separator: ",")]))
         case let m as MsgNoteSwap:
             let (denomIn, amountIn) = rem.first!

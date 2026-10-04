@@ -47,6 +47,7 @@ pub global TAG_OTAG: Field = 0x65617274682e6f746167; // "earth.otag"
 // Stake nullifier indexed tree leaves and stake vote nullifiers (circuits/vote).
 pub global TAG_SNFL: Field = 0x65617274682e736e666c; // "earth.snfl"
 pub global TAG_VNF: Field = 0x65617274682e766e66; // "earth.vnf"
+pub global TAG_VPAD: Field = 0x65617274682e76706164; // "earth.vpad"
 // Stake note slash labels and the slash debt tree (circuits/stake, circuits/vote;
 // ORCHARD_DESIGN.md section 20).
 pub global TAG_SLABEL: Field = 0x65617274682e736c6162656c; // "earth.slabel"
@@ -220,6 +221,15 @@ pub fn vote_nf(nk: Field, rho: Field, position: u32, proposal_id: u64) -> Field 
     h5(TAG_VNF, nk, rho, position as Field, proposal_id as Field)
 }
 
+/// Padding vote nullifier = H(TAG_VPAD, nk, r, proposal_id): what an unused
+/// vote slot publishes, r a fresh random field element per vote. A Poseidon2
+/// output like a real vote nullifier (indistinguishable without nk and r);
+/// another tag and arity (4 inputs, a real one 5), so it never equals any
+/// note's vote nullifier: it can neither take nor block one.
+pub fn vote_pad_nf(nk: Field, r: Field, proposal_id: u64) -> Field {
+    h4(TAG_VPAD, nk, r, proposal_id as Field)
+}
+
 /// Proves `value` is NOT in the indexed tree with root `root`: a low leaf
 /// (low_value, low_next_value, low_next_index) at low_index under root with
 /// low_value < value and (value < low_next_value, or low_next_value = 0: the
@@ -314,9 +324,10 @@ fn test_tags_distinct() {
         TAG_VNF,
         TAG_SLABEL,
         TAG_DEBTL,
+        TAG_VPAD,
     ];
-    for i in 0..20 {
-        for j in 0..20 {
+    for i in 0..21 {
+        for j in 0..21 {
             if i != j {
                 assert(t[i] != t[j]);
             }

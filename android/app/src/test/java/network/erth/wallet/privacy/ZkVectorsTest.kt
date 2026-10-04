@@ -152,6 +152,9 @@ class ZkVectorsTest {
         assertEquals(d.getString("vote_nf"), Privacy.voteNf(nk, rho, 4_000_000_000, 5).toHex())
         assertEquals(d.getString("vote_nf_5eed"), Privacy.voteNf(Fr.of(0x5eed), Fr.of(0xa1), 1, 7).toHex())
         assertEquals("1ada84dad3e6afde3f370e97edf4df2ee4eeb6b1400d5c5f41882552f578ba2f", d.getString("vote_nf_5eed"))
+        assertEquals(d.getString("vote_pad_nf"), Privacy.votePadNf(nk, rho, 5).toHex())
+        assertEquals(d.getString("vote_pad_nf_5eed"), Privacy.votePadNf(Fr.of(0x5eed), Fr.of(0x77), 7).toHex())
+        assertEquals("08d195db55c5c0006ae0d2e8ee33df8cd5286226124074ad37c1d5ebe74b6235", d.getString("vote_pad_nf_5eed"))
     }
 
     /** The stake nullifier indexed tree against zk/indexed: roots by insert count, non-membership witnesses. */

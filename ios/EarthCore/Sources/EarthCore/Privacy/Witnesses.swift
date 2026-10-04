@@ -423,7 +423,9 @@ public struct VoteSlot: Sendable {
 /// under the proposal's snapshot note root with its spend nullifier absent
 /// from the snapshot stake nullifier tree, and one weight, 0 < weight <= the
 /// sum of their values (a labelled note's at the CURRENT `debtRoot`). `slots`
-/// are the used slots, in order; the rest are unused (every field 0). Public
+/// are the used slots; `layout` places them and the padding in the circuit's
+/// slots (an unused slot: amount 0, rho the padding's r, everything else 0,
+/// its vnf the padding nullifier). Public
 /// inputs in the chain's order (MsgStakeVote.VotePublicInputs): note_root,
 /// nf_root, debt_root, asset, weight, proposal_id, vnf[0..1], sighash.
 public struct VoteWitness: Sendable {
@@ -431,6 +433,7 @@ public struct VoteWitness: Sendable {
     public static let maxNotes = 2
     public let nk: Fr
     public let slots: [VoteSlot]
+    public let layout: VoteLayout
     public let noteRoot: Fr
     public let nfRoot: Fr
     public let debtRoot: Fr
@@ -440,16 +443,17 @@ public struct VoteWitness: Sendable {
     public let sighash: Fr
     /// The used slots' spend nullifiers: private, never published by a vote.
     public let spendNFs: [Fr]
-    /// Every slot's vote nullifier: the used ones', then 0 for each unused slot.
+    /// Every circuit slot's vote nullifier: a note's, or a padding nullifier (`layout`).
     public let vnfs: [Fr]
 
-    public init(nk: Fr, slots: [VoteSlot], noteRoot: Fr, nfRoot: Fr, debtRoot: Fr, asset: Fr, weight: UInt64, proposalID: UInt64, sighash: Fr) throws {
+    public init(nk: Fr, slots: [VoteSlot], layout: VoteLayout, noteRoot: Fr, nfRoot: Fr, debtRoot: Fr, asset: Fr, weight: UInt64, proposalID: UInt64,
+                sighash: Fr) throws {
         try require((1 ... Self.maxNotes).contains(slots.count), "a vote carries 1..\(Self.maxNotes) notes")
-        self.nk = nk; self.slots = slots; self.noteRoot = noteRoot; self.nfRoot = nfRoot; self.debtRoot = debtRoot; self.asset = asset
+        try require(layout.used == slots.count, "the layout places \(layout.used) notes, the vote has \(slots.count)")
+        self.nk = nk; self.slots = slots; self.layout = layout; self.noteRoot = noteRoot; self.nfRoot = nfRoot; self.debtRoot = debtRoot; self.asset = asset
         self.weight = weight; self.proposalID = proposalID; self.sighash = sighash
         spendNFs = slots.map { PrivacyHash.stakeNF(nk: nk, rho: $0.rho, position: $0.pos) }
-        vnfs = slots.map { PrivacyHash.voteNF(nk: nk, rho: $0.rho, position: $0.pos, proposalID: proposalID) }
-            + Array(repeating: Fr.zero, count: Self.maxNotes - slots.count)
+        vnfs = layout.vnfs(nk: nk, slots: slots, proposalID: proposalID)
     }
 
     /// What the circuit asserts, checked before spending seconds on a proof that cannot verify.
@@ -464,7 +468,7 @@ public struct VoteWitness: Sendable {
             guard let v = sl.value(debtRoot: debtRoot) else { throw PrivacyError("stake note \(i)'s label is not read under the current debt root") }
             sum += BigUInt(v)
         }
-        try require(Set(vnfs.prefix(slots.count)).count == slots.count, "the same note twice")
+        try require(!vnfs.contains(where: \.isZero) && Set(vnfs).count == vnfs.count, "the same note twice")
         try require(weight != 0, "zero vote weight")
         try require(BigUInt(weight) <= sum, "the vote weighs more than its notes")
     }
@@ -476,12 +480,12 @@ public struct VoteWitness: Sendable {
     public func noirInputs() -> [String: Any] {
         let zero = Fr.zero.noir
         let zeros = Array(repeating: zero, count: Merkle.depth)
-        func slot<T>(_ i: Int, _ used: (VoteSlot) -> T, _ unused: T) -> T { i < slots.count ? used(slots[i]) : unused }
+        func slot<T>(_ i: Int, _ used: (VoteSlot) -> T, _ unused: T) -> T { layout.order[i].map { used(slots[$0]) } ?? unused }
         let idx = 0 ..< Self.maxNotes
         return [
             "nk": nk.noir,
             "amount": idx.map { slot($0, { noirHex($0.amount) }, "0x0") },
-            "rho": idx.map { slot($0, { $0.rho.noir }, zero) },
+            "rho": idx.map { i in slot(i, { $0.rho.noir }, layout.padR(i).noir) },
             "rcm": idx.map { slot($0, { $0.rcm.noir }, zero) },
             "pos": idx.map { slot($0, { noirHex($0.pos) }, "0x0") },
             "path": idx.map { slot($0, { $0.path.map(\.noir) }, zeros) },
@@ -516,6 +520,51 @@ public struct VoteWitness: Sendable {
                              "proposal_id", "vnf", "sighash"]
 
     public func proverToml() -> String { toml(noirInputs(), order: Self.inputOrder) }
+}
+
+/// Where a vote's notes and padding sit in the circuit's `VoteWitness.maxNotes`
+/// slots: `order` gives each slot's used-note index, or nil for padding, whose
+/// r values are `pads` in order. Every vote publishes maxNotes non-zero vote
+/// nullifiers; a padding nullifier H(TAG_VPAD, nk, r, proposal_id) looks like
+/// a note's, so the number of notes voted is hidden. The wallet draws r fresh
+/// at random and puts the padding in a random slot (`random`).
+public struct VoteLayout: Sendable, Equatable {
+    public let order: [Int?]
+    public let pads: [Fr]
+
+    public init(order: [Int?], pads: [Fr]) throws {
+        try require(order.count == VoteWitness.maxNotes, "a vote has \(VoteWitness.maxNotes) slots")
+        try require(order.filter { $0 == nil }.count == pads.count, "one padding value per unused slot")
+        let used = order.compactMap { $0 }
+        try require(used.sorted() == Array(0 ..< used.count), "each note in one slot")
+        try require(!pads.contains(where: \.isZero), "a padding value is random")
+        self.order = order; self.pads = pads
+    }
+
+    /// How many notes the layout places.
+    public var used: Int { order.compactMap { $0 }.count }
+
+    /// The padding r of circuit slot `i` (0 for a note's slot).
+    public func padR(_ i: Int) -> Fr { order[i] != nil ? .zero : pads[order.prefix(i).filter { $0 == nil }.count] }
+
+    public func vnfs(nk: Fr, slots: [VoteSlot], proposalID: UInt64) -> [Fr] {
+        order.indices.map { i in
+            if let j = order[i] { return PrivacyHash.voteNF(nk: nk, rho: slots[j].rho, position: slots[j].pos, proposalID: proposalID) }
+            return PrivacyHash.votePadNF(nk: nk, r: padR(i), proposalID: proposalID)
+        }
+    }
+
+    /// `used` notes and fresh random padding, in a random slot order.
+    public static func random(used: Int) throws -> VoteLayout {
+        try require((1 ... VoteWitness.maxNotes).contains(used), "a vote carries 1..\(VoteWitness.maxNotes) notes")
+        let order = (Array(0 ..< used).map { Optional($0) } + Array(repeating: nil, count: VoteWitness.maxNotes - used)).shuffled()
+        return try VoteLayout(order: order, pads: (0 ..< VoteWitness.maxNotes - used).map { _ in NotePlaintext.randomField() })
+    }
+
+    /// The notes first, then padding with the given r values (tests and fixtures).
+    public static func inOrder(used: Int, pads: [Fr]) throws -> VoteLayout {
+        try VoteLayout(order: Array(0 ..< used).map { Optional($0) } + Array(repeating: nil, count: VoteWitness.maxNotes - used), pads: pads)
+    }
 }
 
 func noirHex(_ v: UInt64) -> String { "0x" + String(v, radix: 16) }

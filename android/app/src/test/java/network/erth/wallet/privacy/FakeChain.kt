@@ -404,10 +404,10 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         return gasOf(m)
     }
 
-    /** What the fake's ante charges [m]: its shape alone (a vote: gasVote + proof + (1 + used) x note). */
+    /** What the fake's ante charges [m]: its shape alone (a vote: gasVote + proof + (1 + 2) x note). */
     fun gasOf(m: MessageLite): Long {
         val actions = PrivateMsgs.bundles(m).sumOf { it.actionsCount }
-        val vote = if (m is MsgStakeVote) 2_250_000L + (1L + m.voteNullifiersList.count { !f(it).isZero }) * 150_000L else 0L
+        val vote = if (m is MsgStakeVote) 2_250_000L + (1L + m.voteNullifiersCount) * 150_000L else 0L
         return 200_000L + 100_000L * PrivateMsgs.bundles(m).size + 350_000L * actions + (if (PrivateMsgs.stake(m) != null) 400_000 else 0) + vote
     }
 
@@ -754,14 +754,13 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 require(m.weight in 1..Long.MAX_VALUE) { "weight must be positive" }
                 // At most three significant digits.
                 require(PrivacyWallet.voteWeight(m.weight) == m.weight) { "weight has more than 3 significant digits" }
-                // Exactly two slots, used ones first (at least one), distinct, zeros after.
+                // Exactly two, non-zero (an unused slot carries a padding nullifier), distinct.
                 require(m.voteNullifiersCount == PrivateMsgs.MAX_VOTE_NOTES) { "a stake vote carries exactly 2 vote nullifiers" }
                 require(m.voteNullifiersList.all { it.size() == 32 }) { "vote_nullifiers" }
                 val vs = m.voteNullifiersList.map(::f)
-                val used = vs.takeWhile { !it.isZero }
-                require(used.isNotEmpty() && vs.drop(used.size).all { it.isZero }) { "used vote nullifiers first, then zeros" }
-                require(used.toSet().size == used.size) { "repeated vote nullifier" }
-                used.firstOrNull { (m.proposalId to it) in voteNullifiers }?.let {
+                require(vs.none { it.isZero }) { "a zero vote nullifier: an unused slot carries a padding nullifier" }
+                require(vs.toSet().size == vs.size) { "repeated vote nullifier" }
+                vs.firstOrNull { (m.proposalId to it) in voteNullifiers }?.let {
                     throw IllegalArgumentException("this stake note already voted on this proposal (code 1119): proposal ${m.proposalId}, vote nullifier ${it.toHex().uppercase()}")
                 }
                 require(snap.nfSize >= 0)
@@ -972,10 +971,11 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                     "value" to value.toString(), "epoch" to epoch.toString(), "payout_id" to id.toString()))
             }
             is MsgStakeVote -> {
-                val used = m.voteNullifiersList.map(::f).filter { !it.isZero }
-                used.forEach { voteNullifiers.add(m.proposalId to it) }
+                val vs = m.voteNullifiersList.map(::f)
+                vs.forEach { voteNullifiers.add(m.proposalId to it) }
                 stakeVotes.add(Triple(m.proposalId, m.validator, m.weight))
-                stakeVoteSlots.add(used.size)
+                // How many notes it voted is not on chain: the proof's witness says.
+                stakeVoteSlots.add(prover.allVotes.last().slots.size)
                 events.add("shieldedstaking_stake_vote" to mapOf("vote_nullifiers" to m.voteNullifiersList.joinToString(",") { f(it).toHex() }))
             }
             is MsgNoteSwap -> {

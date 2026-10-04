@@ -93,7 +93,7 @@ final class PrivateMsgsTests: XCTestCase {
         "undelegate_whole": MsgShieldedUndelegate(bundle: fee(102, 2000), validator: validator, amount: 400_000, stake: stake(102, 2, true),
                                                   pc: fb(103), ciphertext: bct(103)),
         "stake_vote": MsgStakeVote(bundle: fee(120, 2000), proposalID: 5, validator: validator, options: opts, weight: 400_000,
-                                   proof: Data([0x70, 0x7e]), voteNullifiers: [fb(121), zero32], debtRoot: DebtTree.emptyRoot.bytes),
+                                   proof: Data([0x70, 0x7e]), voteNullifiers: [fb(121), fb(122)], debtRoot: DebtTree.emptyRoot.bytes),
         "stake_vote_two": MsgStakeVote(bundle: fee(127, 2000), proposalID: 6, validator: validator, options: opts, weight: 999,
                                        proof: Data([0x70, 0x7e]), voteNullifiers: [fb(128), fb(129)], debtRoot: fb(130)),
         "lock_position": MsgLockPosition(bundle: fee(140, 2000), validator: validator, amount: 400_000, splits: [w(2, 100)], stake: stake(140, 1, true)),

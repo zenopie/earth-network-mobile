@@ -130,6 +130,9 @@ final class ZkVectorsTests: XCTestCase {
         XCTAssertEqual(s("vote_nf"), PrivacyHash.voteNF(nk: nk, rho: rho, position: 4_000_000_000, proposalID: 5).hex)
         XCTAssertEqual(s("vote_nf_5eed"), PrivacyHash.voteNF(nk: Fr(UInt64(0x5eed)), rho: Fr(UInt64(0xa1)), position: 1, proposalID: 7).hex)
         XCTAssertEqual("1ada84dad3e6afde3f370e97edf4df2ee4eeb6b1400d5c5f41882552f578ba2f", s("vote_nf_5eed"))
+        XCTAssertEqual(s("vote_pad_nf"), PrivacyHash.votePadNF(nk: nk, r: rho, proposalID: 5).hex)
+        XCTAssertEqual(s("vote_pad_nf_5eed"), PrivacyHash.votePadNF(nk: Fr(UInt64(0x5eed)), r: Fr(UInt64(0x77)), proposalID: 7).hex)
+        XCTAssertEqual("08d195db55c5c0006ae0d2e8ee33df8cd5286226124074ad37c1d5ebe74b6235", s("vote_pad_nf_5eed"))
     }
 
     /// The slash debt tree against zk/debt: roots by write (a row rewritten in place), witnesses for rows and absent moves.

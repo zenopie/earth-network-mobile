@@ -31,6 +31,7 @@ public enum PrivacyHash {
     // The stake nullifier indexed tree and stake votes (circuits/vote, ORCHARD_DESIGN 15).
     public static let tagSNFL = tag("earth.snfl")
     public static let tagVNF = tag("earth.vnf")
+    public static let tagVPad = tag("earth.vpad")
     // Stake note slash labels and the slash debt tree (circuits/stake, circuits/vote; ORCHARD_DESIGN 20).
     public static let tagSLabel = tag("earth.slabel")
     public static let tagDebtL = tag("earth.debtl")
@@ -115,6 +116,12 @@ public enum PrivacyHash {
     public static func voteNF(nk: Fr, rho: Fr, position: UInt64, proposalID: UInt64) -> Fr {
         precondition(position <= 0xffff_ffff, "position is a u32")
         return h(tagVNF, nk, rho, u64(position), u64(proposalID))
+    }
+
+    /// An unused vote slot's padding nullifier: H(TAG_VPAD, nk, r, proposal_id),
+    /// r fresh random per vote. Looks like a `voteNF` and never equals one.
+    public static func votePadNF(nk: Fr, r: Fr, proposalID: UInt64) -> Fr {
+        h(tagVPad, nk, r, u64(proposalID))
     }
 
     /// A Groundworks position's owner tag: H(TAG_OTAG, owner_pk, salt).

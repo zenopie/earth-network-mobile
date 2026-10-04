@@ -257,13 +257,13 @@ class PrivateTxTest : WalletTest() {
     }
 
     @Test
-    fun voteGasEstimateCountsItsNotes() {
-        fun spec(used: Int) = VoteWitnessSpec(List(2) { if (it < used) Fr.of(it + 1L) else Fr.ZERO }) { error("unused") }
+    fun voteGasEstimateIsTheSameForEveryVote() {
+        // Every vote carries two vote nullifiers (padding included): one gas, whatever it votes.
+        val spec = VoteWitnessSpec(listOf(Fr.of(1L), Fr.of(2L))) { error("unused") }
         val msg = network.erth.earth.proto.shieldedstaking.MsgStakeVote.getDefaultInstance()
-        val g1 = PrivateTxEngine.estimateGas(msg, Assembled(emptyList(), vote = spec(1)) { _, _, _ -> msg }, 0)
-        val g2 = PrivateTxEngine.estimateGas(msg, Assembled(emptyList(), vote = spec(2)) { _, _, _ -> msg }, 0)
-        assertEquals(PrivateTxEngine.NOTE_GAS, g2 - g1)
-        assertEquals(PrivateTxEngine.BASE_GAS + PrivateTxEngine.BUNDLE_GAS + 250_000 + 2_000_000 + 2 * PrivateTxEngine.NOTE_GAS, g1)
+        val g = PrivateTxEngine.estimateGas(msg, Assembled(emptyList(), vote = spec) { _, _, _ -> msg }, 0)
+        assertEquals(PrivateTxEngine.BASE_GAS + PrivateTxEngine.BUNDLE_GAS + 250_000 + 2_000_000 + 3 * PrivateTxEngine.NOTE_GAS, g)
+        assertThrows(IllegalArgumentException::class.java) { VoteWitnessSpec(listOf(Fr.of(1L), Fr.ZERO)) { error("unused") } }
     }
 
     /** B/F2: an unshield to any module account is refused before anything is proven. */

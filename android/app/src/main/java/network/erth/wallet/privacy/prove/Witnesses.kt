@@ -376,7 +376,9 @@ data class VoteSlot(
  * under the proposal's snapshot note root with its spend nullifier absent
  * from the snapshot stake nullifier tree, and one weight, 0 < weight <= the
  * sum of their values (a labelled note's at the CURRENT [debtRoot]). [slots]
- * are the used slots, in order; the rest are unused (every field 0).
+ * are the used slots; [layout] places them and the padding in the circuit's
+ * slots (an unused slot: amount 0, rho the padding's r, everything else 0,
+ * its vnf the padding nullifier).
  * Public inputs in the chain's order (MsgStakeVote.VotePublicInputs):
  * note_root, nf_root, debt_root, asset, weight, proposal_id, vnf[0..1],
  * sighash.
@@ -384,6 +386,7 @@ data class VoteSlot(
 data class VoteWitness(
     val nk: Fr,
     val slots: List<VoteSlot>,
+    val layout: VoteLayout,
     val noteRoot: Fr,
     val nfRoot: Fr,
     val debtRoot: Fr,
@@ -394,15 +397,14 @@ data class VoteWitness(
 ) {
     init {
         require(slots.size in 1..MAX_NOTES) { "a vote carries 1..$MAX_NOTES notes" }
+        require(layout.used == slots.size) { "the layout places ${layout.used} notes, the vote has ${slots.size}" }
     }
 
     /** The used slots' spend nullifiers: private, never published by a vote. */
     val spendNfs: List<Fr> by lazy { slots.map { Privacy.stakeNf(nk, it.rho, it.pos) } }
 
-    /** Every slot's vote nullifier: the used ones', then 0 for each unused slot. */
-    val vnfs: List<Fr> by lazy {
-        slots.map { Privacy.voteNf(nk, it.rho, it.pos, proposalId) } + List(MAX_NOTES - slots.size) { Fr.ZERO }
-    }
+    /** Every circuit slot's vote nullifier: a note's, or a padding nullifier ([layout]). */
+    val vnfs: List<Fr> by lazy { layout.vnfs(nk, slots, proposalId) }
 
     /** What the circuit asserts, checked before spending seconds on a proof that cannot verify. */
     fun check() {
@@ -415,7 +417,7 @@ data class VoteWitness(
             val v = sl.value(debtRoot) ?: throw IllegalArgumentException("stake note $i's label is not read under the current debt root")
             sum += java.math.BigInteger.valueOf(v)
         }
-        require(vnfs.take(slots.size).toSet().size == slots.size) { "the same note twice" }
+        require(vnfs.none { it.isZero } && vnfs.toSet().size == vnfs.size) { "the same note twice" }
         require(weight != 0L) { "zero vote weight" }
         require(java.math.BigInteger(java.lang.Long.toUnsignedString(weight)) <= sum) { "the vote weighs more than its notes" }
     }
@@ -426,12 +428,12 @@ data class VoteWitness(
     fun noirInputs(): Map<String, Any> {
         val zero = Fr.ZERO.toNoir()
         val zeros = List(Merkle.DEPTH) { zero }
-        fun <T> slot(i: Int, used: (VoteSlot) -> T, unused: T): T = slots.getOrNull(i)?.let(used) ?: unused
+        fun <T> slot(i: Int, used: (VoteSlot) -> T, unused: T): T = layout.order[i]?.let { used(slots[it]) } ?: unused
         val idx = 0 until MAX_NOTES
         return mapOf(
             "nk" to nk.toNoir(),
             "amount" to idx.map { i -> slot(i, { hex(it.amount) }, "0x0") },
-            "rho" to idx.map { i -> slot(i, { it.rho.toNoir() }, zero) },
+            "rho" to idx.map { i -> slot(i, { it.rho.toNoir() }, layout.padR(i).toNoir()) },
             "rcm" to idx.map { i -> slot(i, { it.rcm.toNoir() }, zero) },
             "pos" to idx.map { i -> slot(i, { hex(it.pos) }, "0x0") },
             "path" to idx.map { i -> slot(i, { s -> s.path.map { it.toNoir() } }, zeros) },
@@ -465,6 +467,48 @@ data class VoteWitness(
     companion object {
         /** circuits/vote MAX_NOTES: the most notes one vote proof carries. */
         const val MAX_NOTES = 2
+    }
+}
+
+/**
+ * Where a vote's notes and padding sit in the circuit's [VoteWitness.MAX_NOTES]
+ * slots: [order] gives each slot's used-note index, or null for padding,
+ * whose r values are [pads] in order. Every vote publishes MAX_NOTES non-zero
+ * vote nullifiers; a padding nullifier H(TAG_VPAD, nk, r, proposal_id) looks
+ * like a note's, so the number of notes voted is hidden. The wallet draws r
+ * fresh at random and puts the padding in a random slot ([random]).
+ */
+data class VoteLayout(val order: List<Int?>, val pads: List<Fr>) {
+    init {
+        require(order.size == VoteWitness.MAX_NOTES) { "a vote has ${VoteWitness.MAX_NOTES} slots" }
+        require(order.count { it == null } == pads.size) { "one padding value per unused slot" }
+        require(order.filterNotNull().sorted() == (0 until used).toList()) { "each note in one slot" }
+        require(pads.none { it.isZero }) { "a padding value is random" }
+    }
+
+    /** How many notes the layout places. */
+    val used: Int get() = order.count { it != null }
+
+    /** The padding r of circuit slot [i] (0 for a note's slot). */
+    fun padR(i: Int): Fr = if (order[i] != null) Fr.ZERO else pads[order.take(i).count { it == null }]
+
+    fun vnfs(nk: Fr, slots: List<VoteSlot>, proposalId: Long): List<Fr> = order.indices.map { i ->
+        order[i]?.let { Privacy.voteNf(nk, slots[it].rho, slots[it].pos, proposalId) } ?: Privacy.votePadNf(nk, padR(i), proposalId)
+    }
+
+    companion object {
+        private val rng = java.security.SecureRandom()
+
+        /** [used] notes and fresh random padding, in a random slot order. */
+        fun random(used: Int): VoteLayout {
+            require(used in 1..VoteWitness.MAX_NOTES) { "a vote carries 1..${VoteWitness.MAX_NOTES} notes" }
+            val order = ((0 until used).map<Int, Int?> { it } + List(VoteWitness.MAX_NOTES - used) { null }).shuffled(rng)
+            return VoteLayout(order, List(VoteWitness.MAX_NOTES - used) { network.erth.wallet.privacy.note.NotePlaintext.randomField() })
+        }
+
+        /** The notes first, then padding with the given r values (tests and fixtures). */
+        fun inOrder(used: Int, pads: List<Fr>): VoteLayout =
+            VoteLayout((0 until used).map<Int, Int?> { it } + List(VoteWitness.MAX_NOTES - used) { null }, pads)
     }
 }
 
