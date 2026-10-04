@@ -156,8 +156,9 @@ internal fun EarthContent(
     // A stake vote in the making: the votes still to confirm, one sheet each
     // (one per validator, one per position), each sent only on its own tap.
     var stakeVoting by remember { mutableStateOf<StakeVoting?>(null) }
-    // A validator with more notes than one vote holds: the user picks how.
-    var partsChoice by remember { mutableStateOf<StakeVoting?>(null) }
+    // A validator with more notes than one vote holds: the user picks how,
+    // before any of the votes is sent.
+    var partsChoice by remember { mutableStateOf<Pair<StakeVoting, PrivacyWallet.StakeVoteItem.Validator>?>(null) }
     // This identity's handle, caretaker vote and what is due (reminders only).
     val personal by privacy.personal.collectAsStateWithLifecycle()
     val now = System.currentTimeMillis() / 1000
@@ -831,11 +832,11 @@ internal fun EarthContent(
     LaunchedEffect(stakeVoting) {
         val v = stakeVoting ?: return@LaunchedEffect
         stakeVoting = null
-        val item = v.items.firstOrNull() ?: return@LaunchedEffect
-        if (item is PrivacyWallet.StakeVoteItem.Validator && item.parts > 1 && item.validator !in v.inParts) {
-            partsChoice = v
+        v.items.filterIsInstance<PrivacyWallet.StakeVoteItem.Validator>().firstOrNull { it.parts > 1 && it.validator !in v.inParts }?.let {
+            partsChoice = v to it
             return@LaunchedEffect
         }
+        val item = v.items.firstOrNull() ?: return@LaunchedEffect
         val rest = v.copy(items = v.items.drop(1))
         val preview = withContext(Dispatchers.IO) {
             runCatching { PrivacySession.wallet(context).stakeVotePreview(v.proposalId, item) }.getOrNull()
@@ -872,8 +873,7 @@ internal fun EarthContent(
         )
     }
 
-    partsChoice?.let { v ->
-        val item = v.items.first() as PrivacyWallet.StakeVoteItem.Validator
+    partsChoice?.let { (v, item) ->
         val name = earnState?.validators?.firstOrNull { it.validatorOperator == item.validator }?.moniker ?: item.validator
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { partsChoice = null },
@@ -891,7 +891,7 @@ internal fun EarthContent(
                     androidx.compose.material3.TextButton(onClick = {
                         partsChoice = null
                         stakeVoting = v.copy(
-                            items = List(item.parts) { item } + v.items.drop(1),
+                            items = v.items.flatMap { if (it == item) List(item.parts) { item } else listOf(it) },
                             inParts = v.inParts + item.validator,
                         )
                     }) { androidx.compose.material3.Text("Vote in parts") }
