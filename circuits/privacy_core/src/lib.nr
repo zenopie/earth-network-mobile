@@ -16,7 +16,7 @@ pub mod value;
 pub global DEPTH: u32 = 32;
 
 /// Every note value and stake note amount is at most 2^63 - 1: what every
-/// wallet holds (Android Long, iOS Int64, web; PRIVACY_FORMATS section 3,
+/// wallet holds (Android Long, iOS Int64, web; PRIVACY_FORMATS section 4,
 /// Amounts) and the most the chain mints (x/shielded MaxNoteValue,
 /// ORCHARD_DESIGN section 16). note_cm and stake_cm enforce it, so no circuit
 /// opens or creates a commitment to a larger value: a bundle cannot make a
