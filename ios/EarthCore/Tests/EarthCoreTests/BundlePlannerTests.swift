@@ -124,7 +124,8 @@ final class BundlePlannerTests: XCTestCase {
         XCTAssertEqual([400], try StakeSelection.cover(ns, amount: 350).map(\.amount))
         XCTAssertEqual([400, 1_000], try StakeSelection.cover(ns, amount: 1_350).map(\.amount))
         XCTAssertThrowsError(try StakeSelection.cover(ns, amount: 1_500)) {
-            XCTAssertEqual("this stake is spread over more than two notes; merge them first", ($0 as? NoteSelection.Insufficient)?.message)
+            XCTAssertEqual("this stake is spread over more than two notes; merge them on the Notes screen first (one fee each), then try again",
+                           ($0 as? NoteSelection.Insufficient)?.message)
         }
         XCTAssertThrowsError(try StakeSelection.cover(ns, amount: 2_000))
     }

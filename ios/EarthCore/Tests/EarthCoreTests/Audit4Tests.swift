@@ -328,8 +328,8 @@ final class Audit4Tests: XCTestCase {
         let a = try wallet(chain, indexer: forged)
         _ = try await a.sync()
         let items = try await a.stakeVoteItems(proposalID: 1)
-        XCTAssertTrue(items.contains(.note(v.k.position)))
-        let r = try await a.castStakeVote(proposalID: 1, item: .note(v.k.position), options: yes)
+        XCTAssertTrue(items.contains(.validator(vB, notes: 3)))
+        let r = try await a.castStakeVote(proposalID: 1, item: .validator(vB, notes: 3), options: yes)
         XCTAssertNotNil(r)
         XCTAssertEqual(1, chain.stakeVotes.count)
     }
@@ -363,7 +363,7 @@ final class Audit4Tests: XCTestCase {
         _ = try await a.sync()
         chain.indexerNfTree = false
         let sims = chain.simulated
-        await assertThrowsAsync({ try await a.castStakeVote(proposalID: 1, item: .note(v.k.position), options: self.yes) }) {
+        await assertThrowsAsync({ try await a.castStakeVote(proposalID: 1, item: .validator(vB, notes: 3), options: self.yes) }) {
             "\($0.localizedDescription)".contains("sync saw no spend")
         }
         XCTAssertEqual(sims, chain.simulated)
@@ -376,10 +376,10 @@ final class Audit4Tests: XCTestCase {
         let i = v.a.store.state.stakeNotes.firstIndex { $0.position == v.k.position }!
         v.a.store.mutate { $0.stakeNotes[i].spentHeight = UInt64(snap.height) }
         var items = try await v.a.stakeVoteItems(proposalID: 1)
-        XCTAssertFalse(items.contains(.note(v.k.position)))
+        XCTAssertEqual([.validator(vB, notes: 2)], items)
         v.a.store.mutate { $0.stakeNotes[i].spentHeight = UInt64(snap.height) + 1 }
         items = try await v.a.stakeVoteItems(proposalID: 1)
-        XCTAssertTrue(items.contains(.note(v.k.position)))
+        XCTAssertEqual([.validator(vB, notes: 3)], items)
     }
 
     /// nf_size is the LCD's: an indexer's larger count is never fetched (L4); one aligned page.
@@ -393,7 +393,7 @@ final class Audit4Tests: XCTestCase {
         }
         let a = try wallet(v.chain, indexer: idx)
         _ = try await a.sync()
-        let r = try await a.castStakeVote(proposalID: 1, item: .note(v.k.position), options: yes)
+        let r = try await a.castStakeVote(proposalID: 1, item: .validator(vB, notes: 3), options: yes)
         XCTAssertNotNil(r)
         XCTAssertEqual(1, idx.nfLeafAsks.count)
         XCTAssertEqual(0, idx.nfLeafAsks[0].0)
@@ -404,13 +404,14 @@ final class Audit4Tests: XCTestCase {
     /// L1: the stake votes cast survive a same-chain reset.
     func testStakeVotesSurviveAReset() async throws {
         let v = try await voting()
-        _ = try await v.a.castStakeVote(proposalID: 1, item: .note(v.k.position), options: yes)
+        _ = try await v.a.castStakeVote(proposalID: 1, item: .validator(vB, notes: 3), options: yes)
         let votes = v.a.store.state.stakeVotes
-        XCTAssertEqual(1, votes.count)
+        // One vote, three notes: each note's vote nullifier is remembered.
+        XCTAssertEqual(3, votes.count)
         try v.a.store.reset(chainID: v.chain.chainID)
         XCTAssertEqual(votes, v.a.store.state.stakeVotes)
         _ = try await v.a.sync()
-        let again = try await v.a.castStakeVote(proposalID: 1, item: .note(v.k.position), options: yes)
+        let again = try await v.a.castStakeVote(proposalID: 1, item: .validator(vB, notes: 3), options: yes)
         XCTAssertNil(again)
         XCTAssertEqual(1, v.chain.stakeVotes.count)
     }
@@ -427,11 +428,11 @@ final class Audit4Tests: XCTestCase {
     func testRefusedVoteIsForgotten() async throws {
         let v = try await voting()
         v.chain.rejectNext = 1
-        await assertThrowsAsync({ try await v.a.castStakeVote(proposalID: 1, item: .note(v.k.position), options: self.yes) }) { $0 is UnsignedTx.TxRejected }
+        await assertThrowsAsync({ try await v.a.castStakeVote(proposalID: 1, item: .validator(vB, notes: 3), options: self.yes) }) { $0 is UnsignedTx.TxRejected }
         XCTAssertTrue(v.a.store.state.stakeVotes.isEmpty)
-        let r = try await v.a.castStakeVote(proposalID: 1, item: .note(v.k.position), options: yes)
+        let r = try await v.a.castStakeVote(proposalID: 1, item: .validator(vB, notes: 3), options: yes)
         XCTAssertNotNil(r)
-        XCTAssertEqual(1, v.a.store.state.stakeVotes.count)
+        XCTAssertEqual(3, v.a.store.state.stakeVotes.count)
     }
 
     // MARK: M1: pending marked before the broadcast, released by the chain's word
@@ -501,64 +502,7 @@ final class Audit4Tests: XCTestCase {
         XCTAssertNotNil(a.store.state.notes.first { $0.nf == hide }?.pendingAt)
     }
 
-    // MARK: M4: the vote controller and the session (iOS PoC B)
-
-    /// PoC B1: a suspend landing while a start is in flight stops it: nothing is cast.
-    func testB1_SuspendDuringStartStopsIt() async throws {
-        let chain = FakeChain()
-        let a = try await a3.staked(chain)
-        let box = Box<StakeVoteController>()
-        let calls = Tally()
-        let c = StakeVoteController(wallet: {
-            if calls.inc() == 1 { box.v?.suspend() }
-            return a
-        }, pause: { _ in })
-        box.v = c
-        await assertThrowsAsync({ try await c.startAndAwaitFirst(proposalID: 12, options: self.yes) })
-        await c.wait()
-        XCTAssertEqual(0, chain.stakeVotes.count)
-        XCTAssertEqual(0, chain.positionVotes.count)
-        XCTAssertNotEqual(true, c.progress?.finished)
-    }
-
-    /// PoC B1b: the same through resume.
-    func testB1b_SuspendDuringResumeStopsIt() async throws {
-        let chain = FakeChain()
-        let a = try await a3.staked(chain)
-        a.store.mutate { $0.stakeVoteRun = StakeVoteRun(proposalID: 12, options: [.init(option: 1, weight: "1")], votedPositions: [], total: 3) }
-        let box = Box<StakeVoteController>()
-        let calls = Tally()
-        let c = StakeVoteController(wallet: {
-            if calls.inc() == 1 { box.v?.suspend() }
-            return a
-        }, pause: { _ in })
-        box.v = c
-        await c.resume()
-        await c.wait()
-        XCTAssertEqual(0, chain.stakeVotes.count + chain.positionVotes.count)
-        // Kept for the next unlock.
-        XCTAssertNotNil(a.store.state.stakeVoteRun)
-    }
-
-    /// PoC B2: once suspended, a run says nothing more on screen.
-    func testB2_SuspendedRunReportsNothingMore() async throws {
-        let chain = FakeChain()
-        let a = try await a3.staked(chain)
-        let seen = Box<[StakeVoteController.Progress?]>(); seen.v = []
-        let lock = NSLock()
-        let waiting = Tally()
-        let c = StakeVoteController(wallet: { a }, pause: { _ in _ = waiting.inc(); try await Task.sleep(nanoseconds: 60_000_000_000) },
-                                    onProgress: { p in lock.lock(); seen.v!.append(p); lock.unlock() })
-        _ = try await c.startAndAwaitFirst(proposalID: 12, options: yes)
-        while waiting.value == 0 { try await Task.sleep(nanoseconds: 10_000_000) }
-        lock.lock(); let before = seen.v!.count; lock.unlock()
-        c.suspend()
-        await c.wait()
-        lock.lock(); let after = Array(seen.v![before...]); lock.unlock()
-        XCTAssertEqual(1, after.count)
-        XCTAssertNil(after.first ?? nil)
-        XCTAssertNil(c.progress)
-    }
+    // MARK: M4 (iOS PoC B): the gas request
 
     /// PoC B3: cancelling the request stops the proof of work.
     func testB3_CancellingTheRequestStopsTheWork() async throws {
@@ -586,9 +530,11 @@ final class Audit4Tests: XCTestCase {
         chain.openProposal(12)
         _ = try await a.sync()
         let pos = try await a.stakeVoteItems(proposalID: 12).first { if case .position = $0 { return true } else { return false } }!
+        guard case let .position(id, counter) = pos else { return XCTFail("no position") }
+        let p = try await a.positions().first { $0.position.id == id }!.position
         let got = Box<String>()
         chain.unconfirmedNext = 1
-        await assertThrowsAsync({ try await a.castStakeVote(proposalID: 12, item: pos, options: self.yes) { got.v = $0 } })
+        await assertThrowsAsync({ try await a.positionVote(p, counter: counter, proposalID: 12, options: self.yes) { got.v = $0 } })
         XCTAssertNotNil(got.v)
         XCTAssertNotNil(chain.txs[got.v!])
         XCTAssertEqual(1, chain.positionVotes.count)
@@ -630,7 +576,7 @@ final class Audit4Tests: XCTestCase {
 
     func testWalletRequestsFollowThePagingRule() async throws {
         let v = try await voting()
-        let r = try await v.a.castStakeVote(proposalID: 1, item: .note(v.k.position), options: yes)
+        let r = try await v.a.castStakeVote(proposalID: 1, item: .validator(vB, notes: 3), options: yes)
         XCTAssertNotNil(r)
         XCTAssertTrue(v.chain.misaligned.isEmpty, "\(v.chain.misaligned)")
     }

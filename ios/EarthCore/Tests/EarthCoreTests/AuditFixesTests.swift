@@ -100,7 +100,8 @@ final class AuditFixesTests: XCTestCase {
         _ = try await a.undelegate(validator: validator, amount: 200_000)
         try await a.sync()
         XCTAssertTrue(Set(a.balances().keys).isSuperset(of: ["uerth", "uanml", "dexlp/1", PrivacyWallet.derthDenom(validator)]))
-        XCTAssertFalse(a.unbondDenoms().isEmpty)
+        // The undelegation waits for its payout (no claim note any more).
+        XCTAssertEqual(1, a.pendingUnbonds.count)
 
         let restored = try wallet(chain)
         try await restored.sync()

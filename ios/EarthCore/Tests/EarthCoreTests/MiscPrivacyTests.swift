@@ -105,15 +105,9 @@ final class AutomationTests: XCTestCase {
         OwnedStakeNote(position: pos, height: 1, denom: denom, amount: 5, rho: .one, rcm: .one, cm: .one, nf: .one)
     }
 
-    /// Round 5 (user decision): nothing that spends a fee is automatic. The
-    /// day's claim, the caretaker vote and the handle are reminders; the one
-    /// automatic action is the end of an undelegation the user started.
-    func testOnlyMaturedUnbondingClaimsAreAutomatic() {
-        XCTAssertTrue(PrivacyAutomation.decide(.init(now: now, maturedUnbonds: [])).isEmpty)
-        let n = note("unbond/v/1")
-        XCTAssertEqual([.claimUnbonding(denom: n.denom)], PrivacyAutomation.decide(.init(now: now, maturedUnbonds: [n.denom])))
-    }
-
+    /// Round 5, and chain 48b631c (user decision): the wallet sends nothing on
+    /// its own. The day's claim, the caretaker vote and the handle are
+    /// reminders; an undelegation pays out by itself (nothing to claim).
     func testRemindersInsteadOfActions() {
         let base = Reminders.Inputs(now: now, identityLive: true, claimOpensAt: 0, claimedToday: false, caretakerExpiresAt: 0, handle: "", handleEntry: nil)
         XCTAssertEqual([.anmlReady], Reminders.due(base))
@@ -144,21 +138,21 @@ final class AutomationTests: XCTestCase {
         XCTAssertTrue(Reminders.text(.anmlReady, now: now).contains("ANML"))
     }
 
-    func testMaturityComesFromEpochTimingAlone() {
+    func testPayoutTimeComesFromEpochTimingAlone() {
         let d: Int64 = 86_400, unbonding = 21 * d, t: Int64 = 1_800_000_000
-        XCTAssertEqual(t + unbonding + PrivacyAutomation.maturityMargin, PrivacyAutomation.maturesBy(9, current: 10, currentStart: t, epochSeconds: d, unbondingSeconds: unbonding))
-        XCTAssertEqual(t - 2 * d + unbonding + PrivacyAutomation.maturityMargin, PrivacyAutomation.maturesBy(7, current: 10, currentStart: t, epochSeconds: d, unbondingSeconds: unbonding))
-        XCTAssertNil(PrivacyAutomation.maturesBy(10, current: 10, currentStart: t, epochSeconds: d, unbondingSeconds: unbonding))
-        let n9 = note("unbond/v/9", 1), n10 = note("unbond/v/10", 2)
-        let by9 = PrivacyAutomation.maturesBy(9, current: 10, currentStart: t, epochSeconds: d, unbondingSeconds: unbonding)!
-        func m(_ ns: [OwnedStakeNote], _ now: Int64, _ retry: [String: Int64] = [:]) -> [String] {
-            PrivacyAutomation.matured(ns, now: now, current: 10, currentStart: t, epochSeconds: d, unbondingSeconds: unbonding, retryAt: retry)
-        }
-        XCTAssertTrue(m([n9, n10], by9 - 1).isEmpty)
-        XCTAssertEqual([n9.denom], m([n9, n10], by9))
-        XCTAssertTrue(m([n9], by9, ["unbond/v/9": by9 + 1]).isEmpty)
-        var pending = n9; pending.pendingAt = 1
-        XCTAssertTrue(m([pending], by9).isEmpty)
+        let m = PrivacyWallet.payoutMarginSeconds
+        // Booked in the epoch in progress: it ends with it, then unbonds.
+        XCTAssertEqual(t + d + unbonding + m, PrivacyWallet.unbondDueBy(epoch: 10, current: 10, currentStart: t, currentEnd: t + d, epochSeconds: d, unbondingSeconds: unbonding))
+        // A late epoch end (the end time passed): at least one epoch from its start.
+        XCTAssertEqual(t + d + unbonding + m, PrivacyWallet.unbondDueBy(epoch: 10, current: 10, currentStart: t, currentEnd: t, epochSeconds: d, unbondingSeconds: unbonding))
+        // An ended epoch: 9 ended at t, 7 at least two epochs earlier.
+        XCTAssertEqual(t + unbonding + m, PrivacyWallet.unbondDueBy(epoch: 9, current: 10, currentStart: t, currentEnd: t + d, epochSeconds: d, unbondingSeconds: unbonding))
+        XCTAssertEqual(t - 2 * d + unbonding + m, PrivacyWallet.unbondDueBy(epoch: 7, current: 10, currentStart: t, currentEnd: t + d, epochSeconds: d, unbondingSeconds: unbonding))
+        // Chain-supplied numbers never wrap or trap.
+        XCTAssertNil(PrivacyWallet.unbondDueBy(epoch: 0, current: UInt64(Int64.max), currentStart: 0, currentEnd: 0, epochSeconds: Int64.max, unbondingSeconds: 0))
+        XCTAssertNil(PrivacyWallet.unbondDueBy(epoch: 1, current: 1, currentStart: Int64.max, currentEnd: Int64.max, epochSeconds: 1, unbondingSeconds: Int64.max))
+        XCTAssertNil(PrivacyWallet.unbondDueBy(epoch: 1, current: 3, currentStart: 0, currentEnd: 1, epochSeconds: 0, unbondingSeconds: 1))
+        XCTAssertNil(PrivacyWallet.unbondDueBy(epoch: UInt64.max, current: 3, currentStart: 0, currentEnd: 1, epochSeconds: 1, unbondingSeconds: 1))
     }
 
 }

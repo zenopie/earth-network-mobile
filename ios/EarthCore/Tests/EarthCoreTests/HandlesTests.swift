@@ -149,7 +149,7 @@ final class HandlesTests: XCTestCase {
         guard case let .payable(e, addr) = try await chain.handleDirectory().resolveForPayment("@alice") else { return XCTFail("not payable") }
         let prep = try await register(chain, b, passport: "222", referrer: PrivacyWallet.Referrer(handle: e.handle, address: addr))
         // The binding commits to the handle alone (chain 203d3b2): the chain makes the referral note.
-        XCTAssertEqual(PrivacyHash.registrationBinding(idc: b.keys.idc, pcAnml: prep.anml.pc, ctAnml: prep.anml.ciphertext, pcErth: prep.erth.pc,
+        XCTAssertEqual(PrivacyHash.registrationBinding(chainID: chain.chainID, idc: b.keys.idc, pcAnml: prep.anml.pc, ctAnml: prep.anml.ciphertext, pcErth: prep.erth.pc,
                                                        ctErth: prep.erth.ciphertext, affiliate: PrivacyHash.affiliateField(handle: "alice")),
                        prep.binding)
         // Minted to the handle's owner_pk with the opening derived from the passport nullifier and the leaf.

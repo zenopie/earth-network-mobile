@@ -81,13 +81,16 @@ final class PrivateMsgsTests: XCTestCase {
         "vote_removal": MsgVoteRemoval(fee: fee(82, 2000), membership: membership(82), optionID: 3, option: .no),
         "delegate": MsgShieldedDelegate(bundle: fee(90, 502_000), validator: validator, amount: 500_000, stake: stake(90, 0, 0, mints: true)),
         "restake": MsgRestake(bundle: fee(95, 2000), validator: validator, stake: stake(95, 2, 1)),
-        "undelegate": MsgShieldedUndelegate(bundle: fee(100, 2000), validator: validator, amount: 400_000, stake: stake(100, 1, 1, mints: true)),
-        "claim_unbonding": MsgClaimUnbonding(validator: validator, epoch: 17, amount: 400_000, pc: fb(111), ciphertext: bct(111), feeFromOutput: 2000,
-                                             stake: stake(110, 2, 0)),
-        "claim_unbonding_fee_bundle": MsgClaimUnbonding(bundle: fee(115, 2000), validator: validator, epoch: 17, amount: 400_000, pc: fb(116),
-                                                        ciphertext: bct(116), stake: stake(117, 1, 1)),
+        "undelegate": MsgShieldedUndelegate(bundle: fee(100, 2000), validator: validator, amount: 400_000, stake: stake(100, 1, 1),
+                                            pc: fb(101), ciphertext: bct(101)),
+        "undelegate_whole": MsgShieldedUndelegate(bundle: fee(102, 2000), validator: validator, amount: 400_000, stake: stake(102, 2, 0),
+                                                  pc: fb(103), ciphertext: bct(103)),
         "stake_vote": MsgStakeVote(bundle: fee(120, 2000), proposalID: 5, validator: validator, options: opts, weight: 400_000,
-                                   proof: Data([0x70, 0x7e]), voteNullifier: fb(121)),
+                                   proof: Data([0x70, 0x7e]), voteNullifiers: [fb(121), zero32, zero32, zero32]),
+        "stake_vote_four": MsgStakeVote(bundle: fee(122, 2000), proposalID: 5, validator: validator, options: opts, weight: 1_230_000,
+                                        proof: Data([0x70, 0x7e]), voteNullifiers: [fb(123), fb(124), fb(125), fb(126)]),
+        "stake_vote_two": MsgStakeVote(bundle: fee(127, 2000), proposalID: 6, validator: validator, options: opts, weight: 999,
+                                       proof: Data([0x70, 0x7e]), voteNullifiers: [fb(128), fb(129), zero32, zero32]),
         "lock_position": MsgLockPosition(bundle: fee(140, 2000), validator: validator, amount: 400_000, splits: [w(2, 100)], stake: stake(140, 1, 1)),
         "update_position": MsgUpdatePosition(bundle: fee(150, 2000), positionID: 9, splits: [w(2, 100)], stake: stake(150, 0, 0)),
         "unlock_position": MsgUnlockPosition(bundle: fee(160, 2000), positionID: 9, stake: stake(160, 0, 0, mints: true)),
@@ -132,14 +135,14 @@ final class PrivateMsgsTests: XCTestCase {
 
     func testStakeFieldsMatchTheChain() throws {
         let want = Vectors.json["stake_fields_undelegate"] as! [String]
-        let got = try PrivateMsgs.stakeFields(stake(100, 1, 1, mints: true))
+        let got = try PrivateMsgs.stakeFields(stake(100, 1, 1))
         XCTAssertEqual(want, got.map(\.hex))
     }
 
     func testBindingAndFieldEncodings() throws {
         let b = Vectors.obj("registration_binding")
-        XCTAssertEqual(b["with_affiliate"] as? String, try (msgs["register"] as! MsgRegisterPrivate).binding().hex)
-        XCTAssertEqual(b["none"] as? String, try (msgs["register_no_affiliate"] as! MsgRegisterPrivate).binding().hex)
+        XCTAssertEqual(b["with_affiliate"] as? String, try (msgs["register"] as! MsgRegisterPrivate).binding(chainID: chainID).hex)
+        XCTAssertEqual(b["none"] as? String, try (msgs["register_no_affiliate"] as! MsgRegisterPrivate).binding(chainID: chainID).hex)
         XCTAssertEqual(Vectors.json["options_bytes"] as? String, Vectors.hex(try PrivateMsgs.optionsBytes(opts)))
         XCTAssertEqual(Vectors.json["splits_bytes"] as? String, Vectors.hex(PrivateMsgs.splitsBytes([w(1, 60), w(7, 40)])))
     }

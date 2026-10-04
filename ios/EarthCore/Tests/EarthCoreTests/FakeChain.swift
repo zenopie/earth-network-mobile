@@ -132,7 +132,12 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     var forgeHandleAddress: String?
     /// Set to make a set_caretaker event report this expires_at (a hostile node, audit 5 M4).
     var forgeCaretakerExpiry: Int64?
-    var claimedUnbonds: [String] = []
+    /// Undelegations waiting for their payout (chain 48b631c): id, validator, value, pc, ciphertext.
+    struct Payout { let id: UInt64; let validator: String; let value: UInt64; let pc: Fr; let ct: Data }
+    var unbondPayouts: [Payout] = []
+    var nextPayoutID: UInt64 = 1
+    /// Used slots of every stake vote, in order.
+    var stakeVoteSlots: [Int] = []
     /// The fake's epoch (9/10 derth minted per uerth at delegation).
     let epoch: UInt64 = 4
 
@@ -223,6 +228,18 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     /// Ends a block with no tx in it.
     func emptyBlock() { block() }
 
+    /// The unbonding period passes: the chain pays every queued undelegation
+    /// by itself (MintNoteSplit to its pc and ciphertext; `split` cuts a
+    /// payout into chunks as the chain would past 2^63-1). Nothing is sent.
+    func payUnbonds(split: (Payout) -> [UInt64] = { [$0.value] }) {
+        for p in unbondPayouts {
+            precondition(split(p).reduce(0, +) == p.value)
+            _ = mintSplit("uerth", split(p), p.pc, p.ct)
+        }
+        unbondPayouts.removeAll()
+        block()
+    }
+
     /// The LP unbonding period passes: every private withdrawal pays both legs as notes.
     func matureWithdrawals() {
         for w in withdrawals {
@@ -270,9 +287,21 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         let m = try check(tx, simulate: true).0
         for b in m.bundles { for a in b.actions { simulatedNullifiers.append(try Fr(bytes: a.nullifier)) } }
         for n in m.stakeProof?.nullifiers ?? [] { simulatedNullifiers.append(try Fr(bytes: n)) }
-        let actions = m.bundles.reduce(0) { $0 + $1.actions.count }
-        return 200_000 + 100_000 * UInt64(m.bundles.count) + 350_000 * UInt64(actions) + (m.stakeProof != nil ? 400_000 : 0)
+        return gasOf(m)
     }
+
+    /// What the fake's ante charges `m`: its shape alone (a vote: gasVote + proof + (1 + used) x note, chain 48b631c).
+    func gasOf(_ m: any PrivateMsg) -> UInt64 {
+        let actions = m.bundles.reduce(0) { $0 + $1.actions.count }
+        var vote: UInt64 = 0
+        if let v = m as? MsgStakeVote { vote = 2_250_000 + (1 + UInt64(v.voteNullifiers.filter { !$0.allSatisfy { $0 == 0 } }.count)) * 150_000 }
+        return 200_000 + 100_000 * UInt64(m.bundles.count) + 350_000 * UInt64(actions) + (m.stakeProof != nil ? 400_000 : 0) + vote
+    }
+
+    /// Every committed private tx's gas_limit over the gas it uses (chain A-L1: at most 5).
+    var gasRatios: [Double] = []
+    /// The last committed msg.
+    var lastMsg: (any PrivateMsg)?
 
     /// Broadcasts to refuse (after the wallet proved them): a node down, a tx dropped.
     var rejectNext = 0
@@ -313,7 +342,8 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         }
         _ = try check(tx, simulate: true)
         accepted(hash)
-        let (_, events) = try check(tx, simulate: false)
+        let (m, events) = try check(tx, simulate: false)
+        lastMsg = m
         block()
         let r = TxResult(hash: hash, height: height - 1, time: now, events: events)
         txs[hash] = r
@@ -371,11 +401,11 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             try only("dexlp/\(m.poolID)")
             try need(m.erthCiphertext.count == NoteCipher.blindCiphertextBytes && m.tokenCiphertext.count == NoteCipher.blindCiphertextBytes,
                      "withdrawal ciphertexts")
-        case let m as MsgClaimUnbonding:
+        case let m as MsgShieldedUndelegate:
             try only(nil)
-            try need(m.ciphertext.count == NoteCipher.blindCiphertextBytes, "claim ciphertext")
-            // Exactly one way to pay: the bundle, or from the output.
-            try need((m.privateFee == 0) != (m.feeFromOutput == 0), "claim fee")
+            // The payout's pc and ciphertext (chain 48b631c): checked like any mint.
+            try need(m.pc.count == 32 && !(try f(m.pc)).isZero, "pc")
+            try need(m.ciphertext.count == NoteCipher.blindCiphertextBytes, "the payout needs its 177-byte blind ciphertext")
         case let m as MsgRegisterPrivate:
             try only(nil)
             try need(m.ciphertextAnml.count == NoteCipher.blindCiphertextBytes && m.ciphertextErth.count == NoteCipher.blindCiphertextBytes,
@@ -402,7 +432,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
 
     /// Whether the msg has the chain mint a stake note to spc_mint (its blind stake ciphertext is then required).
     private func mintsStake(_ m: any PrivateMsg) -> Bool {
-        m is MsgShieldedDelegate || m is MsgShieldedUndelegate || m is MsgUnlockPosition
+        m is MsgShieldedDelegate || m is MsgUnlockPosition
     }
 
     /// The stake proof's chain-supplied publics: asset, v_out.
@@ -411,7 +441,6 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         case let m as MsgShieldedDelegate: return (PrivacyWallet.derthDenom(m.validator), 0)
         case let m as MsgRestake: return (PrivacyWallet.derthDenom(m.validator), 0)
         case let m as MsgShieldedUndelegate: return (PrivacyWallet.derthDenom(m.validator), m.amount)
-        case let m as MsgClaimUnbonding: return (PrivacyWallet.unbondDenom(m.validator, epoch: m.epoch), m.amount)
         case let m as MsgLockPosition: return (PrivacyWallet.derthDenom(m.validator), m.amount)
         default: return (nil, 0)
         }
@@ -505,8 +534,22 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         min(BigInt(erth) * lpSupply / poolErth, BigInt(anml) * lpSupply / poolAnml)
     }
 
+    /// Denoms governance send-disabled (bank SendEnabled false): refused at every pool edge (chain 48b631c, A-L2).
+    var sendDisabled: Set<String> = []
+
     /// The action's own checks, before anything is written (atomic with the spend in the ante).
     private func precheck(_ m: any PrivateMsg, _ rem: [String: UInt64]) throws {
+        // The ante's release-map check and the module mint (audit 6, A-L2): a
+        // dex note swap and a private delegation release out of the pool.
+        var edges = Set<String>()
+        switch m {
+        case let m as MsgNoteSwap: edges = Set(rem.keys).union([m.denomOut])
+        case is MsgShieldedDelegate, is MsgSend: edges = Set(rem.keys)
+        default: break
+        }
+        if let d = edges.sorted().first(where: { sendDisabled.contains($0) }) {
+            throw Refused(why: "\(d) transfers are currently disabled: send transactions are disabled")
+        }
         switch m {
         case let m as MsgNoteSwap:
             let (denomIn, amountIn) = rem.first!
@@ -526,12 +569,20 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             try need(m.options.allSatisfy { (try? PrivateMsgs.legacyDec($0.weight)) == $0.weight }, "a vote weight is not canonical")
             try need(snapshots[m.proposalID] != nil, "no open snapshot for proposal \(m.proposalID)")
             try need(m.weight > 0, "weight must be positive")
-            try need(m.voteNullifier.count == 32 && !(try f(m.voteNullifier)).isZero, "vote_nullifier")
-            try need(!voteNullifiers.contains([PrivacyHash.u64(m.proposalID), try f(m.voteNullifier)]),
-                     "this stake note already voted on this proposal (code 1119)")
+            // Chain C-L3: at most three significant digits.
+            try need((try? PrivacyWallet.voteWeight(m.weight)) == m.weight, "weight has more than 3 significant digits")
+            // Chain 48b631c: exactly four slots, used ones first (at least one), distinct, zeros after.
+            try need(m.voteNullifiers.count == MsgStakeVote.maxVoteNotes, "a stake vote carries exactly 4 vote nullifiers")
+            try need(m.voteNullifiers.allSatisfy { $0.count == 32 }, "vote_nullifiers")
+            let vs = try m.voteNullifiers.map(f)
+            let used = Array(vs.prefix { !$0.isZero })
+            try need(!used.isEmpty && vs.dropFirst(used.count).allSatisfy(\.isZero), "used vote nullifiers first, then zeros")
+            try need(Set(used).count == used.count, "repeated vote nullifier")
+            if let v = used.first(where: { voteNullifiers.contains([PrivacyHash.u64(m.proposalID), $0]) }) {
+                throw Refused(why: "this stake note already voted on this proposal (code 1119): proposal \(m.proposalID), vote nullifier \(v.hex.uppercased())")
+            }
         case let m as MsgVoteRemoval: try need(removalBallots[m.optionID] != nil, "no open ballot")
         case let m as MsgProposeRemoval: try need(removalBallots[m.optionID] == nil, "ballot already open")
-        case let m as MsgClaimUnbonding: try need((m.bundle != nil) == (m.feeFromOutput == 0), "claim fee")
         case let m as MsgRegisterPrivate:
             let idc = try f(m.idc)
             try need(!identityRows.contains { $0.leaf != .zero && registeredIdc[$0.index] == idc }, "a switch to the live idc is refused")
@@ -593,8 +644,14 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         try need(tx.feeCoins.count == 1 && tx.feeCoins[0].denom == "uerth" && tx.feeCoins[0].amount == String(total), "declared fee != msg fee")
         try need(total >= minFeeValue, "below min fee")
         if !simulate { try need(Decimal(total) >= price * Decimal(tx.gasLimit), "below min gas price") }
+        // Chain 48b631c (audit 6, A-L1): a private tx's gas_limit is at most 5x the gas it uses.
+        if !simulate {
+            let used = gasOf(m)
+            try need(tx.gasLimit <= 5 * used, "gas limit \(tx.gasLimit) exceeds what this private tx uses (\(used))")
+            gasRatios.append(Double(tx.gasLimit) / Double(used))
+        }
         let bundles = m.bundles
-        try need(((m.feeFromOutput > 0 ? 0 : 1) ... 2).contains(bundles.count), "bundle count")
+        try need((1 ... 2).contains(bundles.count), "bundle count")
         let rem = try remainders(m)
         try checkRelease(m, rem)
         // The tx fields every private sighash binds (the ante records them).
@@ -632,7 +689,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
                 guard !prover.votes.isEmpty else { throw Refused(why: "no vote proof") }
                 let w = prover.votes.removeFirst()
                 let expect = [snap.root, snap.nfRoot, PrivacyHash.assetID(PrivacyWallet.derthDenom(m.validator)), PrivacyHash.u64(m.weight),
-                              PrivacyHash.u64(m.proposalID), try f(m.voteNullifier), sighash]
+                              PrivacyHash.u64(m.proposalID)] + (try m.voteNullifiers.map(f)) + [sighash]
                 try need(w.publicInputs() == expect, "vote proof is for other public inputs")
             }
         }
@@ -675,7 +732,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             for (d, v) in rem { unshielded[m.receiver, default: [:]][d, default: 0] += v }
         case let m as MsgRegisterPrivate:
             let binding = try PrivateMsgs.decimalField(m.publicSignals[1])
-            try need(binding == (try m.binding()), "binding")
+            try need(binding == (try m.binding(chainID: chainID)), "binding")
             // Round 2 (R1): a landed binding is never used again.
             try need(usedBindings.insert(binding).inserted, "binding already used (ErrBindingUsed)")
             let dsc = try PrivateMsgs.decimalField(m.publicSignals[3])
@@ -714,14 +771,19 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             mintStake(PrivacyWallet.derthDenom(m.validator), m.amount * 9 / 10, spcMint!, stake!.spcCiphertext)
         case is MsgRestake: break
         case let m as MsgShieldedUndelegate:
-            mintStake(PrivacyWallet.unbondDenom(m.validator, epoch: epoch), m.amount * 10 / 9, spcMint!, stake!.spcCiphertext)
-        case let m as MsgClaimUnbonding:
-            claimedUnbonds.append(PrivacyWallet.unbondDenom(m.validator, epoch: m.epoch))
-            mint("uerth", m.amount - m.feeFromOutput, try f(m.pc), m.ciphertext)
+            // Booked at the live rate and queued: the chain pays it at maturity by itself.
+            let id = nextPayoutID
+            nextPayoutID += 1
+            let value = m.amount * 10 / 9
+            unbondPayouts.append(Payout(id: id, validator: m.validator, value: value, pc: try f(m.pc), ct: m.ciphertext))
+            events.append((type: "shieldedstaking_undelegate", attributes: ["validator": m.validator, "derth": String(m.amount),
+                                                                            "value": String(value), "epoch": String(epoch), "payout_id": String(id)]))
         case let m as MsgStakeVote:
-            voteNullifiers.insert([PrivacyHash.u64(m.proposalID), try f(m.voteNullifier)])
+            let used = try m.voteNullifiers.map(f).filter { !$0.isZero }
+            for v in used { voteNullifiers.insert([PrivacyHash.u64(m.proposalID), v]) }
             stakeVotes.append((m.proposalID, m.validator, m.weight))
-            events.append((type: "shieldedstaking_stake_vote", attributes: ["vote_nullifier": try f(m.voteNullifier).hex]))
+            stakeVoteSlots.append(used.count)
+            events.append((type: "shieldedstaking_stake_vote", attributes: ["vote_nullifiers": try m.voteNullifiers.map { try f($0).hex }.joined(separator: ",")]))
         case let m as MsgNoteSwap:
             let (denomIn, amountIn) = rem.first!
             let out = try swapOut(denomIn, amountIn, m.denomOut)
@@ -1037,6 +1099,10 @@ final class CheckingProver: PrivacyProver, @unchecked Sendable {
 /// PrivacyChainReads over a FakeChain; snapshots are the chain's (FakeChain.openProposal).
 struct FakeReads: PrivacyChainReads, @unchecked Sendable {
     let chain: FakeChain
+    /// What Query/Epoch and the timing say an undelegation's payout time is (nil: unknown).
+    var due: (UInt64) -> Int64? = { _ in nil }
+
+    func unbondDueBy(epoch: UInt64) async -> Int64? { due(epoch) }
 
     func personhoodParams() async throws -> PrivacyReads.PersonhoodParams {
         .init(caretakerVoteSeconds: chain.caretakerLease, identityRootWindowSeconds: 3_600, handleLeaseSeconds: chain.handleLease,

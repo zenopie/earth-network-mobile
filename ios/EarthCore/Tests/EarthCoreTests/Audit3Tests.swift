@@ -183,10 +183,9 @@ final class Audit3Tests: XCTestCase {
         chain.mintStake("derth/\(v1)", 7, PrivacyHash.stakePC(ownerPK: Fr(UInt64(5)), rho: m.rho, rcm: m.rcm), m.ciphertext)
         chain.emptyBlock()
         chain.openProposal(1)
-        let n = try XCTUnwrap(w.stakeNotes.first { $0.spendable })
-        await assertThrowsAsync({ try await w.stakeVote(proposalID: 1, note: n, options: self.yes) }) { $0 is PrivacyWallet.SyncFirst }
+        await assertThrowsAsync({ try await w.stakeVote(proposalID: 1, validator: self.v1, options: self.yes) }) { $0 is PrivacyWallet.SyncFirst }
         try await w.sync()
-        _ = try await w.stakeVote(proposalID: 1, note: try XCTUnwrap(w.stakeNotes.first { $0.spendable }), options: yes)
+        _ = try await w.stakeVote(proposalID: 1, validator: v1, options: yes)
     }
 
     func testChainNumbersNeverTrapOrWrap() {
@@ -196,8 +195,8 @@ final class Audit3Tests: XCTestCase {
         XCTAssertNil(PrivacyQueries.durationSeconds("nan"))
         XCTAssertEqual(1_814_400, PrivacyQueries.durationSeconds("1814400s"))
         XCTAssertEqual(0, PrivacyQueries.durationSeconds("0.5s"))
-        XCTAssertNil(PrivacyAutomation.maturesBy(0, current: UInt64.max, currentStart: 0, epochSeconds: Int64.max, unbondingSeconds: 0))
-        XCTAssertNil(PrivacyAutomation.maturesBy(1, current: 3, currentStart: Int64.max, epochSeconds: 1, unbondingSeconds: Int64.max))
+        XCTAssertNil(PrivacyWallet.unbondDueBy(epoch: 0, current: UInt64.max, currentStart: 0, currentEnd: 0, epochSeconds: Int64.max, unbondingSeconds: 0))
+        XCTAssertNil(PrivacyWallet.unbondDueBy(epoch: 1, current: 3, currentStart: Int64.max, currentEnd: 0, epochSeconds: 1, unbondingSeconds: Int64.max))
         let positions = [PrivacyReads.Position(id: 1, validator: v1, derth: 1, ownerTag: .zero, createdHeight: UInt64.max)]
         XCTAssertTrue(PrivacyWallet.votingPositions(positions, snapshot: .init(root: .zero, treeSize: 0, height: 10)).isEmpty)
     }
@@ -355,89 +354,6 @@ final class Audit3Tests: XCTestCase {
         let ours = Set(w.notes.map(\.nf))
         XCTAssertFalse(ours.isEmpty)
         XCTAssertTrue(roots.asked.allSatisfy { !ours.contains($0) })
-    }
-
-    // MARK: 7. automation spacing; 14b. logs
-
-    func testAutomationSpacesActionsWithASyncBetween() async throws {
-        final class S: @unchecked Sendable { var events: [String] = []; var due = ["unbond/v/1", "unbond/v/2"] }
-        let s = S()
-        let taken = try await PrivacyAutomation.runPass(
-            sync: { s.events.append("sync") },
-            inputs: { PrivacyAutomation.Inputs(now: 20_000 * 86_400 + 5 * 3600, maturedUnbonds: s.due) },
-            act: { a in
-                s.events.append(PrivacyAutomation.kind(a))
-                if case let .claimUnbonding(d) = a { s.due.removeAll { $0 == d } }
-            },
-            pause: { ms in
-                s.events.append("pause")
-                XCTAssertTrue((PrivacyAutomation.actionPauseMinMs ... PrivacyAutomation.actionPauseMaxMs).contains(ms))
-            })
-        XCTAssertEqual(2, taken.count)
-        XCTAssertEqual(["sync", PrivacyAutomation.kind(taken[0]), "pause", "sync", PrivacyAutomation.kind(taken[1])], s.events)
-    }
-
-    func testAutomationTriesEachActionOncePerPass() async throws {
-        final class S: @unchecked Sendable { var pauses = 0 }
-        let s = S()
-        // A claim that keeps failing stays due: tried once this pass.
-        let taken = try await PrivacyAutomation.runPass(
-            sync: {},
-            inputs: { PrivacyAutomation.Inputs(now: 20_000 * 86_400, maturedUnbonds: ["unbond/v/1", "unbond/v/2"]) },
-            act: { _ in throw PrivacyError("not matured after all") },
-            pause: { _ in s.pauses += 1 },
-            pick: { _ in 0 })
-        XCTAssertEqual(2, taken.count)
-        XCTAssertEqual(taken.count - 1, s.pauses)
-    }
-
-    func testAutomationLogsNameNoDenom() {
-        XCTAssertEqual("ClaimUnbonding", PrivacyAutomation.kind(.claimUnbonding(denom: "unbond/\(v1)/3")))
-    }
-
-    // MARK: 8. the stake vote run
-
-    func staked(_ chain: FakeChain) async throws -> PrivacyWallet {
-        let a = try wallet(chain)
-        for _ in 0 ..< 4 { try funded(chain, a, 2_000_000) }
-        try await a.sync()
-        _ = try await a.delegate(validator: v1, amount: 1_000_000); try await a.sync()
-        _ = try await a.delegate(validator: v2, amount: 1_000_000); try await a.sync()
-        _ = try await a.lockPosition(validator: v1, amount: 100_000, splits: [2: 100]); try await a.sync()
-        chain.openProposal(12)
-        return a
-    }
-
-    func testStakeVoteSuspendsAndResumesAndRefusesADoubleStart() async throws {
-        let chain = FakeChain()
-        let a = try await staked(chain)
-        let waiting = Tally()
-        let c = StakeVoteController(wallet: { a }, pause: { _ in _ = waiting.inc(); try await Task.sleep(nanoseconds: 60_000_000_000) })
-        _ = try await c.startAndAwaitFirst(proposalID: 12, options: yes)
-        await assertThrowsAsync({ try await c.startAndAwaitFirst(proposalID: 12, options: self.yes) })
-        while waiting.value == 0 { try await Task.sleep(nanoseconds: 10_000_000) }
-        c.suspend()
-        await c.wait()
-        let kept = try XCTUnwrap(a.store.state.stakeVoteRun)
-        XCTAssertEqual(1, kept.done)
-        let c2 = StakeVoteController(wallet: { a }, pause: { _ in })
-        await c2.resume()
-        await c2.wait()
-        XCTAssertEqual(true, c2.progress?.finished)
-        XCTAssertEqual(3, c2.progress?.done)
-        XCTAssertNil(a.store.state.stakeVoteRun)
-    }
-
-    func testResumeIsPerWallet() async throws {
-        let chain = FakeChain()
-        let a = try await staked(chain)
-        let b = try wallet(chain, words: bob)
-        a.store.mutate { $0.stakeVoteRun = StakeVoteRun(proposalID: 12, options: [.init(option: 1, weight: "1")], votedPositions: [], total: 3) }
-        let c = StakeVoteController(wallet: { b }, pause: { _ in })
-        await c.resume()
-        await c.wait()
-        XCTAssertNil(c.progress)
-        XCTAssertTrue(chain.stakeVotes.isEmpty)
     }
 
     // MARK: 9. forget; 10. saves

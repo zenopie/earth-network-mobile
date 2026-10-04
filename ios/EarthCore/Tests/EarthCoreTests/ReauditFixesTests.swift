@@ -405,67 +405,29 @@ final class ReauditFixesTests: XCTestCase {
         return a
     }
 
-    /// K5, through the UI's own entry point (StakeVoteController, what the
-    /// proposal screen's vote runs): notes and position votes shuffled, one
-    /// at a time, a sync and a 20-120 s pause between each, progress
-    /// reported, the persisted run cleared at the end.
-    func testStakeVotesFromTheUIAreSpacedOut() async throws {
+    /// K5, as the chain now takes it (48b631c): one vote per validator and one
+    /// per position, each its own tx the user confirms; nothing is cast in
+    /// the background. A validator voted once is not voted again.
+    func testStakeVotesAreOneTxPerValidatorAndPosition() async throws {
         let chain = FakeChain()
         let a = try await staked(chain)
-        let pauses = Pauses()
-        let c = StakeVoteController(wallet: { a }, pause: { pauses.add($0) })
-        let before = chain.height
-        let first = try await c.startAndAwaitFirst(proposalID: 12, options: yes)
-        XCTAssertEqual(64, first.count)
-        await c.wait()
-        let p = try XCTUnwrap(c.progress)
-        XCTAssertTrue(p.finished)
-        XCTAssertEqual(3, p.total)
-        XCTAssertEqual(3, p.done)
-        XCTAssertEqual(2, chain.stakeVotes.count)
-        XCTAssertEqual(1, chain.positionVotes.count)
-        XCTAssertEqual(2, pauses.all.count)
-        XCTAssertTrue(pauses.all.allSatisfy { (StakeVoteController.votePauseMinMs ... StakeVoteController.votePauseMaxMs).contains($0) })
-        XCTAssertEqual(before + 3, chain.height)
-        XCTAssertNil(a.store.state.stakeVoteRun)
-    }
-
-    /// K5: cancelled while it waits, nothing more is cast and nothing is resumed.
-    func testStakeVoteCanBeCancelled() async throws {
-        let chain = FakeChain()
-        let a = try await staked(chain)
-        let c = StakeVoteController(wallet: { a }, pause: { _ in try await Task.sleep(nanoseconds: 60_000_000_000) })
-        _ = try await c.startAndAwaitFirst(proposalID: 12, options: yes)
-        for _ in 0 ..< 200 where c.progress?.nextAt == nil { try await Task.sleep(nanoseconds: 10_000_000) }
-        XCTAssertNotNil(c.progress?.nextAt)
-        c.cancel()
-        await c.wait()
-        XCTAssertEqual(true, c.progress?.cancelled)
-        XCTAssertEqual(1, c.progress?.done)
-        XCTAssertEqual(1, chain.stakeVotes.count + chain.positionVotes.count)
-        XCTAssertNil(a.store.state.stakeVoteRun)
-    }
-
-    /// K5: a run the app lost resumes on unlock, never voting a position twice.
-    func testStakeVoteResumesAfterAKill() async throws {
-        let chain = FakeChain()
-        let a = try await staked(chain)
-        let ps = try await a.positions()
-        let pos = try XCTUnwrap(ps.first)
-        _ = try await a.positionVote(pos.position, counter: pos.counter, proposalID: 12, options: yes)
         try await a.sync()
-        a.store.mutate {
-            $0.stakeVoteRun = StakeVoteRun(proposalID: 12, options: [.init(option: 1, weight: "1")], votedPositions: [pos.position.id], total: 3, done: 1)
+        let items = try await a.stakeVoteItems(proposalID: 12)
+        XCTAssertEqual(3, items.count)
+        XCTAssertEqual(2, items.filter { if case .validator = $0 { return true } else { return false } }.count)
+        let before = chain.height
+        for item in items {
+            let r = try await a.castStakeVote(proposalID: 12, item: item, options: yes)
+            XCTAssertNotNil(r)
+            try await a.sync()
         }
-        let pauses = Pauses()
-        let c = StakeVoteController(wallet: { a }, pause: { pauses.add($0) })
-        await c.resume()
-        await c.wait()
-        XCTAssertEqual(true, c.progress?.finished)
-        XCTAssertEqual(3, c.progress?.done)
-        XCTAssertEqual(1, chain.positionVotes.count)
         XCTAssertEqual(2, chain.stakeVotes.count)
-        XCTAssertEqual(2, pauses.all.count)
+        XCTAssertEqual(1, chain.positionVotes.count)
+        XCTAssertEqual(before + 3, chain.height)
+        // Final: the validators' notes have voted.
+        let again = try await a.castStakeVote(proposalID: 12, item: items[0], options: yes)
+        XCTAssertNil(again)
+        XCTAssertEqual(2, chain.stakeVotes.count)
     }
 
     // MARK: K10, K12, info

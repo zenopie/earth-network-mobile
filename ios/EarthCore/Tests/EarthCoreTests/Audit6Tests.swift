@@ -273,9 +273,9 @@ final class Audit6Tests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
         let s1 = try PrivacyStore.shared(root: dir, walletID: "w")
         XCTAssertTrue(s1 === (try PrivacyStore.shared(root: dir, walletID: "w")))
-        s1.mutate { $0.stakeVoteRun = StakeVoteRun(proposalID: 1, options: [], votedPositions: [42], total: 1) }
+        s1.mutate { $0.pendingUnbonds.append(PendingUnbond(txHash: "AB", validator: "v", derth: 42, pc: .one, startedAt: 1, until: 9)) }
         try s1.save()
-        XCTAssertEqual([42], try PrivacyStore.shared(root: dir, walletID: "w").state.stakeVoteRun?.votedPositions)
+        XCTAssertEqual(42, try PrivacyStore.shared(root: dir, walletID: "w").state.pendingUnbonds.first?.derth)
         try PrivacyStore.delete(root: dir, walletID: "w")
         XCTAssertFalse(s1 === (try PrivacyStore.shared(root: dir, walletID: "w")))
     }

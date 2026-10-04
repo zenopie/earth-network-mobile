@@ -259,23 +259,26 @@ final class WalletFlowTests: XCTestCase {
         XCTAssertTrue(gone.isEmpty)
         XCTAssertEqual(1_800_000, bal(a, derth))
 
-        // Stake votes: every derth note from before the snapshot, one a tx.
+        // Stake votes: every derth note from before the snapshot, one vote
+        // per validator (up to four notes), one weight: their rounded sum.
         try await a.sync()
         chain.openProposal(11)
         let weight = try await a.stakeVoteWeight(proposalID: 11, positions: [])
         let held = a.stakeNotes.filter { $0.spendable && $0.denom == derth }
-        let rounded = try held.reduce(UInt64(0)) { $0 + (try PrivacyWallet.voteWeight($1.amount)) }
+        XCTAssertTrue((2 ... 4).contains(held.count))
+        let rounded = try PrivacyWallet.voteWeight(held.reduce(UInt64(0)) { $0 + $1.amount })
         XCTAssertEqual(held.count, weight.notes)
         XCTAssertEqual(rounded, weight.uerth)
         var voted: [TxResult] = []
         for item in try await a.stakeVoteItems(proposalID: 11) {
             if let r = try await a.castStakeVote(proposalID: 11, item: item, options: yes) { voted.append(r) }
         }
-        XCTAssertEqual(held.count, voted.count)
+        XCTAssertEqual(1, voted.count)
         try await a.sync()
         XCTAssertEqual(1_800_000, bal(a, derth))
-        XCTAssertEqual(held.count, chain.stakeVotes.count)
-        XCTAssertEqual(rounded, chain.stakeVotes.reduce(UInt64(0)) { $0 + $1.2 })
+        XCTAssertEqual(1, chain.stakeVotes.count)
+        XCTAssertEqual(rounded, chain.stakeVotes[0].2)
+        XCTAssertEqual([held.count], chain.stakeVoteSlots)
 
         // A handle: claimed by a fresh registrant at once, naming this wallet's shielded address.
         chain.now += 31 * 86_400
@@ -291,25 +294,23 @@ final class WalletFlowTests: XCTestCase {
         _ = try await a.voteRemoval(optionID: 3, yes: true)
         XCTAssertEqual(3, chain.removalVotes.first?.0)
 
-        // Unstake (two notes, change back as a created stake note); the
-        // automation claims once epoch 4 (the fake's) has matured.
+        // Unstake (two notes, change back as a created stake note): the msg
+        // names a pool note of ours; at maturity the chain pays it there by
+        // itself (chain 48b631c), and the wallet sends nothing more.
         try await a.sync()
         _ = try await a.undelegate(validator: validator, amount: 1_000_000)
         try await a.sync()
-        let unbond = PrivacyWallet.unbondDenom(validator, epoch: 4)
-        XCTAssertEqual(1_111_111, bal(a, unbond))
         XCTAssertEqual(800_000, bal(a, derth))
-        let start = chain.now
-        XCTAssertTrue(PrivacyAutomation.matured(a.stakeNotes, now: start, current: 5, currentStart: start, epochSeconds: 86_400,
-                                                unbondingSeconds: 21 * 86_400, retryAt: [:]).isEmpty)
-        let ready = PrivacyAutomation.matured(a.stakeNotes, now: start + 21 * 86_400 + 3600, current: 5, currentStart: start,
-                                              epochSeconds: 86_400, unbondingSeconds: 21 * 86_400, retryAt: [:])
-        XCTAssertEqual([unbond], ready)
+        let u = a.pendingUnbonds[0]
+        XCTAssertEqual(1, a.pendingUnbonds.count)
+        XCTAssertEqual([1_111_111, 4, 1], [u.value, u.epoch, u.payoutID])
         let erthPre = bal(a, "uerth")
-        _ = try await a.claimUnbonding(denom: ready[0])
+        let txsBefore = chain.txs.count
+        chain.payUnbonds()
         try await a.sync()
-        XCTAssertEqual(0, bal(a, unbond))
-        XCTAssertTrue((1_100_000 ..< 1_111_111).contains(bal(a, "uerth") - erthPre))
+        XCTAssertEqual(txsBefore, chain.txs.count)
+        XCTAssertEqual(1_111_111, bal(a, "uerth") - erthPre)
+        XCTAssertTrue(a.pendingUnbonds.isEmpty)
 
         // Both wallets, restored from their mnemonics, find everything again:
         // pool self-mints, stake mints (by spc), created stake notes (by

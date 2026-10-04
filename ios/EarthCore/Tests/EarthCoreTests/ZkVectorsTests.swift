@@ -91,12 +91,17 @@ final class ZkVectorsTests: XCTestCase {
         XCTAssertEqual(s("pc"), pc.hex)
         XCTAssertEqual(s("cm"), PrivacyHash.cm(asset: PrivacyHash.assetID("uanml"), value: 1_000_000, pc: pc).hex)
         XCTAssertEqual(s("nf"), PrivacyHash.nf(nk: nk, rho: rho, position: 4_000_000_000).hex)
-        XCTAssertEqual(s("reg_none"), PrivacyHash.registrationBinding(idc: idc, pcAnml: Vectors.fe(1), ctAnml: Data("anml".utf8), pcErth: Vectors.fe(2),
-                                                                      ctErth: Data("erth".utf8), affiliate: .zero).hex)
-        // The chain's pinned vector (zk/privacy TestRegistrationBindingPinned).
-        XCTAssertEqual("20ce5fccf5e6e20a8a7b80f7565e41a7c73dbb16ac5e53746e7234ba8b305b0c", s("reg_pinned"))
-        XCTAssertEqual(s("reg_pinned"), PrivacyHash.registrationBinding(idc: Fr(UInt64(1)), pcAnml: Fr(UInt64(2)), ctAnml: Data("anml".utf8),
-                                                                        pcErth: Fr(UInt64(3)), ctErth: Data("erth".utf8), affiliate: .zero).hex)
+        XCTAssertEqual(s("reg_none"), PrivacyHash.registrationBinding(chainID: "earth-1", idc: idc, pcAnml: Vectors.fe(1), ctAnml: Data("anml".utf8),
+                                                                      pcErth: Vectors.fe(2), ctErth: Data("erth".utf8), affiliate: .zero).hex)
+        // The chain's pinned vector (zk/privacy TestRegistrationBindingPinned; the chain id since audit 6, B6-4).
+        XCTAssertEqual("148b3513a501b6ff9c02314f355cb83fb544e22b2a9df79552fe49c944424159", s("reg_pinned"))
+        XCTAssertEqual(s("reg_pinned"), PrivacyHash.registrationBinding(chainID: "earth-1", idc: Fr(UInt64(1)), pcAnml: Fr(UInt64(2)),
+                                                                        ctAnml: Data("anml".utf8), pcErth: Fr(UInt64(3)), ctErth: Data("erth".utf8),
+                                                                        affiliate: .zero).hex)
+        // Another network's binding differs: a registration does not replay across chains.
+        XCTAssertEqual(s("reg_testnet"), PrivacyHash.registrationBinding(chainID: "earth-testnet-1", idc: Fr(UInt64(1)), pcAnml: Fr(UInt64(2)),
+                                                                         ctAnml: Data("anml".utf8), pcErth: Fr(UInt64(3)), ctErth: Data("erth".utf8),
+                                                                         affiliate: .zero).hex)
         // The stake tree.
         let spc = PrivacyHash.stakePC(ownerPK: opk, rho: rho, rcm: rcm)
         XCTAssertEqual(s("spc"), spc.hex)
