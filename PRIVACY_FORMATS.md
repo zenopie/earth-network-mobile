@@ -1,116 +1,133 @@
-# Privacy formats the wallet defines
+# Privacy formats
 
-The privacy chain (x/shielded, x/personhood, x/assembly, x/shieldedstaking,
-x/dex) pins every hash, tag, sighash, bundle and proof layout in `zk/privacy`
-and `zk/orchard` (Orchard-style bundles: ORCHARD_DESIGN.md sections 12-14 of
-the chain), and the Android code reproduces those byte for byte
-(`android/.../privacy/zk`, `privacy/tx`, tested against vectors generated from
-the chain by `android/tools/orchardvectors/gen.sh <chain checkout> [ref]`,
-last run against chain privacy/orchard **dff3a9b** (clients round 8;
-byte-identical at b46a4bb; before that 48b631c, 203d3b2, c0ad1dd); `tools/privacyvectors` is
-the retired transfer-circuit generator, whose `dexamm_test.go.in` still
-writes the dex vectors).
+The current byte-level and behavioural spec of the Earth Wallet's private
+side (Android, iOS; the web app must match the formats). It describes what
+is true now, against chain privacy/orchard **b46a4bb** (vectors byte-identical
+to dff3a9b). How it got here is in AUDIT_HISTORY.md.
 
-What the chain never sees, and so does not pin, is defined here. Every item
-is implemented in `android/app/src/main/java/network/erth/wallet/privacy/`
-and pinned by a golden test; the iOS port and the web app must match.
+**Who defines what.** The chain (x/shielded, x/personhood, x/assembly,
+x/shieldedstaking, x/dex; `zk/privacy`, `zk/orchard`, `zk/indexed`,
+`zk/debt`; ORCHARD_DESIGN.md) pins every hash, tag, commitment, nullifier,
+sighash, bundle and proof layout and the public ciphertext lengths; the
+clients reproduce those byte for byte. What the chain never sees (keys,
+note plaintexts, memo records, owner-tag salts, the stake ciphertext's
+contents, the vote weight rule) is defined by the wallet, here. Every
+section is marked **[chain]**, **[wallet]** or **[shared]** (a canonical
+format the chain and the web app also implement).
 
-**Changes for chain fced976 (2026-10-02), summary.** Every chain-minted note
-now carries a 177-byte amount-blind ciphertext, so the self-mint counters
-(`mint-rho/rcm`, `stake-rho/rcm`) are gone: every note is found by trial
-decryption. The sighash binds the tx's memo, timeout_height and gas_limit.
-The registration binding covers both note ciphertexts. Staking and dex msgs
-lost their `fee` fields (one fee rule, §4). New: the registration record
-note (§3a), indexer URL scheme and root verification against the chain
-(§4a, §4b).
+**Ground truth.** Chain-pinned values are tested against vectors generated
+from the chain's own Go code: `android/tools/orchardvectors/gen.sh <chain
+checkout> [ref]` writes `android/app/src/test/resources/privacy/vectors.json`
+(and `dex_amm.json`, the action/membership fixtures), which iOS copies.
+Wallet-defined formats are pinned by golden tests on both platforms
+(`KeysAndNotesTest`, `BlindNoteTest`, `ReauditFixesTest`, `Audit5Test`,
+`Audit6Test` and their iOS `…Tests` twins). The circuits are in
+`circuits/{action,stake,vote,membership,lean_poa*}`; a circuit `main()`'s
+`pub` parameters, in order, are its public inputs.
 
-**Changes for the clients re-audit (2026-10-02), summary.** The record
-note is version 2 with an nk tag (§3a; version 1 ignored), restored by the
-registration block's chain time with a bounded, persisted fallback search;
-an unlock's re-minted stake note names the closed owner-tag counter (§1);
-amounts are bounded to 2^63 − 1 (§3); the pending registration is recorded
-at broadcast acceptance (§3a); a genesis switch is confirmed by the LCD and
-keeps the registration (§4a); the indexer base is validated (§4a); root
-checks distinguish unverified from mismatch, pin heights by the echoed
-header, sample nullifiers and flag an indexer behind (§4b); stake votes
-are cast through one spaced, resumable path (§4); the chain's round-2 tx
-rules (canonical bytes, ciphertext slots, one use per binding) are
-followed (§4). Android and iOS implement all of it identically; the record
-memo golden is pinned on both.
+## Contents
 
-**Handles, predecessor-aware activation and no automatic fees (chain
-4a663d5, clients round 5), summary.** The identity leaf commits to
-`predecessor_at` and every membership proof carries `max_predecessor` after
-`max_activation` (8 public inputs); the wallet names each msg's bounds
-(§4g). Public referrer addresses, MsgBindReferrer and its consent are gone:
-a registered human claims a **handle** (MsgBindHandle) naming their shielded
-address; wallets pay a handle after reading the **whole** directory (the
-backend's `/handles` stream, checked against the chain's `Query/Handles`
-pages before money moves), and a registration names its referrer by handle
-with a referral note to its address (§3a). An identity switch can first
-move the handle (MsgMoveHandle) and the caretaker vote (MsgMoveCaretaker)
-to the new identity. Nothing that spends a fee happens unasked any more:
-the daily claim, the caretaker refresh and handle renewals are reminders;
-the only automatic tx completes an undelegation the user started (§4c).
-Deposits pull each leg rounded up (§4g). Android and iOS identical.
+1. Primitives and domain tags
+2. Keys
+3. Shielded address
+4. Pool notes
+5. Note ciphertexts
+6. Memo records (value-0 pool notes)
+7. Stake notes, labels, positions
+8. Trees
+9. Circuits: public-input order and witnesses
+10. Bundles
+11. Private transactions
+12. Messages
+13. Registration
+14. Handles, caretaker split, identity moves
+15. Staking
+16. Assembly and dex
+17. Indexer
+18. Verification against the chain
+19. Sync and restore
+20. Wallet behaviour
+21. Off-device parity
 
-**Mobile audit round 5 (2026-10-03), summary.** A handle or caretaker
-split is restorable: every bind, release, cast, clear and move carries a
-tagged value-0 **state record** note (§3b), so a wallet restored from the
-mnemonic knows what its identity holds or moved away; it also takes as held
-a single non-free directory entry naming its own address, and drops a
-handle the chain swept. A renewal or refresh whose bound the identity does
-not meet goes out with no bound: the chain refuses it in its ante, before
-any fee, unless the identity holds one (§4g). A move is recorded in both
-wallets before its broadcast and counts as done only once the chain
-confirms it (§4g). Directory entries and caretaker expiries outside
-0 < expires_at ≤ renewal_until ≤ now + 10 years are refused or clamped; all
-reminder arithmetic saturates. Referrals come only from the verified
-`https://erth.network/ref/<handle>` link (App Link, universal link) or the
-Play install referrer, and the registrant can remove or replace one (one
-that does not resolve is cleared). Android and iOS identical.
+## 1. Primitives and domain tags
 
-**Audit round 5 chain rules (chain 203d3b2, ORCHARD_DESIGN 16; clients
-round 6), summary.** MsgRegister names its referrer by handle alone (fields
-11/12 gone): the affiliate field is H("earth.affiliate", Bytes(handle)) and
-the **chain** mints the referral note to the handle's address with a public
-opening; the handle owner's wallet finds it in the notes stream (format 2:
-owner_pk, rho, rcm columns) by its own owner_pk, locally (§3a, §4h). An LP
-payout leg above 2^64 − 1 arrives as several notes sharing one ciphertext,
-each a note of its own. Every handle-claim and caretaker-cast bound comes
-from `Query/LeaseBounds`, never Params; a handle in its renewal period or a
-lapsed split is bounded like a claim, and only a live handle moves. Anchors
-are kept at least 30 minutes from lapsing; the swap fee rounds up; a
-withdrawal's note leg is bounded when it starts; a handle bind is priced as
-nine note writes (§4h). Android and iOS identical.
+**[chain]** p is the BN254 scalar modulus. A field element on the wire is
+exactly 32 bytes big-endian and below p (`Fr.fromBytes` refuses anything
+else, as the chain's `FieldFromBytes` does).
 
-**Stake votes without spending (chain 9b29f5d, ORCHARD_DESIGN 15),
-summary.** MsgStakeVote no longer carries a stake proof: one derth note
-proves (circuits/vote) it was in the stake tree and unspent at the
-proposal's snapshot and publishes a per-proposal vote nullifier; nothing is
-spent or re-minted, so a note votes on every concurrently open proposal.
-The wallet rebuilds the snapshot's stake nullifier tree, rounds the weight
-down to three significant figures and remembers (proposal, vote nullifier)
-(§4e). Android and iOS identical.
+- **H** is Poseidon2 over BN254 (t = 4, d = 5, 8 full + 56 partial rounds),
+  the sponge of noir-lang/poseidon v0.3.0 (`Poseidon2::hash`) = the chain's
+  `zk/poseidon2.Hash`: rate 3, IV = len << 64 in the capacity slot, one
+  element squeezed after a final duplex. The length is absorbed, so hashes
+  of different arity cannot collide.
+- **Tag(s)** = the ASCII bytes of s read as one big-endian integer.
+- **U64(v)** = v as a field element (unsigned).
+- **Bytes(b)** = H(TAG_BYTES, U64(len b), b in 31-byte big-endian chunks…);
+  Bytes of nothing is H(TAG_BYTES, 0).
+- **AssetID(denom)** = H(TAG_ASSET, U64(len), 31-byte chunks of the UTF-8
+  denom…). AssetID("uerth") = `0ad44a14c7205c61e39db2c64b79005ffb14a2a927977e8cda2208be2e3fe54c`
+  (`privacy_core::ASSET_ERTH`); vectors `asset_ids`.
+- **Scope(kind, args…)** = H(TAG_SCOPE, Bytes(kind), args…). Scopes in use:
+  `Scope("claim", U64(day))`, `Scope("caretaker")`, `Scope("handle")`,
+  `Scope("proposal", U64(id), U64(round))`, `Scope("removal", U64(ballot_id))`,
+  `Scope("propose_removal", U64(option_id), U64(day))` (vectors `scopes`).
+- **Signal(type_url, chain_id, fields…)** = H(TAG_SIGNAL, Bytes(type_url),
+  Bytes(chain_id), fields…).
+- **Country** = the ISO 3166-1 alpha-2's two ASCII bytes big-endian ("DE" =
+  0x4445); 0 = unknown.
+- Merkle trees are depth 32, node = H(left, right), empty leaf 0 (§8).
 
-**Audit 6 chain rules and staking without background transactions (chain
-48b631c, ORCHARD_DESIGN 17-18; clients round 7), summary.** The
-registration binding starts with Bytes(chain_id) (§3a). An undelegation
-names its own payout note (MsgUndelegate pc 6, ciphertext 7) and the chain
-pays it at maturity by itself: MsgClaimUnbonding, unbond/ claim notes and
-the wallet's automatic claim are gone; the payout is found by trial
-decryption like any minted note (§4j). One MsgStakeVote per validator votes
-up to four notes with one weight (vote_nullifiers 10, exactly four; the
-vote circuit has 10 public inputs); the spaced background vote run is gone:
-each validator's vote and each position's is its own confirm sheet (§4j).
-A private tx's gas_limit is at most 5x what it uses (the wallet declares
-simulate + 10%). Send-disabled denoms are refused at every pool edge;
-switches stay under their Document Signer (1127). The wallet sends nothing
-the user did not confirm (§4c). Android and iOS identical.
+**Domain tags.** Chain tags (all in `privacy_core` or `zk/orchard`, vectors
+`tags`; `earth.vote` is retired and never reused):
 
-## 1. Keys (wallet-only)
+| tag | string | use |
+| --- | --- | --- |
+| TAG_ID | `earth.id` | idc |
+| TAG_OWNER | `earth.owner` | owner_pk |
+| TAG_LEAF | `earth.leaf` | identity leaf |
+| TAG_SN | `earth.sn` | scope nullifier |
+| TAG_PC | `earth.pc` | pool note owner commitment |
+| TAG_CM | `earth.cm` | pool note commitment |
+| TAG_NF | `earth.nf` | pool note nullifier |
+| TAG_REG | `earth.reg` | registration binding |
+| TAG_ASSET | `earth.asset` | AssetID |
+| TAG_BYTES | `earth.bytes` | Bytes |
+| TAG_SCOPE | `earth.scope` | Scope |
+| TAG_SIGNAL | `earth.signal` | sighash / Signal |
+| TAG_AFFILIATE | `earth.affiliate` | registration affiliate field |
+| TAG_REFERRAL | `earth.referral` | referral note opening |
+| TAG_STAKE | `earth.stake` | stake note commitment |
+| TAG_SPC | `earth.spc` | stake note owner commitment |
+| TAG_SNF | `earth.snf` | stake note nullifier |
+| TAG_OTAG | `earth.otag` | position owner tag |
+| TAG_SNFL | `earth.snfl` | stake nullifier tree leaf |
+| TAG_VNF | `earth.vnf` | stake vote nullifier |
+| TAG_SLABEL | `earth.slabel` | stake note slash label |
+| TAG_DEBTL | `earth.debtl` | slash debt tree leaf |
+| TAG_GEN | `earth.gen` | Grumpkin value base |
+| TAG_CV_R | `earth.cv.r` | value-commitment randomness base R |
+| TAG_BUNDLE | `earth.bundle` | bundle digest |
+| TAG_BSIG | `earth.bsig` | binding-signature challenge |
 
-From the BIP-39 seed (empty passphrase), BIP-32 hardened derivation:
+Wallet tags and labels (**[wallet]**):
+
+| string | kind | use |
+| --- | --- | --- |
+| `earth.privacy.v1` | HMAC-SHA512 key | key derivation, owner-tag salts (§2, §7) |
+| `id_secret`, `nk`, `ek` | HMAC labels | key derivation (§2) |
+| `otag-salt` | HMAC label | owner-tag salt (§7) |
+| `earth.note.v1` | HKDF salt | v1 note ciphertext (§5) |
+| `earth.note.v2` | HKDF salt | v2 blind ciphertext (§5) **[shared]** |
+| `earth.stake.v2` | HKDF salt | wallet stake ciphertext (§5) |
+| `earth.rectag` | field tag | registration record tag (§6) |
+| `earth.statetag` | field tag | state record tag (§6) |
+| `earth.unlocktag` | field tag | unlock record tag (§6) |
+| `earth-gas-pow/v1` | ASCII prefix | gas grant proof of work (§13) |
+
+## 2. Keys
+
+**[wallet]** From the BIP-39 seed (empty passphrase), BIP-32 hardened
+derivation on a purpose of its own (no Cosmos account key is reused):
 
     m/2026'/118'/0'/0'   id_secret
     m/2026'/118'/0'/1'   nk
@@ -123,54 +140,18 @@ For each, with k the child's 32-byte private key:
     nk        = s mod p      (label "nk")
     ek        = s[0..32]     (label "ek"; X25519 clamps it)
 
-p is the BN254 scalar modulus. `idc = H(TAG_ID, id_secret)` and
-`owner_pk = H(TAG_OWNER, nk)` are the chain's.
+**[chain]** `idc = H(TAG_ID, id_secret)`, `owner_pk = H(TAG_OWNER, nk)`.
 
-**No self-mint counters (removed for fced976).** A note the chain mints to
-this wallet (registration ANML and reward, ANML claim, gas grant, shield,
-swap output, LP shares/refunds/withdrawal legs, undelegation payout) is named by
-a pc of fresh random rho and rcm and carries a v2 ciphertext of them to the
-wallet's own address; every stake note is a stake proof's own output with
-fresh random rho and rcm (the chain mints none since dff3a9b). Nothing about them is derived from a
-counter, so failed or abandoned attempts can never open a gap that a restore
-would not cross. (`mint-rho`, `mint-rcm`, `stake-rho`, `stake-rcm` must not
-be used any more.)
+Nothing else is derived from the mnemonic by a counter except owner-tag
+salts (§7): every note the chain mints to the wallet and every stake note
+uses fresh random rho and rcm and is found by trial decryption (§19), so a
+failed or abandoned attempt never leaves a gap a restore cannot cross.
+The seed and the phrase's bytes are zeroed once the keys are derived (the
+phrase as an iOS String cannot be); iOS checks every SecRandomCopyBytes
+status.
 
-Groundworks owner tags (a position stores `otag`; its owner proves it again
-to update, unlock or vote it; positions carry no ciphertext), counter c a u32:
-
-    salt_c = HMAC-SHA512("earth.privacy.v1", "otag-salt" || nk (32 BE) || c (u32 BE)) mod p
-    otag_c = H(TAG_OTAG, owner_pk, salt_c)
-
-A lock takes counter max(next_otag_counter, highest owned counter found + 1,
-highest closed counter + 1) and advances next_otag_counter. Sync matches the
-public positions against counters 0 … that + 1024 (OTAG_GAP = 1024: a closed
-position disappears from the chain, so the window must cross a run of closed
-positions and failed locks). A stake proof whose msg stores no tag
-(everything but a position msg) uses a fresh random salt.
-
-**Closed tags are never reused (K11; chosen over a random high counter,
-which a restore could not find again).** A position disappears from the
-chain when it is unlocked, and the chain's events do not carry its tag, so
-a wallet restored from the mnemonic would otherwise start at the highest
-*live* counter + 1 and lock again under a closed position's public tag,
-linking the two. So MsgUnlockPosition's fee bundle carries a value-0 pool
-note to the wallet's own address (v1, §3; the stake v2 ciphertext has no
-memo since dff3a9b) whose memo names the counter it closed:
-
-    memo = "EU" (0x45 0x55) || 0x01 || counter (u32 BE)
-           || first 16 bytes of BE32( H(Tag("earth.unlocktag"), nk, U64(counter)) ) || zero padding
-
-Sync opens every pool note anyway (a value-0 note is kept for this check
-alone, then dropped); an unlock memo whose tag
-recomputes raises `closed_otag_max` (a gift of stake with someone else's
-memo is ignored, so it cannot stretch the scan). Positions only ever
-disappear by unlock (x/shieldedstaking removes them nowhere else). Left
-open: a lock that failed in its block published its tag in the failed tx
-without creating a position; a restored wallet may reuse that counter.
-
-Pinned in `KeysAndNotesTest` (cross-checked with an independent Python
-derivation) for the mnemonic `abandon ×11 about`:
+Golden (`KeysAndNotesTest`, cross-checked with an independent Python
+derivation), mnemonic `abandon ×11 about`:
 
     id_secret 059b96926ae7a563f2ddeb6fe425a6ccdd1c267f1d06d92457f1b6dba741fcba
     nk        0a67906d75dbdf06237678494da622b51aab4bcefea0134f5ead80d7c9440b81
@@ -178,59 +159,75 @@ derivation) for the mnemonic `abandon ×11 about`:
     salt_0    0685f54037389aaceee42288ed8c8c996a884e297ffee771c73370ca885e1618
     salt_1    2e52e73b7af259664a34df8bcee1c0476009a37e0ab2e52b285bae497845a9ba
 
-## 2. Shielded address (canonical; also in chain zk/privacy and the web app)
+## 3. Shielded address
+
+**[shared]** (chain zk/privacy and the web app):
 
     bech32m( hrp "erthz", 8→5 bits of: 0x01 || owner_pk (32, BE, < p) || ek_pub (32) )
 
 65 payload bytes, 116 characters; BIP-173's 90-character cap is not applied
 (as with Zcash unified addresses). Decoders refuse other hrps, versions,
-lengths and a non-canonical owner_pk. Golden (the mnemonic above):
+lengths, mixed case and a non-canonical owner_pk. Golden (the mnemonic
+above):
 
     erthz1qyh7prm54w0lu9ymzm3dtpm3r3juewetjuu8675hw0gpu5hywx4ll33j03sqfqzdec0ad2rke8ycxgzvkfg4q7ja4zhgghjjeh59s4mn9gwhg2
 
-**Stake note v2, one note per validator, Move stake, the slash debt
-(chain dff3a9b and b46a4bb, ORCHARD_DESIGN 19-20; clients round 8),
-summary.** A stake note's commitment carries a slash label
-(`label = H("earth.slabel", move_key, move_time, exposed)`, 0 for none)
-and its ciphertext is the wallet's own 201-byte stake v2 ciphertext; the
-chain mints no stake note any more (blind stake ciphertext and `spc_mint`
-gone, §3). Every staking msg's stake proof (16 public inputs) spends at
-most two notes and creates one note back (lane A), so a wallet holds one
-note per validator: a delegation merges into it at a derth quoted at the
-live rate less 10 ppm, a full exit leaves a zero note. "Move stake"
-(MsgRedelegate) moves derth between validators with no unbonding gap; the
-credit lane merges what arrives into the destination note, labelled with
-the move until the label window closes. A slash of the source in that
-window is read from the slash debt tree. Votes take two notes (9 public
-inputs) at their post-slash value. Every stake proof names the current
-clear_before and debt root; owner-tag salts are fresh off positions
-(§4k). The unlock record moved to a value-0 pool note (§1). Android and
-iOS identical.
+A bech32 transparent address (`earth1…`) in a msg is its raw bytes from the
+address codec; addresses are lowercase canonical bech32.
 
-## 3. Note ciphertexts
+## 4. Pool notes
 
-Three kinds, told apart by length (and, for 177 bytes, by which stream the
-row is in):
+**[chain]**
 
-| kind | len | used for |
-| --- | --- | --- |
-| v1 note (canonical) | 217 | a bundle's outputs: sends, change, the registration record note |
-| v2 blind note (canonical, chain zk/privacy) | 177 | every pool note the chain mints, to self or to anyone |
-| wallet stake note v2 (wallet-defined; length pinned by the chain) | 201 | every stake note: a stake proof's lane A output and its credit lane's |
+    pc = H(TAG_PC, owner_pk, rho, rcm)
+    cm = H(TAG_CM, AssetID(denom), value, pc)
+    nf = H(TAG_NF, nk, rho, position)          position a u32 (the leaf index)
+
+**Amounts.** Every note value and stake amount is a u64 on chain, and the
+circuits bound it to 2^63 − 1 (`privacy_core NOTE_VALUE_BITS = 63`, inside
+`note_cm` and `stake_cm`): an action's spend and output value, a stake
+proof's input and output amounts and a vote's note amounts are each at most
+2^63 − 1, so no proof can create a note a wallet ignores; x/shielded's
+MaxNoteValue is the same. A witness above it fails `nargo execute`. Public
+amounts (`v_in`, `v_out`, a bundle's balance) are not notes and stay u64.
+
+**[wallet]** Both apps parse public amounts as unsigned decimal u64 (no
+sign, ASCII digits only) and take only values up to 2^63 − 1: a row,
+decrypted note or stake note above that is ignored (never wrapped). Totals
+shown to the user saturate; amounts a tx is built from are checked (an
+overflow is an error, never a wrong change); derth × rate saturates at
+2^63 − 1 (a negative rate is 0).
+
+A note's asset is carried as its id. The wallet resolves ids to denoms from
+`uerth`, `uanml` and what it learns (§19); an id it cannot resolve is kept
+as `asset/<hex>`, spendable inside the pool.
+
+## 5. Note ciphertexts
+
+Three formats, told apart by length:
+
+| format | bytes | plaintext | used for |
+| --- | --- | --- | --- |
+| v1 note **[shared]** | 217 | 169 | a bundle's outputs: sends, change, memo records, dummies |
+| v2 blind note **[shared]** | 177 | 129 | every pool note the chain mints |
+| wallet stake note v2 **[wallet]** (length pinned by the chain) | 201 | 153 | every stake note |
+
+The AEAD is ChaCha20-Poly1305 with a zero 12-byte nonce and empty aad; esk
+is fresh per note, so the nonce never repeats under a key. A shared secret
+of all zeros (low-order epk) is refused.
 
 **v1 note.**
 
-    ct  = epk (32) || ChaCha20-Poly1305(key, nonce = 0^12, aad = empty, pt)     217 bytes
+    ct  = epk (32) || ChaCha20-Poly1305(key, pt)                                   217 bytes
     key = HKDF-SHA256(ikm = X25519(esk, ek_pub), salt = "earth.note.v1", info = epk || cm)
     pt  = 0x01 || asset_id (32) || value (u64 BE) || rho (32) || rcm (32) || memo (64, zero padded)   169 bytes
 
-esk is fresh per note, so the zero nonce never repeats under a key. The
-recipient decrypts with the note's public cm and accepts only if
+The recipient decrypts with the note's public cm and accepts only if
 `H(TAG_CM, asset_id, value, H(TAG_PC, owner_pk, rho, rcm)) == cm`. Memo
-trailing zeros are dropped on read. A dummy output is encrypted to a
-throwaway key. Golden: esk = 01 02 … 20, note (uanml, 1000000,
-rho = Poseidon2([7]), rcm = Poseidon2([8]), memo "memo") to the address
-above:
+trailing zeros are dropped on read. A dummy output is a value-0 uerth note
+encrypted to a throwaway key. Golden: esk = 01 02 … 20, note (uanml,
+1000000, rho = Poseidon2([7]), rcm = Poseidon2([8]), memo "memo") to the
+address of §3:
 
     07a37cbc142093c8b755dc1b10e86cb426374ad16aa853ed0bdfc0b2b86d1c7c27a4ccf6eb32e22c660248ac5cfc37d11c
     e870fdb324e97e1e94176876b187056319e704577b33ba5fa53a834ac83f419c51cbea350859acf194fd7c69dc74074d50
@@ -242,268 +239,104 @@ above:
 
 **v2 blind note (chain `EncryptBlindNote`).** Required, exactly 177 bytes,
 on every note the chain mints to a hidden owner: MsgShield (the gas grant
-included), MsgRegister (ciphertext_anml and ciphertext_erth: both v2, even
-the ANML whose value is known), MsgClaimAnml, MsgBuyAnml, MsgNoteSwap,
-MsgAddLiquidityShielded (share, refund: one ciphertext for both refund
-notes, same pc), MsgRemoveLiquidityShielded (both legs), MsgRemoveLiquidity
-(ANML leg), MsgUndelegate (the payout, chain 48b631c).
+included), MsgRegister (ciphertext_anml and ciphertext_erth, both v2),
+MsgClaimAnml, MsgBuyAnml, MsgNoteSwap, MsgAddLiquidityShielded (share;
+refund: one ciphertext for both refund notes, same pc),
+MsgRemoveLiquidityShielded (both legs), MsgRemoveLiquidity (ANML leg),
+MsgUndelegate (the payout), and `pc_gas` of `/gas/register`.
 
-    ct  = epk (32) || ChaCha20-Poly1305(key, nonce 0^12, aad empty, pt)      177 bytes
+    ct  = epk (32) || ChaCha20-Poly1305(key, pt)                                   177 bytes
     key = HKDF-SHA256(ikm = X25519(esk, ek_pub), salt "earth.note.v2", info = epk)
-    pt  = 0x02 || rho (32) || rcm (32) || memo (64, zero padded)            129 bytes
+    pt  = 0x02 || rho (32) || rcm (32) || memo (64, zero padded)                   129 bytes
 
-info cannot bind cm, so the binding is the recipient's check: it opens ct
-and accepts only if `CM(AssetID(denom), value, PC(owner_pk, rho, rcm)) ==
-cm` with the denom and value the chain published for that position (the
-indexer's note row `amount`, "<n><denom>", set for every shield and mint).
-The wallet uses fresh random rho, rcm and esk for each, and an empty memo
-for its own. Golden (chain formats_test.go goldenKeys: ek = 01..20, esk =
-40..5f, owner_pk = OwnerPK(7), rho 11, rcm 13, memo "golden memo"), pinned
-in `BlindNoteTest`:
+info cannot bind cm (the sender does not know the value), so the binding is
+the recipient's check: it opens ct and accepts only if `CM(AssetID(denom),
+value, PC(owner_pk, rho, rcm)) == cm` with the denom and value the chain
+published for that position (the indexer's note row `amount`,
+`<n><denom>`). The wallet uses fresh random rho, rcm and esk for each and
+an empty memo for its own. Golden (chain formats_test.go goldenKeys: ek =
+01..20, esk = 40..5f, owner_pk = OwnerPK(7), rho 11, rcm 13, memo "golden
+memo"; vectors `blind.note_ct`), pinned in `BlindNoteTest`:
 
     79a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a8b8d4fe44e9fcb771cba93975cb4507ff1d20e44
     6a6a4cd8336f9a50186a7de58a5b4570c62bfd9cd347f5921103700103da6af3ce492bbd1f936a4310b3b01a1d583847125f76
     32547dfb2ea23c438f21cd4a419f9ef66d92660af42686e93c890bc37f68cf282f46ca2550ab2df0ce7191a11e7721ce736e0d
     1bdd62af8be221017ee455ab79e7b2ea0e756a86c39910
 
-**Blind stake ciphertext: removed (chain dff3a9b).** The chain mints no
-stake note: every one is a stake proof's output (`StakeProof.ciphertext`,
-`credit_ciphertext`), so `spc_mint`, `spc_ciphertext` and the 177-byte
-`EncryptBlindStakeNote` format are gone (StakeProof fields 4, 5, 6, 8
-reserved).
+A split payout (§12, x/dex MintNoteSplit, an undelegation payout) mints
+several notes with the same pc and ciphertext, each its own amount and
+position: each row decrypts to the same (rho, rcm) and its own amount gives
+its cm; the wallet never dedupes by ciphertext, pc or opening.
 
-**Wallet stake note ciphertext v2 ("earth stake note v2", wallet-defined;
-the chain pins only its length, WalletStakeCiphertextBytes = 201).** For
-every stake note, always to the wallet's own address:
+**Wallet stake note v2 ("earth stake note v2"; the chain pins only its
+length, WalletStakeCiphertextBytes = 201).** For every stake note (each is a
+stake proof's output), always to the wallet's own address:
 
-    ct  = epk (32) || ChaCha20-Poly1305(key, nonce 0^12, aad empty, pt)      201 bytes
+    ct  = epk (32) || ChaCha20-Poly1305(key, pt)                                   201 bytes
     key = HKDF-SHA256(ikm = X25519(esk, ek_pub), salt "earth.stake.v2", info = epk || cm)
     pt  = 0x04 || asset_id (32) || amount (u64 BE) || rho (32) || rcm (32)
-          || move_key (32) || move_time (u64 BE) || exposed (u64 BE)        153 bytes
+          || move_key (32) || move_time (u64 BE) || exposed (u64 BE)              153 bytes
 
-accepted only if `H(TAG_STAKE, asset_id, amount, H(TAG_SPC, owner_pk, rho,
-rcm), label) == cm`, label = `H(Tag("earth.slabel"), move_key, move_time,
-exposed)` for a labelled note and 0 when all three are zero (an unlabelled
-note: same length, so the ciphertext does not tell). A v1 stake ciphertext
-(153 bytes, 0x03) is no longer written or read. Golden (esk = 40..5f, the
-§3 golden keys, asset AssetID(vectors `derth_denom`), amount 1,800,000,
-rho 11, rcm 13), pinned in `BlindNoteTest` on both platforms:
+Accepted only if `H(TAG_STAKE, asset_id, amount, H(TAG_SPC, owner_pk, rho,
+rcm), label) == cm` (§7). The three label fields are all zero for an
+unlabelled note (label 0; same length, so the ciphertext does not tell);
+otherwise move_key ≠ 0, move_time ≠ 0 and 0 < exposed ≤ amount, else the
+note is refused. Golden (esk = 40..5f, the v2 golden keys, asset
+AssetID(vectors `derth_denom`), amount 1,800,000, rho 11, rcm 13), pinned
+in `BlindNoteTest` on both platforms:
 
     unlabelled (cm vectors blind.stake_cm_derth_1800000):
     79a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a4acda0bd0608c8007ac2122efac709dab693cd96e83cab5ab4603f747f3c136214b4f26db58f5c9a523c7936ed9eded5dcca94061e0f2cde9565e931dbbcde137eb70d7626ff5a5f7f87ca16bf918c833c0e751a006159e638180e36d8c9390721e533f265d6c082c3b39282802bdef58ce478ee525812f7a2409ea2d7582e980be9bd239897e0a849e9bb197f09bdd3bd37309625b149d5c16b7a883c2e3573786ab371c01d82e218
     labelled move_key 0x4d4b, move_time 1000, exposed 200 (cm blind.stake_cm_derth_1800000_labelled):
     79a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a524088d6a8c8bfb2c4c18834e3dca9e08f49563fb5d05b22c0fa65732779254918403cfc2bb8d36aa9c8839639732209620e6666fa89c49fcda050c3d5d4324a3e316bcad126dba984ba60ca4edde3f2e3e4dd565e9d4bd8b85195072085bef5f2454561786101b50164958e27585a23ebbbafff57047de9813082e6a96f0034a597ea4639cad38084f5cf40e3808eee9eb85a4eb63fef8621553805d590d6d5101e93f8be0b7e60e3
 
-**Sync rule (one note-discovery rule).** A pool note row is ours iff its
-ciphertext opens: 217 bytes as v1 (cm-bound), or 177 bytes as v2 with the
-row's public amount (rows without an amount are skipped). A stake note row
-is ours iff its 201-byte ciphertext opens as the wallet stake note v2 (the
-stake rows stream format 2 carries position, height, cm, ciphertext only:
-no denom or amount is published; the wallet names the derth denom by
-AssetID over the chain's validator list, every status, §4k). Value-0 notes
-are dropped, except the registration record note (§3a). Nothing else; a
-restore from the mnemonic alone finds every note.
+The stake ciphertext has no memo.
 
-**Open notes (chain 203d3b2).** A note the chain mints with an opening it
-chose (today only the referral note, §3a) has no ciphertext at all: its
-notes-stream row carries `owner_pk`, `rho` and `rcm` instead, and it is
-ours iff owner_pk is our own and H(TAG_CM, AssetID(denom), amount,
-H(TAG_PC, owner_pk, rho, rcm)) is the row's cm (§4h).
+**Open notes [chain].** A note the chain mints with an opening it chose
+(only the referral note, §13) has no ciphertext: its notes-stream row
+carries `owner_pk`, `rho` and `rcm` instead, and it is ours iff owner_pk is
+our own and `H(TAG_CM, AssetID(denom), amount, H(TAG_PC, owner_pk, rho,
+rcm))` is the row's cm. It is spent like any other note (nf needs nk; the
+published opening links nothing without it).
 
-**Amounts (K12).** Every note value and stake amount is a u64 on chain.
-Both apps parse public amounts as unsigned decimal u64 (no sign, ASCII
-digits only) and take only values up to 2^63 − 1: a row, decrypted note or
-stake note above that is ignored (never wrapped to a negative; no supply
-reaches it). Totals shown to the user saturate; amounts a tx is built from
-are checked (an overflow is an error, never a wrong change); derth × rate
-saturates at 2^63 − 1 (a negative rate is 0).
-The circuits enforce the same bound (privacy_core `NOTE_VALUE_BITS = 63`,
-inside `note_cm` and `stake_cm`): an action's spend and output value, a
-stake proof's input and output amounts and a vote's note amount are each at
-most 2^63 − 1, so no proof can create a note a wallet ignores (the action
-circuit had allowed outputs up to 2^64 − 1; chain ORCHARD_DESIGN §16). A
-witness above it fails `nargo execute` and cannot be proven. The witness
-format is unchanged; the action, stake and vote circuits (and their chain
-verifying keys) are new. Public amounts (`v_in`, `v_out`, a bundle's
-balance) are not notes and stay u64.
+## 6. Memo records (value-0 pool notes)
 
-## 3a. Registration (binding, gas grant, record note, restore)
+**[wallet]** Restoring from the mnemonic must recover state no chain query
+names. The wallet records it in value-0 uerth pool notes to the wallet's
+own address (v1 ciphertext, 217 bytes), carried as outputs of a fee bundle,
+whose 64-byte memo is a record. Every record is tagged so only the holder
+of nk can make one (anyone can send this wallet a value-0 note with any
+memo); the tag is the first 16 bytes of a field element's 32-byte BE form,
+and is compared before anything else is done with the record. Sync opens
+every pool note anyway; a value-0 note is read for its record, then
+dropped.
 
-**Binding.** The passport proof's `address` public input is (chain
-48b631c, audit 6 B6-4: the chain id first, so a registration seen on one
-network cannot be replayed onto another)
-
-    address = H(TAG_REG, Bytes(chain_id), idc, pc_anml, Bytes(ct_anml), pc_erth, Bytes(ct_erth), affiliate)
-
-with affiliate = 0 for no referrer, and for a referrer named by handle
-(chain 203d3b2)
-
-    affiliate = H(Tag("earth.affiliate"), Bytes(affiliate_handle))
-
-MsgRegister carries `affiliate_handle` (15) only, "" for none (11, 12, 13,
-14 are reserved; 11/12 were `affiliate_pc` / `affiliate_ciphertext`, the
-referral note the registrant's wallet used to make, which let a registrant
-pay the referral half to itself). The chain mints the referrer's half
-itself, at execution, to the address the handle resolves to then:
-
-    pc  = H(TAG_PC, handle owner_pk, rho, rcm)
-    rho = H(Tag("earth.referral"), passport nullifier, U64(leaf_index), U64(0))
-    rcm = H(Tag("earth.referral"), passport nullifier, U64(leaf_index), U64(1))
-
-(zk/privacy.ReferralOpening; leaf_index is the new identity leaf). The note
-has no ciphertext; its `shielded_mint` event carries owner_pk, rho and rcm
-(hex) with amount and position, and the handle owner's wallet takes it from
-the notes stream by its own owner_pk (§4h). Vectors: vectors.json
-`referral_opening` (five (nullifier, leaf_index) pairs with rho, rcm, and
-the pc and cm of 5 ERTH to OwnerPK(7100+i)). The handle is resolved from
-the whole directory when the registrant confirms the passport details (§4g:
-live in a fresh copy and in the chain's own directory), and a wallet never
-names its own address. The wallet picks fresh rho/rcm for its own two notes
-and writes their ciphertexts **before** proving the passport, and sends
-exactly those ciphertexts in MsgRegister and to /gas/register. A referral link
-(`https://erth.network/ref/<handle>`, `earth://ref/<handle>`, the Play
-install referrer `referrer=<handle>`) prefills the handle. Chain pinned
-vector (zk/privacy TestRegistrationBindingPinned): chain_id "earth-1",
-idc=1, pc_anml=2, ct_anml="anml", pc_erth=3, ct_erth="erth", affiliate=0 →
-`148b3513a501b6ff9c02314f355cb83fb544e22b2a9df79552fe49c944424159` (was
-`20ce5fcc...5b0c` without the chain id); the same with "earth-testnet-1"
-(vectors.json `reg_testnet`) →
-`122b90a7dc7460e7a9fedc31ab0ee17602b744124eab9fb9b9a7e4770485523a`.
-
-**Gas grant.** `POST /gas/register` takes MsgRegister's fields (no fee
-bundle; the referral as `affiliate_handle`, "" for none; never
-`affiliate_pc` / `affiliate_ciphertext`, which the backend refuses with a
-400 since chain 203d3b2; no `affiliate`)
-plus `pc_gas` and `ciphertext_gas`, a fresh v2 ciphertext to self
-(177 bytes, required). It is the only grant: `/gas/transparent`,
-`/gas/android`, `/gas/challenge`, `/gas/ios`, `/gas/human` are gone.
-**Proof of work (backend services/pow.py).** The request may carry
-`"pow": {"ts": <int>, "nonce": "<str>"}`, a hashcash stamp:
-SHA-256(`"earth-gas-pow/v1:" + ts + ":" + binding + ":" + nullifier + ":" + nonce`,
-ASCII) with at least `bits` leading zero bits, ts unix seconds (±600 s),
-binding and nullifier `public_signals[1]` and `[2]` exactly as sent, nonce a
-lowercase hex counter. The wallet asks `GET /gas/pow` for `bits`, stamps at
-it (off the main thread, cancellable, with progress; 22 bits is a few
-seconds), posts; on 428 it makes a fresh stamp at the answer's `pow.bits`
-and posts again (at most 4 rounds); it keeps a stamp for the next try only
-after a 503 or 429 (the server gave it back, reused within 300 s), never
-after a 403.
-
-**Registration record note (version 2, K1).** MsgRegister's fee bundle
-always carries, as one of its outputs, a value-0 uerth note to the wallet's
-own address (v1 ciphertext) whose 64-byte memo is the registration record:
+**Registration record (version 2).** One output of MsgRegister's fee
+bundle:
 
     memo = "ER" (0x45 0x52) || 0x02 || country (2 ASCII bytes A-Z, 0x0000 unknown)
            || built_at (u64 BE unix seconds, the wallet's clock when the bundle was laid out)
-           || dsc_key (32 BE) || tag (16) || zero padding (3)          (61 bytes used)
+           || dsc_key (32 BE) || tag (16) || zero padding (3)                   (61 bytes used)
     tag  = first 16 bytes of BE32( H(Tag("earth.rectag"), nk, dsc_key, U64(built_at)) )
 
-H is Poseidon2 as everywhere (Tag(s) = the ASCII bytes of s as a field
-element, U64 as in the chain's zk/privacy). Only the holder of nk can make
-a tag, so a record anyone else sends (anyone can send this wallet a value-0
-note with any memo) is ignored. A memo is a record only if the magic and
-version match, the country is 0x0000 or two A-Z letters, dsc_key is
-canonical, the padding is zero and the tag recomputes (compared before
-anything else is done with it). Version 1 records (untagged, written by
-builds before this format) are ignored: such a registration cannot be
-restored from the mnemonic (register again). `country` is the wallet's
-guess at the verifying CSCA's ISO alpha-2 (the DSC's issuer C=, else the
-passport's issuing state). Sync keeps the 32 newest tagged records (they
-are value 0, never spent). Golden (mnemonic `abandon ×11 about`, dsc_key =
-77, country "FR", built_at = 1790000000), pinned in `ReauditFixesTest` and
-`ReauditFixesTests`:
+A memo is a record only if the magic and version match, the country is
+0x0000 or two A-Z letters, dsc_key is canonical, the padding is zero and the
+tag recomputes. Version 1 records (untagged) are ignored: such a
+registration cannot be restored from the mnemonic (register again).
+`country` is the wallet's guess at the verifying CSCA's ISO alpha-2: the
+DSC's issuer C= (unknown when unparsable). Sync keeps the 32 newest tagged
+records (value 0, never spent). Golden (mnemonic `abandon ×11 about`,
+dsc_key = 77, country "FR", built_at = 1790000000), pinned in
+`ReauditFixesTest` and `ReauditFixesTests`:
 
     4552024652000000006ab13b8000000000000000000000000000000000000000000000000000000000000000
     4d1d3756b83dfd918fa510770bc257079b000000
     (tag 1d3756b83dfd918fa510770bc257079b)
 
-**Recording (C2, K7).** The moment the node accepts the registration
-(broadcast returns code 0, before waiting for its block) the wallet persists
-a pending registration {tx hash, dsc_key, passport nullifier, public
-signals, country hint} and marks the notes the fee bundle spends (the gas
-grant's note) pending; every private tx marks its spends at that moment
-too. The leaf index (the tx's `register` event) and activated_at (its block
-time) are filled in when the wait for the block returns, or else by the
-next sync, which looks the tx up by hash (`GET /cosmos/tx/v1beta1/txs/{hash}`);
-a tx that failed in its block is kept as a failure for the UI (a new
-registration replaces it), and its spent notes are released once the chain
-is past its timeout_height (§4). Every sync then tries to resolve it: once the local identity
-tree has the leaf, the country is found by recomputing
-`H(TAG_LEAF, idc, dsc_key, country, activated_at, predecessor_at)` over the
-hint, unknown (0) and every A..Z pair, each with predecessor_at 0 (a
-passport never registered before) and activated_at (a switch or a re-entry:
-the chain sets it to the registration block's time); the match fixes the
-identity's predecessor_at (every restore search below tries both too, so
-its hash budgets doubled); the identity record is written and the pending one
-dropped. It is never dropped unresolved (a leaf that does not match after
-the tree has it is an error shown to the user, the record kept).
-
-**Restore from the mnemonic (L8, K1).** No query names the registration.
-Every tagged record found keeps, as the identity stream passes them, the
-identity leaves appended at its block height h (identity leaves are synced
-no higher than the notes, so the record is always seen first; at most 64).
-Then, once a sync, newest record first, stopping at the newest that
-matched:
-
-1. **Block time from the indexer (audit 3).** activated_at is exactly the
-   registration block's time. The indexer's identity rows may carry it as a
-   fifth column (`[index, height, leaf, zeroed_height, time]`); the record
-   keeps the time of its height's rows as they pass, and every country (the
-   hint, unknown, then every A..Z pair: at most 677 hashes a leaf) is tried
-   at exactly that time. The LCD is never asked about the registration's
-   block alone. Audit 4 (H1): a row time is a block time of this chain or
-   the page is inconsistent: at least 1,735,689,600 (2025-01-01) and at
-   most the LCD tip's block time + 3600 s; a fallback candidate outside the
-   same range, or one that would overflow, is skipped.
-2. **Block time from the LCD, with a cover set.** When the rows carry no
-   time (or it did not match), the LCD is asked for 16 block times
-   (`GET /cosmos/base/tendermint/v1beta1/blocks/{h}`, `block.header.time`,
-   the header's height must be h): h and 15 other heights, in a shuffled
-   order. Audit 4: the decoys are drawn first from a persisted uniform
-   sample (256) of the identity rows' heights (other registrations' blocks,
-   the blocks a restore asks about), then uniformly from [1, min(the synced
-   height, the LCD's tip)]; never a height past the tip (the synced height
-   itself is bounded by the tip, §4a). Residual: an LCD that also runs the
-   indexer sees 16 registration blocks asked together and knows the wallet
-   is one of their registrants; the indexer's row `time` (preferred, step
-   1) avoids the LCD altogether. The set is chosen once
-   and persisted with the record (a retry asks the same set; at most 3
-   fetches; once answered, never again). Its time is tried the same way;
-   known and unmatched, the record is given up (EXHAUSTED). The device
-   clock's built_at plays no part in steps 1-2.
-3. **Fallback (no block time at all).** built_at is searched outward
-   (0, +1, -1, +2, ...), the hint and unknown over [built_at − 3600,
-   built_at + 86400], then every other country over [built_at − 600,
-   built_at + 3600]. The search is resumable and bounded: the cursor and
-   the hashes spent are persisted with the record (a killed app or a later
-   sync continues, never repeats), each sync spends at most 50,000 leaf
-   hashes over all records (a few seconds on a phone, so the wallet lock is
-   never held long), and a record that spent 4,000,000 is given up. A
-   device clock off by more than the windows (a day slow, an hour fast) is
-   only found by steps 1-2.
-
-Every exact time tried is recorded with the record; a time not tried
-before (the indexer's, the LCD's) is still tried after the record was given
-up, more leaves at its height reopen it, and a store reset finds every
-record afresh (K13): an indexer serving a wrong time cannot block a
-restore for good.
-
-A match gives leaf_index, dsc_key, country and activated_at: the identity
-record (passport nullifier left empty; nothing needs it). A registration
-whose record note is missing (made by an older app) cannot be restored and
-must register again (a switch to the same passport is allowed, a switch to
-the same idc is refused by the chain only while the old leaf is live; the
-app tells the user).
-
-## 3b. State records: handle and caretaker split (audit 5, M1)
-
-A handle and a caretaker split are held by a scope nullifier no query
-names, so nothing on chain tells a wallet restored from its mnemonic what
-its identity holds. Every MsgBindHandle (claim, renew, change, release),
-MsgSetCaretaker (cast, refresh, clear), MsgMoveHandle and MsgMoveCaretaker
-therefore carries, as outputs of its fee bundle, value-0 uerth notes (v1
-ciphertext, 217 bytes) whose 64-byte memo is a **state record**, tagged
-like the registration record (only nk makes one):
+**State records (handle and caretaker split).** A handle and a caretaker
+split are held by a scope nullifier no query names. Every MsgBindHandle
+(claim, renew, change, release), MsgSetCaretaker (cast, refresh, clear),
+MsgMoveHandle and MsgMoveCaretaker carries state records:
 
     handle:    "EH" (0x45 0x48) || 0x01 || kind (u8)
                || handle (32 ASCII bytes, zero padded; zero unless kind 1)
@@ -514,19 +347,16 @@ like the registration record (only nk makes one):
                   options ascending, zero padded) || tag (16)
     kind:      1 holds, 2 released / cleared, 3 moved out;
                caretaker 0x81: holds, the split not recorded (it did not fit
-               40 bytes: options are u64; at most 20), split bytes zero
+               40 bytes, or has more than 20 options), split bytes zero
     tag:       first 16 bytes of BE32( H(Tag("earth.statetag"), nk, Bytes(memo[0..48))) )
 
-A record is accepted only if the magic, version and kind are known, the
-tag recomputes (checked first), every padding byte is zero, a held handle
-is a valid handle, and a recorded split has 1-20 distinct options of 1-100
-percent summing to 100. Sync applies them in note order: the newest record
-of each kind sets the store's handle (or none, or moved out) and split
-(with its expiry, at most now + 10 years; a split the wallet already holds
-keeps the chain's own later expiry), unless a newer one was already applied
-(a reset keeps that cursor, so a resync never rolls back what the wallet
-did since) or the record's height is one where the wallet saw its own tx
-fail in its block. Who writes what:
+The tag sits at memo[48..64) and covers every byte before it. A record is
+accepted only if the magic, version and kind are known, the tag recomputes
+(checked first), every padding byte is zero, a held handle is a valid
+handle (§14), a kind-1 caretaker record has expires_at ≠ 0, and a recorded
+split has 1-20 distinct options of 1-100 percent summing to 100. A written
+expires_at is clamped to [1, 2^32 − 1]. Goldens are pinned in `Audit5Test`
+and `Audit5Tests`. Who writes what:
 
 | tx | to this identity's address | to the new identity's address |
 | --- | --- | --- |
@@ -536,1047 +366,1242 @@ fail in its block. Who writes what:
 | MsgMoveHandle | moved out | holds handle (tagged with the new nk) |
 | MsgMoveCaretaker | moved out | holds (split, the chain's expiry) |
 
-The mover has the new wallet's keys on the phone, so it can address and tag
-that wallet's record. A record lands with its fee bundle, so one whose
-msg then fails in its block (the ante's writes stay) still lands; the
-wallet voids it when it sees the failure, and otherwise the chain refuses
-what follows from it at no cost. Records cost nothing extra in the usual
-case (a fee bundle has two actions anyway); a move's two records add one
-action.
+The mover has the new wallet's keys on the phone, so it addresses and tags
+that wallet's record. How sync applies them: §19.
 
-**Directory scan.** After a sync (on Home and the handle screens) every
-wallet reads the chain's whole directory (`Query/Handles`, not the
-indexer's stream) and squares its handle with it, unless a move is in
-flight or the read predates the store's last change: a handle the chain
-swept (absent or free) is dropped; with none held and not moved out, the
-single non-free entry naming the wallet's own shielded address is taken
-as held. Every such entry is reminded on.
+**Unlock record.** MsgUnlockPosition's fee bundle carries a value-0 record
+naming the owner-tag counter it closed (§7):
 
-## 4. Private tx assembly (follows x/shielded/ante)
+    memo = "EU" (0x45 0x55) || 0x01 || counter (u32 BE)
+           || first 16 bytes of BE32( H(Tag("earth.unlocktag"), nk, U64(counter)) ) || zero padding
+
+An unlock memo whose tag recomputes raises `closed_otag_max` (a gift with
+someone else's memo is ignored, so it cannot stretch the owner-tag scan).
+
+## 7. Stake notes, labels, positions
+
+**[chain]** Delegated stake (`derth/<valoper>`) lives in its own
+append-only tree, owner-locked: it can be merged, undelegated, redelegated,
+voted or locked by its owner, never sent.
+
+    spc   = H(TAG_SPC, owner_pk, rho, rcm)
+    cm    = H(TAG_STAKE, AssetID(derth/<valoper>), amount, spc, label)
+    label = H(Tag("earth.slabel"), move_key, move_time, exposed)    (0: unlabelled)
+    nf    = H(TAG_SNF, nk, rho, position)                            position a u32
+    otag  = H(TAG_OTAG, owner_pk, salt)
+
+The chain mints no stake note: every one is a stake proof's output. A label
+marks derth that arrived by a move (§15): `exposed` of it (the move's
+credit), `move_key` the move's credit nullifier, `move_time` the time the
+move named. It stays until the label window (`window_seconds`,
+Query/DebtTree) after move_time has passed; a slash of the source in that
+window owes through the move's debt row (§8). A note holds at most one
+label. Vectors: `derive.stake_label`, `stake_cm`, `stake_cm_labelled`.
+
+**One note per validator [wallet].** Every delegation, unlock and credit
+merges into the wallet's note at the validator, so a wallet holds one note
+per validator; a second appears only beside a labelled note (a move into a
+validator where ours is labelled) or from another device, and merges by
+MsgRestake on the user's tap (at most one of the two labelled).
+
+**Owner tags [wallet].** A Groundworks position stores `otag`; its owner
+proves it again to update, unlock or vote it. Positions carry no
+ciphertext. For counter c (a u32):
+
+    salt_c = HMAC-SHA512("earth.privacy.v1", "otag-salt" || nk (32 BE) || c (u32 BE)) mod p
+    otag_c = H(TAG_OTAG, owner_pk, salt_c)
+
+A lock takes counter max(next_otag_counter, highest owned counter found + 1,
+closed_otag_max + 1) and advances next_otag_counter; update, vote and unlock
+reuse the position's salt. Every other stake proof (delegate, undelegate,
+restake, redelegate) uses a fresh random salt (circuit audit L-2). Sync
+matches the public positions against counters 0 … max(next, closed + 1) +
+1024, extended past every match (OTAG_GAP = 1024: a closed position
+disappears from the chain, so the window must cross a run of closed
+positions and failed locks). Closed counters are never reused: a position
+disappears only by unlock, and the unlock record (§6) lets a restored wallet
+start past every closed tag. Residual: a lock that failed in its block
+published its tag without creating a position, and a restored wallet may
+reuse that counter.
+
+A position's weight is shown as derth × its validator's current rate (0
+without a live split).
+
+## 8. Trees
+
+All are depth-32 Poseidon2 Merkle trees (**[chain]** `zk/merkle`):
+
+    node = H(left, right)    empty leaf = 0    zero[i+1] = H(zero[i], zero[i])
+    bit i of the index = 1  ⇔  the running node is the right child at level i
+
+zero[32] = `0b59baa35b9dc267744f0ccb4e3b0255c1fc512460d91130c6bc19fb2668568d`.
+
+- **Note tree** (x/shielded, append-only): pool note cms.
+- **Identity tree** (x/personhood, updatable: a switched or removed leaf is
+  zeroed):
+
+      leaf = H(TAG_LEAF, idc, dsc_key, country, activated_at, predecessor_at)
+
+  activated_at is the registration block's time; predecessor_at the time of
+  the switch or re-entry that made the leaf (its activated_at), 0 for a
+  passport never registered before. Vectors `derive.leaf`, `leaf_pred`.
+- **Stake tree** (x/shieldedstaking, append-only): stake note cms.
+- **Stake nullifier tree** (`zk/indexed`): an indexed (sorted) tree; leaf i
+  = H(TAG_SNFL, value, next_value, next_index), leaf 0 the sentinel (value
+  0), each leaf pointing at the next larger value (0, 0 for the largest).
+  The tree after n inserts is fixed by the final sorted order, so the
+  wallet writes the final leaves in one batch (the same root as replaying
+  the inserts). nf_size counts leaves, sentinel included. Vectors `indexed`.
+- **Slash debt tree** (`zk/debt`): an indexed tree with one row per slashed
+  redelegation; leaf i = H(TAG_DEBTL, key, next_key, next_index, retained),
+  leaf 0 the sentinel (0, smallest key, its index, 0); the empty tree is
+  the sentinel alone (root `0cea3d3e26cd2710109d7cbff5bf48570ba54332f812d538893f0958007f6903`).
+  A move with a row is worth its row's `retained`; a move absent (a low
+  leaf below it whose successor is above it, or none) is worth its whole
+  exposure. Vectors `debt`.
+
+The wallet builds the note, identity and stake trees from the indexer's full
+streams and takes its own paths locally: nothing it asks names a leaf of its
+own. The nullifier and debt trees are read whole when needed (§15) and
+checked against the chain's root.
+
+## 9. Circuits: public-input order and witnesses
+
+**[chain]** Every privacy circuit is set up at 2^15 (within the bundled
+2^15 + 1 point SRS) and compiled with nargo 1.0.0-beta.22; `bb write_vk` of
+every bundled circuit equals the chain genesis's verifying key. Every proof
+is exactly 14,656 bytes. Prover kinds split these public-input counts:
+action 6, stake 16, membership 8, vote 9.
+
+**action** (one spend and one output of a bundle):
+
+    private: nk, s_asset, s_value, s_rho, s_rcm, s_pos, s_path[32], o_asset, o_value, o_pc, rcv
+    public:  anchor, nf, cm_out, cv_x, cv_y, sighash
+
+Spend: cm = H(TAG_CM, s_asset, s_value, H(TAG_PC, owner_pk, s_rho, s_rcm))
+at s_pos under anchor (not enforced for a dummy, s_value = 0), nf =
+H(TAG_NF, nk, s_rho, s_pos). Output: cm_out = H(TAG_CM, o_asset, o_value,
+o_pc). cv = s_value·G(s_asset) − o_value·G(o_asset) + rcv·R (§10).
+
+**stake** (one owner-locked operation; ORCHARD_DESIGN 13, 20):
+
+    private: nk, in_amount[2], in_rho[2], in_rcm[2], in_pos[2], in_path[2][32],
+             in_move_key[2], in_move_time[2], in_exposed[2],
+             out_amount, out_rho, out_rcm, clear,
+             debt_low_key, debt_low_next_key, debt_low_next_index, debt_low_retained, debt_low_index, debt_low_path[32],
+             cr_in_amount, cr_in_rho, cr_in_rcm, cr_in_pos, cr_in_path[32], cr_out_rho, cr_out_rcm,
+             tag_salt
+    public:  anchor, asset, nf_0, nf_1, cm_out, v_in, v_out, clear_before, debt_root,
+             cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, otag, sighash
+
+Two lanes under `anchor`. Lane A (`asset`) spends up to two notes, at most
+one labelled, and creates one; v_in is credited (delegation, unlock), v_out
+leaves (undelegation, lock, a move's source). It either keeps the label
+(the output carries the same label, and in_0 + in_1 − exposed + v_in = out
+− exposed + v_out) or clears it once `move_time < clear_before`, reading the
+move's row in the debt tree at `debt_root` (in_0 + in_1 − exposed +
+retained + v_in = out + v_out, output unlabelled). Lane B (`cr_asset`, the
+credit lane) merges `cr_v_in` credited by a move into at most one
+unlabelled note: cr_in + cr_v_in = cr_out, the output labelled (move_key =
+cr_nf, move_time = cr_move_time, exposed = cr_v_in). Padding: an input of
+amount 0 publishes 0 or its own would-be nullifier; an output of amount 0
+publishes 0 or a zero note's commitment. Vectors `public_inputs.delegate`,
+`undelegate`, `redelegate`.
+
+**vote** (MAX_NOTES = 2 stake notes of one validator on one proposal,
+nothing spent; ORCHARD_DESIGN 15, 18, 20):
+
+    private: nk, amount[2], rho[2], rcm[2], pos[2], path[2][32],
+             move_key[2], move_time[2], exposed[2],
+             low_value[2], low_next_value[2], low_next_index[2], low_index[2], low_path[2][32],
+             debt_low_key[2], debt_low_next_key[2], debt_low_next_index[2], debt_low_retained[2],
+             debt_low_index[2], debt_low_path[2][32]
+    public:  note_root, nf_root, debt_root, asset, weight, proposal_id, vnf[0], vnf[1], sighash
+
+For each used slot (amount ≠ 0): the note is under note_root (the
+snapshot's stake root); its spend nullifier H(TAG_SNF, nk, rho, pos) is not
+in the nullifier tree at nf_root (a low leaf with low.value < nf <
+low.next_value, or low.next_value = 0); vnf = H(TAG_VNF, nk, rho, pos,
+proposal_id); its value is its amount, or for a labelled note amount −
+exposed + retained against the current `debt_root`. An unused slot (amount
+0, every field zero) has vnf 0 and cannot be padded, so the slot count is
+public. 0 < weight ≤ the sum of the values. Vector `public_inputs.stake_vote`.
+
+**membership** (anonymous proof of a live registration):
+
+    private: id_secret, dsc_key, country, activated_at, predecessor_at, leaf_index, siblings[32]
+    public:  root, scope, nullifier, signal, excluded_dsc, excluded_country, max_activation, max_predecessor
+
+Proves the leaf is in the identity tree at root, nullifier = H(TAG_SN,
+id_secret, scope), dsc_key ≠ excluded_dsc, country ≠ excluded_country
+unless that is 0, activated_at ≤ max_activation, predecessor_at ≤
+max_predecessor, and binds signal (the msg's sighash). "No bound" is 2^63 −
+1 (`Privacy.NO_BOUND`). Vector `membership_public_inputs`.
+
+**passport** (`lean_poa*`, one per signature algorithm; registration only):
+public inputs `current_date` (u32 YYMMDD), `address` (the registration
+binding, §13), then the returned `nullifier` and `dsc_key` commitment. The
+wallet sends them as MsgRegister.public_signals, decimal, in that order:
+[current_date, address, nullifier, dsc_key].
+
+**SRS.** Both apps bundle the first 32,769 G1 points of Aztec's bn254
+transcript (`crs.aztec.network/g1.dat` bytes 0..2,097,215, file
+`srs/bn254_g1_32769.dat`, sha256
+`d769ac6c98f8fab858a7e9967f2b7f181d8ad9fdcdf55438c915696febf0e99c`), checked
+before use and passed to bb as a `.dat` path: proving a private tx never
+touches the network, and a missing file is an error (never a download). The
+passport circuits' SRS (too large to bundle) is fetched once at launch: a
+byte range of the same file, hash-pinned (Android 2^18 + 1 points, sha256
+`8f5cd75519c2e995fa47aa7ecd7b213b9ae13824bc4b0f15025a63acd8c139eb`; iOS
+2^19 + 1 points, `1df37a2ce1da3713c7300691a65ffe84de144ea64899d5cfbf0061aaaeb6ad31`),
+streamed to a staged file, hashed as it comes, cut off at the range's length
+(iOS 524,289 × 64 bytes), no redirect followed, kept out of backups; until
+it is there a passport proof downloads its own. iOS reserves the passport
+size for a private proof only from that local file.
+
+**Witness dumps.** With `PRIVACY_TOML_OUT=<dir>` the wallet tests write every
+witness as `<dir>/{action,stake,membership,vote}/<test>_<i>/Prover.toml`
+(§21).
+
+## 10. Bundles
+
+**[chain]** (zk/orchard, ORCHARD_DESIGN 12-14). A bundle is N ≥ 2 actions,
+each proven on its own, a public value balance per denom, and a binding
+signature.
+
+- **Value commitments** on Grumpkin (Noir's embedded curve, y² = x³ − 17):
+
+      G_a = hash_to_point(TAG_GEN, AssetID(denom))
+      R   = hash_to_point(TAG_CV_R, 0)
+      hash_to_point(tag, input): x = H(tag, input, ctr), least ctr with x³ − 17 a square, y its root ≤ (p − 1)/2
+      cv  = v_spend·G_spend − v_out·G_out + rcv·R
+
+  R is pinned (`privacy_core::value::R`, ctr 0; vectors `orchard.r`). A
+  point on the wire is x (32) || y (32).
+- **Digest:**
+
+      digest = H(TAG_BUNDLE, U64(N), [anchor_i, nf_i, cm_i, cv_x_i, cv_y_i, Bytes(ct_i)]…, U64(M), [AssetID(denom_j), U64(amount_j)]…)
+
+- **Binding signature** (Schnorr over Grumpkin, base R; 96 bytes):
+
+      bvk = Σ cv_i − Σ amount_j·G_j        bsk = Σ rcv_i mod n
+      k   = SHA-512(BE32(bsk) || sighash || rnd (32 fresh random bytes)) mod n     [wallet: the nonce]
+      Rn  = k·R
+      e   = H(TAG_BSIG, Rn.x, Rn.y, bvk.x, bvk.y, sighash)
+      s   = k + e·bsk mod n
+      sig = Rn.x || Rn.y || s
+
+  Verify: s·R = Rn + e·bvk, Rn on the curve and not infinity, s < n, bvk not
+  infinity. n is Grumpkin's group order (vectors `orchard.n`).
+- **Balances** are computed from the actions (spends − outputs per denom,
+  positive only, sorted by denom); a negative one is refused.
+
+**Layout [wallet].** The msg's public release per denom (a fee in uerth, an
+unshield, what a module takes) plus every payment output is what must leave
+each denom; notes per denom: the smallest single note covering it, else the
+fewest notes largest first with the last swapped for the smallest that still
+covers. Each denom's surplus returns as one v1 change note to self. Spends
+and outputs are shuffled independently and paired into max(#spends,
+#outputs, 2) actions (an action's spend and output may be different
+assets), dummies filling either side: a dummy spend has value 0, asset
+uerth, a fresh random rho and rcm, position 0 and a zero path (its
+nullifier is still published and spent); a dummy output value 0, asset
+uerth, a random pc and a ciphertext to a throwaway key. Every action's
+anchor is the wallet's current chain-verified note root. Every rcv is a
+fresh random field element. A layout above x/shielded's
+max_actions_per_bundle (chain default 16; zk/orchard MaxActions 32 bounds
+it) is refused ("merge first"; the user merges a denom's smallest notes in
+one MsgSend to self).
+
+## 11. Private transactions
+
+**Shape [chain].**
 
 - TxRaw with one Any, AuthInfo with no signer infos, fee = exactly the msg's
-  total fee in uerth (the bundles' fee + fee_from_output), no payer or
-  granter, no signatures, no timeout_timestamp (refused for private txs).
-- **Canonical bytes (chain round 2, R7).** The tx is exactly
-  TxRaw{body_bytes, auth_info_bytes}, each part and the msg inside the body
-  the canonical protobuf encoding of what it decodes to (fields in number
-  order, minimal varints, no default scalars, no unknown or extension
-  fields), AuthInfo.tip unset. Both apps encode with protobuf builders
-  (javalite, SwiftProtobuf), which produce exactly this; FakeChain checks
-  the round trip.
-- **Ciphertext slots (round 2).** Every action's output ciphertext is
-  exactly 217 bytes, dummy outputs included; `StakeProof.ciphertexts` has
-  exactly two entries, entry i empty iff `commitments[i]` is zero, a
-  non-empty one exactly 153 bytes. Both apps check this before broadcast.
-- **One use per binding (round 2, R1).** A registration's binding (the
-  passport proof's address input) is refused once a registration with it
-  has landed: the wallet prepares fresh notes (and so a fresh binding) for
-  every registration; a proof whose registration landed is never resent.
-- **Sighash** (every private msg):
+  private fee in uerth, no payer or granter, no signatures, no
+  timeout_timestamp (refused for private txs), AuthInfo.tip unset.
+- **Canonical bytes.** The tx is exactly TxRaw{body_bytes, auth_info_bytes},
+  each part and the msg inside the body the canonical protobuf encoding of
+  what it decodes to (fields in number order, minimal varints, no default
+  scalars, no unknown or extension fields). Both apps encode with protobuf
+  builders (javalite, SwiftProtobuf), which produce exactly this.
+- **Ciphertext slots.** Every action's output ciphertext is exactly 217
+  bytes, dummies included. A StakeProof carries exactly two lane-A
+  nullifiers; anchor, owner_tag, commitment, credit_nullifier,
+  credit_commitment and debt_root are each 32 bytes; `ciphertext` is
+  exactly 201 bytes iff `commitment` is non-zero (else empty), likewise
+  `credit_ciphertext` and `credit_commitment`; debt_root is zero exactly
+  when clear_before is 0. Both apps check all of this before broadcast.
+- **One use per binding.** A registration's binding is refused once a
+  registration with it has landed (§13).
+- **gas_limit** at most 5× what the tx uses.
+- **Sighash** (every private msg; vectors `binding.sighash_tx`, `msgs`):
 
-      sighash = H(TAG_SIGNAL, Bytes(type_url), Bytes(chain_id), K, digest(bundle_0..K-1),
+      sighash = H(TAG_SIGNAL, Bytes(type_url), Bytes(chain_id), U64(K), digest(bundle_0..K-1),
                   Bytes(memo), U64(timeout_height), U64(gas_limit), msg fields…)
 
-  `Bytes(memo)` over the memo's UTF-8 bytes (Bytes("") for none). The wallet
-  sets memo "" (an unshield may carry a user memo, e.g. an exchange deposit
-  tag) and timeout_height = the LCD's latest height + 50 (audit 3), and
-  fixes the gas limit (from simulation) before proving; the tx carries
-  exactly those values (the simulated tx carries the same timeout).
-- **Pending spends (K7, audit 3, audit 4).** The notes a tx spends are
-  marked pending *before* it is sent, with its timeout_height and its hash
-  (computed locally: uppercase hex SHA-256 of the raw tx bytes, the node's
-  own; a node naming another hash is an error). A refusal that proves the
-  tx is in no mempool (CheckTx's non-zero code, no connection at all)
-  unmarks them at once; any other failure (a timeout, a lost answer) keeps
-  them. They are released (spendable again) only when the LCD's latest
-  height is past that timeout_height, the wallet has read the nullifier
-  stream through it without seeing their nullifiers, and the LCD says the
-  tx is missing (`GET /cosmos/tx/v1beta1/txs/{hash}` 404) or failed in its
-  block (code ≠ 0): never by the wall clock. A tx the LCD says is in a
-  block whose spend the indexer never reported keeps them pending and the
-  sync unverified; an LCD that cannot say keeps them. (Marks made by older
-  builds keep their old rule: no hash, the timeout alone; no timeout, 15
-  minutes.)
-- Fee = max(x/shielded min_fee, ceil(node min gas price × gas limit)); gas
-  limit = simulated gas + max(10%, 20,000). Simulation runs on the real
-  anchors, nullifiers, commitments, value commitments and ciphertexts with
-  14,656-byte placeholder proofs and a zero binding signature. The tx is
-  re-laid at the simulated fee; if that changes the action count it is
-  simulated again (at most 4 rounds, the fee only rising after the first),
-  then the sighash is computed (with that gas limit) and every action, the
-  stake proof and the membership proven over it, every bundle signed. Every
-  proof must be exactly 14,656 bytes (checked before broadcast).
-- **Fee cap (audit 3).** Before anything is proven the fee must be at most
-  min(2 ERTH, 2 × the wallet's own estimate): the estimate prices, at the
-  node's gas price (and at least min_fee), the gas of the tx's shape at the
-  chain's default schedule: 100,000 + 10 per tx byte + per bundle 100,000 +
-  2,300,000 per action, + 2,600,000 for a stake proof, + 2,150,000 for a
-  membership, + 3,600,000 for MsgRegister, + 2,250,000 + (1 + used slots)
-  x 150,000 for a stake vote. A node asking more is refused (nothing
-  proven or sent). A confirm
-  sheet's fee bounds the tx it confirms: a simulated fee above what the
-  sheet showed throws before proving and the sheet is shown again at the
-  new fee (Android's sheet shows the fee of 10,000,000 gas).
-- **Quotes (audit 3).** A quote for a sheet (simulate without proving)
-  carries random nullifiers in place of the wallet's (pool, stake, and the
-  membership's), so the node learns nothing about the notes before the
-  user confirms; only the confirmed run simulates the real ones.
-- **SRS (audit 3).** Both apps bundle the first 32,769 G1 points of Aztec's
-  bn254 transcript (`crs.aztec.network/g1.dat` bytes 0..2,097,215, sha256
-  `d769ac6c98f8fab858a7e9967f2b7f181d8ad9fdcdf55438c915696febf0e99c`),
-  enough for every privacy circuit (all set up at 2^15), passed to bb as a
-  `.dat` path: proving a private tx never touches the network. The passport
-  circuits' SRS (too large to bundle) is fetched once at launch, not when a
-  proof needs it: a byte range of the same file, hash-pinned (Android 2^18+1
-  points, sha256 `8f5cd75519c2e995fa47aa7ecd7b213b9ae13824bc4b0f15025a63acd8c139eb`;
-  iOS 2^19+1 points, `1df37a2ce1da3713c7300691a65ffe84de144ea64899d5cfbf0061aaaeb6ad31`),
-  kept out of backups; until it is there a passport proof downloads its own
-  (registration is public anyway). iOS reserves the passport size for a
-  private proof only from that local file, never from the network.
-- **One fee rule.** fee = the bundles' uerth balance less the uerth the msg
-  moves itself. Moves: MsgDelegate.amount; MsgNoteSwap.amount_in when
-  denom_in is uerth; MsgAddLiquidityShielded.erth_amount; nothing for every
-  other staking, dex, personhood and assembly msg (their whole uerth balance
-  is the fee). Exceptions: MsgSend names its fee (uerth beyond it is
-  unshielded to its receiver). No msg pays from its output (chain 48b631c
-  retired MsgClaimUnbonding, the one that did): a swap of ANML into ERTH
-  needs an ERTH note for its fee.
-- **Bundle layout (any notes, any assets).** The msg's public release per
-  denom (a fee in uerth, an unshield, what a module takes) plus every
-  payment output is what must leave each denom; notes per denom: the
-  smallest single note covering it, else the fewest notes largest first
-  with the last swapped for the smallest that still covers. Each denom's
-  surplus returns as one v1 change note to self. Spends and outputs are
-  shuffled independently and paired into max(#spends, #outputs, 2)
-  actions (an action's spend and output may be different assets), dummies
-  filling either side: a dummy spend has value 0, asset uerth, a fresh
-  random rho and rcm, position 0 and a zero path; a dummy output value 0,
-  asset uerth, a random pc and a ciphertext to a throwaway key. Every
-  action's anchor is the wallet's current (chain-verified) note root.
-  Every rcv is a fresh random field element; bsk = Σ rcv mod n; the binding
-  signature's 32 random bytes are fresh. Balances are computed from the
-  actions (spends − outputs per denom, positive only, sorted by denom). A
-  layout above max_actions_per_bundle (x/shielded param, default 16) is
-  refused ("merge first").
-- **Per msg (fields beyond the bundle; sighash order).**
+  `Bytes(memo)` over the memo's UTF-8 bytes (Bytes("") for none); 0 for no
+  timeout. The msg fields are in §12. Every action proof, the stake proof,
+  the vote proof and the membership (as its signal) are made over it, and
+  every bundle's binding signature signs it.
 
-  | msg | fields bound after the digests |
-  | --- | --- |
-  | MsgSend | Bytes(receiver bytes), fee |
-  | MsgRegister | idc, pc_anml, Bytes(ct_anml), pc_erth, Bytes(ct_erth), affiliate, Bytes(signature_algorithm), signals… |
-  | MsgClaimAnml | day, pc, Bytes(ct) |
-  | MsgSetCaretaker | per entry option_id, percent (max_predecessor = 5 is not a sighash field) |
-  | MsgMoveCaretaker | new_owner |
-  | MsgBindHandle | Bytes(handle), owner_pk, Bytes(ek_pub) of the address (release: Bytes(""), 0, Bytes("")) |
-  | MsgMoveHandle | Bytes(handle), new_owner |
-  | MsgDelegate | StakeFields, Bytes(validator), amount |
-  | MsgRestake | StakeFields, Bytes(validator) |
-  | MsgUndelegate | StakeFields, Bytes(validator), amount, pc, Bytes(ct) |
-  | MsgStakeVote | proposal_id, Bytes(validator), Bytes(OptionsBytes), weight, vote_nullifiers[0..3] (no StakeFields) |
-  | MsgLockPosition | StakeFields, Bytes(validator), amount, Bytes(SplitsBytes) |
-  | MsgUpdatePosition | StakeFields, position_id, Bytes(SplitsBytes) |
-  | MsgUnlockPosition | StakeFields, position_id |
-  | MsgPositionVote | StakeFields, position_id, proposal_id, Bytes(OptionsBytes) |
-  | MsgNoteSwap | Bytes(denom_in), amount_in, Bytes(denom_out), min_amount_out, pc, Bytes(ct) |
-  | MsgAddLiquidityShielded | pool_id, Bytes(min_shares), share_pc, Bytes(share_ct), refund_pc, Bytes(refund_ct), erth_amount |
-  | MsgRemoveLiquidityShielded | pool_id, erth_pc, Bytes(erth_ct), token_pc, Bytes(token_ct) |
+**Fee rule [chain].** fee = the bundles' uerth balance less the uerth the
+msg moves itself. Moves: MsgDelegate.amount; MsgNoteSwap.amount_in when
+denom_in is uerth; MsgAddLiquidityShielded.erth_amount; nothing for every
+other staking, dex, personhood and assembly msg (their whole uerth balance
+is the fee). MsgSend names its fee (uerth beyond it is unshielded to its
+receiver). No msg pays from its output: a swap of ANML into ERTH needs an
+ERTH note for its fee.
 
-  StakeFields = anchor, nf_0, nf_1, cm_0, cm_1, Bytes(ct_0), Bytes(ct_1),
-  spc_mint, owner_tag, Bytes(spc_ciphertext). Proto field numbers: the
-  removed `fee` fields are reserved; MsgDelegate.amount = 5,
-  StakeProof.spc_ciphertext = 8, MsgNoteSwap.denom_in = 8 / amount_in = 9
-  (fee_from_output 6 and fee 7 reserved), MsgAddLiquidityShielded.erth_amount
-  = 11, MsgStakeVote.proof = 8 / vote_nullifiers = 10 (stake 7 and the
-  single vote_nullifier 9 reserved), MsgUndelegate.pc = 6 / ciphertext = 7.
-  Addresses are lowercase canonical bech32.
-- **Stake proofs.** Superseded by §4k (stake proof v2, chain dff3a9b);
-  kept for history. A staking msg's stake proof spent at most two stake
-  notes of the msg's denom (the smallest single covering, else the
-  smallest sufficient pair; a balance spread over more is refused with
-  "merge first": the user merges by MsgRestake, two into one, each merge
-  its own confirmed tx, never one the wallet adds) and creates at most one
-  change note (two for a restake split) with the wallet stake ciphertext;
-  unused input and output slots get random rho/rcm (amount 0: nf 0, cm 0)
-  and a zero path. Anchor: the wallet's latest (chain-verified) stake root
-  (zero when the stake tree is empty; not checked when nothing is spent).
-  `spc_mint` and `spc_ciphertext` as in §3 (an undelegation: a throwaway
-  spc_mint of ours, empty spc_ciphertext, §4j); `otag` a position's owner
-  tag (lock: a new counter; update/unlock/vote: the position's) or random.
-  A stake vote is not a stake proof (§4e, §4j). **Casting a stake vote**
-  (chain 48b631c): one MsgStakeVote per validator (up to four notes) and
-  one MsgPositionVote per position, each its own confirm sheet and tx,
-  raised one after the other and sent only on its own tap (§4j). The
-  spaced, resumable background run (K5) is gone.
-- **Groundworks positions** are still per-user msgs with splits; the chain
-  weighs them per validator and no longer stores a position's weight. The
-  wallet shows a position's weight as derth × its validator's current rate
-  (0 without a live split).
+**Assembly [wallet]** (`PrivateTxEngine`):
 
-## 4e. Stake votes without spending (chain 9b29f5d, ORCHARD_DESIGN 15)
+1. timeout_height = the LCD's latest height + 50. The tip must be within
+   1,000 blocks of the store's `verified_height` (the indexer height of the
+   last verified sync), else the wallet syncs once and retries, then
+   refuses (TipOutOfRange).
+2. Lay the tx out at a guessed fee (3,000,000 gas) with 14,656-byte
+   placeholder proofs and a zero binding signature over the real anchors,
+   commitments, value commitments and ciphertexts, and simulate. gas limit
+   = simulated gas + max(10 %, 20,000); fee = max(x/shielded min_fee,
+   ceil(node min gas price × gas limit)). Re-lay at that fee; if the action
+   count changes, simulate again (at most 4 rounds, the fee only rising
+   after the first).
+3. **Fee cap.** Before anything is proven the fee must be at most min(2 ERTH,
+   2 × the wallet's own estimate), the estimate pricing (at the node's gas
+   price, at least min_fee) the gas of the tx's shape at the chain's
+   default schedule: 100,000 + 10 per tx byte + per bundle 100,000 +
+   2,300,000 per action; + 3,150,000 for a stake proof (+ 750,000 for a
+   credit lane and 1,024 × 5,000 + 128 × 20,000 for MsgRedelegate's
+   x/staking record at its worst); + 2,150,000 for a membership; +
+   3,600,000 for MsgRegister; + 2,250,000 + (1 + used slots) × 150,000 for
+   a stake vote; + 8 × 150,000 for MsgBindHandle (a bind is priced as nine
+   note writes). x/shielded's gas prices are capped (proof 10M, note 1M,
+   bundle 1M). A node asking more is refused (FeeAboveCap; nothing proven
+   or sent).
+4. **Confirm sheets.** Every tx comes from a confirm sheet whose fee bounds
+   it: a fee above the sheet's throws before proving (FeeAboveQuote) and
+   the sheet is shown again at the new fee. A sheet's fee estimate is
+   10,000,000 gas for a private tx, 12,500,000 for a handle bind, 7,000,000
+   for a registration; these are never declared as a gas limit.
+5. **Quotes** (simulate without proving, for a sheet) carry random
+   nullifiers in place of the wallet's (pool, stake lane A and credit, the
+   membership's, a vote's used slots; zeros stay zero), so the node learns
+   nothing about the notes before the user confirms.
+6. Fix memo, timeout_height and gas limit; compute the sighash; prove every
+   action, the stake proof, the membership and the vote over it; sign every
+   bundle; check every proof is 14,656 bytes, the sighash recomputes, the
+   fee is exactly the quote and the slots above; broadcast.
 
-Superseded in part by §4j (chain 48b631c): one msg now votes up to four
-notes of one validator with one weight; the per-note steps below (snapshot,
-paths, nullifier tree, low leaves, vote nullifiers, records) apply to each
-of its notes. The single-note msg was:
+The wallet sets memo "" except on an unshield, which may carry a user memo
+(an exchange deposit tag).
 
-    bundle (fee), proposal_id, validator, options, weight, proof (8), vote_nullifier (9)
+**Anchors.** CheckTx/ReCheckTx refuse an anchor lapsing within 120 s of the
+last block, and a proposer leaves out a tx whose anchor lapsed by its
+block's time. Before laying out a private tx the wallet reads its local
+root's record (`/earth/shielded/v1/roots/{root}`: `valid`, `expires_at`, 0
+for the latest root); one lapsing within 1,800 s of the LCD tip's time
+makes it sync first (a newer root), and if that is still too old the tx is
+refused before anything is proven (Android SyncFirst, iOS AnchorTooOld). A
+node that does not say `expires_at` leaves the chain's own check.
 
-1. **Snapshot.** The LCD `Query/Snapshot`
-   (`/earth/shieldedstaking/v1/snapshots/{proposal_id}`), never the
-   indexer (audit 4, M3: a forged nf_root made a note look spent before the
-   snapshot and the vote was skipped; the proposal id is public, so asking
-   names nothing of the wallet): root, tree_size, height, nf_root, nf_size
-   (the nullifier tree's leaf count, sentinel included; 0 = nothing
-   inserted), and the validators' rates (legacy snapshots; the weight shown
-   uses them). A snapshot without nf_root takes no stake vote. Cached per
-   proposal, dropped with every other per-chain cache when the store's
-   genesis changes.
-2. **Note.** Its path in the wallet's stake tree of the first tree_size
-   leaves; that tree's root must be the snapshot root (a snapshot past the
-   local tree is "sync first"). A note at position >= tree_size cannot vote.
+**Pending spends [wallet].** The notes (and stake notes) a tx spends are
+marked pending before it is sent, with its timeout_height and its hash
+(computed locally: uppercase hex SHA-256 of the raw tx bytes; a node naming
+another hash is an error). A refusal that proves the tx is in no mempool
+(CheckTx's non-zero code, no connection at all) unmarks them at once; any
+other failure keeps them. They are released only when the LCD's latest
+height is past that timeout_height, the wallet has read the nullifier
+stream through it without seeing their nullifiers, and the LCD says the tx
+is missing (`GET /cosmos/tx/v1beta1/txs/{hash}` 404) or failed in its block
+(code ≠ 0): never by the wall clock. A tx the LCD says is in a block whose
+spend the indexer never reported keeps them pending and the sync
+unverified; an LCD that cannot say keeps them. A mark (note, stake note,
+vote, move) whose timeout_height is more than 1,050 blocks past the current
+`verified_height` came from an inflated tip and is settled by the tx's
+status alone (missing or failed: released; notes after a 15-minute mempool
+grace). Marks from builds without a hash keep the timeout alone, and without
+a timeout, 15 minutes.
+
+## 12. Messages
+
+**Per msg [chain]:** type URL, bundle field, fields bound after the
+digests (each msg's Go `SighashFields`), and the membership scope / stake
+proof it carries. `StakeFields` (every stake-proof msg, first):
+
+    StakeFields = anchor, nf_0, nf_1, cm, Bytes(ciphertext), credit_nf, credit_cm, Bytes(credit_ciphertext),
+                  owner_tag, U64(clear_before), debt_root          (absent field: 0; absent bytes: Bytes of nothing)
+
+| msg | sighash fields after the digests |
+| --- | --- |
+| `/earth.shielded.v1.MsgSend` | Bytes(receiver address bytes, nothing for none), U64(fee) |
+| `/earth.personhood.v1.MsgRegister` | idc, pc_anml, Bytes(ct_anml), pc_erth, Bytes(ct_erth), affiliate, Bytes(signature_algorithm), each public signal as a field |
+| `/earth.personhood.v1.MsgClaimAnml` | U64(day), pc, Bytes(ct) |
+| `/earth.personhood.v1.MsgSetCaretaker` | per entry U64(option_id), U64(percent) (max_predecessor is not a sighash field) |
+| `/earth.personhood.v1.MsgMoveCaretaker` | new_owner |
+| `/earth.personhood.v1.MsgBindHandle` | Bytes(handle), owner_pk, Bytes(ek_pub) of the address (release: Bytes(""), 0, Bytes("")) |
+| `/earth.personhood.v1.MsgMoveHandle` | Bytes(handle), new_owner |
+| `/earth.assembly.v1.MsgVoteProposal` | U64(proposal_id), U64(option) |
+| `/earth.assembly.v1.MsgProposeRemoval` | U64(option_id) |
+| `/earth.assembly.v1.MsgVoteRemoval` | U64(option_id), U64(option) |
+| `/earth.shieldedstaking.v1.MsgDelegate` | StakeFields, Bytes(validator), U64(amount), U64(derth) |
+| `/earth.shieldedstaking.v1.MsgRestake` | StakeFields, Bytes(validator) |
+| `/earth.shieldedstaking.v1.MsgUndelegate` | StakeFields, Bytes(validator), U64(amount), pc, Bytes(ciphertext) |
+| `/earth.shieldedstaking.v1.MsgRedelegate` | StakeFields, Bytes(src_validator), Bytes(dst_validator), U64(amount), U64(dst_derth), U64(move_time) |
+| `/earth.shieldedstaking.v1.MsgLockPosition` | StakeFields, Bytes(validator), U64(amount), Bytes(SplitsBytes) |
+| `/earth.shieldedstaking.v1.MsgUpdatePosition` | StakeFields, U64(position_id), Bytes(SplitsBytes) |
+| `/earth.shieldedstaking.v1.MsgUnlockPosition` | StakeFields, U64(position_id) |
+| `/earth.shieldedstaking.v1.MsgPositionVote` | StakeFields, U64(position_id), U64(proposal_id), Bytes(OptionsBytes) |
+| `/earth.shieldedstaking.v1.MsgStakeVote` | U64(proposal_id), Bytes(validator), Bytes(OptionsBytes), U64(weight), vnf_0, vnf_1, debt_root (no StakeFields) |
+| `/earth.dex.v1.MsgNoteSwap` | Bytes(denom_in), U64(amount_in), Bytes(denom_out), U64(min_amount_out), pc, Bytes(ct) |
+| `/earth.dex.v1.MsgAddLiquidityShielded` | U64(pool_id), Bytes(min_shares), share_pc, Bytes(share_ct), refund_pc, Bytes(refund_ct), U64(erth_amount) |
+| `/earth.dex.v1.MsgRemoveLiquidityShielded` | U64(pool_id), erth_pc, Bytes(erth_ct), token_pc, Bytes(token_ct) |
+
+Strings (validator, denom, handle, min_shares, signature_algorithm) are
+Bytes of their bytes. Public signals are canonical decimals below p.
+
+- **SplitsBytes** = per entry, option_id (u64 BE) || percent (u64 BE)
+  (vectors `splits_bytes`). Splits are sent sorted by option_id.
+- **OptionsBytes** = per option, option (u64 BE) || len (u32 BE) || the
+  weight's LegacyDec string (vectors `options_bytes`). Every option weight
+  in MsgStakeVote / MsgPositionVote is the canonical LegacyDec string, 18
+  decimals ("1.000000000000000000", "0.500000000000000000"; vectors
+  `legacy_dec`); the wallet canonicalizes before laying the msg out and
+  refuses a weight outside (0, 1].
+
+**Proto field numbers [chain]** (`android/app/src/main/proto/earth/…`;
+reserved numbers are never written):
+
+    shielded.Action          anchor 1, nullifier 2, commitment 3, cv 4, ciphertext 5, proof 6
+    shielded.ValueBalance    denom 1, amount 2
+    shielded.Bundle          actions 1, balances 2, binding_sig 3
+    MsgShield                sender 1, amount 2, pc 3, ciphertext 4
+    MsgSend                  bundle 1, receiver 2, fee 3
+    personhood.Membership    proof 1, root 2, nullifier 3
+    MsgRegister              fee 1, proof 2, public_signals 3, signature_algorithm 4, dsc_der 5, idc 6,
+                             pc_anml 7, ciphertext_anml 8, pc_erth 9, ciphertext_erth 10, affiliate_handle 15;
+                             reserved 11-14
+    MsgClaimAnml             fee 1, membership 2, day 3, pc 4, ciphertext 5
+    MsgSetCaretaker          fee 1, membership 2, percentages 3, max_predecessor 5; reserved 4
+    MsgMoveCaretaker         fee 1, membership 2, new_owner 3
+    MsgBindHandle            fee 1, membership 2, handle 3, address 4, max_predecessor 6; reserved 5
+    MsgMoveHandle            fee 1, membership 2, handle 3, new_owner 4
+    MsgVoteProposal          fee 1, membership 2, proposal_id 3, option 4   (YES 1, NO 2)
+    MsgProposeRemoval        fee 1, membership 2, option_id 3
+    MsgVoteRemoval           fee 1, membership 2, option_id 3, option 4
+    StakeProof               proof 1, anchor 2, nullifiers 3 (two), owner_tag 7, commitment 9, ciphertext 10,
+                             credit_nullifier 11, credit_commitment 12, credit_ciphertext 13,
+                             clear_before 14, debt_root 15; reserved 4, 5, 6, 8
+    MsgDelegate              bundle 1, validator 2, stake 4, amount 5, derth 6; reserved 3
+    MsgRestake               bundle 1, validator 2, stake 4; reserved 3
+    MsgUndelegate            bundle 1, validator 2, amount 3, stake 5, pc 6, ciphertext 7; reserved 4
+    MsgRedelegate            bundle 1, src_validator 2, dst_validator 3, amount 4, stake 5, dst_derth 6, move_time 7
+    MsgLockPosition          bundle 1, validator 2, amount 3, splits 4, stake 6; reserved 5
+    MsgUpdatePosition        bundle 1, position_id 2, splits 3, stake 5; reserved 4
+    MsgUnlockPosition        bundle 1, position_id 2, stake 4; reserved 3
+    MsgPositionVote          bundle 1, position_id 2, proposal_id 3, options 4, stake 6; reserved 5
+    MsgStakeVote             bundle 1, proposal_id 2, validator 3, options 4, weight 5, proof 8,
+                             vote_nullifiers 10 (exactly two), debt_root 11; reserved 6, 7, 9
+    MsgNoteSwap              bundle 1, denom_out 2, min_amount_out 3, pc 4, ciphertext 5, denom_in 8, amount_in 9;
+                             reserved 6, 7
+    MsgAddLiquidityShielded  bundle 1, pool_id 3, min_shares 5, refund_pc 6, refund_ciphertext 7, share_pc 9,
+                             share_ciphertext 10, erth_amount 11; reserved 2, 4, 8
+    MsgRemoveLiquidityShielded bundle 1, pool_id 2, erth_pc 4, erth_ciphertext 5, token_pc 6, token_ciphertext 7;
+                             reserved 3
+    MsgAddLiquidity (public) creator 1, pool_id 2, amount_a 3, amount_b 4, min_shares 5
+    MsgRemoveLiquidity       creator 1, pool_id 2, shares 3, pc 4, ciphertext 5
+    MsgBuyAnml               creator 1, token_in 2, min_amount_out 3, pc 4, ciphertext 5
+
+**Membership statements per msg [chain + wallet].** signal = the sighash;
+root = the wallet's verified identity root. Scopes (§1): MsgClaimAnml
+`claim(day)`, MsgSetCaretaker / MsgMoveCaretaker `caretaker`,
+MsgBindHandle / MsgMoveHandle `handle`, MsgVoteProposal `proposal(id,
+round)` (recomputed by the wallet from BallotInputs' `round`; a node's
+scope that differs is refused), MsgVoteRemoval `removal(ballot_id)`,
+MsgProposeRemoval `propose_removal(option_id, day)` (day = the chain tip
+time's UTC day). excluded_dsc and excluded_country are 0 except on ballot
+votes, which take them from BallotInputs. Bounds: §14.
+
+**Other rules [chain].**
+
+- An unshield (MsgSend with a receiver) to any module account is refused;
+  the wallet refuses it before proving. Module accounts: fee_collector,
+  distribution, mint, bonded_tokens_pool, not_bonded_tokens_pool, gov, nft,
+  transfer, interchainaccounts, shielded, shieldedstaking, dex, allocation,
+  personhood, earth, wasm; address = SHA-256(name)[:20] (vectors
+  `module_accounts`).
+- Send-disabled denoms (bank 5, "send transactions are disabled") are
+  refused at shield, unshield, a dex note swap (either side), a private
+  delegation's ERTH and any module mint into the pool; the wallet explains
+  it ("Transfers of this token are switched off on the chain … no
+  shielding, unshielding, note swaps or private staking with it"); notes
+  already held still move privately.
+- derth is owner-locked: never sent or unshielded; LP shares leave the pool
+  only by a withdrawal.
+
+## 13. Registration
+
+**Binding [chain].** The passport proof's `address` public input:
+
+    address   = H(TAG_REG, Bytes(chain_id), idc, pc_anml, Bytes(ct_anml), pc_erth, Bytes(ct_erth), affiliate)
+    affiliate = 0 for no referrer, else H(Tag("earth.affiliate"), Bytes(affiliate_handle))
+
+The chain id first keeps a registration seen on one network from being
+replayed onto another; the circuit takes `address` as opaque. Pinned
+(zk/privacy TestRegistrationBindingPinned; vectors `derive.reg_pinned`):
+chain_id "earth-1", idc = 1, pc_anml = 2, ct_anml = "anml", pc_erth = 3,
+ct_erth = "erth", affiliate = 0 →
+`148b3513a501b6ff9c02314f355cb83fb544e22b2a9df79552fe49c944424159`; the
+same with "earth-testnet-1" (`derive.reg_testnet`) →
+`122b90a7dc7460e7a9fedc31ab0ee17602b744124eab9fb9b9a7e4770485523a`.
+
+The wallet picks fresh rho/rcm for its ANML and ERTH notes (both v2 to its
+own address) and writes their ciphertexts **before** proving the passport,
+and sends exactly those ciphertexts in MsgRegister and to /gas/register. A
+binding is single-use: a registration whose binding has landed is never
+resent; every registration prepares fresh notes. current_date must be a
+calendar date (YYMMDD; 250231 is refused); the wallet checks before
+broadcast. MsgRegister's fee bundle carries the registration record (§6).
+
+**Referral [chain].** MsgRegister names its referrer by `affiliate_handle`
+(15) alone, "" for none. The chain mints the referrer's half at execution
+to the address the handle resolves to then, as an open note (§5):
+
+    pc  = H(TAG_PC, handle owner_pk, rho, rcm)
+    rho = H(Tag("earth.referral"), passport nullifier, U64(leaf_index), U64(0))
+    rcm = H(Tag("earth.referral"), passport nullifier, U64(leaf_index), U64(1))
+
+(zk/privacy.ReferralOpening; leaf_index the new identity leaf). Its
+`shielded_mint` event carries owner_pk, rho and rcm (hex) with amount and
+position; the handle owner's wallet takes it from the notes stream by its
+own owner_pk (§19). Vectors `referral_opening` (five (nullifier,
+leaf_index) pairs with rho, rcm, and the pc and cm of 5 ERTH to
+OwnerPK(7100+i)).
+
+**Referral capture [wallet].** A referrer comes only from the verified link
+`https://erth.network/ref/<handle>` (Android App Link, iOS universal link;
+exactly that host, path and a valid handle) or the Play install referrer
+(`referrer=<handle>`). There is no custom scheme. First capture wins; the
+registrant sees it and may remove or replace it. The handle is resolved
+from the whole directory when the registrant confirms the passport details
+(live in a fresh copy and in the chain's own directory, §14); one that does
+not resolve is cleared, and a wallet never names its own address.
+
+**Gas grant [wallet + backend].** `POST /gas/register` is the only grant.
+Body (bytes as standard base64): `proof`, `public_signals`,
+`signature_algorithm`, `dsc_der`, `idc`, `pc_anml`, `pc_erth`,
+`ciphertext_anml`, `ciphertext_erth`, `affiliate_handle` ("" for none;
+never `affiliate_pc` / `affiliate_ciphertext`, which the backend refuses
+with a 400), `pc_gas` and `ciphertext_gas` (a fresh v2 note to self, 177
+bytes, required), and optionally `pow`. The backend rebuilds MsgRegister
+from it and checks it as the chain would.
+
+**Proof of work** (backend services/pow.py): `"pow": {"ts": <int>,
+"nonce": "<str>"}`, a hashcash stamp:
+
+    SHA-256( "earth-gas-pow/v1:" + ts + ":" + binding + ":" + nullifier + ":" + nonce )   (ASCII)
+    with at least `bits` leading zero bits
+
+ts unix seconds (±600 s), binding and nullifier `public_signals[1]` and
+`[2]` exactly as sent, nonce a lowercase hex counter. The wallet asks `GET
+/gas/pow` for `bits` (its `version` must be `earth-gas-pow/v1`), stamps at
+it (off the main thread, cancellable, with progress; 22 bits is a few
+seconds), posts; on 428 it makes a fresh stamp at the answer's `pow.bits`
+and posts again (at most 4 rounds); it keeps a stamp for the next try only
+after a 503 or 429 (the server gave it back; reused within 300 s), never
+after a 403. It works for at most 24 bits: a server asking more is refused.
+The gas service's refusals carrying the chain's text get the chain errors'
+sentences.
+
+**Recording [wallet].** The moment the node accepts the registration
+(CheckTx code 0, before waiting for its block) the wallet persists a pending
+registration {tx hash, dsc_key, passport nullifier, public signals, country
+hint} and marks the fee bundle's spends pending. The leaf index (the tx's
+`register` event `leaf_index`) and activated_at (its block time) are filled
+in when the wait returns, or by the next sync, which looks the tx up by
+hash; a tx that failed in its block is kept as a failure for the UI (a new
+registration replaces it). Every sync then tries to resolve it: once the
+local identity tree has the leaf, the country is found by recomputing the
+leaf over the hint, unknown (0) and every A..Z pair, each with
+predecessor_at 0 and activated_at (a switch or re-entry); the match fixes
+the identity's predecessor_at; the identity record is written and the
+pending one dropped. It is never dropped unresolved (a leaf that does not
+match is an error shown to the user, the record kept). Restore from the
+mnemonic: §19.
+
+**Chain errors explained.** personhood 1127 (a switch proven under another
+Document Signer than the live registration's: "This switch was refused. A
+switch must be proven with the same passport you registered with …"), 1113
+(a signer's daily cap, switches included: "Today's limit for passports
+from this issuer has been reached. Try again tomorrow.").
+
+## 14. Handles, caretaker split, identity moves
+
+**Handles [chain].** Lowercase a-z, 0-9, -; 3-32 characters; no dash at
+either end; no case folding (the wallet lowercases what is typed and drops
+a leading @). MsgBindHandle: holding a handle, the same handle renews it
+(lease now + handle_lease_seconds, the address may change), another changes
+to it (the old one is freed at once); holding none, a claim; handle and
+address both empty: release at once. The address is canonical lowercase
+`erthz1…`. MsgMoveHandle hands the handle to `new_owner = H(TAG_SN,
+new_id_secret, Scope("handle"))`, only while it is live. Lifecycle: live
+until expires_at; then until renewal_until (= expires_at +
+handle_renewal_seconds, param 26, default 30 days) reserved to its owner and
+not resolving; then free. handle_lease_seconds is param 27 (default 365
+days). Errors (codespace personhood): 1121 (not a live handle, as a
+registration's referrer), 1122 (taken), 1125 (this identity moved its
+handle away), 1126 (its caretaker split), 1116 ("renew it before moving
+it"). Each directory entry carries `owner` (field 6): the handle-scope
+nullifier that holds it, 64 hex digits.
+
+**Caretaker split [chain].** MsgSetCaretaker casts, refreshes or (empty)
+clears the split (1-20 options, percent summing to 100); it lapses at
+expires_at (the `set_caretaker` event; R = caretaker_vote_seconds, default
+365 days) unless cast again. MsgMoveCaretaker hands the live split and its
+expiry to `H(TAG_SN, new_id_secret, Scope("caretaker"))`.
+
+**Lease bounds [chain].** `GET /earth/personhood/v1/lease_bounds` (int64s as
+strings): block_time, activation_margin_seconds, handle_lease_seconds (the
+longest ever in force), handle_claim_bound, caretaker_lease_seconds (a held
+longer lease after a cut included), caretaker_cast_bound,
+caretaker_lease_hold_until. **[wallet]** Checked before use: leases in
+1..10 years, the margin in 0..10 years, handle_claim_bound = block_time −
+handle_lease_seconds − margin and caretaker_cast_bound = block_time −
+caretaker_lease_seconds − margin, else refused. Every bound below comes from
+here, never from Params.
+
+    L(lease) = max(0, floor_hour(block_time − lease − (activation_margin + 600)))   (saturating)
+
+Strictly below the chain's bound with 600 s of clock margin, rounded to the
+hour so it says nothing about when the tx was made. Every wallet names the
+same L, fresh registrants (predecessor_at 0) included: they meet it, so a
+proof does not tell a fresh identity from an old one.
+
+**Bounds the wallet names [wallet; the chain checks them in its ante,
+before the fee bundle is spent].** It refuses locally (`NotYet`, with the
+wait) when its own identity does not meet them:
+
+| msg | max_activation | max_predecessor |
+| --- | --- | --- |
+| MsgClaimAnml | (day − 1) × 86400 | no bound |
+| MsgSetCaretaker, non-empty split | no bound | L(caretaker_lease_seconds) if met; else no bound (see below) |
+| MsgSetCaretaker, clear (empty split) | no bound | no bound |
+| MsgBindHandle claim, renew, change | no bound | L(handle_lease_seconds) if met; else no bound (see below) |
+| MsgBindHandle release (needs a held handle) | no bound | no bound |
+| MsgMoveHandle, MsgMoveCaretaker | no bound | no bound |
+| MsgVoteProposal, MsgVoteRemoval | BallotInputs.max_activation | BallotInputs.max_predecessor (field 7) |
+| MsgProposeRemoval | no bound | day × 86400 − 86400 (day: the chain tip's UTC day) |
+
+When the identity does not meet L: if the wallet knows what it holds there
+has lapsed (a handle past its expires_at, in its renewal period; a split
+past the chain's own expiry) the tx is refused locally (`HandleNotLive`,
+`CaretakerLapsed`; iOS `NotYet.lapsed`) with the date it may act; otherwise
+(it holds a live one, or cannot tell after a restore) it goes out with no
+bound, and the chain refuses a holder of nothing live in its ante at no
+cost, which the wallet reports as `NotHeld` with the wait. A claim for day
+d opens once activated_at ≤ (d − 1) × 86400, so a fresh registration first
+claims on the day after next; day 0 is refused.
+
+**The directory [wallet].** Every lookup reads the whole directory: the
+backend's `GET {base}/handles?from_index=&limit=1000` (rows [handle,
+address, status, expires_at, renewal_until, owner]; owner optional, 64 hex,
+any case accepted; a snapshot at `height`, read from index 0 in aligned
+pages until `last_page`, started over (at most 3 times) when `height`
+changes between pages), falling back to the chain's `GET
+/earth/personhood/v1/handles?start=&limit=1000` from the first page (`next`
+must be the page's last handle). There is no per-handle query anywhere
+(`Query/Handle` is never used). A directory is refused whole when out of
+handle order, a status other than live/renewal/free, a malformed handle, a
+row count other than `size`, more than 250,000 rows (also checked against
+page 0's `size`), an address longer than 256 characters, or an entry whose
+times no lease has (not 0 < expires_at ≤ renewal_until ≤ now + 10 years).
+Cached 10 minutes. An entry whose expires_at has passed by the wallet's
+clock is treated as in its renewal period (not payable). Lease params are
+taken at most 10 years; a set_caretaker expires_at outside (0, now + 10
+years] is replaced by the block time + R; reminder and countdown arithmetic
+saturates.
+
+**Paying a handle.** Send accepts "@handle" or a bare handle. Before the
+confirm the wallet reads a fresh copy (at most 60 s old) and the chain's
+own directory (also whole, also at most 60 s old): the handle must be live
+in both with the same address, else nothing is paid. The confirm shows
+"@handle · erthz1xxxxxxxx…yyyyyyyy". Funding: a private MsgSend to the
+address when the shielded balance of the asset covers it, else MsgShield
+from the public balance whose note is minted to the handle's address (pc of
+its owner_pk, 177-byte v2 ciphertext to its ek_pub; the amount is public,
+the recipient is not).
+
+**Squaring the store with the chain [wallet].** After a sync (Home and the
+handle screens) every wallet reads the chain's whole directory (not the
+indexer's stream) and, unless a handle move is in flight or the read
+predates the store's last change: drops a held handle the chain swept
+(absent or free) or whose entry names another owner; with none held and
+not moved out, adopts the single non-free entry whose `owner` equals its
+own `H(TAG_SN, id_secret, Scope("handle"))` (an entry merely naming its
+address is never adopted: anyone may bind any address); and refreshes the
+held handle's expires_at (`handle_expires_at` for `handle_expires_for`,
+from its bind's `handle_bound` event, else the block time + the lease). While
+no handle is held, entries naming the wallet's address whose owner is
+absent are shown as unverified, with a renew-only bind; entries with
+another owner are not shown. Renew (the held handle, reminders, the address
+cards) binds only the handle held, or, holding none, the one named; a bind
+that would change the held handle is refused locally, and address cards are
+hidden while a handle is held.
+
+**Moves and switching identity [wallet].** A switch is the same passport
+registered from another wallet on the phone. Before it, the old wallet may
+move its handle (only a live one; `HandleNotMovable` otherwise, and the
+switch screen says why) and its live caretaker split to the new identity's
+nullifiers in those scopes, computed from the other wallet's keys, with
+state records to both (§6). Without moves, the new identity waits until
+everything its predecessor could hold has lapsed (lease + 1 day). The mover
+records `*_moved_out` and never casts or claims again.
+
+- A move is written to both stores at the moment its hash is known, before
+  the broadcast: the mover's as an outgoing pending move (it still holds
+  what it moves), the new wallet's as incoming (it holds it, pending). A
+  refusal (CheckTx, no connection) undoes both; a tx that failed in its
+  block, or that the chain does not know once past its timeout_height, is
+  undone by each wallet when it settles its pending moves by hash (every
+  sync, and "Check the moves again"); a committed one is applied, and its
+  state records settle it too. A failed write to the new wallet's store is
+  kept for a retry.
+- The UI shows a move as done only once confirmed and does not offer
+  "register there" while one is in doubt.
+- The first confirmed move fixes the target wallet (by store id); a move in
+  flight holds it only while in flight, and a refused, failed or expired
+  one frees it. A target whose identity moved a handle or split away, or
+  that holds one of its own, is refused before anything is sent; one with a
+  registration is warned about.
+- The switch screen requires the new wallet's recovery phrase be backed up;
+  the phrase is shown only after a fresh PIN or biometric unlock (counted
+  against the unlock backoff), dropped when the screen is paused or left,
+  and the backup box can be ticked only once it was shown. It explains that
+  a lost wallet's handle and vote cannot be moved.
+
+## 15. Staking
+
+All staking msgs carry a fee bundle; every stake proof (Delegate, Restake,
+Undelegate, Redelegate, LockPosition, UpdatePosition, UnlockPosition,
+PositionVote) names Query/DebtTree's current `clear_before` and `root`
+(read when the action starts), whether or not it clears a label (circuit
+audit L-1: a proof naming them only to clear would be linkable to the
+public redelegation into that validator). **[chain]** The chain takes
+clear_before within [ClearBefore(now) − 3600, ClearBefore(now)] and the
+current root (a slash changing it between the read and the block refuses
+the tx at no cost: "try again" re-reads and re-proves). Both are 0 only
+while the block time is below the window (no real chain), as the chain then
+requires.
+
+**Lane A [wallet].** Every note-moving msg spends at most two notes of the
+msg's denom (at most one labelled) and creates exactly one note back (the
+merged note, the change, or a zero note on a full exit: amount 0, a real
+commitment). With nothing of ours to spend (a first delegation) slot 0 is a
+padding input: amount 0, fresh rho and rcm, nullifier H(TAG_SNF, nk, rho,
+0), so nf_0 is never zero on a note-moving msg. A position's msg (update,
+vote) moves nothing: lane A all zero, asset 0. Anchor: the wallet's
+chain-verified stake root (the empty tree's root before the first note).
+
+**Clearing.** A labelled input whose `move_time < clear_before` clears at
+amount − exposed + retained (retained = the debt row's, or all of exposed
+when absent), the output unlabelled. While the window is open the labelled
+part cannot leave: undelegate, lock and move take only amount − exposed, and
+the wallet refuses more up front with "moved stake can move again after
+<date>" (date = move_time + window, UTC). Once clearable, the haircut
+(exposed − retained) is shown on the confirm sheet and sent as shown (a
+larger one by the time of sending is refused as QuoteChanged, before
+proving).
+
+**Debt tree reads.** Only when a label is cleared or voted, and whole: the
+indexer's `{base}/debt_rows?from_index=` (aligned pages of 1000 from leaf 0,
+rows [index, key hex, retained, height, updated_height], `size`, `root`;
+indexes contiguous from 1), else Query/DebtTree pages
+(`/earth/shieldedstaking/v1/debt_tree?start=&limit=`, at most 1000), built in
+insertion order with the latest retained and checked against the LCD's
+root (a mismatch drops the indexer's rows and rebuilds from the chain). The
+last two trees are kept by root.
+
+**Delegate.** MsgDelegate merges `amount` uerth (released by the bundle)
+into the validator's note (v_in = derth) and names `derth`, the derth the
+chain credits:
+
+    derth = floor(value × S / B) − ceil(floor(value × S / B) × 10 / 1e6)     (S = 0: value, B = 0 required)
+
+from Query/Validator's backing B and supply S, asked when the user reviews
+(the confirm sheet shows the derth). Both amount and derth must be at least
+min_delegation. A rate that moved past the margin is refused in the ante
+(1103, no cost).
+
+**Restake.** MsgRestake merges two notes of a validator into one, only on
+the user's tap (Earn "N notes · tap to merge"; offered when at most one of
+the two is labelled).
+
+**Undelegate.** The stake proof spends `amount` derth (v_out = amount,
+change back). `pc` is a fresh pool note opening of the wallet's own and
+`ciphertext` its 177-byte v2 ciphertext to its own address. At maturity the
+chain mints `value × payout / requested` uerth to pc in the EndBlocker (at
+most 2^63 − 1 a note: a larger payout is several `shielded_mint` rows with
+the same ciphertext, each its own position and amount); sync finds every
+one by trial decryption. Nothing is sent to claim it. The
+`shieldedstaking_undelegate` event carries validator, derth, value, epoch
+and payout_id.
+
+**Pending undelegations [wallet, local only].** The wallet records each
+undelegation (`pending_unbonds`: tx_hash, validator, derth, pc, started_at,
+until = timeout_height, confirmed, epoch, value, payout_id, due_by) when the
+node takes the tx, fills epoch, value and payout_id from its committed
+event, and drops it when a synced note of its own carries that pc (paid),
+or when the tx was refused, failed in its block or is missing past its
+timeout_height. `due_by` is computed once, at confirmation, from chain-wide
+timing alone (the current epoch's start and end, epoch_seconds, x/staking
+unbonding_time): an epoch e not ended yet ends (e − current) epochs after
+the current one's end (at least its start + epoch_seconds); an ended one at
+start(current) − (current − 1 − e) × epoch_seconds; then + unbonding_time +
+15 minutes; no answer on overflow. The wallet shows "Unstaking (private),
+arrives by about <due_by>" until paid. The record survives a same-chain
+reset; a restored wallet has none (the payout is still found). The chain's
+per-id `Query/UnbondPayout` is never asked: the id is on the undelegate
+tx's event, so a query for it ties the asking IP to that undelegation.
+
+**Move stake (MsgRedelegate).** Lane A spends `amount` derth of src (free
+value only) with the change back. The credit lane merges what arrives into
+the wallet's largest unlabelled note at dst (cr_in; none: a padding input,
+so a second note beside a labelled one) and creates a labelled note:
+move_key = the credit nullifier (cr_nf), move_time = the LCD's latest block
+time (the chain takes it within 600 s before its block, 1120 otherwise, no
+cost), exposed = cr_v_in = dst_derth. Quote: u = floor(amount × B_src /
+S_src) (at least min_delegation); what arrives is u when src is
+BOND_STATUS_UNBONDED (x/staking, read for src only) and its queue
+(Query/Validator state.pending_delegation) covers u, else u − 1,001 (the
+chain splits u pro rata between the queue and the bonded stake; a bonded
+part of at most 1,000 stays, and x/staking may truncate a uerth);
+dst_derth = the delegation formula on what arrives at dst's book (at least
+min_delegation). Gas is simulated; the fee cap allows the pair's x/staking
+record at its worst (§11). The confirm sheet shows the derth that arrives,
+the window and any haircut. The `shieldedstaking_redelegate` event carries
+credited, move_key, move_time; the wallet never queries a move
+(Query/Redelegation and Query/Move are never asked).
+
+**Positions (Groundworks).** MsgLockPosition: lane A releases `amount` with
+a new owner-tag counter's salt (§7), refused up front (before a counter is
+taken) when open-window stake would have to leave. MsgUpdatePosition and
+MsgPositionVote: lane A all zero, the position's salt. MsgUnlockPosition:
+lane A merges the position's derth (v_in) into the wallet's note at its
+validator (or pads), the position's salt, and the fee bundle carries the
+unlock record (§6). The chain weighs positions per validator. Positions are
+read from `/earth/shieldedstaking/v1/positions`; one votes on a proposal
+only if created before the snapshot's block.
+
+**Stake votes (MsgStakeVote, no stake proof).** One msg votes up to two
+eligible derth notes of one validator with one weight; nothing is spent or
+re-minted, so a note votes on every concurrently open proposal.
+
+1. **Snapshot** from the LCD `Query/Snapshot`
+   (`/earth/shieldedstaking/v1/snapshots/{proposal_id}`), never the indexer
+   (the proposal id is public, so asking names nothing of the wallet): root,
+   tree_size, height, nf_root, nf_size (the nullifier tree's leaf count,
+   sentinel included; 0 = nothing inserted), and the validators' rates (the
+   weight shown uses them). A snapshot without nf_root takes no stake vote.
+   Cached per proposal, dropped with every other per-chain cache when the
+   store's genesis changes. A snapshot past the local stake tree is "sync
+   first".
+2. **Note paths** in the wallet's stake tree of the first tree_size leaves;
+   that tree's root must be the snapshot root. A note at position ≥
+   tree_size cannot vote. Spent notes' openings are kept (never pruned), so
+   a note spent after a snapshot still votes on it; its outputs cannot.
 3. **Nullifier tree.** The first nf_size − 1 stake nullifiers in insertion
    order (nf_size the LCD's, so the fetch is bounded by the chain's own
-   count), from `{base}/stake/nullifier-tree?from_index=0&limit=1000` and
-   the aligned pages after it (§4a paging rule: page k holds leaf indexes
-   [1000k, 1000(k+1)), leaf 0 the sentinel never a row, so page 0 holds
-   1..999; rows [index, nullifier, height], indexes contiguous; a leaf
-   already held must be served identically; more than 1000 rows, or
-   anything else, is inconsistent) with the LCD
+   count), from `{base}/stake/nullifier-tree?from_index=&limit=1000` in
+   aligned pages (page k holds leaf indexes [1000k, 1000(k+1)); leaf 0, the
+   sentinel, is never a row; rows [index, nullifier, height], indexes
+   contiguous; a leaf already held must be served identically; more than
+   1000 rows is inconsistent), with the LCD
    `Query/StakeNullifierTree{start, limit}` (1000 a page) for whatever the
-   indexer lacks. Inserted in order into the
-   indexed tree (leaf = H(TAG_SNFL, value, next_value, next_index), leaf 0
-   the sentinel; the wallet writes the final leaves in one batch, the same
-   root as replaying the inserts), its root must equal nf_root; otherwise
-   everything fetched is dropped and the tree is rebuilt from the LCD alone
-   once, else the vote is refused. The values are kept in memory (a prefix
-   of an append-only list) and the last two trees by nf_root.
-4. **Low leaf** of the note's spend nullifier H(TAG_SNF, nk, rho, pos): the
-   predecessor (the sentinel if none) with next = the successor (0, 0 if
-   none), its index and path. If the nullifier is in the tree the note was
-   spent before the snapshot: refused locally (`SpentBeforeSnapshot`),
-   nothing is simulated or broadcast, but only when sync, too, saw the spend
-   at or before the snapshot's height; otherwise the two disagree and the
-   cast fails with an error (audit 4: never a vote silently skipped). A note spent after the snapshot still
-   votes; its outputs cannot (not under the root).
-5. **vote_nullifier** = H(TAG_VNF, nk, rho, pos, proposal_id): one per note
-   and proposal, unlinkable to the note's other votes and its spend.
-6. **Weight (wallet rule).** The note's amount (uderth) rounded DOWN to
-   three significant decimal digits, whole below 1000:
+   indexer lacks. Its root must equal nf_root; otherwise everything fetched
+   is dropped and the tree is rebuilt from the LCD alone once, else the vote
+   is refused. The values are kept in memory and the last two trees by
+   nf_root.
+4. **Low leaf** of each note's spend nullifier: the predecessor (the
+   sentinel if none) with next = the successor (0, 0 if none). A nullifier
+   in the tree means the note was spent before the snapshot: skipped, but
+   only when sync, too, saw the spend at or before the snapshot's height
+   (a spend in the snapshot's own block is before it); otherwise the cast
+   fails with an error (never a vote silently skipped).
+5. **Notes.** Eligible: derth, amount > 0, position < tree_size, not spent
+   at or before the snapshot's height as far as sync knows, not already
+   voted on the proposal. Taken largest first, then by position, two a
+   msg; a note slashed to nothing is skipped. A labelled note votes at
+   amount − exposed + retained under the current debt root.
+6. **vote_nullifiers** is exactly two: the used slots' H(TAG_VNF, nk, rho,
+   pos, proposal_id) in slot order, then 32 zero bytes for an unused slot.
+   `debt_root` (11) is the current root on every vote.
+7. **Weight [wallet].** RoundVoteWeight of the sum of the notes' values
+   (the sum saturates at 2^63 − 1): rounded DOWN to three significant
+   decimal digits, whole below 1000:
 
        unit = 1; while amount / unit >= 1000: unit *= 10
        weight = amount / unit * unit
 
-   999 → 999; 1,000 → 1,000; 1,009 → 1,000; 999,999 → 999,000;
-   1,234,567 → 1,230,000; 123,456,789 → 123,000,000. The published weight
-   names a bucket, not the exact amount (a delegation's minted amount is
-   public), and gives up less than 1% of the note's voice. The confirm
-   sheet's weight is the sum of the rounded weights at the snapshot rate.
-7. **Prove** circuits/vote (public inputs note_root, nf_root,
-   AssetID(derth/<validator>), weight, proposal_id, vnf, sighash; Prover.toml
-   names nk, amount, rho, rcm, pos, path, low_value, low_next_value,
-   low_next_index, low_index, low_path), fill the fee bundle; the sighash
-   binds vote_nullifier (fields in §4). A quote (confirm sheet) simulates
-   with a random vote nullifier. Gas estimate: 250,000 + proof + one note
-   write (2,400,000); every stake proof now prices two more note writes per
-   nullifier slot (3,200,000).
-8. **Remember** (proposal, vnf) the moment the node accepts the tx
-   (`stake_votes`: proposal_id, vnf, tx_hash, until = timeout_height,
-   confirmed); confirmed once committed. A vote that failed in its block,
-   or is unknown once the chain is past its timeout_height, is forgotten
-   and the note may vote again. A vote the chain refuses as already cast
-   (code 1119 in codespace `shieldedstaking`, or at simulate its registered
-   text "this stake note already voted on this proposal": no fee)
-   is recorded as confirmed: that is how a wallet restored from the
-   mnemonic, which does not know its votes, learns them. One vote per note
-   per proposal; the same note votes on every other open proposal.
+   999 → 999; 1,000 → 1,000; 1,009 → 1,000; 123,456 → 123,000; 999,999 →
+   999,000; 1,234,567 → 1,230,000; 123,456,789 → 123,000,000; 399,999,999
+   → 399,000,000; 2^63 − 1 →
+   9,220,000,000,000,000,000 (vectors `round_vote_weight`). The published
+   weight names a bucket, not the exact amount, and gives up less than 1 %
+   of the notes' voice. The sheet shows the weight at the snapshot rate.
+8. **Prove** circuits/vote (§9); a quote simulates with random vote
+   nullifiers in the used slots. Gas (estimate, fee cap): 250,000 + proof
+   (2,000,000) + (1 + used slots) × note_gas (150,000).
+9. **Remember** each used slot's (proposal, vnf) the moment the node
+   accepts the tx (`stake_votes`: proposal_id, vnf, tx_hash, until =
+   timeout_height, confirmed); confirmed once committed. A vote that failed
+   in its block, or is unknown once the chain is past its timeout_height,
+   is forgotten and the note may vote again. The records survive a
+   same-chain reset.
+10. **Already voted (1119, codespace `shieldedstaking`).** The chain refuses
+    the whole msg if any used vnf was already used on the proposal and
+    names it ("vote nullifier <HEX>"; at simulate, its registered text "this
+    stake note already voted on this proposal"). Refused before any mempool
+    (simulate, CheckTx): the named note is recorded as voted and the vote
+    laid out again without it, within the same confirmed action (nothing
+    was paid; at most two re-layouts). Refused in a block: only the named
+    note's record becomes final, the msg's other notes are forgotten and
+    vote again. This is how a wallet restored from the mnemonic learns its
+    votes.
 
-Eligible notes for a proposal (cast list, weight shown): derth, amount > 0,
-position < tree_size, not spent at or before the snapshot's height as far
-as sync knows (a spend in the snapshot's own block is before it: the
-snapshot is the trees at that block's end), not already voted on it. The
-recorded votes survive a same-chain reset (an inconsistent sync, a root
-mismatch; audit 4, L1).
+**Casting [wallet].** The proposal screen shows one confirm sheet per
+validator and per position, in order, the next raised only after the last
+tx went through and each sent only on its own tap. A validator with more
+eligible notes than one vote holds first asks: "Vote in parts" (one sheet
+per part; each part publishes its own weight and the parts can be linked by
+validator and timing) or "Merge notes" (one MsgRestake sheet). A merge
+after a proposal's snapshot does not change that proposal's vote (the
+merged note is not under its root, and the spent ones still vote); the
+sheet says so.
 
-## 4d. Chain wave 3 wallet rules (chain 06ea4d6)
+**Stake note discovery.** The stake rows stream carries no denom: a stake
+ciphertext names only the asset id, so the wallet names `derth/<valoper>`
+by AssetID over the chain's validator list (every status, read at most once
+a sync, each candidate learned only as the hash of its own name). A stake
+note of an asset it cannot name is not used.
 
-- **Vote weights.** Every option weight in MsgStakeVote / MsgPositionVote
-  is the canonical LegacyDec string, 18 decimals ("1.000000000000000000",
-  "0.500000000000000000"); the wallet canonicalizes whatever it is given
-  before laying the msg out (the sighash already bound the canonical form).
-- **Referrer consent** (MsgBindReferrer): removed with the msg at 4a663d5
-  (§4g).
-- **Activation bounds:** superseded by the predecessor bounds (§4g).
-- **No unshield to a module account.** The wallet refuses, before
-  proving, an unshield whose receiver is any module account the chain
-  declares (fee_collector, distribution, mint, bonded_tokens_pool,
-  not_bonded_tokens_pool, gov, nft, transfer, interchainaccounts, shielded,
-  shieldedstaking, dex, allocation, personhood, earth, wasm: address =
-  SHA-256(name)[:20]; vectors.json `module_accounts`).
-- **current_date** of a registration's passport proof must be a calendar
-  date (YYMMDD; 250231 is refused); the wallet checks before broadcast.
+## 16. Assembly and dex
 
-## 4g. Handles, predecessor bounds, moves, reminders (chain 4a663d5)
+**Assembly.** MsgVoteProposal and MsgVoteRemoval take their statement from
+`/earth/assembly/v1/ballot_inputs?proposal_id=` / `?option_id=` (scope,
+excluded_dsc, excluded_country, max_activation, max_predecessor (7), round,
+ballot_id); the wallet recomputes the scope and refuses a node's that
+differs. An expedited proposal
+the chamber ratified and x/gov demoted votes again in round 1, a new
+nullifier scope (vectors `proposal_5_0`, `proposal_5_1`).
 
-- **Identity leaf and membership.** leaf = H(Tag("earth.leaf"), idc,
-  dsc_key, country, activated_at, predecessor_at) (`Registration.
-  predecessor_at` = 8). Membership public inputs, in order: root, scope,
-  nullifier, signal, excluded_dsc, excluded_country, max_activation,
-  max_predecessor (the circuit checks activated_at <= max_activation and
-  predecessor_at <= max_predecessor). "No bound" is 2^63 − 1
-  (`Privacy.NO_BOUND`). Bundled `membership.json` was rebuilt with nargo
-  1.0.0-beta.22; `bb write_vk` of all four bundled privacy circuits equals
-  the chain genesis's verifying keys. Golden: vectors.json `leaf`,
-  `leaf_pred`, `membership_public_inputs`.
-- **Bounds the wallet names, per msg** (it refuses locally, `NotYet`, when
-  its own identity does not meet them; audit 5: a set-caretaker or bind
-  whose L is not met goes out with no bound, since a restore can lose what
-  the identity holds; x/personhood checks the bound in its ante, before
-  the fee bundle is spent, so a holder of none is refused at no cost and
-  the wallet says so, `NotHeld`, with the wait; release needs a held
-  handle, since the chain refuses that only after the fee):
+**Dex [chain maths, wallet mirrors].**
 
-  | msg | max_activation | max_predecessor |
-  | --- | --- | --- |
-  | MsgClaimAnml | start of yesterday (day − 1) × 86400 | no bound |
-  | MsgSetCaretaker, a new split | no bound | L(R) |
-  | MsgSetCaretaker, refresh/change/clear of one held | no bound | L(R) if met, else no bound |
-  | MsgBindHandle, a claim (holding none) | no bound | L(handle_lease_seconds) |
-  | MsgBindHandle, renew/change of the one held | no bound | L(lease) if met, else no bound |
-  | either, bound not met and nothing held as far as the wallet knows | no bound | no bound (audit 5) |
-  | MsgBindHandle, release | no bound | no bound |
-  | MsgMoveHandle, MsgMoveCaretaker | no bound | no bound |
-  | MsgVoteProposal, MsgVoteRemoval | BallotInputs.max_activation (no bound) | BallotInputs.max_predecessor (7) |
-  | MsgProposeRemoval | no bound | start of today (UTC) − 86400 |
-
-  L(lease) = floor_hour(now − lease − 86400 − 600): strictly below the
-  chain's now − lease − 86400 with 600 s of clock margin, rounded to the
-  hour so it says nothing about when the tx was made. Every wallet names
-  the same L, fresh registrants (predecessor_at 0) included: they meet it,
-  so a fresh identity acts at once and its proof does not tell it from an
-  old one (proving max_predecessor = 0 would). R is caretaker_vote_seconds
-  (default 365 days); handle_lease_seconds is param 27 (default 365 days;
-  the chain bounds a claim by the longest lease ever set).
-- **Handles.** Lowercase a-z, 0-9, -; 3-32; no dash at either end; no case
-  folding (the wallet lowercases what is typed and drops a leading @).
-  MsgBindHandle {fee 1, membership 2 (scope Scope("handle")), handle 3,
-  address 4 (canonical lowercase "erthz1..."), max_predecessor 6}. Holding
-  a handle: the same handle renews it (lease now + handle_lease_seconds,
-  the address may change), another changes to it (the old one is freed at
-  once); holding none: a claim; both empty: release at once. MsgMoveHandle
-  {fee 1, membership 2, handle 3, new_owner 4 = H(TAG_SN, new_id_secret,
-  Scope("handle"))}. Lifecycle: live until expires_at; then until
-  renewal_until (= expires_at + handle_renewal_seconds, param 26, default
-  30 days) reserved to its owner and not resolving; then free. Errors:
-  1121 (not a live handle, as a registration's referrer), 1122 (taken),
-  1125 (this identity moved its handle away), 1126 (its caretaker split);
-  codespace personhood. The wallet records the handle it holds in its store
-  (`handle`, `handle_moved_out`); status, expiry and renewal window come
-  from the directory.
-- **The directory, never one handle.** Every lookup reads the whole
-  directory: the backend's `GET {base}/handles?from_index=&limit=1000`
-  (rows [handle, address, status, expires_at, renewal_until, owner]; owner
-  optional, see §4i; a snapshot at
-  `height`, read from index 0 in aligned pages until `last_page`, started
-  over (at most 3 times) when `height` changes between pages; refused when
-  out of handle order, a status other than live/renewal/free, a malformed
-  handle, or a row count other than `size`), falling back to the chain's
-  `GET /earth/personhood/v1/handles?start=&limit=1000` from the first page
-  (`next` must be the page's last handle). Cached 10 minutes. There is no
-  per-handle query anywhere in the wallet (`Query/Handle` is never used).
-  An entry whose expires_at has passed by the wallet's clock is treated as
-  in its renewal period (not payable).
-  Audit 5 (M4, L4, L7): a directory with an entry whose times no lease has
-  (not 0 < expires_at ≤ renewal_until ≤ now + 10 years) or with more than
-  250,000 rows (audit 6, H2: was 1,000,000; also checked against page 0's
-  `size`), or an address longer than 256 characters,
-  is refused whole; the lease params are taken at most 10 years; a
-  set_caretaker expires_at outside (0, now + 10 years] is replaced by the
-  block time + R; reminder and countdown arithmetic saturates.
-- **Paying a handle.** Send accepts "@handle" or a bare handle. Before the
-  confirm the wallet reads a fresh copy (at most 60 s old) and the chain's
-  own directory (also whole, also at most 60 s old): the handle must be
-  live in both with the same address, else nothing is paid. The confirm
-  shows "@handle · erthz1xxxxxxxx…yyyyyyyy". Funding: from notes when the
-  shielded balance of the asset covers it (a private MsgSend to the
-  address), else from the public balance as MsgShield whose note is minted
-  to the handle's address (pc of its owner_pk, 177-byte blind ciphertext to
-  its ek_pub; the amount is public, the recipient is not).
-- **Moves and switching identity.** A switch is the same passport
-  registered from another wallet on the phone. Before it, the old wallet
-  may move its handle and its live caretaker split to the new identity's
-  nullifiers in those scopes, computed from the other wallet's keys
-  (`H(TAG_SN, id_secret', Scope(...))`), and records them in the other
-  wallet's store (handle, split, expiry; kept by its first sync), so its
-  renewal and refresh take no bound. The mover records `*_moved_out` and
-  never casts or claims again. Without moves, the new identity waits until
-  everything its predecessor could hold has lapsed (lease + 1 day). The
-  switch screen requires the new wallet's recovery phrase be backed up and
-  explains that a lost wallet's handle and vote cannot be moved.
-  **Audit 5 (M2, L8, L9).** A move is written to both stores at the
-  moment its hash is known, before the broadcast: the mover's as an
-  outgoing pending move (it still holds what it is moving), the new
-  wallet's as incoming (it holds it, pending). A refusal (CheckTx, no
-  connection) undoes both; a tx that failed in its block, or that the
-  chain does not know once past its timeout_height, is undone by each
-  wallet on its own when it settles its pending moves by hash (every sync,
-  and "Check the moves again"); a committed one is applied (the mover
-  records moved out), and its state records (§3b) settle it too. The UI
-  shows a move as done only once confirmed and does not offer "register
-  there" while one is in doubt; a failed write to the new wallet's store
-  is kept for a retry (that wallet also finds the move in its own notes).
-  The first confirmed move fixes the target wallet (by store id; audit 6
-  M5: a move in flight holds it only while in flight, and a refused,
-  failed or expired one frees it); a target whose identity moved a handle
-  or split away, or that holds one of its own, is refused for that move
-  before anything is sent; one with a registration is warned about. The recovery
-  phrase is shown only after a fresh PIN or biometric unlock (counted
-  against the unlock backoff) and dropped when the screen is paused or
-  left; the backup box can be ticked only once it was shown.
-- **Dex deposits** (audit 4, C2). x/dex pulls each leg rounded up,
-  ceil(shares × R / S) with shares = min(⌊in_e × S / R_e⌋, ⌊in_t × S / R_t⌋);
-  the wallet derives the other leg of a deposit as ceil(amount × R_other /
-  R_typed), so the typed side is the binding one and at most one unit comes
-  back as a refund. min_shares is the shares at the current reserves less
-  1 %. Pinned against the chain's own maths (dex_amm.json `deposits`).
-  ErrPoolCap (dex 1120, past 2^120) is explained to the user.
-- **timeout_height** stays the LCD tip + 50 (above the last committed
-  height, as CheckTx now requires).
-
-## 4h. Audit round 5 chain rules (chain 203d3b2, ORCHARD_DESIGN 16)
-
-- **Notes stream format 2** (backend README "Note stream format 2"). Every
-  `/notes` page has `"format": 2` and `"fields": ["position", "height",
-  "cm", "ciphertext", "amount", "owner_pk", "rho", "rcm"]`; the wallet reads
-  columns by name and refuses a page of any other format (an old backend)
-  or one missing a column. Three kinds of row: a bundle output (`amount`
-  null, `ciphertext` set): trial-decrypt (§3); a minted or shielded note
-  (`amount` and `ciphertext` set): blind v2 against the row's amount; an
-  **open note** (`ciphertext` null; `amount`, `owner_pk`, `rho`, `rcm` set,
-  hex): ours iff owner_pk is our own and the opening with the amount
-  recomputes the row's cm. A row with part of an opening, an opening beside
-  a ciphertext, or an open row without an amount is refused (the page is
-  inconsistent). Matching is local over the whole stream the wallet reads
-  anyway; no request ever names an owner_pk. The note is then spent like
-  any other (nf = H(TAG_NF, nk, rho, position); the published opening
-  links nothing without nk).
-- **Split payouts.** x/dex pays a private LP withdrawal leg above 2^64 − 1
-  as ceil(v / (2^63 − 1)) notes (MintNoteSplit, at most 128; chain
-  8ed1278): consecutive rows with the **same** pc and ciphertext, each its
-  own amount (2^63 − 1, …, the remainder) and position. The blind v2
-  ciphertext binds no cm or value, so each row decrypts to the same
-  (rho, rcm) and its own amount gives its cm; the nullifier includes the
-  position, so every chunk is a separate, separately spendable note. The
-  wallet never dedupes by ciphertext, pc or opening. Every chunk fits the
-  2^63 − 1 every client holds (§3 Amounts). x/dex refuses at start a leg
-  above 32 × (2^63 − 1) (a quarter of what a payout can carry; dex 1101,
-  "the most one withdrawal pays as notes"), and every client refuses the
-  same bound before proving; the app explains it.
-- **Lease bounds** (`GET /earth/personhood/v1/lease_bounds`, int64s as
-  strings): block_time, activation_margin_seconds, handle_lease_seconds
-  (the longest ever in force), handle_claim_bound, caretaker_lease_seconds
-  (a held longer lease after a cut included), caretaker_cast_bound,
-  caretaker_lease_hold_until. Checked before use: leases in 1..10 years, the
-  margin in 0..10 years, and handle_claim_bound = block_time −
-  handle_lease_seconds − margin (likewise the caretaker bound), else
-  refused. L(lease) of §4g is now floor_hour(block_time − lease − margin −
-  600) with lease and margin from here (closes the mobile audit 5 L1: the
-  bound used Params); the UI's claim-wait date uses the same lease.
-- **Held but not live** (audit 5 P2). MsgBindHandle is unbounded only for a
-  prover holding a **live** handle: a renewal or change of a handle in its
-  renewal period is bounded like a claim. The wallet keeps the held handle's
-  expires_at (`handle_expires_at` for `handle_expires_for`, from its bind's
-  `handle_bound` event, else the block time + the lease, and refreshed from
-  the chain's directory on every scan); past it, an identity that does not
-  meet L gets `HandleNotLive` (iOS NotYet.lapsed .handle) before anything is
-  sent, with the date it may claim; with no expiry known it tries no bound
-  and the chain's no-fee refusal reads as NotHeld. MsgMoveHandle refuses a
-  handle that is not live: the wallet refuses it first (`HandleNotMovable`)
-  and the switch screen does not offer it, saying why; the chain's text
-  ("renew it before moving it", personhood 1116) is explained. A caretaker
-  split past the chain's own expiry is not held: refreshing it is a new
-  split, bounded (`CaretakerLapsed`, iOS NotYet.lapsed .caretaker).
-
-  | msg (replaces the §4g rows) | max_predecessor |
-  | --- | --- |
-  | MsgBindHandle, renew/change of a live handle held | L(handle lease) if met, else no bound |
-  | MsgBindHandle, renew/change of a handle in its renewal period | L(handle lease); not met: refused locally |
-  | MsgSetCaretaker, refresh of a live split | L(caretaker lease) if met, else no bound |
-  | MsgSetCaretaker, refresh of a lapsed split | L(caretaker lease); not met: refused locally |
-
-- **Anchors.** CheckTx/ReCheckTx refuse an anchor lapsing within 120 s of
-  the last block, and a proposer leaves out a tx whose anchor lapsed by its
-  block's time. Before laying out a private tx the wallet reads its local
-  root's record (`/earth/shielded/v1/roots/{root}`: `valid`, `expires_at`, 0
-  for the latest root); one lapsing within 1,800 s of the LCD tip's time
-  (the CheckTx margin, the 50-block timeout_height and phone proving) makes
-  it sync first (a newer root), and if that is still too old the tx is
-  refused before anything is proven (Android SyncFirst, iOS AnchorTooOld).
-  A node that does not say `expires_at` leaves the chain's own check. The
-  chain's "pick a newer anchor" refusal (shielded 1103) is explained.
-- **Gas.** A handle bind (claim, renew, change, release) is priced as nine
-  note writes: the fee cap's estimate adds 8 × 150,000 to the membership's
-  one write, and the confirm sheet estimates 12,500,000 gas (other private
-  txs 10,000,000). The fee itself is still simulated (gas + 10 %, at least
-  20,000). x/shielded's gas prices are capped (proof 10M, note 1M, bundle
-  1M); the wallet's fee cap stays twice its estimate at the defaults and
-  2 ERTH absolute.
-- **MsgShield** of a send-disabled denom is refused (bank 5, "send
-  transactions are disabled"); its simulate fails before signing and the
-  app says the token's transfers are switched off.
-- **Assembly.** An expedited proposal the chamber ratified and x/gov
-  demoted votes again in round 1, a new nullifier scope; BallotInputs
-  reports `round`, and the wallet recomputes the scope as
-  Scope("proposal", U64(id), U64(round)) and refuses a node's scope that
-  differs (unchanged code; vectors `proposal_5_0`, `proposal_5_1`).
-- **Dex.** The swap fee is LegacyDec(amount) × fee / 100 rounded half-even
-  at 18 places, then **up** to an integer (was truncated); quotes and
-  min-out use it (dex_amm.json and iOS corecheck re-derived from x/dex at
-  203d3b2; deposit vectors unchanged).
-
-## 4i. Audit round 6 wallet rules (chain c0ad1dd)
-
-- **Indexer denoms (M2, M3).** A row's public amount is `<digits><denom>`
-  with the denom matching the SDK rule `[a-zA-Z][a-zA-Z0-9/:._-]{2,127}`
-  and never starting `asset/` (the wallet's own name for an asset id it
-  cannot resolve); anything else and the row is not opened against it. The
-  same holds for a stake row's denom. A denom is learned (asset id → denom
-  for v1 and wallet-stake ciphertexts) only from a note of this wallet's
-  whose cm it reproduces, or from the chain's asset list (`GET
-  /earth/shielded/v1/assets`, every page, at most 4,096 entries, each
-  learned only if its `asset_id` is `AssetID(denom)`), read at most once a
-  sync and only when a note of ours carries an id the wallet cannot
-  resolve. The persisted `denoms` are the denoms of the notes held (at
-  most 4,096); the lookup is built once a sync. A held note named
-  `asset/<hex>` whose id becomes known is renamed (same asset, same cm).
-  A row that cannot be opened is skipped, never thrown on: a page's rows
-  are opened before the tree grows.
-- **The send tip (M4).** `verified_height` (store) is the indexer height
-  of the last verified sync (checked against the chain's tree and tip),
-  kept across resets. A tx's tip (LCD latest height) more than 1,000
-  blocks past it is refused (the wallet syncs once and tries again, then
-  refuses) before anything is laid out. A pending mark (note, stake note,
-  vote, move) whose timeout_height is more than 1,050 blocks past the
-  current `verified_height` came from an inflated tip: it is settled by
-  the tx's status alone (missing or failed: released; notes after the
-  15-minute mempool grace).
-- **Handle owners (M6).** The chain adds `owner` to every handle entry
-  (Query/Handle, Query/Handles): the handle-scope nullifier that holds it,
-  64 hex digits (lowercase; any case accepted), the same value as
-  MsgBindHandle's membership nullifier and MsgMoveHandle's new_owner. The
-  backend stream carries it as the row's sixth element. Absent or
-  malformed, an entry has no owner. The wallet adopts a directory entry as
-  its handle only if `owner` equals its own `H(TAG_SN, id_secret,
-  Scope("handle"))` (hex); an entry merely naming its address is never
-  adopted (anyone may bind any address). A held handle whose entry names
-  another owner is dropped. While no handle is held, entries naming the
-  wallet's address whose owner is absent are shown as unverified, with a
-  renew-only bind; entries with another owner are not shown.
-- **Renew-only binds (M7).** Renew (the held handle, reminders, the
-  address cards) binds only the handle held, or, holding none, the one
-  named; a bind that would change the held handle (freeing it) is refused
-  locally. Address cards are hidden while a handle is held.
-- **One store per wallet (M8).** The app keeps one wallet object and one
-  store per wallet per process, across lock and unlock; a stake-vote run
-  re-reads the voted positions from the store before each cast and merges
-  its progress into the stored run.
-- **Public add-liquidity (M9).** MsgAddLiquidity carries `min_shares`
-  (field 5) = min(⌊e·S/R_e⌋, ⌊t·S/R_t⌋) less 1 % from fresh pool and share
-  supply reads, as the shielded deposit; "" only for an empty pool; a read
-  that fails refuses the deposit (D7). Golden (both platforms):
-  creator "earth1creator", pool 2, 1000uerth, 300uusd, min_shares "148" =
+- **Swap fee.** LegacyDec(amount) × fee / 100 rounded half-even at 18
+  places, then **up** to an integer; quotes and min-out use it
+  (`dex_amm.json`; iOS corecheck re-derives from x/dex).
+- **Deposits.** x/dex pulls each leg rounded up, ceil(shares × R / S) with
+  shares = min(⌊in_e × S / R_e⌋, ⌊in_t × S / R_t⌋); the wallet derives the
+  other leg of a deposit as ceil(amount × R_other / R_typed), so the typed
+  side is the binding one and at most one unit comes back as a refund.
+  min_shares is the shares at the current reserves less 1 % (`dex_amm.json`
+  `deposits`). ErrPoolCap (dex 1120, past 2^120) is explained.
+- **Public add-liquidity.** MsgAddLiquidity carries `min_shares` (5) =
+  min(⌊e·S/R_e⌋, ⌊t·S/R_t⌋) less 1 % from fresh pool and share supply
+  reads; "" only for an empty pool; a read that fails refuses the deposit.
+  Golden (both platforms): creator "earth1creator", pool 2, 1000uerth,
+  300uusd, min_shares "148" =
   `0a0d65617274683163726561746f7210021a0d0a057565727468120431303030220b0a047575736412033330302a03313438`.
-- **PIN change (M1, Android).** Changing the unlock secret needs a fresh
-  unlock with the current one (counted against the unlock backoff).
+- **Private deposits** (MsgAddLiquidityShielded): one bundle releases the
+  token leg and erth_amount + fee; LP shares are minted as a `dexlp/<pool>`
+  note to a pc of ours; what the ratio does not take is minted back to one
+  refund pc (a note per asset, both opened by the one v2 refund
+  ciphertext).
+- **Withdrawals** (MsgRemoveLiquidityShielded; the public MsgRemoveLiquidity
+  names a note for its ANML leg): escrowed for the LP unbonding period,
+  then both legs minted to pcs of ours (v2). A leg above 2^64 − 1 is paid as
+  ceil(v / (2^63 − 1)) notes (MintNoteSplit, at most 128) sharing one pc
+  and ciphertext (§5). x/dex refuses at start a leg above 32 × (2^63 − 1)
+  (dex 1101, "the most one withdrawal pays as notes"), and every client
+  refuses the same bound, floor(shares × reserve / total) at the current
+  reserves, before proving.
+- **Note swaps** (MsgNoteSwap) through the ERTH hub; the output is minted
+  to us (or to another address) with a v2 ciphertext.
 
-## 4j. Audit 6 chain rules, staking without background txs (chain 48b631c, ORCHARD_DESIGN 17-18)
+## 17. Indexer
 
-- **Registration binding** (B6-4): Bytes(chain_id) first (§3a), the
-  wallet's own chain id. The circuit takes `address` as opaque: no circuit
-  change.
-- **Undelegation pays out by itself (18.1).**
-
-      MsgUndelegate {bundle (fee), validator, amount, stake (5), pc (6), ciphertext (7)}
-      sighash fields: StakeFields(stake), Bytes(validator), amount, pc, Bytes(ciphertext)
-
-  The stake proof spends the derth (v_out = amount, change back to the
-  owner) and is otherwise unchanged; `spc_mint` is a throwaway pc of the
-  owner (proven, unused: the chain mints no stake note) and
-  `spc_ciphertext` is empty. `pc` is a fresh pool note of the wallet's own
-  (`pc = H(TAG_PC, owner_pk, rho, rcm)`, fresh rho and rcm, as every
-  chain-minted note, §1) and `ciphertext` its 177-byte v2 amount-blind
-  ciphertext (§3) to the wallet's own address. At maturity the chain mints
-  `value x payout / requested` uerth to pc in the EndBlocker (at most
-  2^63 - 1 a note: a larger payout is several `shielded_mint` rows with the
-  same ciphertext, each its own position and amount); sync finds every one
-  by trial decryption like any minted note (§4h's split rule: never stop at
-  the first row a ciphertext opens, never dedupe by ciphertext). Nothing is
-  sent to claim it: MsgClaimUnbonding, the `unbond/<valoper>/<epoch>` claim
-  notes, the wallet's matured-claim automation and its retry bookkeeping
-  (`unbond_retry_at`) are gone. A `shieldedstaking_undelegate` event
-  carries validator, derth, value, epoch and payout_id.
-- **Pending undelegations (local only).** The wallet records each
-  undelegation (`pending_unbonds`: tx_hash, validator, derth, pc,
-  started_at, until = timeout_height, confirmed, epoch, value, payout_id,
-  due_by) when the node takes the tx, fills epoch, value and payout_id from
-  its committed event, and drops it when a synced note of its own carries
-  that pc (paid), or when the tx was refused, failed in its block or is
-  missing past its timeout_height. `due_by` is computed once, at
-  confirmation, from chain-wide timing alone (the current epoch's start and
-  end, epoch_seconds, x/staking unbonding_time): an epoch e not ended yet
-  ends (e - current) epochs after the current one's end (at least its start
-  + epoch_seconds); an ended one at start(current) - (current - 1 - e) x
-  epoch_seconds; then + unbonding_time + 15 minutes; no answer on overflow.
-  The wallet shows "Unstaking (private), arrives by about <due_by>" until
-  paid. The record survives a same-chain reset; a restored wallet has none
-  (the payout is still found). The chain's per-id `Query/UnbondPayout`
-  (`/earth/shieldedstaking/v1/unbond_payouts/{id}`) is never asked: the id
-  is on the undelegate tx's event, so a query for it (let alone a poll)
-  ties the asking IP to that undelegation and its timing. Its answer adds
-  nothing the local record lacks but a slash-adjusted amount and retry
-  state, both visible once the note arrives.
-- **One stake vote per validator (18.2).** Four slots superseded by two
-  (chain dff3a9b, §4k); kept for history.
-
-      MsgStakeVote {bundle (fee), proposal_id, validator, options, weight, proof (8), vote_nullifiers (10)}
-      sighash fields: proposal_id, Bytes(validator), Bytes(OptionsBytes(options)), weight, vote_nullifiers[0..3]
-      public inputs: note_root, nf_root, AssetID(derth/<validator>), weight, proposal_id, vnf[0..3], sighash
-
-  One msg votes up to four eligible derth notes of one validator (§4e's
-  eligibility; the largest first, then by position). `vote_nullifiers` is
-  exactly four: the used slots' H(TAG_VNF, nk, rho, pos, proposal_id) in
-  slot order, then 32 zero bytes for each unused slot (an unused slot
-  cannot be padded: the circuit makes its vnf 0). weight =
-  RoundVoteWeight(sum of the notes' amounts) (§4e rule 6 applied to the
-  sum; the sum saturates at 2^63 - 1, so the weight is at most
-  9,220,000,000,000,000,000, still <= the sum). Prover.toml: `nk`, then
-  per slot arrays of four `amount`, `rho`, `rcm`, `pos`, `path` (4 x 32),
-  `low_value`, `low_next_value`, `low_next_index`, `low_index`, `low_path`
-  (4 x 32), and `vnf` (4); an unused slot is all zeros (amount 0, rho 0,
-  rcm 0, pos 0, zero paths and low leaf). The vote circuit is a 2^15
-  circuit (27,543 gates) within the bundled 2^15 + 1 point SRS; the prover's
-  VOTE kind splits 10 public inputs (was 7); proof length unchanged. A quote
-  simulates with random vote nullifiers in the used slots (zeros stay
-  zero, so the gas is the real one). Every used slot's vnf is recorded as
-  in §4e (one record per note, the same tx hash). Vectors:
-  vectors.json `stake_vote` (one used slot), `stake_vote_two`,
-  `stake_vote_four`, `round_vote_weight`.
-- **Already voted (1119).** The chain refuses the whole msg if any used
-  vnf was already used on the proposal and names it ("vote nullifier
-  <HEX>"). Refused before any mempool (simulate, CheckTx): the named note
-  is recorded as voted and the vote laid out again without it, within the
-  same confirmed action (nothing was paid; at most four retries, enough to
-  learn a whole part). Refused in a block: only the named note's record
-  becomes final, the msg's other notes are forgotten and vote again.
-- **More than four notes at a validator.** The proposal screen shows one
-  confirm sheet per validator and per position, in order, the next raised
-  only after the last tx went through and each sent only on its own tap.
-  A validator with more eligible notes than one vote holds first asks:
-  "Vote in parts" (one sheet per part, the largest four first; each part
-  publishes its own weight and the parts can be linked by validator and
-  timing) or "Merge notes" (one MsgRestake sheet, two notes into one, no
-  follow-up tx). A merge after a proposal's snapshot does not change that
-  proposal's vote: the snapshot holds the notes as they were (the merged
-  note is not under its root, and the spent ones still vote), so the merge
-  only makes later proposals take fewer parts; the sheet says so.
-- **Gas** (A-L1): the chain refuses a private tx whose gas_limit is more
-  than 5x what it uses. Every private tx the wallet sends (registration,
-  binds at the sheet's 12.5M-gas fee estimate, votes, staking, dex) takes
-  its gas_limit from the simulation: simulated gas + max(10%, 20,000). The
-  12.5M (handle bind) and 10M (other private txs) figures are only the
-  confirm sheet's fee estimate and its bound (a higher simulated fee asks
-  again); they are never declared as a gas limit. Stake vote gas (the
-  wallet's estimate, fee cap): 250,000 + proof (2,000,000) + (1 + used
-  slots) x note_gas (150,000).
-- **Send-disabled denoms** (A-L2): refused at shield, unshield, a dex note
-  swap (either side), a private delegation's ERTH and any module mint into
-  the pool (bank code 5, "send transactions are disabled"). The wallet
-  explains it as such ("Transfers of this token are switched off on the
-  chain ... no shielding, unshielding, note swaps or private staking with
-  it"); notes already held still move privately.
-- **Switch signer** (B6-1): a switch proven under another Document Signer
-  than the live registration's is refused (personhood 1127, "This switch
-  was refused. A switch must be proven with the same passport you
-  registered with ..."); a switch counts against its signer's daily cap
-  (1113: "Today's limit for passports from this issuer has been reached.
-  Try again tomorrow."). The gas service's refusals carrying the chain's
-  text get the same sentences.
-- **Handle owners** (wallet dependency): `HandleEntry.owner` (field 6) is
-  now always served, by Query/Handle(s) and as the backend `/handles` row's
-  sixth element; adoption is by owner only, as §4i.
-
-## 4k. Stake note v2, Move stake, the slash debt (chain dff3a9b, b46a4bb, ORCHARD_DESIGN 19-20)
-
-- **Stake commitment and label.**
-
-      cm    = H(TAG_STAKE, AssetID(derth/<valoper>), amount, H(TAG_SPC, owner_pk, rho, rcm), label)
-      label = H(Tag("earth.slabel"), move_key, move_time, exposed)    (0: unlabelled)
-      nf    = H(TAG_SNF, nk, rho, position)
-
-  A label marks derth that arrived by a move (`exposed` of it, the move's
-  credit) and stays until the label window (`window_seconds`, Query/DebtTree)
-  after `move_time` has passed: a slash of the source validator in that
-  window owes through the move's debt row. Ciphertext: §3 (v2, 201 bytes).
-
-- **StakeProof (fields 9-15) and StakeFields.**
-
-      StakeProof {proof 1, anchor 2, nullifiers 3 (two), owner_tag 7, commitment 9, ciphertext 10,
-                  credit_nullifier 11, credit_commitment 12, credit_ciphertext 13, clear_before 14, debt_root 15}
-      StakeFields = anchor, nf_0, nf_1, cm, Bytes(ciphertext), credit_nf, credit_cm, Bytes(credit_ciphertext),
-                    owner_tag, clear_before, debt_root          (absent field: 0, absent bytes: Bytes of nothing)
-      public inputs (16): anchor, asset, nf_0, nf_1, cm_out, v_in, v_out, clear_before, debt_root,
-                          cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, otag, sighash
-
-  Sighash fields per msg (after StakeFields): MsgDelegate validator,
-  amount, derth (6); MsgRestake validator; MsgUndelegate validator, amount,
-  pc, Bytes(ciphertext); MsgLockPosition validator, amount, splits;
-  MsgUpdatePosition position_id, splits; MsgUnlockPosition position_id;
-  MsgPositionVote position_id, proposal_id, options; MsgRedelegate
-  Bytes(src), Bytes(dst), amount, dst_derth (6), move_time (7).
-
-- **Lane A (every note-moving msg).** Spends at most two notes of the msg's
-  denom, at most one labelled, and creates exactly one note back (the
-  merged note, the change, or a zero note on a full exit: amount 0, a real
-  commitment). With nothing of ours to spend (a first delegation) slot 0 is
-  a padding input: amount 0, fresh rho and rcm, nullifier H(TAG_SNF, nk,
-  rho, 0), so nf_0 is never zero on a note-moving msg. Balance: Σ in −
-  exposed + (retained if it clears) + v_in = (out − its exposed) + v_out.
-  The output keeps the input's label unless the proof clears it. A
-  position's msg (update, vote) moves nothing: lane A all zero, asset 0.
-
-- **Clearing a label.** A labelled input whose `move_time < clear_before`
-  clears: the circuit reads the move's row in the debt tree at `debt_root`
-  (own leaf, or a low leaf proving absence) and the input counts as
-  amount − exposed + retained (retained = the row's, or all of exposed when
-  absent); the output is unlabelled. While the window is open the labelled
-  part (exposed) cannot leave: undelegate, lock and move take only
-  amount − exposed and the wallet refuses more up front with "moved stake
-  can move again after <date>" (date = move_time + window, UTC). Once
-  clearable, the haircut (exposed − retained) is shown on the confirm sheet
-  and sent as shown (a larger one by the time of sending is refused as
-  QuoteChanged, before proving).
-
-- **clear_before and debt_root on every stake proof (circuit audit L-1,
-  chain b46a4bb).** Every stake proof (Delegate, Restake, Undelegate,
-  LockPosition, UpdatePosition, UnlockPosition, PositionVote, Redelegate)
-  names Query/DebtTree's current `clear_before` and `root`, read when the
-  action starts, whether or not it clears: a proof naming them only to
-  clear would be linkable to the public redelegation into that validator.
-  The chain takes clear_before within [ClearBefore(now) − 3600,
-  ClearBefore(now)] and the current root (a slash changing it between the
-  read and the block refuses the tx at no cost: "try again" re-reads and
-  re-proves). Both are 0 only while the block time is below the window
-  (no real chain), as the chain then requires.
-
-- **Owner-tag salt (circuit audit L-2).** Fresh random on every proof that
-  does not act on a position (Delegate, Undelegate, Restake, Redelegate).
-  A lock's salt is salt_c of a new counter (§1: unpredictable, never
-  reused, restorable); update, vote and unlock reuse the position's.
-
-- **One note per validator; quotes.** MsgDelegate merges the delegated
-  ERTH into the validator's note (v_in = amount) and names `derth` (field
-  6), the derth the chain credits:
-
-      derth = floor(value × S / B) − ceil(floor(value × S / B) × 10 / 1e6)   (S = 0: value, B = 0 required)
-
-  from Query/Validator's backing B and supply S, asked when the user
-  reviews (the confirm sheet shows the derth). A rate that moved past the
-  margin is refused in the ante (1103, no cost). MsgRestake stays: two
-  notes of a validator into one, only on the user's tap (Earn "N notes ·
-  tap to merge"; offered when at most one of the two is labelled).
-
-- **Move stake (MsgRedelegate).**
-
-      MsgRedelegate {bundle (fee), src_validator, dst_validator, amount, stake, dst_derth (6), move_time (7)}
-
-  Lane A spends `amount` derth of src (free value only) with the change
-  back. The credit lane merges what arrives into the wallet's largest
-  unlabelled note at dst (cr_in; none: a padding input, so a second note
-  beside a labelled one) and creates a labelled note: move_key = the
-  credit nullifier (cr_nf), move_time = the LCD's latest block time
-  (the chain takes it within 600 s before its block, 1120 otherwise, no
-  cost), exposed = cr_v_in = dst_derth. Quote: u = floor(amount × B_src /
-  S_src) (at least min_delegation); what arrives is u when src is
-  BOND_STATUS_UNBONDED (x/staking, read for src only) and its queue
-  (Query/Validator state.pending_delegation) covers u, else u − 1,001
-  (the chain splits u pro rata between the queue and the bonded stake,
-  b46a4bb; a bonded part of at most 1,000 stays, x/staking may truncate
-  a uerth); dst_derth = the delegation formula on what arrives at dst's
-  book. Gas is simulated; the fee cap allows the pair's x/staking record at
-  its worst (1,024 entries × 5,000 + 128 × 20,000). The confirm sheet
-  shows the derth that arrives, the window and any haircut. Events:
-  `shieldedstaking_redelegate` carries credited, move_key, move_time; the
-  wallet never queries a move (Query/Redelegation is gone; Query/Move
-  never asked): the debt tree is read whole.
-
-- **Debt tree (zk/debt).** An indexed tree on the depth-32 Poseidon2 tree,
-  leaf i = H(Tag("earth.debtl"), key, next_key, next_index, retained), leaf
-  0 the sentinel; empty root = the sentinel alone (vectors `debt`). Read
-  only when a label is cleared or voted, whole: the indexer's
-  `{base}/debt_rows?from_index=` (rows [index, key hex, retained, height,
-  updated_height], `size`, `root`), else Query/DebtTree pages; built in
-  insertion order with the latest retained and checked against the LCD's
-  root (a mismatch drops the indexer's rows and rebuilds from the chain).
-
-- **Votes (two slots).** MsgStakeVote's vote_nullifiers are exactly two;
-  `debt_root` (11) is the current root on every vote and is last in the
-  sighash:
-
-      sighash fields: proposal_id, Bytes(validator), Bytes(OptionsBytes(options)), weight, vnf_0, vnf_1, debt_root
-      public inputs (9): note_root, nf_root, debt_root, asset, weight, proposal_id, vnf_0, vnf_1, sighash
-
-  A labelled note votes at its post-slash value (amount − exposed +
-  retained, the debt witness at debt_root); at most one labelled note per
-  vote. Spent notes' openings are kept (never pruned) so a note spent after
-  a snapshot still votes on it. An unused slot is zero (the circuit makes
-  its vnf 0: a vote using one slot is told apart from one using two).
-
-- **Unlock record.** §1: a value-0 pool note in the unlock's fee bundle.
-
-## 4a. Indexer URL scheme (backend README "URL scheme for wallets")
+**[backend; wallet rules]** (backend README "URL scheme for wallets").
 
 1. `GET /privacy/status` → `chain_id`, `genesis` (16 hex), `base`
-   (`/privacy/<chain_id>/<genesis>`, null until the indexer met its chain),
-   `halted` (non-null: the indexer stopped; the wallet refuses to sync).
-   **Base validation (K10).** A non-null `base` is accepted only if it is
-   byte for byte `/privacy/` + chain_id + `/` + genesis, with chain_id the
-   wallet's own (`[A-Za-z0-9][A-Za-z0-9._-]{0,63}`) and genesis
-   `[0-9a-f]{16}`, both as the same status names them; anything else (a
-   host, `//`, `@`, a scheme, `..`, a query, another chain) is refused before
-   any stream request, and every request URL must keep the indexer's own
-   scheme, host and port. A status whose `chain_id` is null or another
-   chain's is refused (no sync).
-2. The wallet's store records (chain_id, genesis). If the status names
-   another genesis for the same chain id (a relaunch), the wallet first asks
-   the LCD (K6): `GET /cosmos/base/tendermint/v1beta1/node_info`
-   (`default_node_info.network` must be the chain id) and
-   `GET /cosmos/base/tendermint/v1beta1/blocks/1` (the first 16 lowercase
-   hex digits of `block_id.hash` must be the status's genesis). Only a
+   (`/privacy/<chain_id>/<genesis>`, null until the indexer met its
+   chain), `halted` (non-null: the indexer stopped; the wallet refuses to
+   sync). A non-null `base` is accepted only if it is byte for byte
+   `/privacy/` + chain_id + `/` + genesis, with chain_id the wallet's own
+   (`[A-Za-z0-9][A-Za-z0-9._-]{0,63}`) and genesis `[0-9a-f]{16}`, both as
+   the same status names them; anything else (a host, `//`, `@`, a scheme,
+   `..`, a query, another chain) is refused before any stream request, and
+   every request URL keeps the indexer's own scheme, host and port. A
+   status whose `chain_id` is null or another chain's is refused.
+2. The store records (chain_id, genesis). If the status names another
+   genesis for the same chain id (a relaunch), the wallet first asks the
+   LCD: `GET /cosmos/base/tendermint/v1beta1/node_info`
+   (`default_node_info.network` must be the chain id) and `GET
+   /cosmos/base/tendermint/v1beta1/blocks/1` (the first 16 lowercase hex
+   digits of `block_id.hash` must be the status's genesis). Only a
    confirmed switch wipes the local trees, notes, cursors, records and the
    old chain's bookkeeping (claimed days, caretaker split, handle); it
    keeps the identity record (with its passport nullifier), the pending
    registration and the owner-tag counters, and the identity's leaf is
    re-verified against the resynced tree (shown as not live if it does not
    match; the record is never dropped). An unconfirmed switch (the LCD says
-   otherwise, or cannot say: block 1 pruned, LCD down) wipes nothing, syncs
-   nothing and is shown as unverified. A first sync (nothing stored) goes
-   ahead when the LCD cannot say, never when it contradicts the status.
-3. Every stream is read under `base`:
+   otherwise, or cannot say) wipes nothing, syncs nothing and is shown as
+   unverified. A first sync goes ahead when the LCD cannot say, never when
+   it contradicts the status. A store with no genesis recorded keeps its
+   identity record when the genesis is first recorded.
+3. Streams the wallet reads, under `base`:
 
-       GET {base}/notes?from_pos=&limit=               format 2: [position, height, cm, ciphertext, amount, owner_pk, rho, rcm] (§4h)
-       GET {base}/nullifiers?from_height=&limit=       [[height, [nf, ...]], ...]
-       GET {base}/identity?from_index=&limit=          [index, height, leaf, zeroed_height]
-       GET {base}/identity/zeroed?from_height=&limit=  [[height, [index, ...]], ...]
-       GET {base}/roots/latest                         {note, identity, stake: {root, tree_size, height, time}}
-       GET {base}/rates?epoch=                         [validator, rate, supply, epoch, height]
-       GET {base}/stake/notes?from_pos=&limit=         [position, height, cm, ciphertext, denom, amount, spc]
-       GET {base}/stake/nullifiers?from_height=&limit= [[height, [nf, ...]], ...]
-       GET {base}/stake/roots?from_height=&limit=      [height, root, tree_size, time]
-       GET {base}/stake/nullifier-tree?from_index=&limit=  [index, nullifier, height]   (from 0; leaf 0 never a row; size, next_index)
-       GET {base}/stake/snapshots?from_height=&limit=  [height, proposal_id, root, tree_size, nf_root, nf_size]
+       GET {base}/notes?from_pos=&limit=               format 2 (below)
+       GET {base}/nullifiers?from_height=&limit=       blocks [[height, [nf, …]], …]
+       GET {base}/identity?from_index=&limit=          leaves [index, height, leaf, zeroed_height, time?]; size
+       GET {base}/identity/zeroed?from_height=&limit=  blocks [[height, [index, …]], …]
+       GET {base}/roots/latest                         {note, identity, stake: {root, tree_size, height, time}}, synced_height
+       GET {base}/rates?epoch=                         [validator, rate, supply, epoch, height]   (Earn display)
+       GET {base}/stake/notes?from_pos=&limit=         notes [position, height, cm, ciphertext]
+       GET {base}/stake/nullifiers?from_height=&limit= blocks [[height, [nf, …]], …]
+       GET {base}/stake/nullifier-tree?from_index=&limit=  nullifiers [index, nullifier, height]; size, next_index
+       GET {base}/debt_rows?from_index=&limit=         rows [index, key, retained, height, updated_height]; size, root
+       GET {base}/handles?from_index=&limit=           handles [handle, address, status, expires_at, renewal_until, owner]; height, size, last_page
 
-   A 404 means the base moved: re-read the status (step 1) and retry once.
-   Response bodies are capped (8 MiB decompressed) and nested at most 64
-   arrays/objects deep, checked before parsing (audit 4, M7: Android's
-   org.json recurses without a cap); a redirect is never followed (both
-   platforms; a 3xx is an error), for the LCD as for the indexer. A 503
-   (the indexer's in-flight cap) or 429 (a client's rate) is retried after
-   Retry-After, or 1, 2, 4, 8 s (at most 30 s), four times, then the sync
-   fails like any other.
-   **Paging rule (backend audit 4, B3).** `limit` is 100 or 1000 (the
-   wallet always asks 1000); a position or index cursor (`notes`,
-   `identity`, `stake/notes`, `stake/nullifier-tree`) is a multiple of the
-   limit and page k is exactly [k·limit, (k+1)·limit). The wallet asks
-   for the page holding its cursor, `from = next − next % limit`, and
-   drops the rows it holds (a held note or stake note row must be the
-   leaf held, else inconsistent); a full page is followed by the next, a
-   short one is the tip. A position page carries at most `limit` rows. A
-   height page (nullifiers, identity/zeroed, stake/nullifiers,
-   stake/snapshots) keeps a free `from_height` and never splits a block,
-   so it may exceed the limit by one block (at most 5000 rows).
-   **Heights bounded by the chain (audit 4, M1).** Every height an indexer
-   page names (a row's height or zeroed_height, `synced_height`,
-   `next_height` − 1, every `/roots/latest` height) must be at most the
-   LCD's latest height + 10 (read again once when exceeded: the chain
-   moved); past it the page is inconsistent and nothing from it is kept, so
-   no persisted cursor can be pushed past the chain.
-   **Paging (audit 3).** A position page (notes, stake notes) must name
-   `next_pos` = from + rows, and one marked complete (more follows) must
-   carry rows; a height page never names a `next_height` below its
-   `from_height` (nor equal to it when complete) and holds no earlier
-   height. Anything else is inconsistent (the wallet starts over once,
-   then stops). One sync, its retries included, gives up after 10 minutes.
-   The identity stream's optional fifth column `time` is the leaf's block
-   time (§3a restore).
+   Position and height pages carry `next_pos` / `next_index` /
+   `next_height`, `complete` and `synced_height`.
 
-A minted stake note row has denom, amount and spc and (fced976 on) its blind
-stake ciphertext; a created one its wallet stake ciphertext and nulls.
+   **Notes format 2** (backend README "Note stream format 2"). Every
+   `/notes` page has `"format": 2` and `"fields": ["position", "height",
+   "cm", "ciphertext", "amount", "owner_pk", "rho", "rcm"]`; the wallet
+   reads columns by name and refuses a page of any other format or one
+   missing a column. Three kinds of row: a bundle output (`amount` null,
+   `ciphertext` set); a minted or shielded note (`amount` and `ciphertext`
+   set); an open note (`ciphertext` null; `amount`, `owner_pk`, `rho`, `rcm`
+   set, hex). A row with part of an opening, an opening beside a
+   ciphertext, or an open row without an amount is refused (the page is
+   inconsistent). Matching is local over the whole stream; no request ever
+   names an owner_pk. A public amount is `<digits><denom>` with the denom
+   matching the SDK rule `[a-zA-Z][a-zA-Z0-9/:._-]{2,127}` and never
+   starting `asset/`; anything else and the row is not opened against it.
 
-## 4b. Root verification against the chain (C3, K8, K9)
+4. **Transport.** A 404 means the base moved: re-read the status and retry
+   once. Response bodies are capped (8 MiB decompressed) and nested at most
+   64 arrays/objects deep, checked before parsing; a redirect is never
+   followed (a 3xx is an error), for the LCD as for the indexer. A 503 (the
+   indexer's in-flight cap) or 429 is retried after max(Retry-After,
+   2^(attempt − 1) s), at most 30 s, four times, then the sync fails.
+5. **Paging rule.** `limit` is 100 or 1000 (the wallet always asks 1000); a
+   position or index cursor (`notes`, `identity`, `stake/notes`,
+   `stake/nullifier-tree`, `debt_rows`, `handles`) is a multiple of the
+   limit and page k is exactly [k·limit, (k+1)·limit). The wallet asks for
+   the page holding its cursor, `from = next − next % limit`, and drops the
+   rows it holds (a held note or stake note row must be the leaf held, else
+   inconsistent); a full page is followed by the next, a short one is the
+   tip. A position page carries at most `limit` rows, must name `next_pos` =
+   from + rows, and one marked complete must carry rows. A height page
+   (nullifiers, identity/zeroed, stake/nullifiers) keeps a free
+   `from_height`, never splits a block (so it may exceed the limit by one
+   block; at most 5000 rows), never names a `next_height` below its
+   `from_height` (nor equal to it when complete), and holds no earlier
+   height. Anything else is inconsistent (the wallet starts over once, then
+   stops). One sync, its retries included, gives up after 10 minutes.
+6. **Heights bounded by the chain.** Every height an indexer page names (a
+   row's height or zeroed_height, `synced_height`, `next_height` − 1, every
+   `/roots/latest` height) must be at most the LCD's latest height + 10
+   (read again once when exceeded); past it the page is inconsistent and
+   nothing from it is kept. An identity row's `time` is a block time of
+   this chain or the page is inconsistent: at least 1,735,689,600
+   (2025-01-01) and at most the LCD tip's block time + 3600 s.
+
+## 18. Verification against the chain
 
 **What is trusted.** The operator runs both the indexer (api.erth.network)
 and the LCD (lcd.erth.network); the wallet has no light client and does not
-check consensus signatures, so the LCD is trusted for chain state. What the
-checks below buy is that a compromised or broken *indexer* alone cannot make
+check consensus signatures, so the LCD is trusted for chain state. The
+checks below make sure a compromised or broken *indexer* alone cannot make
 the wallet build on, or show as verified, trees the chain does not have; an
-operator controlling both the indexer and the LCD could still lie
-consistently (it could not forge spends: every proof is checked by the
-validators, so a forged tree only yields proofs the chain refuses).
+operator controlling both could still lie consistently (it could not forge
+spends: every proof is checked by the validators).
 
-**Sync generations (audit 3).** Before a sync's first request the wallet
-bumps its sync generation, clears "verified" and persists both; only the
-root checks at the end of that same sync mark that generation verified. A
-sync that fails part way (an indexer that serves forged notes and then
-breaks a later stream) leaves the wallet unverified, and every private tx
-needs the latest generation verified.
+**Sync generations.** Before a sync's first request the wallet bumps its
+sync generation, clears "verified" and persists both; only the root checks
+at the end of that same sync mark that generation verified. Every private
+tx needs the latest generation verified.
 
 After each sync the wallet checks every local root against the LCD:
 
-- note tree: `GET /earth/shielded/v1/roots/{root hex}`. A record whose
-  `tree_size` differs from the local size is a mismatch. No record is
-  **unverified, not a mismatch** (K8): x/shielded prunes roots after its
-  window (14 days), so an indexer far behind and a forged root look the
-  same; `valid` false (no longer an anchor) is unverified too.
-- identity tree: `GET /earth/personhood/v1/identity_tree` at height H (header
-  `x-cosmos-block-height`, H = the indexer's `roots/latest.identity.height`)
-  must give `size` = local size and `latest_root` = local root;
-- stake tree: `GET /earth/shieldedstaking/v1/stake_tree` at the indexer's
-  stake root height likewise (an empty tree: size 0, root empty).
-- **Pinned heights (K9).** A tree read counts as pinned only if the
-  response's `x-cosmos-block-height` header echoes exactly H. A pinned read
-  that differs is a mismatch. If H is unavailable (pruned) or another height
-  is echoed, the latest state is read instead (both platforms, never
-  silently: it is marked unpinned); an unpinned read verifies equal trees and
-  otherwise leaves the roots **unverified** (a zeroing after H changes the
-  identity root at the same size), never a mismatch.
-- **Nullifier sample (K9).** Up to 4 pool and 4 stake nullifiers, drawn
+- **Note tree:** `GET /earth/shielded/v1/roots/{root hex}`. A record whose
+  `tree_size` differs from the local size is a mismatch. No record, or
+  `valid` false, is **unverified, not a mismatch** (x/shielded prunes roots
+  after its window, 14 days). The record's `height` must be the indexer's
+  `roots/latest.note.height`, else unverified.
+- **Identity tree:** `GET /earth/personhood/v1/identity_tree` at height H
+  (header `x-cosmos-block-height`, H = the indexer's
+  `roots/latest.identity.height`) must give `size` = local size and
+  `latest_root` = local root.
+- **Stake tree:** `GET /earth/shieldedstaking/v1/stake_tree` at the
+  indexer's stake root height likewise (an empty tree: size 0, root empty).
+- **Pinned heights.** A tree read counts as pinned only if the response's
+  `x-cosmos-block-height` echoes exactly H. A pinned read that differs is a
+  mismatch. If H is unavailable or another height is echoed, the latest
+  state is read instead (marked unpinned); an unpinned read verifies equal
+  trees and otherwise leaves the roots unverified, never a mismatch.
+- **The indexer's claimed height.** `GET /earth/shielded/v1/tree` at the
+  indexer's `roots/latest.synced_height` (pinned) must hold exactly the
+  local note tree's size; unverified otherwise; an unpinned read is not used.
+- **Nullifier sample.** Up to 4 pool and 4 stake nullifiers, drawn
   uniformly (reservoir) from everything the nullifier streams delivered in
   this sync, are asked of `GET /earth/shielded/v1/nullifiers/{hex}` and
   `GET /earth/shieldedstaking/v1/stake_nullifiers/{hex}`; one the chain says
-  is not spent leaves the roots unverified. The wallet never asks about its
-  own nullifiers (that would name its notes): they are left out of the
-  sample.
-- **Note root height (audit 4).** The record's `height` (the block that
-  produced the root) must be the indexer's `roots/latest.note.height`;
-  otherwise unverified.
-- **The indexer's claimed height (audit 4, M1).** `GET
-  /earth/shielded/v1/tree` at the indexer's `roots/latest.synced_height`
-  (pinned as above) must hold exactly the local note tree's size: a stale
-  indexer naming the current height is caught (every spend appends
-  notes). Unverified otherwise; an unpinned read is not used.
-- **Indexer behind the tip (K9).** If the LCD's latest block
+  is not spent leaves the roots unverified. The wallet's own nullifiers are
+  never in the sample.
+- **Indexer behind the tip.** If the LCD's latest block
   (`/cosmos/base/tendermint/v1beta1/blocks/latest`) is more than 30 blocks
-  past the indexer's synced height (now checked as above), the roots are
-  unverified ("the indexer is N blocks behind"). An LCD that cannot say
-  its height leaves them unverified.
+  past the indexer's synced height, the roots are unverified ("the indexer
+  is N blocks behind"); an LCD that cannot say its height leaves them
+  unverified.
 
 A local tree larger than the indexer's latest, or one of the same size with
 another root, is inconsistent: the wallet starts over from an empty store.
 A local tree that differs from the indexer's latest is resynced once; a
 mismatch wipes the synced data and is shown. Unverified roots block every
-private tx (no proof is built on them) and are shown as such next to the
-private balances, stake and registration until a later sync verifies them.
+private tx and are shown next to the private balances, stake and
+registration until a later sync verifies them. `verified_height` (the
+indexer height of the last verified sync) is kept across resets.
 
-## 4c. Wallet behaviors (audit 3)
+Untrusted numbers from the LCD or indexer (tree sizes, params, durations,
+epochs, a snapshot ahead of the local tree) are parsed bounded and refused,
+never trapped on or wrapped.
 
-- **Nothing unasked (chain 48b631c, user rule).** The wallet broadcasts
-  only a tx the user confirmed on its sheet: no automation, no background
-  run, no follow-up tx added to a confirmed one (a stake that needs merging
-  first is refused with "merge first"; a merge is its own sheet). An
-  undelegation pays out by itself (§4j); the day's ANML claim, the
-  caretaker vote and the handle are **reminders** (Home banners and the
-  Handle screen): "ANML ready to claim" when today's claim is open and not
-  made; the caretaker vote from 30 days before its expires_at until 30
-  days after; the handle from 30 days before expires_at through its
-  renewal period. Sync, the reminders and the payout bookkeeping send
+## 19. Sync and restore
+
+**One note-discovery rule.** A pool note row is ours iff: a 217-byte
+ciphertext opens as v1 (cm-bound); a 177-byte one opens as v2 against the
+row's public amount (rows without an amount are skipped); or it is an open
+note with our owner_pk whose opening recomputes its cm. A stake note row is
+ours iff its 201-byte ciphertext opens as the wallet stake note v2.
+Value-0 notes are read for their memo record (§6) and dropped; a zero stake
+note is dropped. Nothing else: a restore from the mnemonic alone finds
+every note. A row that cannot be opened is skipped, never thrown on; a
+page's rows are opened before the tree grows. Nullifiers are read up to the
+height the notes reached; identity leaves are synced no higher than the
+notes.
+
+**Denoms.** A denom is learned (asset id → denom, for v1 and stake
+ciphertexts) only from a note of this wallet's whose cm it reproduces, or
+from the chain's asset list (`GET /earth/shielded/v1/assets`, every page, at
+most 4,096 entries, each learned only if its `asset_id` is
+`AssetID(denom)`), read at most once a sync and only when a note of ours
+carries an id the wallet cannot resolve. The persisted `denoms` are the
+denoms of the notes held (at most 4,096). A held note named `asset/<hex>`
+whose id becomes known is renamed (same asset, same cm).
+
+**State records.** Applied in note order: the newest record of each kind
+sets the store's handle (or none, or moved out) and split (with its expiry,
+at most now + 10 years; a split the wallet already holds keeps the chain's
+own later expiry), unless a newer one was already applied (a reset keeps
+that cursor, so a resync never rolls back what the wallet did since) or the
+record's height is one where the wallet saw its own tx fail in its block. A
+record lands with its fee bundle, so one whose msg then fails in its block
+still lands; the wallet voids it when it sees the failure, and otherwise the
+chain refuses what follows from it at no cost. A HOLDS record settles an
+incoming move, a MOVED_OUT one an outgoing move.
+
+**Restore of the registration.** No query names it. Every tagged
+registration record found keeps, as the identity stream passes them, the
+identity leaves appended at its block height h (at most 64). Records are
+matched only after the same sync's root checks verified the identity tree
+(an unverified sync keeps the leaves for a later one). Then, once a sync,
+newest record first, stopping at the newest that matched, each candidate
+time is tried with every country (the hint, unknown, then every A..Z pair:
+677 countries) and both predecessor_at candidates (0, or the time itself):
+at most 1,354 hashes a leaf.
+
+1. **Block time from the indexer.** activated_at is exactly the
+   registration block's time; the identity rows' optional fifth column
+   `time` gives it. The LCD is never asked about the registration's block
+   alone.
+2. **Block time from the LCD, with a cover set.** When the rows carry no
+   time (or it did not match), the LCD is asked for 16 block times (`GET
+   /cosmos/base/tendermint/v1beta1/blocks/{h}`, `block.header.time`, the
+   header's height must be h): h and 15 other heights, in a shuffled order.
+   The decoys are drawn first from a persisted uniform sample (256) of the
+   identity rows' heights, then uniformly from [1, min(the synced height,
+   the LCD's tip)]; never a height past the tip. The set is chosen once and
+   persisted with the record (a retry asks the same set; at most 3 fetches;
+   once answered, never again). Known and unmatched, the record is given up
+   (EXHAUSTED). Residual: an LCD that also runs the indexer sees 16
+   registration blocks asked together.
+3. **Fallback (no block time at all).** built_at is searched outward (0,
+   +1, −1, +2, …), the hint and unknown over [built_at − 3600, built_at +
+   86400], then every other country over [built_at − 600, built_at + 3600].
+   The search is resumable and bounded: the cursor and the hashes spent are
+   persisted with the record, each sync spends at most 50,000 leaf hashes
+   over all records, and a record that spent 8,000,000 is given up. A
+   device clock off by more than the windows is only found by steps 1-2.
+
+Every exact time tried is recorded; a time not tried before is still tried
+after the record was given up, more leaves at its height reopen it, and a
+store reset finds every record afresh. Times and sums are checked (no wrap,
+no trap); a candidate outside the block-time range is skipped. A match gives
+leaf_index, dsc_key, country, activated_at and predecessor_at: the identity
+record (passport nullifier left empty; nothing needs it), marked
+`verified`. A same-chain reset keeps only a verified identity record; a
+match at the identity's own index replaces it. A registration whose record
+note is missing (an older app) cannot be restored and must register again
+(a switch to the same passport is allowed; a switch to the same idc is
+refused by the chain only while the old leaf is live).
+
+## 20. Wallet behaviour
+
+- **Nothing unasked.** The wallet broadcasts only a tx the user confirmed on
+  its sheet: no automation, no background run, no follow-up tx added to a
+  confirmed one (a stake that needs merging first is refused; a merge is
+  its own sheet). Sync, the reminders and the payout bookkeeping send
   nothing. A chain of sheets (a switch's handle and caretaker moves, a
   stake vote's validators and positions) raises the next sheet only after
   the last tx went through, and each is sent only on its own tap.
-- **Saved state.** state.json is written to a temp file, fsynced and
-  renamed over (iOS: atomic write); a failed save is an error, never
-  silent. An unreadable state.json is an error shown to the user, never
-  replaced by an empty wallet.
+- **Reminders** (Home banners and the Handle screen): "ANML ready to claim"
+  when today's claim is open and not made; the caretaker vote from 30 days
+  before its expires_at until 30 days after; the handle from 30 days before
+  expires_at through its renewal period; a handle naming this wallet's
+  address that it does not hold. All reminder arithmetic saturates.
+- **Saved state.** state.json is written to a temp file, fsynced and renamed
+  over (iOS: atomic write); a failed save is an error, never silent. An
+  unreadable state.json is an error shown to the user, never replaced by an
+  empty wallet. iOS marks the privacy directory excluded from backup.
+- **One store per wallet.** The app keeps one wallet object and one store
+  per wallet per process, across lock and unlock.
 - **Forgetting a wallet** deletes its `privacy/<id>/` directory (notes,
-  identity, records, trees): every file overwritten with zeros, synced,
-  then unlinked. Android (no wallet removal) offers it as Settings →
-  "Forget private data" (audit 4); iOS on forgetting the wallet.
-
-## 4f. Wallet behaviors (audit 4)
-
-- **Restore matching only on verified trees (M5).** Registration records
-  are matched to identity leaves only after the same sync's root checks
-  verified the identity tree; an unverified sync keeps the leaves for a
-  later one. The identity record carries `verified` (matched on a verified
-  tree, resolved from its own committed tx, or found live in one); a
-  same-chain reset keeps only a verified one (an older store's is dropped
-  and found again from its record note). A match at the identity's own
-  index replaces it.
-- **claimOpensAt** and every time sum are checked (no wrap, no trap): an
-  activated_at with no answer gives none.
-- **Gas grant proof of work.** The wallet works for at most 24 bits; a
-  server asking more is refused (iOS: the work stops when the request is
-  cancelled).
-- **Fees.** The registration's fee is bounded by its confirm sheet's like
-  every private tx (a higher one re-shows the sheet). A stake undelegation
-  or lock that needs its notes merged first is refused (round 7: no merge
-  is added to a confirmed action).
+  identity, records, trees): every file overwritten with zeros, synced, then
+  unlinked. Android offers it as Settings → "Forget private data"; iOS on
+  forgetting the wallet.
+- **PIN change (Android)** needs a fresh unlock with the current secret
+  (counted against the unlock backoff).
 - **Logs.** Proof timings are logged in debug builds only.
-- **SRS.** The bundled privacy SRS (srs/bn254_g1_32769.dat, 32,769 points)
-  is checked by SHA-256 (d769ac6c…e99c) before use on both platforms; iOS
-  no longer downloads a privacy SRS when the bundled one is missing (a
-  private proof fails with a clear error instead). The passport SRS
-  prefetch (iOS) is streamed to a staged file, hashed as it comes and cut
-  off at the range's 524,289 × 64 bytes; no redirect is followed.
-- **Secrets (iOS).** Every SecRandomCopyBytes status is checked; the
-  phrase's bytes and the BIP-39 seed are zeroed once the keys are derived
-  (the phrase as a String cannot be).
-- **Vote run session (iOS, M4).** A lock, wallet switch or forget that
-  lands while a stake vote is starting or resuming stops it (a session
-  counter checked under the controller's lock before launch and at every
-  step); a suspended run reports no more progress.
-- **A store from before K6** (same chain id, no genesis recorded) keeps its
-  identity record when the genesis is first recorded (as a confirmed
-  switch: synced data goes, the registration stays).
-- **Untrusted numbers** from the LCD or indexer (tree sizes, params,
-  durations, epochs, a stake snapshot ahead of the local tree) are parsed
-  bounded and refused, never trapped on or wrapped: a snapshot past the
-  local stake tree is "sync first".
+- **Chain errors** are explained in plain words (`ChainErrors`, matched by
+  codespace and code), among them the no-cost ante refusals:
+  shieldedstaking 1103 (a delegation or move quote the rate outran), 1120
+  (a move_time too old), 1113 (a stale clear_before), shielded 1103 ("pick a
+  newer anchor"), and the predecessor bound (§14).
 
-## 5. Off-device parity
+## 21. Off-device parity
 
-`WalletFlowTest` drives two wallets against an in-memory chain (bundles with
-real binding-signature checks, the stake tree, the fced976 fee and
-ciphertext rules); with `PRIVACY_TOML_OUT=<dir>` it writes every witness as
-`<dir>/{action,stake,membership,vote}/<test>_<i>/Prover.toml`. `nargo execute` on
-circuits/action, circuits/stake, circuits/membership and circuits/vote accepts
-all of them. `StakeVoteFlowTest` ports the chain's TestStakeVoteConcurrentProposals
-(one note on two open proposals, a second vote refused locally and by the
-chain for a restored wallet, a note spent before the snapshot refused
-locally, one restaked after it still voting while its outputs cannot), the
-LCD fallback, a forged nullifier stream and the weight rule; one vote
-witness was proven with bb v5.0.0 and verified against the chain's vote VK.
-`HandlesTest` (round 5) drives handles (claim, taken, renew, change, release,
-lapse), paying a handle from the whole directory (a forged indexer entry
-refused), a registration referred by a handle (the referral note found by
-the referrer), a switch that moves the handle and caretaker vote, and every
-predecessor bound; its membership witnesses (switched identities, no-bound
-inputs) pass `nargo execute` with the rest (231 witnesses).
-`Fix6Test` / `Fix6Tests` (chain 203d3b2) drive the open referral note (found
-by owner_pk and cm, a forged cm refused, spent), notes format 2 (by name,
-format 1 and partial openings refused), a split payout's shared ciphertext
-at three positions, a handle in its renewal period and a lapsed split
-(bounded or refused locally, nothing sent), lease bounds after a lease cut,
-inconsistent lease bounds, an anchor about to lapse, the rounded-up fee and
-the new errors. At 203d3b2 every witness of the Android suite (440) and of
-the iOS suite (416) passes `nargo execute`. `Fix7Test` / `Fix7Tests` (chain
-48b631c) drive the chain-id binding (pinned 148b3513...4159), an
-undelegation naming its payout (no stake note minted, spc_ciphertext
-empty), a payout split over three notes found whole (and by a restored
-wallet) with nothing sent, refused and failed undelegations forgotten, the
-four-slot vote (10 public inputs, unused slots zero), RoundVoteWeight
-against the chain, the 5x gas ceiling on every committed tx, send-disabled
-refusals and the new errors, and a sync that never sends anything;
-`StakeVoteFlowTest` covers one vote per validator, a fifth note in a second
-part, and a restored wallet learning its votes from refusals. At 48b631c
-every witness of the Android suite (505, 12 of them four-slot votes) and of
-the iOS suite (481) passes `nargo execute`, and ProverGate proves and
-verifies all of them with VKs equal to the chain's genesis keys.
+`WalletFlowTest` / `WalletFlowTests` drive two wallets against an in-memory
+chain (FakeChain: real binding-signature checks, the stake and debt trees,
+the fee, ciphertext, canonical-bytes, gas-limit (≤ 5× used) and
+send-disabled rules, handles, leases, moves, predecessors). With
+`PRIVACY_TOML_OUT=<dir>` every witness is written as Prover.toml, and
+`nargo execute` (1.0.0-beta.22) on circuits/action, stake, membership and
+vote accepts all of them: Android 553 (403 action, 100 stake, 36 membership,
+14 vote), iOS 529 (385, 100, 30, 14) at chain dff3a9b/b46a4bb. ProverGate
+(`PRIVACY_TOML_DIR`) proves and verifies every stake and vote witness of both
+platforms with VKs equal to the chain's genesis keys. Suites: `StakeVoteFlowTest`
+(concurrent proposals, refusals, restored wallets learning votes, the
+snapshot nullifier tree, the weight rule), `HandlesTest`, `Fix6Test`,
+`Fix7Test`, `Fix8Test` (stake note v2, moves, debt tree, clear_before) and
+their iOS twins, plus the audit suites (`AuditFixesTest`, `ReauditFixesTest`,
+`Audit3Test`…`Audit6Test`).
