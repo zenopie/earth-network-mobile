@@ -27,6 +27,8 @@ message MsgAddLiquidity {
   uint64 pool_id = 2;
   cosmos.base.v1beta1.Coin amount_a = 3;
   cosmos.base.v1beta1.Coin amount_b = 4;
+  // The fewest shares the depositor accepts, a decimal integer ("" none).
+  string min_shares = 5;
 }
 
 // pc receives the token leg as a note, for a pool whose token is

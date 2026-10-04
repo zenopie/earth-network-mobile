@@ -177,6 +177,18 @@ object SwapMath {
         amountOut * BigInteger.valueOf((10_000 - bps).toLong()) / BigInteger.valueOf(10_000)
 
     /**
+     * The fewest LP shares a deposit of [erthIn] + [tokenIn] accepts
+     * (MsgAddLiquidity / MsgAddLiquidityShielded min_shares): what x/dex's
+     * deposit() mints over reserves [re], [rt] and share supply [supply],
+     * min(e*S/Re, t*S/Rt) floored, less [bps]. "" (no bound) for an empty
+     * pool, which seeds at sqrt(erth x token) instead.
+     */
+    fun minShares(erthIn: BigInteger, tokenIn: BigInteger, re: BigInteger, rt: BigInteger, supply: BigInteger, bps: Int): String {
+        if (supply.signum() == 0 || re.signum() == 0 || rt.signum() == 0) return ""
+        return withSlippage(minOf(erthIn * supply / re, tokenIn * supply / rt), bps).toString()
+    }
+
+    /**
      * How much worse the trade's average price is than the pool's marginal one.
      *
      * Worth showing because these pools are small: a trade that would be

@@ -152,10 +152,15 @@ object Dex {
         return EarthTx.anyOf("/earth.dex.v1.MsgSwap", msg)
     }
 
-    fun msgAddLiquidity(creator: String, poolId: Long, denomA: String, amtA: String, denomB: String, amtB: String): ProtoAny {
+    /**
+     * [minShares]: the fewest shares the deposit accepts (field 5, audit 6
+     * M9), computed as the shielded deposit's; "" only for an empty pool.
+     */
+    fun msgAddLiquidity(creator: String, poolId: Long, denomA: String, amtA: String, denomB: String, amtB: String, minShares: String): ProtoAny {
         val msg = MsgAddLiquidity.newBuilder()
             .setCreator(creator).setPoolId(poolId)
             .setAmountA(coin(denomA, amtA)).setAmountB(coin(denomB, amtB))
+            .setMinShares(minShares)
             .build()
         return EarthTx.anyOf("/earth.dex.v1.MsgAddLiquidity", msg)
     }

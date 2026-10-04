@@ -1078,6 +1078,8 @@ internal fun EarthContent(
                                     erthIn.toString(),
                                     pool.tokenDenom,
                                     tokenIn.toString(),
+                                    // Audit 6 (M9): the same bound as the shielded deposit's.
+                                    minShares(pool.id, erthIn, tokenIn),
                                 )
                             } else {
                                 // The ANML leg is paid as a note to us.
@@ -1223,19 +1225,17 @@ internal fun EarthContent(
 }
 
 /**
- * The fewest LP shares a shielded pool deposit accepts: the shares the pool
- * would mint now (the chain's deposit maths over the current reserves and
- * share supply), less 1% for trades landing first. Blocking; "" (no bound)
- * for an empty pool, which seeds at sqrt(erth x token) instead.
+ * The fewest LP shares a pool deposit accepts (public and shielded alike):
+ * the shares the pool would mint now (the chain's deposit maths over fresh
+ * reserves and share supply), less 1% for trades landing first. Blocking;
+ * "" (no bound) only for an empty pool, which seeds at sqrt(erth x token)
+ * instead. Audit 6 (D7): a pool or supply the node cannot read refuses the
+ * deposit rather than sending it unbounded.
  */
 private fun minShares(poolId: Long, erthIn: java.math.BigInteger, tokenIn: java.math.BigInteger): String {
-    val pool = Dex.pools().firstOrNull { it.id == poolId } ?: return ""
+    val pool = Dex.pools().firstOrNull { it.id == poolId } ?: throw IllegalStateException("could not read pool $poolId to bound the deposit; try again")
     val supply = network.erth.wallet.privacy.chain.PrivacyQueries.lpShareSupply(poolId)
-    val re = pool.erthReserve.toBigInteger()
-    val rt = pool.tokenReserve.toBigInteger()
-    if (supply.signum() == 0 || re.signum() == 0 || rt.signum() == 0) return ""
-    val shares = minOf(erthIn * supply / re, tokenIn * supply / rt)
-    return SwapMath.withSlippage(shares, 100).toString()
+    return SwapMath.minShares(erthIn, tokenIn, pool.erthReserve.toBigInteger(), pool.tokenReserve.toBigInteger(), supply, 100)
 }
 
 /** Which direction the stake sheet was opened in. */
