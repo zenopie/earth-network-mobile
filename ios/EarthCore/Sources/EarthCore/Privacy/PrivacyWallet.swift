@@ -22,8 +22,8 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// simulated fee shows the sheet again at it). Two actions, a stake or
     /// membership proof, the tx's bytes and the 10% headroom fit under it.
     public static let privateGasEstimate: UInt64 = 10_000_000
-    /// A handle bind's: the chain prices it as nine note writes (chain
-    /// 203d3b2), 1.2M more than `privateGasEstimate`'s
+    /// A handle bind's: the chain prices it as nine note writes, 1.2M more
+    /// than `privateGasEstimate`'s
     /// membership, with a three-action fee bundle (the state record). As Android.
     public static let bindHandleGasEstimate: UInt64 = 12_500_000
     /// Slack against the chain's clock for bounds the wallet must stay under.
@@ -84,7 +84,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         /// Moves in flight, either way, and the wallet a switch's moves went to.
         public let pendingMoves: [PendingMove]
         public let switchTarget: String
-        /// Undelegations waiting for their payout (local only; chain 48b631c).
+        /// Undelegations waiting for their payout (local only).
         public let pendingUnbonds: [PendingUnbond]
         public let syncedHeight: UInt64
         /// A committed registration whose leaf is not matched yet (nil: none), and why, if it failed.
@@ -321,7 +321,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     @TaskLocal public static var shownFee: UInt64?
 
     /// Whether the local note tree's root, every bundle's anchor, stays an
-    /// anchor long enough (chain 203d3b2): CheckTx refuses one lapsing within
+    /// anchor long enough: CheckTx refuses one lapsing within
     /// 120 s of the last block, and a proposer leaves out a tx whose anchor
     /// lapsed by its block. `anchorMargin` covers proving and the tx's
     /// timeout_height on top. Nil: the node could not say (the chain's own
@@ -443,7 +443,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// The identity is too recent for this action (or replaced another too recently); it opens `waitSeconds` from now.
     /// `notHeld`: a renewal or refresh sent with no bound, by an identity whose own bound has not
     /// passed, which the chain refused (in its ante, before any fee): this identity holds nothing there.
-    /// `lapsed` (chain 203d3b2): held but not live, so bounded like a claim, which this identity cannot make yet;
+    /// `lapsed`: held but not live, so bounded like a claim, which this identity cannot make yet;
     /// refused before anything was sent (a handle in its renewal period, a caretaker split past its expiry).
     public struct NotYet: Swift.Error, LocalizedError {
         public enum Lapsed: Sendable, Equatable { case handle(String), caretaker }
@@ -587,7 +587,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// /gas/register note (its ciphertext is not bound). `referrer`, when the
     /// registrant names one, is a handle, bound into the affiliate field as
     /// H(TAG_AFFILIATE, Bytes(handle)); the chain mints the referrer's half
-    /// itself, to the address the handle resolves to (chain 203d3b2).
+    /// itself, to the address the handle resolves to.
     public struct RegistrationPrep: Sendable {
         public let anml: NoteOut
         public let erth: NoteOut
@@ -784,7 +784,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// (nil), and the chain checks that in its ante, before any fee: a
     /// renewal or refresh of a live one goes through, anything else is
     /// refused at no cost (`boundAttempt` says why, with the wait). Held but
-    /// known lapsed (`held` false; chain 203d3b2: a handle in its renewal
+    /// known lapsed (`held` false; a handle in its renewal
     /// period, a split past its expiry) needs the bound like a claim, so
     /// NotYet(`lapsed`) is thrown before anything is sent.
     private func leaseStatement(bound: UInt64, held: Bool?, lapsed: NotYet.Lapsed) throws -> (UInt64, Int64?) {
@@ -832,8 +832,8 @@ public final class PrivacyWallet: @unchecked Sendable {
 
     /// Whether the split this wallet holds is live at chain time `t`: true, or
     /// false when the chain's own expiry has passed (a lapsed split the sweep
-    /// has not reached is not held: refreshing it is a new split, bounded;
-    /// chain 203d3b2), nil when it holds none or knows only an estimate.
+    /// has not reached is not held: refreshing it is a new split, bounded),
+    /// nil when it holds none or knows only an estimate.
     private func caretakerHeldLive(at t: Int64) async -> Bool? {
         let snap = snapshot
         if snap.caretakerSplit.isEmpty && !snap.caretakerSplitUnknown { return nil }
@@ -1139,7 +1139,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         let mx = await maxActions()
         // The lease this bind gets (Params), validated before anything is sent.
         let leaseNow = try Self.leaseParam(try await reads.personhoodParams().handleLeaseSeconds, "handle lease")
-        // Chain 203d3b2: only a live handle renews or changes unbounded; one in its
+        // Only a live handle renews or changes unbounded; one in its
         // renewal period is bounded like a claim, by the longest lease ever in force.
         let lb = try await leaseBounds()
         return try await locked {
@@ -1190,7 +1190,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         return !s.handle.isEmpty && s.handleExpiresFor == s.handle ? s.handleExpiresAt : 0
     }
 
-    /// Chain 203d3b2: MsgMoveHandle moves only a live handle. Nothing was sent.
+    /// MsgMoveHandle moves only a live handle. Nothing was sent.
     public struct HandleNotMovable: Swift.Error, LocalizedError {
         public let handle: String
         public var errorDescription: String? {
@@ -1231,7 +1231,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             try require(newOwner != PrivacyHash.scopeNullifier(idSecret: keys.idSecret, scope: PrivacyHash.handleScope()), "the new owner is this identity")
             if let target { try require(newOwner == Self.newOwner(target, scope: PrivacyHash.handleScope()), "new_owner is not the target wallet's") }
             try checkNoMove(PendingMove.handleKind)
-            // Chain 203d3b2: MsgMoveHandle refuses a handle that is not live (its renewal period).
+            // MsgMoveHandle refuses a handle that is not live (its renewal period).
             let exp = handleExpiresAtLocked()
             if exp > 0, exp <= t { throw HandleNotMovable(handle: handle) }
             let move = PendingMove(kind: PendingMove.handleKind, txHash: "", timeoutHeight: 0, incoming: false, handle: handle,
@@ -1298,7 +1298,7 @@ public final class PrivacyWallet: @unchecked Sendable {
                     let h = owned[0].handle
                     store.mutate { $0.handle = h; $0.handleSetAt = t }; persistNoThrow()
                 }
-                // The chain's expiry of the handle held: whether it is live (chain 203d3b2).
+                // The chain's expiry of the handle held: whether it is live.
                 let cur = store.state
                 if !cur.handle.isEmpty, let e = dir[cur.handle], e.status(at: t) != HandleEntry.free,
                    cur.handleExpiresFor != cur.handle || cur.handleExpiresAt != e.expiresAt {
@@ -1787,7 +1787,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         try require(a.supply > 0 && BigUInt(amount) <= a.supply, "more derth than this validator has")
         let u = BigUInt(amount) * a.backing / a.supply
         try require(u >= BigUInt(min), "this stake is worth \(u)uerth, less than the \(min)uerth a move must carry")
-        // What arrives at dst (chain b46a4bb): u splits between
+        // What arrives at dst: u splits between
         // src's queue and its bonded stake pro rata, and up to 0.001 ERTH of
         // the bonded part may stay in src's book (bondedDust) or be truncated
         // by x/staking, so u - 1001. All of u only when src is unbonded (no
@@ -2084,7 +2084,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         a.amount != b.amount ? a.amount > b.amount : a.position < b.position
     }
 
-    /// The event an undelegation emits: its epoch, value and payout_id (chain 48b631c).
+    /// The event an undelegation emits: its epoch, value and payout_id.
     public static let undelegateEvent = "shieldedstaking_undelegate"
 
     /// Slack past the computed payout time for the epoch transition and the block that pays it.
@@ -2672,7 +2672,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// The most a withdrawal's note-paid leg may be worth when it starts: a
     /// quarter of one note this wallet can hold (2^63 - 1), so the pool can
     /// move 4x against the provider before maturity, as x/dex allows for its
-    /// own cap. Exactly x/dex's maxWithdrawalNoteLeg (chain 8ed1278):
+    /// own cap. Exactly x/dex's maxWithdrawalNoteLeg:
     /// MaxSplitNotes / 4 = 32 notes of MaxNoteValue (2^63 - 1), paid as
     /// several notes, each one this wallet can hold. As Android.
     public static let maxWithdrawalNoteLeg = BigInt(Int64.max) * 32

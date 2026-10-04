@@ -114,7 +114,7 @@ struct HandleScreen: View {
             EarthDetailRow(label: "Expires", value: day(e.expiresAt))
             EarthDetailRow(label: "Renewable until", value: day(e.renewalUntil))
             if st == HandleEntry.renewal {
-                // Chain 203d3b2: past expiry, a renewal is bounded like a claim, and the handle cannot be moved.
+                // Past expiry, a renewal is bounded like a claim, and the handle cannot be moved.
                 let claimFrom = model.predecessorAt > 0
                     ? Handles.satAdd(Handles.satAdd(Int64(clamping: model.predecessorAt), model.handleLeaseSeconds), 86_400 + 3_600) : 0
                 note("Past its expiry, renewing counts as a new claim"
@@ -270,7 +270,7 @@ struct SwitchIdentityScreen: View {
     private var voteInFlight: Bool { model.outgoingMoves.contains { $0.kind == PendingMove.caretakerKind && !$0.confirmed } }
     private var inFlight: Bool { handleInFlight || voteInFlight }
     private var unrecorded: Bool { model.outgoingMoves.contains { !$0.recorded } }
-    /// Chain 203d3b2: only a live handle moves (not one in its renewal period).
+    /// Only a live handle moves (not one in its renewal period).
     private var handleInRenewal: Bool { model.handleEntry.map { $0.status(at: now) == HandleEntry.renewal } ?? false }
     private var holdsHandle: Bool { !model.handle.isEmpty && !handleInFlight && !handleInRenewal }
     private var holdsVote: Bool {

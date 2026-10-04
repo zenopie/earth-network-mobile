@@ -87,11 +87,10 @@ public struct WalletStore: Sendable {
 
     /// The vault is bound to this device and nothing more.
     ///
-    /// It used to demand user presence as well, from before the PIN encrypted
-    /// it — which meant *reading* it raised a biometric prompt. On a two-factor
-    /// wallet that was a second prompt on top of the one fetching the key half,
-    /// and on a PIN-only wallet it was a biometric prompt for a wallet that had
-    /// asked not to use biometrics at all.
+    /// It does not demand user presence: then *reading* it would raise a
+    /// biometric prompt — on a two-factor wallet a second prompt on top of the
+    /// one fetching the key half, and on a PIN-only wallet a biometric prompt
+    /// for a wallet that asked not to use biometrics at all.
     ///
     /// The contents are sealed, so the Keychain's job here is at-rest binding:
     /// never leaves the device, never in a backup, destroyed with the passcode.
@@ -103,7 +102,7 @@ public struct WalletStore: Sendable {
     /// Whether a wallet exists.
     ///
     /// Asked at launch to decide between the setup flow and the lock screen.
-    /// A plain lookup now that the vault does not demand the user — reading it
+    /// A plain lookup: the vault does not demand the user, and reading it
     /// gives ciphertext, which is no use to anyone without the secret.
     public var exists: Bool {
         SecItemCopyMatching(Self.baseQuery as CFDictionary, nil) == errSecSuccess
@@ -191,10 +190,10 @@ public struct WalletStore: Sendable {
 
     /// Replace the vault in one Keychain operation.
     ///
-    /// Updated in place rather than deleted and re-added. The delete-then-add
-    /// this used to be had a window with no vault at all, and an add that
-    /// failed in it — no passcode any more, a full Keychain, the app killed —
-    /// left the phrase gone with nothing to unlock. `SecItemUpdate` either
+    /// Updated in place rather than deleted and re-added. A delete-then-add has
+    /// a window with no vault at all, and an add that fails in it — no
+    /// passcode any more, a full Keychain, the app killed — leaves the phrase
+    /// gone with nothing to unlock. `SecItemUpdate` either
     /// swaps the data or leaves the old item untouched.
     private func store(_ payload: Data) throws {
         let changes: [String: Any] = [

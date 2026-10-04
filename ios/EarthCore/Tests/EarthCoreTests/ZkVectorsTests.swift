@@ -31,7 +31,7 @@ final class ZkVectorsTests: XCTestCase {
         }
     }
 
-    /// Chain 203d3b2: the referral note's opening the chain derives
+    /// The referral note's opening the chain derives
     /// (zk/privacy.ReferralOpening) and the pc / cm a handle owner's wallet
     /// recomputes from the mint row (5 ERTH to OwnerPK(7100+i)).
     func testReferralOpening() throws {
@@ -107,7 +107,7 @@ final class ZkVectorsTests: XCTestCase {
         XCTAssertEqual(s("spc"), spc.hex)
         let derthAsset = PrivacyHash.assetID("derth/earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq")
         XCTAssertEqual(s("stake_cm"), PrivacyHash.stakeCM(asset: derthAsset, amount: 1_800_000, spc: spc, label: .zero).hex)
-        // Slash labels and the debt tree's leaves (chain dff3a9b), and zk/debt TestNoirParity's pins (= Noir test_go_parity_debt).
+        // Slash labels and the debt tree's leaves, and zk/debt TestNoirParity's pins (= Noir test_go_parity_debt).
         let label = PrivacyHash.stakeLabel(moveKey: Vectors.fe(1009), moveTime: 1_790_000_000, exposed: 400_000)
         XCTAssertEqual(s("stake_label"), label.hex)
         XCTAssertEqual(s("stake_cm_labelled"), PrivacyHash.stakeCM(asset: derthAsset, amount: 1_800_000, spc: spc, label: label).hex)

@@ -311,7 +311,7 @@ final class WalletFlowTests: XCTestCase {
 
         // Unstake (the note, change back as a created stake note): the msg
         // names a pool note of ours; at maturity the chain pays it there by
-        // itself (chain 48b631c), and the wallet sends nothing more.
+        // itself, and the wallet sends nothing more.
         try await a.sync()
         _ = try await a.undelegate(validator: validator, amount: 1_000_000)
         try await a.sync()

@@ -33,8 +33,8 @@ public protocol PrivacyIndexer: Sendable {
     /// from `fromIndex` (aligned).
     func handles(fromIndex: Int64, limit: Int) async throws -> HandleDirectory.StreamPage
     /// The slash debt tree, whole, by leaf index (rows from leaf 1, each with
-    /// its latest retained), its size and root as the indexer synced them
-    /// (chain dff3a9b). The wallet checks the rebuilt root against the
+    /// its latest retained), its size and root as the indexer synced them.
+    /// The wallet checks the rebuilt root against the
     /// chain's own Query/DebtTree before using a row.
     func debtRows(fromIndex: UInt64, limit: Int) async throws -> DebtRowsPage
 }
@@ -179,7 +179,7 @@ public struct LatestRoots: Sendable {
 }
 
 /// A stake tree leaf: every one a stake proof's output with its 201-byte
-/// wallet stake ciphertext (chain dff3a9b: the chain mints no stake note, so
+/// wallet stake ciphertext (the chain mints no stake note, so
 /// no row has a public denom, amount or pc any more).
 public struct StakeNoteRow: Sendable {
     public let position: UInt64
@@ -476,7 +476,7 @@ public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
                               syncedHeight: j.synced_height.uint64(default: 0))
     }
 
-    /// The notes stream format this wallet reads (backend README "Note stream format 2", chain 203d3b2).
+    /// The notes stream format this wallet reads (backend README "Note stream format 2").
     public static let noteFormat = 2
     static let noteFields = ["position", "height", "cm", "ciphertext", "amount", "owner_pk", "rho", "rcm"]
 

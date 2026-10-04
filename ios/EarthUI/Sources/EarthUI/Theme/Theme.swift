@@ -28,11 +28,10 @@ struct EarthColors {
 
     /// The accent, and there is only one.
     ///
-    /// Earth used to give each emission pillar a hue — ANML yellow, staking
-    /// green, DEX teal, governance purple — so a row's pill said which pillar
-    /// it belonged to before you read it. It made one screen look like four
-    /// products stacked together, and bought a distinction nobody needed: the
-    /// row already says "Staked" in words. One Sprout tint, one Sprout ink.
+    /// No hue per emission pillar (ANML, staking, DEX, governance): that makes
+    /// one screen look like four products stacked together, and buys a
+    /// distinction nobody needs — the row already says "Staked" in words. One
+    /// Sprout tint, one Sprout ink.
     let accentTint: Color
     let accentInk: Color
 

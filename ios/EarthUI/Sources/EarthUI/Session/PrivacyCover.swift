@@ -17,11 +17,11 @@ import UIKit
 /// `.active`. The snapshot is taken during `.inactive`, which is why covering
 /// only on `.background` is too late.
 ///
-/// On iOS the panel is its own window, above the app's. It used to be an
-/// overlay on the root view, and a SwiftUI overlay only covers the view it is
-/// attached to — a `.sheet` is presented in a separate UIKit container above
-/// it, so the phrase-reveal sheet sat on top of the cover and went into the
-/// snapshot uncovered. A window at `.alert + 1` is above every presentation
+/// On iOS the panel is its own window, above the app's, not an overlay on the
+/// root view: a SwiftUI overlay only covers the view it is attached to, and a
+/// `.sheet` is presented in a separate UIKit container above it, so the
+/// phrase-reveal sheet would sit on top of the cover and go into the snapshot
+/// uncovered. A window at `.alert + 1` is above every presentation
 /// the app can make, sheets and alerts included.
 ///
 /// Screenshots are left alone deliberately. They are not preventable, and a

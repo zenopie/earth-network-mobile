@@ -95,7 +95,7 @@ public struct ShieldedBundle: ProtoMessage, Equatable, Sendable {
     }
 }
 
-/// earth.shieldedstaking.v1.StakeProof (circuits/stake v2, chain dff3a9b): lane
+/// earth.shieldedstaking.v1.StakeProof (circuits/stake v2): lane
 /// A (asset; nullifiers, commitment) and the credit lane (credit_*), the
 /// clear_before and debt root the proof reads. Every byte field is exactly 32
 /// bytes (zero for none) but the proof and the ciphertexts. Fields 4, 5, 6 and
@@ -533,7 +533,7 @@ public struct MsgRegisterPrivate: DecodablePrivateMsg, FeeBundleMsg, Equatable {
     public var ciphertextErth: Data
     /// The referrer: a live handle (15), empty for none. The chain mints the
     /// referrer's half itself, to the handle's address (ReferralOpening);
-    /// affiliate_pc / affiliate_ciphertext (11, 12) are gone (chain 203d3b2).
+    /// affiliate_pc / affiliate_ciphertext (11, 12) are gone.
     public var affiliateHandle: String
 
     public init(fee: ShieldedBundle?, proof: Data, publicSignals: [String], signatureAlgorithm: String, dscDer: Data,
@@ -950,9 +950,8 @@ public struct MsgRestake: DecodablePrivateMsg, StakingMsg, Equatable {
     }
 }
 
-/// The chain pays the undelegation out by itself at maturity (chain
-/// 48b631c): value x payout / requested uerth as pool notes to `pc` with
-/// `ciphertext` (several notes sharing it past 2^63-1). The proof creates the
+/// The chain pays the undelegation out by itself at maturity: value x
+/// payout / requested uerth as pool notes to `pc` with `ciphertext` (several notes sharing it past 2^63-1). The proof creates the
 /// change, or a zero note when nothing is left. sighash fields: StakeFields,
 /// Bytes(validator), amount, pc, Bytes(ciphertext).
 public struct MsgShieldedUndelegate: DecodablePrivateMsg, StakingMsg, Equatable {

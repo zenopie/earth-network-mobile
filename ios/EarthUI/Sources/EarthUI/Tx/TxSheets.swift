@@ -162,10 +162,9 @@ struct GasWarning: View {
 
 /// What came back.
 ///
-/// The failure case prints the chain's own words in full and selectable. That
-/// is the successor to a toast that truncated "out of gas in location:
-/// ReadFlat; gasWanted: 400000, gasUsed: 400324" — where the part it cut was
-/// the part that explained everything.
+/// The failure case prints the chain's own words in full and selectable, never
+/// truncated: in "out of gas in location: ReadFlat; gasWanted: 400000,
+/// gasUsed: 400324" the tail is the part that explains everything.
 struct TxResultSheet: View {
     @Environment(\.earth) private var theme
     @Environment(TxController.self) private var tx
@@ -277,9 +276,9 @@ struct TxOverlayCard<Content: View>: View {
 /// spinner instead of appearing from nowhere, which is the whole reason Android
 /// put it there.
 ///
-/// It used to be a small centred pill with a scrim of its own, which dimmed a
-/// second time over `TxOverlay`'s and jumped from the bottom of the screen to
-/// the middle and back for every transaction.
+/// No scrim of its own and no centred pill: a second scrim would dim twice over
+/// `TxOverlay`'s, and a pill in the middle would jump from the bottom of the
+/// screen and back for every transaction.
 struct TxSubmittingOverlay: View {
     @Environment(\.earth) private var theme
     @Environment(TxController.self) private var tx

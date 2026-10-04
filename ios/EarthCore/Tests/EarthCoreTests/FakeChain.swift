@@ -132,7 +132,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     var forgeHandleAddress: String?
     /// Set to make a set_caretaker event report this expires_at (a hostile node).
     var forgeCaretakerExpiry: Int64?
-    /// Undelegations waiting for their payout (chain 48b631c): id, validator, value, pc, ciphertext.
+    /// Undelegations waiting for their payout: id, validator, value, pc, ciphertext.
     struct Payout { let id: UInt64; let validator: String; let value: UInt64; let pc: Fr; let ct: Data }
     var unbondPayouts: [Payout] = []
     var nextPayoutID: UInt64 = 1
@@ -141,7 +141,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     /// The fake's epoch (9/10 derth minted per uerth at delegation).
     let epoch: UInt64 = 4
 
-    // MARK: x/shieldedstaking books, moves and the slash debt (chain dff3a9b)
+    // MARK: x/shieldedstaking books, moves and the slash debt
 
     /// Each validator's live book (backing, supply): rate 10/9 uerth per derth unless a test sets one.
     var books: [String: (backing: BigUInt, supply: BigUInt)] = [:]
@@ -263,7 +263,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         noteRootSizes[noteTree.root()] = noteTree.size
         if noteRootHeights[noteTree.root()] == nil { noteRootHeights[noteTree.root()] = height }
         noteAt[height] = TreeState(size: noteTree.size, root: noteTree.size == 0 ? nil : noteTree.root())
-        // The empty tree's root too: the chain records it at the first block (chain dff3a9b).
+        // The empty tree's root too: the chain records it at the first block.
         stakeRoots.insert(stakeTree.root())
         identityAt[height] = TreeState(size: identityTree.size, root: identityTree.size == 0 ? nil : identityTree.root())
         stakeAt[height] = TreeState(size: stakeTree.size, root: stakeTree.size == 0 ? nil : stakeTree.root())
@@ -389,7 +389,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         return gasOf(m)
     }
 
-    /// What the fake's ante charges `m`: its shape alone (a vote: gasVote + proof + (1 + used) x note, chain 48b631c).
+    /// What the fake's ante charges `m`: its shape alone (a vote: gasVote + proof + (1 + used) x note).
     func gasOf(_ m: any PrivateMsg) -> UInt64 {
         let actions = m.bundles.reduce(0) { $0 + $1.actions.count }
         var vote: UInt64 = 0
@@ -502,14 +502,14 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
                      "withdrawal ciphertexts")
         case let m as MsgShieldedUndelegate:
             try only(nil)
-            // The payout's pc and ciphertext (chain 48b631c): checked like any mint.
+            // The payout's pc and ciphertext: checked like any mint.
             try need(m.pc.count == 32 && !(try f(m.pc)).isZero, "pc")
             try need(m.ciphertext.count == NoteCipher.blindCiphertextBytes, "the payout needs its 177-byte blind ciphertext")
         case let m as MsgRegisterPrivate:
             try only(nil)
             try need(m.ciphertextAnml.count == NoteCipher.blindCiphertextBytes && m.ciphertextErth.count == NoteCipher.blindCiphertextBytes,
                      "registration ciphertexts")
-            // The referral is the handle alone (chain 203d3b2); the chain makes its note.
+            // The referral is the handle alone; the chain makes its note.
             if !m.affiliateHandle.isEmpty {
                 try need(Handles.valid(m.affiliateHandle), "affiliate_handle")
             }
@@ -623,7 +623,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         min(BigInt(erth) * lpSupply / poolErth, BigInt(anml) * lpSupply / poolAnml)
     }
 
-    /// Denoms governance send-disabled (bank SendEnabled false): refused at every pool edge (chain 48b631c).
+    /// Denoms governance send-disabled (bank SendEnabled false): refused at every pool edge.
     var sendDisabled: Set<String> = []
 
     /// The action's own checks, before anything is written (atomic with the spend in the ante).
@@ -656,7 +656,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             let (bA, sA) = book(m.srcValidator)
             let u = BigUInt(m.amount) * bA / sA
             try need(u >= BigUInt(minDelegation), "the redelegation is worth less than the minimum (code 1103)")
-            // What arrives (chain b46a4bb): pro rata out of the queue and the
+            // What arrives: pro rata out of the queue and the
             // bonded stake, up to bondedDust + a truncated uerth short of u; all
             // of it only out of an unbonded source's queue.
             let q = queues[m.srcValidator] ?? 0
@@ -676,7 +676,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             try need(m.weight > 0, "weight must be positive")
             // At most three significant digits.
             try need((try? PrivacyWallet.voteWeight(m.weight)) == m.weight, "weight has more than 3 significant digits")
-            // Chain dff3a9b: exactly two slots, used ones first (at least one), distinct, zeros after.
+            // Exactly two slots, used ones first (at least one), distinct, zeros after.
             try need(m.voteNullifiers.count == MsgStakeVote.maxVoteNotes, "a stake vote carries exactly 2 vote nullifiers")
             try need(m.voteNullifiers.allSatisfy { $0.count == 32 }, "vote_nullifiers")
             let vs = try m.voteNullifiers.map(f)
@@ -733,7 +733,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         try need(UnsignedTx.build(m, tx: tx.txFields) == txBytes, "tx bytes are not canonical")
         // Every action's output ciphertext exactly 217 bytes, dummies included.
         for b in m.bundles { for a in b.actions { try need(a.ciphertext.count == NoteCipher.ciphertextBytes, "action ciphertext \(a.ciphertext.count) bytes") } }
-        // Stake proofs (chain dff3a9b): every field 32 bytes, a 201-byte ciphertext exactly for a non-zero commitment.
+        // Stake proofs: every field 32 bytes, a 201-byte ciphertext exactly for a non-zero commitment.
         if let p = m.stakeProof {
             try need(p.nullifiers.count == 2, "a stake proof carries exactly two nullifiers")
             for b in p.nullifiers + [p.anchor, p.ownerTag, p.commitment, p.creditNullifier, p.creditCommitment, p.debtRoot] {
@@ -753,7 +753,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         try need(tx.feeCoins.count == 1 && tx.feeCoins[0].denom == "uerth" && tx.feeCoins[0].amount == String(total), "declared fee != msg fee")
         try need(total >= minFeeValue, "below min fee")
         if !simulate { try need(Decimal(total) >= price * Decimal(tx.gasLimit), "below min gas price") }
-        // Chain 48b631c: a private tx's gas_limit is at most 5x the gas it uses.
+        // A private tx's gas_limit is at most 5x the gas it uses.
         if !simulate {
             let used = gasOf(m)
             try need(tx.gasLimit <= 5 * used, "gas limit \(tx.gasLimit) exceeds what this private tx uses (\(used))")
@@ -776,7 +776,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             try need(!nfs.contains { stakeNullifiers[$0] != nil }, "stake nullifier spent")
             try need(Set(nfs).count == nfs.count, "duplicate stake nullifier")
             if !nfs.isEmpty { try need(stakeRoots.contains(try f(stake.anchor)), "unknown stake anchor") }
-            // Every stake proof names the current clear_before (within an hour below it) and debt root (chain b46a4bb checkStakeClear).
+            // Every stake proof names the current clear_before (within an hour below it) and debt root (the chain's checkStakeClear).
             let cb = clearBefore()
             if cb == 0 {
                 try need(stake.clearBefore == 0, "clear_before must be 0 while the block time is within the label window")

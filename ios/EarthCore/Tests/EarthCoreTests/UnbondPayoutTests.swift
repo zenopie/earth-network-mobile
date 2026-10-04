@@ -16,7 +16,7 @@ final class UnbondPayoutTests: PrivacyTestCase {
         let m = try XCTUnwrap(chain.lastMsg as? MsgShieldedUndelegate)
         XCTAssertEqual(32, m.pc.count)
         XCTAssertEqual(NoteCipher.blindCiphertextBytes, m.ciphertext.count)
-        // Chain dff3a9b: lane A's output (the change) with its 201-byte ciphertext; no credit lane.
+        // Lane A's output (the change) with its 201-byte ciphertext; no credit lane.
         XCTAssertEqual(NoteCipher.stakeCiphertextBytes, m.stake.ciphertext.count)
         XCTAssertTrue(m.stake.creditCommitment.allSatisfy { $0 == 0 } && m.stake.creditCiphertext.isEmpty)
         // The change is the proof's own output; nothing minted into the stake tree.

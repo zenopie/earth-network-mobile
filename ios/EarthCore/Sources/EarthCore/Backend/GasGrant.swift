@@ -50,7 +50,7 @@ public enum GasGrant {
                     "ciphertext_anml": msg.ciphertextAnml.base64EncodedString(),
                     "ciphertext_erth": msg.ciphertextErth.base64EncodedString(),
                     // The referrer by handle alone ("" for none); the backend refuses
-                    // affiliate_pc / affiliate_ciphertext, which MsgRegister lost (chain 203d3b2).
+                    // affiliate_pc / affiliate_ciphertext, which MsgRegister lost.
                     "affiliate_handle": msg.affiliateHandle,
                     "pc_gas": pcGas.base64EncodedString(),
                     "ciphertext_gas": ciphertextGas.base64EncodedString(),

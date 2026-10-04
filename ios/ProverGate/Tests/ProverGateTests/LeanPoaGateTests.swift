@@ -2,7 +2,7 @@ import XCTest
 import ProverGateCore
 @testable import ProverGate
 
-/// XCTest front end for the Phase 1 gate, for running it inside Xcode. The
+/// XCTest front end for the lean_poa gate, for running it inside Xcode. The
 /// checks themselves live in `Gate` so they can also run as `swift run progate`
 /// without a full Xcode install — see Sources/progate/main.swift.
 final class LeanPoaGateTests: XCTestCase {

@@ -6,7 +6,7 @@ import Foundation
 /// nullifier or an identity of this wallet.
 public protocol PrivacyChainReads: Sendable {
     func personhoodParams() async throws -> PrivacyReads.PersonhoodParams
-    /// x/personhood Query/LeaseBounds (chain 203d3b2): what every predecessor bound is computed from, never Params.
+    /// x/personhood Query/LeaseBounds: what every predecessor bound is computed from, never Params.
     func leaseBounds() async throws -> PrivacyReads.LeaseBounds
     func ballotInputs(proposalID: UInt64, optionID: UInt64) async throws -> PrivacyReads.BallotInputs
     func epochNumber() async throws -> UInt64
@@ -46,7 +46,7 @@ public enum PrivacyReads {
         }
     }
 
-    /// x/personhood Query/LeaseBounds (chain 203d3b2): the lease lengths the
+    /// x/personhood Query/LeaseBounds: the lease lengths the
     /// chain's predecessor bounds use now (the longest handle lease ever in
     /// force; the caretaker lease including a held longer one after a cut),
     /// the activation margin, and both bounds at `blockTime`. Every
@@ -170,7 +170,7 @@ public enum PrivacyReads {
         }
     }
 
-    /// x/shieldedstaking Query/DebtTree{start, limit} (chain dff3a9b): the
+    /// x/shieldedstaking Query/DebtTree{start, limit}: the
     /// slash debt tree's rows from leaf start+1 in insertion order (each with
     /// its latest retained), its size (sentinel included, 0 before the first
     /// row) and current root, the label window and the clear_before a proof

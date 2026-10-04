@@ -80,9 +80,8 @@ enum Palette {
     /// chart wears blue first.
     ///
     /// These are deliberately *not* the accent. Identity needs distinct hues:
-    /// the ring previously stepped one hue's opacity by 16% per slice, which is
-    /// a sequential ramp doing a categorical job, and adjacent slices were
-    /// nearly indistinguishable. The one-accent rule still holds everywhere
+    /// stepping one hue's opacity per slice is a sequential ramp doing a
+    /// categorical job, and leaves adjacent slices nearly indistinguishable. The one-accent rule still holds everywhere
     /// else — this is the inside of a chart, where hue carries meaning.
     ///
     /// Three of these sit below 3:1 on white, which is allowed only because the

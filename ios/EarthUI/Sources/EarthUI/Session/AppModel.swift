@@ -62,7 +62,7 @@ public final class AppModel {
     public private(set) var unshieldableErth: UInt64 = 0
     /// This wallet's Groundworks positions (public positions whose key is ours).
     public private(set) var positions: [OwnedPosition] = []
-    /// This wallet's private stake per validator: what may move now, what waits for its window (chain dff3a9b).
+    /// This wallet's private stake per validator: what may move now, what waits for its window.
     public private(set) var stakeHoldings: [PrivacyWallet.StakeHolding] = []
     /// The chain's label window as last read (0: never): how long moved stake stays put.
     public private(set) var labelWindowSeconds: UInt64 = 0

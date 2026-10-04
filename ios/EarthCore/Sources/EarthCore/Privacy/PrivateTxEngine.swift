@@ -165,23 +165,25 @@ public struct PrivateTxEngine: Sendable {
     public static let bundleGas: UInt64 = 100_000
     /// One action: its proof (2,000,000) and two note writes (150,000 each).
     public static let actionGas: UInt64 = 2_300_000
-    /// A stake proof: its proof (2,000,000), two note writes per lane A
-    /// nullifier slot and one for its output (the indexed nullifier tree
-    /// rewrites two paths an insert), and the msg's base (at most 400,000;
-    /// chain dff3a9b PrivateActionGas).
+    /// A stake proof (PRIVACY_FORMATS 11): its proof (2,000,000), two note
+    /// writes per lane A nullifier slot and one for its output (the indexed
+    /// nullifier tree rewrites two paths an insert), 5 x 150,000, and the
+    /// msg's base (at most 400,000; the chain's PrivateActionGas).
     public static let stakeGas: UInt64 = 3_150_000
-    /// A credit lane's (a redelegation's) writes, and MsgRedelegate's base beyond `stakeGas`'s (700,000).
+    /// A credit lane (a redelegation's), 750,000: its three note writes, and
+    /// the 300,000 by which MsgRedelegate's base (700,000) exceeds the
+    /// 400,000 in `stakeGas`.
     public static let creditGas: UInt64 = 3 * 150_000 + 300_000
     /// MsgRedelegate's gas for the (src, dst) pair's x/staking record at its
-    /// worst (chain b46a4bb redelegateGas): 2,500 an entry read and written,
+    /// worst (the chain's redelegateGas): 2,500 an entry read and written,
     /// 2,500 more each while the pair is at its 1,024-entry cap, and 128
     /// re-filed moves at 20,000. Simulation prices the real record; this
     /// keeps the cap above it without asking the node about the pair before
     /// the move is sent. As Android.
     public static let redelegateRecordGas: UInt64 = 1_024 * (2_500 + 2_500) + 128 * 20_000
-    /// A stake vote's fixed part: gasVote (250,000) and its proof; the chain
-    /// adds a note write for the vote and one per used vote nullifier (chain
-    /// 48b631c: gasVote + proof + (1 + used) x note_gas).
+    /// A stake vote's fixed part: gasVote (250,000) and its proof (2,000,000);
+    /// the chain adds a note write for the vote and one per used vote
+    /// nullifier: gasVote + proof + (1 + used) x note_gas (PRIVACY_FORMATS 11).
     public static let voteGas: UInt64 = 2_250_000
     /// A membership proof and its nullifier write.
     public static let membershipGas: UInt64 = 2_150_000
@@ -190,7 +192,7 @@ public struct PrivateTxEngine: Sendable {
     /// One note write (x/shielded note_gas default).
     public static let noteGas: UInt64 = 150_000
     /// MsgBindHandle's writes beyond the one in `membershipGas`: the chain
-    /// prices a bind as nine note writes (chain 203d3b2).
+    /// prices a bind as nine note writes.
     public static let bindHandleExtraGas: UInt64 = 8 * noteGas
 
     /// The absolute cap on any private fee, in uerth.
@@ -346,8 +348,8 @@ public struct PrivateTxEngine: Sendable {
     /// The chain's wallet format rules, checked before broadcast: every
     /// action's output ciphertext exactly 217 bytes (dummies too); a stake
     /// proof's every field 32 bytes, exactly two lane A nullifiers, and a
-    /// 201-byte wallet stake ciphertext exactly for each non-zero commitment
-    /// (chain dff3a9b); debt_root zero exactly when clear_before is 0.
+    /// 201-byte wallet stake ciphertext exactly for each non-zero commitment;
+    /// debt_root zero exactly when clear_before is 0.
     static func checkShape(_ msg: any PrivateMsg) throws {
         for b in msg.bundles {
             for a in b.actions where a.ciphertext.count != NoteCipher.ciphertextBytes {

@@ -42,15 +42,10 @@ public enum AprMath {
 
     /// The pool's 14-day-weighted volume, in real uerth.
     ///
-    /// A read, not a calculation. This used to reproduce the chain's decay
-    /// client-side, and the chain stopped decaying: it scales new volume by a
-    /// chain-wide index instead, so the stored figure carried a multiplier
-    /// growing 7.7% a day forever. Nothing here divided it out and the fee APR
-    /// inflated with it — right by accident on day one, out by 18x in a month.
-    ///
-    /// The chain de-scales it before returning it now, so there is nothing left
-    /// to mirror. Reimplementing chain arithmetic in a client is what caused
-    /// the drift; having none to reimplement is the fix.
+    /// A read, not a calculation. The chain scales new volume by a chain-wide
+    /// index and de-scales the figure before returning it, so there is
+    /// nothing to mirror here: reimplementing that arithmetic in a client is
+    /// how a fee APR drifts away from the chain's.
     public static func volumeErth(_ pool: Dex.Pool) -> BigInt {
         BigInt(pool.volumeErth) ?? 0
     }

@@ -5,9 +5,9 @@ import Foundation
 /// out for `tools/txcheck` to verify with the chain's own cosmos-sdk types.
 ///
 /// The self-contained checks below can only show the encoder agrees with
-/// itself. `txcheck` is what shows it agrees with the chain — same shape as
-/// Phase 1, where the gate verifying its own proof was necessary and the
-/// chain's verifier accepting it was the actual result.
+/// itself. `txcheck` is what shows it agrees with the chain — the same shape as
+/// the prover gate, where verifying its own proof is necessary and the
+/// chain's verifier accepting it is the actual result.
 func checkTransactions(writingTo artifacts: URL) {
     let abandon = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
     let key = try! EarthKey(mnemonic: abandon)

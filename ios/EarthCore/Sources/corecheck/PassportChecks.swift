@@ -101,7 +101,7 @@ private func checkRegistration() {
                 body["public_signals"] as? [String], proof!.publicSignals)
     Check.equal("gas body signature_algorithm", body["signature_algorithm"] as? String, proof!.signatureAlgorithm)
     Check.equal("gas body affiliate_handle empty when unreferred", body["affiliate_handle"] as? String, "")
-    Check.equal("gas body has no affiliate_pc / affiliate_ciphertext (chain 203d3b2)", body["affiliate_pc"] == nil && body["affiliate_ciphertext"] == nil, true)
+    Check.equal("gas body has no affiliate_pc / affiliate_ciphertext", body["affiliate_pc"] == nil && body["affiliate_ciphertext"] == nil, true)
     Check.equal("gas body has no affiliate address", body["affiliate"] == nil, true)
     Check.that("gas body is valid JSON", JSONSerialization.isValidJSONObject(body))
     Check.equal("the binding matches the msg's fields", try? msg.binding(chainID: Constants.chainID), binding)
@@ -374,7 +374,7 @@ private func checkSODAndInputs(writingTo artifacts: URL) {
     // Everything above shows the witness has the right shape. Whether it is
     // the *right* witness only the circuit can say, so it is written out for
     // `progate --witness` to prove against the real lean_poa. That is the same
-    // arrangement as Phase 1: the offline checks are necessary, and the thing
+    // arrangement as the prover gate: the offline checks are necessary, and the thing
     // that decides is downstream.
     let fixture: [String: Any] = [
         "algorithm": inputs.algorithm,

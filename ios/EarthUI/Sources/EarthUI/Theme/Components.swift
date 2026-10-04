@@ -101,9 +101,8 @@ struct EarthDetailRow: View {
 /// A chain error or a transaction hash.
 ///
 /// Selectable, because the whole point of showing it is that it can be taken
-/// somewhere else. This is the successor to a toast that truncated "out of gas
-/// in location: ReadFlat; gasWanted: 400000, gasUsed: 400324" — the part that
-/// mattered was the part it cut.
+/// somewhere else. Never truncated: in "out of gas in location: ReadFlat;
+/// gasWanted: 400000, gasUsed: 400324" the part that matters is the tail.
 struct EarthCodeBlock: View {
     @Environment(\.earth) private var theme
     let text: String

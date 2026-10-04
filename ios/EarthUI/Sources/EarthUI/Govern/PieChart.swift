@@ -14,17 +14,16 @@ struct AllocationSlice: Identifiable, Equatable {
 /// arc lengths either way, and the centre of a pie carries no information while
 /// being the part hardest to judge by eye.
 ///
-/// The hole used to state the allocated total. It was always "100%" for any
-/// valid allocation — the slices are a split of the whole, so their sum is a
-/// restatement of the thing the ring already draws — and it showed the
-/// committed split rather than the one being dragged in the editor, so it read
-/// as a figure that would not update.
+/// The hole does not state the allocated total. It would always be "100%" for
+/// any valid allocation — the slices are a split of the whole, so their sum
+/// restates what the ring already draws — and it would show the committed
+/// split rather than the one being dragged in the editor, reading as a figure
+/// that does not update.
 ///
 /// Slices take `Palette.Series`, a fixed categorical order, because hue here is
-/// doing identity work — which slice is which. They used to be one accent hue
-/// stepped 16% in opacity per slice, which is a sequential ramp asked to encode
-/// identity: adjacent slices differed by almost nothing and the fourth onward
-/// were mud. The one-accent rule still governs the rest of the app; a chart's
+/// doing identity work — which slice is which. One accent hue stepped in
+/// opacity per slice would be a sequential ramp asked to encode identity:
+/// adjacent slices would differ by almost nothing and the fourth onward be mud. The one-accent rule still governs the rest of the app; a chart's
 /// interior is where hue has to mean something.
 ///
 /// Arcs are separated by a hairline gap of surface. It reads as division
@@ -46,10 +45,9 @@ struct PieChart: View {
     /// Sweeps between splits, so switching Actual to Preferred reads as the
     /// same chart changing rather than two charts.
     ///
-    /// Starts at 1, not 0. It used to sweep in on first appear too, driven from
-    /// `onAppear` — but a `withAnimation` issued in the frame a sheet is
-    /// presenting gets dropped, which left `progress` at zero and the ring
-    /// drawn with no sweep at all. An invisible chart is a worse trade than a
+    /// Starts at 1, not 0, with no sweep on first appear: a `withAnimation`
+    /// issued from `onAppear` in the frame a sheet is presenting gets dropped,
+    /// which would leave `progress` at zero and the ring not drawn at all. An invisible chart is a worse trade than a
     /// missing flourish, and the animation's stated job — making the two lenses
     /// read as one chart — is untouched.
     @State private var progress: CGFloat = 1

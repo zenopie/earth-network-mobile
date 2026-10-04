@@ -2,9 +2,8 @@ import Foundation
 import ProverGate
 import ProverGateCore
 
-// Runs the Phase 1 gate and prints a report. An executable rather than only an
-// XCTest case because XCTest needs full Xcode, and the gate is meant to be
-// answerable before committing to any of the iOS toolchain.
+// Runs the lean_poa gate and prints a report. An executable rather than only an
+// XCTest case because XCTest needs full Xcode, and the gate runs without it.
 //
 //   cd ios/ProverGate && swift run progate
 //
@@ -25,7 +24,7 @@ if let flag = arguments.firstIndex(of: "--witness") {
 let start = arguments.first ?? FileManager.default.currentDirectoryPath
 
 // `--witness <path>` proves a witness built elsewhere instead of running the
-// gate. It exists for Phase 3: EarthCore builds a witness from a passport's
+// gate. EarthCore builds a witness from a passport's
 // DG1 and EF.SOD, and nothing inside EarthCore can say whether that witness is
 // the one the circuit wants. Proving it here is what says so.
 if let witnessPath {
@@ -102,7 +101,7 @@ func runWitness(path: String, start: String) -> Int32 {
               : "\nFAILED — the proof does not verify")
 
         // Written in the shape tools/chainverify reads, under a `passport`
-        // prefix so it sits beside the Phase 1 gate's own artifacts rather
+        // prefix so it sits beside the gate's own artifacts rather
         // than overwriting them.
         let artifacts = RepoLayout.Paths(root: root).artifactDir
         try? FileManager.default.createDirectory(at: artifacts, withIntermediateDirectories: true)

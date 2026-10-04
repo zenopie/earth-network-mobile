@@ -26,15 +26,15 @@ public enum ChainErrors {
               explain: "This identity moved its caretaker vote to another identity and can never cast one again."),
         Known(codespace: "dex", code: 1120, text: "amount exceeds the pool cap",
               explain: "That amount is past the pool's cap (2^120 units). Use a smaller amount."),
-        // Chain 203d3b2: x/dex refuses at start a withdrawal whose note leg is above 16 notes' worth.
+        // x/dex refuses at start a withdrawal whose note leg is above 16 notes' worth.
         Known(codespace: "dex", code: 1101, text: "the most one withdrawal pays as notes",
               explain: "That withdrawal is too large to be paid as private notes in one go. Withdraw in smaller parts.", byText: true),
-        // A denom the bank has send-disabled is refused at every pool edge
-        // (chain 48b631c): shield, unshield, a dex note swap,
+        // A denom the bank has send-disabled is refused at every pool edge:
+        // shield, unshield, a dex note swap,
         // a private delegation's ERTH, a module mint into the pool.
         Known(codespace: "bank", code: 5, text: "send transactions are disabled",
               explain: "Transfers of this token are switched off on the chain, so it can't enter or leave private notes right now: no shielding, unshielding, note swaps or private staking with it. Notes you already hold still move privately.", byText: true),
-        // Chain 48b631c: a switch stays under its Document Signer.
+        // A switch stays under its Document Signer.
         Known(codespace: "personhood", code: 1127, text: "identity switch must be proven under the live registration's document signer",
               explain: "This switch was refused. A switch must be proven with the same passport you registered with, and this one was signed by a different issuing key."),
         // The signer's (or country's) daily cap; a switch counts against its signer's.
@@ -44,7 +44,7 @@ public enum ChainErrors {
         Known(codespace: "personhood", code: 1116, text: "renew it before moving it",
               explain: "That handle is past its expiry (in its renewal period), and only a live handle can be moved. Renew it first, then move it.",
               byText: true),
-        // Chain dff3a9b: a credit (a delegation's derth, a move's arrival) is
+        // A credit (a delegation's derth, a move's arrival) is
         // quoted at the live rate with a margin; a rate that outran it is
         // refused in the ante, before anything is spent or paid.
         Known(codespace: "shieldedstaking", code: 1103, text: "re-quote with a margin",
@@ -58,7 +58,7 @@ public enum ChainErrors {
         Known(codespace: "shieldedstaking", code: 1113, text: "is not the current slash debt root",
               explain: "A slash reached stake moved between validators just as this was sent, so the chain turned it down. Nothing was spent: try again.",
               byText: true),
-        // Chain b46a4bb: every stake proof names the label window's clear_before as of the last hour.
+        // Every stake proof names the label window's clear_before as of the last hour.
         Known(codespace: "shieldedstaking", code: 1113, text: "name the label window's current clear_before",
               explain: "This took too long between its quote and its block, so the chain turned it down. Nothing was spent and no fee was paid: try again.",
               byText: true),

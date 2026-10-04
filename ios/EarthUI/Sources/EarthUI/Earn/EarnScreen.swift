@@ -8,14 +8,14 @@ import SwiftUI
 /// belongs: claiming ANML is a one-tap action on a balance, not a position to
 /// manage.
 ///
-/// Pools used to hang off the swap tab, on the argument that providing
-/// liquidity is adjacent to swapping. Two things were wrong with that. It put
-/// the pool list a sheet deep and the deposit sheet a second sheet deep, and a
-/// transaction raised from there had its confirmation drawn *behind* both — the
-/// overlay is hosted on a view, and a view cannot draw over what is presented
-/// on top of it. And the question "where do I earn on what I hold" has one
-/// answer, not two places to look. Both are here now, one selector apart, and
-/// the deposit sheet is a single presentation from a tab like every other.
+/// Pools live here, not off the swap tab, for two reasons. Hung off swap, the
+/// pool list would be a sheet deep and the deposit sheet a second sheet deep,
+/// and a transaction raised from there would have its confirmation drawn
+/// *behind* both — the overlay is hosted on a view, and a view cannot draw
+/// over what is presented on top of it. And the question "where do I earn on
+/// what I hold" has one answer, not two places to look. Staking and pools sit
+/// one selector apart, and the deposit sheet is a single presentation from a
+/// tab like every other.
 ///
 /// Staked and claimable lead because the common question is how much rather
 /// than with whom. Claim is disabled at zero rather than hidden: a button that

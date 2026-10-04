@@ -8,9 +8,9 @@ import Security
 /// is what makes a four-digit PIN worth anything — 10,000 combinations falls
 /// in seconds to something that can guess freely.
 ///
-/// Timed on the monotonic clock, not the wall clock. The lockout used to be a
-/// wall-clock deadline, so setting the date forward in Settings ended it — and
-/// that took the backoff, and with it the PIN, back to 10,000 free guesses.
+/// Timed on the monotonic clock, not the wall clock: a wall-clock deadline
+/// ends when the date is set forward in Settings, which would take the
+/// backoff, and with it the PIN, back to 10,000 free guesses.
 /// `CLOCK_MONOTONIC` cannot be set and keeps counting through sleep, but it
 /// restarts at zero on boot; so the deadline is stored with the boot it
 /// belongs to, and a reboot restarts the lockout in force rather than ending
@@ -165,8 +165,8 @@ enum UnlockAttempts {
         }
     }
 
-    // The UserDefaults keys this used to live under. Carried over once so an
-    // update does not hand out a fresh set of attempts, then removed.
+    // UserDefaults keys an earlier version kept this under. Carried over once
+    // so an update does not hand out a fresh set of attempts, then removed.
     private static let legacyKeys = ["unlock.failed", "unlock.lockouts", "unlock.until"]
 
     private static func migrated() -> State {

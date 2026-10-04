@@ -18,7 +18,7 @@ public struct GateReport {
     }
 }
 
-/// The Phase 1 gate: does Barretenberg on Apple platforms produce a lean_poa
+/// The lean_poa gate: does Barretenberg on Apple platforms produce a lean_poa
 /// proof the earth-1 chain will accept?
 ///
 /// Lives in the library rather than in a test case so it can run from a plain

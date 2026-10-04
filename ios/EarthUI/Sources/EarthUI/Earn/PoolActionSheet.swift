@@ -317,7 +317,7 @@ struct PoolActionSheet: View {
                 ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
             ]
         ), onSuccess: { await model.refresh() }) { [rest = model.client.rest, erthReserve = pool.erthReserve, tokenReserve = pool.tokenReserve] w in
-            // Both legs are notes: refused here, before proving, when too large (chain 203d3b2).
+            // Both legs are notes: refused here, before proving, when too large.
             let supply = BigInt(try await PrivacyQueries(rest: rest).lpShareSupply(poolID: poolID)) ?? 0
             try PrivacyWallet.checkWithdrawalNoteLegs(shares: BigInt(shares), totalShares: supply, reserveErth: BigInt(erthReserve) ?? 0,
                                                       reserveToken: BigInt(tokenReserve) ?? 0, tokenDenom: tokenDenom, erthNote: true, tokenNote: true)

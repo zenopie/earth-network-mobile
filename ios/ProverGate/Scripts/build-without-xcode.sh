@@ -9,7 +9,7 @@
 # framework's static library. That is what this does.
 #
 # Prefer `swift run progate` once a working Xcode is installed. This exists so
-# the Phase 1 go/no-go question is answerable without a ~40GB download first.
+# the gate runs on a Command Line Tools toolchain, without a ~40GB download.
 #
 # -force_load is required, not an optimisation: members of the Barretenberg
 # archive reference each other's template instantiations (2650 MegaCircuitBuilder

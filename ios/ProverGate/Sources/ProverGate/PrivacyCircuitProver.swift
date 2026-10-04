@@ -107,9 +107,9 @@ public final class PrivacyCircuitProver: @unchecked Sendable {
             case .membership: 8
             case .action: 6
             // anchor, asset, nf_0, nf_1, cm_out, v_in, v_out, clear_before, debt_root,
-            // cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, otag, sighash (chain dff3a9b).
+            // cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, otag, sighash.
             case .stake: 16
-            // note_root, nf_root, debt_root, asset, weight, proposal_id, vnf[0..1], sighash (chain dff3a9b).
+            // note_root, nf_root, debt_root, asset, weight, proposal_id, vnf[0..1], sighash.
             case .vote: 9
             }
         }

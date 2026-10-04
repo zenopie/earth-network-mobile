@@ -19,11 +19,11 @@ public enum TransactionSigner {
 
     /// What a "max" button leaves behind so the account can still act.
     ///
-    /// Subtracting one minimum fee is not enough. Staking the maximum used to
-    /// leave exactly ``defaultFeeUerth`` — one 400,000-gas transaction and no
-    /// more — so the very next thing a staker wants, claiming rewards, needed
-    /// 2,750 against a 2,000 balance and was unaffordable the moment it was
-    /// offered. The position was staked and the account was stranded.
+    /// Subtracting one minimum fee is not enough. Leaving exactly
+    /// ``defaultFeeUerth`` — one 400,000-gas transaction and no more — would
+    /// make the very next thing a staker wants, claiming rewards (2,750 against
+    /// a 2,000 balance), unaffordable the moment it is offered, stranding the
+    /// account.
     ///
     /// A million gas covers the realistic follow-ups: claim across a few
     /// validators, then unstake. 5,000 uerth at 0.005uerth.

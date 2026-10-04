@@ -20,9 +20,8 @@ public enum Dex {
         ///
         /// The chain does the weighting and returns a plain number: a trade a
         /// week ago counts (13/14)^7 of one made today. Nothing here ages it,
-        /// and nothing here should try — the wallet used to decay this
-        /// client-side against a mechanism the chain had already replaced, and
-        /// the fee APR drifted further out every day as a result.
+        /// and nothing here should try: a client-side decay drifts from the
+        /// chain's mechanism, and the fee APR with it.
         ///
         /// At a steady trading rate it settles at about fourteen times the
         /// daily volume.

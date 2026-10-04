@@ -135,8 +135,8 @@ public struct RegRecord: Codable, Equatable, Sendable {
 /// afresh.
 public enum RecordStatus: String, Codable, Sendable { case open, matched, exhausted }
 
-/// An undelegation of this wallet whose payout has not arrived (chain
-/// 48b631c, ORCHARD_DESIGN 18.1): recorded when the node takes the tx
+/// An undelegation of this wallet whose payout has not arrived
+/// (ORCHARD_DESIGN 18.1): recorded when the node takes the tx
 /// (`until` its timeout_height), confirmed with the committed event's
 /// `epoch`, `value` (uerth) and `payoutID`, dropped once a note to `pc` is
 /// synced (paid) or the tx failed. Local only: what the wallet shows while
@@ -260,7 +260,7 @@ public struct PrivacyState: Codable, Sendable {
     /// When the handle `handleExpiresFor` stops being live (the chain's
     /// expires_at, from its bind or the chain's directory). Counts only while
     /// it is `handle`; otherwise unknown. Past it, a renewal or change is
-    /// bounded like a claim and a move is refused (chain 203d3b2).
+    /// bounded like a claim and a move is refused.
     public var handleExpiresAt: Int64 = 0
     public var handleExpiresFor: String = ""
     /// The caretaker split is held but its record did not carry it (restored from a state record).

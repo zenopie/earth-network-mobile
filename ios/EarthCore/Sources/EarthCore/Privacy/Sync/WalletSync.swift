@@ -900,7 +900,7 @@ public final class WalletSync {
         let amount = Self.publicAmount(r.amount)
         let note: NotePlaintext
         switch r.ciphertext.count {
-        // An open mint (chain 203d3b2: the referral note to a handle we hold):
+        // An open mint (the referral note to a handle we hold):
         // no ciphertext, the opening on the row. Ours if its owner_pk is ours
         // and the opening with the public amount recomputes the row's cm
         // (which the tree check pins to the chain's root). Matched here, over
@@ -1131,8 +1131,8 @@ public final class WalletSync {
     }
 
     /// A stake row is ours if its ciphertext opens (the wallet stake note,
-    /// 201 bytes, label inside): every stake note is a stake proof's output
-    /// (chain dff3a9b). A zero note (a full exit's padding output) is dropped.
+    /// 201 bytes, label inside): every stake note is a stake proof's output.
+    /// A zero note (a full exit's padding output) is dropped.
     static func openStake(_ r: StakeNoteRow, keys: PrivacyKeys) -> NoteCipher.StakeOpening? {
         guard let o = NoteCipher.tryDecryptStake(r.ciphertext, cm: r.cm, keys: keys) else { return nil }
         // Zero, or past 2^63-1: nothing the wallet holds (as Android).

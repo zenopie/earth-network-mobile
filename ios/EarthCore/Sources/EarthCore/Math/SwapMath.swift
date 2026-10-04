@@ -159,7 +159,7 @@ public enum SwapMath {
         return withSlippage(min(erthIn * supply / re, tokenIn * supply / rt), bps: bps).description
     }
 
-    /// The chain's `feeOf` (chain 203d3b2: rounded up, so a
+    /// The chain's `feeOf` (rounded up, so a
     /// small swap cannot pay nothing):
     /// LegacyDec(amount).Mul(fee).Quo(100).Ceil().TruncateInt(). Mul is exact
     /// for an 18-place fee; Quo rounds its 18th place half-even

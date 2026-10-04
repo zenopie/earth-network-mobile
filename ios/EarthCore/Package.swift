@@ -1,7 +1,7 @@
 // swift-tools-version:5.9
 import PackageDescription
 
-// Phase 2: the headless domain layer. No Barretenberg, no UI, no Apple SDK —
+// The headless domain layer. No Barretenberg, no UI, no Apple SDK —
 // so it builds and its checks run under plain SwiftPM on a Command Line Tools
 // toolchain, the same reason ProverGateCore is its own package.
 let package = Package(

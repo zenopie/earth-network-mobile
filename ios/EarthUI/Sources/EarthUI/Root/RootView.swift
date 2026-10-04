@@ -131,10 +131,9 @@ struct TabsView: View {
                 // there toggled state that masked nothing.
                 showsBalances: model.tab == .wallet,
                 // Tabs are destinations, not toolbars, so none has an action.
-                // Swap used to carry one for liquidity; pools live on Earn now,
-                // behind a selector, because that put the deposit sheet two
-                // presentations deep and its confirmation could not draw over
-                // them.
+                // Pools live on Earn, behind a selector, not as a Swap action:
+                // that would put the deposit sheet two presentations deep, and
+                // its confirmation could not draw over them.
                 tabAction: nil,
                 onSettings: { settingsOpen = true }
             )

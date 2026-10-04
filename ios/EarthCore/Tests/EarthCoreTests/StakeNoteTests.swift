@@ -133,9 +133,9 @@ final class StakeNoteTests: PrivacyTestCase {
         XCTAssertEqual(sims, chain.simulated)
     }
 
-    /// A move arrives whole only out of an unbonded source's queue (chain
-    /// b46a4bb): from a bonded one it leaves pro rata, so the
-    /// quote takes u - 1001 even when the queue covers u, and lands.
+    /// A move arrives whole only out of an unbonded source's queue: from a
+    /// bonded one it leaves pro rata, so the quote takes u - 1001 even when
+    /// the queue covers u, and lands.
     func testAMoveArrivesWholeOnlyFromAnUnbondedQueue() async throws {
         let chain = FakeChain()
         let a = try await staked(chain)

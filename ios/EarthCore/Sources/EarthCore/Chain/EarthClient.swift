@@ -90,9 +90,9 @@ public struct EarthClient: Sendable {
     /// Poll until the transaction appears in a block, then check how it ran.
     ///
     /// Throws ``Error/notCommitted(hash:)`` if it has not appeared within the
-    /// window. That used to return the hash as though it had landed, which the
-    /// app then reported as a success — for a transaction that could still be
-    /// dropped. A slow block is not a failure either, so the caller gets the
+    /// window, never the hash as though it had landed: a transaction that has
+    /// not appeared can still be dropped, so reporting it as a success would
+    /// be wrong. A slow block is not a failure either, so the caller gets the
     /// hash to look up and says it does not know yet.
     public func awaitCommit(
         _ hash: String,

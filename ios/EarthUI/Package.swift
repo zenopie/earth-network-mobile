@@ -1,7 +1,7 @@
 // swift-tools-version:5.9
 import PackageDescription
 
-// Phase 4: the app's screens. A library rather than an app target so the whole
+// The app's screens. A library rather than an app target so the whole
 // UI typechecks from the command line — `Scripts/build-ios.sh` — without a
 // simulator runtime installed. `ios/EarthWallet` is the thin app shell that
 // hosts it.
