@@ -6,8 +6,8 @@ and `zk/orchard` (Orchard-style bundles: ORCHARD_DESIGN.md sections 12-14 of
 the chain), and the Android code reproduces those byte for byte
 (`android/.../privacy/zk`, `privacy/tx`, tested against vectors generated from
 the chain by `android/tools/orchardvectors/gen.sh <chain checkout> [ref]`,
-last run against chain privacy/orchard **48b631c** (clients round 7;
-before that 203d3b2, byte-identical at c0ad1dd); `tools/privacyvectors` is
+last run against chain privacy/orchard **dff3a9b** (clients round 8;
+byte-identical at b46a4bb; before that 48b631c, 203d3b2, c0ad1dd); `tools/privacyvectors` is
 the retired transfer-circuit generator, whose `dexamm_test.go.in` still
 writes the dex vectors).
 
@@ -130,10 +130,8 @@ p is the BN254 scalar modulus. `idc = H(TAG_ID, id_secret)` and
 this wallet (registration ANML and reward, ANML claim, gas grant, shield,
 swap output, LP shares/refunds/withdrawal legs, undelegation payout) is named by
 a pc of fresh random rho and rcm and carries a v2 ciphertext of them to the
-wallet's own address; a stake note the chain mints (delegation's derth,
-unlocked position; an undelegation and a stake vote mint none) is named by a
-`spc_mint` of fresh random rho and rcm and carries the blind stake ciphertext
-of them (`StakeProof.spc_ciphertext`). Nothing about them is derived from a
+wallet's own address; every stake note is a stake proof's own output with
+fresh random rho and rcm (the chain mints none since dff3a9b). Nothing about them is derived from a
 counter, so failed or abandoned attempts can never open a gap that a restore
 would not cross. (`mint-rho`, `mint-rcm`, `stake-rho`, `stake-rcm` must not
 be used any more.)
@@ -156,13 +154,15 @@ which a restore could not find again).** A position disappears from the
 chain when it is unlocked, and the chain's events do not carry its tag, so
 a wallet restored from the mnemonic would otherwise start at the highest
 *live* counter + 1 and lock again under a closed position's public tag,
-linking the two. So MsgUnlockPosition's re-minted stake note carries, in
-its blind stake ciphertext's memo, the counter it closed:
+linking the two. So MsgUnlockPosition's fee bundle carries a value-0 pool
+note to the wallet's own address (v1, §3; the stake v2 ciphertext has no
+memo since dff3a9b) whose memo names the counter it closed:
 
     memo = "EU" (0x45 0x55) || 0x01 || counter (u32 BE)
            || first 16 bytes of BE32( H(Tag("earth.unlocktag"), nk, U64(counter)) ) || zero padding
 
-Sync opens every minted stake note anyway; an unlock memo whose tag
+Sync opens every pool note anyway (a value-0 note is kept for this check
+alone, then dropped); an unlock memo whose tag
 recomputes raises `closed_otag_max` (a gift of stake with someone else's
 memo is ignored, so it cannot stretch the scan). Positions only ever
 disappear by unlock (x/shieldedstaking removes them nowhere else). Left
@@ -188,17 +188,35 @@ lengths and a non-canonical owner_pk. Golden (the mnemonic above):
 
     erthz1qyh7prm54w0lu9ymzm3dtpm3r3juewetjuu8675hw0gpu5hywx4ll33j03sqfqzdec0ad2rke8ycxgzvkfg4q7ja4zhgghjjeh59s4mn9gwhg2
 
+**Stake note v2, one note per validator, Move stake, the slash debt
+(chain dff3a9b and b46a4bb, ORCHARD_DESIGN 19-20; clients round 8),
+summary.** A stake note's commitment carries a slash label
+(`label = H("earth.slabel", move_key, move_time, exposed)`, 0 for none)
+and its ciphertext is the wallet's own 201-byte stake v2 ciphertext; the
+chain mints no stake note any more (blind stake ciphertext and `spc_mint`
+gone, §3). Every staking msg's stake proof (16 public inputs) spends at
+most two notes and creates one note back (lane A), so a wallet holds one
+note per validator: a delegation merges into it at a derth quoted at the
+live rate less 10 ppm, a full exit leaves a zero note. "Move stake"
+(MsgRedelegate) moves derth between validators with no unbonding gap; the
+credit lane merges what arrives into the destination note, labelled with
+the move until the label window closes. A slash of the source in that
+window is read from the slash debt tree. Votes take two notes (9 public
+inputs) at their post-slash value. Every stake proof names the current
+clear_before and debt root; owner-tag salts are fresh off positions
+(§4k). The unlock record moved to a value-0 pool note (§1). Android and
+iOS identical.
+
 ## 3. Note ciphertexts
 
-Four kinds, told apart by length (and, for 177 bytes, by which stream the
+Three kinds, told apart by length (and, for 177 bytes, by which stream the
 row is in):
 
 | kind | len | used for |
 | --- | --- | --- |
 | v1 note (canonical) | 217 | a bundle's outputs: sends, change, the registration record note |
 | v2 blind note (canonical, chain zk/privacy) | 177 | every pool note the chain mints, to self or to anyone |
-| blind stake (canonical, chain zk/privacy) | 177 | `StakeProof.spc_ciphertext`: every stake note the chain mints |
-| wallet stake note (wallet-defined) | 153 | a stake proof's own outputs (restake, change) |
+| wallet stake note v2 (wallet-defined; length pinned by the chain) | 201 | every stake note: a stake proof's lane A output and its credit lane's |
 
 **v1 note.**
 
@@ -248,37 +266,41 @@ in `BlindNoteTest`:
     32547dfb2ea23c438f21cd4a419f9ef66d92660af42686e93c890bc37f68cf282f46ca2550ab2df0ce7191a11e7721ce736e0d
     1bdd62af8be221017ee455ab79e7b2ea0e756a86c39910
 
-**Blind stake ciphertext (chain `EncryptBlindStakeNote`).** Required,
-exactly 177 bytes, in `StakeProof.spc_ciphertext` of MsgDelegate,
-MsgUndelegate and MsgUnlockPosition (empty in every other staking msg;
-MsgStakeVote has no stake proof at all):
+**Blind stake ciphertext: removed (chain dff3a9b).** The chain mints no
+stake note: every one is a stake proof's output (`StakeProof.ciphertext`,
+`credit_ciphertext`), so `spc_mint`, `spc_ciphertext` and the 177-byte
+`EncryptBlindStakeNote` format are gone (StakeProof fields 4, 5, 6, 8
+reserved).
 
-    ct  = epk || ChaCha20-Poly1305(HKDF-SHA256(X25519(esk, ek_pub), salt "earth.stake.v1", info epk), nonce 0, pt)
-    pt  = 0x03 || rho (32) || rcm (32) || memo (64)                          129 bytes
+**Wallet stake note ciphertext v2 ("earth stake note v2", wallet-defined;
+the chain pins only its length, WalletStakeCiphertextBytes = 201).** For
+every stake note, always to the wallet's own address:
 
-The owner opens it, recomputes `spc = H(TAG_SPC, owner_pk, rho, rcm)` and
-`cm = H(TAG_STAKE, AssetID(denom), amount, spc)` from the stake row's
-published denom and amount, and accepts only a matching cm. `spc_mint` is
-that spc (fresh rho, rcm per msg). Golden: chain `goldenBlindStakeCT`
-(zk/privacy notecipher_test.go), pinned in `BlindNoteTest`.
-
-**Wallet stake note ciphertext ("earth stake note v1", wallet-defined).**
-For a stake note a stake proof creates (a restake's outputs, an
-undelegation's or a lock's change), always to the wallet's own address:
-
-    ct  = epk (32) || ChaCha20-Poly1305(key, nonce 0^12, aad empty, pt)      153 bytes
-    key = HKDF-SHA256(ikm = X25519(esk, ek_pub), salt "earth.stake.v1", info = epk || cm)
-    pt  = 0x03 || asset_id (32) || amount (u64 BE) || rho (32) || rcm (32)  105 bytes
+    ct  = epk (32) || ChaCha20-Poly1305(key, nonce 0^12, aad empty, pt)      201 bytes
+    key = HKDF-SHA256(ikm = X25519(esk, ek_pub), salt "earth.stake.v2", info = epk || cm)
+    pt  = 0x04 || asset_id (32) || amount (u64 BE) || rho (32) || rcm (32)
+          || move_key (32) || move_time (u64 BE) || exposed (u64 BE)        153 bytes
 
 accepted only if `H(TAG_STAKE, asset_id, amount, H(TAG_SPC, owner_pk, rho,
-rcm)) == cm`. Same salt and version byte as the blind stake ciphertext, but
-a different length, info and plaintext, so neither opens as the other.
+rcm), label) == cm`, label = `H(Tag("earth.slabel"), move_key, move_time,
+exposed)` for a labelled note and 0 when all three are zero (an unlabelled
+note: same length, so the ciphertext does not tell). A v1 stake ciphertext
+(153 bytes, 0x03) is no longer written or read. Golden (esk = 40..5f, the
+§3 golden keys, asset AssetID(vectors `derth_denom`), amount 1,800,000,
+rho 11, rcm 13), pinned in `BlindNoteTest` on both platforms:
+
+    unlabelled (cm vectors blind.stake_cm_derth_1800000):
+    79a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a4acda0bd0608c8007ac2122efac709dab693cd96e83cab5ab4603f747f3c136214b4f26db58f5c9a523c7936ed9eded5dcca94061e0f2cde9565e931dbbcde137eb70d7626ff5a5f7f87ca16bf918c833c0e751a006159e638180e36d8c9390721e533f265d6c082c3b39282802bdef58ce478ee525812f7a2409ea2d7582e980be9bd239897e0a849e9bb197f09bdd3bd37309625b149d5c16b7a883c2e3573786ab371c01d82e218
+    labelled move_key 0x4d4b, move_time 1000, exposed 200 (cm blind.stake_cm_derth_1800000_labelled):
+    79a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a524088d6a8c8bfb2c4c18834e3dca9e08f49563fb5d05b22c0fa65732779254918403cfc2bb8d36aa9c8839639732209620e6666fa89c49fcda050c3d5d4324a3e316bcad126dba984ba60ca4edde3f2e3e4dd565e9d4bd8b85195072085bef5f2454561786101b50164958e27585a23ebbbafff57047de9813082e6a96f0034a597ea4639cad38084f5cf40e3808eee9eb85a4eb63fef8621553805d590d6d5101e93f8be0b7e60e3
 
 **Sync rule (one note-discovery rule).** A pool note row is ours iff its
 ciphertext opens: 217 bytes as v1 (cm-bound), or 177 bytes as v2 with the
 row's public amount (rows without an amount are skipped). A stake note row
-is ours iff its ciphertext opens: 153 bytes as the wallet stake note, or 177
-bytes as a blind stake note with the row's denom and amount. Value-0 notes
+is ours iff its 201-byte ciphertext opens as the wallet stake note v2 (the
+stake rows stream format 2 carries position, height, cm, ciphertext only:
+no denom or amount is published; the wallet names the derth denom by
+AssetID over the chain's validator list, every status, §4k). Value-0 notes
 are dropped, except the registration record note (§3a). Nothing else; a
 restore from the mnemonic alone finds every note.
 
@@ -667,7 +689,8 @@ as held. Every such entry is reminded on.
   = 11, MsgStakeVote.proof = 8 / vote_nullifiers = 10 (stake 7 and the
   single vote_nullifier 9 reserved), MsgUndelegate.pc = 6 / ciphertext = 7.
   Addresses are lowercase canonical bech32.
-- **Stake proofs.** A staking msg's stake proof spends at most two stake
+- **Stake proofs.** Superseded by §4k (stake proof v2, chain dff3a9b);
+  kept for history. A staking msg's stake proof spent at most two stake
   notes of the msg's denom (the smallest single covering, else the
   smallest sufficient pair; a balance spread over more is refused with
   "merge first": the user merges by MsgRestake, two into one, each merge
@@ -1111,7 +1134,8 @@ mismatch; audit 4, L1).
   ties the asking IP to that undelegation and its timing. Its answer adds
   nothing the local record lacks but a slash-adjusted amount and retry
   state, both visible once the note arrives.
-- **One stake vote per validator (18.2).**
+- **One stake vote per validator (18.2).** Four slots superseded by two
+  (chain dff3a9b, §4k); kept for history.
 
       MsgStakeVote {bundle (fee), proposal_id, validator, options, weight, proof (8), vote_nullifiers (10)}
       sighash fields: proposal_id, Bytes(validator), Bytes(OptionsBytes(options)), weight, vote_nullifiers[0..3]
@@ -1179,6 +1203,134 @@ mismatch; audit 4, L1).
 - **Handle owners** (wallet dependency): `HandleEntry.owner` (field 6) is
   now always served, by Query/Handle(s) and as the backend `/handles` row's
   sixth element; adoption is by owner only, as §4i.
+
+## 4k. Stake note v2, Move stake, the slash debt (chain dff3a9b, b46a4bb, ORCHARD_DESIGN 19-20)
+
+- **Stake commitment and label.**
+
+      cm    = H(TAG_STAKE, AssetID(derth/<valoper>), amount, H(TAG_SPC, owner_pk, rho, rcm), label)
+      label = H(Tag("earth.slabel"), move_key, move_time, exposed)    (0: unlabelled)
+      nf    = H(TAG_SNF, nk, rho, position)
+
+  A label marks derth that arrived by a move (`exposed` of it, the move's
+  credit) and stays until the label window (`window_seconds`, Query/DebtTree)
+  after `move_time` has passed: a slash of the source validator in that
+  window owes through the move's debt row. Ciphertext: §3 (v2, 201 bytes).
+
+- **StakeProof (fields 9-15) and StakeFields.**
+
+      StakeProof {proof 1, anchor 2, nullifiers 3 (two), owner_tag 7, commitment 9, ciphertext 10,
+                  credit_nullifier 11, credit_commitment 12, credit_ciphertext 13, clear_before 14, debt_root 15}
+      StakeFields = anchor, nf_0, nf_1, cm, Bytes(ciphertext), credit_nf, credit_cm, Bytes(credit_ciphertext),
+                    owner_tag, clear_before, debt_root          (absent field: 0, absent bytes: Bytes of nothing)
+      public inputs (16): anchor, asset, nf_0, nf_1, cm_out, v_in, v_out, clear_before, debt_root,
+                          cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, otag, sighash
+
+  Sighash fields per msg (after StakeFields): MsgDelegate validator,
+  amount, derth (6); MsgRestake validator; MsgUndelegate validator, amount,
+  pc, Bytes(ciphertext); MsgLockPosition validator, amount, splits;
+  MsgUpdatePosition position_id, splits; MsgUnlockPosition position_id;
+  MsgPositionVote position_id, proposal_id, options; MsgRedelegate
+  Bytes(src), Bytes(dst), amount, dst_derth (6), move_time (7).
+
+- **Lane A (every note-moving msg).** Spends at most two notes of the msg's
+  denom, at most one labelled, and creates exactly one note back (the
+  merged note, the change, or a zero note on a full exit: amount 0, a real
+  commitment). With nothing of ours to spend (a first delegation) slot 0 is
+  a padding input: amount 0, fresh rho and rcm, nullifier H(TAG_SNF, nk,
+  rho, 0), so nf_0 is never zero on a note-moving msg. Balance: Σ in −
+  exposed + (retained if it clears) + v_in = (out − its exposed) + v_out.
+  The output keeps the input's label unless the proof clears it. A
+  position's msg (update, vote) moves nothing: lane A all zero, asset 0.
+
+- **Clearing a label.** A labelled input whose `move_time < clear_before`
+  clears: the circuit reads the move's row in the debt tree at `debt_root`
+  (own leaf, or a low leaf proving absence) and the input counts as
+  amount − exposed + retained (retained = the row's, or all of exposed when
+  absent); the output is unlabelled. While the window is open the labelled
+  part (exposed) cannot leave: undelegate, lock and move take only
+  amount − exposed and the wallet refuses more up front with "moved stake
+  can move again after <date>" (date = move_time + window, UTC). Once
+  clearable, the haircut (exposed − retained) is shown on the confirm sheet
+  and sent as shown (a larger one by the time of sending is refused as
+  QuoteChanged, before proving).
+
+- **clear_before and debt_root on every stake proof (circuit audit L-1,
+  chain b46a4bb).** Every stake proof (Delegate, Restake, Undelegate,
+  LockPosition, UpdatePosition, UnlockPosition, PositionVote, Redelegate)
+  names Query/DebtTree's current `clear_before` and `root`, read when the
+  action starts, whether or not it clears: a proof naming them only to
+  clear would be linkable to the public redelegation into that validator.
+  The chain takes clear_before within [ClearBefore(now) − 3600,
+  ClearBefore(now)] and the current root (a slash changing it between the
+  read and the block refuses the tx at no cost: "try again" re-reads and
+  re-proves). Both are 0 only while the block time is below the window
+  (no real chain), as the chain then requires.
+
+- **Owner-tag salt (circuit audit L-2).** Fresh random on every proof that
+  does not act on a position (Delegate, Undelegate, Restake, Redelegate).
+  A lock's salt is salt_c of a new counter (§1: unpredictable, never
+  reused, restorable); update, vote and unlock reuse the position's.
+
+- **One note per validator; quotes.** MsgDelegate merges the delegated
+  ERTH into the validator's note (v_in = amount) and names `derth` (field
+  6), the derth the chain credits:
+
+      derth = floor(value × S / B) − ceil(floor(value × S / B) × 10 / 1e6)   (S = 0: value, B = 0 required)
+
+  from Query/Validator's backing B and supply S, asked when the user
+  reviews (the confirm sheet shows the derth). A rate that moved past the
+  margin is refused in the ante (1103, no cost). MsgRestake stays: two
+  notes of a validator into one, only on the user's tap (Earn "N notes ·
+  tap to merge"; offered when at most one of the two is labelled).
+
+- **Move stake (MsgRedelegate).**
+
+      MsgRedelegate {bundle (fee), src_validator, dst_validator, amount, stake, dst_derth (6), move_time (7)}
+
+  Lane A spends `amount` derth of src (free value only) with the change
+  back. The credit lane merges what arrives into the wallet's largest
+  unlabelled note at dst (cr_in; none: a padding input, so a second note
+  beside a labelled one) and creates a labelled note: move_key = the
+  credit nullifier (cr_nf), move_time = the LCD's latest block time
+  (the chain takes it within 600 s before its block, 1120 otherwise, no
+  cost), exposed = cr_v_in = dst_derth. Quote: u = floor(amount × B_src /
+  S_src) (at least min_delegation); what arrives is u when src is
+  BOND_STATUS_UNBONDED (x/staking, read for src only) and its queue
+  (Query/Validator state.pending_delegation) covers u, else u − 1,001
+  (the chain splits u pro rata between the queue and the bonded stake,
+  b46a4bb; a bonded part of at most 1,000 stays, x/staking may truncate
+  a uerth); dst_derth = the delegation formula on what arrives at dst's
+  book. Gas is simulated; the fee cap allows the pair's x/staking record at
+  its worst (1,024 entries × 5,000 + 128 × 20,000). The confirm sheet
+  shows the derth that arrives, the window and any haircut. Events:
+  `shieldedstaking_redelegate` carries credited, move_key, move_time; the
+  wallet never queries a move (Query/Redelegation is gone; Query/Move
+  never asked): the debt tree is read whole.
+
+- **Debt tree (zk/debt).** An indexed tree on the depth-32 Poseidon2 tree,
+  leaf i = H(Tag("earth.debtl"), key, next_key, next_index, retained), leaf
+  0 the sentinel; empty root = the sentinel alone (vectors `debt`). Read
+  only when a label is cleared or voted, whole: the indexer's
+  `{base}/debt_rows?from_index=` (rows [index, key hex, retained, height,
+  updated_height], `size`, `root`), else Query/DebtTree pages; built in
+  insertion order with the latest retained and checked against the LCD's
+  root (a mismatch drops the indexer's rows and rebuilds from the chain).
+
+- **Votes (two slots).** MsgStakeVote's vote_nullifiers are exactly two;
+  `debt_root` (11) is the current root on every vote and is last in the
+  sighash:
+
+      sighash fields: proposal_id, Bytes(validator), Bytes(OptionsBytes(options)), weight, vnf_0, vnf_1, debt_root
+      public inputs (9): note_root, nf_root, debt_root, asset, weight, proposal_id, vnf_0, vnf_1, sighash
+
+  A labelled note votes at its post-slash value (amount − exposed +
+  retained, the debt witness at debt_root); at most one labelled note per
+  vote. Spent notes' openings are kept (never pruned) so a note spent after
+  a snapshot still votes on it. An unused slot is zero (the circuit makes
+  its vnf 0: a vote using one slot is told apart from one using two).
+
+- **Unlock record.** §1: a value-0 pool note in the unlock's fee bundle.
 
 ## 4a. Indexer URL scheme (backend README "URL scheme for wallets")
 
