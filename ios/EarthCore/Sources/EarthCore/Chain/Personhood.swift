@@ -12,13 +12,6 @@ public enum Personhood {
     public static func nextClaimOpensAt(now: Date = Date()) -> Int64 {
         (Int64(now.timeIntervalSince1970) / secondsPerDay + 1) * secondsPerDay
     }
-
-    /// One issuing country's registration total. `country` is ISO 3166-1
-    /// alpha-2, or "" when the Document Signer's certificate carries no country.
-    public struct CountryCount: Sendable, Equatable {
-        public let country: String
-        public let count: Int64
-    }
 }
 
 public extension EarthClient {
@@ -30,21 +23,6 @@ public extension EarthClient {
             "/earth/personhood/v1/registration_count"
         ) else { return 0 }
         return json.count.int64(default: 0)
-    }
-
-    /// Registrations per issuing country, largest first.
-    func registrationCountries() async -> [Personhood.CountryCount] {
-        guard let json = try? await rest.get(
-            "/earth/personhood/v1/registration_countries"
-        ) else { return [] }
-        return json.countries.array
-            .map {
-                Personhood.CountryCount(
-                    country: $0.country.string(default: ""),
-                    count: $0.count.int64(default: 0)
-                )
-            }
-            .sorted { $0.count > $1.count }
     }
 
     /// How many humans registered with a given Document Signer (hex dsc_key).

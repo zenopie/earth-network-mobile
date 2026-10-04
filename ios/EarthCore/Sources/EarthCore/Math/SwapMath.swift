@@ -143,9 +143,6 @@ public enum SwapMath {
         return (shares, e, t)
     }
 
-    /// x/dex ErrPoolCap: a reserve, share supply or input past 2^120 (code 1120, codespace dex).
-    public static let errPoolCap = 1120
-
     /// The floor a swap accepts at a tolerance of `bps` basis points.
     /// Truncating, so rounding only ever moves the floor down.
     public static func withSlippage(_ amountOut: BigInt, bps: Int) -> BigInt {

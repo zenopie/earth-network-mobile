@@ -61,11 +61,6 @@ public enum Fees {
         return NSDecimalNumber(decimal: rounded).stringValue
     }
 
-    /// As ``forGas(_:)``, for callers that want to compare against a balance.
-    public static func forGasValue(_ gas: UInt64) -> BigInt {
-        BigInt(forGas(gas)) ?? BigInt(0)
-    }
-
     /// The price per gas the node takes, priming the cache first: what a
     /// private tx's fee is held to in CheckTx (x/shielded/ante).
     public static func price(rest: EarthRest = EarthRest()) async -> Decimal {

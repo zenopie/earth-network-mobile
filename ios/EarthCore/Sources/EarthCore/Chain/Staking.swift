@@ -28,19 +28,6 @@ public enum Staking {
         public let validator: String
         public let balance: String
         public let completionTime: String
-        /// Cancelling addresses an entry by (validator, creationHeight) —
-        /// unbonding entries have no id — so this has to be carried through or
-        /// the cancel cannot be built.
-        public let creationHeight: Int64
-    }
-
-    /// Stake in flight between validators: still bonded, but locked until it
-    /// matures.
-    public struct RedelegationEntry: Sendable, Equatable {
-        public let source: String
-        public let destination: String
-        public let balance: String
-        public let completionTime: String
     }
 }
 
@@ -86,25 +73,7 @@ public extension EarthClient {
                 Staking.UnbondingEntry(
                     validator: validator,
                     balance: e.balance.string(default: "0"),
-                    completionTime: e.completion_time.string(default: ""),
-                    creationHeight: e.creation_height.int64(default: 0)
-                )
-            }
-        }
-    }
-
-    func redelegations(_ delegator: String) async -> [Staking.RedelegationEntry] {
-        guard let json = try? await rest.get(
-            "/cosmos/staking/v1beta1/delegators/\(delegator)/redelegations"
-        ) else { return [] }
-        return json.redelegation_responses.array.flatMap { response -> [Staking.RedelegationEntry] in
-            let redelegation = response.redelegation
-            return response.entries.array.map { e in
-                Staking.RedelegationEntry(
-                    source: redelegation.validator_src_address.string(default: ""),
-                    destination: redelegation.validator_dst_address.string(default: ""),
-                    balance: e.balance.string(default: "0"),
-                    completionTime: e.redelegation_entry.completion_time.string(default: "")
+                    completionTime: e.completion_time.string(default: "")
                 )
             }
         }
@@ -126,53 +95,6 @@ public extension EarthClient {
     }
 
     // --- messages ---
-
-    private func uerth(_ amount: String) -> Coin {
-        Coin(denom: Constants.gasDenom, amount: amount)
-    }
-
-    func msgDelegate(delegator: String, validator: String, amountUerth: String) -> ProtoAny {
-        Msg.Delegate(delegator: delegator, validator: validator, amount: uerth(amountUerth))
-            .asAny(typeURL: Msg.Delegate.typeURL)
-    }
-
-    func msgUndelegate(delegator: String, validator: String, amountUerth: String) -> ProtoAny {
-        Msg.Undelegate(delegator: delegator, validator: validator, amount: uerth(amountUerth))
-            .asAny(typeURL: Msg.Undelegate.typeURL)
-    }
-
-    /// Move stake between validators without unbonding — it keeps earning, with
-    /// no 21-day gap. The chain refuses to redelegate stake already in flight,
-    /// and caps concurrent entries between any validator pair.
-    func msgBeginRedelegate(
-        delegator: String,
-        source: String,
-        destination: String,
-        amountUerth: String
-    ) -> ProtoAny {
-        Msg.BeginRedelegate(
-            delegator: delegator,
-            source: source,
-            destination: destination,
-            amount: uerth(amountUerth)
-        ).asAny(typeURL: Msg.BeginRedelegate.typeURL)
-    }
-
-    /// Cancel an in-progress unbonding, returning the stake to the same
-    /// validator. Partial cancels are allowed; the remainder keeps its schedule.
-    func msgCancelUnbonding(
-        delegator: String,
-        validator: String,
-        amountUerth: String,
-        creationHeight: Int64
-    ) -> ProtoAny {
-        Msg.CancelUnbondingDelegation(
-            delegator: delegator,
-            validator: validator,
-            amount: uerth(amountUerth),
-            creationHeight: creationHeight
-        ).asAny(typeURL: Msg.CancelUnbondingDelegation.typeURL)
-    }
 
     func msgWithdrawReward(delegator: String, validator: String) -> ProtoAny {
         Msg.WithdrawDelegatorReward(delegator: delegator, validator: validator)

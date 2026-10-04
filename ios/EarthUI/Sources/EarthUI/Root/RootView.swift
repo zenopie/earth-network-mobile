@@ -298,33 +298,6 @@ struct EarthTabBar: View {
     }
 }
 
-/// A tab's content: the screen gutter, a scroll, and pull to refresh.
-///
-/// No large title — the top bar identifies the wallet and the screens name
-/// themselves in their first line, the way the Android app does.
-struct EarthScreen<Content: View>: View {
-    @Environment(\.earth) private var theme
-    @Environment(AppModel.self) private var model
-
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: theme.space.x16) {
-                if let error = model.lastError {
-                    ErrorBanner(text: error)
-                }
-                content
-            }
-            .padding(.horizontal, theme.space.gutter)
-            .padding(.top, theme.space.x24)
-            .padding(.bottom, theme.space.x32)
-        }
-        .refreshable { await model.refresh() }
-        .background(theme.colors.bgPrimary)
-    }
-}
-
 /// A query failure, shown in place rather than as an alert.
 ///
 /// A wallet that cannot reach the chain still has an address to show and a

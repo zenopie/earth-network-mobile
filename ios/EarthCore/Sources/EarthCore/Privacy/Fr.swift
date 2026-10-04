@@ -69,13 +69,6 @@ public struct Fr: Hashable, Comparable, Sendable, CustomStringConvertible {
         self.init(v)
     }
 
-    /// Big-endian bytes of any length read as an integer, which must be below p.
-    public static func fromUnsignedBytes(_ b: Data) throws -> Fr {
-        let v = BigUInt(b)
-        guard v < modulus else { throw Error.notCanonical }
-        return Fr(v)
-    }
-
     /// At least 48 uniform bytes reduced mod p: a uniform field element.
     public static func fromWideBytes(_ b: Data) throws -> Fr {
         guard b.count >= 48 else { throw Error.tooShortForReduction }

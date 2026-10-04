@@ -243,16 +243,6 @@ public struct WalletStore: Sendable {
         }
     }
 
-    /// Whether a secret is held behind biometrics, without asking for it.
-    public var biometricsEnrolled: Bool {
-        let context = LAContext()
-        context.interactionNotAllowed = true
-        var query = Self.biometricQuery
-        query[kSecUseAuthenticationContext as String] = context
-        let status = SecItemCopyMatching(query as CFDictionary, nil)
-        return status == errSecSuccess || status == errSecInteractionNotAllowed
-    }
-
     /// Put a secret behind biometrics, in the spare slot.
     ///
     /// Returns the slot it landed in. The live slot is left alone, so whatever

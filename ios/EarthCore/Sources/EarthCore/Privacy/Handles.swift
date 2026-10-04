@@ -16,12 +16,6 @@ public enum Handles {
     public static let defaultLeaseSeconds: Int64 = 365 * 86400
     public static let defaultRenewalSeconds: Int64 = 30 * 86400
 
-    /// x/personhood errors a handle msg may meet (codespace personhood).
-    public static let errNoReferrer = 1121
-    public static let errHandleTaken = 1122
-    public static let errHandleMovedOut = 1125
-    public static let errCaretakerMovedOut = 1126
-
     /// Seconds before expiry the reminder starts (and it stays through the renewal period).
     public static let reminderLeadSeconds: Int64 = 30 * 86400
 

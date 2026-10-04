@@ -317,27 +317,6 @@ struct EarthEmpty: View {
     }
 }
 
-/// A section heading with optional trailing detail.
-struct EarthSectionHeader: View {
-    @Environment(\.earth) private var theme
-    let title: String
-    var trailing: String?
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(title)
-                .font(EarthType.title)
-                .foregroundStyle(theme.colors.textPrimary)
-            Spacer()
-            if let trailing {
-                Text(trailing)
-                    .font(EarthType.bodySmall)
-                    .foregroundStyle(theme.colors.textTertiary)
-            }
-        }
-    }
-}
-
 /// A screen background. Secondary rather than primary, so cards read as raised.
 struct EarthBackground: ViewModifier {
     @Environment(\.earth) private var theme

@@ -80,45 +80,4 @@ public extension EarthClient {
             totalWeight: json.total_weight.string(default: "0")
         )
     }
-
-    func allocationOptions(_ stream: Msg.StreamID) async -> [Allocation.OptionInfo] {
-        await self.stream(stream).options
-    }
-
-    /// A voter's current split in one stream.
-    ///
-    /// `QueryVoterResponse` wraps the record in a `voter` field, so the
-    /// percentages are one level down. Reading them off the top level parses as
-    /// empty and shows an unallocated voter — silently, since an empty split is
-    /// a valid state for someone who has never allocated.
-    func voterAllocations(_ stream: Msg.StreamID, address: String) async -> [Allocation.Weight] {
-        guard let json = try? await rest.get(
-            "/earth/allocation/v1/voter/\(Allocation.path(stream))/\(address)"
-        ) else { return [] }
-        return json.voter.percentages.array.map {
-            Allocation.Weight(
-                optionID: $0.option_id.uint64(default: 0),
-                percent: $0.percent.uint64(default: 0)
-            )
-        }
-    }
-
-    // --- messages ---
-
-    func msgSetAllocations(
-        creator: String,
-        stream: Msg.StreamID,
-        weights: [Allocation.Weight]
-    ) -> ProtoAny {
-        Msg.SetAllocations(
-            creator: creator,
-            stream: stream,
-            percentages: weights.map { Msg.AllocationWeight(optionID: $0.optionID, percent: $0.percent) }
-        ).asAny(typeURL: Msg.SetAllocations.typeURL)
-    }
-
-    func msgClaimAllocation(creator: String, stream: Msg.StreamID, optionID: UInt64) -> ProtoAny {
-        Msg.ClaimAllocation(creator: creator, stream: stream, optionID: optionID)
-            .asAny(typeURL: Msg.ClaimAllocation.typeURL)
-    }
 }

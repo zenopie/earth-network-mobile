@@ -13,7 +13,6 @@ import Foundation
 /// `snapshot`, which is replaced after each operation and never torn.
 public final class PrivacyWallet: @unchecked Sendable {
     public static let secondsPerDay: Int64 = 86_400
-    public static let anmlPerClaim: UInt64 = 1_000_000
     /// MsgRegister's gas, for the fee estimate before simulating: the
     /// passport proof (3M) and DSC chain (300k), the fee bundle's two action
     /// proofs and note writes, and the tx's bytes.
@@ -676,15 +675,9 @@ public final class PrivacyWallet: @unchecked Sendable {
         return result
     }
 
-    /// Fills the pending registration (C2, K7) from its committed tx — the
-    /// leaf index from its register event, activated_at its block time —
-    /// and syncs; every later sync retries until the leaf is in the local
-    /// identity tree and matches.
-    public func recordRegistration(_ result: TxResult) async throws {
-        try await locked { try recordPendingLocked(result) }
-        _ = try? await sync()
-    }
-
+    /// Fills the pending registration from its committed tx: the leaf index
+    /// from its register event, activated_at its block time. Every later
+    /// sync retries until the leaf is in the local identity tree and matches.
     private func recordPendingLocked(_ result: TxResult) throws {
         guard let index = result.attr("register", "leaf_index").flatMap(UInt64.init) else {
             throw PrivacyError("registration tx \(result.hash) has no leaf_index")
@@ -2722,11 +2715,6 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// balance): a pc of its owner_pk and a blind ciphertext to its ek_pub;
     /// the shield's amount is public, its recipient is not.
     public func shieldOutput(denom: String, to: ShieldedAddress) throws -> NoteOut { try payout(denom, to: to) }
-
-    /// The output for a MsgBuyAnml (signed by the caller's transparent key).
-    public func buyAnmlOutput(to: ShieldedAddress? = nil) async throws -> NoteOut {
-        try await locked { try payout("uanml", to: to) }
-    }
 
     // MARK: - saving
 
