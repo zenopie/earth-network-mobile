@@ -1125,23 +1125,49 @@ insertion order with the latest retained and checked against the LCD's
 root (a mismatch drops the indexer's rows and rebuilds from the chain). The
 last two trees are kept by root.
 
+**Validator list.** Every staking quote, picker, stake value and validator
+name comes from x/shieldedstaking `Query/Validators`
+(`/earth/shieldedstaking/v1/validators?pagination.limit=200&pagination.key=`),
+read whole: the first page's `height` (int64 as a string) fixes the
+height, every later page is asked with `x-cosmos-block-height: <height>`
+and must answer that same `height`; a page from another height, or one the
+node cannot serve at it, starts the read over (at most 4 reads, then an
+error, never a mix of two states). An entry: `validator`; `staking`
+(x/staking's Validator: `operator_address` "" for a book whose validator
+x/staking removed, which comes on the last page; `status`, `jailed`,
+`tokens`, `description.moniker`, `commission.commission_rates.rate`);
+`tombstoned`; `delegatable` and `refusal`; `book` (`pending_delegation` P,
+`pending_undelegation` U, …); `backing` B, `supply` S, `rate`;
+`delegation` D, `rewards` W; `redelegations` [{`dst_validator`, `entries`,
+`counted_entries`}]. Integers are decimal strings of at most 80 digits; a
+duplicate validator, a looping next_key, an entry whose
+`staking.operator_address` is another's or more than 10,000 entries refuse
+the read. The list is read again on every sync and every quote (a quote
+reads it when the user reviews it), kept in memory for pickers and names;
+the stake pickers offer bonded validators with `delegatable` true. The
+wallet never asks about one validator (Query/Validator, x/staking's
+`validators/{addr}`, `Query/Redelegation`): asked just before a public msg,
+that ties the asking IP to the intent.
+
 **Delegate.** MsgDelegate merges `amount` uerth (released by the bundle)
 into the validator's note (v_in = derth) and names `derth`, the derth the
 chain credits:
 
     derth = floor(value × S / B) − ceil(floor(value × S / B) × 10 / 1e6)     (S = 0: value, B = 0 required)
 
-from Query/Validator's backing B and supply S, asked when the user reviews
-(the confirm sheet shows the derth). Both amount and derth must be at least
-min_delegation. A rate that moved past the margin is refused in the ante
-(1103, no cost).
+from the list's backing B and supply S, read when the user reviews (the
+confirm sheet shows the derth). A validator whose entry is not
+`delegatable` is refused up front with its `refusal`. Both amount and derth
+must be at least min_delegation. A rate that moved past the margin is
+refused in the ante (1103, no cost).
 
 **Restake.** MsgRestake merges two notes of a validator into one, only on
 the user's tap (Earn "N notes · tap to merge"; offered when at most one of
 the two is labelled).
 
-**Undelegate.** The stake proof spends `amount` derth (v_out = amount,
-change back). `pc` is a fresh pool note opening of the wallet's own and
+**Undelegate.** The confirm sheet shows the value floor(amount × B / S)
+from the list, read when the user reviews. The stake proof spends `amount`
+derth (v_out = amount, change back). `pc` is a fresh pool note opening of the wallet's own and
 `ciphertext` its 177-byte v2 ciphertext to its own address. At maturity the
 chain mints `value × payout / requested` uerth to pc in the EndBlocker (at
 most 2^63 − 1 a note: a larger payout is several `shielded_mint` rows with
@@ -1173,15 +1199,21 @@ the wallet's largest unlabelled note at dst (cr_in; none: a padding input,
 so a second note beside a labelled one) and creates a labelled note:
 move_key = the credit nullifier (cr_nf), move_time = the LCD's latest block
 time (the chain takes it within 600 s before its block, 1120 otherwise, no
-cost), exposed = cr_v_in = dst_derth. Quote: u = floor(amount × B_src /
-S_src) (at least min_delegation); what arrives is u when src is
-BOND_STATUS_UNBONDED (x/staking, read for src only) and its queue
-(Query/Validator state.pending_delegation) covers u, else u − 1,001 (the
-chain splits u pro rata between the queue and the bonded stake; a bonded
-part of at most 1,000 stays, and x/staking may truncate a uerth);
+cost), exposed = cr_v_in = dst_derth. Quote, from one read of the list: dst
+must be `delegatable` (else refused up front with its `refusal`); u =
+floor(amount × B_src / S_src) (at least min_delegation); what arrives is u
+when the value leaves src's queue first (src's `staking.status`
+BOND_STATUS_UNBONDED, or removed, or its bonded part D − U ≤ 0) and the
+queue P + W covers u (the move withdraws W into it first), else u − 1,001
+(the chain splits u pro rata between the queue and the bonded stake; a
+bonded part of at most 1,000 stays, and x/staking may truncate a uerth);
 dst_derth = the delegation formula on what arrives at dst's book (at least
-min_delegation). Gas is simulated; the fee cap allows the pair's x/staking
-record at its worst (§11). The confirm sheet shows the derth that arrives,
+min_delegation). Gas is simulated, the limit the simulation + 10% (§11)
+plus, when src's `redelegations` entry for dst has `counted_entries` < 1,024
+≤ `counted_entries` + 51 (the pair may reach the cap within the tx's
+timeout), the merge it would then pay: (`entries` (at most 1,024) + 51) ×
+2,500 + 128 × 20,000. The fee cap allows the pair's x/staking record at
+its worst (§11). The confirm sheet shows the derth that arrives,
 the window and any haircut. The `shieldedstaking_redelegate` event carries
 credited, move_key, move_time; the wallet never queries a move
 (Query/Redelegation and Query/Move are never asked).
@@ -1288,8 +1320,9 @@ sheet says so.
 
 **Stake note discovery.** The stake rows stream carries no denom: a stake
 ciphertext names only the asset id, so the wallet names `derth/<valoper>`
-by AssetID over the chain's validator list (every status, read at most once
-a sync, each candidate learned only as the hash of its own name). A stake
+by AssetID over the validator list (every status, and books whose
+validator x/staking removed; the list the sync read, each candidate
+learned only as the hash of its own name). A stake
 note of an asset it cannot name is not used.
 
 ## 16. Assembly and dex
@@ -1372,7 +1405,6 @@ nullifier scope (vectors `proposal_5_0`, `proposal_5_1`).
        GET {base}/identity?from_index=&limit=          leaves [index, height, leaf, zeroed_height, time?]; size
        GET {base}/identity/zeroed?from_height=&limit=  blocks [[height, [index, …]], …]
        GET {base}/roots/latest                         {note, identity, stake: {root, tree_size, height, time}}, synced_height
-       GET {base}/rates?epoch=                         [validator, rate, supply, epoch, height]   (Earn display)
        GET {base}/stake/notes?from_pos=&limit=         notes [position, height, cm, ciphertext]
        GET {base}/stake/nullifiers?from_height=&limit= blocks [[height, [nf, …]], …]
        GET {base}/stake/nullifier-tree?from_index=&limit=  nullifiers [index, nullifier, height]; size, next_index
