@@ -106,16 +106,26 @@ data class RegRecord(
 enum class RecordStatus { OPEN, MATCHED, EXHAUSTED }
 
 /**
- * A stake vote being cast (K5), persisted so a run the process lost resumes
- * on the next unlock: the options as (VoteOption number, weight), the
- * positions already voted, casts done of [total].
+ * An undelegation of this wallet whose payout has not arrived (chain
+ * 48b631c, ORCHARD_DESIGN 18.1): recorded when the node takes the tx
+ * ([until] its timeout_height), confirmed with the committed event's
+ * [epoch], [value] (uerth) and [payoutId], dropped once a note to [pc] is
+ * synced (paid) or the tx failed. Local only: what the wallet shows while it
+ * waits, never a query key.
  */
-data class StakeVoteRun(
-    val proposalId: Long,
-    val options: List<Pair<Int, String>>,
-    val votedPositions: Set<Long>,
-    val total: Int,
-    val done: Int = 0,
+data class PendingUnbond(
+    val txHash: String,
+    val validator: String,
+    val derth: Long,
+    val pc: Fr,
+    val startedAt: Long,
+    val until: Long?,
+    val confirmed: Boolean = false,
+    val epoch: Long? = null,
+    val value: Long? = null,
+    val payoutId: Long? = null,
+    /** About when the chain pays it (PrivacyWallet.unbondDueBy at confirmation; null: unknown). */
+    val dueBy: Long? = null,
 )
 
 /**
@@ -157,7 +167,7 @@ data class PendingMove(
 
 /**
  * What the wallet keeps between syncs: cursors into each indexer stream, its
- * own notes, its registration, and the automations' bookkeeping. Small; the
+ * own notes, its registration, and its own txs' bookkeeping. Small; the
  * trees live beside it in per-level files.
  */
 class PrivacyState {
@@ -227,10 +237,8 @@ class PrivacyState {
     val pendingMoves: MutableList<PendingMove> = ArrayList()
     /** The store id of the wallet a switch moves to, fixed by its first move (audit 5, L8). */
     var switchTarget: String = ""
-    /** Unbond denoms whose claim the chain refused as not yet matured, to when the automation next tries. */
-    val unbondRetryAt: MutableMap<String, Long> = sortedMapOf()
-    /** A stake vote being cast (K5), or null. */
-    var stakeVoteRun: StakeVoteRun? = null
+    /** Undelegations whose payout has not arrived yet. */
+    val pendingUnbonds: MutableList<PendingUnbond> = ArrayList()
     /** Every stake vote cast: (proposal, vote nullifier). */
     val stakeVotes: MutableList<StakeVoteRecord> = ArrayList()
     /** A uniform sample of identity row heights (registration blocks): a record's LCD cover set is drawn from it (audit 4). */
@@ -286,12 +294,13 @@ class PrivacyState {
         put("void_record_heights", JSONArray(voidRecordHeights.toList()))
         put("pending_moves", JSONArray().apply { pendingMoves.forEach { put(moveJson(it)) } })
         put("switch_target", switchTarget)
-        put("unbond_retry_at", JSONObject().apply { unbondRetryAt.forEach { (k, v) -> put(k, v) } })
-        stakeVoteRun?.let { r ->
-            put("stake_vote_run", JSONObject().put("proposal_id", r.proposalId)
-                .put("options", JSONArray().apply { r.options.forEach { (o, w) -> put(JSONArray().put(o).put(w)) } })
-                .put("voted_positions", JSONArray(r.votedPositions.toList())).put("total", r.total).put("done", r.done))
-        }
+        put("pending_unbonds", JSONArray().apply {
+            pendingUnbonds.forEach { u ->
+                put(JSONObject().put("tx_hash", u.txHash).put("validator", u.validator).put("derth", u.derth).put("pc", u.pc.toHex())
+                    .put("started_at", u.startedAt).put("until", u.until ?: JSONObject.NULL).put("confirmed", u.confirmed)
+                    .put("epoch", u.epoch ?: JSONObject.NULL).put("value", u.value ?: JSONObject.NULL).put("payout_id", u.payoutId ?: JSONObject.NULL).put("due_by", u.dueBy ?: JSONObject.NULL))
+            }
+        })
         put("stake_votes", JSONArray().apply {
             stakeVotes.forEach { v ->
                 put(JSONObject().put("proposal_id", v.proposalId).put("vnf", v.vnf.toHex()).put("tx_hash", v.txHash ?: JSONObject.NULL)
@@ -353,15 +362,11 @@ class PrivacyState {
             voidRecordHeights.addAll(longs(j.optJSONArray("void_record_heights")))
             j.optJSONArray("pending_moves")?.let { a -> for (i in 0 until a.length()) pendingMoves.add(moveFromJson(a.getJSONObject(i))) }
             switchTarget = j.optString("switch_target")
-            j.optJSONObject("unbond_retry_at")?.let { o -> o.keys().forEach { unbondRetryAt[it] = o.getLong(it) } }
-            j.optJSONObject("stake_vote_run")?.let { r ->
-                val o = r.optJSONArray("options"); val v = r.optJSONArray("voted_positions")
-                stakeVoteRun = StakeVoteRun(
-                    r.getLong("proposal_id"),
-                    (0 until (o?.length() ?: 0)).map { o!!.getJSONArray(it).let { p -> p.getInt(0) to p.getString(1) } },
-                    (0 until (v?.length() ?: 0)).map { v!!.getLong(it) }.toSet(),
-                    r.optInt("total"), r.optInt("done"),
-                )
+            j.optJSONArray("pending_unbonds")?.let { a ->
+                for (i in 0 until a.length()) a.getJSONObject(i).let {
+                    pendingUnbonds.add(PendingUnbond(it.getString("tx_hash"), it.getString("validator"), it.getLong("derth"), Fr.fromHex(it.getString("pc")),
+                        it.optLong("started_at"), opt(it, "until"), it.optBoolean("confirmed"), opt(it, "epoch"), opt(it, "value"), opt(it, "payout_id"), opt(it, "due_by")))
+                }
             }
             j.optJSONArray("stake_votes")?.let { a ->
                 for (i in 0 until a.length()) a.getJSONObject(i).let {
@@ -514,7 +519,7 @@ class PrivacyStore private constructor(private val dir: File?) {
                 caretakerExpiresAt = old.caretakerExpiresAt; caretakerMovedOut = old.caretakerMovedOut
                 handle = old.handle; handleMovedOut = old.handleMovedOut
                 keepHandleState(old, this)
-                stakeVoteRun = old.stakeVoteRun
+                pendingUnbonds.addAll(old.pendingUnbonds)
                 stakeVotes.addAll(old.stakeVotes)
             } else if (old.chainId == null) {
                 // Never synced: what a switch moved to this identity was

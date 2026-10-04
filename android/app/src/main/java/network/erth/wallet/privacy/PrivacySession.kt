@@ -67,7 +67,7 @@ object PrivacySession {
     /**
      * Deletes the selected wallet's private data from the phone (audit 3/4:
      * PrivacyStore.delete, zeroed then unlinked). The session lets go of the
-     * wallet first (a running stake vote, the automation); nothing on chain
+     * wallet first; nothing on chain
      * changes, and the next sync rebuilds everything from the mnemonic.
      */
     fun forgetPrivateData(context: Context) {
@@ -176,6 +176,12 @@ object PrivacySession {
         }
 
         override fun epochNumber(): Long = PrivacyQueries.epoch().number
+
+        override fun unbondDueBy(epoch: Long): Long? {
+            val e = PrivacyQueries.epoch()
+            val t = PrivacyQueries.stakingTiming()
+            return PrivacyWallet.unbondDueBy(epoch, e.number, e.startTime, e.endTime, t.epochSeconds, t.unbondingSeconds)
+        }
 
         override fun snapshot(proposalId: Long) = PrivacyQueries.snapshot(proposalId).let {
             PrivacyChainReads.Snapshot(it.root, it.treeSize, it.height, it.rates, it.nfRoot, it.nfSize)

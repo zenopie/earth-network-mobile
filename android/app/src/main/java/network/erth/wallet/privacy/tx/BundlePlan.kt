@@ -31,7 +31,7 @@ class NoteOut private constructor(val denom: String, val value: Long, val pc: Fr
 
         /**
          * A note the chain will mint to us (a reward, a claim, a shield, an
-         * unbonding payout, swap output, LP shares, refunds or withdrawal
+         * undelegation's payout, swap output, LP shares, refunds or withdrawal
          * legs): fresh rho and rcm and a value-blind (v2) ciphertext of them
          * to our own address, which sync opens against the amount the chain
          * publishes with the note. No counter: every such note is found by
@@ -277,7 +277,8 @@ object StakeSelection {
     /**
      * Notes covering [amount]: the smallest single one that does, else the
      * pair with the smallest sufficient sum. A balance spread over more than
-     * two notes is merged first (PrivacyWallet.mergeStake).
+     * two notes is refused: the user merges first (PrivacyWallet.mergeStake,
+     * its own tx), never the wallet on its own.
      */
     fun cover(notes: List<network.erth.wallet.privacy.note.OwnedStakeNote>, amount: Long): List<network.erth.wallet.privacy.note.OwnedStakeNote> {
         require(amount > 0)
@@ -290,7 +291,7 @@ object StakeSelection {
             if (s >= amount && s < bestSum) { best = listOf(c[i], c[j]); bestSum = s }
         }
         return best ?: throw NoteSelection.Insufficient(
-            if (network.erth.wallet.privacy.Amounts.satSum(c) { it.amount } >= amount) "this stake is spread over more than two notes; merge them first"
+            if (network.erth.wallet.privacy.Amounts.satSum(c) { it.amount } >= amount) "this stake is spread over more than two notes; merge them on the Notes screen first (one fee each), then try again"
             else "insufficient stake",
         )
     }

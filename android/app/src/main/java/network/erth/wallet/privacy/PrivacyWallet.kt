@@ -17,7 +17,6 @@ import network.erth.earth.proto.personhood.MsgMoveHandle
 import network.erth.earth.proto.personhood.MsgRegister
 import network.erth.earth.proto.personhood.MsgSetCaretaker
 import network.erth.earth.proto.shielded.MsgSend
-import network.erth.earth.proto.shieldedstaking.MsgClaimUnbonding
 import network.erth.earth.proto.shieldedstaking.MsgDelegate
 import network.erth.earth.proto.shieldedstaking.MsgLockPosition
 import network.erth.earth.proto.shieldedstaking.MsgPositionVote
@@ -31,7 +30,9 @@ import network.erth.wallet.privacy.keys.ShieldedAddress
 import network.erth.wallet.privacy.note.OwnedNote
 import network.erth.wallet.privacy.note.OwnedStakeNote
 import network.erth.wallet.privacy.prove.MembershipWitness
+import network.erth.wallet.privacy.prove.VoteSlot
 import network.erth.wallet.privacy.prove.VoteWitness
+import network.erth.wallet.privacy.sync.PendingUnbond
 import network.erth.wallet.privacy.sync.StakeVoteRecord
 import network.erth.wallet.privacy.sync.ChainRoots
 import network.erth.wallet.privacy.sync.IdentityRecord
@@ -132,6 +133,13 @@ interface PrivacyChainReads {
     fun positions(): List<Position>
     /** x/shieldedstaking Query/StakeNullifierTree{start, limit} (at most 1000 a page). */
     fun stakeNullifierTree(start: Long, limit: Int): NfTreePage
+
+    /**
+     * About when an undelegation booked in [epoch] is paid, from chain-wide
+     * timing alone (the current epoch, epoch length, x/staking's unbonding
+     * time): never a query about this wallet's undelegation. Null: unknown.
+     */
+    fun unbondDueBy(epoch: Long): Long? = null
 }
 
 /**
@@ -163,7 +171,7 @@ class PrivacyWallet(
     fun sync(): WalletSync.Result {
         fillPendingRegistration()
         runCatching { resolvePendingMoves() }
-        return WalletSync(indexer, store, keys, chainId, roots, now).sync()
+        return WalletSync(indexer, store, keys, chainId, roots, now).sync().also { runCatching { resolveUnbonds() } }
     }
 
     /**
@@ -199,7 +207,7 @@ class PrivacyWallet(
         store.state.notes.filter { it.unspent && it.pendingAt == null }
             .groupBy { it.note.denom }.mapValues { (_, ns) -> Amounts.satSum(ns) { it.note.value } }
 
-    /** Stake (derth/<valoper>) and unbonding claims (unbond/<valoper>/<epoch>) per denom: owner-locked, never sendable. */
+    /** Stake (derth/<valoper>) per denom: owner-locked, never sendable. */
     fun stakeBalances(): Map<String, Long> =
         store.state.stakeNotes.filter { it.spendable }.groupBy { it.denom }.mapValues { (_, ns) -> Amounts.satSum(ns) { it.amount } }
 
@@ -509,7 +517,7 @@ class PrivacyWallet(
     fun shieldOutput(denom: String, amount: Long): NoteOut = mint(denom)
 
     private fun requireTransferable(denom: String) {
-        require(!denom.startsWith(DERTH_PREFIX) && !denom.startsWith(UNBOND_PREFIX)) { "stake is owner-locked: it cannot be sent or unshielded" }
+        require(!denom.startsWith(DERTH_PREFIX)) { "stake is owner-locked: it cannot be sent or unshielded" }
     }
 
     // ---- personhood ---------------------------------------------------------
@@ -539,7 +547,7 @@ class PrivacyWallet(
             require(it.address.ownerPk != keys.ownerPk) { "a registration cannot name its own wallet as its referrer" }
         }
         val aff = if (referrer == null) Fr.ZERO else Privacy.affiliateField(referrer.handle)
-        val binding = Privacy.registrationBinding(keys.idc, anml.pc, anml.ciphertext, erth.pc, erth.ciphertext, aff)
+        val binding = Privacy.registrationBinding(chainId, keys.idc, anml.pc, anml.ciphertext, erth.pc, erth.ciphertext, aff)
         return RegistrationPrep(anml, erth, gas, referrer?.handle.orEmpty(), binding, keys.idc)
     }
 
@@ -1230,33 +1238,6 @@ class PrivacyWallet(
         store.state.stakeNotes.filter { it.spendable && it.denom.startsWith(DERTH_PREFIX) }
             .groupBy { it.denom }.mapValues { it.value.size }.filter { (_, n) -> n >= 2 }
 
-    /**
-     * Makes [amount] of [denom] spendable by one stake proof (two notes):
-     * while the two largest fall short, merges the two smallest (one restake
-     * each) and syncs. Returns the merge txs it broadcast.
-     *
-     * Audit 4: at most [maxMerges] merges per confirmation (each pays a fee
-     * the user confirmed once), a random pause before each after the first
-     * and before handing back to the action that follows, so the merges and
-     * the action are not one burst that times them together. More than that
-     * is refused: merge on the Notes screen first.
-     */
-    fun consolidateStake(denom: String, amount: Long, maxMerges: Int = MAX_MERGES_PER_CONFIRM, pause: (Long) -> Unit = { Thread.sleep(it) }): List<TxResult> {
-        val out = ArrayList<TxResult>()
-        fun space() = pause(MERGE_PAUSE_MIN_MS + (SPACING_RNG.nextDouble() * (MERGE_PAUSE_MAX_MS - MERGE_PAUSE_MIN_MS)).toLong())
-        while (true) {
-            val ns = spendableStake(denom)
-            if (Amounts.satSum(ns.sortedByDescending { it.amount }.take(2)) { it.amount } >= amount || ns.size < 3) {
-                if (out.isNotEmpty()) space()
-                return out
-            }
-            if (out.size >= maxMerges) throw IllegalStateException("this stake is spread over too many notes for one confirmation; merge them on the Notes screen first")
-            if (out.isNotEmpty()) space()
-            out.add(mergeStake(denom))
-            sync()
-        }
-    }
-
     /** Merges the two smallest stake notes of [denom] (derth/<valoper>) into one. */
     fun mergeStake(denom: String): TxResult {
         val two = spendableStake(denom).sortedBy { it.amount }.take(2)
@@ -1265,100 +1246,187 @@ class PrivacyWallet(
     }
 
     /**
-     * Turns [amount] derth/[validator] into an owner-locked unbonding claim,
-     * minted to our stake self-mint pc at the live rate; claimable once its
-     * epoch's undelegation matures.
+     * Undelegates [amount] derth/[validator] (chain 48b631c, ORCHARD_DESIGN
+     * 18.1): the stake proof spends it (change back to us) and the msg names
+     * where the chain pays it out, a fresh pool note opening of our own
+     * (pc and its v2 amount-blind ciphertext). At maturity the chain mints the
+     * ERTH there by itself, as one note or, past 2^63-1, several sharing that
+     * ciphertext; sync finds them by trial decryption like any minted note.
+     * Nothing to claim, nothing sent later. No stake note is minted: the
+     * proof's spc_mint is a throwaway pc of ours (proven, unused) and its
+     * spc_ciphertext is empty.
+     *
+     * The undelegation is remembered locally ([PendingUnbond]) from the
+     * moment the node takes the tx, with its epoch, value and payout id from
+     * the committed event, until a note to its pc arrives: what the wallet
+     * shows while it waits. The chain's per-id payout query is never asked
+     * (it would tie this wallet's IP to the undelegation).
      */
     fun undelegate(validator: String, amount: Long): TxResult {
         val denom = derthDenom(validator)
         val ins = StakeSelection.cover(spendableStake(denom), amount)
-        val stake = stakePlan(denom, ins, listOf(Amounts.exactSum(ins) { it.amount } - amount), amount, mint = stakeMint())
-        return run { fee ->
+        val stake = stakePlan(denom, ins, listOf(Amounts.exactSum(ins) { it.amount } - amount), amount)
+        val payout = mint(FEE)
+        val pc = payout.pc
+        val r = run(
+            accepted = { hash, timeout -> recordUnbond(PendingUnbond(hash, validator, amount, pc, now(), timeout)) },
+            rejected = { hash -> dropUnbond(hash) },
+        ) { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
-                MsgUndelegate.newBuilder().setBundle(bs[0]).setValidator(validator).setAmount(amount).setStake(sp).build()
+                MsgUndelegate.newBuilder().setBundle(bs[0]).setValidator(validator).setAmount(amount).setStake(sp)
+                    .setPc(ByteString.copyFrom(pc.toBytes())).setCiphertext(ByteString.copyFrom(payout.ciphertext)).build()
+            }
+        }
+        confirmUnbond(r)
+        return r
+    }
+
+    /** Undelegations of this wallet whose payout has not arrived yet, oldest first. */
+    val pendingUnbonds: List<PendingUnbond> get() = synchronized(store) { store.state.pendingUnbonds.toList() }
+
+    private fun recordUnbond(u: PendingUnbond) = synchronized(store) {
+        store.state.pendingUnbonds.removeAll { it.txHash == u.txHash }
+        store.state.pendingUnbonds.add(u)
+        store.save()
+    }
+
+    private fun dropUnbond(hash: String) = synchronized(store) {
+        if (store.state.pendingUnbonds.removeAll { it.txHash == hash }) store.save()
+    }
+
+    /** The committed undelegation's epoch, value and payout id, from its event. */
+    private fun confirmUnbond(r: TxResult) = synchronized(store) {
+        val s = store.state
+        val i = s.pendingUnbonds.indexOfFirst { it.txHash.equals(r.hash, ignoreCase = true) }
+        if (i < 0) return@synchronized
+        if (r.code != 0) { s.pendingUnbonds.removeAt(i); store.save(); return@synchronized }
+        fun attr(k: String) = r.attr(UNDELEGATE_EVENT, k)?.let { Amounts.parseU64(it) }?.takeIf { it >= 0 }
+        val epoch = attr("epoch")
+        s.pendingUnbonds[i] = s.pendingUnbonds[i].copy(
+            confirmed = true, epoch = epoch, value = attr("value"), payoutId = attr("payout_id"),
+            dueBy = epoch?.let { e -> runCatching { reads.unbondDueBy(e) }.getOrNull() },
+        )
+        store.save()
+    }
+
+    /**
+     * Settles the undelegations remembered locally (after a sync): one whose
+     * pc a note of ours now carries has been paid; one still unconfirmed is
+     * looked up by its own hash, dropped when it failed in its block or is
+     * missing past its timeout_height, confirmed when committed.
+     */
+    private fun resolveUnbonds() {
+        val list = synchronized(store) { store.state.pendingUnbonds.toList() }
+        if (list.isEmpty()) return
+        val paid = synchronized(store) { store.state.notes.mapTo(HashSet()) { it.note.pc(keys.ownerPk) } }
+        val tip by lazy { runCatching { chain.tipHeight() }.getOrNull() }
+        for (u in list) {
+            if (u.pc in paid) { dropUnbond(u.txHash); continue }
+            if (u.confirmed) continue
+            val r = runCatching { chain.tx(u.txHash) }.getOrNull()
+            when {
+                r != null -> confirmUnbond(r)
+                u.until != null && tip != null && tip!! > u.until -> dropUnbond(u.txHash)
             }
         }
     }
 
     /**
-     * Claims matured unbonding claims of [denom] (unbond/<valoper>/<epoch>,
-     * up to two notes a claim): the chain mints their ERTH to a pc of ours in
-     * the pool (v2 ciphertext), the fee out of it (fee_from_output, the one
-     * msg that may), so the msg carries no bundle at all.
+     * Votes this wallet's stake at [validator] on [proposalId] (ORCHARD_DESIGN
+     * 18.2): one msg, one vote proof for up to [PrivateMsgs.MAX_VOTE_NOTES] of
+     * its derth notes (the largest eligible ones), one weight, their sum
+     * rounded down to three significant digits ([voteWeight]). The proof
+     * shows every note under the proposal's snapshot root, its spend
+     * nullifier absent from the snapshot's stake nullifier tree (rebuilt here
+     * and checked against nf_root), and each note's vote nullifier; unused
+     * slots carry 0. Nothing is spent: the notes vote on every other open
+     * proposal and are spent as usual. The fee bundle is against the pool's
+     * current roots. Each note's (proposal, vote nullifier) is remembered from
+     * the moment the node accepts the tx, so no note votes twice. A validator
+     * with more notes than one vote holds votes the rest in another msg
+     * ([stakeVoteItems] says how many), a second public weight the user chose.
+     *
+     * A note the wallet does not know already voted (a restored wallet) is
+     * refused by the chain before anything is sent (1119 at simulate, naming
+     * its vote nullifier): it is recorded and the vote laid out again without
+     * it, within this one confirmed action, until it carries only fresh notes.
      */
-    fun claimUnbonding(denom: String): TxResult {
-        val (validator, epoch) = parseUnbond(denom)
-        val ins = spendableStake(denom).sortedByDescending { it.amount }.take(2)
-        require(ins.isNotEmpty()) { "no unbonding claim of $denom" }
-        val amount = Amounts.exactSum(ins) { it.amount }
-        val stake = stakePlan(denom, ins, emptyList(), amount)
-        val erth = mint(FEE)
-        return run { fee ->
-            Assembled(emptyList(), stake) { _, sp, _ ->
-                MsgClaimUnbonding.newBuilder().setValidator(validator).setEpoch(epoch).setAmount(amount)
-                    .setPc(ByteString.copyFrom(erth.pc.toBytes())).setCiphertext(ByteString.copyFrom(erth.ciphertext))
-                    .setFeeFromOutput(fee).setStake(sp).build()
+    fun stakeVote(proposalId: Long, validator: String, options: List<WeightedVoteOption>): TxResult {
+        repeat(PrivateMsgs.MAX_VOTE_NOTES) {
+            try {
+                return stakeVoteOnce(proposalId, validator, options)
+            } catch (e: NoteVoted) {
+                // Recorded; lay the vote out again with the notes left.
             }
         }
+        return stakeVoteOnce(proposalId, validator, options)
     }
 
-    /** Unbonding claim denoms this wallet holds. */
-    fun unbondDenoms(): Set<String> = store.state.stakeNotes.filter { it.spendable && it.denom.startsWith(UNBOND_PREFIX) }.map { it.denom }.toSet()
+    /** A 1119 naming one of the vote's notes, refused before it reached a block: that note is recorded, the rest may vote. */
+    private class NoteVoted : Exception()
 
-    /**
-     * Votes one derth note on [proposalId] without spending it (ORCHARD_DESIGN
-     * 15): a vote proof that the note is under the proposal's snapshot root,
-     * that its spend nullifier is absent from the snapshot's stake nullifier
-     * tree (rebuilt here and checked against nf_root), with weight
-     * [voteWeight] of its amount, and its per-proposal vote nullifier. The
-     * note is untouched: it votes on every other open proposal and is spent
-     * as usual. The fee bundle is against the pool's current roots. The
-     * (proposal, vote nullifier) is remembered from the moment the node
-     * accepts the tx, so the note never votes twice on the proposal.
-     */
-    fun stakeVote(proposalId: Long, note: OwnedStakeNote, options: List<WeightedVoteOption>): TxResult {
-        val validator = parseDerth(note.denom)
-        require(note.amount > 0) { "an empty note has no vote" }
+    private fun stakeVoteOnce(proposalId: Long, validator: String, options: List<WeightedVoteOption>): TxResult {
+        val denom = derthDenom(validator)
         val snap = snapshot(proposalId)
         val tree = store.stakeTree
         // Audit 3: a snapshot past the local tree (stake landed since the last sync) cannot be checked here.
         if (snap.treeSize < 0 || snap.treeSize > tree.size) throw SyncFirst("the proposal's stake snapshot is ahead of this wallet; sync first")
-        require(note.position < snap.treeSize) { "this stake arrived after the proposal's snapshot and cannot vote on it" }
         check(tree.rootAt(snap.treeSize) == snap.root) { "the local stake tree disagrees with the proposal's snapshot root" }
-        val vnf = Privacy.voteNf(keys.nk, note.rho, note.position, proposalId)
-        resolveVotes()
-        if (voted(proposalId, vnf)) throw AlreadyVoted()
         val nfRoot = snap.nfRoot ?: throw IllegalStateException("this proposal's snapshot has no stake nullifier root; it takes no stake vote")
-        val low = snapshotNullifiers(snap).nonMembership(Privacy.stakeNf(keys.nk, note.rho, note.position))
-        if (low == null) {
-            // Audit 4 (M3): only when sync, too, saw the spend at or before the
-            // snapshot's block. Otherwise the two disagree (a stream or a
-            // snapshot that is not the chain's): an error, never a vote
-            // silently skipped.
-            if (note.spentHeight != null && snap.height > 0 && note.spentHeight <= snap.height) throw SpentBeforeSnapshot()
-            throw IllegalStateException("the proposal's snapshot nullifier tree holds this note's nullifier, but sync saw no spend before the snapshot; sync again")
+        val candidates = eligible(proposalId, snap).filter { it.denom == denom }.sortedWith(VOTE_ORDER)
+        if (candidates.isEmpty()) throw AlreadyVoted()
+        val nfs = snapshotNullifiers(snap)
+        val chosen = ArrayList<OwnedStakeNote>()
+        val slots = ArrayList<VoteSlot>()
+        for (note in candidates) {
+            if (chosen.size == PrivateMsgs.MAX_VOTE_NOTES) break
+            val low = nfs.nonMembership(Privacy.stakeNf(keys.nk, note.rho, note.position))
+            if (low == null) {
+                // Audit 4 (M3): skipped only when sync, too, saw the spend at
+                // or before the snapshot's block. Otherwise the two disagree (a
+                // stream or a snapshot that is not the chain's): an error, never
+                // a vote silently skipped.
+                if (note.spentHeight != null && snap.height > 0 && note.spentHeight <= snap.height) continue
+                throw IllegalStateException("the proposal's snapshot nullifier tree holds a note's nullifier, but sync saw no spend before the snapshot; sync again")
+            }
+            chosen.add(note)
+            slots.add(VoteSlot(note.amount, note.rho, note.rcm, note.position, tree.pathAt(note.position, snap.treeSize), low))
         }
-        val weight = voteWeight(note.amount)
-        val path = tree.pathAt(note.position, snap.treeSize)
-        val asset = Privacy.assetId(note.denom)
-        val vote = VoteWitnessSpec(vnf) { sighash ->
-            VoteWitness(keys.nk, note.amount, note.rho, note.rcm, note.position, path, low, snap.root, nfRoot, asset, weight, proposalId, sighash)
+        if (chosen.isEmpty()) throw SpentBeforeSnapshot()
+        val weight = voteWeight(Amounts.satSum(chosen) { it.amount })
+        val used = chosen.map { Privacy.voteNf(keys.nk, it.rho, it.position, proposalId) }
+        val vnfs = used + List(PrivateMsgs.MAX_VOTE_NOTES - used.size) { Fr.ZERO }
+        val asset = Privacy.assetId(denom)
+        val vote = VoteWitnessSpec(vnfs) { sighash ->
+            VoteWitness(keys.nk, slots, snap.root, nfRoot, asset, weight, proposalId, sighash)
         }
+        // Whether the tx reached a mempool (and so may have landed, fee paid).
+        var sent = false
         try {
             val r = run(
-                accepted = { hash, timeout -> recordVote(StakeVoteRecord(proposalId, vnf, hash, timeout, confirmed = false)) },
-                rejected = { hash -> forgetVote(proposalId, vnf, hash) },
+                accepted = { hash, timeout -> sent = true; used.forEach { recordVote(StakeVoteRecord(proposalId, it, hash, timeout, confirmed = false)) } },
+                rejected = { hash -> sent = false; used.forEach { forgetVote(proposalId, it, hash) } },
             ) { fee ->
                 Assembled(listOf(feeBundle(fee)), vote = vote) { bs, _, _ ->
                     MsgStakeVote.newBuilder().setBundle(bs[0]).setProposalId(proposalId).setValidator(validator)
                         .addAllOptions(PrivateMsgs.canonicalOptions(options)).setWeight(weight).build()
                 }
             }
-            recordVote(StakeVoteRecord(proposalId, vnf, r.hash, null, confirmed = true))
+            used.forEach { recordVote(StakeVoteRecord(proposalId, it, r.hash, null, confirmed = true)) }
             return r
         } catch (e: Exception) {
-            // Already voted (a restored wallet, a vote whose block the wallet missed): final either way.
-            if (alreadyVotedError(e)) { recordVote(StakeVoteRecord(proposalId, vnf, null, null, confirmed = true)); throw AlreadyVoted() }
+            // One note already voted (a restored wallet, a vote whose block
+            // the wallet missed): the chain names it. It is recorded, so the
+            // next vote leaves it out; the others never voted.
+            if (alreadyVotedError(e)) {
+                val named = usedVoteNullifier(e, used) ?: throw AlreadyVoted()
+                recordVote(StakeVoteRecord(proposalId, named, null, null, confirmed = true))
+                // Refused before any mempool (simulate, CheckTx): nothing was
+                // paid and the other notes never voted, so lay it out again.
+                // A refusal in a block is settled by resolveVotes.
+                if (!sent) throw NoteVoted()
+                throw AlreadyVoted()
+            }
             throw e
         }
     }
@@ -1397,8 +1465,8 @@ class PrivacyWallet(
         return snap
     }
 
-    /** This note already voted on this proposal (the chain's code 1119): votes are final. */
-    class AlreadyVoted : IllegalStateException("this stake note already voted on this proposal")
+    /** This stake already voted on this proposal (the chain's code 1119): votes are final. */
+    class AlreadyVoted : IllegalStateException("this stake already voted on this proposal; vote again to cast any of it that has not")
 
     /** The note's nullifier is in the proposal's snapshot nullifier tree: it was spent before voting opened. */
     class SpentBeforeSnapshot : IllegalStateException("this stake was spent before the proposal's snapshot and cannot vote on it")
@@ -1432,7 +1500,10 @@ class PrivacyWallet(
         for (v in pending) {
             val r = v.txHash?.let { h -> runCatching { chain.tx(h) }.getOrNull() }
             val next = when {
-                r != null && (r.code == 0 || (r.code == VOTE_NULLIFIER_USED && r.codespace == VOTE_CODESPACE)) -> v.copy(confirmed = true)
+                r != null && r.code == 0 -> v.copy(confirmed = true)
+                // The whole msg was refused for the one note the chain names: only that one is final.
+                r != null && r.code == VOTE_NULLIFIER_USED && r.codespace == VOTE_CODESPACE ->
+                    if (namesVoteNullifier(r.log, v.vnf)) v.copy(confirmed = true) else null
                 r != null -> null
                 v.txHash == null || (v.until != null && tip != null && tip!! > v.until) -> null
                 // Audit 6 (M4): a timeout no sane tip gives is settled by the tx's status alone.
@@ -1517,19 +1588,23 @@ class PrivacyWallet(
     data class StakeWeight(val notes: Int, val positionIds: Set<Long>, val uerth: Long)
 
     /**
-     * This wallet's weight on [proposalId]: every derth note that can still
-     * stake-vote on it (at its rounded [voteWeight]) and every position
-     * created before the snapshot's block (the chain refuses later ones),
-     * each at its validator's rate at the snapshot.
+     * This wallet's weight on [proposalId]: per validator, its eligible derth
+     * notes in votes of up to [PrivateMsgs.MAX_VOTE_NOTES] (each the rounded
+     * [voteWeight] of its notes' sum), and every position created before the
+     * snapshot's block (the chain refuses later ones), each at its validator's
+     * rate at the snapshot.
      */
     fun stakeVoteWeight(proposalId: Long, positions: List<PrivacyChainReads.Position>): StakeWeight {
         val snap = snapshot(proposalId)
         val notes = eligible(proposalId, snap)
         val ps = votingPositions(positions, snap)
-        val total = Amounts.satAdd(
-            Amounts.satSum(notes) { derthValue(voteWeight(it.amount), snap.rates[parseDerth(it.denom)] ?: BigDecimal.ONE) },
-            Amounts.satSum(ps) { derthValue(it.derth, snap.rates[it.validator] ?: BigDecimal.ONE) },
-        )
+        val noteWeight = notes.groupBy { it.denom }.entries.fold(0L) { acc, (denom, ns) ->
+            val rate = snap.rates[parseDerth(denom)] ?: BigDecimal.ONE
+            ns.sortedWith(VOTE_ORDER).chunked(PrivateMsgs.MAX_VOTE_NOTES).fold(acc) { a, part ->
+                Amounts.satAdd(a, derthValue(voteWeight(Amounts.satSum(part) { it.amount }), rate))
+            }
+        }
+        val total = Amounts.satAdd(noteWeight, Amounts.satSum(ps) { derthValue(it.derth, snap.rates[it.validator] ?: BigDecimal.ONE) })
         return StakeWeight(notes.size, ps.map { it.id }.toSet(), total)
     }
 
@@ -1551,38 +1626,66 @@ class PrivacyWallet(
         }
     }
 
-    /** One cast of a stake vote: one derth note, or a position. */
+    /**
+     * One stake vote msg: a validator's eligible notes (one msg votes up to
+     * [PrivateMsgs.MAX_VOTE_NOTES]; [notes] more take [parts] msgs, each its
+     * own weight and fee), or a position.
+     */
     sealed interface StakeVoteItem {
-        data class Note(val position: Long) : StakeVoteItem
+        data class Validator(val validator: String, val notes: Int) : StakeVoteItem {
+            val parts: Int get() = (notes + PrivateMsgs.MAX_VOTE_NOTES - 1) / PrivateMsgs.MAX_VOTE_NOTES
+        }
         data class Position(val id: Long, val counter: Int) : StakeVoteItem
     }
 
     /**
-     * Every cast a stake vote on [proposalId] takes (K5): each eligible derth
-     * note on its own, and every position of ours that may vote (created
-     * before the snapshot's block). Cast them through [StakeVoteController],
-     * the one path the app uses: one at a time, a sync and a random pause
-     * between.
+     * Every stake vote [proposalId] takes from this wallet: one per validator
+     * with eligible derth notes, and one per position of ours that may vote
+     * (created before the snapshot's block). Each is its own tx, confirmed and
+     * sent by the user one at a time ([castStakeVote]); nothing is cast for
+     * them in the background.
      */
     fun stakeVoteItems(proposalId: Long): List<StakeVoteItem> {
         val snap = snapshot(proposalId)
-        val notes = eligible(proposalId, snap).map { StakeVoteItem.Note(it.position) }
+        val notes = eligible(proposalId, snap).groupBy { parseDerth(it.denom) }.toSortedMap()
+            .map { (v, ns) -> StakeVoteItem.Validator(v, ns.size) }
         val mine = positions()
         val voting = votingPositions(mine.map { it.first }, snap).map { it.id }.toSet()
         return notes + mine.filter { it.first.id in voting }.map { (p, c) -> StakeVoteItem.Position(p.id, c) }
     }
 
-    /**
-     * Casts [item] as the last sync left things; null when there is nothing
-     * left of it to cast (the note already voted on this proposal, or was
-     * spent before its snapshot).
-     */
-    fun castStakeVote(proposalId: Long, item: StakeVoteItem, options: List<WeightedVoteOption>, accepted: (hash: String) -> Unit = {}): String? = when (item) {
-        is StakeVoteItem.Note -> store.state.stakeNotes.firstOrNull { it.position == item.position }?.let { n ->
-            try { stakeVote(proposalId, n, options).hash } catch (e: AlreadyVoted) { null } catch (e: SpentBeforeSnapshot) { null }
+    /** What one stake vote weighs: the notes it carries (0 for a position) and the ERTH its weight is worth at the snapshot. */
+    data class VotePreview(val notes: Int, val uerth: Long)
+
+    /** What [item]'s next vote on [proposalId] carries, for its confirm sheet (null: nothing left). */
+    fun stakeVotePreview(proposalId: Long, item: StakeVoteItem): VotePreview? {
+        val snap = snapshot(proposalId)
+        return when (item) {
+            is StakeVoteItem.Validator -> {
+                val part = eligible(proposalId, snap).filter { it.denom == derthDenom(item.validator) }
+                    .sortedWith(VOTE_ORDER).take(PrivateMsgs.MAX_VOTE_NOTES)
+                if (part.isEmpty()) null
+                else VotePreview(part.size, derthValue(voteWeight(Amounts.satSum(part) { it.amount }), snap.rates[item.validator] ?: BigDecimal.ONE))
+            }
+            is StakeVoteItem.Position -> positions().firstOrNull { it.first.id == item.id }?.first
+                ?.let { VotePreview(0, derthValue(it.derth, snap.rates[it.validator] ?: BigDecimal.ONE)) }
         }
+    }
+
+    /**
+     * Casts [item] as the last sync left things: a validator's next vote (up
+     * to four notes) or a position's. Null when there is nothing left of it
+     * to cast (its notes already voted on this proposal, or were spent before
+     * its snapshot; the position is gone).
+     */
+    fun castStakeVote(proposalId: Long, item: StakeVoteItem, options: List<WeightedVoteOption>): String? = when (item) {
+        is StakeVoteItem.Validator -> try {
+            stakeVote(proposalId, item.validator, options).hash
+        } catch (e: AlreadyVoted) {
+            if (eligible(proposalId, snapshot(proposalId)).none { it.denom == derthDenom(item.validator) }) null else throw e
+        } catch (e: SpentBeforeSnapshot) { null }
         is StakeVoteItem.Position -> positions().firstOrNull { it.first.id == item.id && it.second == item.counter }
-            ?.let { (p, c) -> positionVote(p, c, proposalId, options, accepted).hash }
+            ?.let { (p, c) -> positionVote(p, c, proposalId, options).hash }
     }
 
     /**
@@ -1853,7 +1956,8 @@ class PrivacyWallet(
          * The fee the confirm sheet showed, for the private run on this
          * thread (TxController sets it around the run): a fee above it throws
          * PrivateTxEngine.FeeAboveQuote and the sheet asks again (audit 3).
-         * Unset (automation, later stake-vote casts): only the cap applies.
+         * Every tx the app sends comes from a confirm sheet, so it is always
+         * set there; unset (tests) only the cap applies.
          */
         val shownFee = ThreadLocal<Long?>()
 
@@ -1864,15 +1968,42 @@ class PrivacyWallet(
             try { return block() } finally { shownFee.set(before) }
         }
 
-        /** Stake merges one confirmation may pay for, and the random pause between them (audit 4). */
-        const val MAX_MERGES_PER_CONFIRM = 2
-        const val MERGE_PAUSE_MIN_MS = 15_000L
-        const val MERGE_PAUSE_MAX_MS = 45_000L
-        private val SPACING_RNG = java.security.SecureRandom()
-
         const val FEE = "uerth"
         const val DERTH_PREFIX = "derth/"
-        const val UNBOND_PREFIX = "unbond/"
+
+        /** Slack past the computed payout time for the epoch transition and the block that pays it. */
+        const val PAYOUT_MARGIN_S = 15 * 60L
+
+        /**
+         * The latest moment an undelegation booked in epoch [e] is paid, given
+         * the current epoch [current] (started [currentStart], due to end
+         * [currentEnd]). Epoch e ends in the block that starts e+1 and every
+         * epoch lasts at least [epochSeconds]: an epoch not ended yet ends
+         * (e - current) epochs after the current one does; an ended one by
+         * start(current) - (current - 1 - e) x epochSeconds. The SDK entry
+         * then matures [unbondingSeconds] later and the chain pays it in a
+         * following block. Null on nonsense or overflow (chain-supplied
+         * numbers: never a wrapped answer).
+         */
+        fun unbondDueBy(e: Long, current: Long, currentStart: Long, currentEnd: Long, epochSeconds: Long, unbondingSeconds: Long): Long? {
+            if (e < 0 || current < 0 || epochSeconds <= 0 || unbondingSeconds < 0) return null
+            return try {
+                val end = if (e >= current) {
+                    Math.addExact(maxOf(currentEnd, Math.addExact(currentStart, epochSeconds)), Math.multiplyExact(e - current, epochSeconds))
+                } else {
+                    Math.subtractExact(currentStart, Math.multiplyExact(current - 1 - e, epochSeconds))
+                }
+                Math.addExact(Math.addExact(end, unbondingSeconds), PAYOUT_MARGIN_S)
+            } catch (x: ArithmeticException) {
+                null
+            }
+        }
+
+        /** The event an undelegation emits: its epoch, value and payout_id (chain 48b631c). */
+        const val UNDELEGATE_EVENT = "shieldedstaking_undelegate"
+
+        /** The notes one stake vote takes first: the largest (the most weight in one msg), then by position. */
+        val VOTE_ORDER: Comparator<OwnedStakeNote> = compareByDescending<OwnedStakeNote> { it.amount }.thenBy { it.position }
         const val LP_PREFIX = "dexlp/"
 
         /** floor(derth x rate) in uerth, the chain's conversion of derth to ERTH (saturating; a negative rate is 0). */
@@ -1911,6 +2042,15 @@ class PrivacyWallet(
             if (chainOf.any { it is network.erth.wallet.privacy.tx.UnsignedTx.TxRejected && it.code == VOTE_NULLIFIER_USED && it.codespace == VOTE_CODESPACE }) return true
             // Simulate answers with the error's registered text, not its code.
             return chainOf.mapNotNull { it.message }.any { "this stake note already voted on this proposal" in it }
+        }
+
+        /** Whether a 1119 refusal's [log] names [vnf] (the chain: "vote nullifier <HEX>"). */
+        fun namesVoteNullifier(log: String, vnf: Fr): Boolean = log.contains(vnf.toHex(), ignoreCase = true)
+
+        /** Which of [vnfs] a 1119 refusal ([e] or a cause) names, if any. */
+        fun usedVoteNullifier(e: Throwable, vnfs: List<Fr>): Fr? {
+            val texts = generateSequence(e) { it.cause }.mapNotNull { it.message }.toList()
+            return vnfs.firstOrNull { v -> texts.any { namesVoteNullifier(it, v) } }
         }
 
         /** Stake nullifier leaves asked of the indexer a page, and of the LCD (its maximum). */
@@ -1965,18 +2105,11 @@ class PrivacyWallet(
         const val ACTIVATION_MARGIN = 86_400L
 
         fun derthDenom(valoper: String) = "$DERTH_PREFIX$valoper"
-        fun unbondDenom(valoper: String, epoch: Long) = "$UNBOND_PREFIX$valoper/$epoch"
         fun lpDenom(poolId: Long) = "$LP_PREFIX$poolId"
 
         fun parseDerth(denom: String): String {
             require(denom.startsWith(DERTH_PREFIX)) { "not a derth note" }
             return denom.removePrefix(DERTH_PREFIX)
-        }
-
-        fun parseUnbond(denom: String): Pair<String, Long> {
-            val parts = denom.split("/")
-            require(parts.size == 3 && parts[0] == "unbond") { "not an unbond note" }
-            return parts[1] to (Amounts.parseU64(parts[2]) ?: throw IllegalArgumentException("not an unbond note"))
         }
     }
 }

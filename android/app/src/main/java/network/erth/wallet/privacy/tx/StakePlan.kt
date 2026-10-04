@@ -18,8 +18,8 @@ import network.erth.wallet.privacy.zk.Privacy
  * ([mint]) and the owner tag's salt. Everything the sighash binds (the
  * StakeFields) is final once built.
  *
- * [denom] is the msg's stake denom (derth/<valoper> or
- * unbond/<valoper>/<epoch>), null for a position's update, unlock or vote,
+ * [denom] is the msg's stake denom (derth/<valoper>), null for a
+ * position's update, unlock or vote,
  * whose public asset is 0.
  */
 class StakePlan(
