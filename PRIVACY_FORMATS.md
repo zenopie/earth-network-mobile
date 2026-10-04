@@ -915,20 +915,17 @@ run is gone (a chain switch).
   any other (nf = H(TAG_NF, nk, rho, position); the published opening
   links nothing without nk).
 - **Split payouts.** x/dex pays a private LP withdrawal leg above 2^64 − 1
-  as ceil(v / (2^64 − 1)) notes (MintNoteSplit, at most 64): consecutive
-  rows with the **same** pc and ciphertext, each its own amount (2^64 − 1,
-  …, the remainder) and position. The blind v2 ciphertext binds no cm or
-  value, so each row decrypts to the same (rho, rcm) and its own amount
-  gives its cm; the nullifier includes the position, so every chunk is a
-  separate, separately spendable note. The wallet never dedupes by
-  ciphertext, pc or opening. **Residual (reported to the chain):** a chunk
-  of 2^64 − 1 is above the 2^63 − 1 every client holds (§3 Amounts), so
-  such chunks would be ignored; the wallet therefore refuses to start a
-  withdrawal whose note leg is above (2^63 − 1) / 4 at the current reserves
-  (a quarter, as x/dex keeps its own cap at a quarter of what a payout can
-  carry), which keeps every payout one holdable note. x/dex itself refuses
-  at start a leg above 16 × (2^64 − 1) (dex 1101, "the most one withdrawal
-  pays as notes"); the app explains it.
+  as ceil(v / (2^63 − 1)) notes (MintNoteSplit, at most 128; chain
+  8ed1278): consecutive rows with the **same** pc and ciphertext, each its
+  own amount (2^63 − 1, …, the remainder) and position. The blind v2
+  ciphertext binds no cm or value, so each row decrypts to the same
+  (rho, rcm) and its own amount gives its cm; the nullifier includes the
+  position, so every chunk is a separate, separately spendable note. The
+  wallet never dedupes by ciphertext, pc or opening. Every chunk fits the
+  2^63 − 1 every client holds (§3 Amounts). x/dex refuses at start a leg
+  above 32 × (2^63 − 1) (a quarter of what a payout can carry; dex 1101,
+  "the most one withdrawal pays as notes"), and every client refuses the
+  same bound before proving; the app explains it.
 - **Lease bounds** (`GET /earth/personhood/v1/lease_bounds`, int64s as
   strings): block_time, activation_margin_seconds, handle_lease_seconds
   (the longest ever in force), handle_claim_bound, caretaker_lease_seconds

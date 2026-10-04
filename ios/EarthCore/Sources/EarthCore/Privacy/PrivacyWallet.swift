@@ -2034,11 +2034,10 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// The most a withdrawal's note-paid leg may be worth when it starts: a
     /// quarter of one note this wallet can hold (2^63 - 1), so the pool can
     /// move 4x against the provider before maturity, as x/dex allows for its
-    /// own cap. x/dex refuses at start a leg above 16 notes' worth
-    /// (16 x (2^64 - 1), chain 203d3b2) and pays a leg above 2^64 - 1 as
-    /// several notes; a note above 2^63 - 1 is one this wallet cannot hold,
-    /// so the wallet's bound is the one that binds. As Android.
-    public static let maxWithdrawalNoteLeg = BigInt(Int64.max / 4)
+    /// own cap. Exactly x/dex's maxWithdrawalNoteLeg (chain 8ed1278):
+    /// MaxSplitNotes / 4 = 32 notes of MaxNoteValue (2^63 - 1), paid as
+    /// several notes, each one this wallet can hold. As Android.
+    public static let maxWithdrawalNoteLeg = BigInt(Int64.max) * 32
 
     /// Refuses, before anything is proven or signed, a withdrawal of `shares`
     /// of `totalShares` whose note legs (`erthNote`, `tokenNote`) at the

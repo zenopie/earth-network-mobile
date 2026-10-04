@@ -146,8 +146,7 @@ final class Fix6Tests: XCTestCase {
         }
         try PrivacyWallet.checkWithdrawalNoteLegs(shares: 501, totalShares: total, reserveErth: big, reserveToken: 10, tokenDenom: "uanml",
                                                   erthNote: false, tokenNote: true)
-        XCTAssertLessThan(PrivacyWallet.maxWithdrawalNoteLeg, (BigInt(1) << 64 - 1) * 16)
-        XCTAssertLessThanOrEqual(PrivacyWallet.maxWithdrawalNoteLeg, BigInt(Int64.max))
+        XCTAssertEqual(PrivacyWallet.maxWithdrawalNoteLeg, BigInt(Int64.max) * 32)
     }
 
     // MARK: handles and caretaker splits held but not live

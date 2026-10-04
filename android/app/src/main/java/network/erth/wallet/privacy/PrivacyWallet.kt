@@ -1697,12 +1697,12 @@ class PrivacyWallet(
          * The most a withdrawal's note-paid leg may be worth when it starts:
          * a quarter of one note this wallet can hold (2^63 - 1), so the pool
          * can move 4x against the provider before maturity, as x/dex allows
-         * for its own cap. x/dex refuses at start a leg above 16 notes' worth
-         * (16 x (2^64 - 1), chain 203d3b2) and pays a leg above 2^64 - 1 as
-         * several notes; a note above 2^63 - 1 is one this wallet cannot hold
-         * (Amounts), so the wallet's bound is the one that binds.
+         * for its own cap. Exactly x/dex's maxWithdrawalNoteLeg (chain
+         * 8ed1278): MaxSplitNotes / 4 = 32 notes of MaxNoteValue (2^63 - 1),
+         * paid as several notes, each one this wallet can hold (Amounts).
          */
-        val MAX_WITHDRAWAL_NOTE_LEG: java.math.BigInteger = java.math.BigInteger.valueOf(Long.MAX_VALUE / 4)
+        val MAX_WITHDRAWAL_NOTE_LEG: java.math.BigInteger =
+            java.math.BigInteger.valueOf(Long.MAX_VALUE).multiply(java.math.BigInteger.valueOf(32))
 
         /**
          * Refuses, before anything is proven or signed, a withdrawal of

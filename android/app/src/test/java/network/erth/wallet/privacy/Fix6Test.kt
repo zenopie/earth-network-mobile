@@ -167,8 +167,7 @@ class Fix6Test {
         // A leg paid to the account is not a note leg.
         PrivacyWallet.checkWithdrawalNoteLegs(BigInteger.valueOf(501), total, big, BigInteger.TEN, "uanml", erthNote = false, tokenNote = true)
         // The wallet's bound is below x/dex's (16 x (2^64-1)) and below one note it can hold.
-        assertTrue(PrivacyWallet.MAX_WITHDRAWAL_NOTE_LEG < BigInteger.ONE.shiftLeft(64).subtract(BigInteger.ONE).multiply(BigInteger.valueOf(16)))
-        assertTrue(PrivacyWallet.MAX_WITHDRAWAL_NOTE_LEG <= BigInteger.valueOf(Long.MAX_VALUE))
+        assertEquals(BigInteger.valueOf(Long.MAX_VALUE).multiply(BigInteger.valueOf(32)), PrivacyWallet.MAX_WITHDRAWAL_NOTE_LEG)
     }
 
     // ---- handles and caretaker splits held but not live ------------------------
