@@ -47,19 +47,40 @@ public enum RepoLayout {
 
     public struct Paths {
         public let root: URL
-        public let circuit: URL
-        public let witness: URL
-        public let androidProof: URL
-        public let androidVk: URL
+        /// The bundled circuits (the Android asset folder iOS references).
+        public let circuits: URL
+        /// passport_variants.json: every register-circuit variant.
+        public let manifest: URL
+        /// circuits/fixtures: each variant's synthetic passport and witness.
+        public let fixtures: URL
         public let artifactDir: URL
 
         public init(root: URL) {
             self.root = root
-            circuit = root.appendingPathComponent("android/app/src/main/assets/circuits/lean_poa.json")
-            witness = root.appendingPathComponent("android/app/src/androidTest/assets/lean_inputs.json")
-            androidProof = root.appendingPathComponent("ios/ProverGate/Fixtures/android/lean_device_proof.hex")
-            androidVk = root.appendingPathComponent("ios/ProverGate/Fixtures/android/lean_device_vk.hex")
+            circuits = root.appendingPathComponent("android/app/src/main/assets/circuits")
+            manifest = circuits.appendingPathComponent("passport_variants.json")
+            fixtures = root.appendingPathComponent("circuits/fixtures")
             artifactDir = root.appendingPathComponent("ios/ProverGate/.artifacts")
+        }
+
+        /// A variant's compiled circuit: bundled, or the gzipped copy the
+        /// backend serves (a backend checkout beside this one), nil if neither.
+        public func downloadable(_ id: String) -> URL? {
+            for name in ["backend-orch", "backend-privacy", "earth-network-backend"] {
+                let f = root.deletingLastPathComponent().appendingPathComponent("\(name)/circuits/\(id).json.gz")
+                if FileManager.default.fileExists(atPath: f.path) { return f }
+            }
+            return nil
+        }
+
+        /// The device proof and VK `LeanPoaDeviceTest` writes for a variant,
+        /// copied here to compare platforms (see ios/README.md).
+        public func androidProof(_ id: String) -> URL {
+            root.appendingPathComponent("ios/ProverGate/Fixtures/android/\(id)_device_proof.hex")
+        }
+
+        public func androidVk(_ id: String) -> URL {
+            root.appendingPathComponent("ios/ProverGate/Fixtures/android/\(id)_device_vk.hex")
         }
     }
 }

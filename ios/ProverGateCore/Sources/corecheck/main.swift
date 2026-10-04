@@ -2,8 +2,8 @@ import Foundation
 import ProverGateCore
 
 // Checks the parts of the port that do not touch Barretenberg: field-element
-// base conversion and the witness decoder, against the real Android fixture
-// and the compiled lean_poa circuit's own ABI.
+// base conversion and the witness decoder, against every passport variant's
+// shared fixture and its compiled circuit's own ABI.
 //
 //   cd ios/ProverGateCore && swift run corecheck
 //
@@ -80,35 +80,50 @@ do {
         ? CommandLine.arguments[1]
         : FileManager.default.currentDirectoryPath)
     let paths = RepoLayout.Paths(root: root)
-    let witness = try NoirWitness.decode(Data(contentsOf: paths.witness))
-    let manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: paths.circuit)) as? [String: Any]
-    let abi = manifest?["abi"] as? [String: Any]
-    let parameters = abi?["parameters"] as? [[String: Any]] ?? []
+    let variants = ((try JSONSerialization.jsonObject(with: Data(contentsOf: paths.manifest)) as? [String: Any])?["variants"]
+        as? [[String: Any]]) ?? []
+    check("variants in the manifest", "\(variants.count)", "33")
+    for v in variants {
+        guard let id = v["id"] as? String, let bundled = v["bundled"] as? Bool else { continue }
+        // Each variant's shared witness against its compiled circuit's ABI:
+        // a circuit that gains or loses an input fails this, not the prover.
+        let fixture = try JSONSerialization.jsonObject(with: Data(contentsOf:
+            paths.fixtures.appendingPathComponent("\(id)/expected.json"))) as? [String: Any]
+        let witness = try NoirWitness.decode(JSONSerialization.data(withJSONObject: fixture?["witness"] ?? [:]))
+        let circuitData: Data
+        if bundled {
+            circuitData = try Data(contentsOf: paths.circuits.appendingPathComponent("\(id).json"))
+        } else if let gz = paths.downloadable(id), let json = Gzip.inflate(try Data(contentsOf: gz)) {
+            circuitData = json
+        } else {
+            print("[SKIP] \(id): not bundled, and no backend checkout beside this one")
+            continue
+        }
+        let manifest = try JSONSerialization.jsonObject(with: circuitData) as? [String: Any]
+        let abi = manifest?["abi"] as? [String: Any]
+        let parameters = abi?["parameters"] as? [[String: Any]] ?? []
+        let names = parameters.compactMap { $0["name"] as? String }
+        check("\(id): witness inputs are the circuit's", witness.keys.sorted().joined(separator: ","), names.sorted().joined(separator: ","))
+        for p in parameters {
+            guard let name = p["name"] as? String, let type = p["type"] as? [String: Any] else { continue }
+            check("\(id): \(name) is \(shape(type))", witness[name].map { witnessShape($0, like: type) } ?? "missing", shape(type))
+        }
+        // Public inputs: current_date and address, then the two return values
+        // (nullifier, dsc_key): the four signals the chain indexes 0...3.
+        let publics = parameters.filter { $0["visibility"] as? String == "public" }.compactMap { $0["name"] as? String }
+        check("\(id): public inputs in order", publics.joined(separator: ","), "current_date,address")
+        let returns = ((abi?["return_type"] as? [String: Any])?["abi_type"] as? [String: Any])?["fields"] as? [Any]
+        check("\(id): return values", "\(returns?.count ?? -1)", "2")
 
-    // The fixture against the compiled circuit, not against a count written
-    // here: a circuit that gains or loses an input fails this, not the prover.
-    let names = parameters.compactMap { $0["name"] as? String }
-    check("lean_poa declares its inputs", "\(names.count)", "13")
-    check("witness inputs are the circuit's", witness.keys.sorted().joined(separator: ","), names.sorted().joined(separator: ","))
-    for p in parameters {
-        guard let name = p["name"] as? String, let type = p["type"] as? [String: Any] else { continue }
-        check("\(name) is \(shape(type))", witness[name].map { witnessShape($0, like: type) } ?? "missing", shape(type))
+        // current_date is a calendar date (the chain refuses one that is not).
+        let date = Int(decimalFromHex(witness["current_date"] as? String ?? "0x0")) ?? 0
+        let (yy, mm, dd) = (date / 10000, date / 100 % 100, date % 100)
+        var c = DateComponents(); c.year = 2000 + yy; c.month = mm; c.day = dd
+        let cal = Calendar(identifier: .gregorian)
+        let real = cal.date(from: c).map { cal.dateComponents([.year, .month, .day], from: $0) }
+        check("\(id): current_date is a YYMMDD calendar date", "\(real?.month == mm && real?.day == dd && (1 ... 12).contains(mm))", "true")
+        check("\(id): address is a non-zero field", "\((witness["address"] as? String).map { decimalFromHex($0) != "0" } ?? false)", "true")
     }
-    // Public inputs: current_date and address, then the two return values
-    // (nullifier, dsc_key): the four signals the chain indexes 0...3.
-    let publics = parameters.filter { $0["visibility"] as? String == "public" }.compactMap { $0["name"] as? String }
-    check("public inputs in order", publics.joined(separator: ","), "current_date,address")
-    let returns = ((abi?["return_type"] as? [String: Any])?["abi_type"] as? [String: Any])?["fields"] as? [Any]
-    check("return values", "\(returns?.count ?? -1)", "2")
-
-    // current_date is a calendar date (the chain refuses one that is not).
-    let date = Int(decimalFromHex(witness["current_date"] as? String ?? "0x0")) ?? 0
-    let (yy, mm, dd) = (date / 10000, date / 100 % 100, date % 100)
-    var c = DateComponents(); c.year = 2000 + yy; c.month = mm; c.day = dd
-    let cal = Calendar(identifier: .gregorian)
-    let real = cal.date(from: c).map { cal.dateComponents([.year, .month, .day], from: $0) }
-    check("current_date is a YYMMDD calendar date", "\(real?.month == mm && real?.day == dd && (1 ... 12).contains(mm))", "true")
-    check("address is a non-zero field", "\((witness["address"] as? String).map { decimalFromHex($0) != "0" } ?? false)", "true")
 } catch {
     print("[FAIL] fixture checks: \(error)")
     failures += 1

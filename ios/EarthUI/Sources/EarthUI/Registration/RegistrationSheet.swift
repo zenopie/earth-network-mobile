@@ -413,13 +413,17 @@ struct RegistrationSheet: View {
             return "This build has no prover."
         }
         if let inputs = error as? PassportInputs.Error {
-            return "This passport's chip data is not in a shape the circuit accepts (\(inputs))."
+            switch inputs {
+            case let .unsupported(scheme): return "This passport's signature type isn't supported yet (\(scheme))."
+            case .data: return "This passport's data does not match its signature, so it cannot be proved."
+            case .badAddress, .noManifest: return inputs.localizedDescription
+            }
         }
         if let registration = error as? PassportRegistration.Error {
             switch registration {
             case let .malformedReferrer(handle): return "\(handle) is not a handle."
             case let .algorithmMismatch(expected, got):
-                return "The proof came from \(got) but the certificate selects \(expected)."
+                return "The proof came from \(got) but the passport selects \(expected)."
             }
         }
         return model.describe(error)

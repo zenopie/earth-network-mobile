@@ -7,7 +7,7 @@ import ProverGate
 /// seam at launch.
 ///
 /// Here rather than in `EarthUI` because of what it drags in: a ~140MB static
-/// framework and the seven compiled circuits in the bundle. `EarthUI` has to
+/// framework and the bundled compiled circuits. `EarthUI` has to
 /// stay typecheckable from the command line and `EarthCore` has to stay
 /// runnable on a Mac, and neither survives that. The app bundle is the one
 /// place that can carry it.
@@ -18,11 +18,28 @@ import ProverGate
 enum DeviceProver {
 
     static func install() {
+        // The register-circuit variants (circuits/variants.json), which the
+        // domain layer selects from but cannot read out of the bundle itself.
+        PassportVariants.installed = variants
         PassportProving.install(prove, ready: { passportFits })
         PrivacyProving.install(PrivacyDeviceProver())
-        // The passport SRS, fetched once at launch rather than when a proof
-        // needs it (the privacy SRS is bundled).
-        Task.detached(priority: .background) { await PassportSRS.prefetch() }
+        // The 2^18 passport SRS (nearly every passport's tier), fetched once
+        // at launch rather than when a proof needs it (the privacy SRS is
+        // bundled). A larger tier is fetched when a passport needs it.
+        if let tier = tiers.first(where: { $0.log2 == 18 }) {
+            Task.detached(priority: .background) { await PassportSRS.prefetch(tier) }
+        }
+    }
+
+    /// The bundled manifest: passport_variants.json in the referenced folder.
+    static let variants: PassportVariants? = Bundle.main
+        .url(forResource: "passport_variants", withExtension: "json", subdirectory: "circuits")
+        .flatMap { try? Data(contentsOf: $0) }
+        .flatMap { try? PassportVariants(json: $0) }
+
+    /// The SRS tiers the manifest pins.
+    static var tiers: [PassportSRS.Tier] {
+        (variants?.srs ?? [:]).compactMap { k, v in Int(k).map { PassportSRS.Tier(log2: $0, points: v.points, sha256: v.sha256) } }
     }
 
     enum Failure: Error, LocalizedError {
@@ -61,9 +78,9 @@ enum DeviceProver {
     /// barretenberg sizes its SRS once per process: if a private action
     /// proved earlier in this launch sized it for itself, the passport circuit
     /// cannot be set up now, and the honest instruction is to relaunch.
-    private static func loadOrExplain(_ manifest: Data, provisioned: Bool) throws -> LeanPoaProver.LoadedCircuit {
+    private static func loadOrExplain(_ manifest: Data, srsPath: String, provisioned: Bool) throws -> LeanPoaProver.LoadedCircuit {
         do {
-            return try LeanPoaProver.loadCircuit(manifest: manifest, size: nil, srsPath: PassportSRS.path)
+            return try LeanPoaProver.loadCircuit(manifest: manifest, size: nil, srsPath: srsPath)
         } catch where provisioned && String(describing: error).contains("SRS") {
             throw Failure.srsTooSmall
         }
@@ -72,23 +89,28 @@ enum DeviceProver {
     private static func prove(
         _ inputs: PassportInputs.Inputs
     ) async throws -> PassportRegistration.Proof {
-        guard let url = Bundle.main.url(
-            forResource: inputs.algorithm,
-            withExtension: "json",
-            subdirectory: circuitDirectory
-        ) else {
-            throw Failure.circuitMissing(inputs.algorithm)
+        let variant = inputs.variant
+        let manifest: Data
+        if variant.bundled {
+            guard let url = Bundle.main.url(forResource: variant.id, withExtension: "json", subdirectory: circuitDirectory),
+                  let data = try? Data(contentsOf: url), PassportCircuits.sha256(data) == variant.sha256
+            else { throw Failure.circuitMissing(variant.id) }
+            manifest = data
+        } else {
+            // The long tail is not bundled: fetched once, hash-checked.
+            manifest = try await PassportCircuits.load(id: variant.id, sha256: variant.sha256,
+                                                       base: variants?.downloadBase ?? "")
         }
-
-        let manifest = try Data(contentsOf: url)
+        // The setup for this circuit's size tier, fetched if this phone has
+        // no file that covers it yet.
+        let srsPath = try await PassportSRS.ensure(covering: variant.log2CircuitSize, tiers: tiers)
         // `size: nil` — the SRS is sized from this circuit's own gate count.
-        // Seven circuits ship here and they are not the same size, and
-        // barretenberg honours only the first SRS initialization of a process,
-        // so a hardcoded hint that turns out to be too small for the circuit a
-        // passport selects cannot be corrected afterwards. Reading it off the
-        // bytecode cannot be wrong.
+        // The circuits are not the same size, and barretenberg honours only
+        // the first SRS initialization of a process, so a hardcoded hint that
+        // turns out to be too small for the circuit a passport selects cannot
+        // be corrected afterwards. Reading it off the bytecode cannot be wrong.
         let provisioned = SRS.isProvisioned
-        let circuit = try loadOrExplain(manifest, provisioned: provisioned)
+        let circuit = try loadOrExplain(manifest, srsPath: srsPath, provisioned: provisioned)
         if !provisioned { passportSized = true }
         let result = try LeanPoaProver.prove(circuit: circuit, inputs: inputs.witness)
 
@@ -109,10 +131,14 @@ enum DeviceProver {
 /// bundled folder as the passport's (the Android assets, referenced), so one
 /// recompile cannot leave the platforms apart.
 struct PrivacyDeviceProver: PrivacyProver {
-    /// The largest passport circuit (brainpool512, ~425k gates). Barretenberg
-    /// sizes its SRS once per process, so a private action proved before a
-    /// registration that may still follow in this launch provisions for it.
-    private static let largestPassportCircuit = "lean_poa_brainpool512"
+    /// The largest bundled passport circuit, which sets the 2^18 tier that
+    /// nearly every passport needs. Barretenberg sizes its SRS once per
+    /// process, so a private action proved before a registration that may
+    /// still follow in this launch provisions for it; a passport needing a
+    /// larger tier then asks for a relaunch (Failure.srsTooSmall).
+    private static var largestPassportCircuit: String? {
+        DeviceProver.variants?.variants.filter(\.bundled).max { $0.log2CircuitSize < $1.log2CircuitSize }?.id
+    }
 
     /// Set once the SRS reservation is the largest passport circuit's.
     nonisolated(unsafe) static var reservedForPassport = false
@@ -132,7 +158,9 @@ struct PrivacyDeviceProver: PrivacyProver {
             // with what it returns. The passport size only from the local
             // file: a private proof never fetches the SRS. Without
             // it, a registration later in this launch asks for a relaunch.
-            guard PrivacyProving.registrationMayFollow, let path = PassportSRS.path, let m = manifest(largestPassportCircuit) else {
+            guard PrivacyProving.registrationMayFollow, let id = largestPassportCircuit,
+                  let log2 = DeviceProver.variants?.variant(id: id)?.log2CircuitSize,
+                  let path = PassportSRS.path(covering: log2, tiers: DeviceProver.tiers), let m = manifest(id) else {
                 reservedForPassport = false
                 return nil
             }

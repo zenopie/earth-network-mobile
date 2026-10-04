@@ -2,10 +2,10 @@ import Foundation
 import ProverGate
 import ProverGateCore
 
-// Runs the lean_poa gate and prints a report. An executable rather than only an
+// Runs the passport gate on every register-circuit variant and prints a report. An executable rather than only an
 // XCTest case because XCTest needs full Xcode, and the gate runs without it.
 //
-//   cd ios/ProverGate && swift run progate
+//   cd ios/ProverGate && swift run progate [--variant <id>]
 //
 // Exits non-zero if any check fails, so CI can use it directly.
 
@@ -21,7 +21,7 @@ if let flag = arguments.firstIndex(of: "--witness") {
     witnessPath = arguments[flag + 1]
     arguments.removeSubrange(flag ... flag + 1)
 }
-let start = arguments.first ?? FileManager.default.currentDirectoryPath
+let start = FileManager.default.currentDirectoryPath
 
 // `--witness <path>` proves a witness built elsewhere instead of running the
 // gate. EarthCore builds a witness from a passport's
@@ -31,30 +31,41 @@ if let witnessPath {
     exit(runWitness(path: witnessPath, start: start))
 }
 
+// `--variant <id>` runs the gate on one variant; without it, on all of them.
+var only: String?
+if let flag = arguments.firstIndex(of: "--variant"), arguments.indices.contains(flag + 1) {
+    only = arguments[flag + 1]
+    arguments.removeSubrange(flag ... flag + 1)
+}
+
 do {
-    let root = try RepoLayout.root(from: start)
+    let root = try RepoLayout.root(from: arguments.first ?? start)
     let paths = RepoLayout.Paths(root: root)
 
-    FileHandle.standardError.write(Data("running the lean_poa gate (first run downloads the SRS)…\n".utf8))
-    let report = try Gate.run(paths: paths)
-
-    let width = report.checks.map { $0.name.count }.max() ?? 0
-    for check in report.checks {
-        let mark: String
-        switch check.outcome {
-        case .passed: mark = "PASS"
-        case .failed: mark = "FAIL"
-        case .skipped: mark = "SKIP"
-        case .informational: mark = "····"
+    FileHandle.standardError.write(Data("running the passport gate on every variant (first run downloads the SRS)…\n".utf8))
+    let reports = try Gate.runAll(paths: paths, only: only)
+    var failed = 0
+    for (id, report) in reports {
+        print("\n\(id)")
+        let width = report.checks.map { $0.name.count }.max() ?? 0
+        for check in report.checks {
+            let mark: String
+            switch check.outcome {
+            case .passed: mark = "PASS"
+            case .failed: mark = "FAIL"
+            case .skipped: mark = "SKIP"
+            case .informational: mark = "····"
+            }
+            let name = check.name.padding(toLength: width, withPad: " ", startingAt: 0)
+            print("[\(mark)] \(name)  \(check.detail)")
         }
-        let name = check.name.padding(toLength: width, withPad: " ", startingAt: 0)
-        print("[\(mark)] \(name)  \(check.detail)")
+        if !report.passed { failed += 1 }
     }
 
-    print(report.passed
-          ? "\ngate PASSED — Barretenberg on this platform proves lean_poa and the proof verifies"
-          : "\ngate FAILED — see the failing checks above")
-    exit(report.passed ? 0 : 1)
+    print(failed == 0 && !reports.isEmpty
+          ? "\ngate PASSED — Barretenberg on this platform proves all \(reports.count) variants and every proof verifies"
+          : "\ngate FAILED — \(failed) of \(reports.count) variants; see the failing checks above")
+    exit(failed == 0 && !reports.isEmpty ? 0 : 1)
 } catch {
     FileHandle.standardError.write(Data("gate errored: \(error)\n".utf8))
     exit(2)
@@ -67,7 +78,7 @@ do {
 /// selects, so the right compiled circuit is loaded rather than assumed.
 func runWitness(path: String, start: String) -> Int32 {
     do {
-        let root = try RepoLayout.root(from: start)
+        let root = try RepoLayout.root(from: arguments.first ?? start)
         let data = try Data(contentsOf: URL(fileURLWithPath: path))
         guard let fixture = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let algorithm = fixture["algorithm"] as? String,

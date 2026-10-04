@@ -7,7 +7,7 @@ reference for behaviour; read it rather than re-deriving the domain logic.
 
     ios/
       ProverGateCore/   no dependencies — field elements, witness decoding, repo layout
-      ProverGate/       Barretenberg proving via Swoir: the lean_poa gate and the app's circuits
+      ProverGate/       Barretenberg proving via Swoir: the passport gate and the app's circuits
       EarthCore/        the headless layer — keys, tx, chain, maths, passport, privacy core
       EarthUI/          the screens — see EarthUI/README.md
       EarthWallet/      the app shell — see EarthWallet/README.md
@@ -108,7 +108,8 @@ itself:
     Passport/DER.swift            a DER reader that keeps byte ranges
     Passport/Certificate.swift    the Document Signer's key and its curve
     Passport/SOD.swift            EF.SOD -> eContent, signed attributes, signature
-    Passport/PassportInputs.swift the lean_poa witness
+    Passport/PassportInputs.swift variant selection and the register-circuit witness
+    Passport/PassportVariants.swift the variant manifest (passport_variants.json)
     Passport/PassportRegistration.swift  scan -> proof -> MsgRegister
 
 #### How it is checked
@@ -122,7 +123,7 @@ circuit can answer that:
 
     cd ios/EarthCore  && swift run corecheck                 # writes .artifacts/passport_witness.json
     cd ios/ProverGate && swift run progate --witness ../EarthCore/.artifacts/passport_witness.json
-    PROVED — a witness built from a passport's DG1 and EF.SOD satisfies lean_poa
+    PROVED — a witness built from a passport's DG1 and EF.SOD satisfies lean_poa_p256_sha256
 
     cd tools/chainverify && go run . ../../ios/ProverGate/.artifacts passport
     ACCEPTED — the chain verifier accepts the Swift-generated proof
@@ -163,43 +164,49 @@ passport is long expired, so the check is not rejecting what it is there to
 reject. This is a circuit finding, not a port one — it affects Android
 identically — and is recorded here because this is where it surfaced.
 
-## ProverGate: the lean_poa gate
+## ProverGate: the passport gate
 
 Everything the app proves assumes Barretenberg on Apple platforms produces
-proofs `earth-1` accepts. The gate asserts that against the real ~130k-gate
-`lean_poa` circuit.
+proofs `earth-1` accepts. The gate asserts that for **every** register-circuit
+variant (33; `circuits/variants.json`), largest first (bb sizes its SRS once
+per process).
 
-It reads the circuit and witness **from the Android tree** — one copy, no
-duplicated fixture that could drift:
+It reads each circuit and witness from one shared copy, no duplicated fixture
+that could drift:
 
-    android/app/src/main/assets/circuits/lean_poa.json
-    android/app/src/androidTest/assets/lean_inputs.json
+    android/app/src/main/assets/circuits/<variant>.json      bundled (2^18 tier)
+    ../backend-orch/circuits/<variant>.json.gz               the long tail, as served
+    circuits/fixtures/<variant>/expected.json                the shared witness
 
-A Swift-generated UltraHonk proof of `lean_poa` is accepted by the chain's
-own verifier. Run it:
+Run it:
 
-    cd ios/ProverGate && swift run progate        # with Xcode
+    cd ios/ProverGate && swift run progate [--variant <id>]   # with Xcode
     # on a Command Line Tools toolchain (see "Xcode and Command Line Tools"):
     ./Scripts/seed-framework.sh          # first time only
     ./Scripts/build-without-xcode.sh     # first time only
     .build/manual/progate ../..
 
-Checks: witness shape, proof generated, public-input count, proof framing
-(`splitProof`'s 4-byte prefix + 4×32-byte public inputs — asserted via
-`current_date`, not assumed), and verification against its own VK. Proof and VK
-land in `ios/ProverGate/.artifacts/` so the chain verifier
+Checks per variant: the circuit hashes to its pinned sha256, proof
+generated (14,656-byte body), public-input count against the ABI, proof
+framing (`splitProof`'s 4-byte prefix + 4×32-byte public inputs — asserted
+via `current_date`, not assumed), the nullifier and DSC commitment the
+fixture expects, verification against its own VK, and the VK equal to the
+chain's genesis key (`networks/genesis/verifying-keys/<variant>.vk.b64` in
+a chain checkout beside this one). Proofs and VKs land in
+`ios/ProverGate/.artifacts/<variant>/` so the chain verifier
 (`earth-network-chain/third_party/barretenberg-go`) can be run against a
-genuinely Swift-generated proof. **That, not this command passing, is the real
-end of the loop.**
+genuinely Swift-generated proof.
 
-With Android reference artifacts present it also compares cross-platform — see
-the doc comment on `Gate.compare` for the `adb` incantation to produce them.
-The VK comparison is the sharp one: the VK derives from the circuit alone, so a
+With Android device artifacts present (`LeanPoaDeviceTest` writes
+`<variant>_device_{proof,vk}.hex`; copy them to
+`ios/ProverGate/Fixtures/android/`) it also compares cross-platform. The VK
+comparison is the sharp one: the VK derives from the circuit alone, so a
 mismatch is the unambiguous signature of a bb version difference.
 
 ### Measured
 
-On an M-series Mac, macOS slice, `lean_poa` (~130k gates):
+On an M-series Mac, macOS slice, the old `lean_poa` (~130k gates; the
+2^18-tier variants are 139k–255k, see PASSPORT_COVERAGE.md for every tier):
 
     proving key   ~160 ms
     proof         14788 bytes in 1.5s
