@@ -152,6 +152,16 @@ public enum SwapMath {
         amountOut * BigInt(10_000 - bps) / 10_000
     }
 
+    /// The fewest LP shares a deposit of `erthIn` + `tokenIn` accepts
+    /// (MsgAddLiquidity / MsgAddLiquidityShielded min_shares): what x/dex's
+    /// deposit() mints over reserves `re`, `rt` and share supply `supply`,
+    /// min(e*S/Re, t*S/Rt) floored, less `bps`. "" (no bound) for an empty
+    /// pool, which seeds at sqrt(erth x token) instead.
+    public static func minShares(erthIn: BigInt, tokenIn: BigInt, re: BigInt, rt: BigInt, supply: BigInt, bps: Int) -> String {
+        guard supply > 0, re > 0, rt > 0 else { return "" }
+        return withSlippage(min(erthIn * supply / re, tokenIn * supply / rt), bps: bps).description
+    }
+
     /// The chain's `feeOf` (chain 203d3b2, audit 5 L-DX4: rounded up, so a
     /// small swap cannot pay nothing):
     /// LegacyDec(amount).Mul(fee).Quo(100).Ceil().TruncateInt(). Mul is exact

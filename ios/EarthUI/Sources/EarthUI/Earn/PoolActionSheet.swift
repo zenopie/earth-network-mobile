@@ -235,6 +235,7 @@ struct PoolActionSheet: View {
         let poolID = pool.id
         let tokenDenom = pool.tokenDenom
         let symbol = token.symbol
+        let client = model.client
         tx.request(.init(
             action: "Add liquidity",
             rows: [
@@ -243,11 +244,14 @@ struct PoolActionSheet: View {
                 ("Fee", "\(Token.erth.format(TransactionSigner.defaultFeeUerth)) ERTH"),
             ]
         )) { key in
-            [model.client.msgAddLiquidity(
+            // Audit 6 (M9): the same bound as the shielded deposit's, from fresh reads at confirm.
+            let minShares = try await Self.minShares(client: client, poolID: poolID, erthIn: erthIn, tokenIn: tokenIn)
+            return [client.msgAddLiquidity(
                 creator: key.address,
                 poolID: poolID,
                 denomA: Constants.gasDenom, amountA: String(erthIn),
-                denomB: tokenDenom, amountB: String(tokenIn)
+                denomB: tokenDenom, amountB: String(tokenIn),
+                minShares: minShares
             )]
         }
         dismiss()
@@ -260,8 +264,7 @@ struct PoolActionSheet: View {
         guard let erthIn = UInt64(erthUnits.description), let tokenIn = UInt64(tokenUnits.description) else { return }
         let poolID = pool.id
         let tokenDenom = pool.tokenDenom
-        let rest = model.client.rest
-        let re = erthReserve, rt = tokenReserve
+        let client = model.client
         tx.requestPrivate(.private(
             action: "Add liquidity",
             rows: [
@@ -270,22 +273,27 @@ struct PoolActionSheet: View {
                 ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
             ]
         ), onSuccess: { await model.refresh() }) { w in
-            let minShares = await Self.minShares(rest: rest, poolID: poolID, erthIn: BigInt(erthIn), tokenIn: BigInt(tokenIn),
-                                                  erthReserve: re, tokenReserve: rt)
+            let minShares = try await Self.minShares(client: client, poolID: poolID, erthIn: BigInt(erthIn), tokenIn: BigInt(tokenIn))
             return try await w.addLiquidityShielded(poolID: poolID, token: tokenDenom, tokenAmount: tokenIn, erthAmount: erthIn,
                                                     minShares: minShares)
         }
         dismiss()
     }
 
-    /// The fewest LP shares a shielded deposit accepts: the shares the pool
-    /// would mint now over its reserves and share supply, less 1% for trades
-    /// landing first. "" (no bound) for an empty pool.
-    static func minShares(rest: EarthRest, poolID: UInt64, erthIn: BigInt, tokenIn: BigInt, erthReserve: BigInt, tokenReserve: BigInt) async -> String {
-        guard let raw = try? await PrivacyQueries(rest: rest).lpShareSupply(poolID: poolID), let supply = BigInt(raw),
-              supply > 0, erthReserve > 0, tokenReserve > 0 else { return "" }
-        let shares = min(erthIn * supply / erthReserve, tokenIn * supply / tokenReserve)
-        return SwapMath.withSlippage(shares, bps: 100).description
+    /// The fewest LP shares a pool deposit accepts (public and shielded
+    /// alike): the shares the pool would mint now over fresh reserves and
+    /// share supply, less 1% for trades landing first. "" (no bound) only for
+    /// an empty pool. Audit 6 (D7): a pool or supply the node cannot read
+    /// refuses the deposit rather than sending it unbounded, and the
+    /// reserves are read with the supply, never the sheet's stale ones.
+    static func minShares(client: EarthClient, poolID: UInt64, erthIn: BigInt, tokenIn: BigInt) async throws -> String {
+        guard let pool = await client.pools().first(where: { $0.id == poolID }),
+              let re = BigInt(pool.erthReserve), let rt = BigInt(pool.tokenReserve) else {
+            throw PrivacyError("could not read pool \(poolID) to bound the deposit; try again")
+        }
+        let raw = try await PrivacyQueries(rest: client.rest).lpShareSupply(poolID: poolID)
+        guard let supply = BigInt(raw) else { throw PrivacyError("could not read pool \(poolID)'s share supply; try again") }
+        return SwapMath.minShares(erthIn: erthIn, tokenIn: tokenIn, re: re, rt: rt, supply: supply, bps: 100)
     }
 
     private func reviewWithdraw() {

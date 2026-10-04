@@ -140,17 +140,21 @@ public extension EarthClient {
         ).asAny(typeURL: Msg.Swap.typeURL)
     }
 
+    /// `minShares`: the fewest shares the deposit accepts (field 5, audit 6
+    /// M9), computed as the shielded deposit's; "" only for an empty pool.
     func msgAddLiquidity(
         creator: String,
         poolID: UInt64,
         denomA: String, amountA: String,
-        denomB: String, amountB: String
+        denomB: String, amountB: String,
+        minShares: String
     ) -> ProtoAny {
         Msg.AddLiquidity(
             creator: creator,
             poolID: poolID,
             amountA: Coin(denom: denomA, amount: amountA),
-            amountB: Coin(denom: denomB, amount: amountB)
+            amountB: Coin(denom: denomB, amount: amountB),
+            minShares: minShares
         ).asAny(typeURL: Msg.AddLiquidity.typeURL)
     }
 

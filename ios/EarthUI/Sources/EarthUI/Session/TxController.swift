@@ -151,7 +151,7 @@ public final class TxController {
     /// it for the same reason.
     public private(set) var lastAction: String?
 
-    private var build: ((EarthKey) throws -> [ProtoAny])?
+    private var build: ((EarthKey) async throws -> [ProtoAny])?
     private var runPrivate: ((PrivacyWallet) async throws -> TxResult)?
     private var onSuccess: (() async -> Void)?
 
@@ -166,7 +166,7 @@ public final class TxController {
         _ details: Details,
         host: Host = .root,
         onSuccess: (() async -> Void)? = nil,
-        build: @escaping (EarthKey) throws -> [ProtoAny]
+        build: @escaping (EarthKey) async throws -> [ProtoAny]
     ) {
         self.build = build
         self.runPrivate = nil
@@ -277,6 +277,11 @@ public final class TxController {
         guard let details = pending, build != nil || runPrivate != nil else { return }
         let build = self.build
         let runPrivate = self.runPrivate
+        // Audit 6 (I2): taken now, so what `onSuccess` queues (a chained
+        // request, like the caretaker move after a handle move) is not
+        // cleared when this one finishes.
+        let onSuccess = self.onSuccess
+        self.build = nil; self.runPrivate = nil; self.onSuccess = nil
         pending = nil
         lastAction = details.action
         submitting = true
@@ -299,6 +304,7 @@ public final class TxController {
             // Nothing was proven or sent: show the sheet again at the chain's fee.
             var again = details
             again.feeOverride = e.fee
+            self.build = build; self.runPrivate = runPrivate; self.onSuccess = onSuccess
             pending = again
             return
         } catch let EarthClient.Error.notCommitted(hash) {
@@ -309,19 +315,16 @@ public final class TxController {
         } catch {
             outcome = .failed(action: details.action, reason: model.describe(error))
         }
-        self.build = nil
-        self.runPrivate = nil
-        onSuccess = nil
     }
 
     private func broadcast(
         details: Details,
-        build: @escaping (EarthKey) throws -> [ProtoAny],
+        build: @escaping (EarthKey) async throws -> [ProtoAny],
         model: AppModel
     ) async throws -> String {
-        // Decrypted at the moment of signing rather than kept resident. What
-        // the session holds is the PIN, not the phrase — so a snapshot of the
-        // app's memory between transactions has nothing to take.
+        // Decrypted again at the moment of signing. (Audit 6, K7: the
+        // unlocked session does hold the phrases, in AppModel.wallets; this
+        // read keeps signing on the sealed copy, not on that list.)
         guard let pin = model.pin else { throw WalletStore.Error.notFound }
         let store = model.store
         let wallets = try await Task.detached { try store.unlock(pin: pin) }.value
@@ -329,7 +332,7 @@ public final class TxController {
             ?? wallets.first
         else { throw WalletStore.Error.notFound }
         let key = try EarthKey(mnemonic: wallet.mnemonic)
-        let messages = try build(key)
+        let messages = try await build(key)
         return try await model.client.broadcast(
             messages,
             key: key,
