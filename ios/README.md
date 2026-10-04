@@ -1,144 +1,39 @@
 # Earth Wallet — iOS
 
-Port of the Android app in `../android`. The Android implementation is the
+The iOS app, a port of the Android app in `../android`. The Android implementation is the
 reference for behaviour; read it rather than re-deriving the domain logic.
 
 ## Layout
 
     ios/
       ProverGateCore/   no dependencies — field elements, witness decoding, repo layout
-      ProverGate/       the Phase 1 gate: Barretenberg proving via Swoir
-      EarthCore/        Phases 2–3: the headless layer — keys, tx, chain, maths, passport
-      EarthUI/          Phase 4: the screens — see EarthUI/README.md
+      ProverGate/       Barretenberg proving via Swoir: the lean_poa gate and the app's circuits
+      EarthCore/        the headless layer — keys, tx, chain, maths, passport, privacy core
+      EarthUI/          the screens — see EarthUI/README.md
       EarthWallet/      the app shell — see EarthWallet/README.md
 
-## Phase 1: the gate
+## Build, test, verify
 
-Everything downstream assumes Barretenberg on Apple platforms produces proofs
-`earth-1` accepts. Phase 1 asserts that instead, against the real ~130k-gate
-`lean_poa` circuit, before any app code exists.
+Everything that can be checked from the command line, in the order a change
+usually needs it:
 
-It reads the circuit and witness **from the Android tree** — one copy, no
-duplicated fixture that could drift:
+    cd ios/EarthCore      && swift run corecheck      # known-answer checks (any toolchain)
+    cd ios/EarthCore      && swift test               # privacy core, vectors, wallet flows (Xcode)
+    cd ios/ProverGate     && swift test               # proving through Swoirenberg (Xcode)
+    cd ios/ProverGateCore && swift run corecheck      # witness decoding, repo layout
+    cd ios/EarthUI        && ./Scripts/build-ios.sh   # typechecks the whole UI
+    cd ios/EarthWallet    && xcodebuild -project EarthWallet.xcodeproj -scheme EarthWallet \
+      -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=NO
 
-    android/app/src/main/assets/circuits/lean_poa.json
-    android/app/src/androidTest/assets/lean_inputs.json
+The sections below say what each one checks and how its output is carried to
+the chain's own code, which is where a check actually ends.
 
-**Result: passing.** A Swift-generated UltraHonk proof of `lean_poa` is
-accepted by the chain's own verifier — see "Running it" below for the numbers.
-
-Run it:
-
-    cd ios/ProverGate
-    ./Scripts/seed-framework.sh          # first time only
-    ./Scripts/build-without-xcode.sh     # first time only
-    .build/manual/progate ../..
-
-Checks: witness shape, proof generated, public-input count, proof framing
-(`splitProof`'s 4-byte prefix + 4×32-byte public inputs — asserted via
-`current_date`, not assumed), and verification against its own VK. Proof and VK
-land in `ios/ProverGate/.artifacts/` so the chain verifier
-(`earth-network-chain/third_party/barretenberg-go`) can be run against a
-genuinely Swift-generated proof. **That, not this command passing, is the real
-end of the loop.**
-
-With Android reference artifacts present it also compares cross-platform — see
-the doc comment on `Gate.compare` for the `adb` incantation to produce them.
-The VK comparison is the sharp one: the VK derives from the circuit alone, so a
-mismatch is the unambiguous signature of a bb version difference.
-
-## Version lockstep
-
-Proofs verify on-chain only when all three sides share one Barretenberg build:
-
-| | resolves to |
-|---|---|
-| iOS | Swoir `1.0.0-beta.22-2` → Swoirenberg `1.0.0-beta.22-2` |
-| Android | `com.github.madztheo:noir_android:1.0.0-beta.22-2` |
-| both | noir_rs tag `v1.0.0-beta.22-1` → `barretenberg-rs =5.0.0` |
-| chain | `aztec_tag: v5.0.0` in `barretenberg-go/checksums.json` |
-
-`barretenberg-rs` is Aztec's own crate; its `build.rs` downloads
-`barretenberg-static-{arch}.tar.gz` from the Aztec `v5.0.0` release — final,
-not a nightly, and it publishes `arm64-ios` and `arm64-ios-sim` slices. The
-compiled circuits carry `noir_version: 1.0.0-beta.22`, matching this toolchain,
-so they port unchanged.
-
-A *nightly* bb changes the Fiat-Shamir transcript and the v5.0.0 verifier
-rejects its proofs on large circuits. Do not float these pins, and do not move
-the chain to a nightly to compensate — that breaks the shipping Android app.
-
-**Not Swoirenberg `-3`.** That release strips the recursive-proving stack to
-shrink the framework, which leaves dangling references (`ChonkProof`,
-`databus`, `MegaCircuitBuilder`) that fail at link time. `-2` resolves to the
-same noir_rs tag and therefore the same bb build, and its archive is complete
-(142MB vs 101MB). If you bump this, link something against it before believing
-it works.
-
-## Running it, and the Xcode question
-
-**With Xcode installed, `swift build` and `swift run progate` just work.** The
-scripts below are kept for the situation they were written for and are no
-longer the normal path.
-
-On a **Command Line Tools** toolchain SwiftPM is, in effect, unusable here: it
-hangs indefinitely resolving the Swoirenberg xcframework binary target — 0%
-CPU, no sockets, deadlocked in an async await, no error — and it hangs for the
-whole package graph, so `--target` does not dodge it. Observed on Swift 5.10
-(CLT); gone on Swift 6.3 with Xcode 26.
-
-Everything SwiftPM would have done is mechanical, so `Scripts/build-without-xcode.sh`
-does it with `swiftc` directly: compile five modules in dependency order, link
-the framework's static archive. Three things it has to get right, each of which
-failed loudly first:
-
-- `-lc++` — the framework is Barretenberg's C++ as a static archive, so the C++
-  runtime symbols have to come from somewhere.
-- `-force_load` — archive members reference each other's template
-  instantiations and lazy loading resolves them in the wrong order. This
-  over-pulls CLI/AVM members that want `libdeflate`, hence the Homebrew
-  dependency; an Xcode link would not pull them.
-- `-parse-as-library` — otherwise every module emits a `_main` that collides
-  with the executable's real entry point.
-
-`ProverGateCore` is a **separate package with no dependencies**, so
-`cd ios/ProverGateCore && swift run corecheck` works through plain SwiftPM on
-any toolchain. That is where anything not needing Barretenberg should live.
-
-Full Xcode is still needed for the rest of the port — there is no iOS SDK,
-simulator, or device deployment without it. It is just not needed to answer the
-Phase 1 question.
-
-### Measured
-
-On an M-series Mac, macOS slice, `lean_poa` (~130k gates):
-
-    proving key   ~160 ms
-    proof         14788 bytes in 1.5s
-    memory        ~320 MiB peak
-    public inputs [current_date, address, nullifier, dsc_key]
-
-~320 MiB peak is the number to watch when this moves to a phone — iOS is
-stricter than macOS about it, and `Swoirenberg` exposes `low_memory_mode` and
-`storage_cap` on `prove` if it becomes a problem.
-
-### End-to-end
-
-The gate verifying its own proof is necessary but not sufficient — it only
-shows bb agrees with itself. `tools/chainverify` runs the proof through the
-**chain's** verifier (the vendored `barretenberg-go` at `aztec_tag: v5.0.0`):
-
-    cd tools/chainverify && go run . ../../ios/ProverGate/.artifacts
-    ACCEPTED — the chain verifier accepts the Swift-generated proof
-
-That is the actual Phase 1 result. Everything else is corroboration.
-
-## Phase 2: the headless domain layer
+## EarthCore: the headless domain layer
 
 `EarthCore` is everything the app does that is not UI, NFC, or proving: BIP-39
 and BIP-32 at coin type 118, bech32, the Cosmos transaction encoding and
-SIGN_MODE_DIRECT signing, the LCD query clients per chain module, and the AMM
-and APR maths. No Apple SDK, no Barretenberg — so it builds and its checks run
+SIGN_MODE_DIRECT signing, the LCD query clients per chain module, the AMM
+and APR maths, the passport witness and the privacy core. No Apple SDK, no Barretenberg — so it builds and its checks run
 under plain SwiftPM, the same reason `ProverGateCore` is separate.
 
     cd ios/EarthCore
@@ -174,8 +69,8 @@ What it costs is compile-time checking, so the encoding is verified instead:
 chain runs, rebuilds the SignDoc the way the ante handler does, and verifies
 the secp256k1 signature against the public key the transaction itself carries.
 It also round-trips both messages (a bank send and a gov vote) through the
-SDK's own marshallers. Registration is no longer a signed msg — on the privacy
-chain it is an unsigned private tx, checked by the golden tests instead.
+SDK's own marshallers. Registration is not a signed msg: it is an unsigned
+private tx, checked by the golden tests instead.
 
 The trap the writer exists to avoid: **proto3 elides default values**. A zero,
 an empty string, or empty bytes is *absent* on the wire. Emitting one changes
@@ -204,19 +99,7 @@ The ProverGate test proves every dumped witness through Swoirenberg, checks
 each VK against the chain's genesis VK, and writes one proof per circuit for
 `chainverify` (which needs a chain checkout for its `replace`).
 
-### Dependency notes
-
-- `swift-secp256k1` is pinned to the **0.17.x** line. 0.18 and later declare
-  swift-tools 6.1, which a Swift 5.10 toolchain will not even read. Revisit
-  once the toolchain moves.
-- `attaswift/BigInt` is not optional: a pool reserve times an input amount
-  overflows 64 bits, and the chain does that arithmetic in unbounded integers.
-  Matching it needs the same.
-- `swift test` needs full Xcode: a Command Line Tools install ships no XCTest
-  platform. The known-answer checks are an executable (`corecheck`), as in
-  `ProverGateCore`, so they run on either.
-
-## Phase 3: the passport
+### The passport
 
 Everything between a chip read and a registration on chain, minus the chip read
 itself:
@@ -228,7 +111,7 @@ itself:
     Passport/PassportInputs.swift the lean_poa witness
     Passport/PassportRegistration.swift  scan -> proof -> MsgRegister
 
-### How it is checked
+#### How it is checked
 
 There is no captured DG1/SOD pair in this repo — the Android fixture is the
 *already-built* circuit inputs, which cannot be run backwards into a SOD. So
@@ -265,7 +148,7 @@ every certificate in its own test corpus; `corecheck` asserts the Swift parser
 agrees, over Brainpool P-256 and P-512, RSA-2048, and a 6144-bit RSA key that
 correctly has no circuit to prove with.
 
-### Two things worth knowing
+#### Two things worth knowing
 
 **Explicit domain parameters are not an edge case.** Every Brainpool CSCA in
 the chain's test corpus states its curve as explicit parameters rather than by
@@ -280,7 +163,65 @@ passport is long expired, so the check is not rejecting what it is there to
 reject. This is a circuit finding, not a port one — it affects Android
 identically — and is recorded here because this is where it surfaced.
 
-## Phase 4: the app
+## ProverGate: the lean_poa gate
+
+Everything the app proves assumes Barretenberg on Apple platforms produces
+proofs `earth-1` accepts. The gate asserts that against the real ~130k-gate
+`lean_poa` circuit.
+
+It reads the circuit and witness **from the Android tree** — one copy, no
+duplicated fixture that could drift:
+
+    android/app/src/main/assets/circuits/lean_poa.json
+    android/app/src/androidTest/assets/lean_inputs.json
+
+A Swift-generated UltraHonk proof of `lean_poa` is accepted by the chain's
+own verifier. Run it:
+
+    cd ios/ProverGate && swift run progate        # with Xcode
+    # on a Command Line Tools toolchain (see "Xcode and Command Line Tools"):
+    ./Scripts/seed-framework.sh          # first time only
+    ./Scripts/build-without-xcode.sh     # first time only
+    .build/manual/progate ../..
+
+Checks: witness shape, proof generated, public-input count, proof framing
+(`splitProof`'s 4-byte prefix + 4×32-byte public inputs — asserted via
+`current_date`, not assumed), and verification against its own VK. Proof and VK
+land in `ios/ProverGate/.artifacts/` so the chain verifier
+(`earth-network-chain/third_party/barretenberg-go`) can be run against a
+genuinely Swift-generated proof. **That, not this command passing, is the real
+end of the loop.**
+
+With Android reference artifacts present it also compares cross-platform — see
+the doc comment on `Gate.compare` for the `adb` incantation to produce them.
+The VK comparison is the sharp one: the VK derives from the circuit alone, so a
+mismatch is the unambiguous signature of a bb version difference.
+
+### Measured
+
+On an M-series Mac, macOS slice, `lean_poa` (~130k gates):
+
+    proving key   ~160 ms
+    proof         14788 bytes in 1.5s
+    memory        ~320 MiB peak
+    public inputs [current_date, address, nullifier, dsc_key]
+
+~320 MiB peak is the number to watch when this moves to a phone — iOS is
+stricter than macOS about it, and `Swoirenberg` exposes `low_memory_mode` and
+`storage_cap` on `prove` if it becomes a problem.
+
+### End-to-end
+
+The gate verifying its own proof is necessary but not sufficient — it only
+shows bb agrees with itself. `tools/chainverify` runs the proof through the
+**chain's** verifier (the vendored `barretenberg-go` at `aztec_tag: v5.0.0`):
+
+    cd tools/chainverify && go run . ../../ios/ProverGate/.artifacts
+    ACCEPTED — the chain verifier accepts the Swift-generated proof
+
+That is the actual result. Everything else is corroboration.
+
+## The app
 
 Four tabs — Wallet, Earn, Swap, Govern — over `EarthCore`, wired to the live
 chain. `ios/EarthUI/README.md` has the detail; the short version is that no
@@ -294,7 +235,7 @@ Running it needs Xcode's iOS platform component, which is a separate download
 from the SDK and which a connected device needs too — see
 `ios/EarthWallet/README.md`.
 
-## Phase 5: the chip, and the pathway end to end
+### The chip, and registration end to end
 
 The NFC dialogue is `ios/EarthWallet/EarthWallet/ChipReader.swift`, over
 `NFCPassportReader` — the iOS jmrtd. It asks for **DG1 and EF.SOD only**: a
@@ -376,7 +317,7 @@ no Intel slice.
 
 A device build is the real one, and needs the capability above.
 
-## Referral links
+### Referral links
 
 A referrer is a handle. The registration screen takes one by hand, and
 `https://erth.network/ref/<handle>` fills it in when it opens the app: a
@@ -385,3 +326,75 @@ the `apple-app-site-association` file erth.network must serve for `/ref/*`),
 never a custom URL scheme, which any page could fire first to lock in its own
 referrer. There is no iOS equivalent of Android's install referrer, so a
 fresh install from a link does not carry the handle over.
+
+## Version lockstep
+
+Proofs verify on-chain only when all three sides share one Barretenberg build:
+
+| | resolves to |
+|---|---|
+| iOS | Swoir `1.0.0-beta.22-2` → Swoirenberg `1.0.0-beta.22-2` |
+| Android | `com.github.madztheo:noir_android:1.0.0-beta.22-2` |
+| both | noir_rs tag `v1.0.0-beta.22-1` → `barretenberg-rs =5.0.0` |
+| chain | `aztec_tag: v5.0.0` in `barretenberg-go/checksums.json` |
+
+`barretenberg-rs` is Aztec's own crate; its `build.rs` downloads
+`barretenberg-static-{arch}.tar.gz` from the Aztec `v5.0.0` release — final,
+not a nightly, and it publishes `arm64-ios` and `arm64-ios-sim` slices. The
+compiled circuits carry `noir_version: 1.0.0-beta.22`, matching this toolchain,
+so they port unchanged.
+
+A *nightly* bb changes the Fiat-Shamir transcript and the v5.0.0 verifier
+rejects its proofs on large circuits. Do not float these pins, and do not move
+the chain to a nightly to compensate — that breaks the shipping Android app.
+
+**Not Swoirenberg `-3`.** That release strips the recursive-proving stack to
+shrink the framework, which leaves dangling references (`ChonkProof`,
+`databus`, `MegaCircuitBuilder`) that fail at link time. `-2` resolves to the
+same noir_rs tag and therefore the same bb build, and its archive is complete
+(142MB vs 101MB). If you bump this, link something against it before believing
+it works.
+
+## Xcode and Command Line Tools
+
+**With Xcode installed, `swift build`, `swift test` and `swift run progate`
+just work**, and that is the normal path. The script below is for a Command
+Line Tools toolchain.
+
+On a **Command Line Tools** toolchain SwiftPM is, in effect, unusable here: it
+hangs indefinitely resolving the Swoirenberg xcframework binary target — 0%
+CPU, no sockets, deadlocked in an async await, no error — and it hangs for the
+whole package graph, so `--target` does not dodge it. Observed on Swift 5.10
+(CLT); gone on Swift 6.3 with Xcode 26.
+
+Everything SwiftPM would have done is mechanical, so `Scripts/build-without-xcode.sh`
+does it with `swiftc` directly: compile five modules in dependency order, link
+the framework's static archive. Three things it has to get right:
+
+- `-lc++` — the framework is Barretenberg's C++ as a static archive, so the C++
+  runtime symbols have to come from somewhere.
+- `-force_load` — archive members reference each other's template
+  instantiations and lazy loading resolves them in the wrong order. This
+  over-pulls CLI/AVM members that want `libdeflate`, hence the Homebrew
+  dependency; an Xcode link would not pull them.
+- `-parse-as-library` — otherwise every module emits a `_main` that collides
+  with the executable's real entry point.
+
+`ProverGateCore` is a **separate package with no dependencies**, so
+`cd ios/ProverGateCore && swift run corecheck` works through plain SwiftPM on
+any toolchain. That is where anything not needing Barretenberg should live.
+
+Full Xcode is needed for everything else: XCTest, the iOS SDK, the simulator
+and device deployment.
+
+### Dependency notes
+
+- `swift-secp256k1` is pinned to the **0.17.x** line. 0.18 and later declare
+  swift-tools 6.1, which a Swift 5.10 toolchain will not even read. Revisit
+  once the toolchain moves.
+- `attaswift/BigInt` is not optional: a pool reserve times an input amount
+  overflows 64 bits, and the chain does that arithmetic in unbounded integers.
+  Matching it needs the same.
+- `swift test` needs full Xcode: a Command Line Tools install ships no XCTest
+  platform. The known-answer checks are an executable (`corecheck`), as in
+  `ProverGateCore`, so they run on either.
