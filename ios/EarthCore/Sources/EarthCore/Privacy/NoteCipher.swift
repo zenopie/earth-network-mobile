@@ -30,17 +30,19 @@ import Foundation
 /// CM(asset, value, PC(owner_pk, rho, rcm)) is the note's cm, with the asset
 /// and value the chain published for that position.
 ///
-/// "earth stake note v1" (v3), for a stake note a stake proof creates (a
-/// restake's outputs, an undelegation's or a lock's change). Stake notes are
+/// "earth stake note v2", for every stake note (ORCHARD_DESIGN 20: each is
+/// a stake proof's output; the chain mints none). Stake notes are
 /// owner-locked, so it is always encrypted to the wallet's own address, for
 /// its other devices and for recovery from the mnemonic:
 ///
-///     ct    = epk (32) || ChaCha20-Poly1305(key, nonce = 0^12, aad = empty, pt)      153 bytes
-///     key   = HKDF-SHA256(ikm = X25519(esk, ek_pub), salt = "earth.stake.v1", info = epk || cm)
-///     pt    = 0x03 || asset_id (32) || amount (u64 BE) || rho (32) || rcm (32)
+///     ct    = epk (32) || ChaCha20-Poly1305(key, nonce = 0^12, aad = empty, pt)      201 bytes
+///     key   = HKDF-SHA256(ikm = X25519(esk, ek_pub), salt = "earth.stake.v2", info = epk || cm)
+///     pt    = 0x04 || asset_id (32) || amount (u64 BE) || rho (32) || rcm (32)
+///             || move_key (32) || move_time (u64 BE) || exposed (u64 BE)
 ///
-/// accepted only if StakeCM(asset, amount, StakePC(owner_pk, rho, rcm)) is
-/// the note's cm.
+/// The label fields are zero for an unlabelled note, so the length says
+/// nothing about a label. Accepted only if StakeCM(asset, amount,
+/// StakePC(owner_pk, rho, rcm), label) is the note's cm.
 public enum NoteCipher {
     public static let version: UInt8 = 1
     public static let memoBytes = 64
@@ -51,10 +53,11 @@ public enum NoteCipher {
     public static let blindPlaintextBytes = 1 + 32 + 32 + memoBytes
     public static let blindCiphertextBytes = 32 + blindPlaintextBytes + 16
     private static let blindSalt = Data("earth.note.v2".utf8)
-    public static let stakeVersion: UInt8 = 3
-    public static let stakePlaintextBytes = 1 + 32 + 8 + 32 + 32
+    public static let stakeVersion: UInt8 = 4
+    public static let stakePlaintextBytes = 1 + 32 + 8 + 32 + 32 + 32 + 8 + 8
+    /// The chain's WalletStakeCiphertextBytes (201): every stake proof output's.
     public static let stakeCiphertextBytes = 32 + stakePlaintextBytes + 16
-    private static let stakeSalt = Data("earth.stake.v1".utf8)
+    private static let stakeSalt = Data("earth.stake.v2".utf8)
 
     public enum Error: Swift.Error {
         case lowOrderPoint
@@ -173,54 +176,24 @@ public enum NoteCipher {
         return n.cm(ownerPK: ownerPK) == cm ? n : nil
     }
 
-    // MARK: - blind stake ciphertext (chain zk/privacy EncryptBlindStakeNote)
+    // MARK: - stake notes (v4)
 
-    /// The blind stake ciphertext of a stake note the chain will mint to
-    /// spc = StakePC(owner_pk, `rho`, `rcm`) (StakeProof.spc_ciphertext): as
-    /// v2, under salt "earth.stake.v1" and version 0x03, 177 bytes.
-    public static func encryptBlindStake(rho: Fr, rcm: Fr, ekPub: Data, memo: Data = Data()) throws -> Data {
-        try seal(esk: SecretKey(), ekPub: ekPub, salt: stakeSalt, info: { $0 }, pt: blindPlaintext(rho: rho, rcm: rcm, memo: memo, version: stakeVersion))
-    }
-
-    /// Deterministic blind stake encryption: for golden vectors only.
-    static func encryptBlindStakeWith(esk: Data, rho: Fr, rcm: Fr, ekPub: Data, memo: Data = Data()) throws -> Data {
-        try seal(esk: SecretKey(rawRepresentation: esk), ekPub: ekPub, salt: stakeSalt, info: { $0 },
-                 pt: blindPlaintext(rho: rho, rcm: rcm, memo: memo, version: stakeVersion))
-    }
-
-    /// A minted stake note: opens `ct` (177 bytes) with our ek and accepts it
-    /// only if StakeCM(AssetID(`denom`), `amount`, StakePC(owner_pk, rho, rcm))
-    /// is `cm`, with the denom and amount the chain published. (rho, rcm) or nil.
-    public static func tryDecryptBlindStake(_ ct: Data, cm: Fr, denom: String, amount: UInt64, keys: PrivacyKeys) -> (rho: Fr, rcm: Fr)? {
-        guard let ek = try? keys.ek() else { return nil }
-        return tryDecryptBlindStake(ct, cm: cm, denom: denom, amount: amount, ek: ek, ownerPK: keys.ownerPK)
-    }
-
-    static func tryDecryptBlindStake(_ ct: Data, cm: Fr, denom: String, amount: UInt64, ek: SecretKey, ownerPK: Fr) -> (rho: Fr, rcm: Fr)? {
-        tryOpenBlindStake(ct, cm: cm, denom: denom, amount: amount, ek: ek, ownerPK: ownerPK).map { ($0.rho, $0.rcm) }
-    }
-
-    /// `tryDecryptBlindStake` with the memo (trailing zeros dropped).
-    public static func tryOpenBlindStake(_ ct: Data, cm: Fr, denom: String, amount: UInt64, keys: PrivacyKeys) -> (rho: Fr, rcm: Fr, memo: Data)? {
-        guard let ek = try? keys.ek() else { return nil }
-        return tryOpenBlindStake(ct, cm: cm, denom: denom, amount: amount, ek: ek, ownerPK: keys.ownerPK)
-    }
-
-    static func tryOpenBlindStake(_ ct: Data, cm: Fr, denom: String, amount: UInt64, ek: SecretKey, ownerPK: Fr) -> (rho: Fr, rcm: Fr, memo: Data)? {
-        guard let o = openBlind(ct, ek: ek, salt: stakeSalt, version: stakeVersion) else { return nil }
-        let spc = PrivacyHash.stakePC(ownerPK: ownerPK, rho: o.rho, rcm: o.rcm)
-        return PrivacyHash.stakeCM(asset: PrivacyHash.assetID(denom), amount: amount, spc: spc) == cm ? o : nil
-    }
-
-    // MARK: - stake notes (v3)
-
-    /// A stake note's opening, as its stake ciphertext carries it.
+    /// A stake note's opening, as its stake ciphertext carries it: `label` nil for an unlabelled note.
     public struct StakeOpening: Equatable, Sendable {
         public let asset: Fr
         public let amount: UInt64
         public let rho: Fr
         public let rcm: Fr
-        public init(asset: Fr, amount: UInt64, rho: Fr, rcm: Fr) { self.asset = asset; self.amount = amount; self.rho = rho; self.rcm = rcm }
+        public let label: StakeLabel?
+        public init(asset: Fr, amount: UInt64, rho: Fr, rcm: Fr, label: StakeLabel? = nil) {
+            self.asset = asset; self.amount = amount; self.rho = rho; self.rcm = rcm; self.label = label
+        }
+
+        public func cm(ownerPK: Fr) -> Fr {
+            PrivacyHash.stakeCM(asset: asset, amount: amount, spc: PrivacyHash.stakePC(ownerPK: ownerPK, rho: rho, rcm: rcm), label: StakeLabel.hash(label))
+        }
+
+        public func with(label: StakeLabel?) -> StakeOpening { StakeOpening(asset: asset, amount: amount, rho: rho, rcm: rcm, label: label) }
     }
 
     /// Encrypts a stake note to `ekPub` (the wallet's own); cm is its stake commitment.
@@ -235,11 +208,17 @@ public enum NoteCipher {
 
     static func stakePlaintext(_ o: StakeOpening) -> Data {
         Data([stakeVersion]) + o.asset.bytes + PrivateMsgs.be64(o.amount) + o.rho.bytes + o.rcm.bytes
+            + (o.label?.moveKey ?? .zero).bytes + PrivateMsgs.be64(o.label?.moveTime ?? 0) + PrivateMsgs.be64(o.label?.exposed ?? 0)
     }
 
     /// The stake note if `ct` opens with our ek for `cm` and recomputes it under our owner key; else nil.
     public static func tryDecryptStake(_ ct: Data, cm: Fr, keys: PrivacyKeys) -> StakeOpening? {
-        guard ct.count == stakeCiphertextBytes, let ek = try? keys.ek() else { return nil }
+        guard let ek = try? keys.ek() else { return nil }
+        return tryDecryptStake(ct, cm: cm, ek: ek, ownerPK: keys.ownerPK)
+    }
+
+    static func tryDecryptStake(_ ct: Data, cm: Fr, ek: SecretKey, ownerPK: Fr) -> StakeOpening? {
+        guard ct.count == stakeCiphertextBytes else { return nil }
         let c = Data(ct)
         let epk = c.prefix(32)
         guard let key = try? kdf(esk: ek, peer: epk, salt: stakeSalt, info: epk + cm.bytes),
@@ -247,13 +226,26 @@ public enum NoteCipher {
               pt.count == stakePlaintextBytes, pt[pt.startIndex] == stakeVersion
         else { return nil }
         let p = [UInt8](pt)
-        guard let asset = try? Fr(bytes: Data(p[1 ..< 33])) else { return nil }
-        var amount: UInt64 = 0
-        for b in p[33 ..< 41] { amount = amount << 8 | UInt64(b) }
-        guard let rho = try? Fr(bytes: Data(p[41 ..< 73])), let rcm = try? Fr(bytes: Data(p[73 ..< 105])) else { return nil }
-        guard PrivacyHash.stakeCM(asset: asset, amount: amount, spc: PrivacyHash.stakePC(ownerPK: keys.ownerPK, rho: rho, rcm: rcm)) == cm
+        func u64(_ r: Range<Int>) -> UInt64 { p[r].reduce(UInt64(0)) { $0 << 8 | UInt64($1) } }
+        guard let asset = try? Fr(bytes: Data(p[1 ..< 33])),
+              let rho = try? Fr(bytes: Data(p[41 ..< 73])), let rcm = try? Fr(bytes: Data(p[73 ..< 105])),
+              let moveKey = try? Fr(bytes: Data(p[105 ..< 137]))
         else { return nil }
-        return StakeOpening(asset: asset, amount: amount, rho: rho, rcm: rcm)
+        let amount = u64(33 ..< 41)
+        let moveTime = u64(137 ..< 145)
+        let exposed = u64(145 ..< 153)
+        // An unlabelled note carries zeros; a label names its move and a
+        // positive exposure within the note (as the circuit requires).
+        let label: StakeLabel?
+        if moveKey.isZero && moveTime == 0 && exposed == 0 {
+            label = nil
+        } else if moveKey.isZero || moveTime == 0 || exposed == 0 || amount < exposed {
+            return nil
+        } else {
+            label = StakeLabel(moveKey: moveKey, moveTime: moveTime, exposed: exposed)
+        }
+        let o = StakeOpening(asset: asset, amount: amount, rho: rho, rcm: rcm, label: label)
+        return o.cm(ownerPK: ownerPK) == cm ? o : nil
     }
 
     // MARK: - plaintext

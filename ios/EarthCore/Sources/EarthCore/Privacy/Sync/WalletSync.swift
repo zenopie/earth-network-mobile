@@ -69,6 +69,10 @@ public protocol ChainRoots: Sendable {
     /// `Denoms.max`; nil when the node cannot say. Each is learned only if
     /// the id is the denom's own hash (audit 6, M2).
     func assets() async -> [(denom: String, id: Fr)]?
+    /// x/staking's validators, every status (public): a stake ciphertext
+    /// carries derth/<valoper>'s asset id only, so a wallet restored from the
+    /// mnemonic names its stake by trying each (nil: the node cannot say).
+    func validatorOperators() async -> [String]?
 }
 
 public extension ChainRoots {
@@ -81,6 +85,7 @@ public extension ChainRoots {
     func noteTree(height: UInt64?) async -> TreeState? { nil }
     func txStatus(_ hash: String) async -> TxStatus? { nil }
     func assets() async -> [(denom: String, id: Fr)]? { nil }
+    func validatorOperators() async -> [String]? { nil }
 }
 
 /// Which chain the LCD serves: its chain id and the first 16 lowercase hex digits of its block 1 hash (nil: unavailable).
@@ -535,6 +540,8 @@ public final class WalletSync {
     private var assetDenoms = AssetDenoms()
     /// Whether this sync has read the chain's asset list (at most once a sync, and only when a note of ours needs it).
     private var chainAssetsRead = false
+    /// Whether this sync has read the chain's validator list (at most once, and only when a stake note of ours needs it).
+    private var validatorsRead = false
 
     @discardableResult
     private func readTip() async throws -> ChainTip {
@@ -926,6 +933,10 @@ public final class WalletSync {
                 let t = now()
                 store.mutate { Self.applyStateRecord(&$0, position: r.position, height: r.height, rec, now: t) }
             }
+            // An unlock's record (K11): the owner-tag counter of the position it closed.
+            if let c = Self.parseUnlockMemo(nk: keys.nk, note.memo), store.state.closedOtagMax.map({ c > $0 }) ?? true {
+                store.mutate { $0.closedOtagMax = c }
+            }
             return nil
         }
         learnOwn(note.denom)
@@ -954,6 +965,7 @@ public final class WalletSync {
     /// asset, same cm), which also undoes audit 6 M3's relabel.
     private func beginDenoms() {
         chainAssetsRead = false
+        validatorsRead = false
         let own = Set((store.state.notes.map(\.note.denom) + store.state.stakeNotes.map(\.denom)).filter(Denoms.valid))
         let kept = Set(own.sorted().prefix(Denoms.max))
         store.mutate { $0.denoms = kept }
@@ -1096,8 +1108,14 @@ public final class WalletSync {
             let rows = try fresh("stake note", page.rows, from: from, held: store.state.stakeNext, { $0.position }) { tree.leaf($0.position) == $0.cm }
             if !rows.isEmpty {
                 store.stakeTree.appendAll(rows.map(\.cm))
-                for r in rows {
-                    if let n = openStake(r) {
+                let opened = rows.compactMap { r in Self.openStake(r, keys: keys).map { (r, $0) } }
+                // derth/<valoper> by the chain's validator list, read once, only when a note of ours needs it.
+                if !validatorsRead, opened.contains(where: { assetDenoms.resolve($0.1.asset).hasPrefix(NotePlaintext.unresolvedPrefix) }) {
+                    validatorsRead = true
+                    for op in (await chain.validatorOperators() ?? []).prefix(Denoms.max) { assetDenoms.learn("derth/\(op)") }
+                }
+                for (r, o) in opened {
+                    if let n = ownedStake(r, o) {
                         found.append(n)
                         store.mutate { $0.stakeNotes.append(n) }
                     }
@@ -1110,33 +1128,23 @@ public final class WalletSync {
         return found
     }
 
-    /// A stake row is ours if its ciphertext opens: a stake proof's own
-    /// output carries the wallet stake ciphertext (153 bytes, amount inside);
-    /// a note the chain minted carries the blind stake ciphertext (177 bytes)
-    /// of its secrets, checked against the denom and amount the chain
-    /// published with it.
-    func openStake(_ r: StakeNoteRow) -> OwnedStakeNote? {
-        let denom: String, amount: UInt64, rho: Fr, rcm: Fr
-        switch r.ciphertext.count {
-        case NoteCipher.stakeCiphertextBytes:
-            guard let o = NoteCipher.tryDecryptStake(r.ciphertext, cm: r.cm, keys: keys) else { return nil }
-            denom = assetDenoms.resolve(o.asset); amount = o.amount; rho = o.rho; rcm = o.rcm
-        case NoteCipher.blindCiphertextBytes:
-            // Audit 6 (M2, M3): an SDK denom, learned only once the note opens as ours.
-            guard let d = r.denom, Denoms.valid(d), let a = r.amount,
-                  let o = NoteCipher.tryOpenBlindStake(r.ciphertext, cm: r.cm, denom: d, amount: a, keys: keys) else { return nil }
-            denom = d; amount = a; rho = o.rho; rcm = o.rcm
-            if let c = Self.parseUnlockMemo(nk: keys.nk, o.memo), c > (store.state.closedOtagMax ?? 0) || store.state.closedOtagMax == nil {
-                store.mutate { $0.closedOtagMax = c }
-            }
-        default:
-            return nil
-        }
+    /// A stake row is ours if its ciphertext opens (the wallet stake note,
+    /// 201 bytes, label inside): every stake note is a stake proof's output
+    /// (chain dff3a9b). A zero note (a full exit's padding output) is dropped.
+    static func openStake(_ r: StakeNoteRow, keys: PrivacyKeys) -> NoteCipher.StakeOpening? {
+        guard let o = NoteCipher.tryDecryptStake(r.ciphertext, cm: r.cm, keys: keys) else { return nil }
         // Zero, or past 2^63-1: nothing the wallet holds (as Android).
-        guard amount > 0, amount <= UInt64(Int64.max) else { return nil }
+        guard o.amount > 0, o.amount <= UInt64(Int64.max) else { return nil }
+        return o
+    }
+
+    /// The note `o` opened at `r`, named derth/<valoper> (nil: an asset the wallet cannot name is not one it can use).
+    private func ownedStake(_ r: StakeNoteRow, _ o: NoteCipher.StakeOpening) -> OwnedStakeNote? {
+        let denom = assetDenoms.resolve(o.asset)
+        guard !denom.hasPrefix(NotePlaintext.unresolvedPrefix) else { return nil }
         learnOwn(denom)
-        return OwnedStakeNote(position: r.position, height: r.height, denom: denom, amount: amount, rho: rho, rcm: rcm, cm: r.cm,
-                              nf: PrivacyHash.stakeNF(nk: keys.nk, rho: rho, position: r.position))
+        return OwnedStakeNote(position: r.position, height: r.height, denom: denom, amount: o.amount, rho: o.rho, rcm: o.rcm, cm: r.cm,
+                              nf: PrivacyHash.stakeNF(nk: keys.nk, rho: o.rho, position: r.position), label: o.label)
     }
 
     private func syncStakeNullifiers(_ limit: Int) async throws {

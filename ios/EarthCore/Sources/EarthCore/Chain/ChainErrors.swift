@@ -44,6 +44,24 @@ public enum ChainErrors {
         Known(codespace: "personhood", code: 1116, text: "renew it before moving it",
               explain: "That handle is past its expiry (in its renewal period), and only a live handle can be moved. Renew it first, then move it.",
               byText: true),
+        // Chain dff3a9b: a credit (a delegation's derth, a move's arrival) is
+        // quoted at the live rate with a margin; a rate that outran it is
+        // refused in the ante, before anything is spent or paid.
+        Known(codespace: "shieldedstaking", code: 1103, text: "re-quote with a margin",
+              explain: "The validator's rate moved before this landed, so the chain turned it down. Nothing was spent and no fee was paid: try again for a fresh quote.",
+              byText: true),
+        // A move names the latest block's time; one that waited too long is refused, at no cost.
+        Known(codespace: "shieldedstaking", code: 1120, text: "s before the block time",
+              explain: "This move took too long to reach a block, so the chain turned it down. Nothing was spent and no fee was paid: try again.",
+              byText: true),
+        // A slash reached a moved-in stake between the proof and its block: the debt root changed.
+        Known(codespace: "shieldedstaking", code: 1113, text: "is not the current slash debt root",
+              explain: "A slash reached stake moved between validators just as this was sent, so the chain turned it down. Nothing was spent: try again.",
+              byText: true),
+        // Chain b46a4bb: every stake proof names the label window's clear_before as of the last hour.
+        Known(codespace: "shieldedstaking", code: 1113, text: "name the label window's current clear_before",
+              explain: "This took too long between its quote and its block, so the chain turned it down. Nothing was spent and no fee was paid: try again.",
+              byText: true),
         // CheckTx refuses an anchor lapsing within 120 s.
         Known(codespace: "shielded", code: 1103, text: "pick a newer anchor",
               explain: "This wallet's notes were anchored to a note tree the chain is about to stop accepting. Sync and try again.", byText: true),

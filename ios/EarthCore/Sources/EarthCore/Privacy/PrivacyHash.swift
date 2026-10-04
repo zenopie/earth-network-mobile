@@ -31,6 +31,9 @@ public enum PrivacyHash {
     // The stake nullifier indexed tree and stake votes (circuits/vote, ORCHARD_DESIGN 15).
     public static let tagSNFL = tag("earth.snfl")
     public static let tagVNF = tag("earth.vnf")
+    // Stake note slash labels and the slash debt tree (circuits/stake, circuits/vote; ORCHARD_DESIGN 20).
+    public static let tagSLabel = tag("earth.slabel")
+    public static let tagDebtL = tag("earth.debtl")
     // Wallet-defined (PRIVACY_FORMATS.md 3a, 1): the registration record's and an unlock memo's tags.
     public static let tagRecTag = tag("earth.rectag")
     public static let tagUnlockTag = tag("earth.unlocktag")
@@ -79,8 +82,22 @@ public enum PrivacyHash {
     /// A stake note's hidden owner: H(TAG_SPC, owner_pk, rho, rcm).
     public static func stakePC(ownerPK: Fr, rho: Fr, rcm: Fr) -> Fr { h(tagSPC, ownerPK, rho, rcm) }
 
-    /// A stake note: H(TAG_STAKE, AssetID(stake denom), amount, spc).
-    public static func stakeCM(asset: Fr, amount: UInt64, spc: Fr) -> Fr { h(tagStake, asset, u64(amount), spc) }
+    /// A stake note: H(TAG_STAKE, AssetID(stake denom), amount, spc, label),
+    /// label 0 for an ordinary note or `stakeLabel` of the redelegation whose
+    /// exposure it holds (ORCHARD_DESIGN 20.2).
+    public static func stakeCM(asset: Fr, amount: UInt64, spc: Fr, label: Fr) -> Fr { h(tagStake, asset, u64(amount), spc, label) }
+
+    /// A stake note's slash label: H(TAG_SLABEL, move_key, move_time,
+    /// exposed). The note holds `exposed` derth a redelegation credited
+    /// (`moveKey`: its credit nullifier; `moveTime`: the unix seconds it
+    /// named) while a slash of its source may still cut it.
+    public static func stakeLabel(moveKey: Fr, moveTime: UInt64, exposed: UInt64) -> Fr { h(tagSLabel, moveKey, u64(moveTime), u64(exposed)) }
+
+    /// A slash debt tree leaf: H(TAG_DEBTL, key, next_key, next_index, retained), next_index a u32.
+    public static func debtLeaf(key: Fr, nextKey: Fr, nextIndex: UInt64, retained: UInt64) -> Fr {
+        precondition(nextIndex <= 0xffff_ffff, "next_index is a u32")
+        return h(tagDebtL, key, nextKey, u64(nextIndex), u64(retained))
+    }
 
     /// A stake note's nullifier: H(TAG_SNF, nk, rho, position), position a u32.
     public static func stakeNF(nk: Fr, rho: Fr, position: UInt64) -> Fr {

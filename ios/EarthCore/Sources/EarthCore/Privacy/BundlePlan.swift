@@ -276,26 +276,65 @@ public enum NoteSelection {
 }
 
 /// Picks stake notes: a stake proof spends at most two.
+/// Picks stake notes for lane A of a stake proof (circuits/stake v2): at most
+/// two inputs, at most one of them labelled (ORCHARD_DESIGN 20.6). `free` is
+/// what a note may give up: its amount, or for a labelled note its amount less
+/// the exposure (the window still open) or less the exposure plus what the
+/// debt tree says it retains (the window closed: the proof clears it). Ports
+/// `privacy/tx/BundlePlan.kt` StakeSelection, order for order.
 public enum StakeSelection {
-    /// Notes covering `amount`: the smallest single one that does, else the
-    /// pair with the smallest sufficient sum. A balance spread over more than
-    /// two notes is refused: the user merges first (PrivacyWallet.mergeStake,
-    /// its own tx), never the wallet on its own.
-    public static func cover(_ notes: [OwnedStakeNote], amount: UInt64) throws -> [OwnedStakeNote] {
-        try require(amount > 0, "the amount must be positive")
-        let c = notes.filter(\.spendable).sorted { $0.amount != $1.amount ? $0.amount < $1.amount : $0.position < $1.position }
-        if let one = c.first(where: { $0.amount >= amount }) { return [one] }
+    private static func pairs(_ c: [OwnedStakeNote]) -> [[OwnedStakeNote]] {
+        var out: [[OwnedStakeNote]] = []
+        for i in c.indices { for j in (i + 1) ..< c.count where c[i].label == nil || c[j].label == nil { out.append([c[i], c[j]]) } }
+        return out
+    }
+
+    private static func sum(_ ns: [OwnedStakeNote], _ free: (OwnedStakeNote) -> UInt64) -> UInt64 {
+        ns.reduce(UInt64(0)) { PrivacyWallet.Snapshot.satAdd63($0, free($1)) }
+    }
+
+    /// What a merge spends (a delegation's, an unlock's, a restake's): up to
+    /// two of `notes`, at most one labelled, the most value first. Empty when
+    /// there is none (the proof pads).
+    public static func merge(_ notes: [OwnedStakeNote], free: (OwnedStakeNote) -> UInt64) -> [OwnedStakeNote] {
+        let c = notes.filter(\.spendable).sorted { free($0) != free($1) ? free($0) > free($1) : $0.position < $1.position }
+        if c.count <= 1 { return c }
         var best: [OwnedStakeNote]?
-        var bestSum = UInt64.max
-        for i in c.indices {
-            for j in (i + 1) ..< c.count {
-                let s = PrivateMsgs.saturatingAdd(c[i].amount, c[j].amount)
-                if s >= amount, s < bestSum { best = [c[i], c[j]]; bestSum = s }
-            }
+        for p in pairs(c) {
+            guard let b = best else { best = p; continue }
+            let (sp, sb) = (sum(p, free), sum(b, free))
+            let (pp, pb) = (p.reduce(UInt64(0)) { $0 &+ $1.position }, b.reduce(UInt64(0)) { $0 &+ $1.position })
+            if sp > sb || (sp == sb && pp < pb) { best = p }
+        }
+        return best ?? [c[0]]
+    }
+
+    /// Notes whose free value covers `amount`: the smallest single one that
+    /// does, else the pair with the smallest sufficient free sum. Refused when
+    /// none does: `locked` names the exposure the window keeps in place (the
+    /// caller explains it), else the stake is spread over more notes than one
+    /// proof spends, or short.
+    public static func cover(_ notes: [OwnedStakeNote], amount: UInt64, free: (OwnedStakeNote) -> UInt64,
+                             locked: () -> String? = { nil }) throws -> [OwnedStakeNote] {
+        try require(amount > 0, "the amount must be positive")
+        let c = notes.filter(\.spendable).sorted { free($0) != free($1) ? free($0) < free($1) : $0.position < $1.position }
+        if let one = c.first(where: { free($0) >= amount }) { return [one] }
+        var best: [OwnedStakeNote]?
+        for p in pairs(c) where sum(p, free) >= amount {
+            if let b = best, sum(b, free) <= sum(p, free) { continue }
+            best = p
         }
         if let best { return best }
-        let total = c.reduce(UInt64(0)) { PrivateMsgs.saturatingAdd($0, $1.amount) }
-        throw NoteSelection.Insufficient(message: total >= amount ? "this stake is spread over more than two notes; merge them on the Notes screen first (one fee each), then try again"
-            : "insufficient stake")
+        let held = c.reduce(UInt64(0)) { PrivacyWallet.Snapshot.satAdd63($0, $1.amount) }
+        let freeAll = sum(c, free)
+        let message: String
+        if freeAll < amount && held >= amount {
+            message = locked() ?? "part of this stake was moved here recently and cannot move again yet"
+        } else if freeAll >= amount {
+            message = "this stake is spread over more notes than one transaction spends; merge them first (one fee each), then try again"
+        } else {
+            message = "insufficient stake"
+        }
+        throw NoteSelection.Insufficient(message: message)
     }
 }

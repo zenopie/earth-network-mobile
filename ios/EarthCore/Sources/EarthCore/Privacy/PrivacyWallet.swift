@@ -144,11 +144,15 @@ public final class PrivacyWallet: @unchecked Sendable {
             return counts.filter { $0.value >= 2 }
         }
 
-        /// derth denoms held in more than one stake note, with their note counts.
+        /// derth denoms held in more than one stake note that can merge now (at most one labelled), with their note counts.
         public var stakeMergeable: [String: Int] {
             var counts: [String: Int] = [:]
-            for n in stakeNotes where n.spendable && n.denom.hasPrefix(PrivacyWallet.derthPrefix) { counts[n.denom, default: 0] += 1 }
-            return counts.filter { $0.value >= 2 }
+            var unlabelled: Set<String> = []
+            for n in stakeNotes where n.spendable && n.denom.hasPrefix(PrivacyWallet.derthPrefix) {
+                counts[n.denom, default: 0] += 1
+                if n.label == nil { unlabelled.insert(n.denom) }
+            }
+            return counts.filter { $0.value >= 2 && unlabelled.contains($0.key) }
         }
 
         /// Private LP shares per pool id (dexlp/<id> notes).
@@ -256,9 +260,6 @@ public final class PrivacyWallet: @unchecked Sendable {
 
     /// A note the chain will mint to us: fresh secrets, their v2 ciphertext to our own address.
     private func mint(_ denom: String) throws -> NoteOut { try NoteOut.mintToSelf(keys, denom: denom) }
-
-    /// A stake note the chain will mint to us: spc_mint's fresh secrets and their blind stake ciphertext.
-    private func stakeMint() throws -> StakePlan.SelfMint { try StakePlan.selfMint(keys) }
 
     private func today() -> UInt64 { UInt64(max(0, now()) / Self.secondsPerDay) }
 
@@ -1385,101 +1386,359 @@ public final class PrivacyWallet: @unchecked Sendable {
         return String(denom.dropFirst(derthPrefix.count))
     }
 
-    /// The stake tree's latest root (anchors a stake proof; unchecked when it spends nothing).
-    private func stakeAnchor() -> Fr { store.stakeTree.size == 0 ? .zero : store.stakeTree.root() }
-
-    private func stakePlan(_ denom: String?, spends: [OwnedStakeNote], outAmounts: [UInt64], vOut: UInt64,
-                           mint: StakePlan.SelfMint? = nil, salt: Fr = StakePlan.throwaway().rho,
-                           anchor: Fr? = nil, paths: [[Fr]]? = nil) throws -> StakePlan {
-        // mint: a self-mint for a msg the chain mints a stake note for; nil: throwaway secrets, no ciphertext.
-        let outs = try outAmounts.filter { $0 > 0 }.map { try StakePlan.out(keys, denom: denom!, amount: $0) }
-        return try StakePlan(nk: keys.nk, denom: denom, spends: spends, paths: paths ?? spends.map { store.stakeTree.path($0.position) },
-                             outputs: outs, mint: mint.map { ($0.rho, $0.rcm) } ?? StakePlan.throwaway(), tagSalt: salt,
-                             anchor: anchor ?? stakeAnchor(), vOut: vOut, mintCiphertext: mint?.ciphertext ?? Data())
-    }
+    /// The stake tree's latest root: every stake proof's anchor, the empty
+    /// tree's root before the first note (the chain records it at its first
+    /// block, and a first delegation pads its input against it).
+    private func stakeAnchor() -> Fr { store.stakeTree.root() }
 
     /// Stake notes of `denom` this wallet can spend now.
     private func spendableStake(_ denom: String) -> [OwnedStakeNote] {
         store.state.stakeNotes.filter { $0.spendable && $0.denom == denom }
     }
 
-    /// Stakes `amount` uerth with `validator`: the bundle releases it (and
-    /// the fee) into the module, the chain mints derth at the live rate as a
-    /// stake note to our stake self-mint pc, delegated at the epoch's end.
-    public func delegate(validator: String, amount: UInt64) async throws -> TxResult {
+    /// The chain's slash debt now (Query/DebtTree, ORCHARD_DESIGN 20.6): its
+    /// root and size, the label window and the clear_before a proof may name,
+    /// and the rows (`tree`) when a label is cleared or voted, read whole
+    /// (the indexer's stream, else the chain's pages) and checked against
+    /// `root`: nothing asked names a move of this wallet.
+    public struct DebtView: Sendable {
+        public let root: Fr
+        public let size: UInt64
+        public let windowSeconds: UInt64
+        public let clearBefore: UInt64
+        let tree: DebtTree?
+
+        /// Whether `l`'s window has closed: a proof naming `clearBefore` clears it.
+        public func clearable(_ l: StakeLabel) -> Bool { l.moveTime < clearBefore }
+
+        /// What `l`'s exposure is worth now: its row's retained, or all of it when the move was never slashed.
+        public func retained(_ l: StakeLabel) -> UInt64 { min(tree?.retainedOf(l.moveKey) ?? l.exposed, l.exposed) }
+    }
+
+    /// Reads the chain's debt view (one page of Query/DebtTree: its root,
+    /// window and clear_before), with the rows when `rows` says a label of
+    /// `notes` needs them (a closed window to clear, or `always`).
+    private func debtView(_ notes: [OwnedStakeNote] = [], always: Bool = false) async throws -> DebtView {
+        let p = try await reads.debtTree(start: 0, limit: 1)
+        try require(p.size < Merkle.capacity, "debt tree size \(p.size)")
+        try require(p.windowSeconds <= UInt64(PrivacyQueries.maxDurationSeconds), "label window \(p.windowSeconds)")
+        if p.windowSeconds > 0, store.state.labelWindowSeconds != p.windowSeconds {
+            store.mutate { $0.labelWindowSeconds = p.windowSeconds }
+            persistNoThrow()
+        }
+        let need = notes.contains { n in n.label.map { always || $0.moveTime < p.clearBefore } ?? false }
+        let tree = need ? try await debtTreeAt(root: p.root, size: p.size) : nil
+        return DebtView(root: p.root, size: p.size, windowSeconds: p.windowSeconds, clearBefore: p.clearBefore, tree: tree)
+    }
+
+    /// Debt trees by root, the last two (used under the wallet's lock only).
+    private var debtTrees: [(root: Fr, tree: DebtTree)] = []
+    /// Debt rows asked of the indexer a page (a size it serves), and of the LCD (its maximum).
+    static let debtPage = 1000
+    static let lcdDebtPage = 1000
+
+    /// The debt tree whose root is `root` (`size` leaves, sentinel included):
+    /// the indexer's whole stream first, the chain's own pages when it does
+    /// not rebuild `root` (an indexer behind, or lying).
+    private func debtTreeAt(root: Fr, size: UInt64) async throws -> DebtTree {
+        if let t = debtTrees.first(where: { $0.root == root }) { return t.tree }
+        try require(size <= UInt64(Int.max), "debt tree size \(size)")
+        let n = Int(size > 0 ? size - 1 : 0)
+        for chainOnly in [false, true] {
+            guard let rows = try? await (chainOnly ? lcdDebtRows(n) : indexerDebtRows(n)) else { continue }
+            if let t = try? DebtTree(rows), t.root() == root {
+                debtTrees.append((root, t))
+                if debtTrees.count > 2 { debtTrees.removeFirst() }
+                return t
+            }
+        }
+        throw PrivacyError("the slash debt rows served do not rebuild the chain's debt root; sync and try again")
+    }
+
+    /// The first `n` debt rows from the indexer's stream (aligned pages from leaf 0; the sentinel is never a row).
+    private func indexerDebtRows(_ n: Int) async throws -> [(key: Fr, retained: UInt64)] {
+        var out: [(key: Fr, retained: UInt64)] = []
+        var from: UInt64 = 0
+        while out.count < n {
+            let page = try await indexer.debtRows(fromIndex: from, limit: Self.debtPage)
+            guard page.rows.count <= Self.debtPage else {
+                throw WalletSync.Inconsistent(message: "the indexer sent \(page.rows.count) debt rows in a page of \(Self.debtPage)")
+            }
+            for r in page.rows {
+                guard r.index == UInt64(out.count) + 1 else { throw WalletSync.Inconsistent(message: "debt row \(r.index) out of order") }
+                if out.count >= n { break }
+                out.append((r.key, r.retained))
+            }
+            if page.rows.isEmpty { break }
+            from += UInt64(Self.debtPage)
+        }
+        try require(out.count == n, "only \(out.count) of the chain's \(n) debt rows were served")
+        return out
+    }
+
+    /// The first `n` debt rows from the chain's Query/DebtTree pages.
+    private func lcdDebtRows(_ n: Int) async throws -> [(key: Fr, retained: UInt64)] {
+        var out: [(key: Fr, retained: UInt64)] = []
+        while out.count < n {
+            let page = try await reads.debtTree(start: UInt64(out.count), limit: min(n - out.count, Self.lcdDebtPage))
+            if page.rows.isEmpty { break }
+            out.append(contentsOf: page.rows.prefix(min(Self.lcdDebtPage, n - out.count)))
+        }
+        try require(out.count == n, "only \(out.count) of the chain's \(n) debt rows were served")
+        return out
+    }
+
+    /// The label window as last read (0: never): for showing when moved stake may move again.
+    public var labelWindowSeconds: UInt64 { store.state.labelWindowSeconds }
+
+    /// When `l`'s exposure may leave its note (unix seconds): after move_time + the label window.
+    public static func movableAfter(_ l: StakeLabel, windowSeconds: UInt64) -> UInt64 { PrivateMsgs.saturatingAdd(l.moveTime, windowSeconds) }
+
+    /// What `n` may give up now (ORCHARD_DESIGN 20.6): its amount; for a
+    /// labelled note with its window open, the amount less the exposure (the
+    /// exposure stays in place); with the window closed, less the exposure
+    /// plus what it retains (the proof clears it).
+    private static func freeOf(_ n: OwnedStakeNote, _ d: DebtView) -> UInt64 {
+        guard let l = n.label else { return n.amount }
+        return d.clearable(l) ? n.amount - l.exposed + d.retained(l) : n.amount - l.exposed
+    }
+
+    /// Why a move of exposed stake waits: the earliest date one of `notes`' open labels frees its exposure.
+    private static func lockedText(_ notes: [OwnedStakeNote], _ d: DebtView) -> String? {
+        guard let until = notes.compactMap(\.label).filter({ !d.clearable($0) }).map({ movableAfter($0, windowSeconds: d.windowSeconds) }).min()
+        else { return nil }
+        return "moved stake can move again after \(dateText(until)): until then a slash of the validator it left can still reach it, so it stays where it is (the rest of this stake moves freely)"
+    }
+
+    /// One validator's stake as this wallet holds it.
+    public struct StakeHolding: Sendable, Equatable {
+        public let validator: String
+        /// derth held (every spendable note).
+        public let derth: UInt64
+        /// derth that may leave now (what undelegating, locking or moving can take).
+        public let free: UInt64
+        /// Moved-in derth whose window is open, and when the first of it may move again (nil: none).
+        public let locked: UInt64
+        public let lockedUntil: UInt64?
+        /// Notes held here: more than one can be merged (`restake`).
+        public let notes: Int
+        /// Whether two of them can merge now (at most one labelled).
+        public let mergeable: Bool
+    }
+
+    /// This wallet's stake per validator. The chain's debt view is read only
+    /// when a label is held; without it a closed window counts as still open
+    /// (nothing is shown as movable that is not).
+    public func stakeHoldings() async -> [StakeHolding] {
+        await locked {
+            let notes = store.state.stakeNotes.filter { $0.spendable && $0.denom.hasPrefix(Self.derthPrefix) }
+            let view = notes.contains { $0.label != nil } ? try? await debtView(notes) : nil
+            let window = view?.windowSeconds ?? store.state.labelWindowSeconds
+            return Dictionary(grouping: notes, by: \.denom).sorted { $0.key < $1.key }.map { denom, ns in
+                let open = ns.compactMap(\.label).filter { l in view.map { !$0.clearable(l) } ?? true }
+                return StakeHolding(
+                    validator: String(denom.dropFirst(Self.derthPrefix.count)),
+                    derth: ns.reduce(UInt64(0)) { Snapshot.satAdd63($0, $1.amount) },
+                    free: ns.reduce(UInt64(0)) { acc, n in Snapshot.satAdd63(acc, view.map { Self.freeOf(n, $0) } ?? (n.amount - (n.label?.exposed ?? 0))) },
+                    locked: open.reduce(UInt64(0)) { Snapshot.satAdd63($0, $1.exposed) },
+                    lockedUntil: open.map { Self.movableAfter($0, windowSeconds: window) }.min(),
+                    notes: ns.count,
+                    mergeable: ns.count >= 2 && ns.contains { $0.label == nil }
+                )
+            }
+        }
+    }
+
+    /// The clear_before and debt root every stake proof names (circuit audit
+    /// L-1: also when it clears nothing, so a clearing proof looks like any
+    /// other), and the clear of `l` when its window has closed.
+    private static func clearOf(_ l: StakeLabel?, _ d: DebtView) throws -> StakePlan.Clear {
+        if d.clearBefore == 0 { return .none }
+        guard let l, d.clearable(l) else { return StakePlan.Clear(clearBefore: d.clearBefore, debtRoot: d.root) }
+        guard let w = d.tree?.witness(l.moveKey), let r = w.retained(key: l.moveKey, exposed: l.exposed, root: d.root) else {
+            throw PrivacyError("the debt tree does not read this stake's move")
+        }
+        return StakePlan.Clear(clearBefore: d.clearBefore, debtRoot: d.root, witness: w, retained: r)
+    }
+
+    /// Lane A of `denom`: `spends` (at most one labelled) merged with `vIn`
+    /// less `vOut` into one note back to us (the change, or a zero note), the
+    /// label kept or cleared (`clearOf`).
+    private func laneA(_ denom: String, spends: [OwnedStakeNote], vIn: UInt64, vOut: UInt64, _ d: DebtView,
+                       salt: Fr = StakePlan.freshSalt(), credit: StakePlan.Credit? = nil) throws -> StakePlan {
+        let l = spends.compactMap(\.label).first
+        let clear = try Self.clearOf(l, d)
+        var amount = BigUInt(try Self.sum(spends))
+        if clear.clears, let l { amount = amount - BigUInt(l.exposed) + BigUInt(clear.retained) }
+        amount += BigUInt(vIn)
+        try require(amount >= BigUInt(vOut), "insufficient stake")
+        amount -= BigUInt(vOut)
+        try require(amount <= BigUInt(Int64.max), "a stake note holds at most 2^63-1")
+        let out = try StakePlan.out(keys, denom: denom, amount: UInt64(amount), label: clear.clears ? nil : l)
+        return try StakePlan(nk: keys.nk, denom: denom, spends: spends, paths: spends.map { store.stakeTree.path($0.position) }, out: out,
+                             vIn: vIn, vOut: vOut, clear: clear, credit: credit, tagSalt: salt, anchor: stakeAnchor())
+    }
+
+    /// What a lane A clear gives up: the slash's cut of the cleared exposure (0 when nothing is cleared, or nothing was cut).
+    private static func haircutOf(_ p: StakePlan) -> UInt64 {
+        guard p.clear.clears, let l = p.spends.compactMap(\.label).first else { return 0 }
+        return l.exposed - p.clear.retained
+    }
+
+    /// The chain refused nothing yet, but what the sheet showed no longer holds: show it again.
+    public struct QuoteChanged: Swift.Error, LocalizedError, Equatable {
+        public let message: String
+        public var errorDescription: String? { message }
+    }
+
+    /// The margin a credit is quoted with for the rate's drift until its
+    /// block (ORCHARD_DESIGN 20.8: ~10 ppm covers minutes on a chain with
+    /// real stake), in ppm of the derth the value buys. A quote the rate
+    /// outran is refused in the ante at no cost, and retried.
+    public static let creditMarginPPM: UInt64 = 10
+
+    /// What of a redelegation's value beyond the source's queue may stay in its book (chain bondedDust, 0.001 ERTH).
+    public static let bondedDust: UInt64 = 1_000
+
+    /// derth bought for `value` uerth at `book`'s live rate, less a margin for
+    /// the rate's drift until the tx's block (ORCHARD_DESIGN 20.8): the chain
+    /// refuses a credit the value does not buy, in its ante, at no cost.
+    static func creditFor(_ value: BigUInt, _ book: PrivacyReads.Book) throws -> UInt64 {
+        if book.supply == 0 {
+            try require(book.backing == 0, "this validator's book is settling (no derth, some backing); try again after the epoch ends")
+            return UInt64(min(value, BigUInt(Int64.max)))
+        }
+        try require(book.backing > 0, "this validator's stake is backed by nothing (slashed to zero)")
+        let buys = value * book.supply / book.backing
+        let margin = (buys * BigUInt(creditMarginPPM) + 999_999) / 1_000_000
+        guard buys > margin else { return 0 }
+        return UInt64(min(buys - margin, BigUInt(Int64.max)))
+    }
+
+    /// A delegation's quote (ORCHARD_DESIGN 20.8), shown on its confirm
+    /// sheet: `derth` credited to our note at `validator` for `amount` uerth,
+    /// and the `haircut` a merge clearing a moved-in label takes (0: none).
+    public struct DelegateQuote: Sendable, Equatable {
+        public let validator: String
+        public let amount: UInt64
+        public let derth: UInt64
+        public let haircut: UInt64
+    }
+
+    public func quoteDelegate(validator: String, amount: UInt64) async throws -> DelegateQuote {
         try require(amount > 0, "the amount must be positive")
+        let min = try await reads.minDelegation()
+        try require(amount >= min, "a private delegation is at least \(min)uerth")
+        let derth = try Self.creditFor(BigUInt(amount), try await reads.validatorBook(validator))
+        try require(derth >= min && derth > 0, "\(amount)uerth buys less than the least derth a delegation may credit; stake more")
+        return try await locked {
+            let denom = Self.derthDenom(validator)
+            let d = try await debtView(spendableStake(denom))
+            let plan = try laneA(denom, spends: StakeSelection.merge(spendableStake(denom)) { Self.freeOf($0, d) }, vIn: derth, vOut: 0, d)
+            return DelegateQuote(validator: validator, amount: amount, derth: derth, haircut: Self.haircutOf(plan))
+        }
+    }
+
+    /// Stakes `q.amount` uerth with its validator (ORCHARD_DESIGN 20): the
+    /// bundle releases it (and the fee) into the module; the stake proof
+    /// merges the quoted derth into our note there (up to two of them, a
+    /// labelled one cleared once its window closed), or pads its input when
+    /// we hold none, so a first delegation looks like a top-up. A rate that
+    /// outran the quote is refused in the ante: nothing spent, nothing paid.
+    public func delegate(_ q: DelegateQuote) async throws -> TxResult {
         let mx = await maxActions()
         return try await locked {
-            let stake = try stakePlan(Self.derthDenom(validator), spends: [], outAmounts: [], vOut: 0, mint: try stakeMint())
+            let denom = Self.derthDenom(q.validator)
+            let d = try await debtView(spendableStake(denom))
+            let stake = try laneA(denom, spends: StakeSelection.merge(spendableStake(denom)) { Self.freeOf($0, d) }, vIn: q.derth, vOut: 0, d)
+            if Self.haircutOf(stake) > q.haircut {
+                throw QuoteChanged(message: "a slash reached stake you moved to this validator since the quote; review it again")
+            }
             return try await run { fee in
                 // The fee is the bundle's uerth balance less amount.
-                let b = try self.bundle(release: try Self.plus([Self.fee: amount], Self.fee, fee), maxActions: mx)
+                let b = try self.bundle(release: try Self.plus([Self.fee: q.amount], Self.fee, fee), maxActions: mx)
                 return Assembled(bundles: [b], stake: stake) { bs, sp, _ in
-                    MsgShieldedDelegate(bundle: bs[0], validator: validator, amount: amount, stake: sp!)
+                    MsgShieldedDelegate(bundle: bs[0], validator: q.validator, amount: q.amount, derth: q.derth, stake: sp!)
                 }
             }
         }
     }
 
-    /// Merges or splits stake notes of `validator`: spends `notes` (1-2) and
-    /// creates notes of `amounts` (1-2, summing to theirs), all ours. Stake
-    /// moves in at most two notes a proof, so a balance spread over more is
-    /// merged first.
-    public func restake(validator: String, notes: [OwnedStakeNote], amounts: [UInt64]) async throws -> TxResult {
-        let mx = await maxActions()
-        return try await locked { try await restakeLocked(validator: validator, notes: notes, amounts: amounts, mx: mx) }
+    /// Stakes `amount` uerth with `validator` at a quote taken now.
+    public func delegate(validator: String, amount: UInt64) async throws -> TxResult {
+        try await delegate(try await quoteDelegate(validator: validator, amount: amount))
     }
 
-    private func restakeLocked(validator: String, notes: [OwnedStakeNote], amounts: [UInt64], mx: Int) async throws -> TxResult {
-        let denom = Self.derthDenom(validator)
-        try require((1 ... 2).contains(notes.count) && (1 ... 2).contains(amounts.count) && amounts.allSatisfy { $0 > 0 },
-                    "a restake spends and creates one or two notes")
-        try require(notes.reduce(UInt64(0)) { PrivateMsgs.saturatingAdd($0, $1.amount) } == amounts.reduce(0, PrivateMsgs.saturatingAdd)
-                    && !amounts.contains(.max), "a restake keeps the amount")
-        let stake = try stakePlan(denom, spends: notes, outAmounts: amounts, vOut: 0)
-        return try await run { fee in
-            Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
-                MsgRestake(bundle: bs[0], validator: validator, stake: sp!)
+    /// Merges two of our notes at `validator` (MsgRestake, ORCHARD_DESIGN
+    /// 20.3): needed only for a note made beside a labelled one (a move into a
+    /// validator where ours was labelled) or by another device. At most one
+    /// labelled; a closed window clears. One user tap; nothing merges by itself.
+    public func restake(validator: String) async throws -> TxResult {
+        let mx = await maxActions()
+        return try await locked {
+            let denom = Self.derthDenom(validator)
+            let d = try await debtView(spendableStake(denom))
+            let two = StakeSelection.merge(spendableStake(denom)) { Self.freeOf($0, d) }
+            guard two.count == 2 else {
+                throw PrivacyError(spendableStake(denom).count >= 2 ? "these notes each hold stake moved here recently; they merge once one of their windows closes"
+                    : "nothing to merge")
+            }
+            let stake = try laneA(denom, spends: two, vIn: 0, vOut: 0, d)
+            return try await run { fee in
+                Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
+                    MsgRestake(bundle: bs[0], validator: validator, stake: sp!)
+                }
             }
         }
     }
 
-    /// derth denoms held in more than one stake note, with their note counts.
+    /// derth denoms held in more than one stake note that can merge now.
     public func stakeMergeable() -> [String: Int] { snapshot.stakeMergeable }
 
-    /// Merges the two smallest stake notes of `denom` (derth/<valoper>) into one.
-    public func mergeStake(denom: String) async throws -> TxResult {
-        let mx = await maxActions()
-        return try await locked {
-            let two = Array(spendableStake(denom).sorted { $0.amount < $1.amount }.prefix(2))
-            try require(two.count == 2, "nothing to merge")
-            let (sum, o) = two[0].amount.addingReportingOverflow(two[1].amount)
-            try require(!o, "stake amounts overflow")
-            return try await restakeLocked(validator: try Self.parseDerth(denom), notes: two, amounts: [sum], mx: mx)
+    /// Merges two stake notes of `denom` (derth/<valoper>) into one.
+    public func mergeStake(denom: String) async throws -> TxResult { try await restake(validator: try Self.parseDerth(denom)) }
+
+    /// What leaving `amount` derth/`validator` (an undelegation or a lock)
+    /// spends: the notes whose free value covers it, refused up front when
+    /// the exposure a window keeps in place is what it would take.
+    private func leave(_ validator: String, amount: UInt64, _ d: DebtView, salt: Fr = StakePlan.freshSalt(),
+                       credit: StakePlan.Credit? = nil) throws -> StakePlan {
+        let denom = Self.derthDenom(validator)
+        let notes = spendableStake(denom)
+        let ins = try StakeSelection.cover(notes, amount: amount, free: { Self.freeOf($0, d) }) { Self.lockedText(notes, d) }
+        return try laneA(denom, spends: ins, vIn: 0, vOut: amount, d, salt: salt, credit: credit)
+    }
+
+    /// What leaving `amount` derth/`validator` costs beyond its fee: a cleared label's slash cut (0: none). Refuses as the tx would.
+    public func leaveHaircut(validator: String, amount: UInt64) async throws -> UInt64 {
+        try await locked {
+            let d = try await debtView(spendableStake(Self.derthDenom(validator)))
+            return Self.haircutOf(try leave(validator, amount: amount, d))
         }
     }
 
-    /// Undelegates `amount` derth/`validator` (chain 48b631c, ORCHARD_DESIGN
-    /// 18.1): the stake proof spends it (change back to us) and the msg names
-    /// where the chain pays it out, a fresh pool note opening of our own (pc
-    /// and its v2 amount-blind ciphertext). At maturity the chain mints the
-    /// ERTH there by itself, as one note or, past 2^63-1, several sharing
-    /// that ciphertext; sync finds them by trial decryption like any minted
-    /// note. Nothing to claim, nothing sent later. No stake note is minted:
-    /// the proof's spc_mint is a throwaway pc of ours (proven, unused) and its
-    /// spc_ciphertext is empty.
+    /// Undelegates `amount` derth/`validator` (ORCHARD_DESIGN 18.1, 20): the
+    /// stake proof spends it (the change, or a zero note when nothing is left,
+    /// back to us) and the msg names where the chain pays it out, a fresh pool
+    /// note opening of our own (pc and its v2 amount-blind ciphertext). At
+    /// maturity the chain mints the ERTH there by itself, as one note or,
+    /// past 2^63-1, several sharing that ciphertext; sync finds them by trial
+    /// decryption like any minted note. Nothing to claim, nothing sent later.
+    /// Moved-in derth whose window is open cannot leave: refused up front.
     ///
     /// The undelegation is remembered locally (`PendingUnbond`) from the
     /// moment the node takes the tx, with its epoch, value and payout id from
     /// the committed event, until a note to its pc arrives: what the wallet
     /// shows while it waits. The chain's per-id payout query is never asked
     /// (it would tie this wallet's IP to the undelegation).
-    public func undelegate(validator: String, amount: UInt64) async throws -> TxResult {
+    public func undelegate(validator: String, amount: UInt64, maxHaircut: UInt64 = .max) async throws -> TxResult {
         let mx = await maxActions()
         let r = try await locked { () -> TxResult in
-            let denom = Self.derthDenom(validator)
-            let ins = try StakeSelection.cover(spendableStake(denom), amount: amount)
-            let stake = try stakePlan(denom, spends: ins, outAmounts: [try Self.sum(ins) - amount], vOut: amount)
+            let d = try await debtView(spendableStake(Self.derthDenom(validator)))
+            let stake = try leave(validator, amount: amount, d)
+            if Self.haircutOf(stake) > maxHaircut {
+                throw QuoteChanged(message: "a slash reached stake you moved to this validator since the sheet was shown; review it again")
+            }
             let payout = try mint(Self.fee)
             let pc = payout.pc
             let started = now()
@@ -1496,6 +1755,99 @@ public final class PrivacyWallet: @unchecked Sendable {
         }
         await confirmUnbond(r)
         return r
+    }
+
+    /// A move's quote (MsgRedelegate, ORCHARD_DESIGN 19-20), shown on its
+    /// confirm sheet: `amount` derth/`src` worth `value` uerth at src's live
+    /// rate arrives as `dstDerth` derth/`dst` (dst's live rate, less the
+    /// margin and what may stay behind in src's book), merged into our
+    /// unlabelled note there (`merges`) or a new note; `haircut` is a cleared
+    /// label's slash cut on the src side (0: none). The credited derth is
+    /// labelled: it cannot move again until the label window
+    /// (`windowSeconds`) has passed.
+    public struct MoveQuote: Sendable, Equatable {
+        public let src: String
+        public let dst: String
+        public let amount: UInt64
+        public let value: UInt64
+        public let dstDerth: UInt64
+        public let haircut: UInt64
+        public let merges: Bool
+        public let windowSeconds: UInt64
+    }
+
+    /// The note at `dst` a move's credit merges into: our largest unlabelled one there (none: the lane pads, making a second note beside a labelled one).
+    private func creditTarget(_ dst: String) -> OwnedStakeNote? {
+        spendableStake(Self.derthDenom(dst)).filter { $0.label == nil }
+            .max { $0.amount != $1.amount ? $0.amount < $1.amount : $0.position > $1.position }
+    }
+
+    public func quoteMove(src: String, dst: String, amount: UInt64) async throws -> MoveQuote {
+        try require(amount > 0, "the amount must be positive")
+        try require(src != dst, "move stake to another validator")
+        let (haircut, window) = try await locked { () -> (UInt64, UInt64) in
+            let d = try await debtView(spendableStake(Self.derthDenom(src)))
+            return (Self.haircutOf(try leave(src, amount: amount, d)), d.windowSeconds)
+        }
+        let min = try await reads.minDelegation()
+        let a = try await reads.validatorBook(src)
+        try require(a.supply > 0 && BigUInt(amount) <= a.supply, "more derth than this validator has")
+        let u = BigUInt(amount) * a.backing / a.supply
+        try require(u >= BigUInt(min), "this stake is worth \(u)uerth, less than the \(min)uerth a move must carry")
+        // What arrives at dst (chain b46a4bb, audit 7 A7-1): u splits between
+        // src's queue and its bonded stake pro rata, and up to 0.001 ERTH of
+        // the bonded part may stay in src's book (bondedDust) or be truncated
+        // by x/staking, so u - 1001. All of u only when src is unbonded (no
+        // slash reaches it: the queue goes first) and its queue covers u.
+        let dust = BigUInt(Self.bondedDust + 1)
+        let arrives = a.unbonded && u <= a.pendingDelegation ? u : (u > dust ? u - dust : 0)
+        let credit = try Self.creditFor(arrives, try await reads.validatorBook(dst))
+        try require(credit >= min && credit > 0, "this move would credit less than the least derth a move may credit; move more")
+        let merges = await locked { creditTarget(dst) != nil }
+        return MoveQuote(src: src, dst: dst, amount: amount, value: UInt64(Swift.min(u, BigUInt(Int64.max))), dstDerth: credit,
+                         haircut: haircut, merges: merges, windowSeconds: window)
+    }
+
+    /// Moves `q.amount` derth from `q.src` to `q.dst` with no unbonding gap
+    /// (MsgRedelegate; the user's one approved addition to the freeze). Lane
+    /// A spends our src notes (free value only: moved-in stake whose window
+    /// is open stays put, refused up front) with the change back; the credit
+    /// lane merges the quoted derth/dst into our unlabelled note there (or
+    /// pads), labelled with this move: move key = the lane's nullifier,
+    /// move_time = the chain's latest block time (the chain takes it within
+    /// 600 s before its block), exposed = the credit. A refusal (the rates
+    /// outran the quote, move_time too old) costs nothing: the ante runs
+    /// before any spend.
+    public func redelegate(_ q: MoveQuote) async throws -> TxResult {
+        let mx = await maxActions()
+        return try await locked {
+            let d = try await debtView(spendableStake(Self.derthDenom(q.src)))
+            guard let moveTime = await roots.latestBlock()?.time, moveTime > 0 else {
+                throw PrivacyError("the node did not say its latest block time; try again")
+            }
+            let target = creditTarget(q.dst)
+            let credit = try StakePlan.credit(keys, denom: Self.derthDenom(q.dst), spend: target,
+                                              path: target.map { store.stakeTree.path($0.position) }, vIn: q.dstDerth, moveTime: moveTime)
+            let stake = try leave(q.src, amount: q.amount, d, credit: credit)
+            if Self.haircutOf(stake) > q.haircut {
+                throw QuoteChanged(message: "a slash reached stake you moved to this validator since the quote; review it again")
+            }
+            return try await run { fee in
+                Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
+                    MsgRedelegate(bundle: bs[0], srcValidator: q.src, dstValidator: q.dst, amount: q.amount, stake: sp!,
+                                  dstDerth: q.dstDerth, moveTime: moveTime)
+                }
+            }
+        }
+    }
+
+    /// A unix time as the wallet shows it in a sentence: "2026-10-25 14:03 UTC".
+    public static func dateText(_ unix: UInt64) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.dateFormat = "yyyy-MM-dd HH:mm 'UTC'"
+        return f.string(from: Date(timeIntervalSince1970: TimeInterval(min(unix, 253_402_300_799))))
     }
 
     /// Undelegations of this wallet whose payout has not arrived yet, oldest first.
@@ -1577,19 +1929,30 @@ public final class PrivacyWallet: @unchecked Sendable {
     }
 
 
+    /// What a note votes (ORCHARD_DESIGN 20.4): its amount, or for a labelled
+    /// note its amount less the slash cut of its exposure under the CURRENT
+    /// debt tree (a slash after the snapshot counts).
+    private static func voteValue(_ n: OwnedStakeNote, _ d: DebtView?) -> UInt64 {
+        guard let l = n.label else { return n.amount }
+        guard let d else { return n.amount - l.exposed }
+        return n.amount - l.exposed + d.retained(l)
+    }
+
     /// Votes this wallet's stake at `validator` on `proposalID` (ORCHARD_DESIGN
-    /// 18.2): one msg, one vote proof for up to `MsgStakeVote.maxVoteNotes` of
-    /// its derth notes (the largest eligible ones), one weight, their sum
+    /// 18.2, 20.4): one msg, one vote proof for up to `MsgStakeVote.maxVoteNotes`
+    /// of its derth notes (the largest eligible ones), one weight, their value
     /// rounded down to three significant digits (`voteWeight`). The proof
     /// shows every note under the proposal's snapshot root, its spend
     /// nullifier absent from the snapshot's stake nullifier tree (rebuilt here
-    /// and checked against nf_root), and each note's vote nullifier; unused
-    /// slots carry 0. Nothing is spent: the notes vote on every other open
-    /// proposal and are spent as usual. The fee bundle is against the pool's
-    /// current roots. Each note's (proposal, vote nullifier) is remembered from
-    /// the moment the node accepts the tx, so no note votes twice. A validator
-    /// with more notes than one vote holds votes the rest in another msg
-    /// (`stakeVoteItems` says how many), a second public weight the user chose.
+    /// and checked against nf_root), a labelled note's value under the
+    /// current debt root, and each note's vote nullifier; unused slots carry
+    /// 0. Nothing is spent: a note spent since the snapshot (a top-up, a move)
+    /// still votes the value it held then, its opening kept for that; the
+    /// merged note it became cannot vote on this proposal. The fee bundle is
+    /// against the pool's current roots. Each note's (proposal, vote
+    /// nullifier) is remembered from the moment the node accepts the tx, so no
+    /// note votes twice. A validator with more notes than one vote holds votes
+    /// the rest in another msg (`stakeVoteItems` says how many).
     ///
     /// A note the wallet does not know already voted (a restored wallet) is
     /// refused by the chain before anything is sent (1119 at simulate, naming
@@ -1638,6 +2001,8 @@ public final class PrivacyWallet: @unchecked Sendable {
         await resolveVotesLocked()
         let candidates = eligibleLocked(proposalID, snap).filter { $0.denom == denom }.sorted(by: Self.voteOrder)
         guard !candidates.isEmpty else { throw AlreadyVoted() }
+        // Every vote names the current debt root (the chain checks it is current), labelled notes or not.
+        let d = try await debtView(Array(candidates.prefix(MsgStakeVote.maxVoteNotes + 1)), always: true)
         let nfs = try await snapshotNullifiers(snap)
         var chosen: [OwnedStakeNote] = []
         var slots: [VoteSlot] = []
@@ -1651,19 +2016,31 @@ public final class PrivacyWallet: @unchecked Sendable {
                 if let h = note.spentHeight, snap.height > 0, h <= UInt64(snap.height) { continue }
                 throw PrivacyError("the proposal's snapshot nullifier tree holds a note's nullifier, but sync saw no spend before the snapshot; sync again")
             }
+            // A labelled note's value is read from the debt tree under the current root.
+            var debt = DebtTree.Witness.none
+            if let l = note.label {
+                var t = d.tree
+                if t == nil { t = try await debtTreeAt(root: d.root, size: d.size) }
+                guard let w = t?.witness(l.moveKey) else { throw PrivacyError("no debt witness for a move key") }
+                debt = w
+            }
+            let slot = try VoteSlot(amount: note.amount, rho: note.rho, rcm: note.rcm, pos: note.position,
+                                    path: tree.pathAt(note.position, size: snap.treeSize), low: low, label: note.label, debt: debt)
+            // A note slashed to nothing votes nothing.
+            guard (slot.value(debtRoot: d.root) ?? 0) > 0 else { continue }
             chosen.append(note)
-            slots.append(try VoteSlot(amount: note.amount, rho: note.rho, rcm: note.rcm, pos: note.position,
-                                      path: tree.pathAt(note.position, size: snap.treeSize), low: low))
+            slots.append(slot)
         }
         guard !chosen.isEmpty else { throw SpentBeforeSnapshot() }
-        let weight = try Self.voteWeight(chosen.reduce(UInt64(0)) { Snapshot.satAdd63($0, $1.amount) })
+        let weight = try Self.voteWeight(slots.reduce(UInt64(0)) { Snapshot.satAdd63($0, $1.value(debtRoot: d.root) ?? 0) })
         let nk = keys.nk
         let used = chosen.map { PrivacyHash.voteNF(nk: nk, rho: $0.rho, position: $0.position, proposalID: proposalID) }
         let vnfs = used + Array(repeating: Fr.zero, count: MsgStakeVote.maxVoteNotes - used.count)
         let asset = PrivacyHash.assetID(denom)
         let voteSlots = slots
+        let debtRoot = d.root
         let vote = try VoteWitnessSpec(vnfs: vnfs) { sighash in
-            try VoteWitness(nk: nk, slots: voteSlots, noteRoot: snap.root, nfRoot: nfRoot, asset: asset, weight: weight,
+            try VoteWitness(nk: nk, slots: voteSlots, noteRoot: snap.root, nfRoot: nfRoot, debtRoot: debtRoot, asset: asset, weight: weight,
                             proposalID: proposalID, sighash: sighash)
         }
         let sent = Sent()
@@ -1677,7 +2054,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             }) { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], vote: vote) { bs, _, _ in
                     MsgStakeVote(bundle: bs[0], proposalID: proposalID, validator: validator, options: try PrivateMsgs.canonicalOptions(options),
-                                 weight: weight)
+                                 weight: weight, debtRoot: debtRoot.bytes)
                 }
             }
             for v in used { recordVote(StakeVoteRecord(proposalID: proposalID, vnf: v, txHash: r.hash, until: nil, confirmed: true)) }
@@ -2001,11 +2378,13 @@ public final class PrivacyWallet: @unchecked Sendable {
         let snap = try await snapshot(proposalID: proposalID)
         let notes = await eligible(proposalID, snap)
         let ps = Self.votingPositions(positions, snapshot: snap)
+        let d = notes.contains(where: { $0.label != nil }) ? try? await locked { try await debtView(notes, always: true) } : nil
         var total: UInt64 = 0
         for (denom, ns) in Dictionary(grouping: notes, by: \.denom) {
             let rate = snap.rates[(try? Self.parseDerth(denom)) ?? ""] ?? 1
             for part in Self.parts(ns.sorted(by: Self.voteOrder)) {
-                let w = (try? Self.voteWeight(part.reduce(UInt64(0)) { Snapshot.satAdd63($0, $1.amount) })) ?? 0
+                let v = part.reduce(UInt64(0)) { Snapshot.satAdd63($0, Self.voteValue($1, d)) }
+                guard v > 0, let w = try? Self.voteWeight(v) else { continue }
                 total = PrivateMsgs.saturatingAdd(total, Self.derthValue(w, rate: rate))
             }
         }
@@ -2062,7 +2441,10 @@ public final class PrivacyWallet: @unchecked Sendable {
             let part = Array(await eligible(proposalID, snap).filter { $0.denom == Self.derthDenom(v) }.sorted(by: Self.voteOrder)
                 .prefix(MsgStakeVote.maxVoteNotes))
             guard !part.isEmpty else { return nil }
-            let w = try Self.voteWeight(part.reduce(UInt64(0)) { Snapshot.satAdd63($0, $1.amount) })
+            let d = part.contains(where: { $0.label != nil }) ? try? await locked { try await debtView(part, always: true) } : nil
+            let value = part.reduce(UInt64(0)) { Snapshot.satAdd63($0, Self.voteValue($1, d)) }
+            guard value > 0 else { return nil }
+            let w = try Self.voteWeight(value)
             return VotePreview(notes: part.count, uerth: Self.derthValue(w, rate: snap.rates[v] ?? 1))
         case let .position(id, _):
             guard let p = try await positions().first(where: { $0.position.id == id })?.position else { return nil }
@@ -2071,7 +2453,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     }
 
     /// Casts `item` as the last sync left things: a validator's next vote (up
-    /// to four notes) or a position's. Nil when there is nothing left of it to
+    /// to two notes) or a position's. Nil when there is nothing left of it to
     /// cast (its notes already voted on this proposal, or were spent before
     /// its snapshot; the position is gone).
     public func castStakeVote(proposalID: UInt64, item: StakeVoteItem, options: [WeightedVoteOption]) async throws -> TxResult? {
@@ -2146,8 +2528,9 @@ public final class PrivacyWallet: @unchecked Sendable {
         let mx = await maxActions()
         let all = try await reads.positions()
         return try await locked {
-            let denom = Self.derthDenom(validator)
-            let ins = try StakeSelection.cover(spendableStake(denom), amount: amount)
+            let d = try await debtView(spendableStake(Self.derthDenom(validator)))
+            // Refused up front, before a counter is taken, when moved-in stake whose window is open would have to leave.
+            _ = try leave(validator, amount: amount, d)
             // A restored wallet's counter starts past every tag it already holds.
             _ = positionsLocked(all)
             let counter = store.mutate { s -> UInt32 in
@@ -2156,8 +2539,7 @@ public final class PrivacyWallet: @unchecked Sendable {
                 return c
             }
             try store.save()
-            let stake = try stakePlan(denom, spends: ins, outAmounts: [try Self.sum(ins) - amount], vOut: amount,
-                                      salt: keys.otagSalt(counter))
+            let stake = try leave(validator, amount: amount, d, salt: keys.otagSalt(counter))
             let w = Self.weights(splits)
             return try await run { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
@@ -2167,15 +2549,17 @@ public final class PrivacyWallet: @unchecked Sendable {
         }
     }
 
-    private func ownerPlan(_ position: PrivacyReads.Position, counter: UInt32, mint: StakePlan.SelfMint? = nil) throws -> StakePlan {
+    /// A position's own proof (its update, its vote): no notes, the position's owner tag, the chain's current clear_before and debt root.
+    private func ownerPlan(_ position: PrivacyReads.Position, counter: UInt32) async throws -> StakePlan {
         guard keys.ownerTag(counter) == position.ownerTag else { throw PrivacyError("position \(position.id) is not owned by tag \(counter)") }
-        return try stakePlan(nil, spends: [], outAmounts: [], vOut: 0, mint: mint, salt: keys.otagSalt(counter))
+        return try StakePlan(nk: keys.nk, denom: nil, spends: [], paths: [], out: nil, vIn: 0, vOut: 0, clear: try Self.clearOf(nil, try await debtView()),
+                             credit: nil, tagSalt: keys.otagSalt(counter), anchor: stakeAnchor())
     }
 
     public func updatePosition(_ position: PrivacyReads.Position, counter: UInt32, splits: [UInt64: UInt64]) async throws -> TxResult {
         let mx = await maxActions()
         return try await locked {
-            let stake = try ownerPlan(position, counter: counter)
+            let stake = try await ownerPlan(position, counter: counter)
             let w = Self.weights(splits)
             return try await run { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
@@ -2185,16 +2569,22 @@ public final class PrivacyWallet: @unchecked Sendable {
         }
     }
 
-    /// Closes `position`; its derth comes back as a stake note to our stake
-    /// self-mint pc, whose memo names the closed counter (K11) so no restore
-    /// ever locks under its tag again.
+    /// Closes `position`: the stake proof (its owner tag) merges the
+    /// position's derth into our note at its validator, or pads when we hold
+    /// none there (ORCHARD_DESIGN 20.3). The fee bundle carries a value-0
+    /// record note to ourselves naming the closed counter (K11), so no
+    /// restore ever locks under its tag again.
     public func unlockPosition(_ position: PrivacyReads.Position, counter: UInt32) async throws -> TxResult {
         let mx = await maxActions()
         return try await locked {
-            let stake = try ownerPlan(position, counter: counter,
-                                      mint: try StakePlan.selfMint(keys, memo: WalletSync.unlockMemo(nk: keys.nk, counter: counter)))
+            guard keys.ownerTag(counter) == position.ownerTag else { throw PrivacyError("position \(position.id) is not owned by tag \(counter)") }
+            let denom = Self.derthDenom(position.validator)
+            let d = try await debtView(spendableStake(denom))
+            let stake = try laneA(denom, spends: StakeSelection.merge(spendableStake(denom)) { Self.freeOf($0, d) }, vIn: position.derth, vOut: 0, d,
+                                  salt: keys.otagSalt(counter))
+            let record = try NoteOut.to(keys.address, denom: Self.fee, value: 0, memo: WalletSync.unlockMemo(nk: keys.nk, counter: counter))
             return try await run { fee in
-                Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
+                Assembled(bundles: [try self.bundle([record], release: [Self.fee: fee], maxActions: mx)], stake: stake) { bs, sp, _ in
                     MsgUnlockPosition(bundle: bs[0], positionID: position.id, stake: sp!)
                 }
             }
@@ -2205,7 +2595,7 @@ public final class PrivacyWallet: @unchecked Sendable {
                              accepted: @escaping (String) -> Void = { _ in }) async throws -> TxResult {
         let mx = await maxActions()
         return try await locked {
-            let stake = try ownerPlan(position, counter: counter)
+            let stake = try await ownerPlan(position, counter: counter)
             return try await run(accepted: { hash, _ in accepted(hash) }) { fee in
                 Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
                     MsgPositionVote(bundle: bs[0], positionID: position.id, proposalID: proposalID, options: try PrivateMsgs.canonicalOptions(options), stake: sp!)

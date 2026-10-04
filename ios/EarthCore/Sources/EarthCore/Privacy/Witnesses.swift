@@ -92,105 +92,216 @@ public struct ActionWitness: Sendable {
     public func proverToml() -> String { toml(noirInputs(), order: Self.inputOrder) }
 }
 
-/// The stake circuit's witness (circuits/stake): up to two stake notes of one
-/// owner spent under `anchor` (amount 0 = none: nf 0, no path), up to two
-/// created (amount 0 = none: cm 0), all of `asset`, with
+/// One stake input slot: a note of this owner (amount > 0) under the anchor, or padding (amount 0).
+public struct StakeIn: Sendable, Equatable {
+    public let amount: UInt64
+    public let rho: Fr
+    public let rcm: Fr
+    public let pos: UInt64
+    public let path: [Fr]
+    /// Its label (lane A only; lane B inputs are unlabelled).
+    public let label: StakeLabel?
+    /// For amount 0: publish its own would-be nullifier (padding) rather than 0 (no input).
+    public let pad: Bool
+
+    public init(amount: UInt64, rho: Fr, rcm: Fr, pos: UInt64, path: [Fr], label: StakeLabel? = nil, pad: Bool = false) throws {
+        try require(path.count == Merkle.depth, "a path is \(Merkle.depth) siblings")
+        try require(pos <= 0xffff_ffff, "position is a u32")
+        try require(amount <= UInt64(Int64.max), "a stake amount is at most 2^63-1")
+        try require(label == nil || (amount > 0 && label!.exposed <= amount), "a label sits in a note holding its exposure")
+        self.amount = amount; self.rho = rho; self.rcm = rcm; self.pos = pos; self.path = path; self.label = label; self.pad = pad
+    }
+
+    static let zeroPath = [Fr](repeating: .zero, count: Merkle.depth)
+
+    /// No input: nullifier 0.
+    public static func none(rho: Fr, rcm: Fr) -> StakeIn { try! StakeIn(amount: 0, rho: rho, rcm: rcm, pos: 0, path: zeroPath) }
+
+    /// Padding: an amount-0 input at position 0 publishing its own nullifier (a first delegation looks like a top-up).
+    public static func padding(rho: Fr, rcm: Fr) -> StakeIn { try! StakeIn(amount: 0, rho: rho, rcm: rcm, pos: 0, path: zeroPath, pad: true) }
+}
+
+/// The stake circuit's witness (circuits/stake v2, ORCHARD_DESIGN 20.2).
+/// Ports `privacy/prove/Witnesses.kt`: two lanes of one owner (nk), every
+/// real input under `anchor`.
 ///
-///     in_0 + in_1 + v_in == out_0 + out_1 + v_out
+/// Lane A (`asset`): up to two inputs (at most one labelled), one output;
+/// `vIn` credited, `vOut` leaving. A labelled input either keeps its label
+/// (the output carries it and its exposure; only unexposed value moves) or,
+/// with `clear`, clears it once its move_time < `clearBefore` at what the
+/// debt tree under `debtRoot` says it is worth (`debt`):
 ///
-/// and spc_mint, otag of the same owner. Public inputs, in the chain's order
-/// (x/shieldedstaking StakeProof.PublicInputs): anchor, asset, nf_0, nf_1,
-/// cm_out_0, cm_out_1, v_in, v_out, spc_mint, otag, sighash.
+///     in_0 + in_1 - exposed + retained + v_in == out - out_exposed + v_out
+///
+/// Lane B (`crAsset`, the credit lane): one unlabelled input or padding, one
+/// output = cr_in + `crVIn`, labelled (move key = its own nullifier,
+/// `crMoveTime`, exposed = crVIn) when crMoveTime != 0. All zero when the msg
+/// credits no second asset.
+///
+/// An amount-0 output publishes 0 or, with `padOut`, the zero note's
+/// commitment (a full exit looks like a partial one). Public inputs, in the
+/// chain's order (StakeProof.PublicInputs): anchor, asset, nf_0, nf_1,
+/// cm_out, v_in, v_out, clear_before, debt_root, cr_asset, cr_nf, cr_cm,
+/// cr_v_in, cr_move_time, otag, sighash.
 public struct StakeWitness: Sendable {
     public let nk: Fr
-    public let inAmount: [UInt64]
-    public let inRho: [Fr]
-    public let inRcm: [Fr]
-    public let inPos: [UInt64]
-    public let inPath: [[Fr]]
-    public let outAmount: [UInt64]
-    public let outRho: [Fr]
-    public let outRcm: [Fr]
-    public let mintRho: Fr
-    public let mintRcm: Fr
+    public let ins: [StakeIn]
+    public let outAmount: UInt64
+    public let outRho: Fr
+    public let outRcm: Fr
+    public let padOut: Bool
+    public let clear: Bool
+    public let debt: DebtTree.Witness
+    public let crIn: StakeIn
+    public let crOutRho: Fr
+    public let crOutRcm: Fr
     public let tagSalt: Fr
     public let anchor: Fr
     public let asset: Fr
     public let vIn: UInt64
     public let vOut: UInt64
+    public let clearBefore: UInt64
+    public let debtRoot: Fr
+    public let crAsset: Fr
+    public let crVIn: UInt64
+    public let crMoveTime: UInt64
     public let sighash: Fr
     public let nullifiers: [Fr]
-    public let commitments: [Fr]
-    public let spcMint: Fr
+    public let commitment: Fr
+    public let crNF: Fr
+    public let crOutAmount: UInt64
+    public let crLabel: StakeLabel?
+    public let crCM: Fr
     public let otag: Fr
 
-    public init(nk: Fr, inAmount: [UInt64], inRho: [Fr], inRcm: [Fr], inPos: [UInt64], inPath: [[Fr]], outAmount: [UInt64],
-                outRho: [Fr], outRcm: [Fr], mintRho: Fr, mintRcm: Fr, tagSalt: Fr, anchor: Fr, asset: Fr, vIn: UInt64, vOut: UInt64,
-                sighash: Fr) throws {
-        try require([inAmount.count, inRho.count, inRcm.count, inPos.count, inPath.count, outAmount.count, outRho.count, outRcm.count]
-            .allSatisfy { $0 == 2 }, "a stake proof has two input and two output slots")
-        try require(inPath.allSatisfy { $0.count == Merkle.depth }, "a path is \(Merkle.depth) siblings")
-        try require(inPos.allSatisfy { $0 <= 0xffff_ffff }, "position is a u32")
-        self.nk = nk; self.inAmount = inAmount; self.inRho = inRho; self.inRcm = inRcm; self.inPos = inPos; self.inPath = inPath
-        self.outAmount = outAmount; self.outRho = outRho; self.outRcm = outRcm; self.mintRho = mintRho; self.mintRcm = mintRcm
-        self.tagSalt = tagSalt; self.anchor = anchor; self.asset = asset; self.vIn = vIn; self.vOut = vOut; self.sighash = sighash
+    public init(nk: Fr, ins: [StakeIn], outAmount: UInt64, outRho: Fr, outRcm: Fr, padOut: Bool, clear: Bool, debt: DebtTree.Witness,
+                crIn: StakeIn, crOutRho: Fr, crOutRcm: Fr, tagSalt: Fr, anchor: Fr, asset: Fr, vIn: UInt64, vOut: UInt64,
+                clearBefore: UInt64, debtRoot: Fr, crAsset: Fr, crVIn: UInt64, crMoveTime: UInt64, sighash: Fr) throws {
+        try require(ins.count == 2, "a stake proof has two lane A input slots")
+        try require(crIn.label == nil, "the credit lane merges only into an unlabelled note")
+        try require(debt.lowPath.count == Merkle.depth, "a path is \(Merkle.depth) siblings")
+        try require(debt.lowIndex <= 0xffff_ffff && debt.lowNextIndex <= 0xffff_ffff, "a u32")
+        try require(outAmount <= UInt64(Int64.max), "a stake amount is at most 2^63-1")
+        let (crOut, overflow) = crIn.amount.addingReportingOverflow(crVIn)
+        try require(!overflow, "the credit lane's note overflows")
+        self.nk = nk; self.ins = ins; self.outAmount = outAmount; self.outRho = outRho; self.outRcm = outRcm; self.padOut = padOut
+        self.clear = clear; self.debt = debt; self.crIn = crIn; self.crOutRho = crOutRho; self.crOutRcm = crOutRcm; self.tagSalt = tagSalt
+        self.anchor = anchor; self.asset = asset; self.vIn = vIn; self.vOut = vOut; self.clearBefore = clearBefore; self.debtRoot = debtRoot
+        self.crAsset = crAsset; self.crVIn = crVIn; self.crMoveTime = crMoveTime; self.sighash = sighash
         let opk = PrivacyHash.ownerPK(nk)
-        nullifiers = (0 ..< 2).map { inAmount[$0] == 0 ? .zero : PrivacyHash.stakeNF(nk: nk, rho: inRho[$0], position: inPos[$0]) }
-        commitments = (0 ..< 2).map {
-            outAmount[$0] == 0 ? .zero : PrivacyHash.stakeCM(asset: asset, amount: outAmount[$0],
-                                                             spc: PrivacyHash.stakePC(ownerPK: opk, rho: outRho[$0], rcm: outRcm[$0]))
-        }
-        spcMint = PrivacyHash.stakePC(ownerPK: opk, rho: mintRho, rcm: mintRcm)
+        func nf(_ i: StakeIn) -> Fr { i.amount != 0 || i.pad ? PrivacyHash.stakeNF(nk: nk, rho: i.rho, position: i.pos) : .zero }
+        nullifiers = ins.map(nf)
+        let labelled = ins.compactMap(\.label).first
+        let outLabel = clear ? nil : labelled
+        commitment = outAmount == 0 && !padOut ? .zero
+            : PrivacyHash.stakeCM(asset: asset, amount: outAmount, spc: PrivacyHash.stakePC(ownerPK: opk, rho: outRho, rcm: outRcm),
+                                  label: StakeLabel.hash(outLabel))
+        crNF = nf(crIn)
+        crOutAmount = crOut
+        crLabel = crMoveTime != 0 && !crNF.isZero && crVIn != 0 ? StakeLabel(moveKey: crNF, moveTime: crMoveTime, exposed: crVIn) : nil
+        crCM = crOut == 0 ? .zero
+            : PrivacyHash.stakeCM(asset: crAsset, amount: crOut, spc: PrivacyHash.stakePC(ownerPK: opk, rho: crOutRho, rcm: crOutRcm),
+                                  label: StakeLabel.hash(crLabel))
         otag = PrivacyHash.ownerTag(ownerPK: opk, salt: tagSalt)
     }
 
+    /// The labelled input, if any (the circuit takes at most one).
+    var labelled: StakeLabel? { ins.compactMap(\.label).first }
+
+    /// The output's label: the input's, kept unless cleared.
+    public var outLabel: StakeLabel? { clear ? nil : labelled }
+
+    /// What the circuit asserts, checked before spending a second on a proof that cannot verify.
     public func check() throws {
+        try require(ins.filter { $0.label != nil }.count <= 1, "two labelled inputs")
         let opk = PrivacyHash.ownerPK(nk)
-        for i in 0 ..< 2 where inAmount[i] != 0 {
-            let cm = PrivacyHash.stakeCM(asset: asset, amount: inAmount[i], spc: PrivacyHash.stakePC(ownerPK: opk, rho: inRho[i], rcm: inRcm[i]))
-            try require(Merkle.rootFromPath(leaf: cm, index: inPos[i], siblings: inPath[i]) == anchor,
-                        "stake input \(i) not in the stake tree at its anchor")
+        for (i, s) in ins.enumerated() where s.amount != 0 {
+            let cm = PrivacyHash.stakeCM(asset: asset, amount: s.amount, spc: PrivacyHash.stakePC(ownerPK: opk, rho: s.rho, rcm: s.rcm),
+                                         label: StakeLabel.hash(s.label))
+            try require(Merkle.rootFromPath(leaf: cm, index: s.pos, siblings: s.path) == anchor, "stake input \(i) not in the stake tree at its anchor")
         }
-        let ins = inAmount.reduce(BigUInt(vIn)) { $0 + BigUInt($1) }
-        let outs = outAmount.reduce(BigUInt(vOut)) { $0 + BigUInt($1) }
-        try require(ins == outs, "stake amounts do not balance")
+        let l = labelled
+        var retained: UInt64 = 0
+        if clear {
+            guard let l else { throw PrivacyError("nothing to clear") }
+            try require(l.moveTime < clearBefore, "the move's window is still open")
+            guard let r = debt.retained(key: l.moveKey, exposed: l.exposed, root: debtRoot) else {
+                throw PrivacyError("the debt witness does not read the move under debt_root")
+            }
+            retained = r
+        }
+        let outEx = outLabel?.exposed ?? 0
+        try require(outAmount >= outEx, "the exposure stays in the note")
+        let unexposedIn = ins.reduce(BigUInt(0)) { $0 + BigUInt($1.amount) } - BigUInt(l?.exposed ?? 0) + BigUInt(retained) + BigUInt(vIn)
+        let unexposedOut = BigUInt(outAmount - outEx) + BigUInt(vOut)
+        try require(unexposedIn == unexposedOut, "stake amounts do not balance")
+        if crIn.amount != 0 {
+            let cm = PrivacyHash.stakeCM(asset: crAsset, amount: crIn.amount, spc: PrivacyHash.stakePC(ownerPK: opk, rho: crIn.rho, rcm: crIn.rcm), label: .zero)
+            try require(Merkle.rootFromPath(leaf: cm, index: crIn.pos, siblings: crIn.path) == anchor, "the credit lane's input is not in the stake tree at its anchor")
+        }
+        try require(crOutAmount <= UInt64(Int64.max), "the credit lane's note is at most 2^63-1")
+        if crMoveTime != 0 { try require(!crNF.isZero && crVIn != 0, "a labelled credit names its move and exposure") }
     }
 
     public func publicInputs() -> [Fr] {
-        [anchor, asset] + nullifiers + commitments + [PrivacyHash.u64(vIn), PrivacyHash.u64(vOut), spcMint, otag, sighash]
+        [anchor, asset, nullifiers[0], nullifiers[1], commitment, PrivacyHash.u64(vIn), PrivacyHash.u64(vOut),
+         PrivacyHash.u64(clearBefore), debtRoot, crAsset, crNF, crCM, PrivacyHash.u64(crVIn), PrivacyHash.u64(crMoveTime), otag, sighash]
     }
 
     public func noirInputs() -> [String: Any] {
         [
             "nk": nk.noir,
-            "in_amount": inAmount.map(noirHex),
-            "in_rho": inRho.map(\.noir),
-            "in_rcm": inRcm.map(\.noir),
-            "in_pos": inPos.map(noirHex),
-            "in_path": inPath.map { $0.map(\.noir) },
-            "out_amount": outAmount.map(noirHex),
-            "out_rho": outRho.map(\.noir),
-            "out_rcm": outRcm.map(\.noir),
-            "mint_rho": mintRho.noir,
-            "mint_rcm": mintRcm.noir,
+            "in_amount": ins.map { noirHex($0.amount) },
+            "in_rho": ins.map(\.rho.noir),
+            "in_rcm": ins.map(\.rcm.noir),
+            "in_pos": ins.map { noirHex($0.pos) },
+            "in_path": ins.map { $0.path.map(\.noir) },
+            "in_move_key": ins.map { ($0.label?.moveKey ?? .zero).noir },
+            "in_move_time": ins.map { noirHex($0.label?.moveTime ?? 0) },
+            "in_exposed": ins.map { noirHex($0.label?.exposed ?? 0) },
+            "out_amount": noirHex(outAmount),
+            "out_rho": outRho.noir,
+            "out_rcm": outRcm.noir,
+            // A bool is a field in the witness map: 0x1 / 0x0 (noirc_abi parses a string as a field).
+            "clear": noirHex(clear ? 1 : 0),
+            "debt_low_key": debt.lowKey.noir,
+            "debt_low_next_key": debt.lowNextKey.noir,
+            "debt_low_next_index": noirHex(debt.lowNextIndex),
+            "debt_low_retained": noirHex(debt.lowRetained),
+            "debt_low_index": noirHex(debt.lowIndex),
+            "debt_low_path": debt.lowPath.map(\.noir),
+            "cr_in_amount": noirHex(crIn.amount),
+            "cr_in_rho": crIn.rho.noir,
+            "cr_in_rcm": crIn.rcm.noir,
+            "cr_in_pos": noirHex(crIn.pos),
+            "cr_in_path": crIn.path.map(\.noir),
+            "cr_out_rho": crOutRho.noir,
+            "cr_out_rcm": crOutRcm.noir,
             "tag_salt": tagSalt.noir,
             "anchor": anchor.noir,
             "asset": asset.noir,
             "nf_0": nullifiers[0].noir,
             "nf_1": nullifiers[1].noir,
-            "cm_out_0": commitments[0].noir,
-            "cm_out_1": commitments[1].noir,
+            "cm_out": commitment.noir,
             "v_in": noirHex(vIn),
             "v_out": noirHex(vOut),
-            "spc_mint": spcMint.noir,
+            "clear_before": noirHex(clearBefore),
+            "debt_root": debtRoot.noir,
+            "cr_asset": crAsset.noir,
+            "cr_nf": crNF.noir,
+            "cr_cm": crCM.noir,
+            "cr_v_in": noirHex(crVIn),
+            "cr_move_time": noirHex(crMoveTime),
             "otag": otag.noir,
             "sighash": sighash.noir,
         ]
     }
 
-    static let inputOrder = ["nk", "in_amount", "in_rho", "in_rcm", "in_pos", "in_path", "out_amount", "out_rho", "out_rcm", "mint_rho",
-                             "mint_rcm", "tag_salt", "anchor", "asset", "nf_0", "nf_1", "cm_out_0", "cm_out_1", "v_in", "v_out",
-                             "spc_mint", "otag", "sighash"]
+    static let inputOrder = ["nk", "in_amount", "in_rho", "in_rcm", "in_pos", "in_path", "in_move_key", "in_move_time", "in_exposed",
+                             "out_amount", "out_rho", "out_rcm", "clear", "debt_low_key", "debt_low_next_key", "debt_low_next_index",
+                             "debt_low_retained", "debt_low_index", "debt_low_path", "cr_in_amount", "cr_in_rho", "cr_in_rcm", "cr_in_pos",
+                             "cr_in_path", "cr_out_rho", "cr_out_rcm", "tag_salt", "anchor", "asset", "nf_0", "nf_1", "cm_out", "v_in",
+                             "v_out", "clear_before", "debt_root", "cr_asset", "cr_nf", "cr_cm", "cr_v_in", "cr_move_time", "otag", "sighash"]
 
     public func proverToml() -> String { toml(noirInputs(), order: Self.inputOrder) }
 }
@@ -274,8 +385,9 @@ public struct MembershipWitness: Sendable {
 }
 
 /// One used slot of a vote witness: a derth stake note under the proposal's
-/// snapshot note root and the low leaf proving its spend nullifier absent
-/// from the snapshot stake nullifier tree.
+/// snapshot note root, the low leaf proving its spend nullifier absent from
+/// the snapshot stake nullifier tree, and, for a labelled note, the debt tree
+/// witness its value is read by (current debt root).
 public struct VoteSlot: Sendable {
     public let amount: UInt64
     public let rho: Fr
@@ -283,30 +395,45 @@ public struct VoteSlot: Sendable {
     public let pos: UInt64
     public let path: [Fr]
     public let low: IndexedTree.Witness
+    public let label: StakeLabel?
+    public let debt: DebtTree.Witness
 
-    public init(amount: UInt64, rho: Fr, rcm: Fr, pos: UInt64, path: [Fr], low: IndexedTree.Witness) throws {
-        try require(path.count == Merkle.depth && low.lowPath.count == Merkle.depth, "a path is \(Merkle.depth) siblings")
+    public init(amount: UInt64, rho: Fr, rcm: Fr, pos: UInt64, path: [Fr], low: IndexedTree.Witness,
+                label: StakeLabel? = nil, debt: DebtTree.Witness = .none) throws {
+        try require(path.count == Merkle.depth && low.lowPath.count == Merkle.depth && debt.lowPath.count == Merkle.depth,
+                    "a path is \(Merkle.depth) siblings")
         try require(pos <= 0xffff_ffff && low.lowIndex <= 0xffff_ffff && low.lowNextIndex <= 0xffff_ffff, "a u32")
+        try require(debt.lowIndex <= 0xffff_ffff && debt.lowNextIndex <= 0xffff_ffff, "a u32")
         try require(amount > 0, "a used slot holds a note")
+        try require(label == nil || label!.exposed <= amount, "bad exposure")
         self.amount = amount; self.rho = rho; self.rcm = rcm; self.pos = pos; self.path = path; self.low = low
+        self.label = label; self.debt = debt
+    }
+
+    /// What the note votes: its amount, less what slashes cut from a label's exposure (nil: the witness reads nothing under `debtRoot`).
+    public func value(debtRoot: Fr) -> UInt64? {
+        guard let l = label else { return amount }
+        guard let r = debt.retained(key: l.moveKey, exposed: l.exposed, root: debtRoot) else { return nil }
+        return amount - l.exposed + r
     }
 }
 
-/// The vote circuit's witness (circuits/vote, ORCHARD_DESIGN 18.2): up to
+/// The vote circuit's witness (circuits/vote v2, ORCHARD_DESIGN 20.4): up to
 /// `maxNotes` derth stake notes of one owner (one nk) at one validator, each
 /// under the proposal's snapshot note root with its spend nullifier absent
-/// from the snapshot stake nullifier tree, and one weight, 0 < weight <=
-/// their sum. `slots` are the used slots, in order; the rest are unused
-/// (amount 0, vote nullifier 0, every other field 0). Public inputs in the
-/// chain's order (MsgStakeVote.VotePublicInputs): note_root, nf_root, asset,
-/// weight, proposal_id, vnf[0..3], sighash.
+/// from the snapshot stake nullifier tree, and one weight, 0 < weight <= the
+/// sum of their values (a labelled note's at the CURRENT `debtRoot`). `slots`
+/// are the used slots, in order; the rest are unused (every field 0). Public
+/// inputs in the chain's order (MsgStakeVote.VotePublicInputs): note_root,
+/// nf_root, debt_root, asset, weight, proposal_id, vnf[0..1], sighash.
 public struct VoteWitness: Sendable {
     /// circuits/vote MAX_NOTES: the most notes one vote proof carries.
-    public static let maxNotes = 4
+    public static let maxNotes = 2
     public let nk: Fr
     public let slots: [VoteSlot]
     public let noteRoot: Fr
     public let nfRoot: Fr
+    public let debtRoot: Fr
     public let asset: Fr
     public let weight: UInt64
     public let proposalID: UInt64
@@ -316,10 +443,10 @@ public struct VoteWitness: Sendable {
     /// Every slot's vote nullifier: the used ones', then 0 for each unused slot.
     public let vnfs: [Fr]
 
-    public init(nk: Fr, slots: [VoteSlot], noteRoot: Fr, nfRoot: Fr, asset: Fr, weight: UInt64, proposalID: UInt64, sighash: Fr) throws {
+    public init(nk: Fr, slots: [VoteSlot], noteRoot: Fr, nfRoot: Fr, debtRoot: Fr, asset: Fr, weight: UInt64, proposalID: UInt64, sighash: Fr) throws {
         try require((1 ... Self.maxNotes).contains(slots.count), "a vote carries 1..\(Self.maxNotes) notes")
-        self.nk = nk; self.slots = slots; self.noteRoot = noteRoot; self.nfRoot = nfRoot; self.asset = asset; self.weight = weight
-        self.proposalID = proposalID; self.sighash = sighash
+        self.nk = nk; self.slots = slots; self.noteRoot = noteRoot; self.nfRoot = nfRoot; self.debtRoot = debtRoot; self.asset = asset
+        self.weight = weight; self.proposalID = proposalID; self.sighash = sighash
         spendNFs = slots.map { PrivacyHash.stakeNF(nk: nk, rho: $0.rho, position: $0.pos) }
         vnfs = slots.map { PrivacyHash.voteNF(nk: nk, rho: $0.rho, position: $0.pos, proposalID: proposalID) }
             + Array(repeating: Fr.zero, count: Self.maxNotes - slots.count)
@@ -328,20 +455,22 @@ public struct VoteWitness: Sendable {
     /// What the circuit asserts, checked before spending seconds on a proof that cannot verify.
     public func check() throws {
         let opk = PrivacyHash.ownerPK(nk)
+        var sum = BigUInt(0)
         for (i, sl) in slots.enumerated() {
-            let cm = PrivacyHash.stakeCM(asset: asset, amount: sl.amount, spc: PrivacyHash.stakePC(ownerPK: opk, rho: sl.rho, rcm: sl.rcm))
+            let cm = PrivacyHash.stakeCM(asset: asset, amount: sl.amount, spc: PrivacyHash.stakePC(ownerPK: opk, rho: sl.rho, rcm: sl.rcm),
+                                         label: StakeLabel.hash(sl.label))
             try require(Merkle.rootFromPath(leaf: cm, index: sl.pos, siblings: sl.path) == noteRoot, "stake note \(i) is not under the snapshot root")
             try require(sl.low.proves(spendNFs[i], root: nfRoot), "stake note \(i) was spent before the snapshot")
+            guard let v = sl.value(debtRoot: debtRoot) else { throw PrivacyError("stake note \(i)'s label is not read under the current debt root") }
+            sum += BigUInt(v)
         }
         try require(Set(vnfs.prefix(slots.count)).count == slots.count, "the same note twice")
         try require(weight != 0, "zero vote weight")
-        // The sum as the circuit takes it (u128): four notes of up to 2^63-1 overflow a u64.
-        let sum = slots.reduce(BigUInt(0)) { $0 + BigUInt($1.amount) }
         try require(BigUInt(weight) <= sum, "the vote weighs more than its notes")
     }
 
     public func publicInputs() -> [Fr] {
-        [noteRoot, nfRoot, asset, PrivacyHash.u64(weight), PrivacyHash.u64(proposalID)] + vnfs + [sighash]
+        [noteRoot, nfRoot, debtRoot, asset, PrivacyHash.u64(weight), PrivacyHash.u64(proposalID)] + vnfs + [sighash]
     }
 
     public func noirInputs() -> [String: Any] {
@@ -356,13 +485,23 @@ public struct VoteWitness: Sendable {
             "rcm": idx.map { slot($0, { $0.rcm.noir }, zero) },
             "pos": idx.map { slot($0, { noirHex($0.pos) }, "0x0") },
             "path": idx.map { slot($0, { $0.path.map(\.noir) }, zeros) },
+            "move_key": idx.map { slot($0, { ($0.label?.moveKey ?? .zero).noir }, zero) },
+            "move_time": idx.map { slot($0, { noirHex($0.label?.moveTime ?? 0) }, "0x0") },
+            "exposed": idx.map { slot($0, { noirHex($0.label?.exposed ?? 0) }, "0x0") },
             "low_value": idx.map { slot($0, { $0.low.lowValue.noir }, zero) },
             "low_next_value": idx.map { slot($0, { $0.low.lowNextValue.noir }, zero) },
             "low_next_index": idx.map { slot($0, { noirHex($0.low.lowNextIndex) }, "0x0") },
             "low_index": idx.map { slot($0, { noirHex($0.low.lowIndex) }, "0x0") },
             "low_path": idx.map { slot($0, { $0.low.lowPath.map(\.noir) }, zeros) },
+            "debt_low_key": idx.map { slot($0, { $0.debt.lowKey.noir }, zero) },
+            "debt_low_next_key": idx.map { slot($0, { $0.debt.lowNextKey.noir }, zero) },
+            "debt_low_next_index": idx.map { slot($0, { noirHex($0.debt.lowNextIndex) }, "0x0") },
+            "debt_low_retained": idx.map { slot($0, { noirHex($0.debt.lowRetained) }, "0x0") },
+            "debt_low_index": idx.map { slot($0, { noirHex($0.debt.lowIndex) }, "0x0") },
+            "debt_low_path": idx.map { slot($0, { $0.debt.lowPath.map(\.noir) }, zeros) },
             "note_root": noteRoot.noir,
             "nf_root": nfRoot.noir,
+            "debt_root": debtRoot.noir,
             "asset": asset.noir,
             "weight": noirHex(weight),
             "proposal_id": noirHex(proposalID),
@@ -371,8 +510,10 @@ public struct VoteWitness: Sendable {
         ]
     }
 
-    static let inputOrder = ["nk", "amount", "rho", "rcm", "pos", "path", "low_value", "low_next_value", "low_next_index", "low_index",
-                             "low_path", "note_root", "nf_root", "asset", "weight", "proposal_id", "vnf", "sighash"]
+    static let inputOrder = ["nk", "amount", "rho", "rcm", "pos", "path", "move_key", "move_time", "exposed", "low_value", "low_next_value",
+                             "low_next_index", "low_index", "low_path", "debt_low_key", "debt_low_next_key", "debt_low_next_index",
+                             "debt_low_retained", "debt_low_index", "debt_low_path", "note_root", "nf_root", "debt_root", "asset", "weight",
+                             "proposal_id", "vnf", "sighash"]
 
     public func proverToml() -> String { toml(noirInputs(), order: Self.inputOrder) }
 }

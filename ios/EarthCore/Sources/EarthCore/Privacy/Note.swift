@@ -82,12 +82,35 @@ public struct OwnedNote: Hashable, Sendable, Codable {
     }
 }
 
+/// A stake note's slash label (ORCHARD_DESIGN 20.6): the note holds
+/// `exposed` derth a private redelegation credited, the move `moveKey` (its
+/// credit nullifier) named at `moveTime` (unix seconds). Until the move's
+/// window closes (moveTime + the chain's label window) a slash of the move's
+/// source may still cut it, and it cannot leave the note; after, any lane-A
+/// proof clears it at what the slash debt tree says it is worth.
+public struct StakeLabel: Hashable, Sendable, Codable {
+    public let moveKey: Fr
+    public let moveTime: UInt64
+    public let exposed: UInt64
+
+    public init(moveKey: Fr, moveTime: UInt64, exposed: UInt64) {
+        precondition(!moveKey.isZero && moveTime > 0 && exposed > 0, "a label names its move, time and a positive exposure")
+        self.moveKey = moveKey; self.moveTime = moveTime; self.exposed = exposed
+    }
+
+    public var hash: Fr { PrivacyHash.stakeLabel(moveKey: moveKey, moveTime: moveTime, exposed: exposed) }
+
+    /// The label field of a stake commitment: 0 for none.
+    public static func hash(_ l: StakeLabel?) -> Fr { l?.hash ?? .zero }
+}
+
 /// A stake note the wallet owns (x/shieldedstaking's stake tree): delegated
-/// stake (derth/<valoper>).
-/// Owner-locked: it can be merged, split, undelegated, voted or locked by its
-/// owner, never sent.
+/// stake (derth/<valoper>). One per validator as a rule (every delegation,
+/// unlock and redelegation merges into it); a second appears only beside a
+/// labelled note or from another device. Owner-locked: it can be merged,
+/// undelegated, redelegated, voted or locked by its owner, never sent.
 ///
-///     spc = H(TAG_SPC, owner_pk, rho, rcm)    cm = H(TAG_STAKE, AssetID(denom), amount, spc)
+///     spc = H(TAG_SPC, owner_pk, rho, rcm)    cm = H(TAG_STAKE, AssetID(denom), amount, spc, label)
 ///     nf  = H(TAG_SNF, nk, rho, position)
 public struct OwnedStakeNote: Hashable, Sendable, Codable {
     public let position: UInt64
@@ -104,12 +127,14 @@ public struct OwnedStakeNote: Hashable, Sendable, Codable {
     public var pendingUntil: UInt64?
     /// The spending tx's hash (see OwnedNote.pendingTx).
     public var pendingTx: String?
+    /// The redelegation exposure it holds, nil for an unlabelled note.
+    public var label: StakeLabel?
 
     public init(position: UInt64, height: UInt64, denom: String, amount: UInt64, rho: Fr, rcm: Fr, cm: Fr, nf: Fr,
-                spentHeight: UInt64? = nil, pendingAt: Int64? = nil, pendingUntil: UInt64? = nil) {
+                spentHeight: UInt64? = nil, pendingAt: Int64? = nil, pendingUntil: UInt64? = nil, label: StakeLabel? = nil) {
         self.position = position; self.height = height; self.denom = denom; self.amount = amount
         self.rho = rho; self.rcm = rcm; self.cm = cm; self.nf = nf; self.spentHeight = spentHeight; self.pendingAt = pendingAt
-        self.pendingUntil = pendingUntil
+        self.pendingUntil = pendingUntil; self.label = label
     }
 
     public var unspent: Bool { spentHeight == nil }

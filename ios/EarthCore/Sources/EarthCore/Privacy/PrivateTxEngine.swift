@@ -61,9 +61,9 @@ public struct MembershipWitnessSpec: Sendable {
     public func witness(signal: Fr) throws -> MembershipWitness { try make(signal) }
 }
 
-/// A vote proof's statement, waiting for the sighash; `vnfs` (all four
-/// slots, the used ones first, then zeros) are known before: the sighash
-/// binds them.
+/// A vote proof's statement, waiting for the sighash; `vnfs` (both slots,
+/// the used ones first, then zeros) are known before: the sighash binds
+/// them.
 public struct VoteWitnessSpec: Sendable {
     public let vnfs: [Fr]
     let make: @Sendable (Fr) throws -> VoteWitness
@@ -101,8 +101,8 @@ public struct Assembled {
     /// The pool notes the msg spends.
     public var spends: [OwnedNote] { bundles.flatMap(\.spends) }
 
-    /// The stake notes the msg spends.
-    public var stakeSpends: [OwnedStakeNote] { stake?.spends ?? [] }
+    /// The stake notes the msg spends: lane A's and the credit lane's (a move's destination note).
+    public var stakeSpends: [OwnedStakeNote] { (stake?.spends ?? []) + [stake?.credit?.spend].compactMap { $0 } }
 }
 
 /// Runs a private tx end to end, the way the chain's ante requires. Ports
@@ -165,9 +165,20 @@ public struct PrivateTxEngine: Sendable {
     public static let bundleGas: UInt64 = 100_000
     /// One action: its proof (2,000,000) and two note writes (150,000 each).
     public static let actionGas: UInt64 = 2_300_000
-    /// A stake proof: its proof, four note writes and, since the stake
-    /// nullifier tree is indexed, two more per nullifier slot (ORCHARD_DESIGN 15).
-    public static let stakeGas: UInt64 = 3_200_000
+    /// A stake proof: its proof (2,000,000), two note writes per lane A
+    /// nullifier slot and one for its output (the indexed nullifier tree
+    /// rewrites two paths an insert), and the msg's base (at most 400,000;
+    /// chain dff3a9b PrivateActionGas).
+    public static let stakeGas: UInt64 = 3_150_000
+    /// A credit lane's (a redelegation's) writes, and MsgRedelegate's base beyond `stakeGas`'s (700,000).
+    public static let creditGas: UInt64 = 3 * 150_000 + 300_000
+    /// MsgRedelegate's gas for the (src, dst) pair's x/staking record at its
+    /// worst (chain b46a4bb redelegateGas): 2,500 an entry read and written,
+    /// 2,500 more each while the pair is at its 1,024-entry cap, and 128
+    /// re-filed moves at 20,000. Simulation prices the real record; this
+    /// keeps the cap above it without asking the node about the pair before
+    /// the move is sent. As Android.
+    public static let redelegateRecordGas: UInt64 = 1_024 * (2_500 + 2_500) + 128 * 20_000
     /// A stake vote's fixed part: gasVote (250,000) and its proof; the chain
     /// adds a note write for the vote and one per used vote nullifier (chain
     /// 48b631c: gasVote + proof + (1 + used) x note_gas).
@@ -216,7 +227,10 @@ public struct PrivateTxEngine: Sendable {
     public static func estimateGas(_ msg: any PrivateMsg, _ a: Assembled, txBytes: Int) -> UInt64 {
         var g = baseGas &+ txByteGas &* UInt64(txBytes)
         for b in msg.bundles { g = g &+ bundleGas &+ actionGas &* UInt64(b.actions.count) }
-        if msg.stakeProof != nil { g = g &+ stakeGas }
+        if let p = msg.stakeProof {
+            g = g &+ stakeGas
+            if !p.creditNullifier.allSatisfy({ $0 == 0 }) { g = g &+ creditGas &+ redelegateRecordGas }
+        }
         if a.membership != nil { g = g &+ membershipGas }
         if let v = a.vote { g = g &+ voteGas &+ (1 &+ UInt64(v.used)) &* noteGas }
         if msg is MsgRegisterPrivate { g = g &+ registerGas }
@@ -329,10 +343,11 @@ public struct PrivateTxEngine: Sendable {
         return [.cannotConnectToHost, .cannotFindHost, .dnsLookupFailed, .notConnectedToInternet].contains(u.code)
     }
 
-    /// The chain's wallet format rules (round 2), checked before broadcast:
-    /// every action's output ciphertext exactly 217 bytes (dummies too); a
-    /// stake proof's ciphertexts exactly two, entry i empty iff commitment i
-    /// is zero, a non-empty one exactly 153 bytes.
+    /// The chain's wallet format rules, checked before broadcast: every
+    /// action's output ciphertext exactly 217 bytes (dummies too); a stake
+    /// proof's every field 32 bytes, exactly two lane A nullifiers, and a
+    /// 201-byte wallet stake ciphertext exactly for each non-zero commitment
+    /// (chain dff3a9b); debt_root zero exactly when clear_before is 0.
     static func checkShape(_ msg: any PrivateMsg) throws {
         for b in msg.bundles {
             for a in b.actions where a.ciphertext.count != NoteCipher.ciphertextBytes {
@@ -340,12 +355,15 @@ public struct PrivateTxEngine: Sendable {
             }
         }
         if let p = msg.stakeProof {
-            guard p.ciphertexts.count == 2, p.commitments.count == 2 else { throw PrivacyError("a stake proof carries two ciphertext slots") }
-            for i in 0 ..< 2 {
-                let zero = p.commitments[i].allSatisfy { $0 == 0 }
-                let n = p.ciphertexts[i].count
-                guard zero ? n == 0 : n == NoteCipher.stakeCiphertextBytes else { throw PrivacyError("stake ciphertext \(i) is \(n) bytes") }
+            guard p.nullifiers.count == 2 else { throw PrivacyError("a stake proof carries two nullifiers") }
+            for f in p.nullifiers + [p.anchor, p.ownerTag, p.commitment, p.creditNullifier, p.creditCommitment, p.debtRoot] where f.count != 32 {
+                throw PrivacyError("a stake proof field is \(f.count) bytes")
             }
+            for (cm, ct) in [(p.commitment, p.ciphertext), (p.creditCommitment, p.creditCiphertext)] {
+                let zero = cm.allSatisfy { $0 == 0 }
+                guard zero ? ct.isEmpty : ct.count == NoteCipher.stakeCiphertextBytes else { throw PrivacyError("a stake ciphertext is \(ct.count) bytes") }
+            }
+            guard (p.clearBefore == 0) == p.debtRoot.allSatisfy({ $0 == 0 }) else { throw PrivacyError("debt_root is zero exactly when clear_before is 0") }
         }
     }
 
@@ -392,6 +410,7 @@ public struct PrivateTxEngine: Sendable {
             if var p = stake {
                 // A zero marks an unused slot and stays.
                 for i in p.nullifiers.indices where !p.nullifiers[i].allSatisfy({ $0 == 0 }) { p.nullifiers[i] = NotePlaintext.randomField().bytes }
+                if !p.creditNullifier.allSatisfy({ $0 == 0 }) { p.creditNullifier = NotePlaintext.randomField().bytes }
                 stake = p
             }
         }

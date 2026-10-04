@@ -111,9 +111,10 @@ final class PrivacyProverTests: XCTestCase {
         let prover = Self.shared
         let order: [PrivacyCircuitProver.Kind: [String]] = [
             .action: ["anchor", "nf", "cm_out", "cv_x", "cv_y", "sighash"],
-            .stake: ["anchor", "asset", "nf_0", "nf_1", "cm_out_0", "cm_out_1", "v_in", "v_out", "spc_mint", "otag", "sighash"],
+            .stake: ["anchor", "asset", "nf_0", "nf_1", "cm_out", "v_in", "v_out", "clear_before", "debt_root", "cr_asset", "cr_nf", "cr_cm",
+                     "cr_v_in", "cr_move_time", "otag", "sighash"],
             .membership: ["root", "scope", "nullifier", "signal", "excluded_dsc", "excluded_country", "max_activation", "max_predecessor"],
-            .vote: ["note_root", "nf_root", "asset", "weight", "proposal_id", "vnf", "sighash"],  // vnf: four slots
+            .vote: ["note_root", "nf_root", "debt_root", "asset", "weight", "proposal_id", "vnf", "sighash"],  // vnf: two slots
         ]
         var proved = 0
         for kind in [PrivacyCircuitProver.Kind.stake, .action, .membership, .vote] {

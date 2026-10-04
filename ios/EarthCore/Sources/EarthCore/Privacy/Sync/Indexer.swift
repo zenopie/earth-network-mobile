@@ -32,11 +32,32 @@ public protocol PrivacyIndexer: Sendable {
     /// snapshot of the chain's Handles query at one height, paged by place
     /// from `fromIndex` (aligned).
     func handles(fromIndex: Int64, limit: Int) async throws -> HandleDirectory.StreamPage
+    /// The slash debt tree, whole, by leaf index (rows from leaf 1, each with
+    /// its latest retained), its size and root as the indexer synced them
+    /// (chain dff3a9b). The wallet checks the rebuilt root against the
+    /// chain's own Query/DebtTree before using a row.
+    func debtRows(fromIndex: UInt64, limit: Int) async throws -> DebtRowsPage
 }
 
 public extension PrivacyIndexer {
     func handles(fromIndex: Int64, limit: Int) async throws -> HandleDirectory.StreamPage {
         throw PrivacyError("this indexer serves no handle directory")
+    }
+
+    func debtRows(fromIndex: UInt64, limit: Int) async throws -> DebtRowsPage {
+        throw PrivacyError("this indexer serves no debt rows")
+    }
+}
+
+/// /debt_rows: `rows` (leaf index, move key, retained), `size` the leaf count (sentinel included, 0 when empty), `root` at the synced height.
+public struct DebtRowsPage: Sendable {
+    public let rows: [(index: UInt64, key: Fr, retained: UInt64)]
+    public let nextIndex: UInt64
+    public let complete: Bool
+    public let size: UInt64
+    public let root: Fr?
+    public init(rows: [(index: UInt64, key: Fr, retained: UInt64)], nextIndex: UInt64, complete: Bool, size: UInt64, root: Fr?) {
+        self.rows = rows; self.nextIndex = nextIndex; self.complete = complete; self.size = size; self.root = root
     }
 }
 
@@ -157,21 +178,16 @@ public struct LatestRoots: Sendable {
     }
 }
 
-/// A stake tree leaf. A note the chain minted carries its public `denom`,
-/// `amount` and stake pc `spc` and its blind stake ciphertext (177 bytes); a
-/// note a stake proof created carries the wallet stake ciphertext and none of
-/// the three.
+/// A stake tree leaf: every one a stake proof's output with its 201-byte
+/// wallet stake ciphertext (chain dff3a9b: the chain mints no stake note, so
+/// no row has a public denom, amount or pc any more).
 public struct StakeNoteRow: Sendable {
     public let position: UInt64
     public let height: UInt64
     public let cm: Fr
     public let ciphertext: Data
-    public let denom: String?
-    public let amount: UInt64?
-    public let spc: Fr?
-    public init(position: UInt64, height: UInt64, cm: Fr, ciphertext: Data, denom: String?, amount: UInt64?, spc: Fr?) {
+    public init(position: UInt64, height: UInt64, cm: Fr, ciphertext: Data) {
         self.position = position; self.height = height; self.cm = cm; self.ciphertext = ciphertext
-        self.denom = denom; self.amount = amount; self.spc = spc
     }
 }
 
@@ -403,6 +419,21 @@ public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
         Self.parseHandles(try await stream("/handles?from_index=\(fromIndex)\(try q("limit", limit))"))
     }
 
+    public func debtRows(fromIndex: UInt64, limit: Int) async throws -> DebtRowsPage {
+        try Self.parseDebtRows(await stream("/debt_rows?from_index=\(fromIndex)\(try q("limit", limit))"))
+    }
+
+    /// /debt_rows: rows [index, key (hex), retained, height, updated_height]; size, root (hex).
+    static func parseDebtRows(_ j: JSON) throws -> DebtRowsPage {
+        let rows = try j.rows.array.map { r -> (index: UInt64, key: Fr, retained: UInt64) in
+            guard let i = r[0].uint64, let ret = r[2].uint64, ret <= UInt64(Int64.max) else { throw PrivacyError("a debt row without its index or retained") }
+            return (i, try Fr(hex: r[1].string ?? ""), ret)
+        }
+        let rootHex = j.root.string ?? ""
+        return DebtRowsPage(rows: rows, nextIndex: j.next_index.uint64(default: 0), complete: j.complete.bool(default: false),
+                            size: j.size.uint64(default: 0), root: rootHex.count == 64 ? try Fr(hex: rootHex) : nil)
+    }
+
     /// /handles: rows [handle, address, status, expires_at, renewal_until, owner], the
     /// snapshot's height and size. owner (audit 6, M6: 64 hex, the chain's
     /// HandleEntry.owner) is optional: a row without it says no owner.
@@ -439,9 +470,7 @@ public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
     static func parseStakeNotes(_ j: JSON) throws -> StakeNotesPage {
         let rows = try j.notes.array.map { r in
             StakeNoteRow(position: r[0].uint64(default: 0), height: r[1].uint64(default: 0), cm: try Fr(hex: r[2].string ?? ""),
-                         ciphertext: Data(base64Encoded: r[3].string ?? "") ?? Data(), denom: r[4].string,
-                         amount: r[5].uint64.flatMap { $0 <= UInt64(Int64.max) ? $0 : nil },
-                         spc: try r[6].string.map { try Fr(hex: $0) })
+                         ciphertext: Data(base64Encoded: r[3].string ?? "") ?? Data())
         }
         return StakeNotesPage(rows: rows, nextPos: j.next_pos.uint64(default: 0), complete: j.complete.bool(default: false),
                               syncedHeight: j.synced_height.uint64(default: 0))

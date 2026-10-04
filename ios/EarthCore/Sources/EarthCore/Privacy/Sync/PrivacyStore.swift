@@ -287,6 +287,10 @@ public struct PrivacyState: Codable, Sendable {
     public var stakeHeight: UInt64 = 0
     public var stakeNullifiersNext: UInt64 = 0
     public var stakeNotes: [OwnedStakeNote] = []
+    /// The chain's slash label window (Query/DebtTree window_seconds) as last
+    /// read: when a moved stake's exposure may leave its note, for display
+    /// between reads (0: never read).
+    public var labelWindowSeconds: UInt64 = 0
     /// Every denom seen in a public amount: resolves the asset ids ciphertexts carry.
     public var denoms: Set<String> = []
     /// A uniform sample of identity row heights (registration blocks): a record's LCD cover set is drawn from it (audit 4).
@@ -301,7 +305,7 @@ public struct PrivacyState: Codable, Sendable {
              pendingUnbonds, nextOtagCounter, stakeNext, stakeHeight, stakeNullifiersNext, stakeNotes, denoms, closedOtagMax,
              syncGeneration, verifiedGeneration, verifiedHeight, stakeVotes, identityHeights, identityRowsSeen,
              handleSetAt, caretakerSplitUnknown, handleRecordPos, caretakerRecordPos, voidRecordHeights, pendingMoves, switchTarget,
-             handleExpiresAt, handleExpiresFor
+             handleExpiresAt, handleExpiresFor, labelWindowSeconds
     }
 
     /// Tolerates a state file from before the stake tree (missing keys keep their defaults).
@@ -332,6 +336,7 @@ public struct PrivacyState: Codable, Sendable {
         caretakerRecordPos = try c.decodeIfPresent(UInt64.self, forKey: .caretakerRecordPos)
         voidRecordHeights = try v(.voidRecordHeights, []); pendingMoves = try v(.pendingMoves, []); switchTarget = try v(.switchTarget, "")
         handleExpiresAt = try v(.handleExpiresAt, 0); handleExpiresFor = try v(.handleExpiresFor, "")
+        labelWindowSeconds = try v(.labelWindowSeconds, 0)
     }
 }
 
@@ -495,6 +500,7 @@ public final class PrivacyStore {
             s.identity = old.identity?.verified == true ? old.identity : nil
             s.pendingRegistration = old.pendingRegistration
             s.stakeVotes = old.stakeVotes
+            s.labelWindowSeconds = old.labelWindowSeconds
             s.claimedDays = old.claimedDays
             s.caretakerCastAt = old.caretakerCastAt; s.caretakerSplit = old.caretakerSplit
             s.caretakerExpiresAt = old.caretakerExpiresAt; s.caretakerMovedOut = old.caretakerMovedOut

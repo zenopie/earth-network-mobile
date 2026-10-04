@@ -9,7 +9,7 @@ import ProverGateCore
 /// barretenberg honours only the **first** SRS initialization of a process: a
 /// later, larger request is silently not met, and a proof that needs it fails.
 /// The passport circuits run to ~425k gates (brainpool512) and the privacy
-/// circuits to ~28k (vote, the largest of action, stake, membership and vote), so whichever proves first decides for the rest of the
+/// circuits to ~22k (vote, the largest of action, stake, membership and vote), so whichever proves first decides for the rest of the
 /// launch. Everything that proves goes through here, so the decision is made
 /// once, knowingly.
 public enum SRS {
@@ -83,7 +83,7 @@ public enum SRS {
     }
 
     /// The privacy circuits' SRS: 2^15 (32,769 points), every privacy circuit
-    /// fits (vote, the largest, is 27,543 gates: a 2^15 circuit).
+    /// fits (vote, the largest, is 21,716 gates: a 2^15 circuit).
     public static let privacyPoints: UInt32 = 1 << 15
 }
 
@@ -106,14 +106,16 @@ public final class PrivacyCircuitProver: @unchecked Sendable {
             switch self {
             case .membership: 8
             case .action: 6
-            case .stake: 11
-            // note_root, nf_root, asset, weight, proposal_id, vnf[0..3], sighash (chain 48b631c).
-            case .vote: 10
+            // anchor, asset, nf_0, nf_1, cm_out, v_in, v_out, clear_before, debt_root,
+            // cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, otag, sighash (chain dff3a9b).
+            case .stake: 16
+            // note_root, nf_root, debt_root, asset, weight, proposal_id, vnf[0..1], sighash (chain dff3a9b).
+            case .vote: 9
             }
         }
 
         /// The largest privacy circuit (gates: membership 5,659, action
-        /// 8,098, stake 9,672, vote 27,543 since its four note slots): its
+        /// 8,098, stake 16,242, vote 21,716 with two labelled slots): its
         /// SRS holds the others. Vote is a 2^15 circuit, the others 2^14;
         /// all fit the bundled 2^15 + 1 points.
         public static let largest: Kind = .vote

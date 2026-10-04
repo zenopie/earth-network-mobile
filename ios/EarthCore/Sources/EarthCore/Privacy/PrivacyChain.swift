@@ -1,3 +1,4 @@
+import BigInt
 import Foundation
 
 /// The chain reads the wallet's private msgs are built from. Ports
@@ -13,6 +14,14 @@ public protocol PrivacyChainReads: Sendable {
     func positions() async throws -> [PrivacyReads.Position]
     /// x/shieldedstaking Query/StakeNullifierTree{start, limit} (at most 1000 a page).
     func stakeNullifierTree(start: UInt64, limit: Int) async throws -> PrivacyReads.NfTreePage
+    /// x/shieldedstaking Query/DebtTree{start, limit} (at most 1000 a page).
+    func debtTree(start: UInt64, limit: Int) async throws -> PrivacyReads.DebtTreePage
+    /// x/shieldedstaking Query/Validator for `valoper`: what a delegation or a
+    /// redelegation's credit is quoted at. The validator is named by the msg
+    /// itself, so asking says nothing the tx does not.
+    func validatorBook(_ valoper: String) async throws -> PrivacyReads.Book
+    /// x/shieldedstaking params.min_delegation (uerth, and the least derth one may credit).
+    func minDelegation() async throws -> UInt64
     /// About when an undelegation booked in `epoch` is paid, from chain-wide
     /// timing alone (the current epoch, epoch length, x/staking's unbonding
     /// time): never a query about this wallet's undelegation. Nil: unknown.
@@ -145,6 +154,36 @@ public enum PrivacyReads {
         public let validator: String
         public let rate: Decimal
         public let supply: UInt64
+    }
+
+    /// x/shieldedstaking Query/Validator: the live backing and derth supply
+    /// (rate = backing / supply), and the ERTH waiting to be delegated at the
+    /// epoch's end (what a redelegation moves out of first).
+    public struct Book: Sendable, Equatable {
+        public let backing: BigUInt
+        public let supply: BigUInt
+        public let pendingDelegation: BigUInt
+        /// x/staking BOND_STATUS_UNBONDED: no slash reaches it, so a move from it leaves its queue first.
+        public let unbonded: Bool
+        public init(backing: BigUInt, supply: BigUInt, pendingDelegation: BigUInt = 0, unbonded: Bool = false) {
+            self.backing = backing; self.supply = supply; self.pendingDelegation = pendingDelegation; self.unbonded = unbonded
+        }
+    }
+
+    /// x/shieldedstaking Query/DebtTree{start, limit} (chain dff3a9b): the
+    /// slash debt tree's rows from leaf start+1 in insertion order (each with
+    /// its latest retained), its size (sentinel included, 0 before the first
+    /// row) and current root, the label window and the clear_before a proof
+    /// may name now. The whole tree, paged: nothing names a move of ours.
+    public struct DebtTreePage: Sendable {
+        public let rows: [(key: Fr, retained: UInt64)]
+        public let size: UInt64
+        public let root: Fr
+        public let windowSeconds: UInt64
+        public let clearBefore: UInt64
+        public init(rows: [(key: Fr, retained: UInt64)], size: UInt64, root: Fr, windowSeconds: UInt64, clearBefore: UInt64) {
+            self.rows = rows; self.size = size; self.root = root; self.windowSeconds = windowSeconds; self.clearBefore = clearBefore
+        }
     }
 }
 
@@ -296,6 +335,43 @@ public struct PrivacyQueries: PrivacyChainReads {
             return try Fr(bytes: raw)
         }
         return PrivacyReads.NfTreePage(values: values, size: j.size.uint64(default: 0))
+    }
+
+    /// Query/DebtTree: up to `limit` (at most 1000) rows from leaf start+1, the tree's size and root, the label window and clear_before.
+    public func debtTree(start: UInt64, limit: Int) async throws -> PrivacyReads.DebtTreePage {
+        let j = try await rest.get("/earth/shieldedstaking/v1/debt_tree?start=\(start)&limit=\(min(max(limit, 1), 1000))")
+        let rows = try j.rows.array.prefix(1000).enumerated().map { i, r -> (key: Fr, retained: UInt64) in
+            guard let raw = Data(base64Encoded: r.key.string ?? ""), raw.count == 32 else { throw PrivacyError("debt row \(start + 1 + UInt64(i)): key is not 32 bytes") }
+            guard let ret = UInt64(r.retained.string(default: "0")), ret <= UInt64(Int64.max) else { throw PrivacyError("debt row \(start + 1 + UInt64(i)): retained") }
+            return (try Fr(bytes: raw), ret)
+        }
+        guard let rootRaw = Data(base64Encoded: j.root.string ?? ""), rootRaw.count == 32 else { throw PrivacyError("debt_tree: no root") }
+        return PrivacyReads.DebtTreePage(rows: rows, size: j.size.uint64(default: 0), root: try Fr(bytes: rootRaw),
+                                         windowSeconds: j.window_seconds.uint64(default: 0), clearBefore: j.clear_before.uint64(default: 0))
+    }
+
+    /// shieldedstaking params.min_delegation (uerth).
+    public func minDelegation() async throws -> UInt64 {
+        try await rest.get("/earth/shieldedstaking/v1/params").params.min_delegation.uint64(default: 0)
+    }
+
+    /// Query/Validator's live book: backing and derth supply (exact integers;
+    /// the rate is their quotient), its queue, and whether x/staking has it
+    /// unbonded (what a move from it carries depends on that). Read for the
+    /// validators of a quote only: the same ids the quote already names.
+    public func validatorBook(_ valoper: String) async throws -> PrivacyReads.Book {
+        let j = try await rest.get("/earth/shieldedstaking/v1/validators/\(valoper)")
+        func int(_ v: JSON, _ name: String) throws -> BigUInt {
+            let s = v.string ?? "0"
+            guard !s.isEmpty, s.count <= 80, s.allSatisfy({ $0.isASCII && $0.isNumber }), let b = BigUInt(s, radix: 10) else {
+                throw PrivacyError("validator \(name) is not a non-negative integer")
+            }
+            return b
+        }
+        let status = try await rest.get("/cosmos/staking/v1beta1/validators/\(valoper)").validator.status.string ?? ""
+        return PrivacyReads.Book(backing: try int(j.backing, "backing"), supply: try int(j.supply, "supply"),
+                                 pendingDelegation: try int(j.state.pending_delegation, "pending_delegation"),
+                                 unbonded: status == "BOND_STATUS_UNBONDED")
     }
 
     /// Chain-wide timing, the same answer for everyone: with the epoch it says
@@ -482,6 +558,22 @@ public struct LCDChainRoots: ChainRoots {
                 guard let id = Self.field(e.asset_id) else { continue }
                 out.append((e.denom.string(default: ""), id))
             }
+            let next = j.pagination.next_key.string(default: "")
+            if next.isEmpty || next == key || a.isEmpty { break }
+            key = next
+        }
+        return out
+    }
+
+    /// x/staking's validators, every status, every page (public; at most Denoms.max).
+    public func validatorOperators() async -> [String]? {
+        var out: [String] = []
+        var key = ""
+        while out.count < Denoms.max {
+            let q = "pagination.limit=500" + (key.isEmpty ? "" : "&pagination.key=" + (key.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? key))
+            guard let j = try? await rest.get("/cosmos/staking/v1beta1/validators?" + q) else { return nil }
+            let a = j.validators.array
+            for v in a { if let op = v.operator_address.string, !op.isEmpty { out.append(op) } }
             let next = j.pagination.next_key.string(default: "")
             if next.isEmpty || next == key || a.isEmpty { break }
             key = next
