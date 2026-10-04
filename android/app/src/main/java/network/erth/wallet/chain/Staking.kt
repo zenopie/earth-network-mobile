@@ -32,14 +32,6 @@ object Staking {
         val creationHeight: Long,
     )
 
-    /** Stake in flight between validators: still bonded, but locked until it matures. */
-    data class RedelegationEntry(
-        val src: String,
-        val dst: String,
-        val balance: String,
-        val completionTime: String,
-    )
-
     private fun uerth(amount: String) =
         CoinOuterClass.Coin.newBuilder().setDenom(Constants.UERTH_DENOM).setAmount(amount).build()
 
@@ -130,32 +122,6 @@ object Staking {
             }
         }
         return "0"
-    }
-
-    /** In-progress redelegations for a delegator. */
-    fun redelegations(delegator: String): List<RedelegationEntry> {
-        val (code, body) = EarthRest.get("/cosmos/staking/v1beta1/delegators/$delegator/redelegations")
-        if (code !in 200..299) return emptyList()
-        val arr = JSONObject(body).optJSONArray("redelegation_responses") ?: return emptyList()
-        val out = ArrayList<RedelegationEntry>()
-        for (i in 0 until arr.length()) {
-            val resp = arr.getJSONObject(i)
-            val red = resp.optJSONObject("redelegation")
-            val entries = resp.optJSONArray("entries") ?: continue
-            for (j in 0 until entries.length()) {
-                val e = entries.getJSONObject(j)
-                out.add(
-                    RedelegationEntry(
-                        src = red?.optString("validator_src_address", "") ?: "",
-                        dst = red?.optString("validator_dst_address", "") ?: "",
-                        balance = e.optString("balance", "0"),
-                        completionTime = e.optJSONObject("redelegation_entry")
-                            ?.optString("completion_time", "") ?: "",
-                    )
-                )
-            }
-        }
-        return out
     }
 
     // --- messages ---
