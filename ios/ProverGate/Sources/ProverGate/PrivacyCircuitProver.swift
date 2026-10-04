@@ -83,7 +83,7 @@ public enum SRS {
     }
 
     /// The privacy circuits' SRS: 2^15 (32,769 points), every privacy circuit
-    /// fits (stake, the largest, is 9,647 gates).
+    /// fits (stake, the largest, is 9,672 gates).
     public static let privacyPoints: UInt32 = 1 << 15
 }
 
@@ -111,8 +111,8 @@ public final class PrivacyCircuitProver: @unchecked Sendable {
             }
         }
 
-        /// The largest privacy circuit (gates: membership 5,645, action
-        /// 8,120, vote 9,046, stake 9,647): its SRS holds the others (all 2^14
+        /// The largest privacy circuit (gates: membership 5,659, action
+        /// 8,098, vote 9,072, stake 9,672): its SRS holds the others (all 2^14
         /// circuits, under the bundled 2^15 + 1 points).
         public static let largest: Kind = .stake
     }
