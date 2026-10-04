@@ -76,6 +76,12 @@ class Assembled(
     val stake: StakePlan? = null,
     val membership: MembershipWitnessSpec? = null,
     val vote: VoteWitnessSpec? = null,
+    /**
+     * Gas declared beyond the simulation and its headroom: what the chain
+     * may charge by the tx's block that it did not when simulated (a move's
+     * pair reaching its entry cap: PrivacyWallet.redelegateHeadroom).
+     */
+    val extraGas: Long = 0,
     val build: (bundles: List<Bundle>, stake: StakeProof?, membership: Membership?) -> MessageLite,
 ) {
     /** The pool notes the msg spends. */
@@ -273,7 +279,7 @@ class PrivateTxEngine(
             val d = draft(a, placeholders)
             val raw = UnsignedTx.build(d, 0, memo, timeout)
             val gas = chain.simulate(raw)
-            val limit = gas + maxOf(gas / 10, MIN_HEADROOM)
+            val limit = Math.addExact(gas + maxOf(gas / 10, MIN_HEADROOM), a.extraGas.coerceAtLeast(0))
             val need = maxOf(minFee, feeFor(price, limit))
             // The guess is re-laid at the fee its layout needs; after that a
             // layout whose gas the fee covers is final (a fee needing one more
@@ -388,9 +394,9 @@ class PrivateTxEngine(
          * MsgRedelegate's gas for the (src, dst) pair's x/staking record at
          * its worst (the chain's redelegateGas): 2,500 an entry read and
          * written, 2,500 more each while the pair is at its 1,024-entry cap,
-         * and 128 re-filed moves at 20,000. Simulation prices the real record;
-         * this keeps the cap above it without asking the node about the
-         * pair before the move is sent.
+         * and 128 re-filed moves at 20,000. Simulation prices the real record
+         * (and Assembled.extraGas a merge the pair may reach before the tx
+         * lands); this keeps the cap above both whatever the node says.
          */
         const val REDELEGATE_RECORD_GAS = 1_024 * (2_500L + 2_500L) + 128 * 20_000L
         /**

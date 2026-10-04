@@ -27,7 +27,6 @@ interface PrivacyIndexer {
     fun identity(fromIndex: Long, limit: Int? = null): IdentityPage
     fun identityZeroed(fromHeight: Long, limit: Int? = null): HeightPage<Long>
     fun rootsLatest(): LatestRoots
-    fun rates(epoch: Long? = null): List<RateRow>
     /** x/shieldedstaking's stake note tree, by position. */
     fun stakeNotes(fromPos: Long, limit: Int? = null): StakeNotesPage
     /** Its spent nullifiers, by height. */
@@ -132,7 +131,6 @@ data class StakeSnapshotRow(val height: Long, val proposalId: Long, val root: Fr
 
 data class StakeSnapshotsPage(val rows: List<StakeSnapshotRow>, val nextHeight: Long, val complete: Boolean, val syncedHeight: Long)
 
-data class RateRow(val validator: String, val rate: String, val supply: String, val epoch: Long?, val height: Long)
 
 /**
  * [PrivacyIndexer] over HTTP. Blocking; call from an IO thread. Only ever
@@ -242,15 +240,6 @@ class HttpPrivacyIndexer(
         parseHeights(stream("/identity/zeroed?from_height=$fromHeight${limit(limit)}")) { (it as Number).toLong() }
 
     override fun rootsLatest(): LatestRoots = parseRoots(stream("/roots/latest"))
-
-    override fun rates(epoch: Long?): List<RateRow> {
-        val j = stream("/rates" + (epoch?.let { "?epoch=$it" } ?: ""))
-        val rows = j.getJSONArray("rates")
-        return (0 until rows.length()).map { i ->
-            val r = rows.getJSONArray(i)
-            RateRow(r.getString(0), r.get(1).toString(), r.get(2).toString(), if (r.isNull(3)) null else r.getLong(3), r.getLong(4))
-        }
-    }
 
     override fun stakeNotes(fromPos: Long, limit: Int?): StakeNotesPage =
         parseStakeNotes(stream("/stake/notes?from_pos=$fromPos${limit(limit)}"))

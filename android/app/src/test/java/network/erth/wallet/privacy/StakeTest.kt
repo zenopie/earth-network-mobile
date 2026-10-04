@@ -387,6 +387,88 @@ class StakeTest : WalletTest() {
         assertEquals(tags.size, tags.toSet().size)
     }
 
+    /**
+     * The value leaves the queue first, and arrives whole, wherever no slash
+     * can reach src's stake: also a bonded validator whose bonded part D - U
+     * is nothing; the queue counts the rewards a move withdraws into it.
+     */
+    @Test
+    fun aMoveArrivesWholeWhereNoSlashReachesTheStake() {
+        val chain = FakeChain()
+        val a = staked(chain)
+        val bonded = a.quoteMove(vA, vB, 500_000)
+        // P + W covers u (555,555), D <= U: the queue goes first.
+        chain.queues[vA] = java.math.BigInteger.valueOf(300_000)
+        chain.rewards[vA] = java.math.BigInteger.valueOf(300_000)
+        chain.delegated[vA] = java.math.BigInteger.valueOf(1_000)
+        chain.undelegating[vA] = java.math.BigInteger.valueOf(1_000)
+        val whole = a.quoteMove(vA, vB, 500_000)
+        assertTrue(whole.dstDerth > bonded.dstDerth)
+        // Without the rewards the queue no longer covers it.
+        chain.rewards.remove(vA)
+        assertEquals(bonded.dstDerth, a.quoteMove(vA, vB, 500_000).dstDerth)
+        chain.rewards[vA] = java.math.BigInteger.valueOf(300_000)
+        a.redelegate(whole); a.sync()
+        assertEquals(whole.dstDerth, a.at(vB).single().amount)
+    }
+
+    /** A validator the list says takes no stake is refused before anything is laid out, with the chain's reason. */
+    @Test
+    fun aValidatorNotTakingStakeIsRefusedUpFront() {
+        val chain = FakeChain()
+        val a = staked(chain)
+        chain.refusals[vB] = "$vB is jailed: validator cannot take delegations"
+        val sims = chain.simulated
+        val d = assertThrows(IllegalStateException::class.java) { a.quoteDelegate(vB, 1_000_000) }
+        assertTrue(d.message!!, "jailed" in d.message!!)
+        val m = assertThrows(IllegalStateException::class.java) { a.quoteMove(vA, vB, 500_000) }
+        assertTrue(m.message!!, "jailed" in m.message!!)
+        assertEquals(sims, chain.simulated)
+        // Leaving it is not refused: undelegations and moves out do not depend on it.
+        chain.refusals.clear(); chain.refusals[vA] = "$vA is jailed"
+        assertTrue(a.quoteUndelegate(vA, 100_000).value > 0)
+        a.redelegate(a.quoteMove(vA, vB, 500_000)); a.sync()
+        assertTrue(a.at(vB).isNotEmpty())
+    }
+
+    /** Every quote reads the whole list again, never one validator; an undelegation is quoted at the live rate. */
+    @Test
+    fun quotesReadTheWholeValidatorList() {
+        val chain = FakeChain()
+        val a = staked(chain)
+        val before = chain.validatorsReads
+        a.quoteDelegate(vA, 1_000_000)
+        a.quoteMove(vA, vB, 500_000)
+        val u = a.quoteUndelegate(vA, 900_000)
+        assertEquals(before + 3, chain.validatorsReads)
+        assertEquals(1_000_000L, u.value)
+        assertEquals(0L, u.haircut)
+        a.sync()
+        assertEquals(before + 4, chain.validatorsReads)
+    }
+
+    /**
+     * A move whose pair may reach its entry cap before it lands declares the
+     * merge's gas on top of its simulation; one far from the cap, or already
+     * at it (simulated), does not.
+     */
+    @Test
+    fun aMoveNearThePairsEntryCapDeclaresTheMerge() {
+        assertEquals(0L, PrivacyWallet.redelegateHeadroom(10, 10))
+        assertEquals(0L, PrivacyWallet.redelegateHeadroom(1_100, 1_024))
+        assertEquals(0L, PrivacyWallet.redelegateHeadroom(972, 972))
+        assertEquals((973L + 51) * 2_500 + 128L * 20_000, PrivacyWallet.redelegateHeadroom(973, 973))
+        val chain = FakeChain()
+        val a = staked(chain)
+        chain.redelegationLoads[vA to vB] = 1_000L to 1_000L
+        val q = a.quoteMove(vA, vB, 500_000)
+        assertEquals(1_000L to 1_000L, q.pairEntries to q.pairCounted)
+        a.redelegate(q); a.sync()
+        val m = chain.lastMsg as MsgRedelegate
+        val gas = chain.gasOf(m)
+        assertTrue(chain.lastGasLimit >= gas + gas / 10 + PrivacyWallet.redelegateHeadroom(1_000, 1_000))
+    }
+
     @Test
     fun theMsgShapesAreTheChains() {
         assertEquals(PrivateMsgs.REDELEGATE, PrivateMsgs.typeUrl(MsgRedelegate.getDefaultInstance()))

@@ -178,7 +178,7 @@ internal fun EarthContent(
     fun derthValue(derth: Long, validator: String): Long =
         earnState?.derthValue(derth, validator) ?: derth
     fun monikerOf(validator: String): String =
-        earnState?.validators?.firstOrNull { it.validatorOperator == validator }?.moniker ?: validator
+        earnState?.monikerOf(validator) ?: validator
     val privateStakeValue = Amounts.satAdd(
         Amounts.satSum(derthHeld.entries) { (denom, amount) -> derthValue(amount, denom.removePrefix("derth/")) },
         privacyState?.positions?.let { ps -> Amounts.satSum(ps) { derthValue(it.position.derth, it.position.validator) } } ?: 0L,
@@ -877,7 +877,7 @@ internal fun EarthContent(
             runCatching { PrivacySession.wallet(context).stakeVotePreview(v.proposalId, item) }.getOrNull()
         }
         val where = when (item) {
-            is PrivacyWallet.StakeVoteItem.Validator -> "at ${earnState?.validators?.firstOrNull { it.validatorOperator == item.validator }?.moniker ?: item.validator}"
+            is PrivacyWallet.StakeVoteItem.Validator -> "at ${monikerOf(item.validator)}"
             is PrivacyWallet.StakeVoteItem.Position -> "with position #${item.id}"
         }
         val left = rest.items.size
@@ -909,7 +909,7 @@ internal fun EarthContent(
     }
 
     partsChoice?.let { (v, item) ->
-        val name = earnState?.validators?.firstOrNull { it.validatorOperator == item.validator }?.moniker ?: item.validator
+        val name = monikerOf(item.validator)
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { partsChoice = null },
             title = { androidx.compose.material3.Text("${item.notes} stake notes at $name") },
@@ -962,7 +962,7 @@ internal fun EarthContent(
                 validatorOperator = h.validator,
                 moniker = monikerOf(h.validator),
                 amountUerth = h.free,
-                commission = earnState?.validators?.firstOrNull { it.validatorOperator == h.validator }?.commission ?: 0.0,
+                commission = earnState?.commissionOf(h.validator) ?: 0.0,
             )
         }
         if (intent == StakeIntent.Move) {
@@ -1059,15 +1059,17 @@ internal fun EarthContent(
                             )
                         }
                     } else {
-                        val haircut = withContext(Dispatchers.IO) { runCatching { PrivacySession.wallet(context).leaveHaircut(validator, amount) } }
-                        haircut.onFailure { tx.showFailure("Unstake", it) }.onSuccess { cut ->
+                        // The quote: the value at the validator's live rate, and any cleared label's cut.
+                        val quote = withContext(Dispatchers.IO) { runCatching { PrivacySession.wallet(context).quoteUndelegate(validator, amount) } }
+                        quote.onFailure { tx.showFailure("Unstake", it) }.onSuccess { q ->
+                            val cut = q.haircut
                             tx.requestPrivate(
                                 details = TxConfirmDetails(
                                     action = "Unstake",
                                     msgTypeUrl = PrivateMsgs.UNDELEGATE,
                                     balanceUerth = 0L,
                                     amountLabel = "Amount",
-                                    amountValue = "${formatUerth(amount)} derth (${formatUerth(derthValue(amount, validator))} ERTH)",
+                                    amountValue = "${formatUerth(amount)} derth (${formatUerth(q.value)} ERTH)",
                                     recipient = validator,
                                     recipientLabel = "From validator",
                                     notes = listOfNotNull(haircutNote(cut, null)),
@@ -1333,7 +1335,7 @@ internal fun EarthContent(
                 val op = denom.removePrefix("derth/")
                 DelegationRow(
                     validatorOperator = op,
-                    moniker = earnState?.validators?.firstOrNull { it.validatorOperator == op }?.moniker ?: op,
+                    moniker = monikerOf(op),
                     amountUerth = amount,
                     commission = 0.0,
                 )

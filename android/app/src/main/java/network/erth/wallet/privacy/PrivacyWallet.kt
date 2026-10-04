@@ -141,17 +141,72 @@ interface PrivacyChainReads {
     data class DebtTreePage(val rows: List<Pair<Fr, Long>>, val size: Long, val root: Fr, val windowSeconds: Long, val clearBefore: Long)
 
     /**
-     * x/shieldedstaking Query/Validator: the live backing and derth supply
-     * (rate = backing / supply), and the ERTH waiting to be delegated at the
-     * epoch's end (what a redelegation moves out of first).
+     * One entry of x/shieldedstaking Query/Validators (ORCHARD_DESIGN 12.2):
+     * what a delegation, undelegation, redelegation or stake vote at
+     * [validator] is quoted from. B = [backing], S = [supply] (rate = B / S,
+     * exact integers; [rate] the chain's LegacyDec of it, for display), the
+     * queue P = [pendingDelegation], U = [pendingUndelegation], the module's
+     * delegation D = [delegation] and unwithdrawn rewards W = [rewards]
+     * (B = D + W + P - U), x/staking's [status] ("" for a book whose
+     * validator x/staking removed), [jailed], [tombstoned], whether a
+     * delegation or a redelegation into it is taken now ([delegatable], else
+     * [refusal], the chain's reason), and the module's redelegation record
+     * out of it per destination ([redelegations], what MsgRedelegate's gas
+     * grows with).
      */
-    data class ValidatorBook(
+    data class ValidatorQuote(
+        val validator: String,
         val backing: java.math.BigInteger,
         val supply: java.math.BigInteger,
         val pendingDelegation: java.math.BigInteger = java.math.BigInteger.ZERO,
-        /** x/staking BOND_STATUS_UNBONDED: no slash reaches it, so a move from it leaves its queue first. */
-        val unbonded: Boolean = false,
-    )
+        val pendingUndelegation: java.math.BigInteger = java.math.BigInteger.ZERO,
+        val delegation: java.math.BigInteger = backing - pendingDelegation + pendingUndelegation,
+        val rewards: java.math.BigInteger = java.math.BigInteger.ZERO,
+        val rate: BigDecimal = if (supply.signum() == 0) BigDecimal.ONE else BigDecimal(backing).divide(BigDecimal(supply), 18, java.math.RoundingMode.DOWN),
+        val status: String = PrivacyChainReads.BOND_STATUS_BONDED,
+        val jailed: Boolean = false,
+        val tombstoned: Boolean = false,
+        val delegatable: Boolean = true,
+        val refusal: String = "",
+        val moniker: String = "",
+        /** x/staking's commission rate, a fraction (0.10 for 10%). */
+        val commission: Double = 0.0,
+        /** x/staking's bonded tokens (the validator's whole stake, not the module's). */
+        val tokens: java.math.BigInteger = java.math.BigInteger.ZERO,
+        val redelegations: Map<String, RedelegationLoad> = emptyMap(),
+    ) {
+        val removed: Boolean get() = status.isEmpty()
+        val bonded: Boolean get() = status == PrivacyChainReads.BOND_STATUS_BONDED
+
+        /**
+         * Whether a move out of here leaves the queue first (8.7 step 3): no
+         * slash can reach the stake (x/staking unbonded or removed it, or the
+         * bonded part D - U is nothing). Otherwise the value leaves the queue
+         * and the bonded stake pro rata.
+         */
+        val queueFirst: Boolean get() = removed || status == PrivacyChainReads.BOND_STATUS_UNBONDED || delegation <= pendingUndelegation
+
+        /** The queue a move draws on: P, and W, which a move withdraws into it first. */
+        val queue: java.math.BigInteger get() = pendingDelegation + rewards
+    }
+
+    companion object {
+        const val BOND_STATUS_BONDED = "BOND_STATUS_BONDED"
+        const val BOND_STATUS_UNBONDED = "BOND_STATUS_UNBONDED"
+    }
+
+    /** RedelegationLoad: the pair's x/staking record, its [entries] and [countedEntries] (those of positive height). */
+    data class RedelegationLoad(val entries: Long, val countedEntries: Long)
+
+    /** Query/Validators, every page, read at one [height]. */
+    data class ValidatorList(val height: Long, val validators: List<ValidatorQuote>) {
+        private val byOperator = validators.associateBy { it.validator }
+
+        operator fun get(valoper: String): ValidatorQuote? = byOperator[valoper]
+
+        /** [valoper]'s entry; a validator the list does not carry has no book and no x/staking record. */
+        fun of(valoper: String): ValidatorQuote = byOperator[valoper] ?: throw IllegalStateException("the chain lists no validator $valoper")
+    }
 
     fun personhoodParams(): PersonhoodParams
     fun leaseBounds(): LeaseBounds
@@ -164,11 +219,11 @@ interface PrivacyChainReads {
     /** x/shieldedstaking Query/DebtTree{start, limit} (at most 1000 a page). */
     fun debtTree(start: Long, limit: Int): DebtTreePage
     /**
-     * x/shieldedstaking Query/Validator for [valoper]: what a delegation or a
-     * redelegation's credit is quoted at. The validator is named by the msg
-     * itself, so asking says nothing the tx does not.
+     * x/shieldedstaking Query/Validators, every page at one height: what
+     * every staking quote reads. Never a query about one validator (asked
+     * shortly before a public msg, it would tie the asking IP to that intent).
      */
-    fun validatorBook(valoper: String): ValidatorBook
+    fun validators(): ValidatorList
     /** x/shieldedstaking params.min_delegation (uerth, and the least derth one may credit). */
     fun minDelegation(): Long
 
@@ -209,6 +264,11 @@ class PrivacyWallet(
     fun sync(): WalletSync.Result {
         fillPendingRegistration()
         runCatching { resolvePendingMoves() }
+        // The validator list (Query/Validators, whole) is read again with
+        // every sync, as with every quote: what pickers and stake values
+        // show, and the derth denoms sync names stake notes by. A failed read
+        // keeps the last one.
+        runCatching { reads.validators() }
         return WalletSync(indexer, store, keys, chainId, roots, now).sync().also { runCatching { resolveUnbonds() } }
     }
 
@@ -1427,7 +1487,7 @@ class PrivacyWallet(
      * the rate's drift until the tx's block (ORCHARD_DESIGN 20.8): the
      * chain refuses a credit the value does not buy, in its ante, at no cost.
      */
-    private fun creditFor(value: java.math.BigInteger, book: PrivacyChainReads.ValidatorBook): Long {
+    private fun creditFor(value: java.math.BigInteger, book: PrivacyChainReads.ValidatorQuote): Long {
         if (book.supply.signum() == 0) {
             check(book.backing.signum() == 0) { "this validator's book is settling (no derth, some backing); try again after the epoch ends" }
             return value.min(java.math.BigInteger.valueOf(Long.MAX_VALUE)).toLong()
@@ -1450,7 +1510,8 @@ class PrivacyWallet(
         require(amount > 0)
         val min = reads.minDelegation()
         if (amount < min) throw IllegalArgumentException("a private delegation is at least ${min}uerth")
-        val derth = creditFor(java.math.BigInteger.valueOf(amount), reads.validatorBook(validator))
+        val book = takesStake(reads.validators().of(validator))
+        val derth = creditFor(java.math.BigInteger.valueOf(amount), book)
         if (derth < min || derth <= 0) throw IllegalArgumentException("${amount}uerth buys less than the least derth a delegation may credit; stake more")
         val d = debtView()
         val plan = laneA(derthDenom(validator), StakeSelection.merge(spendableStake(derthDenom(validator))) { freeOf(it, d) }, derth, 0, d)
@@ -1528,6 +1589,31 @@ class PrivacyWallet(
     fun leaveHaircut(validator: String, amount: Long): Long = haircutOf(leave(validator, amount, debtView()))
 
     /**
+     * An undelegation's quote, for its confirm sheet: [amount] derth worth
+     * [value] uerth at the validator's live rate now (what the chain books
+     * it at, floor(amount x B / S); a slash before the payout lowers what
+     * arrives), and the [haircut] a cleared label takes (0: none).
+     */
+    data class UndelegateQuote(val validator: String, val amount: Long, val value: Long, val haircut: Long)
+
+    fun quoteUndelegate(validator: String, amount: Long): UndelegateQuote {
+        require(amount > 0)
+        val haircut = leaveHaircut(validator, amount)
+        val book = reads.validators().of(validator)
+        check(book.supply.signum() > 0 && java.math.BigInteger.valueOf(amount) <= book.supply) { "more derth than this validator has" }
+        val value = java.math.BigInteger.valueOf(amount).multiply(book.backing).divide(book.supply)
+        return UndelegateQuote(validator, amount, value.min(java.math.BigInteger.valueOf(Long.MAX_VALUE)).toLong(), haircut)
+    }
+
+    /** [book], refused with the chain's own reason when it takes no delegation or redelegation now (1102). */
+    private fun takesStake(book: PrivacyChainReads.ValidatorQuote): PrivacyChainReads.ValidatorQuote {
+        if (!book.delegatable) {
+            throw IllegalStateException("this validator is not taking stake now" + if (book.refusal.isNotEmpty()) ": ${book.refusal}" else "")
+        }
+        return book
+    }
+
+    /**
      * Undelegates [amount] derth/[validator] (ORCHARD_DESIGN 18.1, 20): the
      * stake proof spends it (the change, or a zero note when nothing is left,
      * back to us) and the msg names where the chain pays it out, a fresh pool
@@ -1569,7 +1655,9 @@ class PrivacyWallet(
      * unlabelled note there ([merges]) or a new note; [haircut] is a cleared
      * label's slash cut on the src side (0: none). The credited derth is
      * labelled: it cannot move again until the label window
-     * ([windowSeconds]) has passed.
+     * ([windowSeconds]) has passed. [pairEntries] and [pairCounted] are the
+     * (src, dst) x/staking record's entries when quoted: what the move's gas
+     * headroom is sized by ([redelegateHeadroom]).
      */
     data class MoveQuote(
         val src: String,
@@ -1580,6 +1668,8 @@ class PrivacyWallet(
         val haircut: Long,
         val merges: Boolean,
         val windowSeconds: Long,
+        val pairEntries: Long = 0,
+        val pairCounted: Long = 0,
     )
 
     /** The note at [dst] a move's credit merges into: our largest unlabelled one there (none: the lane pads, making a second note beside a labelled one). */
@@ -1592,20 +1682,19 @@ class PrivacyWallet(
         val d = debtView()
         val plan = leave(src, amount, d)
         val min = reads.minDelegation()
-        val a = reads.validatorBook(src)
+        val list = reads.validators()
+        val a = list.of(src)
+        val b = takesStake(list.of(dst))
         check(a.supply.signum() > 0 && java.math.BigInteger.valueOf(amount) <= a.supply) { "more derth than this validator has" }
         val u = java.math.BigInteger.valueOf(amount).multiply(a.backing).divide(a.supply)
         if (u < java.math.BigInteger.valueOf(min)) throw IllegalArgumentException("this stake is worth ${u}uerth, less than the ${min}uerth a move must carry")
-        // What arrives at dst: u splits between
-        // src's queue and its bonded stake pro rata, and up to 0.001 ERTH of
-        // the bonded part may stay in src's book (bondedDust) or be truncated
-        // by x/staking, so u - 1001. All of u only when src is unbonded (no
-        // slash reaches it: the queue goes first) and its queue covers u.
-        val arrives = if (a.unbonded && u <= a.pendingDelegation) u
-        else (u - java.math.BigInteger.valueOf(BONDED_DUST + 1)).max(java.math.BigInteger.ZERO)
-        val credit = creditFor(arrives, reads.validatorBook(dst))
+        val credit = creditFor(arrives(a, u), b)
         if (credit < min || credit <= 0) throw IllegalArgumentException("this move would credit less than the least derth a move may credit; move more")
-        return MoveQuote(src, dst, amount, u.min(java.math.BigInteger.valueOf(Long.MAX_VALUE)).toLong(), credit, haircutOf(plan), creditTarget(dst) != null, d.windowSeconds)
+        val load = a.redelegations[dst]
+        return MoveQuote(
+            src, dst, amount, u.min(java.math.BigInteger.valueOf(Long.MAX_VALUE)).toLong(), credit, haircutOf(plan), creditTarget(dst) != null,
+            d.windowSeconds, load?.entries ?: 0, load?.countedEntries ?: 0,
+        )
     }
 
     /**
@@ -1627,7 +1716,7 @@ class PrivacyWallet(
         val stake = leave(q.src, q.amount, d, credit = credit)
         if (haircutOf(stake) > q.haircut) throw QuoteChanged("a slash reached stake you moved to this validator since the quote; review it again")
         return run { fee ->
-            Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
+            Assembled(listOf(feeBundle(fee)), stake, extraGas = redelegateHeadroom(q.pairEntries, q.pairCounted)) { bs, sp, _ ->
                 MsgRedelegate.newBuilder().setBundle(bs[0]).setSrcValidator(q.src).setDstValidator(q.dst).setAmount(q.amount)
                     .setStake(sp!!).setDstDerth(q.dstDerth).setMoveTime(moveTime).build()
             }
@@ -2433,6 +2522,38 @@ class PrivacyWallet(
 
         /** What of a redelegation's value beyond the source's queue may stay in its book (chain bondedDust, 0.001 ERTH). */
         const val BONDED_DUST = 1_000L
+
+        /**
+         * What of a move's value [u] arrives at dst (ORCHARD_DESIGN 8.7,
+         * 12.2), from src's [a] list entry: all of u when the value leaves
+         * the queue first ([PrivacyChainReads.ValidatorQuote.queueFirst]) and
+         * the queue P + W covers it; otherwise u splits between the queue and
+         * the bonded stake pro rata, a bonded part of at most 0.001 ERTH stays
+         * in src's book and x/staking may truncate a uerth: u - 1001.
+         */
+        fun arrives(a: PrivacyChainReads.ValidatorQuote, u: java.math.BigInteger): java.math.BigInteger =
+            if (a.queueFirst && u <= a.queue) u
+            else (u - java.math.BigInteger.valueOf(BONDED_DUST + 1)).max(java.math.BigInteger.ZERO)
+
+        /** x/shieldedstaking MaxEntryHeightsPerPair: at this many counted entries a move first merges two. */
+        const val MAX_ENTRY_HEIGHTS_PER_PAIR = 1_024L
+
+        /**
+         * Gas a move declares beyond its simulation's headroom: the pair's
+         * record gains at most an entry a block until the tx lands (within
+         * PrivateTxEngine.TIMEOUT_BLOCKS of the tip), and the 10% headroom
+         * covers those entries' 2,500 each, but not the merge (2,500 an entry
+         * more and 128 x 20,000, the chain's redelegateGas) the move pays once
+         * the pair reaches [MAX_ENTRY_HEIGHTS_PER_PAIR] counted entries. So
+         * when it could reach the cap before the tx lands without being there
+         * when simulated, that much more; otherwise nothing (at the cap, the
+         * simulation priced it).
+         */
+        fun redelegateHeadroom(entries: Long, counted: Long): Long {
+            val ahead = network.erth.wallet.privacy.tx.PrivateTxEngine.TIMEOUT_BLOCKS + 1
+            if (counted >= MAX_ENTRY_HEIGHTS_PER_PAIR || counted + ahead < MAX_ENTRY_HEIGHTS_PER_PAIR) return 0
+            return (entries.coerceIn(0, MAX_ENTRY_HEIGHTS_PER_PAIR) + ahead) * 2_500L + 128L * 20_000L
+        }
 
         /** A unix time as the wallet shows it in a sentence: "2026-10-25 14:03 UTC". */
         fun dateText(unix: Long): String =

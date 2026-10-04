@@ -175,13 +175,6 @@ object PrivacyQueries {
         Epoch(it.long("number"), it.long("start_time"), it.long("end_time"))
     }
 
-    data class ValidatorBook(val validator: String, val rate: BigDecimal, val supply: Long)
-
-    fun validator(valoper: String): ValidatorBook {
-        val j = get("/earth/shieldedstaking/v1/validators/$valoper")
-        return ValidatorBook(valoper, BigDecimal(j.optString("rate", "1")), j.long("supply"))
-    }
-
     data class Snapshot(
         val proposalId: Long,
         val root: Fr,
@@ -238,21 +231,29 @@ object PrivacyQueries {
     fun minDelegation(): Long = get("/earth/shieldedstaking/v1/params").getJSONObject("params").long("min_delegation")
 
     /**
-     * Query/Validator's live book: backing and derth supply (exact integers;
-     * the rate is their quotient), its queue, and whether x/staking has it
-     * unbonded (what a move from it carries depends on that). Read for the
-     * validators of a quote only: the same ids the quote already names.
+     * The last validator list read ([validators]): what pickers, monikers
+     * and stake values show between reads. Null until the first.
      */
-    fun validatorBook(valoper: String): network.erth.wallet.privacy.PrivacyChainReads.ValidatorBook {
-        val j = get("/earth/shieldedstaking/v1/validators/$valoper")
-        fun int(k: String) = j.optString(k, "0").ifEmpty { "0" }.let { v ->
-            require(v.all { it in '0'..'9' } && v.length <= 80) { "validator $k is not a non-negative integer" }
-            java.math.BigInteger(v)
-        }
-        val pending = j.optJSONObject("state")?.optString("pending_delegation", "0")?.ifEmpty { "0" } ?: "0"
-        require(pending.all { it in '0'..'9' } && pending.length <= 80) { "validator pending_delegation is not a non-negative integer" }
-        val status = get("/cosmos/staking/v1beta1/validators/$valoper").optJSONObject("validator")?.optString("status").orEmpty()
-        return network.erth.wallet.privacy.PrivacyChainReads.ValidatorBook(int("backing"), int("supply"), java.math.BigInteger(pending), status == "BOND_STATUS_UNBONDED")
+    @Volatile
+    var cachedValidators: network.erth.wallet.privacy.PrivacyChainReads.ValidatorList? = null
+        private set
+
+    /**
+     * Query/Validators, every page at one height (ValidatorPages), kept as
+     * [cachedValidators]. Read with every sync and every quote; the only
+     * read of a validator's book, status or redelegations the app makes.
+     */
+    fun validators(): network.erth.wallet.privacy.PrivacyChainReads.ValidatorList =
+        ValidatorPages.readAll(::validatorsPage).also { cachedValidators = it }
+
+    private fun validatorsPage(key: String, height: Long?): ValidatorPages.Page? {
+        val path = "/earth/shieldedstaking/v1/validators?pagination.limit=${ValidatorPages.PAGE_LIMIT}" +
+            if (key.isEmpty()) "" else "&pagination.key=" + java.net.URLEncoder.encode(key, "UTF-8")
+        if (height == null) return ValidatorPages.parse(get(path))
+        val (code, body, echo) = EarthRest.getAtEcho(path, height)
+        // Not served at that height (pruned, or a node behind it): read again.
+        if (code !in 200..299 || (echo != null && echo != height)) return null
+        return ValidatorPages.parse(JSONObject(body))
     }
 
     /** shieldedstaking params.epoch_seconds and x/staking params.unbonding_time, in seconds. */
@@ -482,22 +483,14 @@ object LcdChainRoots : network.erth.wallet.privacy.sync.ChainRoots {
         out
     }.getOrNull()
 
-    /** x/staking's validators, every status, every page (public; at most Denoms.MAX). */
+    /**
+     * Every validator with a book or an x/staking record, from the
+     * validator list (the one the sync that asks just read; read now when
+     * there is none), at most Denoms.MAX.
+     */
     override fun validatorOperators(): List<String>? = runCatching {
-        val out = ArrayList<String>()
-        var key = ""
-        while (out.size < network.erth.wallet.privacy.note.Denoms.MAX) {
-            val q = "pagination.limit=500" + if (key.isEmpty()) "" else "&pagination.key=" + java.net.URLEncoder.encode(key, "UTF-8")
-            val path = "/cosmos/staking/v1beta1/validators?$q"
-            val (code, body) = EarthRest.get(path)
-            val j = json(code, body, path)
-            val a = j.optJSONArray("validators") ?: break
-            for (i in 0 until a.length()) a.optJSONObject(i)?.optString("operator_address")?.takeIf { it.isNotEmpty() }?.let(out::add)
-            val next = j.optJSONObject("pagination")?.optString("next_key").orEmpty()
-            if (next.isEmpty() || next == "null" || next == key || a.length() == 0) break
-            key = next
-        }
-        out
+        (PrivacyQueries.cachedValidators ?: PrivacyQueries.validators()).validators.map { it.validator }
+            .take(network.erth.wallet.privacy.note.Denoms.MAX)
     }.getOrNull()
 
     /** A tx this wallet broadcast, by hash: 404 missing, a non-zero code failed. */

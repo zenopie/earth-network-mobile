@@ -188,7 +188,7 @@ object PrivacySession {
 
         override fun debtTree(start: Long, limit: Int) = PrivacyQueries.debtTree(start, limit)
 
-        override fun validatorBook(valoper: String) = PrivacyQueries.validatorBook(valoper)
+        override fun validators() = PrivacyQueries.validators()
 
         override fun minDelegation(): Long = PrivacyQueries.minDelegation()
     }

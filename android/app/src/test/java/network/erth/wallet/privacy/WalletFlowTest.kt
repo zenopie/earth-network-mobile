@@ -46,7 +46,7 @@ class WalletFlowTest {
         override fun stakeNullifierTree(start: Long, limit: Int) = chain.nfTreeRead(start, limit)
         override fun positions() = chain.positionReads()
         override fun debtTree(start: Long, limit: Int) = chain.debtTreeRead(start, limit)
-        override fun validatorBook(valoper: String) = chain.validatorBookRead(valoper)
+        override fun validators() = chain.validatorsRead()
         override fun minDelegation() = chain.minDelegation
     }
 

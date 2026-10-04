@@ -46,7 +46,6 @@ import network.erth.wallet.privacy.sync.LatestRoots
 import network.erth.wallet.privacy.sync.NoteRow
 import network.erth.wallet.privacy.sync.NotesPage
 import network.erth.wallet.privacy.sync.PrivacyIndexer
-import network.erth.wallet.privacy.sync.RateRow
 import network.erth.wallet.privacy.sync.RootRecord
 import network.erth.wallet.privacy.sync.StakeNoteRow
 import network.erth.wallet.privacy.sync.StakeNotesPage
@@ -191,6 +190,18 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     val queues = HashMap<String, BigInteger>()
     /** Validators x/staking has unbonded: a move from one leaves its queue first. */
     val unbonded = HashSet<String>()
+    /** The module's x/staking delegation D per validator (default: the backing less the queue, all bonded). */
+    val delegated = HashMap<String, BigInteger>()
+    /** U: undelegated privately, not yet from x/staking (0 unless a test sets it). */
+    val undelegating = HashMap<String, BigInteger>()
+    /** W: the module's unwithdrawn rewards (0 unless a test sets it); a move withdraws them into the queue first. */
+    val rewards = HashMap<String, BigInteger>()
+    /** Validators taking no delegation, with the chain's reason (1102). */
+    val refusals = HashMap<String, String>()
+    /** The module's (src, dst) x/staking redelegation records: (entries, counted entries). */
+    val redelegationLoads = HashMap<Pair<String, String>, Pair<Long, Long>>()
+    /** Every Query/Validators read (page reads included). */
+    var validatorsReads = 0
     var minDelegation = 1L
     /** Applied to every book's backing just before a tx's credit check: the rate moving between quote and block. */
     var rateDriftPpm = 0L
@@ -229,8 +240,32 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         return PrivacyChainReads.DebtTreePage(rows, if (debtRows.isEmpty()) 0 else debtRows.size + 1L, debtRoot(), labelWindow, clearBefore())
     }
 
-    fun validatorBookRead(v: String): PrivacyChainReads.ValidatorBook =
-        book(v).let { (b, sup) -> PrivacyChainReads.ValidatorBook(b, sup, queues[v] ?: BigInteger.ZERO, v in unbonded) }
+    /** x/staking's validators: the tests' own, and any a private delegation or move named. */
+    val stakingValidators = linkedSetOf(
+        "earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+        "earthvaloper1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5pmxnhd",
+        "earthvaloper1qyqszqgpqyqszqgpqyqszqgpqyqszqgpjnp7du",
+        "earthvaloper1zyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszq",
+    )
+
+    /** Query/Validators: x/staking's validators, and any a test gave a book, a queue or a refusal. */
+    fun validatorsRead(): PrivacyChainReads.ValidatorList {
+        validatorsReads++
+        val ops = LinkedHashSet<String>(stakingValidators).apply { addAll(validators); addAll(books.keys); addAll(refusals.keys); addAll(queues.keys); addAll(unbonded) }
+        return PrivacyChainReads.ValidatorList(height, ops.map(::quoteOf))
+    }
+
+    fun quoteOf(v: String): PrivacyChainReads.ValidatorQuote {
+        val (b, sup) = book(v)
+        val p = queues[v] ?: BigInteger.ZERO
+        return PrivacyChainReads.ValidatorQuote(
+            validator = v, backing = b, supply = sup, pendingDelegation = p, pendingUndelegation = undelegating[v] ?: BigInteger.ZERO,
+            delegation = delegated[v] ?: (b - p).max(BigInteger.ZERO), rewards = rewards[v] ?: BigInteger.ZERO,
+            status = if (v in unbonded) PrivacyChainReads.BOND_STATUS_UNBONDED else PrivacyChainReads.BOND_STATUS_BONDED,
+            delegatable = v !in refusals, refusal = refusals[v].orEmpty(), moniker = "moniker-$v",
+            redelegations = redelegationLoads.filterKeys { it.first == v }.map { (k, e) -> k.second to PrivacyChainReads.RedelegationLoad(e.first, e.second) }.toMap(),
+        )
+    }
 
     override fun debtRows(fromIndex: Long, limit: Int): DebtRowsPage {
         if (!indexerDebtRows) throw IndexerBaseMoved("no /debt_rows (test)")
@@ -408,8 +443,18 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     fun gasOf(m: MessageLite): Long {
         val actions = PrivateMsgs.bundles(m).sumOf { it.actionsCount }
         val vote = if (m is MsgStakeVote) 2_250_000L + (1L + m.voteNullifiersCount) * 150_000L else 0L
-        return 200_000L + 100_000L * PrivateMsgs.bundles(m).size + 350_000L * actions + (if (PrivateMsgs.stake(m) != null) 400_000 else 0) + vote
+        return 200_000L + 100_000L * PrivateMsgs.bundles(m).size + 350_000L * actions + (if (PrivateMsgs.stake(m) != null) 400_000 else 0) + vote +
+            (if (m is MsgRedelegate) redelegateGas(m.srcValidator, m.dstValidator) else 0L)
     }
+
+    /** The chain's redelegateGas beyond the 400,000 above: 700,000 base, 2,500 an entry, the merge at the cap. */
+    fun redelegateGas(src: String, dst: String): Long {
+        val (n, counted) = redelegationLoads[src to dst] ?: (0L to 0L)
+        return 300_000L + n * 2_500L + if (counted >= 1_024) n * 2_500L + 128L * 20_000L else 0L
+    }
+
+    /** The last committed tx's gas_limit. */
+    var lastGasLimit = 0L
 
     /** Every committed private tx's gas_limit over the gas it uses (the chain allows at most 5). */
     val gasRatios = ArrayList<Double>()
@@ -723,20 +768,25 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 require(shares(rem.getValue("uerth"), rem.getValue("uanml")) >= BigInteger(m.minShares)) { "below min_shares" }
             }
             is MsgDelegate -> {
+                refusals[m.validator]?.let { throw IllegalArgumentException("$it (code 1102)") }
                 require(m.amount >= minDelegation) { "a delegation is at least ${minDelegation}uerth" }
                 checkCredit(m.validator, BigInteger.valueOf(m.amount), m.derth)
             }
             is MsgRedelegate -> {
                 require(m.srcValidator != m.dstValidator) { "source and destination are the same validator (code 1120)" }
+                refusals[m.dstValidator]?.let { throw IllegalArgumentException("$it (code 1102)") }
                 require(m.moveTime in 1..now && now - m.moveTime <= 600) { "move_time ${m.moveTime} is not within 600s before the block time $now (name a recent block's time)" }
                 val (bA, sA) = book(m.srcValidator)
                 val u = BigInteger.valueOf(m.amount) * bA / sA
                 require(u >= BigInteger.valueOf(minDelegation)) { "the redelegation is worth less than the minimum (code 1103)" }
                 // What arrives: pro rata out of the queue and the
-                // bonded stake, up to bondedDust + a truncated uerth short of u; all
-                // of it only out of an unbonded source's queue.
-                val q = queues[m.srcValidator] ?: BigInteger.ZERO
-                val arrived = if (m.srcValidator in unbonded && u <= q) u else (u - BigInteger.valueOf(1001)).max(BigInteger.ZERO)
+                // bonded stake, up to bondedDust + a truncated uerth short of u
+                // (the least it can be); all of it only when the value leaves the
+                // queue first (src unbonded, or its bonded part D - U nothing)
+                // and the queue, its rewards withdrawn into it, covers u.
+                val src = quoteOf(m.srcValidator)
+                val queueFirst = m.srcValidator in unbonded || src.delegation <= src.pendingUndelegation
+                val arrived = if (queueFirst && u <= src.pendingDelegation + src.rewards) u else (u - BigInteger.valueOf(1001)).max(BigInteger.ZERO)
                 checkCredit(m.dstValidator, arrived, m.dstDerth)
             }
             is MsgUpdatePosition -> require(positions.getValue(m.positionId).ownerTag == f(m.stake.ownerTag)) { "not the position's owner" }
@@ -839,6 +889,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             val used = gasOf(m)
             require(auth.fee.gasLimit <= 5 * used) { "gas limit ${auth.fee.gasLimit} exceeds what this private tx uses (${used})" }
             gasRatios.add(auth.fee.gasLimit.toDouble() / used)
+            lastGasLimit = auth.fee.gasLimit
         }
         val bundles = PrivateMsgs.bundles(m)
         require(bundles.size in 1..2) { "bundle count" }
@@ -1180,7 +1231,6 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         registeredIdc.remove(index)
     }
 
-    override fun rates(epoch: Long?): List<RateRow> = emptyList()
 
     override fun stakeNotes(fromPos: Long, limit: Int?): StakeNotesPage {
         val n = aligned("stake/notes", fromPos, limit)

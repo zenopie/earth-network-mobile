@@ -74,8 +74,9 @@ interface ChainRoots {
      */
     fun assets(): List<Pair<String, Fr>>? = null
     /**
-     * x/staking's validators, every status (public): a stake ciphertext
-     * carries derth/<valoper>'s asset id only, so a wallet restored from the
+     * Every validator of Query/Validators (every status, and books whose
+     * validator x/staking removed; public): a stake ciphertext carries
+     * derth/<valoper>'s asset id only, so a wallet restored from the
      * mnemonic names its stake by trying each (null: the node cannot say).
      */
     fun validatorOperators(): List<String>? = null
