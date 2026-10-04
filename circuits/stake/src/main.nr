@@ -1,9 +1,8 @@
 //! stake — one owner-locked operation on the stake note tree
 //! (earth-network-chain x/shieldedstaking, ORCHARD_DESIGN.md section 13).
 //!
-//! Delegated stake (derth/<valoper>) and unbonding claims
-//! (unbond/<valoper>/<epoch>) live in their own append-only tree, never in the
-//! shielded pool, and can never change owner: every note this circuit spends
+//! Delegated stake (derth/<valoper>) lives in its own append-only tree, never
+//! in the shielded pool, and can never change owner: every note this circuit spends
 //! or creates, and every note it lets the chain mint, belongs to the one
 //! owner_pk = H(TAG_OWNER, nk) the prover knows nk for.
 //!
@@ -22,11 +21,13 @@
 //! mints. v_in and v_out are public u64 amounts, not notes.
 //!
 //! v_in is value the chain adds (none today), v_out value leaving the notes
-//! to the chain (undelegated, locked, voted, claimed). spc_mint is a stake pc
-//! of the same owner the chain may mint a note to (a delegation's derth, an
-//! undelegation's claim, a vote's re-mint, an unlocked position); otag a
+//! to the chain (undelegated, locked). spc_mint is a stake pc of the same
+//! owner the chain may mint a note to (a delegation's derth, an unlocked
+//! position; an undelegation pays out to a pool pc instead); otag a
 //! commitment to the same owner the chain may store (a position) or compare
 //! (a position's later update, unlock or vote). Binding: the msg's sighash.
+//! (Unbonding claims, unbond/<valoper>/<epoch>, and spend-to-vote are
+//! retired: the asset is always a derth asset, or 0 for a position msg.)
 //!
 //! The chain fixes, per msg, which of these must be zero.
 //!

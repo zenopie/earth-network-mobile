@@ -132,7 +132,7 @@ pub fn stake_pc(owner_pk: Field, rho: Field, rcm: Field) -> Field {
 
 /// Stake note commitment = H(TAG_STAKE, asset, amount, spc). asset is the
 /// stake asset's id: zk/privacy.AssetID("derth/<valoper>") for delegated
-/// stake, AssetID("unbond/<valoper>/<epoch>") for an unbonding claim. amount
+/// stake (unbonding claims are retired). amount
 /// at most 2^63 - 1 (NOTE_VALUE_BITS).
 pub fn stake_cm(asset: Field, amount: u64, spc: Field) -> Field {
     assert_note_value(amount);
