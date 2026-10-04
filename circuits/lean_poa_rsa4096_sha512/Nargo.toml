@@ -1,0 +1,9 @@
+[package]
+name = "lean_poa_rsa4096_sha512"
+type = "bin"
+authors = [""]
+compiler_version = ">=1.0.0"
+[dependencies]
+poa_core = { path = "../poa_core" }
+rsa = { tag = "v0.12.0", git = "https://github.com/zkpassport/noir_rsa" }
+bignum = { tag = "v0.10.0-2", git = "https://github.com/zkpassport/noir-bignum" }

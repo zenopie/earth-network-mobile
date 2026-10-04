@@ -1,8 +1,9 @@
 //! poa_core — shared passive-authentication logic for the passport register
-//! circuits. Each per-algorithm binary (P-256, RSA-2048, RSA-4096, …) does only
-//! the SOD→DSC signature verification and DSC key encoding that differ by key
-//! type; everything else (hash binding, DSC binding, expiry, nullifier) lives
-//! here so it stays identical across variants.
+//! circuits. Each variant binary (one per DSC key type, signature scheme and
+//! hash profile; see ../variants.json and PASSPORT_COVERAGE.md) only verifies
+//! the SOD signature and names its hash functions; everything else (hash
+//! binding, DSC commitment, expiry, nullifier, address binding) lives here so it
+//! stays identical across variants.
 //!
 //! The Document Signer that signed the passport is a PUBLIC input: the circuit
 //! proves the SOD was signed by that specific DSC, and the chain independently
@@ -12,7 +13,8 @@
 //! revoke a compromised signer, which matters more for this system.
 
 use poseidon::poseidon2::Poseidon2;
-use sha256::sha256_var;
+
+pub mod hash;
 
 pub global DG1_MAX: u32 = 95;
 
@@ -48,44 +50,51 @@ pub fn bytes_to_fields<let N: u32>(b: [u8; N]) -> [Field; N] {
 
 // A TD3 DG1 is exactly its 5-byte header (tag 61, length 5B, MRZ tag 5F1F, MRZ
 // length 58) followed by the 88-character MRZ.
-global DG1_LEN: u32 = 93;
+pub global DG1_LEN: u32 = 93;
 global DG1_HEADER: [u8; 5] = [0x61, 0x5B, 0x5F, 0x1F, 0x58];
 
-// The DER immediately ahead of DG1's hash in the LDS security object: a
-// DataGroupHash SEQUENCE (30 25) whose dataGroupNumber is INTEGER 1 (02 01 01),
-// then the 32-byte OCTET STRING header (04 20).
-global DG1_HASH_PREFIX: [u8; 7] = [0x30, 0x25, 0x02, 0x01, 0x01, 0x04, 0x20];
+/// The DER immediately ahead of DG1's hash in the LDS security object: a
+/// DataGroupHash SEQUENCE (30, 5 + H) whose dataGroupNumber is INTEGER 1
+/// (02 01 01), then the H-byte OCTET STRING header (04 H). H is the DG hash
+/// length (20, 28, 32, 48 or 64), so the prefix also pins which hash the entry
+/// holds: every permitted hash has a different length.
+pub fn dg1_hash_prefix<let H: u32>() -> [u8; 7] {
+    [0x30, (H + 5) as u8, 0x02, 0x01, 0x01, 0x04, H as u8]
+}
 
-// The DER immediately ahead of eContent's hash in the signed attributes: the
-// messageDigest attribute's OID (06 09 2A864886F70D010904), its SET (31 22) and
-// the 32-byte OCTET STRING header (04 20).
-global MESSAGE_DIGEST_PREFIX: [u8; 15] = [
-    0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x04, 0x31, 0x22, 0x04, 0x20,
-];
+/// The DER immediately ahead of eContent's hash in the signed attributes: the
+/// messageDigest attribute's OID (06 09 2A864886F70D010904), its SET (31, H + 2)
+/// and the H-byte OCTET STRING header (04 H).
+pub fn message_digest_prefix<let H: u32>() -> [u8; 15] {
+    [
+        0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x04, 0x31, (H + 2) as u8, 0x04,
+        H as u8,
+    ]
+}
 
 // Asserts `hash` sits at `offset` inside the first `len` bytes of `data` -- the
 // bytes that were actually hashed -- directly after `prefix`.
 //
-// Both bounds are load-bearing. sha256_var reads nothing at or past `len`, so a
-// hash placed there is bound to no signature at all: a prover could keep a
-// genuine SOD's signed prefix and write the hash of an invented DG1 into the
-// unhashed tail, minting a registration per invented document number. The
-// prefix pins which structure the hash belongs to, so the hash of some other
+// Both bounds are load-bearing. The variable-length hashes read nothing at or
+// past `len`, so a hash placed there is bound to no signature at all: a prover
+// could keep a genuine SOD's signed prefix and write the hash of an invented DG1
+// into the unhashed tail, minting a registration per invented document number.
+// The prefix pins which structure the hash belongs to, so the hash of some other
 // data group, or a run of bytes that merely happens to match, does not qualify.
-fn assert_hash_at<let N: u32, let P: u32>(
+fn assert_hash_at<let N: u32, let P: u32, let H: u32>(
     data: [u8; N],
     len: u32,
     prefix: [u8; P],
-    hash: [u8; 32],
+    hash: [u8; H],
     offset: u32,
 ) {
     assert(len <= N);
     assert(offset >= P);
-    assert(offset + 32 <= len);
+    assert(offset + H <= len);
     for i in 0..P {
         assert(data[offset - P + i] == prefix[i]);
     }
-    for i in 0..32 {
+    for i in 0..H {
         assert(data[offset + i] == hash[i]);
     }
 }
@@ -101,19 +110,29 @@ fn yymmdd(data: [u8; DG1_MAX], offset: u32) -> u32 {
     n
 }
 
-/// Binds DG1 → eContent → signed attributes and returns the message hash the DSC
-/// signature is verified against: sha256(dg1) sits in eContent, sha256(eContent)
-/// sits in the signed attributes, and msg_hash = sha256(signed_attributes).
-pub fn hash_and_bind(
+/// Binds DG1 → eContent → signed attributes and returns the digest the DSC
+/// signature is verified against.
+///
+/// `dg_hash(dg1)` sits in eContent as DG1's DataGroupHash, `ec_hash(eContent)`
+/// sits in the signed attributes as the messageDigest attribute, and the
+/// result is `sa_hash(signed_attributes)`. The three hashes are the passport's
+/// LDS hashAlgorithm, SignerInfo digestAlgorithm and signature hash; real SODs
+/// mix them (PASSPORT_COVERAGE.md section 2), so a variant names each one. The
+/// prover gains nothing by naming the wrong ones: a digest under another hash
+/// would have to be a preimage of what the issuer signed.
+pub fn hash_and_bind<let EC: u32, let SA: u32, let HD: u32, let HE: u32, let HS: u32>(
     dg1: [u8; DG1_MAX],
     dg1_len: u32,
-    e_content: [u8; 200],
+    e_content: [u8; EC],
     e_content_len: u32,
     dg1_hash_offset: u32,
-    signed_attrs: [u8; 200],
+    signed_attrs: [u8; SA],
     signed_attrs_len: u32,
     econtent_hash_offset: u32,
-) -> [u8; 32] {
+    dg_hash: fn([u8; DG1_MAX], u32) -> [u8; HD],
+    ec_hash: fn([u8; EC], u32) -> [u8; HE],
+    sa_hash: fn([u8; SA], u32) -> [u8; HS],
+) -> [u8; HS] {
     // DG1 must be a whole TD3 DG1. Every MRZ field read later sits at a fixed
     // offset below DG1_LEN, so each of them is covered by the hash; a shorter
     // length would leave those bytes unhashed and free for the prover to choose.
@@ -121,17 +140,42 @@ pub fn hash_and_bind(
     for i in 0..5 {
         assert(dg1[i] == DG1_HEADER[i]);
     }
-    let dg1_hash = sha256_var(dg1, dg1_len);
-    assert_hash_at(e_content, e_content_len, DG1_HASH_PREFIX, dg1_hash, dg1_hash_offset);
-    let econtent_hash = sha256_var(e_content, e_content_len);
+    let dg1_digest = dg_hash(dg1, dg1_len);
+    assert_hash_at(
+        e_content,
+        e_content_len,
+        dg1_hash_prefix::<HD>(),
+        dg1_digest,
+        dg1_hash_offset,
+    );
+    let econtent_digest = ec_hash(e_content, e_content_len);
     assert_hash_at(
         signed_attrs,
         signed_attrs_len,
-        MESSAGE_DIGEST_PREFIX,
-        econtent_hash,
+        message_digest_prefix::<HE>(),
+        econtent_digest,
         econtent_hash_offset,
     );
-    sha256_var(signed_attrs, signed_attrs_len)
+    sa_hash(signed_attrs, signed_attrs_len)
+}
+
+/// Left-pads (or truncates to its leftmost bytes) a digest to `N` bytes: the
+/// ECDSA message representative for a curve whose order is N bytes, when the
+/// verifier takes exactly N bytes (Noir's std secp256r1). Leftmost-bits
+/// truncation is what ECDSA prescribes for a digest longer than the order; a
+/// shorter one is the same integer zero-extended.
+pub fn ecdsa_digest<let H: u32, let N: u32>(digest: [u8; H]) -> [u8; N] {
+    let mut out: [u8; N] = [0; N];
+    if H >= N {
+        for i in 0..N {
+            out[i] = digest[i];
+        }
+    } else {
+        for i in 0..H {
+            out[N - H + i] = digest[i];
+        }
+    }
+    out
 }
 
 /// Curve tags, absorbed into the DSC commitment ahead of the key bytes.
@@ -140,26 +184,30 @@ pub fn hash_and_bind(
 /// earth-network-chain/x/pki/certs/commitment.go exactly and for ever: the chain
 /// recomputes the commitment from the submitted certificate and requires it to
 /// equal this circuit's public output, so a mismatch on either side breaks every
-/// registration. Append only; never renumber.
+/// registration. Append only; never renumber. 7 (RSA without its exponent) is
+/// retired: RSA keys commit under CURVE_TAG_RSA_E, exponent included.
 pub global CURVE_TAG_P256: Field = 1;
 pub global CURVE_TAG_P384: Field = 2;
 pub global CURVE_TAG_P521: Field = 3;
 pub global CURVE_TAG_BRAINPOOL_P256R1: Field = 4;
 pub global CURVE_TAG_BRAINPOOL_P384R1: Field = 5;
 pub global CURVE_TAG_BRAINPOOL_P512R1: Field = 6;
-pub global CURVE_TAG_RSA: Field = 7;
+pub global CURVE_TAG_P224: Field = 8;
+pub global CURVE_TAG_BRAINPOOL_P224R1: Field = 9;
+pub global CURVE_TAG_RSA_E: Field = 10;
 
-/// Commitment to a DSC = Poseidon2 over a curve tag followed by its canonical
-/// public-key bytes (ECDSA: x‖y; RSA: modulus big-endian). The chain recomputes
-/// this from the submitted DSC certificate with the same Poseidon2 parameters,
-/// so it identifies exactly which Document Signer produced the proof.
+/// Commitment to an ECDSA DSC = Poseidon2 over a curve tag followed by its
+/// canonical public-key bytes (x‖y, each the curve's coordinate width). The
+/// chain recomputes this from the submitted DSC certificate with the same
+/// Poseidon2 parameters, so it identifies exactly which Document Signer
+/// produced the proof.
 ///
 /// The tag is what stops two curves of the same coordinate width sharing a
 /// commitment. The sponge already absorbs the input length into its capacity
-/// slot, so RSA — 256 or 512 bytes — collides with nothing; what length cannot
-/// separate is P-256 from brainpoolP256r1 (64 bytes each) and P-384 from
-/// brainpoolP384r1 (96 each). Each variant passes its own constant, because a
-/// circuit knows statically which curve it verifies against.
+/// slot, so different widths collide with nothing; what length cannot separate
+/// is P-256 from brainpoolP256r1 (64 bytes each), P-384 from brainpoolP384r1
+/// (96) and P-224 from brainpoolP224r1 (56). Each variant passes its own
+/// constant, because a circuit knows statically which curve it verifies against.
 pub fn dsc_commitment<let N: u32>(tag: Field, pubkey: [u8; N]) -> Field {
     let key = bytes_to_fields(pubkey);
     let mut input: [Field; N + 1] = [0; N + 1];
@@ -168,6 +216,52 @@ pub fn dsc_commitment<let N: u32>(tag: Field, pubkey: [u8; N]) -> Field {
         input[i + 1] = key[i];
     }
     Poseidon2::hash(input, N + 1)
+}
+
+/// Commitment to an RSA DSC = Poseidon2(CURVE_TAG_RSA_E, e, modulus bytes
+/// big-endian). The exponent is a witness (real DSCs use 3, 65537 and random
+/// odd values), so it is committed: the proof then states which (n, e) signed,
+/// and the chain recomputes both from the certificate.
+pub fn dsc_commitment_rsa<let NB: u32>(exponent: u32, modulus: [u8; NB]) -> Field {
+    let mut input: [Field; NB + 2] = [0; NB + 2];
+    input[0] = CURVE_TAG_RSA_E;
+    input[1] = exponent as Field;
+    for i in 0..NB {
+        input[i + 2] = modulus[i] as Field;
+    }
+    Poseidon2::hash(input, NB + 2)
+}
+
+/// The big-endian bytes of a modulus held as noir-bignum's 120-bit
+/// little-endian limbs, for the commitment.
+///
+/// Read straight off the limbs rather than through RuntimeBigNum::to_be_bytes,
+/// which requires a value below the modulus and so fails on the modulus itself.
+/// Each limb is decomposed into exactly 15 bytes (the top one into what is
+/// left), and Field::to_be_bytes asserts the limb fits, so the bytes determine
+/// the integer: no oversized limb can carry into its neighbour. BigNumParams::new
+/// separately requires the top limb to fill the modulus's bit length, which is
+/// why the chain's minimal big-endian encoding is always exactly NB bytes.
+pub fn modulus_be_bytes<let L: u32, let NB: u32>(limbs: [u128; L]) -> [u8; NB] {
+    let mut out: [u8; NB] = [0; NB];
+    let top = NB - (L - 1) * 15;
+    let mut at = top;
+    for i in 0..L - 1 {
+        let b: [u8; 15] = (limbs[L - 2 - i] as Field).to_be_bytes();
+        for j in 0..15 {
+            out[at + j] = b[j];
+        }
+        at += 15;
+    }
+    let t: [u8; 15] = (limbs[L - 1] as Field).to_be_bytes();
+    // The top limb holds `top` bytes; the bytes above them must be zero.
+    for j in 0..15 - top {
+        assert(t[j] == 0);
+    }
+    for j in 0..top {
+        out[j] = t[15 - top + j];
+    }
+    out
 }
 
 /// Expiry + nullifier + DSC commitment, shared by every variant.
@@ -263,107 +357,7 @@ fn nullifier_preimage(dg1: [u8; DG1_MAX]) -> [Field; NULLIFIER_PREIMAGE_LEN] {
     id
 }
 
-// --- hash-binding tests ------------------------------------------------------
-//
-// Each builds a well-formed DG1 → eContent → signedAttrs chain and then breaks
-// exactly one link. The attack cases are the ones the length and prefix
-// checks exist for: a hash parked past the hashed length, and a DG1 short
-// enough to leave the MRZ fields it is read for unhashed.
-
-#[test]
-fn binding_accepts_well_formed_chain() {
-    let (dg1, ec, ec_len, dg1_off, sa, sa_len, ec_off) = test_chain(40, 24);
-    let _ = hash_and_bind(dg1, DG1_LEN, ec, ec_len, dg1_off, sa, sa_len, ec_off);
-}
-
-#[test(should_fail)]
-fn binding_rejects_econtent_hash_past_signed_length() {
-    let (dg1, ec, ec_len, dg1_off, sa, sa_len, ec_off) = test_chain(40, 24);
-    // Move the eContent hash (and its prefix) out of the signed bytes.
-    let mut forged = sa;
-    let moved = sa_len + MESSAGE_DIGEST_PREFIX.len();
-    for i in 0..(MESSAGE_DIGEST_PREFIX.len() + 32) {
-        forged[moved - MESSAGE_DIGEST_PREFIX.len() + i] = sa[ec_off - MESSAGE_DIGEST_PREFIX.len() + i];
-    }
-    let _ = hash_and_bind(dg1, DG1_LEN, ec, ec_len, dg1_off, forged, sa_len, moved);
-}
-
-#[test(should_fail)]
-fn binding_rejects_dg1_hash_past_econtent_length() {
-    let (dg1, ec, ec_len, dg1_off, sa, sa_len, ec_off) = test_chain(40, 24);
-    let mut forged = ec;
-    let moved = ec_len + DG1_HASH_PREFIX.len();
-    for i in 0..(DG1_HASH_PREFIX.len() + 32) {
-        forged[moved - DG1_HASH_PREFIX.len() + i] = ec[dg1_off - DG1_HASH_PREFIX.len() + i];
-    }
-    let _ = hash_and_bind(dg1, DG1_LEN, forged, ec_len, moved, sa, sa_len, ec_off);
-}
-
-#[test(should_fail)]
-fn binding_rejects_short_dg1() {
-    let (dg1, _, _, _, _, _, _) = test_chain(40, 24);
-    // Rebuild the chain over a 60-byte DG1: document number onwards unhashed.
-    let (ec, ec_len, dg1_off) = test_embed(sha256_var(dg1, 60), DG1_HASH_PREFIX, 40);
-    let (sa, sa_len, ec_off) = test_embed(sha256_var(ec, ec_len), MESSAGE_DIGEST_PREFIX, 24);
-    let _ = hash_and_bind(dg1, 60, ec, ec_len, dg1_off, sa, sa_len, ec_off);
-}
-
-#[test(should_fail)]
-fn binding_rejects_hash_without_its_der_prefix() {
-    let (dg1, _, _, _, _, _, _) = test_chain(40, 24);
-    // The DG1 hash is present and inside the hashed bytes, but not as DG1's
-    // DataGroupHash entry.
-    let wrong: [u8; 7] = [0x30, 0x25, 0x02, 0x01, 0x0B, 0x04, 0x20];
-    let (ec, ec_len, dg1_off) = test_embed(sha256_var(dg1, DG1_LEN), wrong, 40);
-    let (sa, sa_len, ec_off) = test_embed(sha256_var(ec, ec_len), MESSAGE_DIGEST_PREFIX, 24);
-    let _ = hash_and_bind(dg1, DG1_LEN, ec, ec_len, dg1_off, sa, sa_len, ec_off);
-}
-
-#[test(should_fail)]
-fn binding_rejects_wrong_dg1_header() {
-    let (mut dg1, _, _, _, _, _, _) = test_chain(40, 24);
-    dg1[0] = 0x6B; // DG11's tag
-    let (ec, ec_len, dg1_off) = test_embed(sha256_var(dg1, DG1_LEN), DG1_HASH_PREFIX, 40);
-    let (sa, sa_len, ec_off) = test_embed(sha256_var(ec, ec_len), MESSAGE_DIGEST_PREFIX, 24);
-    let _ = hash_and_bind(dg1, DG1_LEN, ec, ec_len, dg1_off, sa, sa_len, ec_off);
-}
-
-#[test]
-fn test_embed_places_hash_after_prefix() {
-    let h: [u8; 32] = [7; 32];
-    let (buf, len, off) = test_embed(h, DG1_HASH_PREFIX, 40);
-    assert(off == 40);
-    assert(len == 40 + 32 + 8);
-    assert(buf[39] == 0x20);
-    assert(buf[40] == 7);
-}
-
-fn test_embed<let P: u32>(hash: [u8; 32], prefix: [u8; P], offset: u32) -> ([u8; 200], u32, u32) {
-    let mut buf: [u8; 200] = [0; 200];
-    for i in 0..200 {
-        buf[i] = (i * 7) as u8;
-    }
-    for i in 0..P {
-        buf[offset - P + i] = prefix[i];
-    }
-    for i in 0..32 {
-        buf[offset + i] = hash[i];
-    }
-    (buf, offset + 32 + 8, offset)
-}
-
-fn test_chain(
-    dg1_offset: u32,
-    ec_offset: u32,
-) -> ([u8; DG1_MAX], [u8; 200], u32, u32, [u8; 200], u32, u32) {
-    let mut dg1: [u8; DG1_MAX] = [0x3C; DG1_MAX]; // '<'
-    for i in 0..5 {
-        dg1[i] = DG1_HEADER[i];
-    }
-    let (ec, ec_len, dg1_off) = test_embed(sha256_var(dg1, DG1_LEN), DG1_HASH_PREFIX, dg1_offset);
-    let (sa, sa_len, ec_off) = test_embed(sha256_var(ec, ec_len), MESSAGE_DIGEST_PREFIX, ec_offset);
-    (dg1, ec, ec_len, dg1_off, sa, sa_len, ec_off)
-}
+mod tests;
 
 // --- nullifier tests ---------------------------------------------------------
 
