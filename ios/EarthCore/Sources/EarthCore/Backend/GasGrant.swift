@@ -72,7 +72,8 @@ public enum GasGrant {
         public let status: Int
         public let message: String
 
-        public init(status: Int, message: String) { self.status = status; self.message = message }
+        /// The chain's own reason, in plain words where the app has them (1127, 1113).
+        public init(status: Int, message: String) { self.status = status; self.message = ChainErrors.explain(text: message) ?? message }
     }
 
     public enum Outcome: Sendable, Equatable {
