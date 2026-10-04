@@ -186,6 +186,13 @@ class PrivacyState {
      */
     var syncGeneration: Long = 0
     var verifiedGeneration: Long = -1
+    /**
+     * The height the last verified sync reached (the indexer's, checked
+     * against the chain's tree and tip). Audit 6 (M4): a tx's tip is bounded
+     * by it, and a pending mark whose timeout is far past it is resolved by
+     * the tx's status alone. Kept across resets (heights only grow).
+     */
+    var verifiedHeight: Long = 0
     /** UTC days a claim was broadcast for (so a claim is not offered twice). */
     val claimedDays: MutableSet<Long> = sortedSetOf()
     /** When the caretaker split was last cast (unix seconds), and the split (option -> percent). */
@@ -260,7 +267,7 @@ class PrivacyState {
             }
         })
         put("roots_verified", rootsVerified); put("roots_error", rootsError ?: JSONObject.NULL)
-        put("sync_generation", syncGeneration); put("verified_generation", verifiedGeneration)
+        put("sync_generation", syncGeneration); put("verified_generation", verifiedGeneration); put("verified_height", verifiedHeight)
         put("notes_next", notesNext); put("notes_height", notesHeight)
         put("nullifiers_next", nullifiersNext); put("identity_next", identityNext); put("zeroed_next", zeroedNext)
         put("notes", JSONArray().apply { notes.forEach { put(noteJson(it)) } })
@@ -328,7 +335,7 @@ class PrivacyState {
             }
             rootsVerified = j.optBoolean("roots_verified")
             rootsError = if (j.isNull("roots_error")) null else j.optString("roots_error").ifEmpty { null }
-            syncGeneration = j.optLong("sync_generation"); verifiedGeneration = j.optLong("verified_generation", -1)
+            syncGeneration = j.optLong("sync_generation"); verifiedGeneration = j.optLong("verified_generation", -1); verifiedHeight = j.optLong("verified_height", 0).coerceAtLeast(0)
             notesNext = j.optLong("notes_next"); notesHeight = j.optLong("notes_height")
             nullifiersNext = j.optLong("nullifiers_next"); identityNext = j.optLong("identity_next"); zeroedNext = j.optLong("zeroed_next")
             j.optJSONArray("notes")?.let { a -> for (i in 0 until a.length()) notes.add(noteFromJson(a.getJSONObject(i))) }
@@ -534,6 +541,7 @@ class PrivacyStore private constructor(private val dir: File?) {
         s.voidRecordHeights.addAll(old.voidRecordHeights)
         s.pendingMoves.addAll(old.pendingMoves)
         s.switchTarget = old.switchTarget
+        s.verifiedHeight = old.verifiedHeight
     }
 
     /**

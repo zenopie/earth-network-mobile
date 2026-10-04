@@ -155,7 +155,7 @@ class PrivacyWallet(
     private val roots: ChainRoots,
     private val now: () -> Long = { System.currentTimeMillis() / 1000 },
 ) {
-    private val engine = PrivateTxEngine(chainId, chain, prover)
+    private val engine = PrivateTxEngine(chainId, chain, prover, verifiedHeight = { store.state.verifiedHeight })
 
     val address: ShieldedAddress get() = keys.address
 
@@ -245,14 +245,33 @@ class PrivacyWallet(
         // lost answer or a killed app never leaves them spendable. They stay
         // pending until the chain is past the tx's timeout_height and says the
         // tx is not in a block (WalletSync.releaseStalePending).
-        val (result, _) = engine.run(assemble, memo, shownFee.get(), accepted = { hash, a, timeout ->
-            markPending(a.spends, a.stakeSpends, timeout, hash)
-            accepted(hash, timeout)
-        }, rejected = { hash, a ->
-            unmarkPending(a.spends, a.stakeSpends, hash)
-            rejected(hash)
-        })
+        val (result, _) = tipChecked {
+            engine.run(assemble, memo, shownFee.get(), accepted = { hash, a, timeout ->
+                markPending(a.spends, a.stakeSpends, timeout, hash)
+                accepted(hash, timeout)
+            }, rejected = { hash, a ->
+                unmarkPending(a.spends, a.stakeSpends, hash)
+                rejected(hash)
+            })
+        }
         return result
+    }
+
+    /**
+     * Audit 6 (M4): a tip far past the last verified sync height is either a
+     * stale sync (sync, and try once more) or a node lying about the tip
+     * (refused again: nothing was laid out, proven or sent).
+     */
+    private fun <T> tipChecked(block: () -> T): T = try {
+        block()
+    } catch (e: PrivateTxEngine.TipOutOfRange) {
+        sync()
+        requireVerified()
+        try {
+            block()
+        } catch (e: PrivateTxEngine.TipOutOfRange) {
+            throw SyncFirst("the node says the chain is at height ${e.tip}, far past the ${e.verified} this wallet verified; try another node or sync again")
+        }
     }
 
     /**
@@ -297,7 +316,7 @@ class PrivacyWallet(
     }
 
     /** What [run] would charge, without proving (placeholder nullifiers): for a confirm sheet. */
-    fun quote(assemble: (fee: Long) -> Assembled): PrivateTxEngine.Quote = engine.quote(assemble)
+    fun quote(assemble: (fee: Long) -> Assembled): PrivateTxEngine.Quote = tipChecked { engine.quote(assemble) }
 
     private fun markPending(spent: List<OwnedNote>, stake: List<OwnedStakeNote>, timeoutHeight: Long, hash: String) {
         val positions = spent.map { it.position }.toSet()
@@ -893,6 +912,11 @@ class PrivacyWallet(
             when {
                 r != null && r.code == 0 -> confirmMove(p.txHash)
                 r != null -> { s.voidRecordHeights.add(r.height); dropMove(p) }
+                // Audit 6 (M4): a timeout no sane tip gives is settled by the tx's status alone.
+                !PrivateTxEngine.timeoutSane(p.timeoutHeight, s.verifiedHeight) -> {
+                    val st = runCatching { roots.txStatus(p.txHash) }.getOrNull()
+                    if (st == network.erth.wallet.privacy.sync.TxStatus.MISSING) dropMove(p)
+                }
                 else -> {
                     val tip = runCatching { chain.tipHeight() }.getOrNull() ?: continue
                     if (tip > p.timeoutHeight) dropMove(p)
@@ -1367,6 +1391,9 @@ class PrivacyWallet(
                 r != null && (r.code == 0 || (r.code == VOTE_NULLIFIER_USED && r.codespace == VOTE_CODESPACE)) -> v.copy(confirmed = true)
                 r != null -> null
                 v.txHash == null || (v.until != null && tip != null && tip!! > v.until) -> null
+                // Audit 6 (M4): a timeout no sane tip gives is settled by the tx's status alone.
+                v.until != null && !PrivateTxEngine.timeoutSane(v.until, store.state.verifiedHeight) &&
+                    runCatching { roots.txStatus(v.txHash) }.getOrNull() == network.erth.wallet.privacy.sync.TxStatus.MISSING -> null
                 else -> continue
             }
             synchronized(store) {

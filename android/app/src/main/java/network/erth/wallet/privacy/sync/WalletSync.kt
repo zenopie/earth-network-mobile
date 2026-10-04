@@ -7,6 +7,7 @@ import network.erth.wallet.privacy.note.NoteCipher
 import network.erth.wallet.privacy.note.NotePlaintext
 import network.erth.wallet.privacy.note.OwnedNote
 import network.erth.wallet.privacy.note.OwnedStakeNote
+import network.erth.wallet.privacy.tx.PrivateTxEngine
 import network.erth.wallet.privacy.zk.Fr
 import network.erth.wallet.privacy.zk.Privacy
 
@@ -810,7 +811,10 @@ class WalletSync(
         }
         s.rootsVerified = problems.isEmpty()
         s.rootsError = problems.firstOrNull()
-        if (s.rootsVerified) s.verifiedGeneration = s.syncGeneration
+        if (s.rootsVerified) {
+            s.verifiedGeneration = s.syncGeneration
+            s.verifiedHeight = maxOf(s.verifiedHeight, roots.syncedHeight)
+        }
         return s.rootsVerified
     }
 
@@ -1035,6 +1039,11 @@ class WalletSync(
         fun release(pendingAt: Long?, until: Long?, hash: String?, readThrough: Long): Boolean = when {
             pendingAt == null -> false
             until == null -> now - pendingAt > PENDING_TIMEOUT_S
+            // Audit 6 (M4): a timeout no sane tip gives (a node inflated the
+            // tip at send) is never reached: the tx's status alone settles
+            // it, after the mempool's grace.
+            !PrivateTxEngine.timeoutSane(until, s.verifiedHeight) -> hash != null && now - pendingAt > PENDING_TIMEOUT_S &&
+                status.getOrPut(hash) { runCatching { chain.txStatus(hash) }.getOrNull() }.let { it == TxStatus.MISSING || it == TxStatus.FAILED }
             readThrough < until || tipHeight?.let { it > until } != true -> false
             // Marks from before audit 4 carry no hash: the timeout alone.
             hash == null -> true

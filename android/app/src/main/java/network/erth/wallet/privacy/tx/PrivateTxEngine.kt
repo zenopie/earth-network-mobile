@@ -120,12 +120,22 @@ class PrivateTxEngine(
     private val prover: Prover,
     /** The absolute cap on any private fee, in uerth (audit 3). */
     private val maxFee: Long = MAX_PRIVATE_FEE,
+    /**
+     * The height the wallet's last verified sync reached (null: no bound).
+     * Audit 6 (M4): the tip a timeout_height is set from must be within
+     * [MAX_TIP_AHEAD] of it.
+     */
+    private val verifiedHeight: () -> Long? = { null },
 ) {
     data class Quote(val gasLimit: Long, val fee: Long)
 
     /** The fee the chain asks is more than the sheet showed: ask the user again at [fee]. */
     class FeeAboveQuote(val fee: Long, val shown: Long) :
         IllegalStateException("the fee is now ${fee}uerth, more than the ${shown}uerth shown; confirm again")
+
+    /** The node's tip is not near the last verified sync height (audit 6, M4): sync and retry. */
+    class TipOutOfRange(val tip: Long, val verified: Long) :
+        IllegalStateException("the node says the chain is at height $tip, far from the $verified this wallet last verified; sync again")
 
     /** The fee the node's pricing asks is past the wallet's cap: nothing is proven or sent. */
     class FeeAboveCap(val fee: Long, val cap: Long) :
@@ -140,7 +150,17 @@ class PrivateTxEngine(
     fun quote(assemble: (fee: Long) -> Assembled, memo: String = ""): Quote =
         price(assemble, memo, timeoutHeight(), placeholders = true).first
 
-    private fun timeoutHeight(): Long = Math.addExact(chain.tipHeight(), TIMEOUT_BLOCKS)
+    /**
+     * The node's tip + [TIMEOUT_BLOCKS]. Audit 6 (M4): a tip past the last
+     * verified sync height by more than [MAX_TIP_AHEAD] is refused before
+     * anything is laid out: a node inflating it would leave the spent notes
+     * pending until a height the chain never reaches.
+     */
+    private fun timeoutHeight(): Long {
+        val tip = chain.tipHeight()
+        verifiedHeight()?.let { v -> if (!tipSane(tip, v)) throw TipOutOfRange(tip, v) }
+        return Math.addExact(tip, TIMEOUT_BLOCKS)
+    }
 
     /**
      * Prices, proves and broadcasts. The tx's [memo], timeout_height (the
@@ -310,6 +330,19 @@ class PrivateTxEngine(
 
         /** Blocks past the chain's tip a private tx stays valid for (its timeout_height; audit 3). */
         const val TIMEOUT_BLOCKS = 50L
+
+        /** How far past the last verified sync height a tip may be (audit 6, M4). */
+        const val MAX_TIP_AHEAD = 1_000L
+
+        fun tipSane(tip: Long, verified: Long): Boolean = tip >= 0 && verified >= 0 && tip - verified <= MAX_TIP_AHEAD
+
+        /**
+         * Whether a pending mark's timeout_height [until] could have come from
+         * a sane tip, given the last verified height now (heights only grow):
+         * an outsized one is resolved by the tx's status alone (audit 6, M4).
+         */
+        fun timeoutSane(until: Long, verifiedNow: Long): Boolean =
+            verifiedNow >= 0 && until - verifiedNow <= MAX_TIP_AHEAD + TIMEOUT_BLOCKS
 
         /** The absolute cap on a private fee: 2 ERTH (audit 3). */
         const val MAX_PRIVATE_FEE = 2_000_000L
