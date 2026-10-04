@@ -25,13 +25,13 @@ object PrivacyProver {
     /** Expected body size of a bb v5.0.0 UltraHonk proof, whatever the circuit. */
     const val PROOF_BYTES = 14_656
 
-    private enum class Kind(val file: String, val srsSize: Int, val publicInputs: Int) {
+    internal enum class Kind(val file: String, val srsSize: Int, val publicInputs: Int) {
         // Every kind asks the same SRS: bb honours only a process's first SRS
         // initialization, so whichever proves first sizes it for all three
         // (twice the next power of two above the largest gate count, stake's
         // 9,672; membership 5,659, action 8,098 and vote 9,072 fit under it:
         // 2^14 circuits, which the bundled 2^15 + 1 points cover).
-        MEMBERSHIP("membership", SRS_SIZE, 7),
+        MEMBERSHIP("membership", SRS_SIZE, 8),
         ACTION("action", SRS_SIZE, 6),
         STAKE("stake", SRS_SIZE, 11),
         VOTE("vote", SRS_SIZE, 7),

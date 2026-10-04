@@ -104,7 +104,7 @@ public final class PrivacyCircuitProver: @unchecked Sendable {
 
         public var publicInputs: Int {
             switch self {
-            case .membership: 7
+            case .membership: 8
             case .action: 6
             case .stake: 11
             case .vote: 7
