@@ -87,30 +87,19 @@ final class KeysAndNotesTests: XCTestCase {
         XCTAssertEqual(n, NoteCipher.tryDecrypt(ct, cm: n.cm(ownerPK: keys.ownerPK), keys: keys))
     }
 
-    /// Stake ciphertext v3 (PRIVACY_FORMATS.md section 3) against an
-    /// independent Python (cryptography) encryption: esk = 01..20 to this
-    /// wallet's ek, cm the note golden's (encryption binds it, decryption
-    /// recomputes it).
-    func testStakeCiphertextGoldenAndRoundTrip() throws {
+    /// The wallet stake note v2 (PRIVACY_FORMATS.md section 3; its goldens in
+    /// BlindNoteTests): a stake note opens for its owner only, only under its
+    /// own cm, never as a pool note.
+    func testStakeCiphertextRoundTrip() throws {
         let asset = PrivacyHash.assetID("derth/earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq")
-        let o = NoteCipher.StakeOpening(asset: asset, amount: 1_800_000, rho: Fr(UInt64(0x11)), rcm: Fr(UInt64(0x13)))
-        let cm = Vectors.fr("05e80ddba92b607efc03967707d42b7cbc814f5767040a9066902fb53b3ff5a3")
-        let ct = try NoteCipher.encryptStakeWith(esk: Data((1 ... 32).map { UInt8($0) }), o, ekPub: keys.ekPub, cm: cm)
-        XCTAssertEqual(NoteCipher.stakeCiphertextBytes, ct.count)
-        XCTAssertEqual(
-            "07a37cbc142093c8b755dc1b10e86cb426374ad16aa853ed0bdfc0b2b86d1c7cdcf30ca4a0dc1e2eb74b496a798822e18fe8843476dd456581afcd738b87c761" +
-                "00d7d974c63d1b9a2e1aa3b1967d97ef2b947a74ccf6ed19134c3f56f8cf8cac78e97f15145a9447c8f7eb0bef62efd4ef0c5ce5f6543f61cd3cde5d60ca8697" +
-                "368a1b5329eebc27dcb4d3f4763016bb034210a3a91ea7954a",
-            Vectors.hex(ct)
-        )
-        // The golden's cm is not this opening's, so the recipient's check refuses it.
-        XCTAssertNil(NoteCipher.tryDecryptStake(ct, cm: cm, keys: keys))
-        // A real stake note opens for its owner only, and only under its own cm.
-        let realCM = PrivacyHash.stakeCM(asset: asset, amount: o.amount, spc: PrivacyHash.stakePC(ownerPK: keys.ownerPK, rho: o.rho, rcm: o.rcm))
+        let o = NoteCipher.StakeOpening(asset: asset, amount: 1_800_000, rho: Fr(UInt64(0x11)), rcm: Fr(UInt64(0x13)),
+                                        label: StakeLabel(moveKey: Fr(UInt64(5)), moveTime: 1_790_000_000, exposed: 400_000))
+        let realCM = o.cm(ownerPK: keys.ownerPK)
         let real = try NoteCipher.encryptStake(o, ekPub: keys.ekPub, cm: realCM)
+        XCTAssertEqual(NoteCipher.stakeCiphertextBytes, real.count)
         XCTAssertEqual(o, NoteCipher.tryDecryptStake(real, cm: realCM, keys: keys))
         XCTAssertNil(NoteCipher.tryDecryptStake(real, cm: realCM, keys: other))
-        XCTAssertNil(NoteCipher.tryDecryptStake(real, cm: cm, keys: keys))
+        XCTAssertNil(NoteCipher.tryDecryptStake(real, cm: o.with(label: nil).cm(ownerPK: keys.ownerPK), keys: keys))
         // Neither of the pool's decryptors takes a stake ciphertext.
         XCTAssertNil(NoteCipher.tryDecrypt(real, cm: realCM, keys: keys))
     }

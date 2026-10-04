@@ -141,6 +141,113 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     /// The fake's epoch (9/10 derth minted per uerth at delegation).
     let epoch: UInt64 = 4
 
+    // MARK: x/shieldedstaking books, moves and the slash debt (chain dff3a9b)
+
+    /// Each validator's live book (backing, supply): rate 10/9 uerth per derth unless a test sets one.
+    var books: [String: (backing: BigUInt, supply: BigUInt)] = [:]
+    func book(_ v: String) -> (backing: BigUInt, supply: BigUInt) { books[v] ?? (BigUInt(10_000_000_000_000), BigUInt(9_000_000_000_000)) }
+    /// ERTH queued for delegation per validator (what a move leaves first): 0 unless a test sets it.
+    var queues: [String: BigUInt] = [:]
+    /// Validators x/staking has unbonded: a move from one leaves its queue first.
+    var unbonded: Set<String> = []
+    var minDelegation: UInt64 = 1
+    /// Applied to every book's backing just before a tx's credit check: the rate moving between quote and block.
+    var rateDriftPPM: UInt64 = 0
+    /// x/staking's longest unbonding time (MaxUnbonding); the label window adds 600 s.
+    var maxUnbondingSeconds: UInt64 = 21 * 86_400
+    var labelWindow: UInt64 { maxUnbondingSeconds + 600 }
+    /// types.ClearBeforeSlackSeconds: how far below ClearBefore(now) a proof's clear_before may be.
+    static let clearBeforeSlack: UInt64 = 3_600
+
+    func clearBefore() -> UInt64 { UInt64(now) <= labelWindow ? 0 : UInt64(now) - labelWindow }
+    /// Open moves: key -> (src, dst, move_time, credited).
+    struct Move { let key: Fr; let src: String; let dst: String; let moveTime: UInt64; let credited: UInt64 }
+    var moves: [Fr: Move] = [:]
+    /// The slash debt tree's rows in insertion order, each with its latest retained.
+    var debtKeys: [Fr] = []
+    var debtRetained: [Fr: UInt64] = [:]
+    func debtTree() -> DebtTree { try! DebtTree(debtKeys.map { ($0, debtRetained[$0]!) }) }
+    func debtRoot() -> Fr { debtTree().root() }
+    /// A slash of the move's source reaches it: its exposure now worth `retained` (a row written in the next block's BeginBlock).
+    func slashMove(_ key: Fr, retained: UInt64) {
+        let m = moves[key]!
+        precondition(retained <= m.credited)
+        if debtRetained[key] == nil { debtKeys.append(key) }
+        debtRetained[key] = min(retained, debtRetained[key] ?? .max)
+        block()
+    }
+    /// Every Query/DebtTree page asked (start), and every /debt_rows page (from_index).
+    var debtAsks: [String] = []
+    /// Whether the indexer serves /debt_rows (false: an older indexer; the wallet reads the chain's pages).
+    var indexerDebtRows = true
+    /// Set to make the indexer's debt stream lie about a retained (the root check must catch it).
+    var forgeDebtRetained: UInt64?
+
+    /// Query/DebtTree.
+    func debtTreeRead(start: UInt64, limit: Int) -> PrivacyReads.DebtTreePage {
+        debtAsks.append("chain:\(start)")
+        let rows = debtKeys.dropFirst(Int(start)).prefix(min(limit, 1000)).map { (key: $0, retained: debtRetained[$0]!) }
+        return PrivacyReads.DebtTreePage(rows: Array(rows), size: debtKeys.isEmpty ? 0 : UInt64(debtKeys.count) + 1, root: debtRoot(),
+                                         windowSeconds: labelWindow, clearBefore: clearBefore())
+    }
+
+    func validatorBookRead(_ v: String) -> PrivacyReads.Book {
+        let b = book(v)
+        return PrivacyReads.Book(backing: b.backing, supply: b.supply, pendingDelegation: queues[v] ?? 0, unbonded: unbonded.contains(v))
+    }
+
+    func debtRows(fromIndex: UInt64, limit: Int) async throws -> DebtRowsPage {
+        guard indexerDebtRows else { throw IndexerBaseMoved("no /debt_rows (test)") }
+        debtAsks.append("indexer:\(fromIndex)")
+        let n = UInt64(try aligned("debt_rows", fromIndex, limit))
+        let all = debtKeys
+        var rows: [(index: UInt64, key: Fr, retained: UInt64)] = []
+        var i = max(fromIndex, 1)
+        while i < fromIndex + n && i <= UInt64(all.count) {
+            let k = all[Int(i - 1)]
+            rows.append((i, k, forgeDebtRetained ?? debtRetained[k]!))
+            i += 1
+        }
+        let full = fromIndex + n <= UInt64(all.count) + 1
+        return DebtRowsPage(rows: rows, nextIndex: full ? fromIndex + n : (rows.last.map { $0.index + 1 } ?? max(fromIndex, 1)), complete: full,
+                            size: all.isEmpty ? 0 : UInt64(all.count) + 1, root: debtRoot())
+    }
+
+    /// floor(value x S / B) at `v`'s book (with the drift a test set), the chain's derthFor.
+    private func buys(_ v: String, _ value: BigUInt) -> BigUInt {
+        let (b0, sup) = book(v)
+        let b = b0 + b0 * BigUInt(rateDriftPPM) / 1_000_000
+        return sup == 0 ? value : value * sup / b
+    }
+
+    private func checkCredit(_ v: String, _ value: BigUInt, _ credit: UInt64) throws {
+        let buys = buys(v, value)
+        try need(buys >= BigUInt(minDelegation), "the value buys \(buys) derth, less than the minimum (code 1103)")
+        try need(credit >= minDelegation, "credits less than the minimum (code 1103)")
+        try need(BigUInt(credit) <= buys,
+                 "the delegation buys \(buys) derth at the live rate, less than the \(credit) it credits (the rate moved since the proof: re-quote with a margin)")
+    }
+
+    /// Every validator a private delegation or move named (x/staking's validators, as the LCD lists them).
+    var validators: [String] = []
+    private func noteValidator(_ v: String) { if !validators.contains(v) { validators.append(v) } }
+
+    func validatorOperators() async -> [String]? { validators }
+
+    /// A stake note of `keys`'s owner made elsewhere (another device's proof,
+    /// another owner's): its commitment and wallet stake ciphertext appended
+    /// as a proof output would, and the block ended.
+    @discardableResult
+    func plantStake(_ keys: PrivacyKeys, _ denom: String, _ amount: UInt64, label: StakeLabel? = nil) -> UInt64 {
+        let o = NoteCipher.StakeOpening(asset: PrivacyHash.assetID(denom), amount: amount, rho: NotePlaintext.randomField(), rcm: NotePlaintext.randomField(), label: label)
+        let cm = o.cm(ownerPK: keys.ownerPK)
+        let pos = stakeTree.append(cm)
+        stakeRows.append(StakeNoteRow(position: pos, height: height, cm: cm, ciphertext: try! NoteCipher.encryptStake(o, ekPub: keys.ekPub, cm: cm)))
+        noteValidator(String(denom.dropFirst(PrivacyWallet.derthPrefix.count)))
+        block()
+        return pos
+    }
+
     init() {
         noteRoots.insert(noteTree.root())
         identityRoots.insert(identityTree.root())
@@ -156,7 +263,8 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         noteRootSizes[noteTree.root()] = noteTree.size
         if noteRootHeights[noteTree.root()] == nil { noteRootHeights[noteTree.root()] = height }
         noteAt[height] = TreeState(size: noteTree.size, root: noteTree.size == 0 ? nil : noteTree.root())
-        if stakeTree.size > 0 { stakeRoots.insert(stakeTree.root()) }
+        // The empty tree's root too: the chain records it at the first block (chain dff3a9b).
+        stakeRoots.insert(stakeTree.root())
         identityAt[height] = TreeState(size: identityTree.size, root: identityTree.size == 0 ? nil : identityTree.root())
         stakeAt[height] = TreeState(size: stakeTree.size, root: stakeTree.size == 0 ? nil : stakeTree.root())
         blockTimes[height] = UInt64(now)
@@ -186,15 +294,6 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     /// MintNoteSplit: one pc and one ciphertext, several notes, each its own amount and position.
     func mintSplit(_ denom: String, _ values: [UInt64], _ pc: Fr, _ ct: Data) -> [UInt64] { values.map { mint(denom, $0, pc, ct) } }
 
-
-    @discardableResult
-    func mintStake(_ denom: String, _ amount: UInt64, _ spc: Fr, _ ct: Data) -> UInt64 {
-        precondition(ct.count == NoteCipher.blindCiphertextBytes, "a minted stake note needs its blind stake ciphertext")
-        let cm = PrivacyHash.stakeCM(asset: PrivacyHash.assetID(denom), amount: amount, spc: spc)
-        let pos = stakeTree.append(cm)
-        stakeRows.append(StakeNoteRow(position: pos, height: height, cm: cm, ciphertext: ct, denom: denom, amount: amount, spc: spc))
-        return pos
-    }
 
     /// The stake nullifier tree's root now (indexed.EmptyRoot before the first insert).
     func stakeNfRoot() -> Fr { try! IndexedTree(stakeNfValues).root() }
@@ -286,7 +385,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         simulated += 1
         let m = try check(tx, simulate: true).0
         for b in m.bundles { for a in b.actions { simulatedNullifiers.append(try Fr(bytes: a.nullifier)) } }
-        for n in m.stakeProof?.nullifiers ?? [] { simulatedNullifiers.append(try Fr(bytes: n)) }
+        if let p = m.stakeProof { for n in p.nullifiers + [p.creditNullifier] { simulatedNullifiers.append(try Fr(bytes: n)) } }
         return gasOf(m)
     }
 
@@ -430,38 +529,28 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         try need(m.totalFee > 0, "no fee")
     }
 
-    /// Whether the msg has the chain mint a stake note to spc_mint (its blind stake ciphertext is then required).
-    private func mintsStake(_ m: any PrivateMsg) -> Bool {
-        m is MsgShieldedDelegate || m is MsgUnlockPosition
+    private func lanes(_ m: any PrivateMsg) -> ChainLayout.Lanes {
+        ChainLayout.lanes(m) { id in self.positions[id].map { ($0.validator, $0.derth) } ?? ("", 0) }
     }
 
-    /// The stake proof's chain-supplied publics: asset, v_out.
-    private func stakeStatement(_ m: any PrivateMsg) -> (String?, UInt64) {
-        switch m {
-        case let m as MsgShieldedDelegate: return (PrivacyWallet.derthDenom(m.validator), 0)
-        case let m as MsgRestake: return (PrivacyWallet.derthDenom(m.validator), 0)
-        case let m as MsgShieldedUndelegate: return (PrivacyWallet.derthDenom(m.validator), m.amount)
-        case let m as MsgLockPosition: return (PrivacyWallet.derthDenom(m.validator), m.amount)
-        default: return (nil, 0)
-        }
-    }
+    private func spent(_ p: StakeProof) throws -> [Fr] { try (p.nullifiers + [p.creditNullifier]).map(f).filter { !$0.isZero } }
 
-    private func spent(_ p: StakeProof) throws -> [Fr] { try p.nullifiers.map(f).filter { !$0.isZero } }
-    private func created(_ p: StakeProof) throws -> [(Int, Fr)] {
-        try p.commitments.enumerated().map { ($0.offset, try f($0.element)) }.filter { !$0.1.isZero }
-    }
-
-    /// Shape per msg: (min spends, may create).
+    /// The chain's shape rule: a note-moving msg spends in its first slot and creates; a crediting one uses its credit lane; the rest are zero.
     private func stakeShape(_ m: any PrivateMsg, _ p: StakeProof) throws {
-        let (minSpends, creates): (Int, Bool)
-        switch m {
-        case is MsgShieldedDelegate, is MsgUpdatePosition, is MsgUnlockPosition, is MsgPositionVote: (minSpends, creates) = (0, false)
-        default: (minSpends, creates) = (1, true)
+        let notes = !(m is MsgUpdatePosition) && !(m is MsgPositionVote)
+        let credit = m is MsgRedelegate
+        if notes {
+            try need(!(try f(p.nullifiers[0])).isZero, "the stake proof spends a note (or pads with its own nullifier) in its first slot")
+            try need(!(try f(p.commitment)).isZero, "the stake proof creates a note (the merged note, the change or a zero note)")
+        } else {
+            try need((try f(p.nullifiers[0])).isZero && (try f(p.nullifiers[1])).isZero && (try f(p.commitment)).isZero,
+                     "the stake proof spends and creates nothing for this msg")
         }
-        let n = try spent(p).count
-        try need(minSpends == 0 ? n == 0 : n >= minSpends, "stake proof spends \(n)")
-        try need(creates || (try created(p)).isEmpty, "stake proof creates")
-        if m is MsgRestake { try need(!(try created(p)).isEmpty, "restake creates nothing") }
+        if credit {
+            try need(!(try f(p.creditNullifier)).isZero && !(try f(p.creditCommitment)).isZero, "the credit lane spends (or pads) and creates")
+        } else {
+            try need((try f(p.creditNullifier)).isZero && (try f(p.creditCommitment)).isZero, "this msg credits no second asset")
+        }
     }
 
     /// A ballot's max_predecessor (x/assembly: opened - 86400; the fake opens ballots as it is asked).
@@ -557,6 +646,22 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             try need(out >= m.minAmountOut, "slippage: got \(out), want >= \(m.minAmountOut)")
         case let m as MsgAddLiquidityShielded:
             if !m.minShares.isEmpty { try need(shares(rem["uerth"]!, rem["uanml"]!) >= BigInt(m.minShares)!, "below min_shares") }
+        case let m as MsgShieldedDelegate:
+            try need(m.amount >= minDelegation, "a delegation is at least \(minDelegation)uerth")
+            try checkCredit(m.validator, BigUInt(m.amount), m.derth)
+        case let m as MsgRedelegate:
+            try need(m.srcValidator != m.dstValidator, "source and destination are the same validator (code 1120)")
+            try need(m.moveTime >= 1 && m.moveTime <= UInt64(now) && UInt64(now) - m.moveTime <= 600,
+                     "move_time \(m.moveTime) is not within 600s before the block time \(now) (name a recent block's time)")
+            let (bA, sA) = book(m.srcValidator)
+            let u = BigUInt(m.amount) * bA / sA
+            try need(u >= BigUInt(minDelegation), "the redelegation is worth less than the minimum (code 1103)")
+            // What arrives (chain b46a4bb): pro rata out of the queue and the
+            // bonded stake, up to bondedDust + a truncated uerth short of u; all
+            // of it only out of an unbonded source's queue.
+            let q = queues[m.srcValidator] ?? 0
+            let arrived = unbonded.contains(m.srcValidator) && u <= q ? u : (u > 1001 ? u - 1001 : 0)
+            try checkCredit(m.dstValidator, arrived, m.dstDerth)
         case let m as MsgUpdatePosition:
             try need(positions[m.positionID]?.ownerTag == (try f(m.stake.ownerTag)), "not the position's owner")
         case let m as MsgUnlockPosition:
@@ -571,8 +676,8 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             try need(m.weight > 0, "weight must be positive")
             // Chain C-L3: at most three significant digits.
             try need((try? PrivacyWallet.voteWeight(m.weight)) == m.weight, "weight has more than 3 significant digits")
-            // Chain 48b631c: exactly four slots, used ones first (at least one), distinct, zeros after.
-            try need(m.voteNullifiers.count == MsgStakeVote.maxVoteNotes, "a stake vote carries exactly 4 vote nullifiers")
+            // Chain dff3a9b: exactly two slots, used ones first (at least one), distinct, zeros after.
+            try need(m.voteNullifiers.count == MsgStakeVote.maxVoteNotes, "a stake vote carries exactly 2 vote nullifiers")
             try need(m.voteNullifiers.allSatisfy { $0.count == 32 }, "vote_nullifiers")
             let vs = try m.voteNullifiers.map(f)
             let used = Array(vs.prefix { !$0.isZero })
@@ -628,13 +733,17 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         try need(UnsignedTx.build(m, tx: tx.txFields) == txBytes, "tx bytes are not canonical")
         // Every action's output ciphertext exactly 217 bytes, dummies included.
         for b in m.bundles { for a in b.actions { try need(a.ciphertext.count == NoteCipher.ciphertextBytes, "action ciphertext \(a.ciphertext.count) bytes") } }
-        // Stake proofs: exactly two ciphertext slots, empty iff the commitment is zero, else 153 bytes.
+        // Stake proofs (chain dff3a9b): every field 32 bytes, a 201-byte ciphertext exactly for a non-zero commitment.
         if let p = m.stakeProof {
-            try need(p.ciphertexts.count == 2, "stake proof has \(p.ciphertexts.count) ciphertexts")
-            for i in 0 ..< 2 {
-                let zero = p.commitments.count > i && p.commitments[i].allSatisfy { $0 == 0 }
-                try need(zero ? p.ciphertexts[i].isEmpty : p.ciphertexts[i].count == NoteCipher.stakeCiphertextBytes, "stake ciphertext \(i)")
+            try need(p.nullifiers.count == 2, "a stake proof carries exactly two nullifiers")
+            for b in p.nullifiers + [p.anchor, p.ownerTag, p.commitment, p.creditNullifier, p.creditCommitment, p.debtRoot] {
+                try need(b.count == 32, "a stake field of \(b.count) bytes")
             }
+            for (cm, ct) in [(p.commitment, p.ciphertext), (p.creditCommitment, p.creditCiphertext)] {
+                let zero = cm.allSatisfy { $0 == 0 }
+                try need(zero ? ct.isEmpty : ct.count == NoteCipher.stakeCiphertextBytes, "stake ciphertext: \(ct.count) bytes")
+            }
+            try need((p.clearBefore == 0) == p.debtRoot.allSatisfy { $0 == 0 }, "debt_root is zero when clear_before is 0 (the proof clears no label)")
         }
         // timeout_height: the block being built must not be past it (0: none).
         try need(tx.txFields.timeoutHeight == 0 || height <= tx.txFields.timeoutHeight, "tx timed out")
@@ -661,36 +770,37 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
 
         let stake = m.stakeProof
         if let stake {
-            try need(stake.nullifiers.count == 2 && stake.commitments.count == 2 && stake.ciphertexts.count <= 2, "stake proof shape")
             try need(stake.proof.count == PrivateTxEngine.proofBytes, "a stake proof is exactly \(PrivateTxEngine.proofBytes) bytes")
-            if mintsStake(m) {
-                try need(stake.spcCiphertext.count == NoteCipher.blindCiphertextBytes, "spc_ciphertext required")
-            } else {
-                try need(stake.spcCiphertext.isEmpty, "spc_ciphertext only for a msg that mints")
-            }
             try stakeShape(m, stake)
             let nfs = try spent(stake)
             try need(!nfs.contains { stakeNullifiers[$0] != nil }, "stake nullifier spent")
             try need(Set(nfs).count == nfs.count, "duplicate stake nullifier")
             if !nfs.isEmpty { try need(stakeRoots.contains(try f(stake.anchor)), "unknown stake anchor") }
+            // Every stake proof names the current clear_before (within an hour below it) and debt root (chain b46a4bb checkStakeClear).
+            let cb = clearBefore()
+            if cb == 0 {
+                try need(stake.clearBefore == 0, "clear_before must be 0 while the block time is within the label window")
+            } else {
+                let lo: UInt64 = cb > Self.clearBeforeSlack ? cb - Self.clearBeforeSlack : 1
+                try need(stake.clearBefore >= lo && stake.clearBefore <= cb, "clear_before \(stake.clearBefore) is not within [\(lo), \(cb)] (code 1113)")
+                try need((try f(stake.debtRoot)) == debtRoot(), "debt root is not the current slash debt root (a slash reached a redelegation since: re-prove)")
+            }
             if !simulate {
                 guard !prover.stakes.isEmpty else { throw Refused(why: "no stake proof") }
                 let w = prover.stakes.removeFirst()
-                let (denom, vOut) = stakeStatement(m)
-                let expect = [try f(stake.anchor), denom.map(PrivacyHash.assetID) ?? .zero] + (try stake.nullifiers.map(f)) +
-                    (try stake.commitments.map(f)) + [PrivacyHash.u64(0), PrivacyHash.u64(vOut), try f(stake.spcMint), try f(stake.ownerTag), sighash]
-                try need(w.publicInputs() == expect, "stake proof is for other public inputs")
+                try need(w.publicInputs() == (try ChainLayout.stakePublicInputs(stake, lanes(m), sighash)), "stake proof is for other public inputs")
             }
         }
         if let m = m as? MsgStakeVote {
             try need(m.proof.count == PrivateTxEngine.proofBytes, "a vote proof is exactly \(PrivateTxEngine.proofBytes) bytes")
             guard let snap = snapshots[m.proposalID] else { throw Refused(why: "no open snapshot for proposal \(m.proposalID)") }
+            try need(m.debtRoot.count == 32 && (try f(m.debtRoot)) == debtRoot(),
+                     "debt root is not the current slash debt root (a slash reached a redelegation since: re-prove)")
             if !simulate {
                 guard !prover.votes.isEmpty else { throw Refused(why: "no vote proof") }
                 let w = prover.votes.removeFirst()
-                let expect = [snap.root, snap.nfRoot, PrivacyHash.assetID(PrivacyWallet.derthDenom(m.validator)), PrivacyHash.u64(m.weight),
-                              PrivacyHash.u64(m.proposalID)] + (try m.voteNullifiers.map(f)) + [sighash]
-                try need(w.publicInputs() == expect, "vote proof is for other public inputs")
+                try need(w.publicInputs() == (try ChainLayout.votePublicInputs(m, noteRoot: snap.root, nfRoot: snap.nfRoot, sighash: sighash)),
+                         "vote proof is for other public inputs")
             }
         }
         if let mm = m as? any MembershipMsg {
@@ -720,13 +830,14 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         }
         if let stake {
             for nf in try spent(stake) { stakeNullifiers[nf] = height; stakeNfValues.append(nf) }
-            for (i, c) in try created(stake) {
+            for (cm, ct) in [(stake.commitment, stake.ciphertext), (stake.creditCommitment, stake.creditCiphertext)] {
+                let c = try f(cm)
+                if c.isZero { continue }
                 let pos = stakeTree.append(c)
-                stakeRows.append(StakeNoteRow(position: pos, height: height, cm: c, ciphertext: stake.ciphertexts[i], denom: nil, amount: nil, spc: nil))
+                stakeRows.append(StakeNoteRow(position: pos, height: height, cm: c, ciphertext: ct))
             }
         }
         var events: [(type: String, attributes: [String: String])] = []
-        let spcMint = try stake.map { try f($0.spcMint) }
         switch m {
         case let m as MsgSend:
             for (d, v) in rem { unshielded[m.receiver, default: [:]][d, default: 0] += v }
@@ -768,8 +879,16 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         case let m as MsgVoteProposalPrivate:
             votes.append((m.proposalID, m.option.rawValue))
         case let m as MsgShieldedDelegate:
-            mintStake(PrivacyWallet.derthDenom(m.validator), m.amount * 9 / 10, spcMint!, stake!.spcCiphertext)
+            noteValidator(m.validator)
+            events.append((type: "shieldedstaking_delegate", attributes: ["validator": m.validator, "amount": String(m.amount), "derth": String(m.derth)]))
         case is MsgRestake: break
+        case let m as MsgRedelegate:
+            let key = try f(m.stake.creditNullifier)
+            noteValidator(m.srcValidator); noteValidator(m.dstValidator)
+            moves[key] = Move(key: key, src: m.srcValidator, dst: m.dstValidator, moveTime: m.moveTime, credited: m.dstDerth)
+            events.append((type: "shieldedstaking_redelegate", attributes: ["src_validator": m.srcValidator, "dst_validator": m.dstValidator,
+                                                                             "derth": String(m.amount), "credited": String(m.dstDerth),
+                                                                             "move_key": key.hex, "move_time": String(m.moveTime)]))
         case let m as MsgShieldedUndelegate:
             // Booked at the live rate and queued: the chain pays it at maturity by itself.
             let id = nextPayoutID
@@ -811,9 +930,8 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         case let m as MsgUpdatePosition:
             positions[m.positionID]!.splits = Dictionary(uniqueKeysWithValues: m.splits.map { ($0.optionID, $0.percent) })
         case let m as MsgUnlockPosition:
-            let p = positions.removeValue(forKey: m.positionID)!
+            _ = positions.removeValue(forKey: m.positionID)!
             positionOrder.removeAll { $0 == m.positionID }
-            mintStake(PrivacyWallet.derthDenom(p.validator), p.derth, spcMint!, stake!.spcCiphertext)
         case let m as MsgPositionVote:
             positionVotes.append((m.positionID, m.proposalID))
         case let m as MsgSetCaretaker:
@@ -1128,4 +1246,56 @@ struct FakeReads: PrivacyChainReads, @unchecked Sendable {
     func stakeNullifierTree(start: UInt64, limit: Int) async throws -> PrivacyReads.NfTreePage { chain.nfTreeRead(start: start, limit: limit) }
 
     func positions() async throws -> [PrivacyReads.Position] { chain.positionReads() }
+
+    func debtTree(start: UInt64, limit: Int) async throws -> PrivacyReads.DebtTreePage { chain.debtTreeRead(start: start, limit: limit) }
+
+    func validatorBook(_ valoper: String) async throws -> PrivacyReads.Book { chain.validatorBookRead(valoper) }
+
+    func minDelegation() async throws -> UInt64 { chain.minDelegation }
+}
+
+/// The chain's layout of the stake and vote circuits' public inputs
+/// (x/shieldedstaking StakeProof.PublicInputs with each msg's StakeLanes, and
+/// MsgStakeVote.VotePublicInputs), pinned to the chain's own output by
+/// PrivateMsgsTests; FakeChain checks every witness against it (as Android's).
+enum ChainLayout {
+    /// What the chain supplies a stake proof: lane A's denom, v_in, v_out; the credit lane's denom, cr_v_in, cr_move_time.
+    struct Lanes {
+        var denom: String?
+        var vIn: UInt64
+        var vOut: UInt64
+        var crDenom: String? = nil
+        var crVIn: UInt64 = 0
+        var crMoveTime: UInt64 = 0
+    }
+
+    /// `position` names an unlocked position's validator and derth (the keeper fills an unlock's lanes in).
+    static func lanes(_ m: any PrivateMsg, position: (UInt64) -> (String, UInt64) = { _ in ("", 0) }) -> Lanes {
+        switch m {
+        case let m as MsgShieldedDelegate: return Lanes(denom: PrivacyWallet.derthDenom(m.validator), vIn: m.derth, vOut: 0)
+        case let m as MsgRestake: return Lanes(denom: PrivacyWallet.derthDenom(m.validator), vIn: 0, vOut: 0)
+        case let m as MsgShieldedUndelegate: return Lanes(denom: PrivacyWallet.derthDenom(m.validator), vIn: 0, vOut: m.amount)
+        case let m as MsgLockPosition: return Lanes(denom: PrivacyWallet.derthDenom(m.validator), vIn: 0, vOut: m.amount)
+        case let m as MsgUnlockPosition:
+            let (v, d) = position(m.positionID)
+            return Lanes(denom: PrivacyWallet.derthDenom(v), vIn: d, vOut: 0)
+        case let m as MsgRedelegate:
+            return Lanes(denom: PrivacyWallet.derthDenom(m.srcValidator), vIn: 0, vOut: m.amount, crDenom: PrivacyWallet.derthDenom(m.dstValidator),
+                         crVIn: m.dstDerth, crMoveTime: m.moveTime)
+        default: return Lanes(denom: nil, vIn: 0, vOut: 0)
+        }
+    }
+
+    static func stakePublicInputs(_ p: StakeProof, _ l: Lanes, _ sighash: Fr) throws -> [Fr] {
+        func f(_ b: Data) throws -> Fr { try Fr(bytes: b) }
+        return [try f(p.anchor), l.denom.map(PrivacyHash.assetID) ?? .zero, try f(p.nullifiers[0]), try f(p.nullifiers[1]),
+                try f(p.commitment), PrivacyHash.u64(l.vIn), PrivacyHash.u64(l.vOut), PrivacyHash.u64(p.clearBefore), try f(p.debtRoot),
+                l.crDenom.map(PrivacyHash.assetID) ?? .zero, try f(p.creditNullifier), try f(p.creditCommitment), PrivacyHash.u64(l.crVIn),
+                PrivacyHash.u64(l.crMoveTime), try f(p.ownerTag), sighash]
+    }
+
+    static func votePublicInputs(_ m: MsgStakeVote, noteRoot: Fr, nfRoot: Fr, sighash: Fr) throws -> [Fr] {
+        [noteRoot, nfRoot, try Fr(bytes: m.debtRoot), PrivacyHash.assetID(PrivacyWallet.derthDenom(m.validator)), PrivacyHash.u64(m.weight),
+         PrivacyHash.u64(m.proposalID)] + (try m.voteNullifiers.map { try Fr(bytes: $0) }) + [sighash]
+    }
 }

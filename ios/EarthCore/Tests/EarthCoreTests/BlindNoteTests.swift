@@ -42,31 +42,44 @@ final class BlindNoteTests: XCTestCase {
         XCTAssertNil(NoteCipher.tryDecryptBlind(try NoteCipher.encryptWith(esk: esk, note, to: owner), cm: cm, denom: "uerth", value: 1_234_567, ek: ek, ownerPK: owner.ownerPK))
     }
 
-    /// The blind stake ciphertext (spc_ciphertext) against the chain's goldenBlindStakeCT and orchardvectors.
-    func testBlindStakeMatchesTheChainsGolden() throws {
+    /// The wallet stake note v2 (wallet-defined, PRIVACY_FORMATS 3: 201
+    /// bytes, the label inside) under the same keys, byte for byte Android's
+    /// goldens (BlindNoteTest.kt, cross-checked by an independent Python
+    /// decryption): an unlabelled note (the cm the chain's vectors pin) and a
+    /// labelled one.
+    func testWalletStakeNoteMatchesItsGolden() throws {
         let v = Vectors.obj("blind")
-        let ct = try NoteCipher.encryptBlindStakeWith(esk: esk, rho: Fr(UInt64(11)), rcm: Fr(UInt64(13)), ekPub: owner.ekPub,
-                                                     memo: Data("golden memo".utf8))
-        XCTAssertEqual(177, ct.count)
-        XCTAssertEqual(Self.goldenStake, Vectors.hex(ct))
-        XCTAssertEqual(v["stake_ct"] as? String, Vectors.hex(ct))
+        XCTAssertEqual(v["wallet_stake_ciphertext_bytes"] as? String, String(NoteCipher.stakeCiphertextBytes))
+        let asset = PrivacyHash.assetID(Vectors.json["derth_denom"] as! String)
+        let plain = NoteCipher.StakeOpening(asset: asset, amount: 1_800_000, rho: Fr(UInt64(11)), rcm: Fr(UInt64(13)))
+        let cm = plain.cm(ownerPK: owner.ownerPK)
+        XCTAssertEqual(v["stake_cm_derth_1800000"] as? String, cm.hex)
+        let ct = try NoteCipher.encryptStakeWith(esk: esk, plain, ekPub: owner.ekPub, cm: cm)
+        XCTAssertEqual(201, ct.count)
+        XCTAssertEqual(Self.goldenStakeV2, Vectors.hex(ct))
+        XCTAssertEqual(plain, NoteCipher.tryDecryptStake(ct, cm: cm, ek: ek, ownerPK: owner.ownerPK))
+
+        let labelled = plain.with(label: StakeLabel(moveKey: Fr(UInt64(0x4d4b)), moveTime: 1000, exposed: 200))
+        let lcm = labelled.cm(ownerPK: owner.ownerPK)
+        XCTAssertEqual(v["stake_cm_derth_1800000_labelled"] as? String, lcm.hex)
+        let lct = try NoteCipher.encryptStakeWith(esk: esk, labelled, ekPub: owner.ekPub, cm: lcm)
+        XCTAssertEqual(Self.goldenStakeV2Labelled, Vectors.hex(lct))
+        XCTAssertEqual(labelled, NoteCipher.tryDecryptStake(lct, cm: lcm, ek: ek, ownerPK: owner.ownerPK))
+        // The label is bound by the cm: the same body under the unlabelled cm opens as nothing.
+        XCTAssertNil(NoteCipher.tryDecryptStake(lct, cm: cm, ek: ek, ownerPK: owner.ownerPK))
+        let wrong = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: Data(repeating: 9, count: 32))
+        XCTAssertNil(NoteCipher.tryDecryptStake(ct, cm: cm, ek: wrong, ownerPK: owner.ownerPK))
+        var bad = ct
+        bad[150] ^= 1
+        XCTAssertNil(NoteCipher.tryDecryptStake(bad, cm: cm, ek: ek, ownerPK: owner.ownerPK))
+        // A v2 pool ciphertext never opens as a stake note (another length and salt).
+        XCTAssertNil(NoteCipher.tryDecryptStake(try NoteCipher.encryptBlindWith(esk: esk, note, ekPub: owner.ekPub), cm: cm, ek: ek, ownerPK: owner.ownerPK))
         XCTAssertEqual(v["note_ct"] as? String, Self.goldenV2)
-        let denom = Vectors.json["derth_denom"] as! String
-        let spc = PrivacyHash.stakePC(ownerPK: owner.ownerPK, rho: Fr(UInt64(11)), rcm: Fr(UInt64(13)))
-        XCTAssertEqual(v["spc"] as? String, spc.hex)
-        let cm = try Fr(hex: v["stake_cm_derth_1800000"] as! String)
-        let opened = NoteCipher.tryDecryptBlindStake(ct, cm: cm, denom: denom, amount: 1_800_000, ek: ek, ownerPK: owner.ownerPK)
-        XCTAssertEqual(Fr(UInt64(11)), opened?.rho)
-        XCTAssertEqual(Fr(UInt64(13)), opened?.rcm)
-        // The published amount and the cm bind it; v2 and blind stake never open as each other.
-        XCTAssertNil(NoteCipher.tryDecryptBlindStake(ct, cm: cm, denom: denom, amount: 1_800_001, ek: ek, ownerPK: owner.ownerPK))
-        let v2 = try NoteCipher.encryptBlindWith(esk: esk, note, ekPub: owner.ekPub)
-        XCTAssertNil(NoteCipher.tryDecryptBlindStake(v2, cm: cm, denom: denom, amount: 1_800_000, ek: ek, ownerPK: owner.ownerPK))
-        XCTAssertNil(NoteCipher.tryDecryptBlind(ct, cm: note.cm(ownerPK: owner.ownerPK), denom: "uerth", value: 1_234_567, ek: ek, ownerPK: owner.ownerPK))
     }
 
-    /// chain zk/privacy formats_test.go goldenBlindStakeCT (Python cross-checked).
-    static let goldenStake = "79a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51aee8945675bfea325467df067f447ff0537e1b1b9afd7e07645f504ccb3e3191db98002dd3d6117d2707071721157989713d23aa9e382fc26cd5c51222610d5fa1f25d4bc3ef9fe7634b319e691e6a1d4d90865917da6b72c6b247658114c4bdf82055ede3b4e2fe90ae1406fac3aceaf280ecf08dd8ce8f3e572daa238d8157fe50fe43d980ffd1b4fc4b9af1526c7b568"
+    /// The wallet stake note v2 of (derth, 1800000, rho 11, rcm 13), unlabelled and labelled (0x4d4b, 1000, 200): Android's bytes.
+    static let goldenStakeV2 = "79a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a4acda0bd0608c8007ac2122efac709dab693cd96e83cab5ab4603f747f3c136214b4f26db58f5c9a523c7936ed9eded5dcca94061e0f2cde9565e931dbbcde137eb70d7626ff5a5f7f87ca16bf918c833c0e751a006159e638180e36d8c9390721e533f265d6c082c3b39282802bdef58ce478ee525812f7a2409ea2d7582e980be9bd239897e0a849e9bb197f09bdd3bd37309625b149d5c16b7a883c2e3573786ab371c01d82e218"
+    static let goldenStakeV2Labelled = "79a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a524088d6a8c8bfb2c4c18834e3dca9e08f49563fb5d05b22c0fa65732779254918403cfc2bb8d36aa9c8839639732209620e6666fa89c49fcda050c3d5d4324a3e316bcad126dba984ba60ca4edde3f2e3e4dd565e9d4bd8b85195072085bef5f2454561786101b50164958e27585a23ebbbafff57047de9813082e6a96f0034a597ea4639cad38084f5cf40e3808eee9eb85a4eb63fef8621553805d590d6d5101e93f8be0b7e60e3"
 
     /// A low-order public key (all zeros) yields an all-zero shared secret:
     /// refused on encrypt and silently not ours on decrypt, as on Android.

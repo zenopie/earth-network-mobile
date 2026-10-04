@@ -179,9 +179,8 @@ final class Audit3Tests: XCTestCase {
         try await w.sync()
         _ = try await w.delegate(validator: v1, amount: 1_000_000)
         try await w.sync()
-        let m = try StakePlan.selfMint(try PrivacyKeys.fromMnemonic(bob))
-        chain.mintStake("derth/\(v1)", 7, PrivacyHash.stakePC(ownerPK: Fr(UInt64(5)), rho: m.rho, rcm: m.rcm), m.ciphertext)
-        chain.emptyBlock()
+        // Someone else's stake lands after this wallet's sync.
+        chain.plantStake(try PrivacyKeys.fromMnemonic(bob), "derth/\(v1)", 7)
         chain.openProposal(1)
         await assertThrowsAsync({ try await w.stakeVote(proposalID: 1, validator: self.v1, options: self.yes) }) { $0 is PrivacyWallet.SyncFirst }
         try await w.sync()

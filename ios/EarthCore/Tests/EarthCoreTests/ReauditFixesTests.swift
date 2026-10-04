@@ -471,9 +471,10 @@ final class ReauditFixesTests: XCTestCase {
         XCTAssertNil(WalletSync.publicAmount("9223372036854775808uerth"))
         XCTAssertEqual(UInt64(Int64.max), WalletSync.publicAmount("9223372036854775807uerth")?.value)
         XCTAssertNil(WalletSync.publicAmount("-1uerth"))
+        // A stake row is [position, height, cm, ciphertext] (format 2, chain dff3a9b); an older row's extra columns are ignored, never trusted.
         let page = try HTTPPrivacyIndexer.parseStakeNotes(JSON(try JSONSerialization.jsonObject(with: Data(
-            #"{"notes":[[0,1,"\#(String(repeating: "00", count: 32))",null,"derth/x","18446744073709551615",null]],"next_pos":1,"complete":true,"synced_height":1}"#.utf8))))
-        XCTAssertNil(page.rows[0].amount)
+            #"{"format":2,"notes":[[0,1,"\#(String(repeating: "00", count: 32))","AAAA"],[1,1,"\#(String(repeating: "00", count: 32))",null,"derth/x","18446744073709551615",null]],"next_pos":2,"complete":true,"synced_height":1}"#.utf8))))
+        XCTAssertEqual([3, 0], page.rows.map(\.ciphertext.count))
         XCTAssertEqual(UInt64(Int64.max), PrivacyWallet.derthValue(UInt64(Int64.max), rate: 2.5))
         XCTAssertEqual(0, PrivacyWallet.derthValue(5, rate: -1))
     }

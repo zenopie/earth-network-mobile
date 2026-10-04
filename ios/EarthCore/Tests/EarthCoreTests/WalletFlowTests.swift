@@ -104,10 +104,12 @@ final class WalletFlowTests: XCTestCase {
         XCTAssertEqual(1_000_000, chain.unshieldedTo(receiver))
         XCTAssertLessThan(bal(a, "uerth"), before - 1_000_000)
 
-        // Stake: a derth stake note, minted to our stake pc.
+        // Stake: the quoted derth (9/10 at the fake's rate, less the drift margin) in a note of ours, its input padded.
         _ = try await a.delegate(validator: validator, amount: 2_000_000)
         try await a.sync()
-        XCTAssertEqual(1_800_000, bal(a, derth))
+        let q1 = (chain.lastMsg as! MsgShieldedDelegate).derth
+        XCTAssertEqual(1_800_000 - (1_800_000 * PrivacyWallet.creditMarginPPM + 999_999) / 1_000_000, q1)
+        XCTAssertEqual(q1, bal(a, derth))
         XCTAssertEqual(1, a.stakeNotes.count)
         // Owner-locked: stake cannot be sent or unshielded.
         await assertThrowsAsync({ try await a.send(to: b.address, denom: self.derth, amount: 1) }) { $0 is PrivacyError }
@@ -118,19 +120,20 @@ final class WalletFlowTests: XCTestCase {
         chain.openProposal(9)
         let fresh = try wallet(chain, alice)
         try await fresh.sync()
-        // A later stake note moves the stake tree past the snapshot.
+        // A top-up after the snapshot merges into the note (spending it).
         _ = try await fresh.delegate(validator: validator, amount: 100_000)
         try await fresh.sync()
+        let q2 = (chain.lastMsg as! MsgShieldedDelegate).derth
         let items9 = try await fresh.stakeVoteItems(proposalID: 9)
         _ = try await fresh.castStakeVote(proposalID: 9, item: try XCTUnwrap(items9.first), options: yes)
         try await fresh.sync()
+        // The old note votes the value it held at the snapshot; the merged one is not in it.
         XCTAssertEqual(1, chain.stakeVotes.count)
         XCTAssertEqual(9, chain.stakeVotes[0].0)
         XCTAssertEqual(validator, chain.stakeVotes[0].1)
-        XCTAssertEqual(1_800_000, chain.stakeVotes[0].2)
-        XCTAssertEqual(1_890_000, bal(fresh, derth))
-        XCTAssertEqual(2, fresh.stakeNotes.count)
-        // Final: the note voted on 9, the later one is not in its snapshot.
+        XCTAssertEqual(try PrivacyWallet.voteWeight(q1), chain.stakeVotes[0].2)
+        XCTAssertEqual(q1 + q2, bal(fresh, derth))
+        XCTAssertEqual(1, fresh.stakeNotes.filter(\.unspent).count)
         let left = try await fresh.stakeVoteItems(proposalID: 9)
         XCTAssertTrue(left.isEmpty)
 
@@ -227,22 +230,30 @@ final class WalletFlowTests: XCTestCase {
         XCTAssertGreaterThan(bal(a, "uanml"), t0)
         XCTAssertGreaterThan(bal(a, "uerth"), e0 - 10_000)
 
-        // Staking: delegate twice (two stake notes), restake them into one.
+        // Staking: delegate twice without a sync between (as two devices
+        // would): each pads its input, two notes; the user merges them.
         _ = try await a.delegate(validator: validator, amount: 1_000_000)
         _ = try await a.delegate(validator: validator, amount: 1_000_000)
         try await a.sync()
-        XCTAssertEqual(1_800_000, bal(a, derth))
+        let held0 = bal(a, derth)
+        XCTAssertEqual(2 * (900_000 - 9), held0)
         XCTAssertEqual(2, a.stakeNotes.filter(\.spendable).count)
         XCTAssertEqual([derth: 2], a.stakeMergeable())
         _ = try await a.mergeStake(denom: derth)
         try await a.sync()
-        XCTAssertEqual(1_800_000, bal(a, derth))
+        XCTAssertEqual(held0, bal(a, derth))
+        XCTAssertEqual(1, a.stakeNotes.filter(\.spendable).count)
+        XCTAssertTrue(a.stakeMergeable().isEmpty)
+        // One note per validator: the next delegation merges into it.
+        _ = try await a.delegate(validator: validator, amount: 100_000); try await a.sync()
+        let total = bal(a, derth)
+        XCTAssertEqual(held0 + 90_000 - 1, total)
         XCTAssertEqual(1, a.stakeNotes.filter(\.spendable).count)
 
         // Groundworks: lock a position (owner tag), re-split, vote, unlock.
         _ = try await a.lockPosition(validator: validator, amount: 1_000_000, splits: [2: 60, 5: 40])
         try await a.sync()
-        XCTAssertEqual(800_000, bal(a, derth))
+        XCTAssertEqual(total - 1_000_000, bal(a, derth))
         let mine = try await a.positions()
         XCTAssertEqual(1, mine.count)
         let (pos, tag) = (mine[0].position, mine[0].counter)
@@ -253,19 +264,23 @@ final class WalletFlowTests: XCTestCase {
         XCTAssertEqual(9, chain.positionVotes.first?.1)
         // Only its owner can move it.
         await assertThrowsAsync({ try await b.updatePosition(pos, counter: 0, splits: [2: 100]) }) { $0 is PrivacyError }
+        // Unlocking merges the position's derth back into the note; the fee bundle records the closed counter (K11).
         _ = try await a.unlockPosition(try await a.positions()[0].position, counter: tag)
         try await a.sync()
         let gone = try await a.positions()
         XCTAssertTrue(gone.isEmpty)
-        XCTAssertEqual(1_800_000, bal(a, derth))
+        XCTAssertEqual(total, bal(a, derth))
+        XCTAssertEqual(1, a.stakeNotes.filter(\.spendable).count)
+        let restoredA = try wallet(chain, alice)
+        try await restoredA.sync()
+        XCTAssertEqual(tag, restoredA.store.state.closedOtagMax)
 
-        // Stake votes: every derth note from before the snapshot, one vote
-        // per validator (up to four notes), one weight: their rounded sum.
+        // Stake votes: the derth note from before the snapshot, one vote per validator, its rounded amount.
         try await a.sync()
         chain.openProposal(11)
         let weight = try await a.stakeVoteWeight(proposalID: 11, positions: [])
         let held = a.stakeNotes.filter { $0.spendable && $0.denom == derth }
-        XCTAssertTrue((2 ... 4).contains(held.count))
+        XCTAssertEqual(1, held.count)
         let rounded = try PrivacyWallet.voteWeight(held.reduce(UInt64(0)) { $0 + $1.amount })
         XCTAssertEqual(held.count, weight.notes)
         XCTAssertEqual(rounded, weight.uerth)
@@ -275,7 +290,7 @@ final class WalletFlowTests: XCTestCase {
         }
         XCTAssertEqual(1, voted.count)
         try await a.sync()
-        XCTAssertEqual(1_800_000, bal(a, derth))
+        XCTAssertEqual(total, bal(a, derth))
         XCTAssertEqual(1, chain.stakeVotes.count)
         XCTAssertEqual(rounded, chain.stakeVotes[0].2)
         XCTAssertEqual([held.count], chain.stakeVoteSlots)
@@ -294,13 +309,13 @@ final class WalletFlowTests: XCTestCase {
         _ = try await a.voteRemoval(optionID: 3, yes: true)
         XCTAssertEqual(3, chain.removalVotes.first?.0)
 
-        // Unstake (two notes, change back as a created stake note): the msg
+        // Unstake (the note, change back as a created stake note): the msg
         // names a pool note of ours; at maturity the chain pays it there by
         // itself (chain 48b631c), and the wallet sends nothing more.
         try await a.sync()
         _ = try await a.undelegate(validator: validator, amount: 1_000_000)
         try await a.sync()
-        XCTAssertEqual(800_000, bal(a, derth))
+        XCTAssertEqual(total - 1_000_000, bal(a, derth))
         let u = a.pendingUnbonds[0]
         XCTAssertEqual(1, a.pendingUnbonds.count)
         XCTAssertEqual([1_111_111, 4, 1], [u.value, u.epoch, u.payoutID])

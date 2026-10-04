@@ -55,7 +55,7 @@ final class ZkVectorsTests: XCTestCase {
             "pc": PrivacyHash.tagPC, "cm": PrivacyHash.tagCM, "nf": PrivacyHash.tagNF, "reg": PrivacyHash.tagReg,
             "asset": PrivacyHash.tagAsset, "signal": PrivacyHash.tagSignal, "bytes": PrivacyHash.tagBytes, "scope": PrivacyHash.tagScope, "affiliate": PrivacyHash.tagAffiliate, "referral": PrivacyHash.tagReferral,
             "stake": PrivacyHash.tagStake, "spc": PrivacyHash.tagSPC, "snf": PrivacyHash.tagSNF, "otag": PrivacyHash.tagOTag,
-            "snfl": PrivacyHash.tagSNFL, "vnf": PrivacyHash.tagVNF,
+            "snfl": PrivacyHash.tagSNFL, "vnf": PrivacyHash.tagVNF, "slabel": PrivacyHash.tagSLabel, "debtl": PrivacyHash.tagDebtL,
             "gen": Grumpkin.tagGen, "cv_r": Grumpkin.tagCvR, "bsig": Grumpkin.tagBsig, "bundle": PrivateMsgs.tagBundle,
         ]
         XCTAssertEqual(tags.count, mine.count)
@@ -105,8 +105,21 @@ final class ZkVectorsTests: XCTestCase {
         // The stake tree.
         let spc = PrivacyHash.stakePC(ownerPK: opk, rho: rho, rcm: rcm)
         XCTAssertEqual(s("spc"), spc.hex)
-        XCTAssertEqual(s("stake_cm"), PrivacyHash.stakeCM(asset: PrivacyHash.assetID("derth/earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"),
-                                                         amount: 1_800_000, spc: spc).hex)
+        let derthAsset = PrivacyHash.assetID("derth/earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq")
+        XCTAssertEqual(s("stake_cm"), PrivacyHash.stakeCM(asset: derthAsset, amount: 1_800_000, spc: spc, label: .zero).hex)
+        // Slash labels and the debt tree's leaves (chain dff3a9b), and zk/debt TestNoirParity's pins (= Noir test_go_parity_debt).
+        let label = PrivacyHash.stakeLabel(moveKey: Vectors.fe(1009), moveTime: 1_790_000_000, exposed: 400_000)
+        XCTAssertEqual(s("stake_label"), label.hex)
+        XCTAssertEqual(s("stake_cm_labelled"), PrivacyHash.stakeCM(asset: derthAsset, amount: 1_800_000, spc: spc, label: label).hex)
+        XCTAssertEqual(s("debt_leaf"), PrivacyHash.debtLeaf(key: Vectors.fe(1010), nextKey: Vectors.fe(1011), nextIndex: 4_000_000_000, retained: 123_456).hex)
+        XCTAssertEqual(s("debt_leaf_1_2_3_4"), PrivacyHash.debtLeaf(key: Fr(UInt64(1)), nextKey: Fr(UInt64(2)), nextIndex: 3, retained: 4).hex)
+        XCTAssertEqual("0b28cc858d976ddad0ede75ca9538f9b5ab36538964f6e241b8e89be2711e82a", s("debt_leaf_1_2_3_4"))
+        XCTAssertEqual("2dfbc154973d1d3ec6e03137ba41b5c2cf5119f66cc69e3e58c033a77c80a881",
+                       PrivacyHash.stakeLabel(moveKey: Fr(UInt64(0x4d4b)), moveTime: 1000, exposed: 200).hex)
+        XCTAssertEqual(s("stake_label_4d4b"), PrivacyHash.stakeLabel(moveKey: Fr(UInt64(0x4d4b)), moveTime: 1000, exposed: 200).hex)
+        XCTAssertEqual("0ffc538b4162732774bd5026e7a07bd00d2fe406af55231fa0c255c321ad4232",
+                       PrivacyHash.stakeCM(asset: Fr(UInt64(1)), amount: 2, spc: Fr(UInt64(3)), label: Fr(UInt64(4))).hex)
+        XCTAssertEqual(s("stake_cm_1_2_3_4"), PrivacyHash.stakeCM(asset: Fr(UInt64(1)), amount: 2, spc: Fr(UInt64(3)), label: Fr(UInt64(4))).hex)
         XCTAssertEqual(s("stake_nf"), PrivacyHash.stakeNF(nk: nk, rho: rho, position: 4_000_000_000).hex)
         XCTAssertEqual(Vectors.fe(1006), Vectors.fr(s("otag_salt")))
         XCTAssertEqual(s("otag"), PrivacyHash.ownerTag(ownerPK: opk, salt: Vectors.fe(1006)).hex)
@@ -117,6 +130,44 @@ final class ZkVectorsTests: XCTestCase {
         XCTAssertEqual(s("vote_nf"), PrivacyHash.voteNF(nk: nk, rho: rho, position: 4_000_000_000, proposalID: 5).hex)
         XCTAssertEqual(s("vote_nf_5eed"), PrivacyHash.voteNF(nk: Fr(UInt64(0x5eed)), rho: Fr(UInt64(0xa1)), position: 1, proposalID: 7).hex)
         XCTAssertEqual("1ada84dad3e6afde3f370e97edf4df2ee4eeb6b1400d5c5f41882552f578ba2f", s("vote_nf_5eed"))
+    }
+
+    /// The slash debt tree against zk/debt: roots by write (a row rewritten in place), witnesses for rows and absent moves.
+    func testDebtTree() throws {
+        let dj = Vectors.obj("debt")
+        XCTAssertEqual(dj["empty_root"] as? String, DebtTree.emptyRoot.hex)
+        XCTAssertEqual("0cea3d3e26cd2710109d7cbff5bf48570ba54332f812d538893f0958007f6903", dj["empty_root"] as? String)
+        let rows = (dj["rows"] as! [[String: Any]]).map { (key: Vectors.fr($0["key"] as! String), retained: ($0["retained"] as! NSNumber).uint64Value) }
+        let t = try DebtTree(rows)
+        XCTAssertEqual(dj["root"] as? String, t.root().hex)
+        // Every write's root: the rows inserted so far, each at its latest retained then.
+        let writes = (0 ..< 9).map { (key: Vectors.fe(9000 + UInt64($0)), retained: 1_000 * UInt64($0 + 1)) } + [(key: Vectors.fe(9002), retained: UInt64(7))]
+        for (k, root) in dj["roots_by_write"] as! [String: String] {
+            var keys: [Fr] = [], latest: [Fr: UInt64] = [:]
+            for w in writes.prefix(Int(k)!) {
+                if latest[w.key] == nil { keys.append(w.key) }
+                latest[w.key] = w.retained
+            }
+            XCTAssertEqual(root, try DebtTree(keys.map { ($0, latest[$0]!) }).root().hex, "root after \(k) writes")
+        }
+        for w in dj["witnesses"] as! [[String: Any]] {
+            let key = Vectors.fr(w["key"] as! String)
+            let mine = try XCTUnwrap(t.witness(key))
+            XCTAssertEqual(w["low_key"] as? String, mine.lowKey.hex)
+            XCTAssertEqual(w["low_next_key"] as? String, mine.lowNextKey.hex)
+            XCTAssertEqual((w["low_next_index"] as! NSNumber).uint64Value, mine.lowNextIndex)
+            XCTAssertEqual((w["low_retained"] as! NSNumber).uint64Value, mine.lowRetained)
+            XCTAssertEqual((w["low_index"] as! NSNumber).uint64Value, mine.lowIndex)
+            XCTAssertEqual(w["low_path"] as? [String], mine.lowPath.map(\.hex))
+            XCTAssertEqual((w["retained"] as! NSNumber).uint64Value, mine.retained(key: key, exposed: (w["exposed"] as! NSNumber).uint64Value, root: t.root()))
+        }
+        // A row's own key read through its low leaf, or against another root, proves nothing.
+        let slashed = Vectors.fe(9002)
+        XCTAssertEqual(7, t.retainedOf(slashed))
+        XCTAssertNil(t.witness(Fr(UInt64(1)))!.retained(key: slashed, exposed: 50_000, root: t.root()))
+        XCTAssertNil(t.witness(slashed)!.retained(key: slashed, exposed: 50_000, root: DebtTree.emptyRoot))
+        XCTAssertThrowsError(try DebtTree([(slashed, 1), (slashed, 2)]))
+        XCTAssertThrowsError(try DebtTree([(Fr.zero, 1)]))
     }
 
     /// The stake nullifier indexed tree against zk/indexed: roots by insert count, non-membership witnesses.

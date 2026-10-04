@@ -322,8 +322,9 @@ final class AuditFixesTests: XCTestCase {
         let m = MsgRemoveLiquidityShielded(bundle: b, poolID: 1, erthPC: Data(), tokenPC: Data())
         XCTAssertEqual(UInt64.max, m.privateFee)
         let d = MsgShieldedDelegate(bundle: ShieldedBundle(balances: [ValueBalance(denom: "uerth", amount: 5)]), validator: validator, amount: 9,
-                                    stake: StakeProof(proof: Data(), anchor: Data(), nullifiers: [], commitments: [], ciphertexts: [], spcMint: Data(),
-                                                      ownerTag: Data()))
+                                    derth: 8, stake: StakeProof(proof: Data(), anchor: Data(), nullifiers: [], ownerTag: Data(), commitment: Data(),
+                                                                ciphertext: Data(), creditNullifier: Data(), creditCommitment: Data(),
+                                                                creditCiphertext: Data(), clearBefore: 0, debtRoot: Data()))
         XCTAssertEqual(0, d.privateFee)
     }
 

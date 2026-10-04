@@ -117,16 +117,30 @@ final class BundlePlannerTests: XCTestCase {
     }
 
     func testStakeSelectionSpendsAtMostTwo() throws {
-        func s(_ pos: UInt64, _ amount: UInt64) -> OwnedStakeNote {
-            OwnedStakeNote(position: pos, height: 1, denom: "derth/v", amount: amount, rho: .one, rcm: .one, cm: .one, nf: .one)
+        func s(_ pos: UInt64, _ amount: UInt64, _ label: StakeLabel? = nil) -> OwnedStakeNote {
+            OwnedStakeNote(position: pos, height: 1, denom: "derth/v", amount: amount, rho: .one, rcm: .one, cm: .one, nf: .one, label: label)
         }
+        let amount: (OwnedStakeNote) -> UInt64 = { $0.amount }
         let ns = [s(1, 50), s(2, 400), s(3, 300), s(4, 1_000)]
-        XCTAssertEqual([400], try StakeSelection.cover(ns, amount: 350).map(\.amount))
-        XCTAssertEqual([400, 1_000], try StakeSelection.cover(ns, amount: 1_350).map(\.amount))
-        XCTAssertThrowsError(try StakeSelection.cover(ns, amount: 1_500)) {
-            XCTAssertEqual("this stake is spread over more than two notes; merge them on the Notes screen first (one fee each), then try again",
+        XCTAssertEqual([400], try StakeSelection.cover(ns, amount: 350, free: amount).map(\.amount))
+        XCTAssertEqual([400, 1_000], try StakeSelection.cover(ns, amount: 1_350, free: amount).map(\.amount))
+        XCTAssertThrowsError(try StakeSelection.cover(ns, amount: 1_500, free: amount)) {
+            XCTAssertEqual("this stake is spread over more notes than one transaction spends; merge them first (one fee each), then try again",
                            ($0 as? NoteSelection.Insufficient)?.message)
         }
-        XCTAssertThrowsError(try StakeSelection.cover(ns, amount: 2_000))
+        XCTAssertThrowsError(try StakeSelection.cover(ns, amount: 2_000, free: amount)) {
+            XCTAssertEqual("insufficient stake", ($0 as? NoteSelection.Insufficient)?.message)
+        }
+        XCTAssertEqual([1_000, 400], StakeSelection.merge(ns, free: amount).map(\.amount))
+        // At most one labelled note a proof; a labelled note gives up only its unexposed part while its window is open.
+        let ls = [s(1, 500, StakeLabel(moveKey: .one, moveTime: 1, exposed: 100)), s(2, 600, StakeLabel(moveKey: Fr(UInt64(2)), moveTime: 1, exposed: 100)),
+                  s(3, 50)]
+        let free: (OwnedStakeNote) -> UInt64 = { $0.amount - ($0.label?.exposed ?? 0) }
+        XCTAssertEqual([50, 600], try StakeSelection.cover(ls, amount: 520, free: free).map(\.amount))
+        XCTAssertThrowsError(try StakeSelection.cover(ls, amount: 700, free: free))
+        XCTAssertThrowsError(try StakeSelection.cover(ls, amount: 1_000, free: free, locked: { "held" })) {
+            XCTAssertEqual("held", ($0 as? NoteSelection.Insufficient)?.message)
+        }
+        XCTAssertEqual([600, 50], StakeSelection.merge(ls, free: free).map(\.amount))
     }
 }

@@ -288,21 +288,20 @@ final class Audit4Tests: XCTestCase {
 
     struct Voting { let chain: FakeChain; let a: PrivacyWallet; let k: OwnedStakeNote }
 
-    /// k delegated before proposal 1's snapshot and restaked (spent) after it: on chain it still votes.
+    /// k delegated before proposal 1's snapshot, beside a second note of ours
+    /// (another device's), and merged by a top-up (spent) after it: on chain
+    /// it still votes the value it held at the snapshot.
     func voting(indexer: WrappedIndexer? = nil) async throws -> Voting {
         let chain = FakeChain()
         let a = try wallet(chain)
         for _ in 0 ..< 6 { try funded(chain, a, 2_000_000) }
         _ = try await a.sync()
         _ = try await a.delegate(validator: vB, amount: 666_666); _ = try await a.sync()
-        let k = a.snapshot.stakeNotes[0]
-        _ = try await a.delegate(validator: vB, amount: 333_333); _ = try await a.sync()
-        let m = a.snapshot.stakeNotes.max { $0.position < $1.position }!
-        _ = try await a.restake(validator: vB, notes: [m], amounts: [m.amount / 2, m.amount - m.amount / 2]); _ = try await a.sync()
+        let k = a.snapshot.stakeNotes.first { $0.unspent }!
+        chain.plantStake(a.keys, PrivacyWallet.derthDenom(vB), 300_000); _ = try await a.sync()
         chain.openProposal(1)
-        let k2 = a.snapshot.stakeNotes.first { $0.position == k.position }!
-        _ = try await a.restake(validator: vB, notes: [k2], amounts: [k.amount / 2, k.amount - k.amount / 2]); _ = try await a.sync()
-        return Voting(chain: chain, a: a, k: k)
+        _ = try await a.delegate(validator: vB, amount: 333_333); _ = try await a.sync()
+        return Voting(chain: chain, a: a, k: a.snapshot.stakeNotes.first { $0.position == k.position }!)
     }
 
     /// Vote PoC: a hostile indexer forged the snapshot's nf_root (adding k's
@@ -328,8 +327,8 @@ final class Audit4Tests: XCTestCase {
         let a = try wallet(chain, indexer: forged)
         _ = try await a.sync()
         let items = try await a.stakeVoteItems(proposalID: 1)
-        XCTAssertTrue(items.contains(.validator(vB, notes: 3)))
-        let r = try await a.castStakeVote(proposalID: 1, item: .validator(vB, notes: 3), options: yes)
+        XCTAssertTrue(items.contains(.validator(vB, notes: 2)))
+        let r = try await a.castStakeVote(proposalID: 1, item: .validator(vB, notes: 2), options: yes)
         XCTAssertNotNil(r)
         XCTAssertEqual(1, chain.stakeVotes.count)
     }
@@ -346,6 +345,9 @@ final class Audit4Tests: XCTestCase {
         func epochNumber() async throws -> UInt64 { try await inner.epochNumber() }
         func snapshot(proposalID: UInt64) async throws -> PrivacyReads.Snapshot { snap }
         func positions() async throws -> [PrivacyReads.Position] { try await inner.positions() }
+        func debtTree(start: UInt64, limit: Int) async throws -> PrivacyReads.DebtTreePage { try await inner.debtTree(start: start, limit: limit) }
+        func validatorBook(_ valoper: String) async throws -> PrivacyReads.Book { try await inner.validatorBook(valoper) }
+        func minDelegation() async throws -> UInt64 { try await inner.minDelegation() }
         func stakeNullifierTree(start: UInt64, limit: Int) async throws -> PrivacyReads.NfTreePage {
             PrivacyReads.NfTreePage(values: Array(values.dropFirst(Int(start)).prefix(limit)), size: UInt64(values.count) + 1)
         }
@@ -363,7 +365,7 @@ final class Audit4Tests: XCTestCase {
         _ = try await a.sync()
         chain.indexerNfTree = false
         let sims = chain.simulated
-        await assertThrowsAsync({ try await a.castStakeVote(proposalID: 1, item: .validator(vB, notes: 3), options: self.yes) }) {
+        await assertThrowsAsync({ try await a.castStakeVote(proposalID: 1, item: .validator(vB, notes: 2), options: self.yes) }) {
             "\($0.localizedDescription)".contains("sync saw no spend")
         }
         XCTAssertEqual(sims, chain.simulated)
@@ -376,10 +378,10 @@ final class Audit4Tests: XCTestCase {
         let i = v.a.store.state.stakeNotes.firstIndex { $0.position == v.k.position }!
         v.a.store.mutate { $0.stakeNotes[i].spentHeight = UInt64(snap.height) }
         var items = try await v.a.stakeVoteItems(proposalID: 1)
-        XCTAssertEqual([.validator(vB, notes: 2)], items)
+        XCTAssertEqual([.validator(vB, notes: 1)], items)
         v.a.store.mutate { $0.stakeNotes[i].spentHeight = UInt64(snap.height) + 1 }
         items = try await v.a.stakeVoteItems(proposalID: 1)
-        XCTAssertEqual([.validator(vB, notes: 3)], items)
+        XCTAssertEqual([.validator(vB, notes: 2)], items)
     }
 
     /// nf_size is the LCD's: an indexer's larger count is never fetched (L4); one aligned page.
@@ -393,7 +395,7 @@ final class Audit4Tests: XCTestCase {
         }
         let a = try wallet(v.chain, indexer: idx)
         _ = try await a.sync()
-        let r = try await a.castStakeVote(proposalID: 1, item: .validator(vB, notes: 3), options: yes)
+        let r = try await a.castStakeVote(proposalID: 1, item: .validator(vB, notes: 2), options: yes)
         XCTAssertNotNil(r)
         XCTAssertEqual(1, idx.nfLeafAsks.count)
         XCTAssertEqual(0, idx.nfLeafAsks[0].0)
@@ -404,14 +406,14 @@ final class Audit4Tests: XCTestCase {
     /// L1: the stake votes cast survive a same-chain reset.
     func testStakeVotesSurviveAReset() async throws {
         let v = try await voting()
-        _ = try await v.a.castStakeVote(proposalID: 1, item: .validator(vB, notes: 3), options: yes)
+        _ = try await v.a.castStakeVote(proposalID: 1, item: .validator(vB, notes: 2), options: yes)
         let votes = v.a.store.state.stakeVotes
         // One vote, three notes: each note's vote nullifier is remembered.
-        XCTAssertEqual(3, votes.count)
+        XCTAssertEqual(2, votes.count)
         try v.a.store.reset(chainID: v.chain.chainID)
         XCTAssertEqual(votes, v.a.store.state.stakeVotes)
         _ = try await v.a.sync()
-        let again = try await v.a.castStakeVote(proposalID: 1, item: .validator(vB, notes: 3), options: yes)
+        let again = try await v.a.castStakeVote(proposalID: 1, item: .validator(vB, notes: 2), options: yes)
         XCTAssertNil(again)
         XCTAssertEqual(1, v.chain.stakeVotes.count)
     }
@@ -428,11 +430,11 @@ final class Audit4Tests: XCTestCase {
     func testRefusedVoteIsForgotten() async throws {
         let v = try await voting()
         v.chain.rejectNext = 1
-        await assertThrowsAsync({ try await v.a.castStakeVote(proposalID: 1, item: .validator(vB, notes: 3), options: self.yes) }) { $0 is UnsignedTx.TxRejected }
+        await assertThrowsAsync({ try await v.a.castStakeVote(proposalID: 1, item: .validator(vB, notes: 2), options: self.yes) }) { $0 is UnsignedTx.TxRejected }
         XCTAssertTrue(v.a.store.state.stakeVotes.isEmpty)
-        let r = try await v.a.castStakeVote(proposalID: 1, item: .validator(vB, notes: 3), options: yes)
+        let r = try await v.a.castStakeVote(proposalID: 1, item: .validator(vB, notes: 2), options: yes)
         XCTAssertNotNil(r)
-        XCTAssertEqual(3, v.a.store.state.stakeVotes.count)
+        XCTAssertEqual(2, v.a.store.state.stakeVotes.count)
     }
 
     // MARK: M1: pending marked before the broadcast, released by the chain's word
@@ -576,7 +578,7 @@ final class Audit4Tests: XCTestCase {
 
     func testWalletRequestsFollowThePagingRule() async throws {
         let v = try await voting()
-        let r = try await v.a.castStakeVote(proposalID: 1, item: .validator(vB, notes: 3), options: yes)
+        let r = try await v.a.castStakeVote(proposalID: 1, item: .validator(vB, notes: 2), options: yes)
         XCTAssertNotNil(r)
         XCTAssertTrue(v.chain.misaligned.isEmpty, "\(v.chain.misaligned)")
     }

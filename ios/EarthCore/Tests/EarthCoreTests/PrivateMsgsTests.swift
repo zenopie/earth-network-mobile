@@ -32,12 +32,17 @@ final class PrivateMsgsTests: XCTestCase {
     /// A deterministic 177-byte stand-in for an amount-blind ciphertext (main.go bct).
     func bct(_ seed: Int) -> Data { Data((0 ..< 177).map { UInt8(truncatingIfNeeded: seed + $0) }) }
 
-    func stake(_ seed: UInt64, _ spends: Int, _ creates: Int, mints: Bool = false) -> StakeProof {
+    /// A deterministic 201-byte stand-in for a wallet stake ciphertext (main.go sct).
+    func sct(_ seed: Int) -> Data { Data((0 ..< 201).map { UInt8(truncatingIfNeeded: seed ^ $0) }) }
+
+    /// main.go stakeProof: lane A nullifiers, its output, the credit lane, a clear_before and debt root.
+    func stake(_ seed: UInt64, _ spends: Int, _ creates: Bool, credits: Bool = false, clears: Bool = true) -> StakeProof {
         StakeProof(proof: Data([0x5e, UInt8(truncatingIfNeeded: seed)]), anchor: fb(seed),
-                   nullifiers: (0 ..< 2).map { $0 < spends ? fb(seed + 1 + UInt64($0)) : zero32 },
-                   commitments: (0 ..< 2).map { $0 < creates ? fb(seed + 3 + UInt64($0)) : zero32 },
-                   ciphertexts: (0 ..< 2).map { $0 < creates ? bs("sct-\(seed)-\($0)") : Data() },
-                   spcMint: fb(seed + 7), ownerTag: fb(seed + 8), spcCiphertext: mints ? bct(Int(seed)) : Data())
+                   nullifiers: (0 ..< 2).map { $0 < spends ? fb(seed + 1 + UInt64($0)) : zero32 }, ownerTag: fb(seed + 8),
+                   commitment: creates ? fb(seed + 3) : zero32, ciphertext: creates ? sct(Int(seed)) : Data(),
+                   creditNullifier: credits ? fb(seed + 4) : zero32, creditCommitment: credits ? fb(seed + 5) : zero32,
+                   creditCiphertext: credits ? sct(Int(seed) + 1) : Data(),
+                   clearBefore: clears ? 1_790_000_000 + seed : 0, debtRoot: clears ? fb(seed + 6) : zero32)
     }
 
     func membership(_ seed: UInt64) -> Membership {
@@ -79,22 +84,24 @@ final class PrivateMsgsTests: XCTestCase {
         "vote_proposal": MsgVoteProposalPrivate(fee: fee(80, 2000), membership: membership(80), proposalID: 5, option: .yes),
         "propose_removal": MsgProposeRemoval(fee: fee(81, 2000), membership: membership(81), optionID: 3),
         "vote_removal": MsgVoteRemoval(fee: fee(82, 2000), membership: membership(82), optionID: 3, option: .no),
-        "delegate": MsgShieldedDelegate(bundle: fee(90, 502_000), validator: validator, amount: 500_000, stake: stake(90, 0, 0, mints: true)),
-        "restake": MsgRestake(bundle: fee(95, 2000), validator: validator, stake: stake(95, 2, 1)),
-        "undelegate": MsgShieldedUndelegate(bundle: fee(100, 2000), validator: validator, amount: 400_000, stake: stake(100, 1, 1),
+        "delegate": MsgShieldedDelegate(bundle: fee(90, 502_000), validator: validator, amount: 500_000, derth: 449_995, stake: stake(90, 1, true)),
+        "delegate_young": MsgShieldedDelegate(bundle: fee(91, 502_000), validator: validator, amount: 500_000, derth: 449_995,
+                                              stake: stake(91, 1, true, clears: false)),
+        "restake": MsgRestake(bundle: fee(95, 2000), validator: validator, stake: stake(95, 2, true)),
+        "undelegate": MsgShieldedUndelegate(bundle: fee(100, 2000), validator: validator, amount: 400_000, stake: stake(100, 1, true),
                                             pc: fb(101), ciphertext: bct(101)),
-        "undelegate_whole": MsgShieldedUndelegate(bundle: fee(102, 2000), validator: validator, amount: 400_000, stake: stake(102, 2, 0),
+        "undelegate_whole": MsgShieldedUndelegate(bundle: fee(102, 2000), validator: validator, amount: 400_000, stake: stake(102, 2, true),
                                                   pc: fb(103), ciphertext: bct(103)),
         "stake_vote": MsgStakeVote(bundle: fee(120, 2000), proposalID: 5, validator: validator, options: opts, weight: 400_000,
-                                   proof: Data([0x70, 0x7e]), voteNullifiers: [fb(121), zero32, zero32, zero32]),
-        "stake_vote_four": MsgStakeVote(bundle: fee(122, 2000), proposalID: 5, validator: validator, options: opts, weight: 1_230_000,
-                                        proof: Data([0x70, 0x7e]), voteNullifiers: [fb(123), fb(124), fb(125), fb(126)]),
+                                   proof: Data([0x70, 0x7e]), voteNullifiers: [fb(121), zero32], debtRoot: DebtTree.emptyRoot.bytes),
         "stake_vote_two": MsgStakeVote(bundle: fee(127, 2000), proposalID: 6, validator: validator, options: opts, weight: 999,
-                                       proof: Data([0x70, 0x7e]), voteNullifiers: [fb(128), fb(129), zero32, zero32]),
-        "lock_position": MsgLockPosition(bundle: fee(140, 2000), validator: validator, amount: 400_000, splits: [w(2, 100)], stake: stake(140, 1, 1)),
-        "update_position": MsgUpdatePosition(bundle: fee(150, 2000), positionID: 9, splits: [w(2, 100)], stake: stake(150, 0, 0)),
-        "unlock_position": MsgUnlockPosition(bundle: fee(160, 2000), positionID: 9, stake: stake(160, 0, 0, mints: true)),
-        "position_vote": MsgPositionVote(bundle: fee(170, 2000), positionID: 9, proposalID: 5, options: opts, stake: stake(170, 0, 0)),
+                                       proof: Data([0x70, 0x7e]), voteNullifiers: [fb(128), fb(129)], debtRoot: fb(130)),
+        "lock_position": MsgLockPosition(bundle: fee(140, 2000), validator: validator, amount: 400_000, splits: [w(2, 100)], stake: stake(140, 1, true)),
+        "update_position": MsgUpdatePosition(bundle: fee(150, 2000), positionID: 9, splits: [w(2, 100)], stake: stake(150, 0, false)),
+        "unlock_position": MsgUnlockPosition(bundle: fee(160, 2000), positionID: 9, stake: stake(160, 1, true)),
+        "position_vote": MsgPositionVote(bundle: fee(170, 2000), positionID: 9, proposalID: 5, options: opts, stake: stake(170, 0, false)),
+        "redelegate": MsgRedelegate(bundle: fee(175, 2000), srcValidator: validator, dstValidator: Vectors.json["validator2"] as! String,
+                                    amount: 400_000, stake: stake(175, 1, true, credits: true), dstDerth: 380_000, moveTime: 1_790_000_123),
         "note_swap": MsgNoteSwap(bundle: bundle(180, ("uanml", 300_000), ("uerth", 2000)), denomIn: "uanml", amountIn: 300_000, denomOut: "uerth",
                                  minAmountOut: 123_456, pc: fb(181), ciphertext: bct(181)),
         "note_swap_to_anml": MsgNoteSwap(bundle: fee(200, 302_000), denomIn: "uerth", amountIn: 300_000, denomOut: "uanml", minAmountOut: 1,
@@ -134,9 +141,24 @@ final class PrivateMsgsTests: XCTestCase {
     }
 
     func testStakeFieldsMatchTheChain() throws {
-        let want = Vectors.json["stake_fields_undelegate"] as! [String]
-        let got = try PrivateMsgs.stakeFields(stake(100, 1, 1))
+        let want = Vectors.json["stake_fields_redelegate"] as! [String]
+        let got = try PrivateMsgs.stakeFields(stake(175, 1, true, credits: true))
         XCTAssertEqual(want, got.map(\.hex))
+    }
+
+    /// The stake and vote circuits' public inputs, as the chain lays them out per msg (FakeChain checks every witness against this layout).
+    func testPublicInputLayoutsMatchTheChain() throws {
+        let want = Vectors.obj("public_inputs")
+        for name in ["delegate", "undelegate", "redelegate"] {
+            let m = msgs[name] as! any PrivateMsg
+            let got = try ChainLayout.stakePublicInputs(m.stakeProof!, ChainLayout.lanes(m), Vectors.fe(77))
+            XCTAssertEqual(want[name] as? [String], got.map(\.hex), name)
+            XCTAssertEqual(16, got.count)
+        }
+        let vote = msgs["stake_vote_two"] as! MsgStakeVote
+        let got = try ChainLayout.votePublicInputs(vote, noteRoot: Vectors.fe(131), nfRoot: Vectors.fe(132), sighash: Vectors.fe(77))
+        XCTAssertEqual(want["stake_vote"] as? [String], got.map(\.hex))
+        XCTAssertEqual(9, got.count)
     }
 
     func testBindingAndFieldEncodings() throws {

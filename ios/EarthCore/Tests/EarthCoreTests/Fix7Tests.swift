@@ -98,9 +98,9 @@ final class Fix7Tests: XCTestCase {
         let m = try XCTUnwrap(chain.lastMsg as? MsgShieldedUndelegate)
         XCTAssertEqual(32, m.pc.count)
         XCTAssertEqual(NoteCipher.blindCiphertextBytes, m.ciphertext.count)
-        XCTAssertTrue(m.stake.spcCiphertext.isEmpty)
-        // spc_mint is a throwaway pc of ours: never the payout's pc.
-        XCTAssertNotEqual(m.stake.spcMint, m.pc)
+        // Chain dff3a9b: lane A's output (the change) with its 201-byte ciphertext; no credit lane.
+        XCTAssertEqual(NoteCipher.stakeCiphertextBytes, m.stake.ciphertext.count)
+        XCTAssertTrue(m.stake.creditCommitment.allSatisfy { $0 == 0 } && m.stake.creditCiphertext.isEmpty)
         // The change is the proof's own output; nothing minted into the stake tree.
         XCTAssertEqual(stakeRows + 1, chain.stakeRows.count)
         let u = try XCTUnwrap(a.pendingUnbonds.first)
@@ -118,7 +118,9 @@ final class Fix7Tests: XCTestCase {
     func testASplitPayoutIsFoundWhole() async throws {
         let chain = FakeChain()
         let a = try await staked(chain)
-        _ = try await a.undelegate(validator: vB, amount: 900_000)
+        // The whole note: the proof's output is a zero note.
+        let all = a.stakeBalances()[PrivacyWallet.derthDenom(vB)]!
+        _ = try await a.undelegate(validator: vB, amount: all)
         let pc = try Fr(bytes: (chain.lastMsg as! MsgShieldedUndelegate).pc)
         try await a.sync()
         let before = bal(a)
@@ -126,8 +128,9 @@ final class Fix7Tests: XCTestCase {
         let txs = chain.txs.count
         try await a.sync()
         XCTAssertEqual(txs, chain.txs.count)
-        XCTAssertEqual(1_000_000, bal(a) - before)
+        XCTAssertEqual(all * 10 / 9, bal(a) - before)
         XCTAssertEqual(3, a.notes.filter { $0.note.pc(ownerPK: a.keys.ownerPK) == pc }.count)
+        XCTAssertFalse(a.stakeNotes.contains(where: \.spendable))
         XCTAssertTrue(a.pendingUnbonds.isEmpty)
         // A restored wallet finds the payout by trial decryption alone.
         let restored = try wallet(chain)
@@ -168,29 +171,35 @@ final class Fix7Tests: XCTestCase {
         }
     }
 
-    func testAVoteHasFourSlotsAndTenPublicInputs() async throws {
+    func testAVoteHasTwoSlotsAndNinePublicInputs() async throws {
         let chain = FakeChain()
         let a = try await staked(chain)
+        // A top-up merges into the one note.
         _ = try await a.delegate(validator: vB, amount: 500_000); try await a.sync()
+        let note = try XCTUnwrap(a.stakeNotes.filter(\.unspent).first)
+        XCTAssertEqual(1, a.stakeNotes.filter(\.unspent).count)
         chain.openProposal(7)
         try await a.sync()
         _ = try await a.stakeVote(proposalID: 7, validator: vB, options: yes)
         let m = try XCTUnwrap(chain.lastMsg as? MsgStakeVote)
-        XCTAssertEqual(4, m.voteNullifiers.count)
+        XCTAssertEqual(2, m.voteNullifiers.count)
         let vs = try m.voteNullifiers.map { try Fr(bytes: $0) }
-        XCTAssertEqual([false, false, true, true], vs.map(\.isZero))
+        XCTAssertEqual([false, true], vs.map(\.isZero))
+        XCTAssertEqual(chain.debtRoot(), try Fr(bytes: m.debtRoot))
         let w = chain.prover.allVotes.last!
-        XCTAssertEqual(10, w.publicInputs().count)
+        XCTAssertEqual(9, w.publicInputs().count)
         XCTAssertEqual(vs, w.vnfs)
         let inputs = w.noirInputs()
-        for k in ["amount", "rho", "rcm", "pos", "path", "low_value", "low_next_value", "low_next_index", "low_index", "low_path", "vnf"] {
-            XCTAssertEqual(4, (inputs[k] as! [Any]).count, k)
+        for k in ["amount", "rho", "rcm", "pos", "path", "move_key", "move_time", "exposed", "low_value", "low_next_value", "low_next_index",
+                  "low_index", "low_path", "debt_low_key", "debt_low_next_key", "debt_low_next_index", "debt_low_retained", "debt_low_index",
+                  "debt_low_path", "vnf"] {
+            XCTAssertEqual(2, (inputs[k] as! [Any]).count, k)
         }
-        XCTAssertEqual(["0x0", "0x0"], Array((inputs["amount"] as! [String]).suffix(2)))
-        XCTAssertEqual(32, ((inputs["path"] as! [[String]])[3]).count)
-        XCTAssertEqual(m.weight, try PrivacyWallet.voteWeight(900_000 + 450_000))
-        // The msg's own checks: four slots.
-        XCTAssertThrowsError(try PrivateTxEngine.withVote(m, vnfs: Array(vs.prefix(3)), proof: Data()))
+        XCTAssertEqual(["0x0"], Array((inputs["amount"] as! [String]).suffix(1)))
+        XCTAssertEqual(32, ((inputs["path"] as! [[String]])[1]).count)
+        XCTAssertEqual(m.weight, try PrivacyWallet.voteWeight(note.amount))
+        // The msg's own checks: two slots.
+        XCTAssertThrowsError(try PrivateTxEngine.withVote(m, vnfs: Array(vs.prefix(1)), proof: Data()))
         dump(chain, "fix7VoteSlots")
     }
 
@@ -201,13 +210,13 @@ final class Fix7Tests: XCTestCase {
         try await a.sync()
         _ = try await a.stakeVote(proposalID: 8, validator: vB, options: yes)
         let w = chain.prover.allVotes.last!
-        // The same note twice; more weight than the notes; five slots.
-        XCTAssertThrowsError(try VoteWitness(nk: w.nk, slots: w.slots + w.slots, noteRoot: w.noteRoot, nfRoot: w.nfRoot, asset: w.asset,
-                                             weight: w.weight, proposalID: w.proposalID, sighash: w.sighash).check())
-        XCTAssertThrowsError(try VoteWitness(nk: w.nk, slots: w.slots, noteRoot: w.noteRoot, nfRoot: w.nfRoot, asset: w.asset,
+        // The same note twice; more weight than the notes; three slots.
+        XCTAssertThrowsError(try VoteWitness(nk: w.nk, slots: w.slots + w.slots, noteRoot: w.noteRoot, nfRoot: w.nfRoot, debtRoot: w.debtRoot,
+                                             asset: w.asset, weight: w.weight, proposalID: w.proposalID, sighash: w.sighash).check())
+        XCTAssertThrowsError(try VoteWitness(nk: w.nk, slots: w.slots, noteRoot: w.noteRoot, nfRoot: w.nfRoot, debtRoot: w.debtRoot, asset: w.asset,
                                              weight: w.slots.reduce(0) { $0 + $1.amount } + 1, proposalID: w.proposalID, sighash: w.sighash).check())
-        XCTAssertThrowsError(try VoteWitness(nk: w.nk, slots: Array(repeating: w.slots[0], count: 5), noteRoot: w.noteRoot, nfRoot: w.nfRoot,
-                                             asset: w.asset, weight: w.weight, proposalID: w.proposalID, sighash: w.sighash))
+        XCTAssertThrowsError(try VoteWitness(nk: w.nk, slots: Array(repeating: w.slots[0], count: 3), noteRoot: w.noteRoot, nfRoot: w.nfRoot,
+                                             debtRoot: w.debtRoot, asset: w.asset, weight: w.weight, proposalID: w.proposalID, sighash: w.sighash))
         XCTAssertEqual(VoteWitness.maxNotes, MsgStakeVote.maxVoteNotes)
     }
 
@@ -226,8 +235,9 @@ final class Fix7Tests: XCTestCase {
         let chain = FakeChain()
         let a = try await staked(chain)
         _ = try await a.delegate(validator: vB, amount: 500_000); try await a.sync()
-        let ns = a.stakeNotes.filter { $0.spendable && $0.denom == PrivacyWallet.derthDenom(vB) }
-        _ = try await a.restake(validator: vB, notes: ns, amounts: [1_350_000]); try await a.sync()
+        // A second note (another device's) merged by a restake.
+        chain.plantStake(a.keys, PrivacyWallet.derthDenom(vB), 50_000); try await a.sync()
+        _ = try await a.restake(validator: vB); try await a.sync()
         chain.openProposal(9); try await a.sync()
         _ = try await a.stakeVote(proposalID: 9, validator: vB, options: yes); try await a.sync()
         _ = try await a.undelegate(validator: vB, amount: 100_000); try await a.sync()
@@ -239,12 +249,12 @@ final class Fix7Tests: XCTestCase {
 
     func testVoteGasEstimateCountsItsNotes() throws {
         func spec(_ used: Int) throws -> VoteWitnessSpec {
-            try VoteWitnessSpec(vnfs: (0 ..< 4).map { $0 < used ? Fr(UInt64($0 + 1)) : .zero }) { _ in throw PrivacyError("unused") }
+            try VoteWitnessSpec(vnfs: (0 ..< 2).map { $0 < used ? Fr(UInt64($0 + 1)) : .zero }) { _ in throw PrivacyError("unused") }
         }
         let msg = MsgStakeVote(bundle: ShieldedBundle(actions: [], balances: [], bindingSig: Data()), proposalID: 1, validator: vB, options: [], weight: 1)
         let g1 = PrivateTxEngine.estimateGas(msg, Assembled(bundles: [], vote: try spec(1)) { _, _, _ in msg }, txBytes: 0)
-        let g4 = PrivateTxEngine.estimateGas(msg, Assembled(bundles: [], vote: try spec(4)) { _, _, _ in msg }, txBytes: 0)
-        XCTAssertEqual(3 * PrivateTxEngine.noteGas, g4 - g1)
+        let g2 = PrivateTxEngine.estimateGas(msg, Assembled(bundles: [], vote: try spec(2)) { _, _, _ in msg }, txBytes: 0)
+        XCTAssertEqual(PrivateTxEngine.noteGas, g2 - g1)
         XCTAssertEqual(PrivateTxEngine.baseGas + PrivateTxEngine.bundleGas + 250_000 + 2_000_000 + 2 * PrivateTxEngine.noteGas, g1)
     }
 
