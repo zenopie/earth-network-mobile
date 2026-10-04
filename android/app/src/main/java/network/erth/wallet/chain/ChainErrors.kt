@@ -38,6 +38,17 @@ object ChainErrors {
         // MsgMoveHandle moves only a live handle.
         Known("personhood", 1116, "renew it before moving it",
             "That handle is past its expiry (in its renewal period), and only a live handle can be moved. Renew it first, then move it.", byText = true),
+        // Chain dff3a9b: a credit (a delegation's derth, a move's arrival) is
+        // quoted at the live rate with a margin; a rate that outran it is
+        // refused in the ante, before anything is spent or paid.
+        Known("shieldedstaking", 1103, "re-quote with a margin",
+            "The validator's rate moved before this landed, so the chain turned it down. Nothing was spent and no fee was paid: try again for a fresh quote.", byText = true),
+        // A move names the latest block's time; one that waited too long is refused, at no cost.
+        Known("shieldedstaking", 1120, "s before the block time",
+            "This move took too long to reach a block, so the chain turned it down. Nothing was spent and no fee was paid: try again.", byText = true),
+        // A slash reached a moved-in stake between the proof and its block: the debt root changed.
+        Known("shieldedstaking", 1113, "is not the current slash debt root",
+            "A slash reached stake moved between validators just as this was sent, so the chain turned it down. Nothing was spent: try again.", byText = true),
         // CheckTx refuses an anchor lapsing within 120 s.
         Known("shielded", 1103, "pick a newer anchor",
             "This wallet's notes were anchored to a note tree the chain is about to stop accepting. Sync and try again.", byText = true),
