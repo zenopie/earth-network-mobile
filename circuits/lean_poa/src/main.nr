@@ -1,7 +1,9 @@
 //! lean_poa — passport register circuit for an ECDSA-P256 Document Signer.
 //! Verifies the SOD signature (secp256r1) and binds the signing DSC publicly;
-//! all shared logic lives in poa_core. Public inputs: current_date, address;
-//! outputs: (name‖DOB nullifier, dsc_key commitment).
+//! all shared logic lives in poa_core.
+//!
+//! Public input order: current_date, address, then the public return values
+//! (nullifier, dsc_key).
 
 use std::ecdsa_secp256r1::verify_signature;
 

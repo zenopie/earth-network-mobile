@@ -36,8 +36,8 @@
 //! other) and any anchor in the chain's window; a dummy output a random pc.
 //!
 //! Size (bb v5.0.0 gates, noir-recursive): 8,098, 94 below the 2^13 = 8,192
-//! dyadic size (8,120 before the 2^63 - 1 note bound). Any added constraint risks 2^14 and doubles prove time:
-//! re-run `bb gates` after every change (scripts/orchard-bundles.sh prints it).
+//! dyadic size. Any added constraint risks 2^14 and doubles prove time:
+//! re-run `bb gates -b target/action.json -t noir-recursive` after every change.
 //!
 //! Public input order: anchor, nf, cm_out, cv_x, cv_y, sighash
 

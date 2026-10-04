@@ -1,5 +1,5 @@
 //! privacy_core — shared hashes, derivations and Merkle path logic for the
-//! privacy circuits (membership, action).
+//! privacy circuits (membership, action, stake, vote).
 //!
 //! Must match earth-network-chain zk/privacy and zk/merkle bit for bit.
 //!

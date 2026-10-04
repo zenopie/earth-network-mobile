@@ -1,6 +1,9 @@
-//! lean_poa_brainpool256 — passport register circuit for an ECDSA Document Signer on a non-P256
-//! curve, via zkpassport/noir-ecdsa (generic in-circuit ECDSA over noir_bigcurve).
-//! Shares poa_core; public interface [current_date] -> (nullifier, dsc_key).
+//! lean_poa_brainpool256 — passport register circuit for an ECDSA Document Signer
+//! on a non-P256 curve, via zkpassport/noir-ecdsa (generic in-circuit ECDSA over
+//! noir_bigcurve). Shared logic in poa_core.
+//!
+//! Public input order: current_date, address, then the public return values
+//! (nullifier, dsc_key).
 
 use ecdsa::ecdsa::verify_brainpoolp256r1_ecdsa;
 use bignum::BigNum;

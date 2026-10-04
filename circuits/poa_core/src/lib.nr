@@ -227,11 +227,12 @@ pub fn finalize(
     //
     // A document number is unique only within the state that issued it. Without
     // the state, two people from different countries with the same nine-char
-    // number and birth date got one nullifier, and the second to register
-    // silently took over the first's registration as a "wallet switch". And a
-    // number longer than nine characters was cut to its first nine, so two
-    // documents sharing that prefix collided the same way. Every byte added is
-    // already covered by the SOD hash, so none of it can be chosen.
+    // number and birth date would share one nullifier, and the second to
+    // register would silently take over the first's registration as a "wallet
+    // switch". The optional data carries the overflow of a number longer than
+    // nine characters; without it, two documents sharing the first nine would
+    // collide the same way. Every byte is covered by the SOD hash, so none of it
+    // can be chosen.
     let id = nullifier_preimage(dg1);
     (Poseidon2::hash(id, NULLIFIER_PREIMAGE_LEN), dsc_key)
 }
@@ -265,9 +266,9 @@ fn nullifier_preimage(dg1: [u8; DG1_MAX]) -> [Field; NULLIFIER_PREIMAGE_LEN] {
 // --- hash-binding tests ------------------------------------------------------
 //
 // Each builds a well-formed DG1 → eContent → signedAttrs chain and then breaks
-// exactly one link. The attack cases are the ones that verified before the
-// length and prefix checks: a hash parked past the hashed length, and a DG1
-// short enough to leave the MRZ fields it is read for unhashed.
+// exactly one link. The attack cases are the ones the length and prefix
+// checks exist for: a hash parked past the hashed length, and a DG1 short
+// enough to leave the MRZ fields it is read for unhashed.
 
 #[test]
 fn binding_accepts_well_formed_chain() {

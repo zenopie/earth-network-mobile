@@ -1,7 +1,11 @@
 //! lean_poa_rsa4096 — passport register circuit for an RSA-4096 (PKCS#1 v1.5,
 //! SHA-256, e=65537) Document Signer. Identical to lean_poa except the SOD
-//! signature is RSA and the DSC leaf is Poseidon2 over the modulus big-endian
-//! bytes (matching the chain's canonical RSA pubkey). Shared logic in poa_core.
+//! signature is RSA and the DSC commitment is over CURVE_TAG_RSA and the
+//! modulus big-endian bytes (the chain's canonical RSA pubkey). Shared logic in
+//! poa_core.
+//!
+//! Public input order: current_date, address, then the public return values
+//! (nullifier, dsc_key).
 
 use bignum::params::BigNumParams;
 use bignum::RuntimeBigNum;
