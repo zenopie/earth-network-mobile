@@ -1424,4 +1424,7 @@ four-slot vote (10 public inputs, unused slots zero), RoundVoteWeight
 against the chain, the 5x gas ceiling on every committed tx, send-disabled
 refusals and the new errors, and a sync that never sends anything;
 `StakeVoteFlowTest` covers one vote per validator, a fifth note in a second
-part, and a restored wallet learning its votes from refusals.
+part, and a restored wallet learning its votes from refusals. At 48b631c
+every witness of the Android suite (505, 12 of them four-slot votes) and of
+the iOS suite (481) passes `nargo execute`, and ProverGate proves and
+verifies all of them with VKs equal to the chain's genesis keys.

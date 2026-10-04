@@ -11,14 +11,14 @@ Backend (read only, being updated by another agent): backend-orch README
 (handles row[5] owner, notes format 2).
 
 ## Items
-- [ ] 1 registration binding names the chain id; reg_pinned 148b3513...4159
-- [ ] 2 errors 1127 (switch under another DSC), 1113 (signer's daily cap)
-- [ ] 3 undelegate pays out by itself (pc 6, ciphertext 7); claim flow removed
-- [ ] 4 one stake vote per validator (4 slots, 10 public inputs); vote run removed
-- [ ] 5 gas: every private path simulate + 10% (<= 5x); vote gas estimate
-- [ ] 6 handle owner end to end (chain query field 6, backend row[5])
-- [ ] 7 send-disabled denoms on dex note swaps and private delegation
-- [ ] 8 audit: no background tx, no automatic fee spend
+- [x] 1 registration binding names the chain id; reg_pinned 148b3513...4159
+- [x] 2 errors 1127 (switch under another DSC), 1113 (signer's daily cap)
+- [x] 3 undelegate pays out by itself (pc 6, ciphertext 7); claim flow removed
+- [x] 4 one stake vote per validator (4 slots, 10 public inputs); vote run removed
+- [x] 5 gas: every private path simulate + 10% (<= 5x); vote gas estimate
+- [x] 6 handle owner end to end (chain query field 6, backend row[5])
+- [x] 7 send-disabled denoms on dex note swaps and private delegation
+- [x] 8 audit: no background tx, no automatic fee spend
 
 ## Android (done)
 - [x] 2 ChainErrors 1127 / 1113 / bank 5 at every pool edge; GasGrant maps
@@ -47,11 +47,39 @@ Backend (read only, being updated by another agent): backend-orch README
   (PRIVACY_TOML_OUT) pass nargo execute (1.0.0-beta.22), 12 of them
   four-slot vote witnesses; versionCode 45 (1.0.38)
 
-## iOS
+- [x] UI: the parts-or-merge choice is asked before the first vote of a
+  run (0a6b3f9)
 
-## Chain notes
+## iOS (done, as Android)
+- [x] errors (1b66ac0), formats + ProverGate vote 10 / largest = vote
+  (7f82e6e), wallet (58643de), UI (e17393a), tests (d067219)
+- [x] swift test 212/212; corecheck 149/149; build-ios.sh ok; xcodebuild
+  simulator (ARCHS=arm64, no signing) BUILD SUCCEEDED; 481 witnesses
+  (PRIVACY_TOML_OUT) pass nargo execute; build 18
+- [x] ProverGate (PRIVACY_TOML_DIR): all 481 iOS and 505 Android wallet
+  witnesses prove and verify (vote kind 10 inputs); every VK equals chain
+  genesis (unchanged from 48b631c to 0c60692)
+- [x] audit 8: every tx is a TxController sheet's run (claim, register,
+  sends, staking, dex, handles, moves, votes); the automation task and the
+  vote controller are gone
+
+## Chain notes (for the chain)
 - "Merge notes first (one vote)" cannot make one vote on a proposal
   already in voting: a merge after the snapshot leaves the spent notes
   eligible and the merged note outside the snapshot root. The wallet offers
   the merge for later proposals and says so; the chain could only change
   this with a different snapshot rule.
+- A restored wallet learns its earlier votes only from 1119 refusals, and
+  the chain names one vote nullifier per refusal: up to four simulations to
+  re-lay one part (free, within the user's one action). Naming every used
+  vnf of the msg in the error would make it one.
+- Query/UnbondPayout is per id, and the id is on the undelegate tx's event:
+  asking for it (let alone polling) ties the asking IP to that
+  undelegation. Wallets keep their own record instead (due time from
+  Query/Epoch + params at confirmation). If a pending view from the chain is
+  wanted, a whole-list stream (indexer) would be the private shape.
+- MsgUndelegate still proves and binds spc_mint though nothing is minted to
+  it (wallets pass a throwaway pc). Harmless; noted only because it is a
+  public value with no use.
+- Chain HEAD moved past 48b631c to 0c60692 (private redelegation,
+  MsgRedelegate): not adopted here (feature freeze); VKs unchanged.
