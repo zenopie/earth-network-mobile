@@ -6,8 +6,8 @@ and `zk/orchard` (Orchard-style bundles: ORCHARD_DESIGN.md sections 12-14 of
 the chain), and the Android code reproduces those byte for byte
 (`android/.../privacy/zk`, `privacy/tx`, tested against vectors generated from
 the chain by `android/tools/orchardvectors/gen.sh <chain checkout> [ref]`,
-last run against chain privacy/orchard **203d3b2**, regenerated
-byte-identically at **c0ad1dd** by audit 6; `tools/privacyvectors` is
+last run against chain privacy/orchard **48b631c** (clients round 7;
+before that 203d3b2, byte-identical at c0ad1dd); `tools/privacyvectors` is
 the retired transfer-circuit generator, whose `dexamm_test.go.in` still
 writes the dex vectors).
 
@@ -93,6 +93,21 @@ The wallet rebuilds the snapshot's stake nullifier tree, rounds the weight
 down to three significant figures and remembers (proposal, vote nullifier)
 (§4e). Android and iOS identical.
 
+**Audit 6 chain rules and staking without background transactions (chain
+48b631c, ORCHARD_DESIGN 17-18; clients round 7), summary.** The
+registration binding starts with Bytes(chain_id) (§3a). An undelegation
+names its own payout note (MsgUndelegate pc 6, ciphertext 7) and the chain
+pays it at maturity by itself: MsgClaimUnbonding, unbond/ claim notes and
+the wallet's automatic claim are gone; the payout is found by trial
+decryption like any minted note (§4j). One MsgStakeVote per validator votes
+up to four notes with one weight (vote_nullifiers 10, exactly four; the
+vote circuit has 10 public inputs); the spaced background vote run is gone:
+each validator's vote and each position's is its own confirm sheet (§4j).
+A private tx's gas_limit is at most 5x what it uses (the wallet declares
+simulate + 10%). Send-disabled denoms are refused at every pool edge;
+switches stay under their Document Signer (1127). The wallet sends nothing
+the user did not confirm (§4c). Android and iOS identical.
+
 ## 1. Keys (wallet-only)
 
 From the BIP-39 seed (empty passphrase), BIP-32 hardened derivation:
@@ -113,10 +128,10 @@ p is the BN254 scalar modulus. `idc = H(TAG_ID, id_secret)` and
 
 **No self-mint counters (removed for fced976).** A note the chain mints to
 this wallet (registration ANML and reward, ANML claim, gas grant, shield,
-swap output, LP shares/refunds/withdrawal legs, unbonding payout) is named by
+swap output, LP shares/refunds/withdrawal legs, undelegation payout) is named by
 a pc of fresh random rho and rcm and carries a v2 ciphertext of them to the
 wallet's own address; a stake note the chain mints (delegation's derth,
-undelegation's claim, unlocked position; a stake vote mints nothing) is named by a
+unlocked position; an undelegation and a stake vote mint none) is named by a
 `spc_mint` of fresh random rho and rcm and carries the blind stake ciphertext
 of them (`StakeProof.spc_ciphertext`). Nothing about them is derived from a
 counter, so failed or abandoned attempts can never open a gap that a restore
@@ -213,7 +228,7 @@ included), MsgRegister (ciphertext_anml and ciphertext_erth: both v2, even
 the ANML whose value is known), MsgClaimAnml, MsgBuyAnml, MsgNoteSwap,
 MsgAddLiquidityShielded (share, refund: one ciphertext for both refund
 notes, same pc), MsgRemoveLiquidityShielded (both legs), MsgRemoveLiquidity
-(ANML leg), MsgClaimUnbonding.
+(ANML leg), MsgUndelegate (the payout, chain 48b631c).
 
     ct  = epk (32) || ChaCha20-Poly1305(key, nonce 0^12, aad empty, pt)      177 bytes
     key = HKDF-SHA256(ikm = X25519(esk, ek_pub), salt "earth.note.v2", info = epk)
@@ -292,9 +307,11 @@ balance) are not notes and stay u64.
 
 ## 3a. Registration (binding, gas grant, record note, restore)
 
-**Binding.** The passport proof's `address` public input is
+**Binding.** The passport proof's `address` public input is (chain
+48b631c, audit 6 B6-4: the chain id first, so a registration seen on one
+network cannot be replayed onto another)
 
-    address = H(TAG_REG, idc, pc_anml, Bytes(ct_anml), pc_erth, Bytes(ct_erth), affiliate)
+    address = H(TAG_REG, Bytes(chain_id), idc, pc_anml, Bytes(ct_anml), pc_erth, Bytes(ct_erth), affiliate)
 
 with affiliate = 0 for no referrer, and for a referrer named by handle
 (chain 203d3b2)
@@ -323,9 +340,13 @@ names its own address. The wallet picks fresh rho/rcm for its own two notes
 and writes their ciphertexts **before** proving the passport, and sends
 exactly those ciphertexts in MsgRegister and to /gas/register. A referral link
 (`https://erth.network/ref/<handle>`, `earth://ref/<handle>`, the Play
-install referrer `referrer=<handle>`) prefills the handle. Chain pinned vector: idc=1,
-pc_anml=2, ct_anml="anml", pc_erth=3, ct_erth="erth", affiliate=0 →
-`20ce5fccf5e6e20a8a7b80f7565e41a7c73dbb16ac5e53746e7234ba8b305b0c`.
+install referrer `referrer=<handle>`) prefills the handle. Chain pinned
+vector (zk/privacy TestRegistrationBindingPinned): chain_id "earth-1",
+idc=1, pc_anml=2, ct_anml="anml", pc_erth=3, ct_erth="erth", affiliate=0 →
+`148b3513a501b6ff9c02314f355cb83fb544e22b2a9df79552fe49c944424159` (was
+`20ce5fcc...5b0c` without the chain id); the same with "earth-testnet-1"
+(vectors.json `reg_testnet`) →
+`122b90a7dc7460e7a9fedc31ab0ee17602b744124eab9fb9b9a7e4770485523a`.
 
 **Gas grant.** `POST /gas/register` takes MsgRegister's fields (no fee
 bundle; the referral as `affiliate_handle`, "" for none; never
@@ -568,8 +589,9 @@ as held. Every such entry is reminded on.
   node's gas price (and at least min_fee), the gas of the tx's shape at the
   chain's default schedule: 100,000 + 10 per tx byte + per bundle 100,000 +
   2,300,000 per action, + 2,600,000 for a stake proof, + 2,150,000 for a
-  membership, + 3,600,000 for MsgRegister. A node asking more is refused
-  (nothing proven or sent); the automation has no other limit. A confirm
+  membership, + 3,600,000 for MsgRegister, + 2,250,000 + (1 + used slots)
+  x 150,000 for a stake vote. A node asking more is refused (nothing
+  proven or sent). A confirm
   sheet's fee bounds the tx it confirms: a simulated fee above what the
   sheet showed throws before proving and the sheet is shown again at the
   new fee (Android's sheet shows the fee of 10,000,000 gas).
@@ -594,9 +616,9 @@ as held. Every such entry is reminded on.
   denom_in is uerth; MsgAddLiquidityShielded.erth_amount; nothing for every
   other staking, dex, personhood and assembly msg (their whole uerth balance
   is the fee). Exceptions: MsgSend names its fee (uerth beyond it is
-  unshielded to its receiver); MsgClaimUnbonding pays `fee_from_output`
-  with no bundle (the wallet always does). No other msg pays from output: a
-  swap of ANML into ERTH needs an ERTH note for its fee.
+  unshielded to its receiver). No msg pays from its output (chain 48b631c
+  retired MsgClaimUnbonding, the one that did): a swap of ANML into ERTH
+  needs an ERTH note for its fee.
 - **Bundle layout (any notes, any assets).** The msg's public release per
   denom (a fee in uerth, an unshield, what a module takes) plus every
   payment output is what must leave each denom; notes per denom: the
@@ -627,9 +649,8 @@ as held. Every such entry is reminded on.
   | MsgMoveHandle | Bytes(handle), new_owner |
   | MsgDelegate | StakeFields, Bytes(validator), amount |
   | MsgRestake | StakeFields, Bytes(validator) |
-  | MsgUndelegate | StakeFields, Bytes(validator), amount |
-  | MsgClaimUnbonding | StakeFields, Bytes(validator), epoch, amount, pc, Bytes(ct), fee_from_output |
-  | MsgStakeVote | proposal_id, Bytes(validator), Bytes(OptionsBytes), weight, vote_nullifier (no StakeFields) |
+  | MsgUndelegate | StakeFields, Bytes(validator), amount, pc, Bytes(ct) |
+  | MsgStakeVote | proposal_id, Bytes(validator), Bytes(OptionsBytes), weight, vote_nullifiers[0..3] (no StakeFields) |
   | MsgLockPosition | StakeFields, Bytes(validator), amount, Bytes(SplitsBytes) |
   | MsgUpdatePosition | StakeFields, position_id, Bytes(SplitsBytes) |
   | MsgUnlockPosition | StakeFields, position_id |
@@ -643,31 +664,26 @@ as held. Every such entry is reminded on.
   removed `fee` fields are reserved; MsgDelegate.amount = 5,
   StakeProof.spc_ciphertext = 8, MsgNoteSwap.denom_in = 8 / amount_in = 9
   (fee_from_output 6 and fee 7 reserved), MsgAddLiquidityShielded.erth_amount
-  = 11, MsgStakeVote.proof = 8 / vote_nullifier = 9 (stake 7 reserved).
+  = 11, MsgStakeVote.proof = 8 / vote_nullifiers = 10 (stake 7 and the
+  single vote_nullifier 9 reserved), MsgUndelegate.pc = 6 / ciphertext = 7.
   Addresses are lowercase canonical bech32.
 - **Stake proofs.** A staking msg's stake proof spends at most two stake
   notes of the msg's denom (the smallest single covering, else the
-  smallest sufficient pair; a balance spread over more is merged first by
-  MsgRestake, two into one) and creates at most one change note (two for a
-  restake split) with the wallet stake ciphertext; unused input and output
-  slots get random rho/rcm (amount 0: nf 0, cm 0) and a zero path. Anchor:
-  the wallet's latest (chain-verified) stake root (zero when the stake tree
-  is empty; not checked when nothing is spent). `spc_mint` and
-  `spc_ciphertext` as in §3; `otag` a position's owner tag (lock: a new
-  counter; update/unlock/vote: the position's) or random. A stake vote is
-  not a stake proof (§4e). **Casting a stake vote (K5)** is one path
-  in the app (StakeVoteController, what the proposal screen's confirm
-  runs): every eligible derth note (one vote each, §4e) and every position of ours created
-  before the snapshot's block, in a shuffled order, one cast at a time, a
-  full sync and a random 20-120 s pause between casts (none before the
-  first; one before the first after a resume), so a vote's fee never spends
-  the previous vote's change unseen and the casts are not one burst that
-  times them together. It runs off the screen (the app-level view model;
-  never holding the wallet lock while it waits), shows its progress and the
-  next cast's time, and can be stopped. The plan is persisted (proposal,
-  options, positions voted, casts done) and a run the process lost resumes
-  on the next unlock (positions already voted are skipped; notes already
-  voted are known by their recorded vote nullifiers, §4e).
+  smallest sufficient pair; a balance spread over more is refused with
+  "merge first": the user merges by MsgRestake, two into one, each merge
+  its own confirmed tx, never one the wallet adds) and creates at most one
+  change note (two for a restake split) with the wallet stake ciphertext;
+  unused input and output slots get random rho/rcm (amount 0: nf 0, cm 0)
+  and a zero path. Anchor: the wallet's latest (chain-verified) stake root
+  (zero when the stake tree is empty; not checked when nothing is spent).
+  `spc_mint` and `spc_ciphertext` as in §3 (an undelegation: a throwaway
+  spc_mint of ours, empty spc_ciphertext, §4j); `otag` a position's owner
+  tag (lock: a new counter; update/unlock/vote: the position's) or random.
+  A stake vote is not a stake proof (§4e, §4j). **Casting a stake vote**
+  (chain 48b631c): one MsgStakeVote per validator (up to four notes) and
+  one MsgPositionVote per position, each its own confirm sheet and tx,
+  raised one after the other and sent only on its own tap (§4j). The
+  spaced, resumable background run (K5) is gone.
 - **Groundworks positions** are still per-user msgs with splits; the chain
   weighs them per validator and no longer stores a position's weight. The
   wallet shows a position's weight as derth × its validator's current rate
@@ -675,7 +691,10 @@ as held. Every such entry is reminded on.
 
 ## 4e. Stake votes without spending (chain 9b29f5d, ORCHARD_DESIGN 15)
 
-One MsgStakeVote per derth note and proposal:
+Superseded in part by §4j (chain 48b631c): one msg now votes up to four
+notes of one validator with one weight; the per-note steps below (snapshot,
+paths, nullifier tree, low leaves, vote nullifiers, records) apply to each
+of its notes. The single-note msg was:
 
     bundle (fee), proposal_id, validator, options, weight, proof (8), vote_nullifier (9)
 
@@ -753,10 +772,7 @@ position < tree_size, not spent at or before the snapshot's height as far
 as sync knows (a spend in the snapshot's own block is before it: the
 snapshot is the trees at that block's end), not already voted on it. The
 recorded votes survive a same-chain reset (an inconsistent sync, a root
-mismatch; audit 4, L1). A running vote (StakeVoteController) waits for a
-suspended run's last cast to end before casting (audit 4, L5), records a
-position's vote the moment the node takes it, and stops when its persisted
-run is gone (a chain switch).
+mismatch; audit 4, L1).
 
 ## 4d. Chain wave 3 wallet rules (chain 06ea4d6)
 
@@ -1049,6 +1065,121 @@ run is gone (a chain switch).
 - **PIN change (M1, Android).** Changing the unlock secret needs a fresh
   unlock with the current one (counted against the unlock backoff).
 
+## 4j. Audit 6 chain rules, staking without background txs (chain 48b631c, ORCHARD_DESIGN 17-18)
+
+- **Registration binding** (B6-4): Bytes(chain_id) first (§3a), the
+  wallet's own chain id. The circuit takes `address` as opaque: no circuit
+  change.
+- **Undelegation pays out by itself (18.1).**
+
+      MsgUndelegate {bundle (fee), validator, amount, stake (5), pc (6), ciphertext (7)}
+      sighash fields: StakeFields(stake), Bytes(validator), amount, pc, Bytes(ciphertext)
+
+  The stake proof spends the derth (v_out = amount, change back to the
+  owner) and is otherwise unchanged; `spc_mint` is a throwaway pc of the
+  owner (proven, unused: the chain mints no stake note) and
+  `spc_ciphertext` is empty. `pc` is a fresh pool note of the wallet's own
+  (`pc = H(TAG_PC, owner_pk, rho, rcm)`, fresh rho and rcm, as every
+  chain-minted note, §1) and `ciphertext` its 177-byte v2 amount-blind
+  ciphertext (§3) to the wallet's own address. At maturity the chain mints
+  `value x payout / requested` uerth to pc in the EndBlocker (at most
+  2^63 - 1 a note: a larger payout is several `shielded_mint` rows with the
+  same ciphertext, each its own position and amount); sync finds every one
+  by trial decryption like any minted note (§4h's split rule: never stop at
+  the first row a ciphertext opens, never dedupe by ciphertext). Nothing is
+  sent to claim it: MsgClaimUnbonding, the `unbond/<valoper>/<epoch>` claim
+  notes, the wallet's matured-claim automation and its retry bookkeeping
+  (`unbond_retry_at`) are gone. A `shieldedstaking_undelegate` event
+  carries validator, derth, value, epoch and payout_id.
+- **Pending undelegations (local only).** The wallet records each
+  undelegation (`pending_unbonds`: tx_hash, validator, derth, pc,
+  started_at, until = timeout_height, confirmed, epoch, value, payout_id,
+  due_by) when the node takes the tx, fills epoch, value and payout_id from
+  its committed event, and drops it when a synced note of its own carries
+  that pc (paid), or when the tx was refused, failed in its block or is
+  missing past its timeout_height. `due_by` is computed once, at
+  confirmation, from chain-wide timing alone (the current epoch's start and
+  end, epoch_seconds, x/staking unbonding_time): an epoch e not ended yet
+  ends (e - current) epochs after the current one's end (at least its start
+  + epoch_seconds); an ended one at start(current) - (current - 1 - e) x
+  epoch_seconds; then + unbonding_time + 15 minutes; no answer on overflow.
+  The wallet shows "Unstaking (private), arrives by about <due_by>" until
+  paid. The record survives a same-chain reset; a restored wallet has none
+  (the payout is still found). The chain's per-id `Query/UnbondPayout`
+  (`/earth/shieldedstaking/v1/unbond_payouts/{id}`) is never asked: the id
+  is on the undelegate tx's event, so a query for it (let alone a poll)
+  ties the asking IP to that undelegation and its timing. Its answer adds
+  nothing the local record lacks but a slash-adjusted amount and retry
+  state, both visible once the note arrives.
+- **One stake vote per validator (18.2).**
+
+      MsgStakeVote {bundle (fee), proposal_id, validator, options, weight, proof (8), vote_nullifiers (10)}
+      sighash fields: proposal_id, Bytes(validator), Bytes(OptionsBytes(options)), weight, vote_nullifiers[0..3]
+      public inputs: note_root, nf_root, AssetID(derth/<validator>), weight, proposal_id, vnf[0..3], sighash
+
+  One msg votes up to four eligible derth notes of one validator (§4e's
+  eligibility; the largest first, then by position). `vote_nullifiers` is
+  exactly four: the used slots' H(TAG_VNF, nk, rho, pos, proposal_id) in
+  slot order, then 32 zero bytes for each unused slot (an unused slot
+  cannot be padded: the circuit makes its vnf 0). weight =
+  RoundVoteWeight(sum of the notes' amounts) (§4e rule 6 applied to the
+  sum; the sum saturates at 2^63 - 1, so the weight is at most
+  9,220,000,000,000,000,000, still <= the sum). Prover.toml: `nk`, then
+  per slot arrays of four `amount`, `rho`, `rcm`, `pos`, `path` (4 x 32),
+  `low_value`, `low_next_value`, `low_next_index`, `low_index`, `low_path`
+  (4 x 32), and `vnf` (4); an unused slot is all zeros (amount 0, rho 0,
+  rcm 0, pos 0, zero paths and low leaf). The vote circuit is a 2^15
+  circuit (27,543 gates) within the bundled 2^15 + 1 point SRS; the prover's
+  VOTE kind splits 10 public inputs (was 7); proof length unchanged. A quote
+  simulates with random vote nullifiers in the used slots (zeros stay
+  zero, so the gas is the real one). Every used slot's vnf is recorded as
+  in §4e (one record per note, the same tx hash). Vectors:
+  vectors.json `stake_vote` (one used slot), `stake_vote_two`,
+  `stake_vote_four`, `round_vote_weight`.
+- **Already voted (1119).** The chain refuses the whole msg if any used
+  vnf was already used on the proposal and names it ("vote nullifier
+  <HEX>"). Refused before any mempool (simulate, CheckTx): the named note
+  is recorded as voted and the vote laid out again without it, within the
+  same confirmed action (nothing was paid; at most four retries, enough to
+  learn a whole part). Refused in a block: only the named note's record
+  becomes final, the msg's other notes are forgotten and vote again.
+- **More than four notes at a validator.** The proposal screen shows one
+  confirm sheet per validator and per position, in order, the next raised
+  only after the last tx went through and each sent only on its own tap.
+  A validator with more eligible notes than one vote holds first asks:
+  "Vote in parts" (one sheet per part, the largest four first; each part
+  publishes its own weight and the parts can be linked by validator and
+  timing) or "Merge notes" (one MsgRestake sheet, two notes into one, no
+  follow-up tx). A merge after a proposal's snapshot does not change that
+  proposal's vote: the snapshot holds the notes as they were (the merged
+  note is not under its root, and the spent ones still vote), so the merge
+  only makes later proposals take fewer parts; the sheet says so.
+- **Gas** (A-L1): the chain refuses a private tx whose gas_limit is more
+  than 5x what it uses. Every private tx the wallet sends (registration,
+  binds at the sheet's 12.5M-gas fee estimate, votes, staking, dex) takes
+  its gas_limit from the simulation: simulated gas + max(10%, 20,000). The
+  12.5M (handle bind) and 10M (other private txs) figures are only the
+  confirm sheet's fee estimate and its bound (a higher simulated fee asks
+  again); they are never declared as a gas limit. Stake vote gas (the
+  wallet's estimate, fee cap): 250,000 + proof (2,000,000) + (1 + used
+  slots) x note_gas (150,000).
+- **Send-disabled denoms** (A-L2): refused at shield, unshield, a dex note
+  swap (either side), a private delegation's ERTH and any module mint into
+  the pool (bank code 5, "send transactions are disabled"). The wallet
+  explains it as such ("Transfers of this token are switched off on the
+  chain ... no shielding, unshielding, note swaps or private staking with
+  it"); notes already held still move privately.
+- **Switch signer** (B6-1): a switch proven under another Document Signer
+  than the live registration's is refused (personhood 1127, "This switch
+  was refused. A switch must be proven with the same passport you
+  registered with ..."); a switch counts against its signer's daily cap
+  (1113: "Today's limit for passports from this issuer has been reached.
+  Try again tomorrow."). The gas service's refusals carrying the chain's
+  text get the same sentences.
+- **Handle owners** (wallet dependency): `HandleEntry.owner` (field 6) is
+  now always served, by Query/Handle(s) and as the backend `/handles` row's
+  sixth element; adoption is by owner only, as §4i.
+
 ## 4a. Indexer URL scheme (backend README "URL scheme for wallets")
 
 1. `GET /privacy/status` → `chain_id`, `genesis` (16 hex), `base`
@@ -1195,21 +1326,19 @@ private balances, stake and registration until a later sync verifies them.
 
 ## 4c. Wallet behaviors (audit 3)
 
-- **Automation** (round 5: only matured unbonding claims, the completion
-  of an undelegation the user started, paid from its own output) takes one
-  claim at a time, chosen at random among those due; before the next, a
-  random 30-180 s pause and a full sync, and a fresh decision. Logs name the
-  kind of action only, never a denom. Nothing else spends a fee unasked:
-  the day's ANML claim, the caretaker vote and the handle are **reminders**
-  (Home banners and the Handle screen): "ANML ready to claim" when today's
-  claim is open and not made; the caretaker vote from 30 days before its
-  expires_at until 30 days after; the handle from 30 days before
-  expires_at through its renewal period. A stake vote run continues only a
-  vote the user started.
-- **Stake vote run** (K5) stops with the session: lock, session end and a
-  wallet switch suspend it (the wallet's keys are dropped, the persisted
-  run kept); the next unlock resumes it from that wallet's own store only.
-  A second start while one runs is refused.
+- **Nothing unasked (chain 48b631c, user rule).** The wallet broadcasts
+  only a tx the user confirmed on its sheet: no automation, no background
+  run, no follow-up tx added to a confirmed one (a stake that needs merging
+  first is refused with "merge first"; a merge is its own sheet). An
+  undelegation pays out by itself (§4j); the day's ANML claim, the
+  caretaker vote and the handle are **reminders** (Home banners and the
+  Handle screen): "ANML ready to claim" when today's claim is open and not
+  made; the caretaker vote from 30 days before its expires_at until 30
+  days after; the handle from 30 days before expires_at through its
+  renewal period. Sync, the reminders and the payout bookkeeping send
+  nothing. A chain of sheets (a switch's handle and caretaker moves, a
+  stake vote's validators and positions) raises the next sheet only after
+  the last tx went through, and each is sent only on its own tap.
 - **Saved state.** state.json is written to a temp file, fsynced and
   renamed over (iOS: atomic write); a failed save is an error, never
   silent. An unreadable state.json is an error shown to the user, never
@@ -1231,15 +1360,13 @@ private balances, stake and registration until a later sync verifies them.
   index replaces it.
 - **claimOpensAt** and every time sum are checked (no wrap, no trap): an
   activated_at with no answer gives none.
-- **Automation.** Errors (not only exceptions) fail the action, never the
-  app. (The claim offset went with the automatic claim in round 5.)
 - **Gas grant proof of work.** The wallet works for at most 24 bits; a
   server asking more is refused (iOS: the work stops when the request is
   cancelled).
 - **Fees.** The registration's fee is bounded by its confirm sheet's like
   every private tx (a higher one re-shows the sheet). A stake undelegation
-  that needs its notes merged first merges at most twice per confirmation,
-  15-45 s apart and before the action.
+  or lock that needs its notes merged first is refused (round 7: no merge
+  is added to a confirmed action).
 - **Logs.** Proof timings are logged in debug builds only.
 - **SRS.** The bundled privacy SRS (srs/bn254_g1_32769.dat, 32,769 points)
   is checked by SHA-256 (d769ac6c…e99c) before use on both platforms; iOS
@@ -1288,4 +1415,13 @@ at three positions, a handle in its renewal period and a lapsed split
 (bounded or refused locally, nothing sent), lease bounds after a lease cut,
 inconsistent lease bounds, an anchor about to lapse, the rounded-up fee and
 the new errors. At 203d3b2 every witness of the Android suite (440) and of
-the iOS suite (416) passes `nargo execute`.
+the iOS suite (416) passes `nargo execute`. `Fix7Test` / `Fix7Tests` (chain
+48b631c) drive the chain-id binding (pinned 148b3513...4159), an
+undelegation naming its payout (no stake note minted, spc_ciphertext
+empty), a payout split over three notes found whole (and by a restored
+wallet) with nothing sent, refused and failed undelegations forgotten, the
+four-slot vote (10 public inputs, unused slots zero), RoundVoteWeight
+against the chain, the 5x gas ceiling on every committed tx, send-disabled
+refusals and the new errors, and a sync that never sends anything;
+`StakeVoteFlowTest` covers one vote per validator, a fifth note in a second
+part, and a restored wallet learning its votes from refusals.
