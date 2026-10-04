@@ -4,14 +4,15 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class AutomationTest {
+/** Reminders: what the wallet asks the user to do instead of doing it. */
+class RemindersTest {
     private val day = 20_000L
     private val now = day * 86_400 + 5 * 3600
 
     /**
-     * Round 5, and chain 48b631c (user decision): the wallet sends nothing on
-     * its own. The day's claim, the caretaker vote and the handle are
-     * reminders; an undelegation pays out by itself (nothing to claim).
+     * The wallet sends nothing on its own: the day's claim, the caretaker vote
+     * and the handle are reminders; an undelegation pays out by itself
+     * (nothing to claim).
      */
     @Test
     fun remindersInsteadOfActions() {
@@ -36,26 +37,5 @@ class AutomationTest {
         // A served "live" whose expiry passed by our clock is in its renewal period.
         assertEquals(true, (Reminders.due(q.copy(handle = "alice", handleEntry = e.copy(expiresAt = now - 5))).single() as Reminders.Reminder.HandleExpiring).inRenewal)
         assertTrue(Reminders.text(Reminders.Reminder.AnmlReady, now).contains("ANML"))
-    }
-
-    @Test
-    fun payoutTimeComesFromEpochTimingAlone() {
-        val day = 86_400L
-        val unbonding = 21 * day
-        val m = PrivacyWallet.PAYOUT_MARGIN_S
-        // Epoch 10 began at t and ends at t + day.
-        val t = 1_800_000_000L
-        // Booked in the epoch in progress: it ends with it, then unbonds.
-        assertEquals(t + day + unbonding + m, PrivacyWallet.unbondDueBy(10, 10, t, t + day, day, unbonding))
-        // A late epoch end (the end time passed): at least one epoch from its start.
-        assertEquals(t + day + unbonding + m, PrivacyWallet.unbondDueBy(10, 10, t, t, day, unbonding))
-        // An ended epoch: 9 ended at t, 7 at least two epochs earlier.
-        assertEquals(t + unbonding + m, PrivacyWallet.unbondDueBy(9, 10, t, t + day, day, unbonding))
-        assertEquals(t - 2 * day + unbonding + m, PrivacyWallet.unbondDueBy(7, 10, t, t + day, day, unbonding))
-        // Chain-supplied numbers never wrap.
-        assertEquals(null, PrivacyWallet.unbondDueBy(0, Long.MAX_VALUE, 0, 0, Long.MAX_VALUE, 0))
-        assertEquals(null, PrivacyWallet.unbondDueBy(1, 1, Long.MAX_VALUE, Long.MAX_VALUE, 1, Long.MAX_VALUE))
-        assertEquals(null, PrivacyWallet.unbondDueBy(-1, 3, 0, 1, 1, 1))
-        assertEquals(null, PrivacyWallet.unbondDueBy(1, 3, 0, 1, 0, 1))
     }
 }

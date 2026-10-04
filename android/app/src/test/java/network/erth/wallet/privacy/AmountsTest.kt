@@ -8,7 +8,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 import java.math.BigDecimal
 
-/** K12: u64 amounts parsed unsigned and bounded to 2^63-1, sums saturating (display) or checked (tx). */
+/** u64 amounts parsed unsigned and bounded to 2^63-1, sums saturating (display) or checked (tx). */
 class AmountsTest {
     @Test
     fun parsesUnsignedWithinLong() {

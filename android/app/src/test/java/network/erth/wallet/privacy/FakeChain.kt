@@ -162,7 +162,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     data class HandleRec(val handle: String, val nullifier: Fr, val address: String, val expiresAt: Long)
     val handles = java.util.TreeMap<String, HandleRec>()
     val handleMovedOut = HashSet<Fr>()
-    /** What a served entry's owner says (audit 6, M6): the holder's nullifier unless a test overrides it ("" = a directory without owners). */
+    /** What a served entry's owner says: the holder's nullifier unless a test overrides it ("" = a directory without owners). */
     var ownerHex: ((HandleRec) -> String)? = null
     /** Every Query/Handles (start) and backend /handles (from_index) page asked: never one handle. */
     val handleAsks = ArrayList<String>()
@@ -384,10 +384,10 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     override fun maxActionsPerBundle(): Int = maxActions
     override fun tipHeight(): Long = height - 1 + tipAhead + sendTipAhead
 
-    /** How far the tip a tx's timeout is set from runs ahead (audit 6, M4: a node inflating it at send only). */
+    /** How far the tip a tx's timeout is set from runs ahead (a node inflating it at send only). */
     var sendTipAhead = 0L
 
-    /** x/shielded Query/Assets as the node serves it (audit 6, M2): null says nothing. */
+    /** x/shielded Query/Assets as the node serves it: null says nothing. */
     var assetList: List<Pair<String, Fr>>? = null
 
     override fun assets(): List<Pair<String, Fr>>? = assetList
@@ -411,7 +411,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         return 200_000L + 100_000L * PrivateMsgs.bundles(m).size + 350_000L * actions + (if (PrivateMsgs.stake(m) != null) 400_000 else 0) + vote
     }
 
-    /** Every committed private tx's gas_limit over the gas it uses (chain A-L1: at most 5). */
+    /** Every committed private tx's gas_limit over the gas it uses (the chain allows at most 5). */
     val gasRatios = ArrayList<Double>()
 
     /** Whether a committed tx must carry a timeout_height (the wallet always sets one). */
@@ -529,7 +529,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             is MsgSend -> {
                 require(m.fee > 0)
                 require(rem.isEmpty() == m.receiver.isEmpty()) { "receiver exactly when something is left" }
-                // Wave 3 (B/F2): never to a module account.
+                // Never to a module account.
                 if (m.receiver.isNotEmpty()) require(PrivateMsgs.moduleAccountOf(network.erth.wallet.crypto.Bech32.decode(m.receiver)) == null) { "receiver is a module account" }
                 require(rem.keys.none { it.startsWith("dexlp/") }) { "LP shares cannot be unshielded" }
             }
@@ -619,10 +619,10 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
 
     private fun caretakerHolds(n: Fr): Boolean = n in caretakerVotes
 
-    /** Audit 5 P2: a lapsed split the sweep has not reached is not held. */
+    /** A lapsed split the sweep has not reached is not held. */
     private fun caretakerHoldsLive(n: Fr): Boolean = caretakerHolds(n) && (caretakerExpiry[n] ?: 0L) > now
 
-    /** Audit 5 P2: a handle held and live (not in its renewal period). */
+    /** A handle held and live (not in its renewal period). */
     private fun holdsLiveHandle(n: Fr): Boolean = handleOf(n)?.let { now < it.expiresAt } == true
 
     private fun handleOf(n: Fr): HandleRec? = handles.values.firstOrNull { it.nullifier == n }
@@ -662,7 +662,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             if (m.handle.isNotEmpty()) {
                 require(network.erth.wallet.privacy.handles.Handles.valid(m.handle)) { "not a handle" }
                 handles[m.handle]?.let { h -> require(h.nullifier == n || now >= h.expiresAt + handleRenewal) { "handle is held by another human (code 1122)" } }
-                // Audit 5 P2: only a live handle renews or changes unbounded.
+                // Only a live handle renews or changes unbounded.
                 if (!holdsLiveHandle(n)) {
                     require(n !in handleMovedOut) { "this identity moved its handle away (code 1125)" }
                     predecessorBound(m.maxPredecessor, handleClaimBound())
@@ -699,12 +699,12 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     private fun shares(erth: Long, anml: Long): BigInteger =
         minOf(BigInteger.valueOf(erth) * lpSupply / poolErth, BigInteger.valueOf(anml) * lpSupply / poolAnml)
 
-    /** Denoms governance send-disabled (bank SendEnabled false): refused at every pool edge (chain 48b631c, A-L2). */
+    /** Denoms governance send-disabled (bank SendEnabled false): refused at every pool edge (chain 48b631c). */
     var sendDisabled: Set<String> = emptySet()
 
     /** The action's own checks, before anything is written (atomic with the spend in the ante). */
     private fun precheck(m: MessageLite, rem: Map<String, Long>) {
-        // The ante's release-map check and the module mint (audit 6, A-L2): a
+        // The ante's release-map check and the module mint: a
         // dex note swap and a private delegation release out of the pool.
         val edges = when (m) {
             is MsgNoteSwap -> rem.keys + m.denomOut
@@ -747,12 +747,12 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             }
             is MsgVoteRemoval -> require(m.optionId in removalBallots) { "no open ballot" }
             is MsgProposeRemoval -> require(m.optionId !in removalBallots) { "ballot already open" }
-            // Wave 3 (F3): option weights only in their canonical LegacyDec form.
+            // Option weights only in their canonical LegacyDec form.
             is MsgStakeVote -> {
                 require(m.optionsList.all { it.weight == PrivateMsgs.legacyDec(it.weight) }) { "a vote weight is not canonical" }
                 val snap = snapshots[m.proposalId] ?: error("no open snapshot for proposal ${m.proposalId}")
                 require(m.weight in 1..Long.MAX_VALUE) { "weight must be positive" }
-                // Chain C-L3: at most three significant digits.
+                // At most three significant digits.
                 require(PrivacyWallet.voteWeight(m.weight) == m.weight) { "weight has more than 3 significant digits" }
                 // Chain dff3a9b: exactly two slots, used ones first (at least one), distinct, zeros after.
                 require(m.voteNullifiersCount == PrivateMsgs.MAX_VOTE_NOTES) { "a stake vote carries exactly 2 vote nullifiers" }
@@ -809,7 +809,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         require(auth.signerInfosCount == 0)
         val m = decode(raw)
         val body = Tx.TxBody.parseFrom(raw.bodyBytes)
-        // Round 2 (R7): exactly the canonical encoding of what it decodes to (the wallet's AuthInfo proto has no tip field at all).
+        // Exactly the canonical encoding of what it decodes to (the wallet's AuthInfo proto has no tip field at all).
         require(raw.toByteArray().contentEquals(txBytes)) { "tx bytes are not canonical" }
         require(body.toByteArray().contentEquals(raw.bodyBytes.toByteArray())) { "body bytes are not canonical" }
         require(auth.toByteArray().contentEquals(raw.authInfoBytes.toByteArray())) { "auth info bytes are not canonical" }
@@ -835,7 +835,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         require(auth.fee.amountCount == 1 && auth.fee.getAmount(0).denom == "uerth" && auth.fee.getAmount(0).amount == total.toString()) { "declared fee != msg fee" }
         require(total >= minFee) { "below min fee" }
         if (!simulate) require(BigDecimal(total) >= price.multiply(BigDecimal(auth.fee.gasLimit))) { "below min gas price" }
-        // Chain 48b631c (audit 6, A-L1): a private tx's gas_limit is at most 5x the gas it uses.
+        // Chain 48b631c: a private tx's gas_limit is at most 5x the gas it uses.
         if (!simulate) {
             val used = gasOf(m)
             require(auth.fee.gasLimit <= 5 * used) { "gas limit ${auth.fee.gasLimit} exceeds what this private tx uses (${used})" }
@@ -920,7 +920,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             is MsgRegister -> {
                 val binding = PrivateMsgs.decimalField(m.publicSignalsList[1])
                 require(binding == PrivateMsgs.registrationBinding(m, chainId)) { "binding" }
-                // Round 2 (R1): a landed binding is never used again.
+                // A landed binding is never used again.
                 require(usedBindings.add(binding)) { "binding already used (ErrBindingUsed)" }
                 val dsc = PrivateMsgs.decimalField(m.publicSignalsList[3])
                 // A switch: the holder's old leaf is zeroed, the new one appended.
@@ -1224,7 +1224,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         return network.erth.wallet.privacy.handles.HandleDirectory.Page(page, if (more) page.last().handle else "")
     }
 
-    /** Set to make a set_caretaker event report this expires_at (a hostile node, audit 5 M4). */
+    /** Set to make a set_caretaker event report this expires_at (a hostile node). */
     var forgeCaretakerExpiry: Long? = null
 
     /** Set to make the backend's handle stream lie about an address (the chain check must catch it). */

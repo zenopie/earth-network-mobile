@@ -285,7 +285,7 @@ class PrivateMsgsTest {
         org.junit.Assert.assertThrows(IllegalArgumentException::class.java) { PrivateMsgs.bindHandleFields(bind.toBuilder().setAddress("").build()) }
     }
 
-    /** Chain wave 3 (06ea4d6): the module accounts, canonical weights. */
+    /** The module accounts the chain declares, and canonical vote weights. */
     @Test
     fun wave3Vectors() {
         val mods = json.getJSONObject("module_accounts")

@@ -12,7 +12,7 @@ import java.io.IOException
 import java.net.ServerSocket
 import kotlin.concurrent.thread
 
-/** K10: the status's base is taken only as exactly /privacy/<chain_id>/<genesis>, never as a host. */
+/** The status's base is taken only as exactly /privacy/<chain_id>/<genesis>, never as a host. */
 class IndexerBaseTest {
     private val server = ServerSocket(0, 50, java.net.InetAddress.getByName("127.0.0.1"))
     private val paths = java.util.Collections.synchronizedList(ArrayList<String>())

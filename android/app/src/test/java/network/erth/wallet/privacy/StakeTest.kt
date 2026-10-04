@@ -6,15 +6,11 @@ import network.erth.earth.proto.shieldedstaking.MsgRestake
 import network.erth.earth.proto.shieldedstaking.MsgUndelegate
 import network.erth.earth.proto.shieldedstaking.StakeProof
 import network.erth.wallet.chain.ChainErrors
-import network.erth.wallet.privacy.keys.PrivacyKeys
 import network.erth.wallet.privacy.note.OwnedStakeNote
-import network.erth.wallet.privacy.sync.PrivacyIndexer
-import network.erth.wallet.privacy.sync.PrivacyStore
 import network.erth.wallet.privacy.tx.NoteSelection
 import network.erth.wallet.privacy.tx.PrivateMsgs
 import network.erth.wallet.privacy.zk.DebtTree
 import network.erth.wallet.privacy.zk.Fr
-import network.erth.wallet.privacy.zk.Privacy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -24,49 +20,24 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Clients round 8 (chain dff3a9b, ORCHARD_DESIGN 20): one stake note per
- * validator (a delegation, an unlock and a move's credit merge into it; a
- * first delegation pads its input, a full exit creates a zero note), credits
- * quoted at the live rate with a margin (a refusal costs nothing), moving
- * stake (MsgRedelegate) with its slash label, the window that keeps moved-in
- * stake in place (refused up front, explained), the label cleared at what
- * the slash debt tree says it is worth, every stake proof naming the chain's
- * clear_before and debt root, and the debt tree read whole (the indexer's
- * stream, the chain's pages), never asked about one move.
+ * Private staking: one note per validator, quotes at the live rate, moving
+ * stake (labels, the window, the slash debt), and the refusals that cost
+ * nothing.
  */
-class Fix8Test {
-    private val alice = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+class StakeTest : WalletTest() {
+    private fun f(b: com.google.protobuf.ByteString) = Fr.fromBytes(b.toByteArray())
+
+    /** Every proof names the chain's clear_before and debt root. */
+    private fun assertNamesTheDebt(chain: FakeChain, p: StakeProof) {
+        assertEquals(chain.clearBefore(), p.clearBefore)
+        assertEquals(chain.debtRoot(), f(p.debtRoot))
+    }
+
     private val vA = "earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
-    private val vB: String = Vectors.json.getString("validator2")
-    private val vC = "earthvaloper1zyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszq"
-
-    private fun reads(chain: FakeChain) = object : PrivacyChainReads {
-        override fun personhoodParams() = PrivacyChainReads.PersonhoodParams(chain.caretakerLease, 3_600, chain.handleLease, chain.handleRenewal)
-        override fun leaseBounds() = chain.leaseBounds()
-        override fun ballotInputs(proposalId: Long, optionId: Long) =
-            PrivacyChainReads.BallotInputs(Privacy.proposalScope(proposalId, 0), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, 0, 0, chain.ballotMaxPredecessor())
-        override fun epochNumber() = chain.epoch
-        override fun snapshot(proposalId: Long) = chain.snapshotRead(proposalId)
-        override fun stakeNullifierTree(start: Long, limit: Int) = chain.nfTreeRead(start, limit)
-        override fun positions() = chain.positionReads()
-        override fun debtTree(start: Long, limit: Int) = chain.debtTreeRead(start, limit)
-        override fun validatorBook(valoper: String) = chain.validatorBookRead(valoper)
-        override fun minDelegation() = chain.minDelegation
-    }
-
-    private fun wallet(chain: FakeChain, indexer: PrivacyIndexer = chain) = PrivacyWallet(
-        PrivacyKeys.fromMnemonic(alice), PrivacyStore.memory(), indexer, chain, reads(chain), chain.prover, chain.chainId, chain,
-        now = { chain.now },
-    )
-
-    private fun funded(chain: FakeChain, w: PrivacyWallet, amount: Long = 3_000_000) {
-        val o = w.shieldOutput("uerth", 0)
-        chain.shield("uerth", amount, o.pc, o.ciphertext)
-    }
 
     private fun staked(chain: FakeChain = FakeChain(), at: String = vA, amount: Long = 2_000_000): PrivacyWallet {
         val a = wallet(chain)
-        repeat(6) { funded(chain, a) }
+        repeat(6) { funded(chain, a, 3_000_000) }
         a.sync()
         a.delegate(at, amount); a.sync()
         return a
@@ -74,21 +45,15 @@ class Fix8Test {
 
     private fun PrivacyWallet.at(v: String): List<OwnedStakeNote> = stakeNotes.filter { it.spendable && it.denom == PrivacyWallet.derthDenom(v) }
 
-    private fun f(b: com.google.protobuf.ByteString) = Fr.fromBytes(b.toByteArray())
+    private val vB: String = Vectors.json.getString("validator2")
 
-    /** Every proof names the chain's clear_before and debt root (circuit audit L-1). */
-    private fun assertNamesTheDebt(chain: FakeChain, p: StakeProof) {
-        assertEquals(chain.clearBefore(), p.clearBefore)
-        assertEquals(chain.debtRoot(), f(p.debtRoot))
-    }
-
-    // ---- one note per validator ------------------------------------------------
+    private val vC = "earthvaloper1zyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszq"
 
     @Test
     fun aFirstDelegationPadsAndATopUpMerges() {
         val chain = FakeChain()
         val a = wallet(chain)
-        repeat(4) { funded(chain, a) }
+        repeat(4) { funded(chain, a, 3_000_000) }
         a.sync()
         val nfs = chain.stakeNfValues.size
         a.delegate(vA, 1_000_000); a.sync()
@@ -142,8 +107,6 @@ class Fix8Test {
         assertEquals(0L, (chain.lastMsg as MsgUndelegate).stake.clearBefore)
     }
 
-    // ---- quotes ----------------------------------------------------------------
-
     @Test
     fun theQuoteIsWhatTheTxCredits() {
         val chain = FakeChain()
@@ -188,11 +151,9 @@ class Fix8Test {
         assertEquals(sims, chain.simulated)
     }
 
-    // ---- moving stake ------------------------------------------------------------
-
     /**
      * A move arrives whole only out of an unbonded source's queue (chain
-     * b46a4bb, audit 7 A7-1): from a bonded one it leaves pro rata, so the
+     * b46a4bb): from a bonded one it leaves pro rata, so the
      * quote takes u - 1001 even when the queue covers u, and lands.
      */
     @Test
@@ -299,8 +260,6 @@ class Fix8Test {
         dumpWitnesses(chain, "fix8RestakeLabelled")
     }
 
-    // ---- the window ----------------------------------------------------------------
-
     @Test
     fun movedStakeStaysUntilItsWindowCloses() {
         val chain = FakeChain()
@@ -401,8 +360,6 @@ class Fix8Test {
         assertTrue(chain.debtAsks.toString(), chain.debtAsks.count { it.startsWith("chain:") } >= 2)
     }
 
-    // ---- errors ----------------------------------------------------------------------
-
     @Test
     fun refusalsThatCostNothingSayTryAgain() {
         for (log in listOf(
@@ -418,7 +375,7 @@ class Fix8Test {
         assertNull(ChainErrors.explain(1103, "shieldedstaking", "amount converts to nothing"))
     }
 
-    /** The proof's owner tag is fresh on every msg that is not a position's (circuit audit L-2). */
+    /** The proof's owner tag is fresh on every msg that is not a position's. */
     @Test
     fun ownerTagsAreFreshOffPositions() {
         val chain = FakeChain()

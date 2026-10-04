@@ -283,7 +283,7 @@ class WalletFlowTest {
         assertEquals(9L, chain.positionVotes.single().second)
         // Only its owner can move it.
         assertThrows(IllegalStateException::class.java) { b.updatePosition(pos, 0, mapOf(2L to 100L)) }
-        // Unlocking merges the position's derth back into the note; the fee bundle records the closed counter (K11).
+        // Unlocking merges the position's derth back into the note; the fee bundle records the closed counter.
         a.unlockPosition(a.positions().single().first, tag)
         a.sync()
         assertTrue(a.positions().isEmpty())

@@ -76,7 +76,7 @@ class SwapMathTest {
     }
 
     /**
-     * Deposits (audit 4, C2): the shares and the legs x/dex pulls, rounded
+     * Deposits: the shares and the legs x/dex pulls, rounded
      * up, match the chain's own maths; a leg derived with depositLeg never
      * makes the other side the binding one and is never pulled past.
      */
@@ -107,5 +107,17 @@ class SwapMathTest {
         }
         assertEquals(BigInteger.valueOf(3), SwapMath.depositLeg(BigInteger.valueOf(5), BigInteger.valueOf(2), BigInteger.ONE))
         assertEquals(BigInteger.ZERO, SwapMath.depositLeg(BigInteger.ONE, BigInteger.ZERO, BigInteger.ONE))
+    }
+
+    @Test
+    fun swapFeeRoundsUp() {
+        val f = BigDecimal("0.300000000000000000")
+        assertEquals(BigInteger.ONE, SwapMath.feeOf(BigInteger.ONE, f))
+        assertEquals(BigInteger.valueOf(3), SwapMath.feeOf(BigInteger.valueOf(1_000), f))
+        assertEquals(BigInteger.valueOf(4), SwapMath.feeOf(BigInteger.valueOf(1_001), f))
+        assertEquals(BigInteger.ZERO, SwapMath.feeOf(BigInteger.valueOf(1_000), BigDecimal.ZERO))
+        // A swap's output is net of the larger fee.
+        val q = SwapMath.hubForToken(BigInteger.valueOf(1_000_000), BigInteger.valueOf(1_000_000), BigInteger.valueOf(1_001), f)!!
+        assertEquals(BigInteger.valueOf(4), q.feeErth)
     }
 }

@@ -114,7 +114,7 @@ class OrchardVectorsTest {
         val noTx = listOf(Privacy.bytes(ByteArray(0)), Privacy.u64(0), Privacy.u64(0))
         val sighash = Privacy.signal(PrivateMsgs.SEND, "earth-1", listOf(Privacy.u64(1), digest) + noTx + listOf(Privacy.bytes(ByteArray(0)), Privacy.u64(10_000)))
         assertEquals(b.getString("sighash"), sighash.toHex())
-        // The tx's memo (UTF-8), timeout_height and gas_limit are bound (audit M1).
+        // The tx's memo (UTF-8), timeout_height and gas_limit are bound.
         val t = b.getJSONObject("sighash_tx")
         val withTx = Privacy.signal(PrivateMsgs.SEND, "earth-1", listOf(Privacy.u64(1), digest,
             Privacy.bytes(t.getString("memo").toByteArray(Charsets.UTF_8)), Privacy.u64(t.getLong("timeout_height")), Privacy.u64(t.getLong("gas_limit")),

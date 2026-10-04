@@ -15,7 +15,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Round 5 (chain 4a663d5): handles end to end against [FakeChain] (claim,
+ * Handles end to end against [FakeChain] (claim,
  * renew, change, release, move; the whole-directory lookup), paying a handle,
  * a registration referred by a handle, an identity switch that moves its
  * handle and caretaker vote first, and the predecessor bounds of every
