@@ -57,6 +57,16 @@ data class TxConfirmDetails(
      * nothing about how much slippage the message allows.
      */
     val minReceived: String? = null,
+    /**
+     * Rows the chain's own numbers add beyond the amount (label, value):
+     * a delegation's quoted derth, what a move arrives as.
+     */
+    val rows: List<Pair<String, String>> = emptyList(),
+    /**
+     * Sentences the user must read before confirming: a slash's cut of
+     * moved stake this tx settles, when moved stake can move again.
+     */
+    val notes: List<String> = emptyList(),
 )
 
 /**
@@ -114,6 +124,7 @@ fun TxConfirmSheet(
         if (details.minReceived != null) {
             EarthDetailRow("Minimum received", details.minReceived)
         }
+        details.rows.forEach { (label, value) -> EarthDetailRow(label, value) }
         if (details.recipient != null) {
             Text(
                 text = details.recipientLabel,
@@ -122,6 +133,14 @@ fun TxConfirmSheet(
                 modifier = Modifier.fillMaxWidth().padding(top = dimens.space8),
             )
             Box(Modifier.padding(vertical = dimens.space8)) { EarthCodeBlock(details.recipient) }
+        }
+        details.notes.forEach { note ->
+            Text(
+                text = note,
+                style = EarthTypography.textSm,
+                color = EarthColors.Text.textSecondary,
+                modifier = Modifier.fillMaxWidth().padding(vertical = dimens.space4),
+            )
         }
         EarthDetailRow(if (details.shielded) "Network fee (about)" else "Network fee", formatErth(details.feeUerth))
         EarthDetailRow(if (details.shielded) "Shielded balance" else "Balance", formatErth(details.balanceUerth))

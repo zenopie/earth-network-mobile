@@ -39,6 +39,8 @@ import network.erth.wallet.ui.earn.DelegationRow
 import network.erth.wallet.ui.earn.EarnScreen
 import network.erth.wallet.ui.earn.EarnUiState
 import network.erth.wallet.ui.earn.EarnViewModel
+import network.erth.wallet.ui.earn.MoveStakeSheet
+import network.erth.wallet.ui.earn.PrivateStakeRow
 import network.erth.wallet.ui.earn.StakeSheet
 import network.erth.wallet.ui.explore.ExploreScreen
 import network.erth.wallet.ui.explore.ExploreUiState
@@ -175,6 +177,8 @@ internal fun EarthContent(
     // under-reports it once rewards have compounded.
     fun derthValue(derth: Long, validator: String): Long =
         earnState?.derthValue(derth, validator) ?: derth
+    fun monikerOf(validator: String): String =
+        earnState?.validators?.firstOrNull { it.validatorOperator == validator }?.moniker ?: validator
     val privateStakeValue = Amounts.satAdd(
         Amounts.satSum(derthHeld.entries) { (denom, amount) -> derthValue(amount, denom.removePrefix("derth/")) },
         privacyState?.positions?.let { ps -> Amounts.satSum(ps) { derthValue(it.position.derth, it.position.validator) } } ?: 0L,
@@ -253,7 +257,9 @@ internal fun EarthContent(
             contentPadding = padding,
         )
 
-        EarthRoute.Earn -> EarnScreen(
+        EarthRoute.Earn -> {
+          LaunchedEffect(Unit) { privacy.refresh() }
+          EarnScreen(
             state = earnState,
             pools = marketsState?.pools,
             swapFeePercent = marketsState?.swapFeePercent,
@@ -264,7 +270,35 @@ internal fun EarthContent(
             onRemoveLiquidity = { liquidity = LiquidityAction.Remove to it },
             onStake = { staking = StakeIntent.Stake },
             onUnstake = { staking = StakeIntent.Unstake },
+            onMove = { staking = StakeIntent.Move },
             privateStakedUerth = privateStakeValue,
+            privateStake = privacyState?.stake.orEmpty().map { h ->
+                PrivateStakeRow(
+                    validator = h.validator,
+                    moniker = monikerOf(h.validator),
+                    derth = h.derth,
+                    valueUerth = derthValue(h.derth, h.validator),
+                    free = h.free,
+                    locked = h.locked,
+                    lockedUntil = h.lockedUntil,
+                    notes = h.notes,
+                    mergeable = h.mergeable,
+                )
+            },
+            onMerge = { validator ->
+                tx.requestPrivate(
+                    details = TxConfirmDetails(
+                        action = "Merge stake notes",
+                        msgTypeUrl = PrivateMsgs.RESTAKE,
+                        balanceUerth = 0L,
+                        recipient = validator,
+                        recipientLabel = "Validator",
+                    ),
+                    shieldedErth = loaded.shieldedErthUerth,
+                    onSuccess = { onRefresh(); privacy.refresh() },
+                    run = { ctx -> PrivacySession.wallet(ctx).restake(validator).hash },
+                )
+            },
             onClaim = {
                 val validators = earnState?.delegations?.map { it.validatorOperator }.orEmpty()
                 // One withdraw per validator, so the gas scales with how many
@@ -284,7 +318,8 @@ internal fun EarthContent(
                 )
             },
             modifier = inset,
-        )
+          )
+        }
 
         EarthRoute.Swap -> SwapScreen(
             // ANML exists only as notes and the dex refuses it on every
@@ -767,7 +802,7 @@ internal fun EarthContent(
             stakeVoteFinal = true,
             onVote = { proposal, vote -> scope.launch {
                 // Every vote this wallet's stake takes: one per validator
-                // (its notes, up to four a vote) and one per position. Each
+                // (its notes, up to two a vote) and one per position. Each
                 // is its own confirm sheet and its own tx, sent on its tap.
                 val items = withContext(Dispatchers.IO) {
                     runCatching { PrivacySession.wallet(context).stakeVoteItems(proposal.id) }
@@ -919,16 +954,61 @@ internal fun EarthContent(
     }
 
     staking?.let { intent ->
-        val stake = intent == StakeIntent.Stake
-        val derthRows = loaded.shielded.filterKeys { it.startsWith("derth/") }.map { (denom, amount) ->
-            val op = denom.removePrefix("derth/")
+        // What may leave each validator now: moved-in stake whose window is
+        // open stays where it is (refused up front, explained).
+        val holdings = privacyState?.stake.orEmpty()
+        val derthRows = holdings.filter { it.free > 0 }.map { h ->
             DelegationRow(
-                validatorOperator = op,
-                moniker = earnState?.validators?.firstOrNull { it.validatorOperator == op }?.moniker ?: op,
-                amountUerth = amount,
-                commission = earnState?.validators?.firstOrNull { it.validatorOperator == op }?.commission ?: 0.0,
+                validatorOperator = h.validator,
+                moniker = monikerOf(h.validator),
+                amountUerth = h.free,
+                commission = earnState?.validators?.firstOrNull { it.validatorOperator == h.validator }?.commission ?: 0.0,
             )
         }
+        if (intent == StakeIntent.Move) {
+            val windowDays = (privacyState?.labelWindowSeconds ?: 0L) / 86_400
+            MoveStakeSheet(
+                sources = derthRows,
+                destinations = earnState?.validators.orEmpty(),
+                note = "Moved stake keeps earning, with no unbonding gap. It stays at the new validator" +
+                    (if (windowDays > 0) " for about $windowDays days" else " for the unbonding period") +
+                    " before it can move, unstake or lock again: a slash of the validator it left can still reach it until then.",
+                onDismiss = { staking = null },
+                onConfirm = { src, dst, amount ->
+                    staking = null
+                    scope.launch {
+                        // The chain's own numbers first (live rates, the
+                        // debt tree): the sheet shows what the tx will carry.
+                        val quote = withContext(Dispatchers.IO) { runCatching { PrivacySession.wallet(context).quoteMove(src, dst, amount) } }
+                        quote.onFailure { tx.showFailure("Move stake", it) }.onSuccess { q ->
+                            tx.requestPrivate(
+                                details = TxConfirmDetails(
+                                    action = "Move stake",
+                                    msgTypeUrl = PrivateMsgs.REDELEGATE,
+                                    balanceUerth = 0L,
+                                    amountLabel = "Moves",
+                                    amountValue = "${formatUerth(q.amount)} derth (${formatUerth(q.value)} ERTH)",
+                                    recipient = "${monikerOf(q.src)} → ${monikerOf(q.dst)}\n${q.dst}",
+                                    recipientLabel = "From → to",
+                                    rows = listOf("Arrives as" to "${formatUerth(q.dstDerth)} derth or more"),
+                                    notes = listOfNotNull(
+                                        "The arriving stake is quoted at both validators' live rates with a small margin. If the rates move past it before the move lands, the chain refuses it and nothing is spent: just try again.",
+                                        if (q.merges) null else "You hold no other stake at ${monikerOf(q.dst)} it can join, so it arrives as its own note there (merge it later with a tap).",
+                                        "It can move, unstake or lock again after about ${q.windowSeconds / 86_400} days.",
+                                        haircutNote(q.haircut, monikerOf(q.src)),
+                                    ),
+                                ),
+                                shieldedErth = loaded.shieldedErthUerth,
+                                onSuccess = { onRefresh(); privacy.refresh() },
+                                run = { ctx -> PrivacySession.wallet(ctx).redelegate(q).hash },
+                            )
+                        }
+                    }
+                },
+            )
+            return@let
+        }
+        val stake = intent == StakeIntent.Stake
         StakeSheet(
             title = if (stake) "Stake ERTH privately" else "Unstake",
             choices = if (stake) earnState?.validators.orEmpty() else derthRows,
@@ -945,41 +1025,63 @@ internal fun EarthContent(
             // derth is not a coin: a stake note only its owner can merge,
             // vote, lock or unstake. Nothing can send or sell it.
             note = if (stake) {
-                "Staked ERTH stays locked to this wallet: it can't be sent, unshielded or traded, only unstaked."
+                "Staked ERTH stays locked to this wallet: it can't be sent, unshielded or traded, only unstaked or moved."
             } else {
-                "Unstaked ERTH arrives in this wallet as private ERTH once the unbonding period ends. Nothing more to do or pay."
+                "Unstaked ERTH arrives in this wallet as private ERTH once the unbonding period ends. Nothing more to do or pay." +
+                    (if (holdings.any { it.locked > 0 }) " Stake moved here recently can be unstaked once its window closes." else "")
             },
             onDismiss = { staking = null },
             onConfirm = { validator, amount ->
                 staking = null
-                tx.requestPrivate(
-                    details = TxConfirmDetails(
-                        action = if (stake) "Stake ERTH" else "Unstake",
-                        msgTypeUrl = if (stake) PrivateMsgs.DELEGATE else PrivateMsgs.UNDELEGATE,
-                        balanceUerth = 0L,
-                        amountLabel = "Amount",
-                        amountValue = if (stake) {
-                            "${formatUerth(amount)} ERTH"
-                        } else {
-                            "${formatUerth(amount)} derth (${formatUerth(derthValue(amount, validator))} ERTH)"
-                        },
-                        recipient = validator,
-                        recipientLabel = if (stake) "Validator" else "From validator",
-                    ),
-                    shieldedErth = loaded.shieldedErthUerth,
-                    onSuccess = onRefresh,
-                    run = { ctx ->
-                        val w = PrivacySession.wallet(ctx)
-                        if (stake) {
-                            w.delegate(validator, amount).hash
-                        } else {
-                            // A stake proof spends two notes: spread over more,
-                            // it is refused with "merge them first" (a merge is
-                            // the user's own tx, on the Notes screen).
-                            w.undelegate(validator, amount).hash
+                scope.launch {
+                    if (stake) {
+                        // The quote: the derth the chain credits at the live rate, less a margin.
+                        val quote = withContext(Dispatchers.IO) { runCatching { PrivacySession.wallet(context).quoteDelegate(validator, amount) } }
+                        quote.onFailure { tx.showFailure("Stake ERTH", it) }.onSuccess { q ->
+                            tx.requestPrivate(
+                                details = TxConfirmDetails(
+                                    action = "Stake ERTH",
+                                    msgTypeUrl = PrivateMsgs.DELEGATE,
+                                    balanceUerth = 0L,
+                                    amountLabel = "Amount",
+                                    amountValue = "${formatUerth(q.amount)} ERTH",
+                                    recipient = validator,
+                                    recipientLabel = "Validator",
+                                    rows = listOf("You receive" to "${formatUerth(q.derth)} derth"),
+                                    notes = listOfNotNull(
+                                        "Quoted at the validator's live rate with a small margin. If the rate moves past it before this lands, the chain refuses it and nothing is spent: just try again.",
+                                        haircutNote(q.haircut, null),
+                                    ),
+                                ),
+                                shieldedErth = loaded.shieldedErthUerth,
+                                onSuccess = { onRefresh(); privacy.refresh() },
+                                run = { ctx -> PrivacySession.wallet(ctx).delegate(q).hash },
+                            )
                         }
-                    },
-                )
+                    } else {
+                        val haircut = withContext(Dispatchers.IO) { runCatching { PrivacySession.wallet(context).leaveHaircut(validator, amount) } }
+                        haircut.onFailure { tx.showFailure("Unstake", it) }.onSuccess { cut ->
+                            tx.requestPrivate(
+                                details = TxConfirmDetails(
+                                    action = "Unstake",
+                                    msgTypeUrl = PrivateMsgs.UNDELEGATE,
+                                    balanceUerth = 0L,
+                                    amountLabel = "Amount",
+                                    amountValue = "${formatUerth(amount)} derth (${formatUerth(derthValue(amount, validator))} ERTH)",
+                                    recipient = validator,
+                                    recipientLabel = "From validator",
+                                    notes = listOfNotNull(haircutNote(cut, null)),
+                                ),
+                                shieldedErth = loaded.shieldedErthUerth,
+                                onSuccess = { onRefresh(); privacy.refresh() },
+                                // A stake proof spends two notes (at most one
+                                // holding moved-in stake): spread over more, it
+                                // is refused with "merge them first".
+                                run = { ctx -> PrivacySession.wallet(ctx).undelegate(validator, amount, maxHaircut = cut).hash },
+                            )
+                        }
+                    }
+                }
             },
         )
     }
@@ -1317,7 +1419,16 @@ private fun minShares(poolId: Long, erthIn: java.math.BigInteger, tokenIn: java.
 }
 
 /** Which direction the stake sheet was opened in. */
-private enum class StakeIntent { Stake, Unstake }
+private enum class StakeIntent { Stake, Unstake, Move }
+
+/**
+ * The sentence a confirm sheet shows when the tx settles a slash's cut of
+ * stake moved in from another validator (the label clears at what the debt
+ * tree says it is worth). Null when nothing is cut.
+ */
+private fun haircutNote(haircut: Long, from: String?): String? = if (haircut <= 0) null else
+    "A slash of the validator this stake was moved from${from?.let { " ($it)" } ?: ""} reached it before its window closed: " +
+        "${formatUerth(haircut)} derth of it is gone, and this transaction settles that."
 
 private fun settingsItems(nav: EarthNavController, state: WalletUiState?, personal: PersonalState?, onForgetPrivate: () -> Unit): List<SettingsItem> =
     listOf(

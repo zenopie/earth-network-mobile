@@ -31,6 +31,10 @@ data class PrivacyActionsState(
     val ballots: List<PrivacyQueries.RemovalBallot>,
     /** Spendable note counts per denom where a merge would help. */
     val mergeable: Map<String, Int>,
+    /** This wallet's private stake per validator: what may move now, what waits for its window. */
+    val stake: List<network.erth.wallet.privacy.PrivacyWallet.StakeHolding> = emptyList(),
+    /** The chain's label window as last read (0: never): how long moved stake stays put. */
+    val labelWindowSeconds: Long = 0,
 )
 
 /**
@@ -86,6 +90,8 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
                 groundworksOptions = runCatching { Allocation.stream(StreamId.STREAM_ID_GROUNDWORKS).options }.getOrDefault(emptyList()),
                 ballots = runCatching { PrivacyQueries.removalBallots() }.getOrDefault(emptyList()),
                 mergeable = w?.let { it.mergeable() + it.stakeMergeable() }.orEmpty(),
+                stake = w?.let { runCatching { it.stakeHoldings() }.getOrNull() }.orEmpty(),
+                labelWindowSeconds = w?.labelWindowSeconds ?: 0L,
             )
         }
         refreshPersonal()

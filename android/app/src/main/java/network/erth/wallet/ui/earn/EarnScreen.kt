@@ -74,6 +74,12 @@ fun EarnScreen(
     modifier: Modifier = Modifier,
     /** Private stake (derth notes and positions) at its validators' live rates, in uerth. */
     privateStakedUerth: Long = 0L,
+    /** This wallet's private stake per validator (one note each, as a rule). */
+    privateStake: List<PrivateStakeRow> = emptyList(),
+    /** Move stake between validators (MsgRedelegate). */
+    onMove: () -> Unit = {},
+    /** Merge a validator's notes into one (MsgRestake): only offered when it holds more than one. */
+    onMerge: (validator: String) -> Unit = {},
     // --- the liquidity half ---
     pools: List<Dex.Pool>? = null,
     swapFeePercent: String? = null,
@@ -190,6 +196,39 @@ fun EarnScreen(
             )
         }
 
+        Spacer(Modifier.height(dimens.space8))
+        EarthButton(
+            text = "Move stake",
+            onClick = onMove,
+            enabled = privateStake.any { it.free > 0 },
+            modifier = Modifier.fillMaxWidth(),
+            colors = EarthButtonDefaults.secondaryColors(),
+        )
+
+        if (privateStake.isNotEmpty()) {
+            Spacer(Modifier.height(dimens.space24))
+            EarthLabel("Your private stake")
+            privateStake.forEach { p ->
+                // Moved-in stake stays where it is until its window closes
+                // (a slash of the validator it left can still reach it), and a
+                // second note here (beside such stake, or from another device)
+                // merges on a tap.
+                val parts = listOfNotNull(
+                    p.lockedUntil?.let { "${formatUerth(p.locked)} derth can move again after ${network.erth.wallet.privacy.PrivacyWallet.dateText(it)}" },
+                    if (p.notes > 1) (if (p.mergeable) "${p.notes} notes · tap to merge" else "${p.notes} notes") else null,
+                )
+                EarthListRow(
+                    initial = p.moniker.take(1).uppercase(),
+                    name = p.moniker,
+                    subtitle = parts.joinToString(" · ").ifEmpty { "${formatUerth(p.derth)} derth" },
+                    value = formatUerth(p.valueUerth),
+                    iconBg = EarthAccent.tint,
+                    iconFg = EarthAccent.ink,
+                    onClick = if (p.mergeable) ({ onMerge(p.validator) }) else null,
+                )
+            }
+        }
+
         if (!state?.delegations.isNullOrEmpty()) {
             Spacer(Modifier.height(dimens.space24))
             EarthLabel("Your validators")
@@ -233,6 +272,21 @@ fun EarnScreen(
         Spacer(Modifier.height(dimens.space32))
     }
 }
+
+/** One validator's private stake, resolved for display. */
+data class PrivateStakeRow(
+    val validator: String,
+    val moniker: String,
+    val derth: Long,
+    /** Its ERTH value at the live rate. */
+    val valueUerth: Long,
+    /** derth that may leave now. */
+    val free: Long,
+    val locked: Long,
+    val lockedUntil: Long?,
+    val notes: Int,
+    val mergeable: Boolean,
+)
 
 @Composable
 private fun AmountOrShimmer(

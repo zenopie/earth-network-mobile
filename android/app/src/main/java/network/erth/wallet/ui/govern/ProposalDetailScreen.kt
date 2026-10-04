@@ -356,7 +356,7 @@ fun ProposalDetailScreen(
                 Text(
                     text = if (stakeVoteFinal) {
                         "Your vote is private and final. Your stake at each validator votes " +
-                            "once, as one vote (up to four notes) you confirm yourself; nothing is " +
+                            "once, as one vote you confirm yourself; nothing is " +
                             "spent and it cannot be changed afterwards. Stake added since voting " +
                             "opened does not count."
                     } else {
