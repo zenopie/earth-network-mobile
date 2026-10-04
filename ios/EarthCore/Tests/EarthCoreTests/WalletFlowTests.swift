@@ -5,7 +5,7 @@ import XCTest
 /// Two wallets driven end to end against `FakeChain` on bundles and the stake
 /// tree (ports WalletFlowTest.kt): gas grant, registration, claim, assembly
 /// vote, private sends of any number of notes and assets, unshields, swaps,
-/// private LP add and remove, delegate / restake / undelegate / claim, stake
+/// private LP add and remove, delegate / restake / undelegate (paid out), stake
 /// votes, Groundworks positions, the personhood paths, and wallets restored
 /// from their mnemonics finding everything again (stake notes and positions
 /// included).
@@ -264,7 +264,7 @@ final class WalletFlowTests: XCTestCase {
         XCTAssertEqual(9, chain.positionVotes.first?.1)
         // Only its owner can move it.
         await assertThrowsAsync({ try await b.updatePosition(pos, counter: 0, splits: [2: 100]) }) { $0 is PrivacyError }
-        // Unlocking merges the position's derth back into the note; the fee bundle records the closed counter (K11).
+        // Unlocking merges the position's derth back into the note; the fee bundle records the closed counter.
         _ = try await a.unlockPosition(try await a.positions()[0].position, counter: tag)
         try await a.sync()
         let gone = try await a.positions()

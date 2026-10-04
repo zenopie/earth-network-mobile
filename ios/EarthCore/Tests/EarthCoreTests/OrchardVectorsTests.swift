@@ -83,7 +83,7 @@ final class OrchardVectorsTests: XCTestCase {
         let sighash = PrivacyHash.signal(msgType: MsgSend.typeURL, chainID: "earth-1",
                                          fields: [PrivacyHash.u64(1), digest] + noTx + [PrivacyHash.bytes(Data()), PrivacyHash.u64(10_000)])
         XCTAssertEqual(b["sighash"] as? String, sighash.hex)
-        // The tx's memo (UTF-8), timeout_height and gas_limit are bound (audit M1).
+        // The tx's memo (UTF-8), timeout_height and gas_limit are bound.
         let t = b["sighash_tx"] as! [String: Any]
         let withTx = PrivacyHash.signal(msgType: MsgSend.typeURL, chainID: "earth-1", fields: [
             PrivacyHash.u64(1), digest, PrivacyHash.bytes(Data((t["memo"] as! String).utf8)),

@@ -130,7 +130,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     }
     /// Set to make the backend's handle stream lie about an address (the chain check must catch it).
     var forgeHandleAddress: String?
-    /// Set to make a set_caretaker event report this expires_at (a hostile node, audit 5 M4).
+    /// Set to make a set_caretaker event report this expires_at (a hostile node).
     var forgeCaretakerExpiry: Int64?
     /// Undelegations waiting for their payout (chain 48b631c): id, validator, value, pc, ciphertext.
     struct Payout { let id: UInt64; let validator: String; let value: UInt64; let pc: Fr; let ct: Data }
@@ -360,15 +360,15 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     func maxActionsPerBundle() async throws -> Int { maxActions }
     func tipHeight() async throws -> UInt64 { height - 1 + tipAhead + sendTipAhead }
 
-    /// How far the tip a tx's timeout is set from runs ahead (audit 6, M4: a node inflating it at send only).
+    /// How far the tip a tx's timeout is set from runs ahead (a node inflating it at send only).
     var sendTipAhead: UInt64 = 0
 
-    /// x/shielded Query/Assets as the node serves it (audit 6, M2): nil says nothing.
+    /// x/shielded Query/Assets as the node serves it: nil says nothing.
     var assetList: [(denom: String, id: Fr)]?
 
     func assets() async -> [(denom: String, id: Fr)]? { assetList }
 
-    /// What a served entry's owner says (audit 6, M6): the holder's nullifier unless a test overrides it ("" = a directory without owners).
+    /// What a served entry's owner says: the holder's nullifier unless a test overrides it ("" = a directory without owners).
     var ownerHex: ((HandleRec) -> String)?
 
     /// Every nullifier (pool, stake) the node saw in a simulated tx.
@@ -397,7 +397,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         return 200_000 + 100_000 * UInt64(m.bundles.count) + 350_000 * UInt64(actions) + (m.stakeProof != nil ? 400_000 : 0) + vote
     }
 
-    /// Every committed private tx's gas_limit over the gas it uses (chain A-L1: at most 5).
+    /// Every committed private tx's gas_limit over the gas it uses (the chain allows at most 5).
     var gasRatios: [Double] = []
     /// The last committed msg.
     var lastMsg: (any PrivateMsg)?
@@ -481,7 +481,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         case let m as MsgSend:
             try need(m.fee > 0, "send fee")
             try need(rem.isEmpty == m.receiver.isEmpty, "receiver exactly when something is left")
-            // Wave 3 (B/F2): never to a module account.
+            // Never to a module account.
             if !m.receiver.isEmpty { try need(PrivateMsgs.moduleAccount(of: Data(try Bech32.decode(m.receiver).data)) == nil, "receiver is a module account") }
             try need(!rem.keys.contains { $0.hasPrefix("dexlp/") }, "LP shares cannot be unshielded")
         case let m as MsgShieldedDelegate:
@@ -558,7 +558,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
 
     private func handleOf(_ n: Fr) -> HandleRec? { handles.values.first { $0.nullifier == n } }
 
-    /// Audit 5 P2: a lapsed split the sweep has not reached is not held; only a live handle renews unbounded.
+    /// A lapsed split the sweep has not reached is not held; only a live handle renews unbounded.
     private func caretakerHoldsLive(_ n: Fr) -> Bool { caretakerVotes[n] != nil && (caretakerExpiry[n] ?? 0) > now }
     private func holdsLiveHandle(_ n: Fr) -> Bool { handleOf(n).map { now < $0.expiresAt } ?? false }
 
@@ -623,12 +623,12 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         min(BigInt(erth) * lpSupply / poolErth, BigInt(anml) * lpSupply / poolAnml)
     }
 
-    /// Denoms governance send-disabled (bank SendEnabled false): refused at every pool edge (chain 48b631c, A-L2).
+    /// Denoms governance send-disabled (bank SendEnabled false): refused at every pool edge (chain 48b631c).
     var sendDisabled: Set<String> = []
 
     /// The action's own checks, before anything is written (atomic with the spend in the ante).
     private func precheck(_ m: any PrivateMsg, _ rem: [String: UInt64]) throws {
-        // The ante's release-map check and the module mint (audit 6, A-L2): a
+        // The ante's release-map check and the module mint: a
         // dex note swap and a private delegation release out of the pool.
         var edges = Set<String>()
         switch m {
@@ -670,11 +670,11 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             try need(positions[m.positionID]?.ownerTag == (try f(m.stake.ownerTag)), "not the position's owner")
             try need(m.options.allSatisfy { (try? PrivateMsgs.legacyDec($0.weight)) == $0.weight }, "a vote weight is not canonical")
         case let m as MsgStakeVote:
-            // Wave 3 (F3): option weights only in their canonical LegacyDec form.
+            // Option weights only in their canonical LegacyDec form.
             try need(m.options.allSatisfy { (try? PrivateMsgs.legacyDec($0.weight)) == $0.weight }, "a vote weight is not canonical")
             try need(snapshots[m.proposalID] != nil, "no open snapshot for proposal \(m.proposalID)")
             try need(m.weight > 0, "weight must be positive")
-            // Chain C-L3: at most three significant digits.
+            // At most three significant digits.
             try need((try? PrivacyWallet.voteWeight(m.weight)) == m.weight, "weight has more than 3 significant digits")
             // Chain dff3a9b: exactly two slots, used ones first (at least one), distinct, zeros after.
             try need(m.voteNullifiers.count == MsgStakeVote.maxVoteNotes, "a stake vote carries exactly 2 vote nullifiers")
@@ -729,7 +729,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         try need(tx.signatures == 0, "private txs are unsigned")
         try need(tx.signerInfos == 0, "no signer infos")
         let m = tx.msg
-        // Round 2 (R7): exactly the canonical encoding of what it decodes to.
+        // Exactly the canonical encoding of what it decodes to.
         try need(UnsignedTx.build(m, tx: tx.txFields) == txBytes, "tx bytes are not canonical")
         // Every action's output ciphertext exactly 217 bytes, dummies included.
         for b in m.bundles { for a in b.actions { try need(a.ciphertext.count == NoteCipher.ciphertextBytes, "action ciphertext \(a.ciphertext.count) bytes") } }
@@ -753,7 +753,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         try need(tx.feeCoins.count == 1 && tx.feeCoins[0].denom == "uerth" && tx.feeCoins[0].amount == String(total), "declared fee != msg fee")
         try need(total >= minFeeValue, "below min fee")
         if !simulate { try need(Decimal(total) >= price * Decimal(tx.gasLimit), "below min gas price") }
-        // Chain 48b631c (audit 6, A-L1): a private tx's gas_limit is at most 5x the gas it uses.
+        // Chain 48b631c: a private tx's gas_limit is at most 5x the gas it uses.
         if !simulate {
             let used = gasOf(m)
             try need(tx.gasLimit <= 5 * used, "gas limit \(tx.gasLimit) exceeds what this private tx uses (\(used))")
@@ -844,7 +844,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         case let m as MsgRegisterPrivate:
             let binding = try PrivateMsgs.decimalField(m.publicSignals[1])
             try need(binding == (try m.binding(chainID: chainID)), "binding")
-            // Round 2 (R1): a landed binding is never used again.
+            // A landed binding is never used again.
             try need(usedBindings.insert(binding).inserted, "binding already used (ErrBindingUsed)")
             let dsc = try PrivateMsgs.decimalField(m.publicSignals[3])
             let idc = try f(m.idc)

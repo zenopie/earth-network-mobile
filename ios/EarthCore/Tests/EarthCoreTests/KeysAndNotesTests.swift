@@ -26,8 +26,7 @@ final class KeysAndNotesTests: XCTestCase {
         XCTAssertEqual(Self.knownAddress, keys.address.encode())
         XCTAssertEqual(PrivacyHash.idc(keys.idSecret), keys.idc)
         XCTAssertNotEqual(keys.idSecret, other.idSecret)
-        // Owner-tag salts (PRIVACY_FORMATS.md section 1; the self-mint
-        // counters are gone), cross-checked with an independent Python HMAC
+        // Owner-tag salts (PRIVACY_FORMATS.md section 2), cross-checked with an independent Python HMAC
         // derivation.
         XCTAssertEqual("0685f54037389aaceee42288ed8c8c996a884e297ffee771c73370ca885e1618", keys.otagSalt(0).hex)
         XCTAssertEqual("2e52e73b7af259664a34df8bcee1c0476009a37e0ab2e52b285bae497845a9ba", keys.otagSalt(1).hex)
@@ -87,7 +86,7 @@ final class KeysAndNotesTests: XCTestCase {
         XCTAssertEqual(n, NoteCipher.tryDecrypt(ct, cm: n.cm(ownerPK: keys.ownerPK), keys: keys))
     }
 
-    /// The wallet stake note v2 (PRIVACY_FORMATS.md section 3; its goldens in
+    /// The wallet stake note v2 (PRIVACY_FORMATS.md section 5; its goldens in
     /// BlindNoteTests): a stake note opens for its owner only, only under its
     /// own cm, never as a pool note.
     func testStakeCiphertextRoundTrip() throws {

@@ -42,7 +42,7 @@ final class BlindNoteTests: XCTestCase {
         XCTAssertNil(NoteCipher.tryDecryptBlind(try NoteCipher.encryptWith(esk: esk, note, to: owner), cm: cm, denom: "uerth", value: 1_234_567, ek: ek, ownerPK: owner.ownerPK))
     }
 
-    /// The wallet stake note v2 (wallet-defined, PRIVACY_FORMATS 3: 201
+    /// The wallet stake note v2 (wallet-defined, PRIVACY_FORMATS 5: 201
     /// bytes, the label inside) under the same keys, byte for byte Android's
     /// goldens (BlindNoteTest.kt, cross-checked by an independent Python
     /// decryption): an unlabelled note (the cm the chain's vectors pin) and a
