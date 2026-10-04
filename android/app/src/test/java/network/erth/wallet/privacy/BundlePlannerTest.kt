@@ -138,4 +138,36 @@ class BundlePlannerTest {
         assertEquals(Grumpkin.R * p.bindingKey(), bvk)
         assertEquals(Merkle.DEPTH, p.witness(0, Fr.ONE).sPath.size)
     }
+
+    @Test
+    fun stakeSelectionSpendsAtMostTwo() {
+        fun s(pos: Long, amount: Long, label: network.erth.wallet.privacy.note.StakeLabel? = null) =
+            network.erth.wallet.privacy.note.OwnedStakeNote(pos, 1, "derth/v", amount, Fr.ONE, Fr.ONE, Fr.ONE, Fr.ONE, label = label)
+        val amount: (network.erth.wallet.privacy.note.OwnedStakeNote) -> Long = { it.amount }
+        val ns = listOf(s(1, 50), s(2, 400), s(3, 300), s(4, 1_000))
+        assertEquals(listOf(400L), network.erth.wallet.privacy.tx.StakeSelection.cover(ns, 350, amount).map { it.amount })
+        assertEquals(listOf(400L, 1_000L), network.erth.wallet.privacy.tx.StakeSelection.cover(ns, 1_350, amount).map { it.amount })
+        val e = org.junit.Assert.assertThrows(network.erth.wallet.privacy.tx.NoteSelection.Insufficient::class.java) {
+            network.erth.wallet.privacy.tx.StakeSelection.cover(ns, 1_500, amount)
+        }
+        assertEquals("this stake is spread over more notes than one transaction spends; merge them first (one fee each), then try again", e.message)
+        val e2 = org.junit.Assert.assertThrows(network.erth.wallet.privacy.tx.NoteSelection.Insufficient::class.java) {
+            network.erth.wallet.privacy.tx.StakeSelection.cover(ns, 2_000, amount)
+        }
+        assertEquals("insufficient stake", e2.message)
+        assertEquals(listOf(1_000L, 400L), network.erth.wallet.privacy.tx.StakeSelection.merge(ns, amount).map { it.amount })
+        // At most one labelled note a proof; a labelled note gives up only its unexposed part while its window is open.
+        val ls = listOf(s(1, 500, network.erth.wallet.privacy.note.StakeLabel(Fr.ONE, 1, 100)),
+            s(2, 600, network.erth.wallet.privacy.note.StakeLabel(Fr.of(2), 1, 100)), s(3, 50))
+        val free: (network.erth.wallet.privacy.note.OwnedStakeNote) -> Long = { it.amount - (it.label?.exposed ?: 0) }
+        assertEquals(listOf(50L, 600L), network.erth.wallet.privacy.tx.StakeSelection.cover(ls, 520, free).map { it.amount })
+        org.junit.Assert.assertThrows(network.erth.wallet.privacy.tx.NoteSelection.Insufficient::class.java) {
+            network.erth.wallet.privacy.tx.StakeSelection.cover(ls, 700, free)
+        }
+        val e3 = org.junit.Assert.assertThrows(network.erth.wallet.privacy.tx.NoteSelection.Insufficient::class.java) {
+            network.erth.wallet.privacy.tx.StakeSelection.cover(ls, 1_000, free) { "held" }
+        }
+        assertEquals("held", e3.message)
+        assertEquals(listOf(600L, 50L), network.erth.wallet.privacy.tx.StakeSelection.merge(ls, free).map { it.amount })
+    }
 }

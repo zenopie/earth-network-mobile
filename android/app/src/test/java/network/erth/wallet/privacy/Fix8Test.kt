@@ -213,7 +213,7 @@ class Fix8Test {
         assertEquals(m.moveTime to q.dstDerth, l.moveTime to l.exposed)
         assertTrue(l.moveKey in chain.moves)
         // The event names the move: credited, move key, move time.
-        val ev = chain.txs.values.last().events.single { it.first == "shieldedstaking_redelegate" }.second
+        val ev = chain.txs.values.flatMap { it.events }.single { it.first == "shieldedstaking_redelegate" }.second
         assertEquals(listOf(q.dstDerth.toString(), l.moveKey.toHex(), m.moveTime.toString()), listOf(ev["credited"], ev["move_key"], ev["move_time"]))
         // A restored wallet finds the label in the note's ciphertext, and names its validators by the chain's list.
         val restored = wallet(chain)
