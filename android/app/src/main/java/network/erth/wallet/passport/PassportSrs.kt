@@ -7,31 +7,45 @@ import java.net.URL
 import java.security.MessageDigest
 
 /**
- * The passport circuit's SRS as a local file. The privacy
+ * The passport circuits' SRS as a local file, one per size tier. The privacy
  * circuits' SRS ships in the APK (PrivacyProver.SRS_ASSET), so a private
- * proof never fetches anything; the passport's (2^18 + 1 points, 16 MiB) is
- * too large to bundle, so it is fetched once at launch, independent of
- * anything the wallet does: the first 262,145 points of Aztec's transcript
- * (crs.aztec.network/g1.dat, a byte range), checked against a pinned hash,
- * kept in no-backup storage. Until it is there a passport proof downloads its
- * own SRS as before (registration is public anyway).
+ * proof never fetches anything; the passport circuits need 2^18 + 1 points
+ * (16 MiB, nearly every passport), 2^19 + 1 (32 MiB) or 2^20 + 1 (64 MiB),
+ * too large to bundle. Each is the first points of Aztec's transcript
+ * (crs.aztec.network/g1.dat, a byte range), checked against the hash pinned in
+ * passport_variants.json and kept in no-backup storage. The 2^18 tier is
+ * fetched at launch; a passport whose circuit needs a larger one fetches it
+ * before proving. A larger file serves a smaller circuit.
  */
 object PassportSrs {
-    const val POINTS = (1L shl 18) + 1
-    const val SHA256 = "8f5cd75519c2e995fa47aa7ecd7b213b9ae13824bc4b0f15025a63acd8c139eb"
     private const val SOURCE = "https://crs.aztec.network/g1.dat"
-    private const val NAME = "srs/bn254_g1_262145.dat"
 
-    private fun file(context: Context) = File(context.noBackupFilesDir, NAME)
+    private fun file(context: Context, log2: Int) = File(context.noBackupFilesDir, "srs/bn254_g1_${(1L shl log2) + 1}.dat")
 
-    /** The local file when complete (its hash was checked when written); null otherwise. */
-    fun path(context: Context): String? = file(context).takeIf { it.length() == POINTS * 64 }?.absolutePath
+    /** The smallest complete local file covering a 2^log2 circuit, or null. */
+    fun path(context: Context, log2: Int): String? {
+        val tiers = PassportVariants.get(context).srs
+        return tiers.keys.filter { it >= log2 }.sorted().firstNotNullOfOrNull { t ->
+            file(context, t).takeIf { it.length() == tiers.getValue(t).points * 64 }?.absolutePath
+        }
+    }
 
-    /** Fetches the file if missing. Blocking; call once at launch on a background thread. Failures leave nothing behind. */
-    @Synchronized
+    /** Fetches the 2^18 tier if missing. Blocking; call once at launch on a background thread. */
     fun prefetch(context: Context) {
-        if (path(context) != null) return
-        val dest = file(context)
+        runCatching { ensure(context, 18) }
+    }
+
+    /**
+     * The local file for a 2^log2 circuit, fetching its tier if no file covers
+     * it. Blocking. Failures leave nothing behind and throw.
+     */
+    @Synchronized
+    fun ensure(context: Context, log2: Int): String {
+        path(context, log2)?.let { return it }
+        val tiers = PassportVariants.get(context).srs
+        val tier = tiers.keys.filter { it >= log2 }.minOrNull() ?: error("no SRS tier covers 2^$log2")
+        val want = tiers.getValue(tier)
+        val dest = file(context, tier)
         dest.parentFile?.mkdirs()
         val part = File(dest.parentFile, dest.name + ".part")
         try {
@@ -40,11 +54,11 @@ object PassportSrs {
             c.instanceFollowRedirects = false
             c.connectTimeout = 15_000
             c.readTimeout = 60_000
-            c.setRequestProperty("Range", "bytes=0-${POINTS * 64 - 1}")
+            c.setRequestProperty("Range", "bytes=0-${want.points * 64 - 1}")
             try {
-                if (c.responseCode != 206 && c.responseCode != 200) return
+                check(c.responseCode == 206 || c.responseCode == 200) { "SRS download: HTTP ${c.responseCode}" }
                 val md = MessageDigest.getInstance("SHA-256")
-                var left = POINTS * 64
+                var left = want.points * 64
                 c.inputStream.use { input ->
                     java.io.FileOutputStream(part).use { out ->
                         val buf = ByteArray(64 * 1024)
@@ -57,14 +71,14 @@ object PassportSrs {
                     }
                 }
                 val hex = md.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
-                if (left == 0L && hex == SHA256) part.renameTo(dest)
+                check(left == 0L && hex == want.sha256) { "SRS download did not match its pinned hash" }
+                check(part.renameTo(dest)) { "could not install the SRS" }
             } finally {
                 c.disconnect()
             }
-        } catch (e: Exception) {
-            // Retried on the next launch.
         } finally {
             part.delete()
         }
+        return dest.absolutePath
     }
 }

@@ -8,14 +8,16 @@ import java.math.BigInteger
  *
  * Generates the client-side proof-of-personhood proof from a scanned passport,
  * on-device, for the earth chain's caretaker verifier (zk/ultrahonk): a
- * Barretenberg **UltraHonk** proof (bb v5.0.0, poseidon2 flavor) of the lean_poa
+ * Barretenberg **UltraHonk** proof (bb v5.0.0, poseidon2 flavor) of the register
  * circuit, plus its public inputs.
  *
- * Pipeline: [PassportInputs.leanInputs] (BouncyCastle extraction) -> [NoirProver]
- * (on-device Barretenberg) -> split the returned proof into the chain's
- * (proof, publicSignals) form.
+ * Pipeline: [PassportInputs.buildInputs] (variant selection + witness) ->
+ * [PassportCircuits] (bundled, or fetched and hash-checked) + [PassportSrs]
+ * (the setup for the circuit's size tier) -> [NoirProver] (on-device
+ * Barretenberg) -> split the returned proof into the chain's (proof,
+ * publicSignals) form.
  *
- * The lean_poa circuit's public inputs are, in order:
+ * Every register circuit's public inputs are, in order:
  *   [0] current_date, [1] address, [2] nullifier, [3] dsc_key (the DSC
  *   commitment).
  *
@@ -25,7 +27,7 @@ import java.math.BigInteger
  */
 object PassportProver {
 
-    /** Public-input positions in the lean_poa circuit. */
+    /** Public-input positions, the same in every register circuit. */
     // Public signals are [current_date, address, nullifier, dsc_key]:
     // current_date and address are the declared public inputs, and bb appends
     // the circuit's return values after them. On the privacy chain `address`
@@ -36,12 +38,6 @@ object PassportProver {
     private const val NULLIFIER_INDEX = 2
     private const val NUM_PUBLIC_INPUTS = 4
 
-    /**
-     * SRS size hint for [NoirProver.loadCircuit]. Must cover the circuit's domain
-     * (next power of two >= gate count); lean_poa is ~130k gates -> 2^18.
-     */
-    private const val SRS_SIZE = 1 shl 18
-
     data class Result(
         val proof: ByteArray,
         val publicSignals: List<String>,
@@ -50,14 +46,21 @@ object PassportProver {
     )
 
     /**
+     * The variant a passport selects, before anything slow happens: an
+     * unsupported scheme or bad data is reported here, by
+     * [PassportInputs.UnsupportedPassportException] or
+     * [PassportInputs.PassportDataException].
+     */
+    fun inputs(context: Context, dg1: ByteArray, sodBytes: ByteArray, currentDateYymmdd: Int, address: String) =
+        PassportInputs.buildInputs(dg1, sodBytes, currentDateYymmdd, address, PassportVariants.get(context))
+
+    /**
      * Proves proof-of-personhood from the scanned passport.
      *
      * @param context to read the compiled circuit from assets.
      * @param dg1 raw EF.DG1 bytes.
      * @param sodBytes raw EF.SOD bytes.
      * @param currentDateYymmdd today as YYMMDD (the chain pins it to block time).
-     * @param registry the DSC's certificate-registry inclusion proof (from the
-     *   registry service; its root must equal the chain's params.dsc_root).
      */
     fun prove(
         context: Context,
@@ -67,14 +70,14 @@ object PassportProver {
         /** The `address` input: the registration binding as a "0x" field. */
         address: String,
     ): Result {
-        // Build inputs + select the circuit matching the passport's DSC algorithm
-        // (lean_poa / lean_poa_rsa2048 / lean_poa_rsa4096).
-        val inputs = PassportInputs.buildInputs(dg1, sodBytes, currentDateYymmdd, address)
-        val circuitJson = context.assets.open("circuits/${inputs.algorithm}.json")
-            .bufferedReader().use { it.readText() }
-        val circuit = NoirProver.loadCircuit(circuitJson, SRS_SIZE)
-        // The local transcript prefix when the launch fetch has it, else bb downloads it.
-        circuit.setupSrs(PassportSrs.path(context))
+        // Select the variant the passport's key, padding and hashes need, and
+        // build its witness.
+        val inputs = inputs(context, dg1, sodBytes, currentDateYymmdd, address)
+        val variant = inputs.variant
+        val circuitJson = PassportCircuits.load(context, variant)
+        val srs = PassportSrs.ensure(context, variant.log2CircuitSize)
+        val circuit = NoirProver.loadCircuit(circuitJson, 1 shl variant.log2CircuitSize)
+        circuit.setupSrs(srs)
 
         val vk = circuit.getVerificationKey()
         val proofHex = NoirProver.prove(circuit, inputs.map, vk)

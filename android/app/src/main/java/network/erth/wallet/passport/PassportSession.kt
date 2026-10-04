@@ -67,6 +67,15 @@ object PassportSession {
         /** The chip read but would not produce what the proof needs. */
         data object NoSod : Failure
 
+        /**
+         * A genuine-looking passport whose signature scheme no register
+         * circuit covers yet; [scheme] says which (e.g. "RSA-2048 PSS, SHA-1").
+         */
+        data class Unsupported(val scheme: String) : Failure
+
+        /** The passport's signed data does not hold together. */
+        data object BadData : Failure
+
         data class Error(val cause: Throwable) : Failure
     }
 
@@ -146,6 +155,12 @@ object PassportSession {
                     prep = prep,
                 ),
             )
+        } catch (e: PassportInputs.UnsupportedPassportException) {
+            Log.w(TAG, "unsupported passport: ${e.scheme}")
+            Result.failure(FailureException(Failure.Unsupported(e.scheme)))
+        } catch (e: PassportInputs.PassportDataException) {
+            Log.e(TAG, "passport data does not hold together: ${e.code}", e)
+            Result.failure(FailureException(Failure.BadData))
         } catch (e: AccessDeniedException) {
             // The chip refused the key, which in practice means a mistyped
             // passport number or date rather than anything wrong with the

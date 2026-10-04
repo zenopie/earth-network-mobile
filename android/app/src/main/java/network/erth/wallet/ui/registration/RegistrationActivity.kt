@@ -197,6 +197,16 @@ class RegistrationActivity : ComponentActivity() {
                                             "data the proof needs.",
                                         canRetry = true,
                                     )
+                                    is PassportSession.Failure.Unsupported -> NfcStage.Failed(
+                                        "This passport's signature type isn't supported " +
+                                            "yet (${failure.scheme}).",
+                                        canRetry = false,
+                                    )
+                                    PassportSession.Failure.BadData -> NfcStage.Failed(
+                                        "This passport's data does not match its " +
+                                            "signature, so it cannot be proved.",
+                                        canRetry = false,
+                                    )
                                     else -> NfcStage.Failed(
                                         "Hold the passport flat against the phone " +
                                             "and keep it still.",

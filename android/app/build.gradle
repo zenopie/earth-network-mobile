@@ -94,6 +94,19 @@ android {
                 srcDirs = ['build/generated/source/proto/release/java']
             }
         }
+        // The shared synthetic passports, one per register-circuit variant
+        // (circuits/tools/variants.py): read in place, as iOS does, so the two
+        // apps are checked against the very same bytes.
+        test {
+            resources {
+                srcDirs += ['../../circuits/fixtures']
+            }
+        }
+        androidTest {
+            assets {
+                srcDirs += ['../../circuits/fixtures']
+            }
+        }
     }
 
     packaging {
