@@ -1589,10 +1589,13 @@ class PrivacyWallet(
         check(a.supply.signum() > 0 && java.math.BigInteger.valueOf(amount) <= a.supply) { "more derth than this validator has" }
         val u = java.math.BigInteger.valueOf(amount).multiply(a.backing).divide(a.supply)
         if (u < java.math.BigInteger.valueOf(min)) throw IllegalArgumentException("this stake is worth ${u}uerth, less than the ${min}uerth a move must carry")
-        // What arrives at dst: all of it when src's queue covers it, else up
-        // to 0.001 ERTH may stay in src's book and x/staking may truncate a
-        // uerth (chain redelegate.go bondedDust).
-        val arrives = if (u <= a.pendingDelegation) u else (u - java.math.BigInteger.valueOf(BONDED_DUST + 1)).max(java.math.BigInteger.ZERO)
+        // What arrives at dst: u, less up to 0.001 ERTH left in src's book
+        // (a bonded part at most bondedDust stays) or x/staking's truncation
+        // of the bonded part. The chain splits u between src's queue and its
+        // bonded stake pro rata (chain be780c5, audit 7 A7-1), so even a
+        // queue that covers u no longer means all of it arrives: the one
+        // bound that holds either way is u - 1001.
+        val arrives = (u - java.math.BigInteger.valueOf(BONDED_DUST + 1)).max(java.math.BigInteger.ZERO)
         val credit = creditFor(arrives, reads.validatorBook(dst))
         if (credit < min || credit <= 0) throw IllegalArgumentException("this move would credit less than the least derth a move may credit; move more")
         return MoveQuote(src, dst, amount, u.min(java.math.BigInteger.valueOf(Long.MAX_VALUE)).toLong(), credit, haircutOf(plan), creditTarget(dst) != null, d.windowSeconds)
