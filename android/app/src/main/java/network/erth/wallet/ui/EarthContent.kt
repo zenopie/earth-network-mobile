@@ -406,6 +406,20 @@ internal fun EarthContent(
 
         EarthRoute.Handle -> {
             LaunchedEffect(Unit) { privacy.refreshPersonal() }
+            // Renew-only (audit 6, M7): the wallet refuses a bind that would change the handle held.
+            fun renewHandle(h: String) = tx.requestPrivate(
+                details = TxConfirmDetails(
+                    action = "Renew @$h for a year",
+                    msgTypeUrl = PrivateMsgs.BIND_HANDLE,
+                    balanceUerth = 0L,
+                    recipient = "@$h · ${Handles.truncate(loaded.shieldedAddress)}",
+                    recipientLabel = "Pays",
+                ),
+                estimatedFee = TxController.feeFor(TxController.BIND_HANDLE_GAS_ESTIMATE),
+                shieldedErth = loaded.shieldedErthUerth,
+                onSuccess = { PrivacyQueries.handles.invalidate(); privacy.refreshPersonal() },
+                run = { ctx -> PrivacySession.wallet(ctx).bindHandle(h, renewOnly = true).hash },
+            )
             HandleScreen(
                 state = personal,
                 now = now,
@@ -427,20 +441,9 @@ internal fun EarthContent(
                 },
                 onRenew = {
                     val h = personal?.handle.orEmpty()
-                    if (h.isNotEmpty()) tx.requestPrivate(
-                        details = TxConfirmDetails(
-                            action = "Renew @$h for a year",
-                            msgTypeUrl = PrivateMsgs.BIND_HANDLE,
-                            balanceUerth = 0L,
-                            recipient = "@$h · ${Handles.truncate(loaded.shieldedAddress)}",
-                            recipientLabel = "Pays",
-                        ),
-                        estimatedFee = TxController.feeFor(TxController.BIND_HANDLE_GAS_ESTIMATE),
-                        shieldedErth = loaded.shieldedErthUerth,
-                        onSuccess = { PrivacyQueries.handles.invalidate(); privacy.refreshPersonal() },
-                        run = { ctx -> PrivacySession.wallet(ctx).bindHandle(h).hash },
-                    )
+                    if (h.isNotEmpty()) renewHandle(h)
                 },
+                onRenewAddressed = { h -> if (personal?.handle.isNullOrEmpty()) renewHandle(h) },
                 onRelease = {
                     val h = personal?.handle.orEmpty()
                     tx.requestPrivate(

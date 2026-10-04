@@ -153,6 +153,7 @@ object PrivacyQueries {
             network.erth.wallet.privacy.handles.HandleEntry(
                 handle = h.optString("handle"), address = h.optString("address"), status = h.optString("status"),
                 expiresAt = h.long("expires_at"), renewalUntil = h.long("renewal_until"),
+                owner = network.erth.wallet.privacy.handles.Handles.owner(h.optString("owner")),
             )
         }
         return network.erth.wallet.privacy.handles.HandleDirectory.Page(hs, j.optString("next"))

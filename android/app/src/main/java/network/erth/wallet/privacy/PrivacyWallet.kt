@@ -979,8 +979,13 @@ class PrivacyWallet(
      * predecessor by the longest lease; a renewal or change does not.
      * Nothing renews on its own: the app reminds the owner before expiry.
      */
-    fun bindHandle(handle: String, address: ShieldedAddress = keys.address): TxResult {
+    fun bindHandle(handle: String, address: ShieldedAddress = keys.address, renewOnly: Boolean = false): TxResult {
         require(Handles.valid(handle)) { "\"$handle\" is not a handle: 3-32 of a-z, 0-9 and -, no dash at either end" }
+        // Audit 6 (M7): a renewal binds only the handle held (or, holding none, one this
+        // identity may hold): a bind of another would be a change, freeing the held one.
+        if (renewOnly) check(store.state.handle.isEmpty() || store.state.handle == handle) {
+            "this identity holds @${store.state.handle}; renewing @$handle would change to it and free @${store.state.handle}"
+        }
         val holds = store.state.handle.isNotEmpty()
         check(holds || !store.state.handleMovedOut) { "this identity moved its handle to another; it cannot claim one again" }
         checkNoMove(PendingMove.HANDLE)
@@ -1080,36 +1085,46 @@ class PrivacyWallet(
     }
 
     /**
-     * Audit 5 (M1, L11): squares the store's handle with the chain's
-     * directory [dir], read at [readAt] (wallet clock): a handle the chain
-     * swept (absent or free) is dropped; with none held, a single entry
-     * naming this wallet's own address is taken as held (a restore lost
-     * it; renewing it is refused at no cost if it is not). Nothing changes
-     * while a move is in flight or when the directory predates the store's
-     * last change. Returns every non-free entry naming this wallet's
-     * address, for the reminders.
+     * Audit 5 (M1, L11), audit 6 (M6): squares the store's handle with the
+     * chain's directory [dir], read at [readAt] (wallet clock): a handle the
+     * chain swept (absent or free), or one whose entry names another owner,
+     * is dropped; with none held, the one entry whose owner is this
+     * identity's handle-scope nullifier is taken as held (a restore lost
+     * it). An entry merely naming this wallet's address is never adopted:
+     * anyone may bind a handle to any address. Nothing changes while a move
+     * is in flight or when the directory predates the store's last change.
+     * Returns, while no handle is held, the non-free entries naming this
+     * wallet's address whose owner is not someone else (unverified: a
+     * directory without owners), for the cards and reminders.
      */
     @Synchronized
     fun reconcileHandle(dir: Map<String, HandleEntry>, readAt: Long): List<HandleEntry> {
         val s = store.state
         val t = now()
         val own = keys.address.encode()
-        val addressed = dir.values.filter { it.address == own && it.statusAt(t) != HandleEntry.FREE }
+        val mine = handleOwner()
+        val addressed = dir.values.filter { it.address == own && it.statusAt(t) != HandleEntry.FREE && (it.owner.isEmpty() || it.owner == mine) }
+        val owned = dir.values.filter { it.owner == mine && it.statusAt(t) != HandleEntry.FREE }
         val moving = s.pendingMoves.any { it.kind == PendingMove.HANDLE && !it.confirmed }
         if (!moving && readAt > s.handleSetAt) {
             if (s.handle.isNotEmpty()) {
                 val e = dir[s.handle]
-                if (e == null || e.statusAt(t) == HandleEntry.FREE) { s.handle = ""; s.handleSetAt = t; store.save() }
-            } else if (!s.handleMovedOut && addressed.size == 1) {
-                s.handle = addressed[0].handle; s.handleSetAt = t; store.save()
+                if (e == null || e.statusAt(t) == HandleEntry.FREE || (e.owner.isNotEmpty() && e.owner != mine)) { s.handle = ""; s.handleSetAt = t; store.save() }
+            }
+            if (s.handle.isEmpty() && !s.handleMovedOut && owned.size == 1) {
+                s.handle = owned[0].handle; s.handleSetAt = t; store.save()
             }
             // The chain's expiry of the handle held: whether it is live (chain 203d3b2).
             dir[s.handle]?.takeIf { s.handle.isNotEmpty() && it.statusAt(t) != HandleEntry.FREE }?.let { e ->
                 if (s.handleExpiresFor != s.handle || s.handleExpiresAt != e.expiresAt) { s.handleExpiresFor = s.handle; s.handleExpiresAt = e.expiresAt; store.save() }
             }
         }
-        return addressed
+        // Audit 6 (M7): while a handle is held, no other entry is offered (a bind of it would change, freeing the held one).
+        return if (s.handle.isNotEmpty()) emptyList() else addressed
     }
+
+    /** This identity's handle-scope nullifier as a directory entry's owner (64 lowercase hex; audit 6, M6). */
+    fun handleOwner(): String = Privacy.scopeNullifier(keys.idSecret, Privacy.handleScope()).toHex().lowercase(java.util.Locale.ROOT)
 
     // ---- assembly -----------------------------------------------------------
 

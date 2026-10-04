@@ -67,6 +67,20 @@ object Handles {
      */
     const val MAX_AHEAD_SECONDS = 10L * 365 * 86_400
 
+    /**
+     * A directory entry's owner (audit 6, M6): the handle-scope nullifier
+     * that holds it, as 64 lowercase hex digits (the MsgBindHandle membership
+     * nullifier, MsgMoveHandle new_owner). Anything else, or none, is "":
+     * no owner said, and nothing is adopted on it.
+     */
+    fun owner(raw: String?): String {
+        val h = raw?.trim()?.lowercase(java.util.Locale.ROOT) ?: return ""
+        return if (h.length == 64 && h.all { it in '0'..'9' || it in 'a'..'f' }) h else ""
+    }
+
+    /** The longest address a directory entry may carry (audit 6, H2): an erthz1 address is far shorter. */
+    const val MAX_ADDRESS_LEN = 256
+
     /** a + b, clamped to the Long range rather than wrapped (iOS would trap). */
     fun satAdd(a: Long, b: Long): Long {
         val r = a + b
@@ -89,6 +103,8 @@ data class HandleEntry(
     val status: String,
     val expiresAt: Long,
     val renewalUntil: Long,
+    /** [Handles.owner]: the holder's handle-scope nullifier (hex), "" when the source does not say. */
+    val owner: String = "",
 ) {
     val live: Boolean get() = status == LIVE
 
@@ -172,6 +188,7 @@ class HandleDirectory(
         if (!Handles.valid(e.handle)) throw Inconsistent("the directory holds ${e.handle.take(40)}, not a handle")
         if (e.handle <= after || out.containsKey(e.handle)) throw Inconsistent("the directory is out of order at ${e.handle}")
         if (e.status !in STATUSES) throw Inconsistent("handle ${e.handle}: status ${e.status.take(20)}")
+        if (e.address.length > Handles.MAX_ADDRESS_LEN) throw Inconsistent("handle ${e.handle}: address too long")
         // Audit 5 (M4): times a lease can have, 0 < expires_at <= renewal_until <= now + 10 years;
         // anything else is refused before any reminder or status does arithmetic on it.
         if (!timesOk(e, now())) throw Inconsistent("handle ${e.handle}: times out of range")
@@ -262,7 +279,8 @@ class HandleDirectory(
         /** Query/Handles' largest page, and the backend stream's page. */
         const val PAGE = 1000
         /** Audit 5 (L4): the most rows the wallet holds (the backend's own cap); more fails closed. */
-        const val MAX_ROWS = 1_000_000
+        /** Audit 6 (H2): near the backend's 200k (README), well under what a phone holds. */
+        const val MAX_ROWS = 250_000
         const val MAX_PAGES = MAX_ROWS / PAGE
         const val FRESH_SECONDS = 60L
         const val STREAM_RESTARTS = 3

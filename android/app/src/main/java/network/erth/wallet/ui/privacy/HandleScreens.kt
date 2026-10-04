@@ -71,6 +71,8 @@ fun HandleScreen(
     now: Long,
     onClaim: (String) -> Unit,
     onRenew: () -> Unit,
+    /** Renew-only (audit 6, M7): an entry at this address, while no handle is held. */
+    onRenewAddressed: (String) -> Unit,
     onRelease: () -> Unit,
     onShare: (String) -> Unit,
     modifier: Modifier = Modifier,
@@ -111,14 +113,15 @@ fun HandleScreen(
         }
         // Audit 5 (M1): entries naming this wallet's address that the store does not hold
         // (a restore loses track of a handle): renewing one is checked by the chain, at no cost if it is not ours.
-        state.addressed.filter { it.handle != state.handle }.forEach { a ->
+        // Audit 6 (M7): only while no handle is held (a bind of another would free it), and renew-only.
+        if (state.handle.isEmpty()) state.addressed.forEach { a ->
             Card {
                 EarthDetailRow("Names this wallet", "@${a.handle}")
                 EarthDetailRow("Expires", date(a.expiresAt))
                 Spacer(Modifier.height(dimens.space8))
                 Note("If this identity holds it, renew it here. If it does not, the chain refuses and nothing is charged.")
                 Spacer(Modifier.height(dimens.space8))
-                EarthButton(text = "Renew @${a.handle}", onClick = { onClaim(a.handle) }, modifier = Modifier.fillMaxWidth(), colors = brandButtonColors())
+                EarthButton(text = "Renew @${a.handle}", onClick = { onRenewAddressed(a.handle) }, modifier = Modifier.fillMaxWidth(), colors = brandButtonColors())
             }
             Spacer(Modifier.height(dimens.space12))
         }

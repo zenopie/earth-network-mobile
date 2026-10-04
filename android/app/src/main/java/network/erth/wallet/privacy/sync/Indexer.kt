@@ -322,12 +322,19 @@ class HttpPrivacyIndexer(
         }
 
         /** /stake/nullifier-tree: rows [index, nullifier (hex), height]. */
-        /** /handles: rows [handle, address, status, expires_at, renewal_until], the snapshot's height and size. */
+        /**
+         * /handles: rows [handle, address, status, expires_at, renewal_until, owner], the
+         * snapshot's height and size. owner (audit 6, M6: 64 hex, the chain's
+         * HandleEntry.owner) is optional: a row without it says no owner.
+         */
         fun parseHandles(j: JSONObject): network.erth.wallet.privacy.handles.HandleDirectory.StreamPage {
             val a = j.optJSONArray("handles") ?: JSONArray()
             val rows = (0 until a.length()).map { i ->
                 val r = a.getJSONArray(i)
-                network.erth.wallet.privacy.handles.HandleEntry(r.getString(0), r.getString(1), r.getString(2), r.getLong(3), r.getLong(4))
+                network.erth.wallet.privacy.handles.HandleEntry(
+                    r.getString(0), r.getString(1), r.getString(2), r.getLong(3), r.getLong(4),
+                    if (r.length() > 5) network.erth.wallet.privacy.handles.Handles.owner(r.optString(5)) else "",
+                )
             }
             return network.erth.wallet.privacy.handles.HandleDirectory.StreamPage(
                 rows, if (j.isNull("height")) null else j.optLong("height"), j.optLong("size"), j.optLong("from_index"), j.optBoolean("last_page"),
