@@ -251,9 +251,7 @@ public extension PrivateMsg {
         return o ? 0 : d
     }
 
-    /// The whole fee the tx declares (types.TotalFee): the private fee alone
-    /// since the chain retired MsgClaimUnbonding, the one msg that paid
-    /// fee_from_output (chain 48b631c).
+    /// The whole fee the tx declares (types.TotalFee): the private fee.
     var totalFee: UInt64 { privateFee }
     func asAny() -> ProtoAny { asAny(typeURL: Self.typeURL) }
 

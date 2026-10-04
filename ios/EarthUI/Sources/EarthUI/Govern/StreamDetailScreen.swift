@@ -569,7 +569,7 @@ struct ProposalDetailScreen: View {
                 }
             } else {
                 if weight != nil { EarthDetailRow(label: "Your weight", value: weightText) }
-                Text("Your stake at each validator votes once, as one vote (up to four notes) you confirm yourself, and each of your positions votes too. Nothing is spent. A stake vote is final.")
+                Text("Your stake at each validator votes once, as one vote (up to two notes) you confirm yourself, and each of your positions votes too. Nothing is spent. A stake vote is final.")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
             }
@@ -647,12 +647,12 @@ struct ProposalDetailScreen: View {
         model.validators.first { $0.operatorAddress == valoper }?.moniker ?? valoper
     }
 
-    /// Stake votes without spending (chain 48b631c): one vote per validator,
-    /// up to four of its notes with one weight (their sum rounded down to
+    /// Stake votes without spending: one vote per validator,
+    /// up to two of its notes with one weight (their sum rounded down to
     /// three significant figures), and one per position. Each is its own
     /// confirm sheet and tx, raised one after the other and sent only on its
     /// own tap; nothing is cast in the background. A validator with more than
-    /// four notes is asked about first: vote in parts, or merge.
+    /// two notes is asked about first: vote in parts, or merge.
     private func cast(_ option: Gov.Vote) {
         voteError = nil
         Task { @MainActor in

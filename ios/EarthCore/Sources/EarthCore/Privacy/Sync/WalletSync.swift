@@ -251,11 +251,12 @@ public final class WalletSync {
         PrivacyHash.h(PrivacyHash.tagUnlockTag, nk, PrivacyHash.u64(UInt64(counter))).bytes.prefix(regTagBytes)
     }
 
-    /// The memo of an unlock's re-minted stake note: the owner-tag counter of
-    /// the position it closed, so a wallet restored from the mnemonic knows
-    /// the tags of closed positions too and never locks under one again
-    /// (K11). Tagged like the record (only nk makes one): a gift of stake
-    /// carrying a huge counter cannot stretch the owner-tag scan.
+    /// The memo of an unlock's record (a value-0 pool note to ourselves in
+    /// the unlock's fee bundle): the owner-tag counter of the position it
+    /// closed, so a wallet restored from the mnemonic knows the tags of
+    /// closed positions too and never locks under one again. Tagged like the
+    /// registration record (only nk makes one): a note carrying a huge
+    /// counter cannot stretch the owner-tag scan.
     public static func unlockMemo(nk: Fr, counter: UInt32) -> Data {
         var b = unlockMagic
         b += Data((0 ..< 4).map { UInt8(truncatingIfNeeded: counter >> UInt32(24 - 8 * $0)) })

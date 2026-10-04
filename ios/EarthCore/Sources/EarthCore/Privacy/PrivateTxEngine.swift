@@ -424,8 +424,8 @@ public struct PrivateTxEngine: Sendable {
     }
 
     /// A stake vote with its vote nullifiers and proof set (the sighash binds
-    /// the nullifiers, not the proof): exactly four, the used slots' first,
-    /// then zeros.
+    /// the nullifiers, not the proof): exactly `MsgStakeVote.maxVoteNotes`,
+    /// the used slots' first, then zeros.
     static func withVote(_ msg: any PrivateMsg, vnfs: [Fr], proof: Data) throws -> any PrivateMsg {
         guard var m = msg as? MsgStakeVote else { throw PrivacyError("not a stake vote") }
         guard vnfs.count == MsgStakeVote.maxVoteNotes else { throw PrivacyError("a stake vote carries exactly \(MsgStakeVote.maxVoteNotes) vote nullifiers") }
