@@ -242,7 +242,18 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     func gasPrice() async throws -> Decimal { price }
     func minFee() async throws -> UInt64 { minFeeValue }
     func maxActionsPerBundle() async throws -> Int { maxActions }
-    func tipHeight() async throws -> UInt64 { height - 1 + tipAhead }
+    func tipHeight() async throws -> UInt64 { height - 1 + tipAhead + sendTipAhead }
+
+    /// How far the tip a tx's timeout is set from runs ahead (audit 6, M4: a node inflating it at send only).
+    var sendTipAhead: UInt64 = 0
+
+    /// x/shielded Query/Assets as the node serves it (audit 6, M2): nil says nothing.
+    var assetList: [(denom: String, id: Fr)]?
+
+    func assets() async -> [(denom: String, id: Fr)]? { assetList }
+
+    /// What a served entry's owner says (audit 6, M6): the holder's nullifier unless a test overrides it ("" = a directory without owners).
+    var ownerHex: ((HandleRec) -> String)?
 
     /// Every nullifier (pool, stake) the node saw in a simulated tx.
     var simulatedNullifiers: [Fr] = []

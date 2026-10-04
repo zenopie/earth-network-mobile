@@ -71,6 +71,15 @@ public struct OwnedNote: Hashable, Sendable, Codable {
     }
 
     public var unspent: Bool { spentHeight == nil }
+
+    /// The same note under another name for its asset (audit 6, M3: an "asset/<hex>" note whose id is now known).
+    func withDenom(_ denom: String) -> OwnedNote {
+        var n = OwnedNote(position: position, height: height,
+                          note: NotePlaintext(denom: denom, value: note.value, rho: note.rho, rcm: note.rcm, memo: note.memo),
+                          cm: cm, nf: nf, spentHeight: spentHeight, pendingAt: pendingAt, pendingUntil: pendingUntil)
+        n.pendingTx = pendingTx
+        return n
+    }
 }
 
 /// A stake note the wallet owns (x/shieldedstaking's stake tree): delegated
@@ -108,10 +117,11 @@ public struct OwnedStakeNote: Hashable, Sendable, Codable {
 }
 
 /// Asset id -> denom, for the ids note ciphertexts carry. Seeded with the fee
-/// and personhood denoms; every public amount the indexer serves (shields and
-/// mints, which name their denom) teaches it more, and the first note of any
-/// derth/ or unbond/ denom is always a public mint, so a wallet learns a denom
-/// before it can be sent one privately.
+/// and personhood denoms. Audit 6 (M2, M3): it learns only denoms the wallet
+/// has reason to trust (a note of its own whose cm the denom reproduces, or
+/// the chain's asset list, each entry checked against its id), never a public
+/// amount an indexer merely serves; only well-formed denoms (`Denoms.valid`),
+/// and at most `Denoms.max` of them. Built once per sync and grown as it goes.
 public struct AssetDenoms {
     private var byID: [Fr: String] = [:]
 
@@ -122,12 +132,43 @@ public struct AssetDenoms {
 
     public init() { self.init([String]()) }
 
-    public mutating func learn(_ denom: String) {
-        guard !denom.isEmpty, !denom.hasPrefix(NotePlaintext.unresolvedPrefix) else { return }
-        byID[PrivacyHash.assetID(denom)] = denom
+    /// Whether `denom` is new here (false: invalid, known already, or the set is full).
+    @discardableResult
+    public mutating func learn(_ denom: String) -> Bool {
+        guard Denoms.valid(denom), byID.count < Denoms.max else { return false }
+        return byID.updateValue(denom, forKey: PrivacyHash.assetID(denom)) == nil
     }
 
+    /// Learn `denom` under an id the chain stated for it: only if the id is the denom's own.
+    @discardableResult
+    public mutating func learn(_ denom: String, id: Fr) -> Bool {
+        guard Denoms.valid(denom), byID.count < Denoms.max, byID[id] == nil else { return false }
+        guard PrivacyHash.assetID(denom) == id else { return false }
+        byID[id] = denom
+        return true
+    }
+
+    public var denoms: Set<String> { Set(byID.values) }
+
     public func resolve(_ asset: Fr) -> String { byID[asset] ?? NotePlaintext.unresolvedPrefix + asset.hex }
+}
+
+/// Which denoms the wallet accepts from outside (audit 6, M2, M3): the SDK's
+/// own denom rule (`[a-zA-Z][a-zA-Z0-9/:._-]{2,127}`), and never the wallet's
+/// internal "asset/<hex>" name for an id it cannot resolve.
+public enum Denoms {
+    /// The most denoms a wallet keeps (learned and persisted).
+    public static let max = 4096
+
+    public static func valid(_ denom: String) -> Bool {
+        let b = Array(denom.utf8)
+        guard (3 ... 128).contains(b.count), !denom.hasPrefix(NotePlaintext.unresolvedPrefix) else { return false }
+        func letter(_ c: UInt8) -> Bool { (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A) }
+        guard letter(b[0]) else { return false }
+        return b.dropFirst().allSatisfy { c in
+            letter(c) || (c >= 0x30 && c <= 0x39) || c == 0x2F || c == 0x3A || c == 0x2E || c == 0x5F || c == 0x2D
+        }
+    }
 }
 
 extension Fr: Codable {

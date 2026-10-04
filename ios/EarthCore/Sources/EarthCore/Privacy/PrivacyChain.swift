@@ -453,6 +453,27 @@ public struct LCDChainRoots: ChainRoots {
         return TreeState(size: size, root: nil, pinned: pinned)
     }
 
+    /// x/shielded Query/Assets, every page, at most `Denoms.max` entries
+    /// (audit 6, M2). The caller learns an entry only if its id is the denom's own.
+    public func assets() async -> [(denom: String, id: Fr)]? {
+        var out: [(denom: String, id: Fr)] = []
+        var key = ""
+        while out.count < Denoms.max {
+            let q = "pagination.limit=500" + (key.isEmpty ? "" : "&pagination.key=" + (key.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? key))
+            guard let j = try? await rest.get("/earth/shielded/v1/assets?" + q) else { return nil }
+            let a = j.assets.array
+            for e in a {
+                if out.count >= Denoms.max { break }
+                guard let id = Self.field(e.asset_id) else { continue }
+                out.append((e.denom.string(default: ""), id))
+            }
+            let next = j.pagination.next_key.string(default: "")
+            if next.isEmpty || next == key || a.isEmpty { break }
+            key = next
+        }
+        return out
+    }
+
     /// A tx this wallet broadcast, by hash: 404 missing, a non-zero code failed (audit 4).
     public func txStatus(_ hash: String) async -> TxStatus? {
         do {

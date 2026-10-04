@@ -65,6 +65,10 @@ public protocol ChainRoots: Sendable {
     /// already): nil when the node could not say. A pending note is released
     /// only on missing or failed (audit 4).
     func txStatus(_ hash: String) async -> TxStatus?
+    /// x/shielded Query/Assets: (denom, asset id) pairs, at most
+    /// `Denoms.max`; nil when the node cannot say. Each is learned only if
+    /// the id is the denom's own hash (audit 6, M2).
+    func assets() async -> [(denom: String, id: Fr)]?
 }
 
 public extension ChainRoots {
@@ -76,6 +80,7 @@ public extension ChainRoots {
     func latestBlock() async -> ChainTip? { await latestHeight().map { ChainTip(height: $0, time: nil) } }
     func noteTree(height: UInt64?) async -> TreeState? { nil }
     func txStatus(_ hash: String) async -> TxStatus? { nil }
+    func assets() async -> [(denom: String, id: Fr)]? { nil }
 }
 
 /// Which chain the LCD serves: its chain id and the first 16 lowercase hex digits of its block 1 hash (nil: unavailable).
@@ -520,6 +525,11 @@ public final class WalletSync {
     private var tip: ChainTip?
     /// Our own tx landed but the indexer never reported its spend: what it served is not the chain's (audit 4).
     private var ownSpendMissing = false
+    /// Audit 6 (M2): the asset-id lookup, built once per sync from the
+    /// persisted denoms and grown as notes of our own name new ones.
+    private var assetDenoms = AssetDenoms()
+    /// Whether this sync has read the chain's asset list (at most once a sync, and only when a note of ours needs it).
+    private var chainAssetsRead = false
 
     @discardableResult
     private func readTip() async throws -> ChainTip {
@@ -618,6 +628,7 @@ public final class WalletSync {
         }
         try await readTip()
         ownSpendMissing = false
+        beginDenoms()
         var newNotes: [OwnedNote] = []
         var spent: [OwnedNote] = []
         var newStake: [OwnedStakeNote] = []
@@ -635,6 +646,7 @@ public final class WalletSync {
             pass += 1
             if try atIndexerTip(roots) || pass >= Self.maxPasses { break }
         }
+        await resolveUnresolved()
         await releaseStalePending()
         let verified = try await verifyRoots(roots)
         // Audit 4 (M5): a registration is matched only against an identity
@@ -866,8 +878,10 @@ public final class WalletSync {
     /// carries v2, so the mnemonic alone finds everything. A value-0 v1 note
     /// is kept only as a registration record (its memo).
     func open(_ r: NoteRow) -> OwnedNote? {
+        // Audit 6 (M2, M3): the row's amount is only checked here, never
+        // learned from: a denom is learned once a note of ours reproduces
+        // its cm with it.
         let amount = Self.publicAmount(r.amount)
-        if let a = amount { store.mutate { _ = $0.denoms.insert(a.denom) } }
         let note: NotePlaintext
         switch r.ciphertext.count {
         // An open mint (chain 203d3b2: the referral note to a handle we hold):
@@ -884,7 +898,7 @@ public final class WalletSync {
             guard let a = amount, let n = NoteCipher.tryDecryptBlind(r.ciphertext, cm: r.cm, denom: a.denom, value: a.value, keys: keys) else { return nil }
             note = n
         case NoteCipher.ciphertextBytes:
-            guard let n = NoteCipher.tryDecrypt(r.ciphertext, cm: r.cm, keys: keys, denoms: AssetDenoms(store.state.denoms)) else { return nil }
+            guard let n = NoteCipher.tryDecrypt(r.ciphertext, cm: r.cm, keys: keys, denoms: assetDenoms) else { return nil }
             note = n
         default:
             return nil
@@ -906,6 +920,7 @@ public final class WalletSync {
             }
             return nil
         }
+        learnOwn(note.denom)
         return OwnedNote(position: r.position, height: r.height, note: note, cm: r.cm,
                          nf: PrivacyHash.nf(nk: keys.nk, rho: note.rho, position: r.position))
     }
@@ -913,9 +928,55 @@ public final class WalletSync {
     static func publicAmount(_ amount: String?) -> (value: UInt64, denom: String)? {
         guard let amount else { return nil }
         let digits = amount.prefix { $0.isASCII && $0.isNumber }
-        let denom = amount.dropFirst(digits.count)
-        guard !digits.isEmpty, !denom.isEmpty, let v = UInt64(digits), v <= UInt64(Int64.max) else { return nil }
-        return (v, String(denom))
+        let denom = String(amount.dropFirst(digits.count))
+        // Audit 6 (M3): an SDK denom only; never the wallet's own "asset/" name.
+        guard !digits.isEmpty, Denoms.valid(denom), let v = UInt64(digits), v <= UInt64(Int64.max) else { return nil }
+        return (v, denom)
+    }
+
+    /// A denom a note of ours carries (its cm binds it): learned and kept (audit 6, M2).
+    private func learnOwn(_ denom: String) {
+        if assetDenoms.learn(denom), store.state.denoms.count < Denoms.max { store.mutate { _ = $0.denoms.insert(denom) } }
+    }
+
+    /// Audit 6 (M2): the persisted denoms are the ones of notes this wallet
+    /// holds (anything else a store learned before is dropped), at most
+    /// `Denoms.max`, and the lookup is built from them once for the sync. A
+    /// held note named "asset/<hex>" whose id is now known is renamed (same
+    /// asset, same cm), which also undoes audit 6 M3's relabel.
+    private func beginDenoms() {
+        chainAssetsRead = false
+        let own = Set((store.state.notes.map(\.note.denom) + store.state.stakeNotes.map(\.denom)).filter(Denoms.valid))
+        let kept = Set(own.sorted().prefix(Denoms.max))
+        store.mutate { $0.denoms = kept }
+        assetDenoms = AssetDenoms(kept)
+        renameResolved()
+    }
+
+    /// Renames every held "asset/<hex>" note whose id the lookup now knows.
+    private func renameResolved() {
+        let p = NotePlaintext.unresolvedPrefix
+        guard store.state.notes.contains(where: { $0.note.denom.hasPrefix(p) }) else { return }
+        let d = assetDenoms
+        var added: [String] = []
+        store.mutate { s in
+            for i in s.notes.indices where s.notes[i].note.denom.hasPrefix(p) {
+                let name = d.resolve(s.notes[i].note.asset)
+                if !name.hasPrefix(p) { s.notes[i] = s.notes[i].withDenom(name); added.append(name) }
+            }
+            for a in added where s.denoms.count < Denoms.max { s.denoms.insert(a) }
+        }
+    }
+
+    /// A held note whose asset id the wallet cannot name: the chain's asset
+    /// list, read at most once a sync, each entry learned only if its id is
+    /// the denom's own (audit 6, M2).
+    private func resolveUnresolved() async {
+        guard !chainAssetsRead, store.state.notes.contains(where: { $0.note.denom.hasPrefix(NotePlaintext.unresolvedPrefix) }) else { return }
+        chainAssetsRead = true
+        guard let list = await chain.assets() else { return }
+        for a in list.prefix(Denoms.max) { assetDenoms.learn(a.denom, id: a.id) }
+        renameResolved()
     }
 
     private func syncNullifiers(_ limit: Int) async throws -> [OwnedNote] {
@@ -1032,14 +1093,14 @@ public final class WalletSync {
     /// of its secrets, checked against the denom and amount the chain
     /// published with it.
     func openStake(_ r: StakeNoteRow) -> OwnedStakeNote? {
-        if let d = r.denom { store.mutate { _ = $0.denoms.insert(d) } }
         let denom: String, amount: UInt64, rho: Fr, rcm: Fr
         switch r.ciphertext.count {
         case NoteCipher.stakeCiphertextBytes:
             guard let o = NoteCipher.tryDecryptStake(r.ciphertext, cm: r.cm, keys: keys) else { return nil }
-            denom = AssetDenoms(store.state.denoms).resolve(o.asset); amount = o.amount; rho = o.rho; rcm = o.rcm
+            denom = assetDenoms.resolve(o.asset); amount = o.amount; rho = o.rho; rcm = o.rcm
         case NoteCipher.blindCiphertextBytes:
-            guard let d = r.denom, let a = r.amount,
+            // Audit 6 (M2, M3): an SDK denom, learned only once the note opens as ours.
+            guard let d = r.denom, Denoms.valid(d), let a = r.amount,
                   let o = NoteCipher.tryOpenBlindStake(r.ciphertext, cm: r.cm, denom: d, amount: a, keys: keys) else { return nil }
             denom = d; amount = a; rho = o.rho; rcm = o.rcm
             if let c = Self.parseUnlockMemo(nk: keys.nk, o.memo), c > (store.state.closedOtagMax ?? 0) || store.state.closedOtagMax == nil {
@@ -1050,6 +1111,7 @@ public final class WalletSync {
         }
         // Zero, or past 2^63-1: nothing the wallet holds (as Android).
         guard amount > 0, amount <= UInt64(Int64.max) else { return nil }
+        learnOwn(denom)
         return OwnedStakeNote(position: r.position, height: r.height, denom: denom, amount: amount, rho: rho, rcm: rcm, cm: r.cm,
                               nf: PrivacyHash.stakeNF(nk: keys.nk, rho: rho, position: r.position))
     }
