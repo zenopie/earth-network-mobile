@@ -191,12 +191,12 @@ reads (`Tests/EarthCoreTests/Resources/privacy`, copied from
 `android/app/src/test/resources/privacy`, generated from the chain by
 `android/tools/orchardvectors/gen.sh`): Grumpkin, value commitments and the
 binding signature byte for byte, every private msg's encoding, sighash and
-fee, the chain's action and membership fixtures, and three wallet flows
-against an in-memory chain. The end of that loop is the real circuits and
-verifier:
+fee, the chain's action and membership fixtures, and wallet flows against an
+in-memory chain (`FakeChain`), one test file per feature. The end of that
+loop is the real circuits and verifier:
 
-    cd ios/EarthCore && PRIVACY_TOML_OUT=/tmp/w swift test --filter WalletFlowTests
-    # nargo execute each /tmp/w/{action,stake,membership}/*/Prover.toml in circuits/<kind>
+    cd ios/EarthCore && PRIVACY_TOML_OUT=/tmp/w swift test
+    # nargo execute each /tmp/w/{action,stake,membership,vote}/*/Prover.toml in circuits/<kind>
     cd ios/ProverGate && PRIVACY_TOML_DIR=/tmp/w swift test --filter PrivacyProverTests
     cd tools/chainverify && go run . ../../ios/ProverGate/.artifacts wallet_stake
 
@@ -212,9 +212,9 @@ each VK against the chain's genesis VK, and writes one proof per circuit for
 - `attaswift/BigInt` is not optional: a pool reserve times an input amount
   overflows 64 bits, and the chain does that arithmetic in unbounded integers.
   Matching it needs the same.
-- There are **no XCTest tests**, and cannot be on a Command Line Tools install
-  — it ships no XCTest platform, so `swift test` cannot run at all. The checks
-  are an executable, as in `ProverGateCore`.
+- `swift test` needs full Xcode: a Command Line Tools install ships no XCTest
+  platform. The known-answer checks are an executable (`corecheck`), as in
+  `ProverGateCore`, so they run on either.
 
 ## Phase 3: the passport
 
@@ -330,20 +330,25 @@ The circuits are **referenced**, not copied: the folder reference in the Xcode
 project points straight at `android/app/src/main/assets/circuits`, so one
 recompile cannot leave the two platforms proving against different circuits.
 
-### The SRS is not free, and not cached
+### The SRS
 
 `DeviceProver` loads circuits with `size: nil`, so the SRS is provisioned from
-the circuit's own gate count rather than a hardcoded hint. Seven circuits ship
-and they are not the same size, and **barretenberg honours only the first SRS
-initialization of a process** — a hint too small for the circuit a passport
-selects cannot be corrected afterwards.
+the circuit's own gate count rather than a hardcoded hint. Seven passport
+circuits ship and they are not the same size, and **barretenberg honours only
+the first SRS initialization of a process** — a size too small for the
+circuit a passport selects cannot be corrected afterwards.
 
-With no `srsPath`, noir_rs fetches the SRS from Aztec. There is no cache: it is
-a download every time `setup_srs` does real work — which is once per process,
-so once per app launch that reaches a proof. Do **not** pass a path to fix
-that unless the file is definitely there: `LocalSrs::new` reads it with
-`fs::read(..).unwrap()`, so a missing file is a Rust panic across the FFI
-boundary, not a Swift error.
+- The privacy circuits' SRS (32,769 points, 2 MiB) is bundled: the Android
+  asset `srs/bn254_g1_32769.dat`, referenced into the app and checked by hash.
+  A private proof never fetches anything.
+- The passport circuits need up to 2^19 + 1 points (32 MiB), too large to
+  bundle. `PassportSRS.prefetch` fetches that prefix of Aztec's transcript
+  once, at launch, checks it against a pinned hash and keeps it in
+  Application Support (excluded from backups). While it is missing, a passport
+  proof downloads its own SRS (registration is public anyway).
+- A private proof made while a registration may still follow in this launch
+  reserves the SRS for the largest passport circuit, from the local file
+  only; without the file, a later registration asks for a relaunch.
 
 ### Signing
 
@@ -371,13 +376,12 @@ no Intel slice.
 
 A device build is the real one, and needs the capability above.
 
-## Not yet started
+## Referral links
 
-Referrals from a link. Android captures a referrer from a deep link or the Play
-install referrer; iOS needs
-`/.well-known/apple-app-site-association` served from erth.network alongside the
-`assetlinks.json` already there, and there is no iOS equivalent of the install
-referrer — so a fresh install from a link needs another mechanism. The manual
-referrer field on the registration screen works today.
-
-See `../IOS_PORT_PROMPT.md`.
+A referrer is a handle. The registration screen takes one by hand, and
+`https://erth.network/ref/<handle>` fills it in when it opens the app: a
+universal link only (associated domains `applinks:erth.network`, verified by
+the `apple-app-site-association` file erth.network must serve for `/ref/*`),
+never a custom URL scheme, which any page could fire first to lock in its own
+referrer. There is no iOS equivalent of Android's install referrer, so a
+fresh install from a link does not carry the handle over.

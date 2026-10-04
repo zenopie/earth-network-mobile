@@ -30,8 +30,8 @@ LCD would be both slower and capable of disagreeing with themselves on screen.
 
 **No screen broadcasts.** A screen raises an intent and hands messages to
 `TxController`; the confirmation and result sheets are hung off the root and
-driven by its state, so a caller who forgets them cannot skip them. That is also
-what will make the gas gate universal rather than registration-only.
+driven by its state, so a caller who forgets them cannot skip them. A private
+action is one `TxController` run too, and nothing broadcasts outside one.
 
 **The key is never held.** Unlocking buys the address and nothing else. Every
 signature re-reads the phrase from the Keychain behind its own Face ID prompt,

@@ -41,7 +41,7 @@ Three things, each with a comment saying why it is not in `EarthUI`:
   = [TAG]`, which is what permits raw APDU exchange. `NFCReaderUsageDescription`
   and the ICAO eMRTD application identifier (`A0000002471001`) are in
   `Info.plist` next to it; iOS refuses the session if any of the three is
-  missing.
+  missing. It also holds `applinks:erth.network`, for referral links.
 - `ChipReader.swift` — the passport dialogue, over `NFCPassportReader`.
 - `DeviceProver.swift` — Barretenberg, over `ProverGate`, against the seven
   circuits referenced in from the Android tree.
@@ -51,14 +51,12 @@ See `../README.md` for the packaging reasons and the SRS behaviour.
 
 ## Free gas
 
-An underfunded account gets its fee from the backend
-(`EarthCore/Backend/GasGrant.swift`, driven by `TxController.requestGas`),
-which pays on the chain's own personhood checks — no device attestation, no
-ads, and it works the same on the Simulator:
-
-- Registration posts the finished `MsgRegister` to `/gas/register`. The
-  backend runs the chain's checks on it (proof, address binding, DSC chain)
-  and pays if the chain would accept it, once per passport per month. The same
-  message is broadcast once the gas lands; the proof is not made twice.
-- Everything else posts the address to `/gas/human`, paid once per day to a
-  registered human.
+A registration's fee comes from the backend (`EarthCore/Backend/GasGrant.swift`,
+driven by `TxController.requestGas`), which pays on the chain's own personhood
+checks — no device attestation, no ads, and it works the same on the
+Simulator. The app posts the finished `MsgRegister` to `/gas/register`; the
+backend runs the chain's checks on it (proof, address binding, DSC chain) and,
+if the chain would accept it, shields a gas note to the wallet, once per
+passport per month. The same message is broadcast once the note lands; the
+proof is not made twice. Every other private action pays its fee from the
+wallet's shielded ERTH.
