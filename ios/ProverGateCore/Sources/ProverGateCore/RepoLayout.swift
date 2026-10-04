@@ -29,7 +29,24 @@ public enum RepoLayout {
         throw Failure.rootNotFound(startedAt: start)
     }
 
+    /// The chain's genesis verifying key for the register circuit `algorithm`
+    /// (`networks/genesis/verifying-keys/<algorithm>.vk.b64`), from a chain
+    /// checkout beside this one; nil when there is none. The VK derives from
+    /// the circuit and the bb build alone, so equality says this prover's
+    /// proofs are the ones the chain's genesis verifies.
+    public static func genesisVK(root: URL, algorithm: String) -> Data? {
+        for name in ["chain-orch", "chain-orchard", "chain-privacy", "earth-network-chain"] {
+            let f = root.deletingLastPathComponent()
+                .appendingPathComponent("\(name)/networks/genesis/verifying-keys/\(algorithm).vk.b64")
+            if let b64 = try? String(contentsOf: f, encoding: .utf8) {
+                return Data(base64Encoded: b64.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+        }
+        return nil
+    }
+
     public struct Paths {
+        public let root: URL
         public let circuit: URL
         public let witness: URL
         public let androidProof: URL
@@ -37,6 +54,7 @@ public enum RepoLayout {
         public let artifactDir: URL
 
         public init(root: URL) {
+            self.root = root
             circuit = root.appendingPathComponent("android/app/src/main/assets/circuits/lean_poa.json")
             witness = root.appendingPathComponent("android/app/src/androidTest/assets/lean_inputs.json")
             androidProof = root.appendingPathComponent("ios/ProverGate/Fixtures/android/lean_device_proof.hex")

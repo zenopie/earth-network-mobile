@@ -77,6 +77,15 @@ public enum Gate {
         report.record("artifacts written", .informational, paths.artifactDir.path)
         report.record("nullifier", .informational, result.nullifierHex)
 
+        // The chain's genesis key for lean_poa: a proof this prover makes is
+        // one the chain verifies only if the keys are byte for byte equal.
+        if let genesis = RepoLayout.genesisVK(root: paths.root, algorithm: "lean_poa") {
+            report.record("VK is the genesis VK", result.verificationKey == genesis ? .passed : .failed,
+                          result.verificationKey == genesis ? "\(genesis.count) bytes identical" : "differs from verifying-keys/lean_poa.vk.b64")
+        } else {
+            report.record("VK is the genesis VK", .skipped, "no chain checkout beside this one")
+        }
+
         if compareWithAndroid {
             try compare(result: result, circuit: circuit, paths: paths, into: &report)
         }

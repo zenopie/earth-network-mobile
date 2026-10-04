@@ -99,6 +99,16 @@ func runWitness(path: String, start: String) -> Int32 {
         print(verified
               ? "\nPROVED — a witness built from a passport's DG1 and EF.SOD satisfies \(algorithm)"
               : "\nFAILED — the proof does not verify")
+        // The chain verifies with its genesis key: this proof is one it takes
+        // only if the key this circuit derives is that one.
+        var genesisAgrees = true
+        if let genesis = RepoLayout.genesisVK(root: root, algorithm: algorithm) {
+            genesisAgrees = genesis == result.verificationKey
+            print(genesisAgrees ? "VK is the genesis \(algorithm) VK (\(genesis.count) bytes)"
+                                : "FAILED — the VK differs from the genesis \(algorithm) VK")
+        } else {
+            print("no chain checkout beside this one: genesis VK not compared")
+        }
 
         // Written in the shape tools/chainverify reads, under a `passport`
         // prefix so it sits beside the gate's own artifacts rather
@@ -113,7 +123,7 @@ func runWitness(path: String, start: String) -> Int32 {
         write(result.publicSignals.joined(separator: "\n"), "passport_public_signals.txt")
         print("\nartifacts \(artifacts.path)")
 
-        return verified ? 0 : 1
+        return verified && genesisAgrees ? 0 : 1
     } catch {
         FileHandle.standardError.write(Data("witness proof failed: \(error)\n".utf8))
         return 2
