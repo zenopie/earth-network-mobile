@@ -40,18 +40,6 @@ class TxController : ViewModel() {
     var submitting: Boolean by mutableStateOf(false)
         private set
 
-    /** True while the grant is being asked for, before anything is sent. */
-    var requestingGas: Boolean by mutableStateOf(false)
-        private set
-
-    /** True from the moment the grant is sent until the gas lands (or gives up). */
-    var awaitingGas: Boolean by mutableStateOf(false)
-        private set
-
-    /** Why no gas can be had here (see [requestGas]). */
-    var gasError: String? by mutableStateOf(null)
-        private set
-
     /** What is in flight, for the pending sheet to name. */
     var lastAction: String? by mutableStateOf(null)
         private set
@@ -161,20 +149,6 @@ class TxController : ViewModel() {
         }
     }
 
-    /**
-     * Free gas exists only for a first registration (RegistrationActivity),
-     * paid as a shielded note. Every later fee comes from the registration
-     * reward, so there is nothing to ask for here: this says so.
-     */
-    @Suppress("UNUSED_PARAMETER")
-    fun requestGas(
-        address: String,
-        fetchBalance: suspend () -> Long,
-        onFunded: () -> Unit = {},
-    ) {
-        gasError = "Free gas is granted once, with your registration. Fees are paid from your shielded ERTH."
-    }
-
     /** Reports a failure that happened before any sheet (a read the action needed): nothing was sent. */
     fun showFailure(action: String, e: Throwable) {
         outcome = TxOutcome.Failure(action, e)
@@ -184,8 +158,6 @@ class TxController : ViewModel() {
         pending = null
         build = null
         private = null
-        awaitingGas = false
-        gasError = null
     }
 
     fun dismissResult() {
@@ -244,7 +216,9 @@ class TxController : ViewModel() {
 }
 
 /**
- * The sheets, mounted once for the whole app.
+ * The sheets, mounted once for the whole app. No grant is offered on them:
+ * free gas comes with the registration alone (RegistrationActivity's sheet),
+ * so a short balance is told where its fee comes from (TxConfirmSheet).
  *
  * Mounted at the shell rather than per-screen so a result still arrives if the
  * screen that started the transaction has been navigated away from — a stake
@@ -256,17 +230,12 @@ fun TxSheets(
     controller: TxController,
     balanceUerth: Long,
     context: Context,
-    onGetGas: () -> Unit = {},
 ) {
     controller.pending?.let { details ->
         TxConfirmSheet(
             details = if (details.shielded) details else details.copy(balanceUerth = balanceUerth),
             onConfirm = { controller.confirm(context) },
             onDismiss = controller::cancel,
-            onGetGas = onGetGas,
-            awaitingGas = controller.awaitingGas,
-            requestingGas = controller.requestingGas,
-            gasError = controller.gasError,
         )
     }
     // Pending, then result — one sheet position, three states, so the result's

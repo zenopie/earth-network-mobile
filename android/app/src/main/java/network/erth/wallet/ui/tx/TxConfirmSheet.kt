@@ -78,17 +78,18 @@ data class TxConfirmDetails(
  * checked against each other, which is the whole argument for a chain without
  * contracts.
  *
- * Its second job is onboarding. A new human has no ERTH and no on-chain
- * account, and an address the chain has never seen cannot sign anything at all:
- * the ante handler rejects an unknown signer before it looks at who is paying.
- * So when the balance cannot cover the fee, this offers free gas (GasGrant).
+ * When the balance cannot cover the fee it says where the fee comes from and
+ * how to fill it: shielded ERTH for a private action, the public account's
+ * ERTH for a signed one. Free gas exists for one tx only, the registration
+ * (GasGrant): only its sheet passes [onGetGas], and only it offers the grant.
  */
 @Composable
 fun TxConfirmSheet(
     details: TxConfirmDetails,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
-    onGetGas: () -> Unit,
+    /** Asks for the registration's gas grant; null on every other sheet (there is no grant to ask for). */
+    onGetGas: (() -> Unit)? = null,
     /** True once the grant has been sent and has not yet landed. */
     awaitingGas: Boolean = false,
     /** True while the grant is being asked for. */
@@ -157,13 +158,15 @@ fun TxConfirmSheet(
                     text = when {
                         awaitingGas -> "The gas hasn't arrived yet. Give it a moment."
                         gasError != null -> gasError
-                        else -> "Not enough ERTH for the fee. Tap to get free gas for this transaction."
+                        onGetGas != null -> "Not enough ERTH for the fee. Tap to get free gas for this transaction."
+                        details.shielded -> SHIELDED_FEE_SHORT
+                        else -> PUBLIC_FEE_SHORT
                     },
                     style = EarthTypography.textSm,
                     color = EarthAccent.warnInk,
                 )
             }
-            Box(Modifier.padding(top = dimens.space12)) {
+            if (onGetGas != null) Box(Modifier.padding(top = dimens.space12)) {
                 EarthButton(
                     text = when {
                         awaitingGas -> "Waiting for gas…"
@@ -206,3 +209,10 @@ fun TxConfirmSheet(
         }
     }
 }
+
+/** A private action's fee is short: it is paid from shielded ERTH, which shielding or a private send fills. */
+const val SHIELDED_FEE_SHORT =
+    "Not enough shielded ERTH for the fee. Private actions pay from your shielded balance: shield some from Portfolio, or have ERTH sent to your shielded address."
+
+/** A signed tx's fee is short: it is paid from the public account. */
+const val PUBLIC_FEE_SHORT = "Not enough ERTH in your public account for the fee. Unshield some from Portfolio, or send ERTH here."

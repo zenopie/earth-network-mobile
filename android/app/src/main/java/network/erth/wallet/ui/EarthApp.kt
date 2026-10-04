@@ -27,14 +27,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import network.erth.wallet.Constants
 import network.erth.wallet.R
-import network.erth.wallet.chain.Bank
 import network.erth.wallet.privacy.PrivacySession
 import network.erth.wallet.ui.privacy.PrivacyActionsViewModel
 import network.erth.wallet.privacy.tx.PrivateMsgs
@@ -361,30 +357,12 @@ fun EarthApp(
         }
     }
 
-    // The sheets for every transaction. Their "get gas" action only explains
-    // that free gas comes with registration (TxController.requestGas).
+    // The sheets for every transaction. A fee the balance cannot cover is
+    // explained there (free gas comes with the registration alone).
     TxSheets(
         controller = tx,
         balanceUerth = state?.balanceUerth ?: 0L,
         context = context,
-        onGetGas = {
-            val address = state?.address
-            if (!address.isNullOrEmpty()) {
-                // requestGas ignores these arguments: it only sets the
-                // explanation the sheet shows (no grant is asked for here).
-                tx.requestGas(
-                    address = address,
-                    fetchBalance = {
-                        withContext(Dispatchers.IO) {
-                            runCatching {
-                                Bank.balance(address, Constants.UERTH_DENOM).toLong()
-                            }.getOrDefault(0L)
-                        }
-                    },
-                    onFunded = { wallet.refresh() },
-                )
-            }
-        },
     )
 
     // Re-read whenever the app comes back to the foreground.
