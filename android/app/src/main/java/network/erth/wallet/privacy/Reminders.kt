@@ -51,7 +51,7 @@ object Reminders {
         val handle: String,
         val handleEntry: HandleEntry?,
         /**
-         * Audit 5 (M1): directory entries naming this wallet's own address
+         * Directory entries naming this wallet's own address
          * (a handle held but not in the store, after a restore): reminded
          * like the held one.
          */
@@ -63,7 +63,7 @@ object Reminders {
     fun due(i: Inputs): List<Reminder> {
         val out = ArrayList<Reminder>()
         if (i.identityLive && !i.claimedToday && i.claimOpensAt == 0L) out.add(Reminder.AnmlReady)
-        // Clamped throughout (audit 5, M4): a hostile time saturates, never wraps or traps.
+        // Clamped throughout: a hostile time saturates, never wraps or traps.
         val c = i.caretakerExpiresAt
         if (i.identityLive && c > 0 && i.now >= Handles.satSub(c, LEAD_SECONDS) && i.now < Handles.satAdd(c, LAPSED_SECONDS)) {
             out.add(Reminder.CaretakerExpiring(c, lapsed = i.now >= c))

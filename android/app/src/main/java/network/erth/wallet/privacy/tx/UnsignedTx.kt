@@ -43,7 +43,7 @@ object UnsignedTx {
 
     fun build(msg: MessageLite, tx: PrivateMsgs.TxFields): ByteArray = build(msg, tx.gasLimit, tx.memo, tx.timeoutHeight)
 
-    /** The tx hash the chain will name [txBytes] by: SHA-256 of the raw bytes, uppercase hex (audit 4: known before broadcast). */
+    /** The tx hash the chain will name [txBytes] by: SHA-256 of the raw bytes, uppercase hex (known before broadcast). */
     fun hash(txBytes: ByteArray): String =
         java.security.MessageDigest.getInstance("SHA-256").digest(txBytes).joinToString("") { "%02X".format(it.toInt() and 0xff) }
 

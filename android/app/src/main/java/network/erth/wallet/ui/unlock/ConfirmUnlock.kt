@@ -17,8 +17,8 @@ import network.erth.wallet.wallet.UnlockAttempts
 import network.erth.wallet.wallet.UnlockMethod
 
 /**
- * A fresh unlock in front of something an unlocked phone alone must not get
- * (audit 5, M3): another wallet's recovery phrase is that wallet, for good.
+ * A fresh unlock in front of something an unlocked phone alone must not
+ * get: another wallet's recovery phrase is that wallet, for good.
  * The same gate as the unlock screen (PIN, biometric or both, whichever seals
  * this wallet), checked against the open session's secret, and counted
  * against the same backoff: a guess here is a guess at the unlock.
@@ -32,7 +32,7 @@ fun ConfirmUnlockDialog(onConfirmed: (secret: String) -> Unit, onDismiss: () -> 
     var checking by remember { mutableStateOf(false) }
     Dialog(
         onDismissRequest = onDismiss,
-        // Audit 6, K2: the PIN pad is not screenshot or recorded.
+        // The PIN pad is not screenshot or recorded.
         properties = DialogProperties(usePlatformDefaultWidth = false, securePolicy = androidx.compose.ui.window.SecureFlagPolicy.SecureOn),
     ) {
         UnlockGate(

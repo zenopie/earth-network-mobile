@@ -62,9 +62,9 @@ data class PersonalState(
     val directoryError: String? = null,
     /** The split is held but was restored without its options. */
     val caretakerSplitUnknown: Boolean = false,
-    /** Non-free directory entries naming this wallet's address (audit 5, M1). */
+    /** Non-free directory entries naming this wallet's address. */
     val addressed: List<HandleEntry> = emptyList(),
-    /** Moves away from this identity not yet confirmed, or not yet recorded in the new wallet (audit 5, M2). */
+    /** Moves away from this identity not yet confirmed, or not yet recorded in the new wallet. */
     val outgoingMoves: List<PendingMove> = emptyList(),
     /** Moves to this identity the chain has not confirmed yet. */
     val incomingMoves: List<PendingMove> = emptyList(),
@@ -125,8 +125,8 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
             // The claim wait uses the lease the chain's bound uses (LeaseBounds: the longest ever in force), never Params.
             val bounds = runCatching { PrivacyQueries.leaseBounds() }.getOrNull()
             var dirError: String? = null
-            // Every wallet reads the chain's own directory, whole, holder or not (audit 5: L3, L5),
-            // and squares its handle with it (M1, L11: a handle a restore lost, one the chain swept).
+            // Every wallet reads the chain's own directory, whole, holder or not,
+            // and squares its handle with it (a handle a restore lost, one the chain swept).
             val dir = runCatching { PrivacyQueries.handles.chainDirectoryRead() }.onFailure { dirError = it.message ?: "network error" }.getOrNull()
             val addressed = dir?.let { (d, at) -> runCatching { w.reconcileHandle(d, at) }.getOrNull() }.orEmpty()
             val entry = if (st.handle.isEmpty()) null else dir?.first?.get(st.handle)

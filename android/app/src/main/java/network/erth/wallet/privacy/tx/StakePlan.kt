@@ -24,7 +24,7 @@ import network.erth.wallet.privacy.zk.Privacy
  *
  * [denom] null: a position's update or vote, whose lane A is all zero (its
  * public asset 0). Every proof names the chain's current clear_before and
- * debt root ([clear]) whether or not it clears a label (circuit audit L-1):
+ * debt root ([clear]) whether or not it clears a label:
  * a proof naming them only to clear would be linkable to the redelegation
  * that labelled the note.
  */
@@ -182,7 +182,7 @@ class StakePlan(
             return Credit(denom, spend, path, vIn, moveTime, padRho, padRcm, out(keys, denom, Math.addExact(spend?.amount ?: 0L, vIn), label))
         }
 
-        /** A fresh owner-tag salt: every proof that is not a position's links to nothing (circuit audit L-2). */
+        /** A fresh owner-tag salt: every proof that is not a position's links to nothing. */
         fun freshSalt(): Fr = NotePlaintext.randomField()
     }
 }

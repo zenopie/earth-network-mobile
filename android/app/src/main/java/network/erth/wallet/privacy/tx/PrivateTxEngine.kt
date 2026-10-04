@@ -47,7 +47,7 @@ interface PrivateChain {
     /**
      * Broadcasts [tx] and waits for its block. [accepted] runs with the tx
      * hash as soon as the node accepts it into the mempool (CheckTx code 0),
-     * before the wait (K7): the caller records what it spent there, so a
+     * before the wait: the caller records what it spent there, so a
      * wait that times out or a killed app cannot lose it.
      */
     fun broadcast(tx: ByteArray, accepted: (hash: String) -> Unit = {}): TxResult
@@ -128,11 +128,11 @@ class PrivateTxEngine(
     private val chainId: String,
     private val chain: PrivateChain,
     private val prover: Prover,
-    /** The absolute cap on any private fee, in uerth (audit 3). */
+    /** The absolute cap on any private fee, in uerth. */
     private val maxFee: Long = MAX_PRIVATE_FEE,
     /**
      * The height the wallet's last verified sync reached (null: no bound).
-     * Audit 6 (M4): the tip a timeout_height is set from must be within
+     * The tip a timeout_height is set from must be within
      * [MAX_TIP_AHEAD] of it.
      */
     private val verifiedHeight: () -> Long? = { null },
@@ -143,7 +143,7 @@ class PrivateTxEngine(
     class FeeAboveQuote(val fee: Long, val shown: Long) :
         IllegalStateException("the fee is now ${fee}uerth, more than the ${shown}uerth shown; confirm again")
 
-    /** The node's tip is not near the last verified sync height (audit 6, M4): sync and retry. */
+    /** The node's tip is not near the last verified sync height: sync and retry. */
     class TipOutOfRange(val tip: Long, val verified: Long) :
         IllegalStateException("the node says the chain is at height $tip, far from the $verified this wallet last verified; sync again")
 
@@ -153,7 +153,7 @@ class PrivateTxEngine(
 
     /**
      * Lays out, prices and simulates without proving: what a confirm sheet
-     * may show. Simulated with random placeholder nullifiers (audit 3): the
+     * may show. Simulated with random placeholder nullifiers: the
      * node learns nothing about which notes would be spent before the user
      * confirms (gas is the tx's shape, the same either way).
      */
@@ -161,7 +161,7 @@ class PrivateTxEngine(
         price(assemble, memo, timeoutHeight(), placeholders = true).first
 
     /**
-     * The node's tip + [TIMEOUT_BLOCKS]. Audit 6 (M4): a tip past the last
+     * The node's tip + [TIMEOUT_BLOCKS]. A tip past the last
      * verified sync height by more than [MAX_TIP_AHEAD] is refused before
      * anything is laid out: a node inflating it would leave the spent notes
      * pending until a height the chain never reaches.
@@ -213,7 +213,7 @@ class PrivateTxEngine(
         check(PrivateMsgs.totalFee(msg) == q.fee) { "the msg must pay exactly the quoted fee" }
         checkShape(msg)
         val raw = UnsignedTx.build(msg, tx)
-        // Audit 4: what the tx spends is marked before it is sent, under the
+        // What the tx spends is marked before it is sent, under the
         // hash computed here (the chain's own: SHA-256 of the bytes). A
         // broadcast whose answer is lost (a timeout, a killed app) after the
         // node took it never leaves its notes spendable; they are released
@@ -290,7 +290,7 @@ class PrivateTxEngine(
     }
 
     /**
-     * The most this tx may pay (audit 3): twice the wallet's own estimate
+     * The most this tx may pay: twice the wallet's own estimate
      * from the tx's shape at x/shielded's (and the proof modules') default
      * gas, priced like the node's quote, and never more than [maxFee]. A node
      * whose simulation or prices ask more than that is refused before
@@ -348,10 +348,10 @@ class PrivateTxEngine(
 
         private const val MAX_RELAYS = 4
 
-        /** Blocks past the chain's tip a private tx stays valid for (its timeout_height; audit 3). */
+        /** Blocks past the chain's tip a private tx stays valid for (its timeout_height). */
         const val TIMEOUT_BLOCKS = 50L
 
-        /** How far past the last verified sync height a tip may be (audit 6, M4). */
+        /** How far past the last verified sync height a tip may be. */
         const val MAX_TIP_AHEAD = 1_000L
 
         fun tipSane(tip: Long, verified: Long): Boolean = tip >= 0 && verified >= 0 && tip - verified <= MAX_TIP_AHEAD
@@ -359,12 +359,12 @@ class PrivateTxEngine(
         /**
          * Whether a pending mark's timeout_height [until] could have come from
          * a sane tip, given the last verified height now (heights only grow):
-         * an outsized one is resolved by the tx's status alone (audit 6, M4).
+         * an outsized one is resolved by the tx's status alone.
          */
         fun timeoutSane(until: Long, verifiedNow: Long): Boolean =
             verifiedNow >= 0 && until - verifiedNow <= MAX_TIP_AHEAD + TIMEOUT_BLOCKS
 
-        /** The absolute cap on a private fee: 2 ERTH (audit 3). */
+        /** The absolute cap on a private fee: 2 ERTH. */
         const val MAX_PRIVATE_FEE = 2_000_000L
 
         // The chain's default gas schedule (x/shielded params, the proof
@@ -404,7 +404,7 @@ class PrivateTxEngine(
         const val NOTE_GAS = 150_000L
         /**
          * MsgBindHandle's writes beyond the one in [MEMBERSHIP_GAS]: the chain
-         * prices a bind as nine note writes (chain 203d3b2, audit 5 L-P5).
+         * prices a bind as nine note writes (chain 203d3b2).
          */
         const val BIND_HANDLE_EXTRA_GAS = 8 * NOTE_GAS
         /** MsgRegister: the passport proof (3,000,000), the DSC chain (300,000) and two minted notes. */

@@ -9,12 +9,8 @@ import java.math.RoundingMode
  *
  * A Cosmos node rejects a transaction whose fee is below
  * `ceil(gas_limit * minimum-gas-prices)`. That makes the fee a function of the
- * gas limit, not a flat amount — which is exactly the assumption this app used
- * to get wrong. Personhood.REGISTER_GAS_LIMIT was raised to 3,000,000 for
- * headroom while the fee stayed at a flat 2,000 uerth, and every registration
- * was rejected before it ran:
- *
- *     insufficient fees; got: 2000uerth required: 15000uerth
+ * gas limit, not a flat amount: a gas limit raised for headroom under a flat
+ * fee is rejected before it runs ("insufficient fees").
  *
  * Gas headroom is not free. It costs fee, proportionally, whether or not the
  * gas is used — the fee is what you offer, and an unused remainder is not

@@ -7,7 +7,7 @@ import java.net.URL
 import java.security.MessageDigest
 
 /**
- * The passport circuit's SRS as a local file (audit 3). The privacy
+ * The passport circuit's SRS as a local file. The privacy
  * circuits' SRS ships in the APK (PrivacyProver.SRS_ASSET), so a private
  * proof never fetches anything; the passport's (2^18 + 1 points, 16 MiB) is
  * too large to bundle, so it is fetched once at launch, independent of
@@ -36,7 +36,7 @@ object PassportSrs {
         val part = File(dest.parentFile, dest.name + ".part")
         try {
             val c = URL(SOURCE).openConnection() as HttpURLConnection
-            // Audit 4: never followed to another origin.
+            // Never followed to another origin.
             c.instanceFollowRedirects = false
             c.connectTimeout = 15_000
             c.readTimeout = 60_000

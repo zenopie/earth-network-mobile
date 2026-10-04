@@ -26,9 +26,9 @@ data class IdentityRecord(
     /** The passport nullifier: public in the registration, the switch/expiry key. */
     val passportNullifier: String,
     /**
-     * Matched against an identity tree the chain verified in the same sync
-     * (audit 4, M5), or resolved from the registration's own committed tx.
-     * A reset keeps only a verified identity; one from before is not.
+     * Matched against an identity tree the chain verified in the same sync,
+     * or resolved from the registration's own committed tx. A reset keeps
+     * only a verified identity; one from an older version is not.
      */
     val verified: Boolean = false,
     /**
@@ -41,7 +41,7 @@ data class IdentityRecord(
 
 /**
  * A registration the node accepted whose identity leaf the wallet has not
- * resolved yet (C2, K7): everything needed to rebuild the identity record,
+ * resolved yet: everything needed to rebuild the identity record,
  * persisted the moment the broadcast is accepted (before the wait for its
  * block), so neither a lagging indexer, a wait that times out nor a killed
  * app can lose it. [leafIndex] and [activatedAt] come from the committed tx
@@ -66,7 +66,7 @@ data class PendingRegistration(
  * A registration record note found by sync (PRIVACY_FORMATS.md 3a), its tag
  * checked: what a wallet restored from the mnemonic finds its identity leaf
  * by. [height] is the registration's block. The search for its leaf is
- * persisted (K1): the leaves appended at [height] as the stream passed
+ * persisted: the leaves appended at [height] as the stream passed
  * them, whether it matched or was given up, and how far the bounded
  * fallback search got, so a killed app or a later sync resumes it and never
  * repeats it.
@@ -102,7 +102,7 @@ data class RegRecord(
  * OPEN: still searching; MATCHED: the identity; EXHAUSTED: the bounded
  * fallback search is spent. EXHAUSTED never blocks a restore for good: an
  * exact time not tried before (the indexer's, the LCD's) is still tried, and
- * a store reset finds the record afresh (K13).
+ * a store reset finds the record afresh.
  */
 enum class RecordStatus { OPEN, MATCHED, EXHAUSTED }
 
@@ -138,7 +138,7 @@ data class PendingUnbond(
 data class StakeVoteRecord(val proposalId: Long, val vnf: Fr, val txHash: String?, val until: Long?, val confirmed: Boolean)
 
 /**
- * A move of a handle or caretaker split (audit 5, M2), recorded before its
+ * A move of a handle or caretaker split, recorded before its
  * broadcast in both wallets: the mover's ([incoming] false: it still holds
  * what it is moving until the tx is confirmed) and the new identity's
  * ([incoming] true: it holds it already, rolled back only if the tx is
@@ -182,15 +182,15 @@ class PrivacyState {
     var zeroedNext: Long = 0
     val notes: MutableList<OwnedNote> = ArrayList()
     var identity: IdentityRecord? = null
-    /** A committed registration not yet matched to its leaf (C2). */
+    /** A committed registration not yet matched to its leaf. */
     var pendingRegistration: PendingRegistration? = null
-    /** Registration record notes found (restore, L8). */
+    /** Registration record notes found (restore). */
     val regRecords: MutableList<RegRecord> = ArrayList()
-    /** Whether the last sync's roots matched the chain's own (C3), and why not. */
+    /** Whether the last sync's roots matched the chain's own, and why not. */
     var rootsVerified: Boolean = false
     var rootsError: String? = null
     /**
-     * Sync generations (audit 3): [syncGeneration] is bumped, with
+     * Sync generations: [syncGeneration] is bumped, with
      * [rootsVerified] cleared and persisted, before a sync's first request;
      * [verifiedGeneration] is set to it only when every stream and the root
      * checks of that same sync succeeded. Txs need the two equal.
@@ -199,7 +199,7 @@ class PrivacyState {
     var verifiedGeneration: Long = -1
     /**
      * The height the last verified sync reached (the indexer's, checked
-     * against the chain's tree and tip). Audit 6 (M4): a tx's tip is bounded
+     * against the chain's tree and tip). A tx's tip is bounded
      * by it, and a pending mark whose timeout is far past it is resolved by
      * the tx's status alone. Kept across resets (heights only grow).
      */
@@ -234,20 +234,20 @@ class PrivacyState {
     var caretakerRecordPos: Long = -1
     /** Heights of this wallet's txs that failed in their block: their state records are void. */
     val voidRecordHeights: MutableSet<Long> = sortedSetOf()
-    /** Moves in flight, either way (audit 5, M2). */
+    /** Moves in flight, either way. */
     val pendingMoves: MutableList<PendingMove> = ArrayList()
-    /** The store id of the wallet a switch moves to, fixed by its first move (audit 5, L8). */
+    /** The store id of the wallet a switch moves to, fixed by its first move. */
     var switchTarget: String = ""
     /** Undelegations whose payout has not arrived yet. */
     val pendingUnbonds: MutableList<PendingUnbond> = ArrayList()
     /** Every stake vote cast: (proposal, vote nullifier). */
     val stakeVotes: MutableList<StakeVoteRecord> = ArrayList()
-    /** A uniform sample of identity row heights (registration blocks): a record's LCD cover set is drawn from it (audit 4). */
+    /** A uniform sample of identity row heights (registration blocks): a record's LCD cover set is drawn from it. */
     val identityHeights: MutableList<Long> = ArrayList()
     var identityRowsSeen: Long = 0
     /** Next unused Groundworks owner-tag counter (PrivacyKeys.otagSalt). */
     var nextOtagCounter: Int = 0
-    /** The highest owner-tag counter of a position this wallet closed, from its unlock memos (-1: none; K11). */
+    /** The highest owner-tag counter of a position this wallet closed, from its unlock memos (-1: none). */
     var closedOtagMax: Int = -1
     /** The stake tree's stream cursors and this wallet's stake notes. */
     var stakeNext: Long = 0
@@ -469,7 +469,7 @@ class PrivacyStore private constructor(private val dir: File?) {
     private val identityNodes: NodeStore = dir?.let { FileNodeStore(File(it, "identity")) } ?: MemNodeStore()
     private val stakeNodes: NodeStore = dir?.let { FileNodeStore(File(it, "stake")) } ?: MemNodeStore()
 
-    /** state.json exists but does not parse: shown as an error, never silently replaced by an empty state (audit 3). */
+    /** state.json exists but does not parse: shown as an error, never silently replaced by an empty state. */
     class CorruptState(message: String, cause: Throwable?) : java.io.IOException(message, cause)
 
     var state: PrivacyState = dir?.let { File(it, STATE).takeIf(File::exists) }?.let { f ->
@@ -489,7 +489,7 @@ class PrivacyStore private constructor(private val dir: File?) {
      * Persists state after the trees, so a crash between the two leaves state
      * behind (and resyncs) rather than ahead. The state is written to a temp
      * file, fsynced, then renamed over state.json (atomic on one filesystem)
-     * and any failure throws (audit 3: never silent).
+     * and any failure throws (never silent).
      */
     @Synchronized
     fun save() {
@@ -508,10 +508,10 @@ class PrivacyStore private constructor(private val dir: File?) {
     /**
      * Forgets the synced data. On the same chain (an inconsistent sync, a
      * root mismatch) it keeps the owner-tag counter, the registration (its
-     * leaf only when it was matched against a verified tree, audit 4 M5; or
-     * the one pending) and what the wallet itself cast (claims, caretaker
-     * split, handle, the moves, its stake votes, audit 4 L1); a different chain or genesis (a relaunch under the same chain
-     * id) keeps only the owner-tag counter.
+     * leaf only when it was matched against a verified tree, or the one
+     * pending) and what the wallet itself cast (claims, caretaker split,
+     * handle, the moves, its stake votes); a different chain or genesis (a
+     * relaunch under the same chain id) keeps only the owner-tag counter.
      */
     @Synchronized
     fun reset(chainId: String?, genesis: String? = state.genesis) {
@@ -565,7 +565,7 @@ class PrivacyStore private constructor(private val dir: File?) {
 
     /**
      * A relaunch of the same chain id under a new genesis, confirmed by the
-     * LCD (K6): the synced data goes, but the registration stays (the
+     * LCD: the synced data goes, but the registration stays (the
      * identity record, its passport nullifier, a pending registration) and
      * so do the owner-tag counters; the old chain's bookkeeping does not.
      */
@@ -596,7 +596,7 @@ class PrivacyStore private constructor(private val dir: File?) {
         private val sharedStores = HashMap<String, PrivacyStore>()
 
         /**
-         * The process's one store for a wallet's directory (audit 6, M8):
+         * The process's one store for a wallet's directory:
          * two instances on one directory each save their whole state over
          * the other's. Every app path opens stores through this.
          */
@@ -607,7 +607,7 @@ class PrivacyStore private constructor(private val dir: File?) {
 
         /**
          * Deletes a wallet's private data (notes, identity, records, trees)
-         * when the wallet is forgotten (audit 3): every file is overwritten
+         * when the wallet is forgotten: every file is overwritten
          * with zeros and synced before it is unlinked (best effort on flash,
          * where the FTL may keep old blocks; the app's sandbox is the real
          * boundary). [walletId] null: every wallet's.

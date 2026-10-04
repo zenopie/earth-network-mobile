@@ -48,6 +48,16 @@ class SecurityViewModel(app: Application) : AndroidViewModel(app) {
     val changed: StateFlow<Boolean> = _changed.asStateFlow()
 
     /**
+     * The current secret, from a fresh unlock just before the change. Held
+     * only while the flow is open.
+     */
+    private var confirmedSecret: String? = null
+
+    fun confirmed(secret: String) { confirmedSecret = secret }
+
+    fun cancel() { confirmedSecret = null }
+
+    /**
      * Re-seal the wallet under a new secret and record how it was made.
      *
      * The order is the whole point. The new biometric half is already staged in
@@ -56,16 +66,6 @@ class SecurityViewModel(app: Application) : AndroidViewModel(app) {
      * method recorded. Every failure path here leaves the wallet exactly as it
      * was rather than sealed by a half that no longer exists.
      */
-    /**
-     * The current secret, from a fresh unlock just before the change (audit
-     * 6, M1). Held only while the flow is open.
-     */
-    private var confirmedSecret: String? = null
-
-    fun confirmed(secret: String) { confirmedSecret = secret }
-
-    fun cancel() { confirmedSecret = null }
-
     fun apply(method: UnlockMethod, secret: String, stagedSlot: String?) {
         viewModelScope.launch {
             val ctx = getApplication<Application>()
@@ -121,7 +121,7 @@ fun SecurityScreen(modifier: Modifier = Modifier) {
     var changing by remember { mutableStateOf(false) }
     var confirming by remember { mutableStateOf(false) }
 
-    // Audit 6, M1: a fresh unlock before the secret can change. The new
+    // A fresh unlock before the secret can change. The new
     // secret gates every other wallet's recovery phrase, so an unlocked
     // phone alone must not be able to choose it.
     if (confirming) {

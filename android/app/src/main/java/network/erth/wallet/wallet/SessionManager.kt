@@ -138,8 +138,8 @@ object SessionManager {
     fun isSessionActive(): Boolean = isSessionActive
 
     /**
-     * Whether [secret] is the one the open session was unlocked with (audit
-     * 5, M3): a fresh PIN or biometric before anything that reveals a
+     * Whether [secret] is the one the open session was unlocked with: a
+     * fresh PIN or biometric before anything that reveals a
      * recovery phrase. Compared in constant time; the caller counts a
      * mismatch as a failed attempt (UnlockAttempts).
      */
@@ -279,7 +279,7 @@ object SessionManager {
     @Synchronized
     fun changeSecret(context: Context, oldSecret: String, newSecret: String) {
         requireActive()
-        // Audit 6, M1: an unlocked phone alone must not choose the secret
+        // An unlocked phone alone must not choose the secret
         // that later gates every wallet's recovery phrase. The caller got
         // [oldSecret] from a fresh unlock (ConfirmUnlockDialog, failures
         // counted by UnlockAttempts); it is checked again here so no path

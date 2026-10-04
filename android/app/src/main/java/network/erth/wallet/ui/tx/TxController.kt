@@ -137,7 +137,7 @@ class TxController : ViewModel() {
             outcome = try {
                 val hash = withContext(Dispatchers.IO) {
                     if (privateRun != null) {
-                        // The fee the sheet showed bounds what the private run may pay (audit 3).
+                        // The fee the sheet showed bounds what the private run may pay.
                         network.erth.wallet.privacy.PrivacyWallet.withShownFee(details.feeUerth) { privateRun(context) }
                     } else {
                         SecureWalletManager.executeWithMnemonic(context) { mnemonic ->
@@ -206,7 +206,7 @@ class TxController : ViewModel() {
 
         /**
          * A private tx's gas for the confirm sheet: what the sheet shows is
-         * the most the tx may then pay without asking again (audit 3: a
+         * the most the tx may then pay without asking again (a
          * higher simulated fee shows the sheet again at it). Two actions
          * (4.7M at x/shielded's defaults), a stake or membership proof
          * (2.6M), the tx's bytes and the 10% headroom fit under it.
@@ -215,7 +215,7 @@ class TxController : ViewModel() {
 
         /**
          * A handle bind's: the chain prices it as nine note writes (chain
-         * 203d3b2, audit 5 L-P5), 1.2M more than [PRIVATE_GAS_ESTIMATE]'s
+         * 203d3b2), 1.2M more than [PRIVATE_GAS_ESTIMATE]'s
          * membership, with a three-action fee bundle (the state record).
          */
         const val BIND_HANDLE_GAS_ESTIMATE = 12_500_000L

@@ -93,7 +93,7 @@ class RegistrationActivity : ComponentActivity() {
 
                 // A referrer captured from a referral link or a Play install
                 // is shown filled in: the person did not type it and should
-                // not have to. They may remove or replace it (audit 5, M5),
+                // not have to. They may remove or replace it,
                 // and one that does not resolve to a live handle is cleared.
                 val linkedReferrer = remember { Referral.get(this@RegistrationActivity) }
                 var referrerLocked: Boolean by remember { mutableStateOf(linkedReferrer != null) }
@@ -112,8 +112,8 @@ class RegistrationActivity : ComponentActivity() {
                 // while the passport is against the phone; paying for it is a
                 // separate step that can take as long as it needs.
                 var scan: PassportSession.Scan? by remember { mutableStateOf(null) }
-                // The fee the sheet shows, and so the most the registration may pay
-                // (audit 4): a chain asking more re-shows the sheet at its fee.
+                // The fee the sheet shows, and so the most the registration may
+                // pay: a chain asking more re-shows the sheet at its fee.
                 var registerFee: Long by remember { mutableStateOf(REGISTER_FEE) }
                 var balanceUerth: Long by remember { mutableLongStateOf(0L) }
                 var awaitingGas: Boolean by remember { mutableStateOf(false) }

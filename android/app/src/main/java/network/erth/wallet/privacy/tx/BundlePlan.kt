@@ -261,7 +261,7 @@ object NoteSelection {
         var sum = 0L
         for (n in c.asReversed()) {
             chosen.add(n)
-            // Audit 6 (P1): saturating, as iOS: large balances are not "insufficient" by wrapping.
+            // Saturating, as iOS: large balances are not "insufficient" by wrapping.
             sum = if (Long.MAX_VALUE - sum < n.note.value) Long.MAX_VALUE else sum + n.note.value
             if (sum >= amount) break
         }

@@ -347,7 +347,7 @@ internal fun EarthContent(
                         markets.refresh()
                     },
                     run = { ctx ->
-                        // Audit 6 (D1): an amount past a note's range is refused, never truncated.
+                        // An amount past a note's range is refused, never truncated.
                         PrivacySession.wallet(ctx).noteSwap(denomIn, amountIn.longValueExact(), denomOut, minOut.longValueExact()).hash
                     },
                 )
@@ -450,7 +450,7 @@ internal fun EarthContent(
 
         EarthRoute.Handle -> {
             LaunchedEffect(Unit) { privacy.refreshPersonal() }
-            // Renew-only (audit 6, M7): the wallet refuses a bind that would change the handle held.
+            // Renew-only: the wallet refuses a bind that would change the handle held.
             fun renewHandle(h: String) = tx.requestPrivate(
                 details = TxConfirmDetails(
                     action = "Renew @$h for a year",
@@ -509,7 +509,7 @@ internal fun EarthContent(
 
         EarthRoute.SwitchIdentity -> {
             LaunchedEffect(Unit) { privacy.refreshPersonal(); wallets.refresh() }
-            // Audit 5 (L8): the wallet this identity's moves went to, by store id, and what a chosen target already holds.
+            // The wallet this identity's moves went to, by store id, and what a chosen target already holds.
             var frozenTarget by remember { mutableStateOf<Int?>(null) }
             var targetWarning by remember { mutableStateOf<String?>(null) }
             val switchTarget = personal?.switchTarget.orEmpty()
@@ -522,7 +522,7 @@ internal fun EarthContent(
             fun check(idx: Int) {
                 scope.launch {
                     val info = withContext(Dispatchers.IO) { runCatching { PrivacySession.targetInfo(context, idx) }.getOrNull() }
-                    // Audit 6 (M5): what the wallet refuses to move there, said up front.
+                    // What the wallet refuses to move there, said up front.
                     targetWarning = when {
                         info == null || info.storeId == switchTarget -> null
                         info.handleRefusal != null || info.voteRefusal != null ->
@@ -543,7 +543,7 @@ internal fun EarthContent(
                     val handle = personal?.handle.orEmpty()
                     // Each move names the new wallet's nullifier in that scope, derived
                     // from its keys on this phone, and is recorded in its store before
-                    // the broadcast (audit 5, M2). Shown as moved only once confirmed.
+                    // the broadcast. Shown as moved only once confirmed.
                     fun moveVote() = tx.requestPrivate(
                         details = TxConfirmDetails(
                             action = "Move caretaker vote to the new wallet",
@@ -602,7 +602,7 @@ internal fun EarthContent(
                     wallets.beginCreate()
                     nav.push(EarthRoute.CreateWallet)
                 },
-                // Only after a fresh unlock (ConfirmUnlockDialog, audit 5 M3).
+                // Only after a fresh unlock (ConfirmUnlockDialog).
                 revealPhrase = { idx -> runCatching { SecureWalletManager.executeWithMnemonicAt(context, idx) { it } }.getOrNull() },
                 modifier = inset,
             )
@@ -1260,7 +1260,7 @@ internal fun EarthContent(
                                     erthIn.toString(),
                                     pool.tokenDenom,
                                     tokenIn.toString(),
-                                    // Audit 6 (M9): the same bound as the shielded deposit's.
+                                    // The same bound as the shielded deposit's.
                                     minShares(pool.id, erthIn, tokenIn),
                                 )
                             } else {
@@ -1409,7 +1409,7 @@ internal fun EarthContent(
  * the shares the pool would mint now (the chain's deposit maths over fresh
  * reserves and share supply), less 1% for trades landing first. Blocking;
  * "" (no bound) only for an empty pool, which seeds at sqrt(erth x token)
- * instead. Audit 6 (D7): a pool or supply the node cannot read refuses the
+ * instead. A pool or supply the node cannot read refuses the
  * deposit rather than sending it unbounded.
  */
 private fun minShares(poolId: Long, erthIn: java.math.BigInteger, tokenIn: java.math.BigInteger): String {

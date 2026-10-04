@@ -127,13 +127,13 @@ object PrivateMsgs {
         return d.setScale(18, java.math.RoundingMode.UNNECESSARY).toPlainString()
     }
 
-    /** [opts] with every weight in its canonical LegacyDec form ("1" -> "1.000000000000000000"): the only form the chain takes (wave 3, F3). */
+    /** [opts] with every weight in its canonical LegacyDec form ("1" -> "1.000000000000000000"): the only form the chain takes. */
     fun canonicalOptions(opts: List<WeightedVoteOption>): List<WeightedVoteOption> =
         opts.map { it.toBuilder().setWeight(legacyDec(it.weight)).build() }
 
     /**
      * Every module account the chain declares (app_config moduleAccPerms):
-     * an unshield to one is refused (wave 3, B/F2). Address = the first 20
+     * an unshield to one is refused. Address = the first 20
      * bytes of SHA-256(name) (authtypes.NewModuleAddress).
      */
     val MODULE_ACCOUNTS = listOf(
@@ -147,7 +147,7 @@ object PrivateMsgs {
     /** The module whose account [address] (20 raw bytes) is, or null. */
     fun moduleAccountOf(address: ByteArray): String? = MODULE_ACCOUNTS.firstOrNull { moduleAddress(it).contentEquals(address) }
 
-    /** Whether YYMMDD [s] is a real calendar date (the chain refuses 250231; wave 3, I1). */
+    /** Whether YYMMDD [s] is a real calendar date (the chain refuses 250231). */
     fun isCalendarDate(s: String): Boolean {
         if (s.length != 6 || !s.all { it in '0'..'9' }) return false
         val y = 2000 + s.substring(0, 2).toInt(); val m = s.substring(2, 4).toInt(); val d = s.substring(4, 6).toInt()

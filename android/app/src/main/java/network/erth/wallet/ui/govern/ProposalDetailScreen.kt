@@ -58,7 +58,6 @@ fun ProposalDetailScreen(
     onVote: ((Gov.Proposal, Gov.Vote) -> Unit)? = null,
     /** Stake votes are private and final: each staked note votes once. */
     stakeVoteFinal: Boolean = false,
-    /** A stake vote being cast on this proposal (K5): casts done, the next one's time. */
     /**
      * The human house's tally, or null when this chain has no assembly — which
      * is every node older than v0.9.0. Null hides the section rather than

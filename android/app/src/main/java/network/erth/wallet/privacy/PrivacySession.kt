@@ -25,11 +25,10 @@ object PrivacySession {
     @Volatile private var current: Pair<String, PrivacyWallet>? = null
 
     /**
-     * Audit 6 (M8): one [PrivacyWallet] per wallet per process, by store id,
-     * kept across lock and unlock: a cast still finishing in a job the lock
-     * suspended writes to the same wallet and store a resumed run reads, and
-     * the wallet's lock orders them. Dropped only when its private data is
-     * forgotten.
+     * One [PrivacyWallet] per wallet per process, by store id, kept across
+     * lock and unlock: a tx still finishing when the app locks writes to the
+     * same wallet and store the next unlock reads, and the wallet's lock
+     * orders them. Dropped only when its private data is forgotten.
      */
     private val wallets = HashMap<String, PrivacyWallet>()
 
@@ -65,8 +64,8 @@ object PrivacySession {
     private fun storeId(keys: PrivacyKeys): String = Privacy.h(Privacy.TAG_OWNER, keys.ownerPk).toHex().take(16)
 
     /**
-     * Deletes the selected wallet's private data from the phone (audit 3/4:
-     * PrivacyStore.delete, zeroed then unlinked). The session lets go of the
+     * Deletes the selected wallet's private data from the phone
+     * (PrivacyStore.delete, zeroed then unlinked). The session lets go of the
      * wallet first; nothing on chain
      * changes, and the next sync rebuilds everything from the mnemonic.
      */
@@ -94,8 +93,8 @@ object PrivacySession {
     fun storeIdOf(keys: PrivacyKeys): String = storeId(keys)
 
     /**
-     * Writes a switch's moves into another wallet's private store (audit 5,
-     * M2): before the broadcast, as pending; undone only on a definite
+     * Writes a switch's moves into another wallet's private store: before
+     * the broadcast, as pending; undone only on a definite
      * refusal. Addressed by store id, so a retry needs no recovery phrase.
      */
     fun recorderFor(context: Context, targetId: String): PrivacyWallet.MoveRecorder {
@@ -122,12 +121,12 @@ object PrivacySession {
         return w.outgoingMoves().count { !it.recorded }
     }
 
-    /** What a switch target already holds (audit 5, L8): a registration, a handle. */
+    /** What a switch target already holds: a registration, a handle. */
     data class TargetInfo(
         val storeId: String,
         val registered: Boolean,
         val handle: String,
-        /** Why it cannot take this identity's handle / caretaker vote (audit 6, M5), or null. */
+        /** Why it cannot take this identity's handle / caretaker vote, or null. */
         val handleRefusal: String? = null,
         val voteRefusal: String? = null,
     )

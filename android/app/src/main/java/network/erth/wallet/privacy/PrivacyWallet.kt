@@ -196,7 +196,7 @@ class PrivacyWallet(
     private val reads: PrivacyChainReads,
     prover: Prover,
     val chainId: String,
-    /** The chain's own trees, every synced root is checked against (C3). */
+    /** The chain's own trees, every synced root is checked against. */
     private val roots: ChainRoots,
     private val now: () -> Long = { System.currentTimeMillis() / 1000 },
 ) {
@@ -212,7 +212,7 @@ class PrivacyWallet(
     }
 
     /**
-     * K7: a registration recorded at acceptance whose block the wallet has
+     * A registration recorded at acceptance whose block the wallet has
      * not seen (the wait timed out, the app was killed) is looked up by its
      * hash: committed, it gets its leaf index and activated_at; failed in its
      * block, the failure is kept for the UI (a new registration replaces it).
@@ -260,7 +260,7 @@ class PrivacyWallet(
     private fun today(): Long = now() / SECONDS_PER_DAY
 
     /**
-     * Audit 5 (L2): the chain's time, the LCD tip's block time, for what the
+     * The chain's time, the LCD tip's block time, for what the
      * chain checks against its own clock (predecessor bounds, the removal
      * day); the device clock only when the node cannot say.
      */
@@ -270,7 +270,7 @@ class PrivacyWallet(
 
     /**
      * Proves and broadcasts. Only on trees the chain itself vouched for at
-     * the last sync (C3): a proof over an indexer's forged tree is refused by
+     * the last sync: a proof over an indexer's forged tree is refused by
      * the chain anyway, and its notes may not exist.
      */
     @Synchronized
@@ -282,7 +282,7 @@ class PrivacyWallet(
     ): TxResult {
         requireVerified()
         requireFreshAnchor()
-        // The spent notes are marked before the tx is sent (K7, audit 4),
+        // The spent notes are marked before the tx is sent,
         // under its hash: a wait that times out (the tx may still land), a
         // lost answer or a killed app never leaves them spendable. They stay
         // pending until the chain is past the tx's timeout_height and says the
@@ -300,7 +300,7 @@ class PrivacyWallet(
     }
 
     /**
-     * Audit 6 (M4): a tip far past the last verified sync height is either a
+     * A tip far past the last verified sync height is either a
      * stale sync (sync, and try once more) or a node lying about the tip
      * (refused again: nothing was laid out, proven or sent).
      */
@@ -317,7 +317,7 @@ class PrivacyWallet(
     }
 
     /**
-     * Audit 3: only on roots verified by the last sync, in that sync's own
+     * Only on roots verified by the last sync, in that sync's own
      * generation (a sync that failed part way leaves them unverified).
      */
     private fun requireVerified() {
@@ -441,7 +441,7 @@ class PrivacyWallet(
     open class NotYet(val waitSeconds: Long, message: String = notYetText(waitSeconds)) : Exception(message)
 
     /**
-     * Audit 5 (M1): a renewal or refresh sent with no bound, by an identity
+     * A renewal or refresh sent with no bound, by an identity
      * whose own bound has not passed, which the chain refused (in its ante,
      * before any fee): this identity holds nothing there.
      */
@@ -605,8 +605,8 @@ class PrivacyWallet(
      * grant's note, on a first registration) that also carries the
      * registration record note (PRIVACY_FORMATS.md 3a: a value-0 note to
      * ourselves whose memo lets a wallet restored from the mnemonic find the
-     * leaf), and records the registration as pending before anything else
-     * (C2), then tries to resolve it. [publicSignals] are the passport
+     * leaf), and records the registration as pending before anything else,
+     * then tries to resolve it. [publicSignals] are the passport
      * proof's: [current_date, address, nullifier, dsc_key].
      */
     fun register(prep: RegistrationPrep, proof: ByteArray, publicSignals: List<String>, signatureAlgorithm: String, dscDer: ByteArray): TxResult {
@@ -617,7 +617,7 @@ class PrivacyWallet(
         val hint = dscCountry(dscDer)
         val record = NoteOut.to(keys.address, FEE, 0, WalletSync.regMemo(keys.nk, dscKey, hint, now()))
         val pending = { hash: String, _: Long ->
-            // K7: by hash, the moment the node accepts it; the leaf comes later.
+            // By hash, the moment the node accepts it; the leaf comes later.
             store.state.pendingRegistration = PendingRegistration(
                 txHash = hash, leafIndex = null, dscKey = dscKey, passportNullifier = publicSignals.getOrElse(2) { "" },
                 publicSignals = publicSignals, activatedAt = null, countryHint = hint,
@@ -635,7 +635,7 @@ class PrivacyWallet(
     }
 
     /**
-     * Fills the pending registration (C2, K7) from its committed tx — the
+     * Fills the pending registration from its committed tx — the
      * leaf index from its register event, activated_at its block time —
      * and syncs; every later sync retries until the leaf is in the local
      * identity tree and matches.
@@ -680,7 +680,7 @@ class PrivacyWallet(
     fun claimOpensAt(): Long? {
         if (identityStatus() != WalletSync.IdentityStatus.LIVE) return null
         val id = store.state.identity ?: return null
-        // Checked throughout (audit 4, H1): an activated_at no block can
+        // Checked throughout: an activated_at no block can
         // have (sync bounds them; an old store may hold one) has no answer.
         if (id.activatedAt < 0) return null
         return try {
@@ -696,7 +696,7 @@ class PrivacyWallet(
      * The chain's lease bounds now (Query/LeaseBounds), checked before use:
      * lease lengths in range, a sane margin, and bounds that are what the
      * lengths give at its block time. Every max_predecessor below comes from
-     * these lease lengths, never from Params (audit 5 P3; mobile audit 5 L1).
+     * these lease lengths, never from Params.
      */
     private fun leaseBounds(): PrivacyChainReads.LeaseBounds {
         val lb = reads.leaseBounds()
@@ -805,7 +805,7 @@ class PrivacyWallet(
         check(store.state.pendingMoves.none { !it.incoming && it.kind == PendingMove.CARETAKER && !it.confirmed }) {
             "this identity's caretaker vote is being moved; wait for the move to be confirmed"
         }
-        // Validated before anything is sent (audit 5, L6): nothing after the broadcast can throw on it.
+        // Validated before anything is sent: nothing after the broadcast can throw on it.
         // r0: the lease a cast gets now (Params), for the record's expiry estimate. The
         // bound: LeaseBounds' caretaker lease, which a held longer one keeps after a cut.
         val r0 = leaseParam(reads.personhoodParams().caretakerVoteSeconds, "caretaker lease")
@@ -815,7 +815,7 @@ class PrivacyWallet(
         }
         val m = membership(Privacy.caretakerScope(), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, maxPred)
         val weights = weights(split)
-        // The state record: what a wallet restored from the mnemonic finds (audit 5, M1). Its
+        // The state record: what a wallet restored from the mnemonic finds. Its
         // expiry is the wallet's estimate; the chain's own (from the result) replaces it here.
         val record = stateRecord(keys) { nk ->
             if (split.isEmpty()) WalletSync.caretakerMemo(nk, WalletSync.RECORD_NONE)
@@ -828,7 +828,7 @@ class PrivacyWallet(
                 }
             }
         }
-        // Audit 5 (M4, L6): the node's expires_at only within the lease range; else the block time + R, saturating.
+        // The node's expires_at only within the lease range; else the block time + R, saturating.
         val exp = r.attr("set_caretaker", "expires_at")?.toLongOrNull()?.takeIf { it > 0 && it <= Handles.satAdd(now(), Handles.MAX_AHEAD_SECONDS) }
         synchronized(this) {
             store.state.caretakerCastAt = now(); store.state.caretakerSplit = split; store.state.caretakerSplitUnknown = false
@@ -873,7 +873,7 @@ class PrivacyWallet(
     }
 
     /**
-     * Writes a move into the new identity's wallet (audit 5, M2): before the
+     * Writes a move into the new identity's wallet: before the
      * broadcast, as pending, so neither a lost answer nor a killed app can
      * strand what moved; undone only on a definite refusal. [targetId] is
      * that wallet's store id.
@@ -882,7 +882,7 @@ class PrivacyWallet(
         val targetId: String
         fun record(move: PendingMove)
         fun rollback(move: PendingMove)
-        /** Why the target cannot take [move] (audit 6, M5; [targetRefusal]), or null. */
+        /** Why the target cannot take [move] ([targetRefusal]), or null. */
         fun refusal(move: PendingMove): String? = null
     }
 
@@ -897,7 +897,7 @@ class PrivacyWallet(
      */
     private fun moveRun(move: PendingMove, recorder: MoveRecorder?, assemble: (fee: Long) -> Assembled): TxResult {
         recorder?.let { rc ->
-            // Audit 6 (M5): the target a confirmed move went to, or one a move
+            // The target a confirmed move went to, or one a move
             // still in flight names; a refused, failed or expired move frees it.
             val fixed = switchTargetNow()
             check(fixed.isEmpty() || fixed == rc.targetId) { "this identity already moved to another wallet; switch to that one" }
@@ -922,7 +922,7 @@ class PrivacyWallet(
     }
 
     /**
-     * The wallet this identity's moves must go to (audit 6, M5): the one a
+     * The wallet this identity's moves must go to: the one a
      * confirmed move went to, else the one a move still in flight names
      * (empty: any).
      */
@@ -931,7 +931,7 @@ class PrivacyWallet(
     }
 
     /**
-     * Frees the switch target when nothing moved (audit 6, M5): no handle or
+     * Frees the switch target when nothing moved: no handle or
      * split moved out and no move of this identity confirmed or in flight.
      * Returns whether it changed.
      */
@@ -950,7 +950,7 @@ class PrivacyWallet(
         if (!p.incoming) {
             if (p.kind == PendingMove.HANDLE) { s.handle = ""; s.handleMovedOut = true; s.handleSetAt = now() }
             else { s.caretakerSplit = emptyMap(); s.caretakerSplitUnknown = false; s.caretakerExpiresAt = 0; s.caretakerMovedOut = true }
-            // Audit 6 (M5): the target is fixed only by a confirmed move.
+            // The target is fixed only by a confirmed move.
             if (s.switchTarget.isEmpty() && p.target.isNotEmpty()) s.switchTarget = p.target
         }
         if (p.incoming || p.recorded) s.pendingMoves.removeAt(i) else s.pendingMoves[i] = p.copy(confirmed = true)
@@ -966,7 +966,7 @@ class PrivacyWallet(
     }
 
     /**
-     * Settles every move in flight by its tx (audit 5, M2): committed, it is
+     * Settles every move in flight by its tx: committed, it is
      * applied; failed in its block, or unknown to the chain past its
      * timeout_height, it is undone (and its state records void). A move the
      * chain cannot say anything about yet stays. Returns whether any is
@@ -975,7 +975,7 @@ class PrivacyWallet(
     @Synchronized
     fun resolvePendingMoves(): Boolean {
         val s = store.state
-        // Audit 6 (M5): a target fixed by a move that never landed (before this fix) is freed.
+        // A switch target fixed by a move that never landed is freed.
         if (clearSwitchTargetIfUnmoved(s)) store.save()
         for (p in s.pendingMoves.toList()) {
             if (p.confirmed) continue
@@ -983,7 +983,7 @@ class PrivacyWallet(
             when {
                 r != null && r.code == 0 -> confirmMove(p.txHash)
                 r != null -> { s.voidRecordHeights.add(r.height); dropMove(p) }
-                // Audit 6 (M4): a timeout no sane tip gives is settled by the tx's status alone.
+                // A timeout no sane tip gives is settled by the tx's status alone.
                 !PrivateTxEngine.timeoutSane(p.timeoutHeight, s.verifiedHeight) -> {
                     val st = runCatching { roots.txStatus(p.txHash) }.getOrNull()
                     if (st == network.erth.wallet.privacy.sync.TxStatus.MISSING) dropMove(p)
@@ -1023,7 +1023,7 @@ class PrivacyWallet(
      */
     fun bindHandle(handle: String, address: ShieldedAddress = keys.address, renewOnly: Boolean = false): TxResult {
         require(Handles.valid(handle)) { "\"$handle\" is not a handle: 3-32 of a-z, 0-9 and -, no dash at either end" }
-        // Audit 6 (M7): a renewal binds only the handle held (or, holding none, one this
+        // A renewal binds only the handle held (or, holding none, one this
         // identity may hold): a bind of another would be a change, freeing the held one.
         if (renewOnly) check(store.state.handle.isEmpty() || store.state.handle == handle) {
             "this identity holds @${store.state.handle}; renewing @$handle would change to it and free @${store.state.handle}"
@@ -1034,7 +1034,7 @@ class PrivacyWallet(
         // Chain 203d3b2: only a live handle renews or changes unbounded; one in its
         // renewal period is bounded like a claim, by the longest lease ever in force.
         val lb = leaseBounds()
-        // The lease this bind gets (Params), validated before anything is sent (audit 5, L6).
+        // The lease this bind gets (Params), validated before anything is sent.
         val leaseNow = leaseParam(reads.personhoodParams().handleLeaseSeconds, "handle lease")
         val held = if (!holds) null else handleExpiresAt().takeIf { it > 0 }?.let { it > lb.blockTime }
         val (maxPred, wait) = leaseStatement(predecessorBound(lb, lb.handleLeaseSeconds), held) { HandleNotLive(store.state.handle, it) }
@@ -1071,7 +1071,7 @@ class PrivacyWallet(
 
     /** Releases this identity's handle at once (anyone may claim it). */
     fun releaseHandle(): TxResult {
-        // Audit 5 (L12): the chain refuses a release by a holder of none only after taking the fee.
+        // The chain refuses a release by a holder of none only after taking the fee.
         check(store.state.handle.isNotEmpty()) { "this identity holds no handle to release" }
         checkNoMove(PendingMove.HANDLE)
         val m = membership(Privacy.handleScope(), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, Privacy.NO_BOUND)
@@ -1127,7 +1127,7 @@ class PrivacyWallet(
     }
 
     /**
-     * Audit 5 (M1, L11), audit 6 (M6): squares the store's handle with the
+     * Squares the store's handle with the
      * chain's directory [dir], read at [readAt] (wallet clock): a handle the
      * chain swept (absent or free), or one whose entry names another owner,
      * is dropped; with none held, the one entry whose owner is this
@@ -1161,11 +1161,11 @@ class PrivacyWallet(
                 if (s.handleExpiresFor != s.handle || s.handleExpiresAt != e.expiresAt) { s.handleExpiresFor = s.handle; s.handleExpiresAt = e.expiresAt; store.save() }
             }
         }
-        // Audit 6 (M7): while a handle is held, no other entry is offered (a bind of it would change, freeing the held one).
+        // While a handle is held, no other entry is offered (a bind of it would change, freeing the held one).
         return if (s.handle.isNotEmpty()) emptyList() else addressed
     }
 
-    /** This identity's handle-scope nullifier as a directory entry's owner (64 lowercase hex; audit 6, M6). */
+    /** This identity's handle-scope nullifier as a directory entry's owner (64 lowercase hex). */
     fun handleOwner(): String = Privacy.scopeNullifier(keys.idSecret, Privacy.handleScope()).toHex().lowercase(java.util.Locale.ROOT)
 
     // ---- assembly -----------------------------------------------------------
@@ -1185,7 +1185,7 @@ class PrivacyWallet(
     }
 
     fun proposeRemoval(optionId: Long): TxResult {
-        // The chain's day (audit 5, L2): its scope is the including block's UTC day.
+        // The chain's day: its scope is the including block's UTC day.
         val day = chainNow() / SECONDS_PER_DAY
         // The predecessor bound: the start of today (UTC) less a day, whatever the root window; no activation bound.
         val m = membership(Privacy.proposeRemovalScope(optionId, day), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, day * SECONDS_PER_DAY - ACTIVATION_MARGIN)
@@ -1375,9 +1375,9 @@ class PrivacyWallet(
     }
 
     /**
-     * The clear_before and debt root every stake proof names (circuit audit
-     * L-1: also when it clears nothing, so a clearing proof looks like any
-     * other), and the clear of [l] when its window has closed.
+     * The clear_before and debt root every stake proof names (also when it
+     * clears nothing, so a clearing proof looks like any other), and the
+     * clear of [l] when its window has closed.
      */
     private fun clearOf(l: StakeLabel?, d: DebtView): StakePlan.Clear {
         if (d.clearBefore == 0L) return StakePlan.Clear.NONE
@@ -1595,7 +1595,7 @@ class PrivacyWallet(
         check(a.supply.signum() > 0 && java.math.BigInteger.valueOf(amount) <= a.supply) { "more derth than this validator has" }
         val u = java.math.BigInteger.valueOf(amount).multiply(a.backing).divide(a.supply)
         if (u < java.math.BigInteger.valueOf(min)) throw IllegalArgumentException("this stake is worth ${u}uerth, less than the ${min}uerth a move must carry")
-        // What arrives at dst (chain b46a4bb, audit 7 A7-1): u splits between
+        // What arrives at dst (chain b46a4bb): u splits between
         // src's queue and its bonded stake pro rata, and up to 0.001 ERTH of
         // the bonded part may stay in src's book (bondedDust) or be truncated
         // by x/staking, so u - 1001. All of u only when src is unbonded (no
@@ -1734,7 +1734,7 @@ class PrivacyWallet(
         val denom = derthDenom(validator)
         val snap = snapshot(proposalId)
         val tree = store.stakeTree
-        // Audit 3: a snapshot past the local tree (stake landed since the last sync) cannot be checked here.
+        // A snapshot past the local tree (stake landed since the last sync) cannot be checked here.
         if (snap.treeSize < 0 || snap.treeSize > tree.size) throw SyncFirst("the proposal's stake snapshot is ahead of this wallet; sync first")
         check(tree.rootAt(snap.treeSize) == snap.root) { "the local stake tree disagrees with the proposal's snapshot root" }
         val nfRoot = snap.nfRoot ?: throw IllegalStateException("this proposal's snapshot has no stake nullifier root; it takes no stake vote")
@@ -1749,7 +1749,7 @@ class PrivacyWallet(
             if (chosen.size == PrivateMsgs.MAX_VOTE_NOTES) break
             val low = nfs.nonMembership(Privacy.stakeNf(keys.nk, note.rho, note.position))
             if (low == null) {
-                // Audit 4 (M3): skipped only when sync, too, saw the spend at
+                // Skipped only when sync, too, saw the spend at
                 // or before the snapshot's block. Otherwise the two disagree (a
                 // stream or a snapshot that is not the chain's): an error, never
                 // a vote silently skipped.
@@ -1808,7 +1808,7 @@ class PrivacyWallet(
 
     /**
      * Per-wallet caches built from one chain (snapshots, the stake nullifier
-     * tree): dropped when the store's genesis changes (audit 4, L2).
+     * tree): dropped when the store's genesis changes.
      */
     private var cacheGenesis: String? = null
 
@@ -1823,8 +1823,7 @@ class PrivacyWallet(
     }
 
     /**
-     * [proposalId]'s snapshot, from the chain's own Query/Snapshot (audit 4,
-     * M3): its stake root and size, nullifier root and size, block and
+     * [proposalId]'s snapshot, from the chain's own Query/Snapshot: its stake root and size, nullifier root and size, block and
      * validator rates are taken from the LCD, never from the indexer (a
      * forged nf_root would make a note look spent before the snapshot). The
      * proposal id is public, so asking names nothing of this wallet. The
@@ -1880,7 +1879,7 @@ class PrivacyWallet(
                     if (namesVoteNullifier(r.log, v.vnf)) v.copy(confirmed = true) else null
                 r != null -> null
                 v.txHash == null || (v.until != null && tip != null && tip!! > v.until) -> null
-                // Audit 6 (M4): a timeout no sane tip gives is settled by the tx's status alone.
+                // A timeout no sane tip gives is settled by the tx's status alone.
                 v.until != null && !PrivateTxEngine.timeoutSane(v.until, store.state.verifiedHeight) &&
                     runCatching { roots.txStatus(v.txHash) }.getOrNull() == network.erth.wallet.privacy.sync.TxStatus.MISSING -> null
                 else -> continue
@@ -1909,7 +1908,7 @@ class PrivacyWallet(
         val nfRoot = snap.nfRoot ?: throw IllegalStateException("this proposal's snapshot has no stake nullifier root; it takes no stake vote")
         nfTrees[nfRoot]?.let { return it }
         require(snap.nfSize in 0..network.erth.wallet.privacy.zk.Merkle.CAPACITY && snap.nfSize - 1 < Int.MAX_VALUE) { "nf_size ${snap.nfSize}" }
-        // Audit 4 (L4): nf_size is the LCD's (snapshot()), so the fetch
+        // nf_size is the LCD's (snapshot()), so the fetch
         // below is bounded by the chain's own count, never an indexer's.
         val n = maxOf(0L, snap.nfSize - 1).toInt()
         for (chainOnly in listOf(false, true)) {
@@ -1970,7 +1969,7 @@ class PrivacyWallet(
         return store.state.stakeNotes.filter {
             it.denom.startsWith(DERTH_PREFIX) && it.amount > 0 && it.position < snap.treeSize &&
                 // Spent in the snapshot's own block is spent before it (the
-                // snapshot is the trees at that block's end; audit 4).
+                // snapshot is the trees at that block's end).
                 (it.spentHeight == null || snap.height == 0L || it.spentHeight > snap.height) &&
                 !voted(proposalId, Privacy.voteNf(keys.nk, it.rho, it.position, proposalId))
         }
@@ -2051,7 +2050,7 @@ class PrivacyWallet(
         // Counters 0 ... next + OTAG_GAP, extended past every match: closed
         // positions vanish from the chain, so the window must cross a run of
         // them (and of failed locks) to reach a live one. A restored wallet
-        // knows the closed ones' counters from their unlock memos (K11).
+        // knows the closed ones' counters from their unlock memos.
         var limit = maxOf(s.nextOtagCounter, s.closedOtagMax + 1) + OTAG_GAP
         val out = ArrayList<Pair<PrivacyChainReads.Position, Int>>()
         var from = 0
@@ -2108,7 +2107,7 @@ class PrivacyWallet(
      * Closes [position]: the stake proof (its owner tag) merges the
      * position's derth into our note at its validator, or pads when we hold
      * none there (ORCHARD_DESIGN 20.3). The fee bundle carries a value-0
-     * record note to ourselves naming the closed counter (K11), so no
+     * record note to ourselves naming the closed counter, so no
      * restore ever locks under its tag again.
      */
     fun unlockPosition(position: PrivacyChainReads.Position, counter: Int): TxResult {
@@ -2262,7 +2261,7 @@ class PrivacyWallet(
         /**
          * Writes [p] (a move to this store's identity) into [store]: what it
          * now holds, and the move as pending until its own wallet settles it
-         * by hash (audit 5, M2). Used by the mover for the other wallet's store.
+         * by hash. Used by the mover for the other wallet's store.
          */
         fun recordIncoming(store: PrivacyStore, p: PendingMove, now: Long) = synchronized(store) {
             val s = store.state
@@ -2278,7 +2277,7 @@ class PrivacyWallet(
         }
 
         /**
-         * Why a target wallet cannot take a move of [kind] (audit 6, M5, I1):
+         * Why a target wallet cannot take a move of [kind]:
          * its identity moved one away already (the chain refuses that owner),
          * or it holds one of its own (a handle; a live caretaker split) that
          * the move would overwrite here. Null: it can.
@@ -2315,7 +2314,7 @@ class PrivacyWallet(
         /**
          * The fee the confirm sheet showed, for the private run on this
          * thread (TxController sets it around the run): a fee above it throws
-         * PrivateTxEngine.FeeAboveQuote and the sheet asks again (audit 3).
+         * PrivateTxEngine.FeeAboveQuote and the sheet asks again.
          * Every tx the app sends comes from a confirm sheet, so it is always
          * set there; unset (tests) only the cap applies.
          */
@@ -2393,7 +2392,7 @@ class PrivacyWallet(
         /** x/shieldedstaking ErrVoteNullifierUsed. */
         const val VOTE_NULLIFIER_USED = 1119
 
-        /** The codespace [VOTE_NULLIFIER_USED] is registered in: the code alone could be any module's (audit 4). */
+        /** The codespace [VOTE_NULLIFIER_USED] is registered in: the code alone could be any module's. */
         const val VOTE_CODESPACE = "shieldedstaking"
 
         /** Whether [e] is the chain refusing a vote nullifier already used on the proposal. */
@@ -2468,7 +2467,7 @@ class PrivacyWallet(
          * action proofs and note writes, and the tx's bytes.
          */
         const val REGISTER_GAS_ESTIMATE = 7_000_000L
-        /** A pending registration whose tx failed in its block (K7). */
+        /** A pending registration whose tx failed in its block. */
         const val TX_FAILED = "the registration tx failed"
 
         /** Slack against the chain's clock for bounds the wallet must stay under. */
@@ -2481,7 +2480,7 @@ class PrivacyWallet(
          */
         const val ANCHOR_MARGIN = 1_800L
 
-        /** The day every activation bound keeps from now (wave 3: the largest identity root window). */
+        /** The day every activation bound keeps from now (the largest identity root window). */
         const val ACTIVATION_MARGIN = 86_400L
 
         fun derthDenom(valoper: String) = "$DERTH_PREFIX$valoper"

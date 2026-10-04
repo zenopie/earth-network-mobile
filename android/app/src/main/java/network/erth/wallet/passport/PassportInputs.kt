@@ -70,15 +70,6 @@ object PassportInputs {
         return ScannedDsc(dsc.encoded, pubkey)
     }
 
-    /**
-     * Builds the lean_poa circuit inputs as the flat map noir_android expects.
-     *
-     * @param dg1 raw EF.DG1 bytes (as read from the chip).
-     * @param sodBytes raw EF.SOD bytes.
-     * @param currentDateYymmdd today as a YYMMDD integer (e.g. 260813). The chain
-     *   pins this to block time, so it must be ~now.
-     * @param registry the DSC's registry inclusion proof.
-     */
     /** The circuit inputs plus the register-circuit id to prove/verify against. */
     class Inputs(val algorithm: String, val map: Map<String, Any>)
 
@@ -87,6 +78,14 @@ object PassportInputs {
      * selects the matching circuit: `lean_poa` (ECDSA-P256), `lean_poa_rsa2048`,
      * or `lean_poa_rsa4096`. The hash-binding, registry, and expiry inputs are the
      * same across variants (poa_core); only the DSC signature/key fields differ.
+     * The inputs are the flat map noir_android expects.
+     *
+     * @param dg1 raw EF.DG1 bytes (as read from the chip).
+     * @param sodBytes raw EF.SOD bytes.
+     * @param currentDateYymmdd today as a YYMMDD integer (e.g. 260813). The chain
+     *   pins this to block time, so it must be ~now.
+     * @param address the circuit's `address` input: the registration binding
+     *   (zk/privacy.RegistrationBinding).
      */
     fun buildInputs(
         dg1: ByteArray,

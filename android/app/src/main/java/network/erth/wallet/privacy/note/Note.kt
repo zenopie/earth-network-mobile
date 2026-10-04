@@ -58,7 +58,7 @@ data class OwnedNote(
     val pendingAt: Long? = null,
     /** That tx's timeout_height: the note is released only once the chain is past it (null: a pre-timeout mark). */
     val pendingUntil: Long? = null,
-    /** That tx's hash: released only once the chain says it is missing or failed (audit 4; null: a mark from before). */
+    /** That tx's hash: released only once the chain says it is missing or failed (null: a mark from an older version). */
     val pendingTx: String? = null,
 ) {
     val unspent: Boolean get() = spentHeight == null
@@ -66,7 +66,7 @@ data class OwnedNote(
 
 /**
  * Asset id -> denom, for the ids note ciphertexts carry. Seeded with the fee
- * and personhood denoms. Audit 6 (M2, M3): it learns only denoms the wallet
+ * and personhood denoms. It learns only denoms the wallet
  * has reason to trust (a note of its own whose cm the denom reproduces, or
  * the chain's asset list, each entry checked against its id), never a public
  * amount an indexer merely serves; only well-formed denoms ([Denoms.valid]),
@@ -98,7 +98,7 @@ class AssetDenoms(known: Collection<String> = emptyList()) {
 }
 
 /**
- * Which denoms the wallet accepts from outside (audit 6, M2, M3): the SDK's
+ * Which denoms the wallet accepts from outside: the SDK's
  * own denom rule (`[a-zA-Z][a-zA-Z0-9/:._-]{2,127}`), and never the wallet's
  * internal "asset/<hex>" name for an id it cannot resolve: an indexer that
  * served one would relabel a note so no planner picks it.

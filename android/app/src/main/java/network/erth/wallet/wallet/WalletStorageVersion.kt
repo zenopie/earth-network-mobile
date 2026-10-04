@@ -96,7 +96,7 @@ object WalletStorageVersion {
             }
 
         } catch (e: Exception) {
-            // Audit 6 (K5): no message: it can quote the storage it failed on.
+            // No message: it can quote the storage it failed on.
             Log.e(TAG, "Failed to parse wallet storage")
             throw Exception("Invalid wallet storage format: ${e.message}", e)
         }

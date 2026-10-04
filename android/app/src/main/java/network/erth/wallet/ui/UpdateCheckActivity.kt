@@ -28,7 +28,7 @@ class UpdateCheckActivity : AppCompatActivity() {
         private const val EXTRA_TEST_MODE = "test_mode"
     }
 
-    /** The fake update prompt, on a debuggable build only (audit 6, K4): this activity is exported. */
+    /** The fake update prompt, on a debuggable build only: this activity is exported. */
     private fun testMode(): Boolean =
         (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0 &&
             runCatching { intent.getBooleanExtra(EXTRA_TEST_MODE, false) }.getOrDefault(false)
@@ -212,7 +212,7 @@ class UpdateCheckActivity : AppCompatActivity() {
     private fun proceedToMainApp() {
         Log.d(TAG, "Proceeding to main app")
         val intent = Intent(this, MainActivity::class.java)
-        // Audit 6 (K4): no extras forwarded. This activity is exported, so
+        // No extras forwarded. This activity is exported, so
         // they are any app's; MainActivity reads none (a referral link is
         // read here, by Referral.fromIntent).
         startActivity(intent)

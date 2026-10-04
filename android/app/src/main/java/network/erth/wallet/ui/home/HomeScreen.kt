@@ -111,7 +111,7 @@ fun HomeScreen(
     contentPadding: PaddingValues = PaddingValues(0.dp),
     /**
      * Why the private side (notes, stake, registration) is not verified
-     * against the chain, or null when it is (K9): shown, never hidden.
+     * against the chain, or null when it is: shown, never hidden.
      */
     privateNotice: String? = null,
     /** What is due (a claim, a renewal), each with where to do it: reminders, never automatic. */

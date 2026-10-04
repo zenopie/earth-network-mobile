@@ -137,7 +137,7 @@ data class RateRow(val validator: String, val rate: String, val supply: String, 
 /**
  * [PrivacyIndexer] over HTTP. Blocking; call from an IO thread. Only ever
  * talks to [host]: the status's `base` is accepted only as exactly
- * `/privacy/<chain_id>/<genesis>` for [chainId] (K10), so a hostile status
+ * `/privacy/<chain_id>/<genesis>` for [chainId], so a hostile status
  * cannot point the stream requests anywhere else.
  */
 class HttpPrivacyIndexer(
@@ -153,7 +153,7 @@ class HttpPrivacyIndexer(
     private class Busy(val code: Int, val retryAfter: Long?) : IOException("the privacy indexer is busy ($code)")
 
     /**
-     * [getOnce], backing off while the indexer sheds load (audit 4: /privacy
+     * [getOnce], backing off while the indexer sheds load (/privacy
      * answers 503 with Retry-After past its in-flight cap, 429 past a
      * client's rate): Retry-After or 1, 2, 4, 8 s (at most 30), then an
      * error the sync reports like any other.
@@ -177,7 +177,7 @@ class HttpPrivacyIndexer(
             throw IOException("indexer path $path leaves ${hostUrl.host}")
         }
         val c = url.openConnection() as HttpURLConnection
-        // Audit 4: a redirect is never followed (it would leave the pinned host); a 3xx is an error.
+        // A redirect is never followed (it would leave the pinned host); a 3xx is an error.
         c.instanceFollowRedirects = false
         c.connectTimeout = 15_000
         c.readTimeout = 60_000
@@ -205,7 +205,7 @@ class HttpPrivacyIndexer(
 
     private fun q(name: String, v: Any?): String = if (v == null) "" else "&$name=$v"
 
-    /** The backend serves only its fixed page sizes (audit 4 paging rule); anything else is a 400. */
+    /** The backend serves only its fixed page sizes; anything else is a 400. */
     private fun limit(limit: Int?): String {
         require(limit == null || limit in WalletSync.PAGE_SIZES) { "page size $limit is not one the indexer serves" }
         return q("limit", limit)
@@ -275,7 +275,7 @@ class HttpPrivacyIndexer(
         private val GENESIS = Regex("[0-9a-f]{16}")
 
         /**
-         * K10: [base] is exactly `/privacy/<chain_id>/<genesis>` for the
+         * [base] is exactly `/privacy/<chain_id>/<genesis>` for the
          * chain the wallet follows ([expected]), as the same status names it,
          * with a chain id of [A-Za-z0-9._-] (at most 64) and a genesis of 16
          * lowercase hex digits. A null chain id is refused.
@@ -344,7 +344,7 @@ class HttpPrivacyIndexer(
         /** /stake/nullifier-tree: rows [index, nullifier (hex), height]. */
         /**
          * /handles: rows [handle, address, status, expires_at, renewal_until, owner], the
-         * snapshot's height and size. owner (audit 6, M6: 64 hex, the chain's
+         * snapshot's height and size. owner (64 hex, the chain's
          * HandleEntry.owner) is optional: a row without it says no owner.
          */
         fun parseHandles(j: JSONObject): network.erth.wallet.privacy.handles.HandleDirectory.StreamPage {

@@ -53,15 +53,15 @@ object Handles {
     const val REMINDER_LEAD_SECONDS = 30L * 86_400
 
     /**
-     * The furthest ahead any lease time the wallet takes may lie (audit 5,
-     * M4): a directory entry's expiry and renewal end, a caretaker split's
+     * The furthest ahead any lease time the wallet takes may lie: a
+     * directory entry's expiry and renewal end, a caretaker split's
      * expiry, and the lease params themselves. Anything past it is a hostile
      * or broken answer, refused or clamped before it reaches any arithmetic.
      */
     const val MAX_AHEAD_SECONDS = 10L * 365 * 86_400
 
     /**
-     * A directory entry's owner (audit 6, M6): the handle-scope nullifier
+     * A directory entry's owner: the handle-scope nullifier
      * that holds it, as 64 lowercase hex digits (the MsgBindHandle membership
      * nullifier, MsgMoveHandle new_owner). Anything else, or none, is "":
      * no owner said, and nothing is adopted on it.
@@ -71,7 +71,7 @@ object Handles {
         return if (h.length == 64 && h.all { it in '0'..'9' || it in 'a'..'f' }) h else ""
     }
 
-    /** The longest address a directory entry may carry (audit 6, H2): an erthz1 address is far shorter. */
+    /** The longest address a directory entry may carry: an erthz1 address is far shorter. */
     const val MAX_ADDRESS_LEN = 256
 
     /** a + b, clamped to the Long range rather than wrapped (iOS would trap). */
@@ -182,7 +182,7 @@ class HandleDirectory(
         if (e.handle <= after || out.containsKey(e.handle)) throw Inconsistent("the directory is out of order at ${e.handle}")
         if (e.status !in STATUSES) throw Inconsistent("handle ${e.handle}: status ${e.status.take(20)}")
         if (e.address.length > Handles.MAX_ADDRESS_LEN) throw Inconsistent("handle ${e.handle}: address too long")
-        // Audit 5 (M4): times a lease can have, 0 < expires_at <= renewal_until <= now + 10 years;
+        // Times a lease can have, 0 < expires_at <= renewal_until <= now + 10 years;
         // anything else is refused before any reminder or status does arithmetic on it.
         if (!timesOk(e, now())) throw Inconsistent("handle ${e.handle}: times out of range")
         if (out.size >= MAX_ROWS) throw Inconsistent("the directory has more than $MAX_ROWS handles")
@@ -271,8 +271,8 @@ class HandleDirectory(
     companion object {
         /** Query/Handles' largest page, and the backend stream's page. */
         const val PAGE = 1000
-        /** Audit 5 (L4): the most rows the wallet holds (the backend's own cap); more fails closed. */
-        /** Audit 6 (H2): near the backend's 200k (README), well under what a phone holds. */
+        /** The most rows the wallet holds (the backend's own cap); more fails closed. */
+        /** Near the backend's 200k (README), well under what a phone holds. */
         const val MAX_ROWS = 250_000
         const val MAX_PAGES = MAX_ROWS / PAGE
         const val FRESH_SECONDS = 60L

@@ -113,7 +113,7 @@ class EarnViewModel(app: Application) : AndroidViewModel(app) {
                         )
                     }
 
-                // Every validator's rate in one read of the indexer (L5): a
+                // Every validator's rate in one read of the indexer: a
                 // per-validator query for the ones this wallet holds would
                 // tell the node which they are. Falls back to asking about
                 // every bonded validator alike.

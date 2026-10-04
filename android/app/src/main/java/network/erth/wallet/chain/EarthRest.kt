@@ -38,7 +38,7 @@ object EarthRest {
      */
     const val MAX_BODY_BYTES = 8 * 1024 * 1024
 
-    /** The deepest JSON nesting any response may have (audit 4: Android's org.json recurses without a cap). */
+    /** The deepest JSON nesting any response may have (Android's org.json recurses without a cap). */
     const val MAX_JSON_DEPTH = 64
 
     /**
@@ -102,7 +102,7 @@ object EarthRest {
 
         val conn = URL(base + path).openConnection() as HttpURLConnection
         return try {
-            // Audit 4: never followed. A redirect would take the request to
+            // Never followed. A redirect would take the request to
             // another origin than the one configured; a 3xx is an error.
             conn.instanceFollowRedirects = false
             conn.connectTimeout = 20000

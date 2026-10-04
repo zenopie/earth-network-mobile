@@ -68,7 +68,7 @@ class PrivacyKeys private constructor(
 
         fun fromMnemonic(words: List<String>): PrivacyKeys {
             val seed = MnemonicCode.toSeed(words, "")
-            // Audit 4: the seed is zeroed once the keys are derived.
+            // The seed is zeroed once the keys are derived.
             return try { fromSeed(seed) } finally { seed.fill(0) }
         }
 

@@ -79,7 +79,7 @@ object PrivacyQueries {
 
     fun personhoodParams(): PersonhoodParams {
         val p = get("/earth/personhood/v1/params").getJSONObject("params")
-        // Audit 5 (L7): every duration at most Handles.MAX_AHEAD_SECONDS, so
+        // Every duration at most Handles.MAX_AHEAD_SECONDS, so
         // no sum of it with a time can overflow (a node's 2^63 lease is not one).
         val max = network.erth.wallet.privacy.handles.Handles.MAX_AHEAD_SECONDS
         return PersonhoodParams(
@@ -384,7 +384,7 @@ object RestPrivateChain : PrivateChain {
  * from (`x-cosmos-block-height`), pinned only when the node echoes exactly
  * that height; otherwise (a pruned height, another height echoed) the
  * latest state is read and marked unpinned, which can verify equal trees
- * but never condemn different ones (K9).
+ * but never condemn different ones.
  */
 object LcdChainRoots : network.erth.wallet.privacy.sync.ChainRoots {
     private fun json(code: Int, body: String, path: String): JSONObject {
@@ -457,8 +457,8 @@ object LcdChainRoots : network.erth.wallet.privacy.sync.ChainRoots {
     }.getOrNull()
 
     /**
-     * x/shielded Query/Assets, every page, at most Denoms.MAX entries (audit
-     * 6, M2). The caller learns an entry only if its id is the denom's own.
+     * x/shielded Query/Assets, every page, at most Denoms.MAX entries. The
+     * caller learns an entry only if its id is the denom's own.
      */
     override fun assets(): List<Pair<String, Fr>>? = runCatching {
         val out = ArrayList<Pair<String, Fr>>()
@@ -500,7 +500,7 @@ object LcdChainRoots : network.erth.wallet.privacy.sync.ChainRoots {
         out
     }.getOrNull()
 
-    /** A tx this wallet broadcast, by hash: 404 missing, a non-zero code failed (audit 4). */
+    /** A tx this wallet broadcast, by hash: 404 missing, a non-zero code failed. */
     override fun txStatus(hash: String): network.erth.wallet.privacy.sync.TxStatus? = runCatching {
         val (code, body) = EarthRest.get("/cosmos/tx/v1beta1/txs/$hash")
         when {

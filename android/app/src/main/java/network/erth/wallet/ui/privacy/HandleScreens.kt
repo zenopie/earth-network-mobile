@@ -71,7 +71,7 @@ fun HandleScreen(
     now: Long,
     onClaim: (String) -> Unit,
     onRenew: () -> Unit,
-    /** Renew-only (audit 6, M7): an entry at this address, while no handle is held. */
+    /** Renew-only: an entry at this address, while no handle is held. */
     onRenewAddressed: (String) -> Unit,
     onRelease: () -> Unit,
     onShare: (String) -> Unit,
@@ -111,9 +111,9 @@ fun HandleScreen(
             Note("@${state.handle} was moved here and is waiting for the chain to confirm the move.")
             Spacer(Modifier.height(dimens.space12))
         }
-        // Audit 5 (M1): entries naming this wallet's address that the store does not hold
+        // Entries naming this wallet's address that the store does not hold
         // (a restore loses track of a handle): renewing one is checked by the chain, at no cost if it is not ours.
-        // Audit 6 (M7): only while no handle is held (a bind of another would free it), and renew-only.
+        // Only while no handle is held (a bind of another would free it), and renew-only.
         if (state.handle.isEmpty()) state.addressed.forEach { a ->
             Card {
                 EarthDetailRow("Names this wallet", "@${a.handle}")
@@ -188,7 +188,7 @@ fun HandleScreen(
             return@Page
         }
         if (movingOut) return@Page
-        // Clamped (audit 5, L7): a hostile lease param cannot overflow the date.
+        // Clamped: a hostile lease param cannot overflow the date.
         val waitUntil = if (state.predecessorAt > 0) Handles.satAdd(Handles.satAdd(state.predecessorAt, state.handleLeaseSeconds), 86_400 + 3_600) else 0L
         if (state.handle.isEmpty() && waitUntil > now) {
             Note(
@@ -233,10 +233,10 @@ fun HandleScreen(
  * can be moved to the new identity first, so it keeps them with no wait;
  * otherwise the new identity waits until they lapse (up to a year).
  *
- * Audit 5: a move counts as done only once the chain confirmed it (M2); the
+ * A move counts as done only once the chain confirmed it; the
  * new wallet's recovery phrase is shown only after a fresh unlock and is
- * dropped when the screen is paused or left (M3); the backup box needs the
- * phrase shown first (L9); the first move fixes the target (L8).
+ * dropped when the screen is paused or left; the backup box needs the
+ * phrase shown first; the first move fixes the target.
  */
 @Composable
 fun SwitchIdentityScreen(
@@ -403,7 +403,7 @@ fun SwitchIdentityScreen(
             colors = EarthButtonDefaults.secondaryColors(),
         )
         Spacer(Modifier.height(dimens.space8))
-        // Ticked only once the phrase was shown for this target (audit 5, L9).
+        // Ticked only once the phrase was shown for this target.
         val canTick = target != null && revealedFor == target
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(checked = backedUp && canTick, onCheckedChange = { backedUp = it }, enabled = canTick)

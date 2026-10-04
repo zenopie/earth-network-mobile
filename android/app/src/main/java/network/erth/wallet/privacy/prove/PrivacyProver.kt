@@ -45,7 +45,7 @@ object PrivacyProver {
     const val SRS_SIZE = 1 shl 15
 
     /**
-     * The bundled SRS (audit 3): the first 32,769 G1 points of Aztec's
+     * The bundled SRS: the first 32,769 G1 points of Aztec's
      * bn254 transcript (crs.aztec.network/g1.dat, bytes 0..2,097,215),
      * enough for every privacy circuit. Proving a private tx never fetches
      * the SRS, so nothing outside the chain sees when one is made. The
@@ -104,7 +104,7 @@ object PrivacyProver {
     }
 
     /**
-     * A proof's duration, logged in debug builds only (audit 4): in a
+     * A proof's duration, logged in debug builds only: in a
      * release log it would say when and how long this wallet proved what.
      */
     private fun timing(context: Context, kind: String, ms: Long) {

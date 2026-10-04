@@ -142,8 +142,8 @@ object Dex {
     const val SHIELDED_ONLY = "uanml"
 
     /**
-     * [minShares]: the fewest shares the deposit accepts (field 5, audit 6
-     * M9), computed as the shielded deposit's; "" only for an empty pool.
+     * [minShares]: the fewest shares the deposit accepts (field 5),
+     * computed as the shielded deposit's; "" only for an empty pool.
      */
     fun msgAddLiquidity(creator: String, poolId: Long, denomA: String, amtA: String, denomB: String, amtB: String, minShares: String): ProtoAny {
         val msg = MsgAddLiquidity.newBuilder()

@@ -230,14 +230,6 @@ fun EarthSheet(
 }
 
 /**
- * The accent-coloured button.
- *
- * Their `primaryColors()` is a black button and their `Btns.Brand` carries the
- * accent — a naming difference, not a design one, and the reason the first
- * build after vendoring produced a black Send button. In this app the primary
- * action is the green one, so screens ask for this.
- */
-/**
  * The colours for a button that undoes or refuses.
  *
  * Zashi's set has no destructive rank, so this is Earth's: the secondary
@@ -254,6 +246,14 @@ fun destructiveButtonColors() =
         borderColor = androidx.compose.ui.graphics.Color.Unspecified,
     )
 
+/**
+ * The accent-coloured button.
+ *
+ * Their `primaryColors()` is a black button and their `Btns.Brand` carries the
+ * accent — a naming difference, not a design one, and the reason the first
+ * build after vendoring produced a black Send button. In this app the primary
+ * action is the green one, so screens ask for this.
+ */
 @Composable
 fun brandButtonColors() =
     network.erth.wallet.ui.designsystem.component.EarthButtonDefaults.primaryColors(
