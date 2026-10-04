@@ -31,6 +31,19 @@ public enum Handles {
     /// or broken answer, refused or clamped before it reaches any arithmetic.
     public static let maxAheadSeconds: Int64 = 10 * 365 * 86400
 
+    /// A directory entry's owner (audit 6, M6): the handle-scope nullifier
+    /// that holds it, as 64 lowercase hex digits (the MsgBindHandle
+    /// membership nullifier, MsgMoveHandle new_owner). Anything else, or
+    /// none, is "": no owner said, and nothing is adopted on it.
+    public static func owner(_ raw: String?) -> String {
+        guard let raw else { return "" }
+        let h = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return h.utf8.count == 64 && h.utf8.allSatisfy({ ($0 >= 0x30 && $0 <= 0x39) || ($0 >= 0x61 && $0 <= 0x66) }) ? h : ""
+    }
+
+    /// The longest address a directory entry may carry (audit 6, H2): an erthz1 address is far shorter.
+    public static let maxAddressLen = 256
+
     /// a + b, clamped to the Int64 range rather than trapping.
     public static func satAdd(_ a: Int64, _ b: Int64) -> Int64 {
         let (r, o) = a.addingReportingOverflow(b)
@@ -88,9 +101,12 @@ public struct HandleEntry: Equatable, Sendable {
     public let status: String
     public let expiresAt: Int64
     public let renewalUntil: Int64
+    /// `Handles.owner`: the holder's handle-scope nullifier (hex), "" when the source does not say (audit 6, M6).
+    public let owner: String
 
-    public init(handle: String, address: String, status: String, expiresAt: Int64, renewalUntil: Int64) {
+    public init(handle: String, address: String, status: String, expiresAt: Int64, renewalUntil: Int64, owner: String = "") {
         self.handle = handle; self.address = address; self.status = status; self.expiresAt = expiresAt; self.renewalUntil = renewalUntil
+        self.owner = owner
     }
 
     /// The entry's status as of `now`: the served status, demoted when its times have passed since.
@@ -148,8 +164,9 @@ public actor HandleDirectory {
 
     /// Query/Handles' largest page, and the backend stream's page.
     public static let page = 1000
-    /// Audit 5 (L4): the most rows the wallet holds (the backend's own cap); more fails closed.
-    public static let maxRows = 1_000_000
+    /// Audit 5 (L4): the most rows the wallet holds; more fails closed.
+    /// Audit 6 (H2): near the backend's 200k (README), well under what a phone holds.
+    public static let maxRows = 250_000
     public static let maxPages = maxRows / page
     public static let freshSeconds: Int64 = 60
     public static let streamRestarts = 3
@@ -208,6 +225,7 @@ public actor HandleDirectory {
         guard Handles.valid(e.handle) else { throw Inconsistent("the directory holds \(e.handle.prefix(40)), not a handle") }
         guard e.handle > after, out[e.handle] == nil else { throw Inconsistent("the directory is out of order at \(e.handle)") }
         guard Self.statuses.contains(e.status) else { throw Inconsistent("handle \(e.handle): status \(e.status.prefix(20))") }
+        guard e.address.utf8.count <= Handles.maxAddressLen else { throw Inconsistent("handle \(e.handle): address too long") }
         // Audit 5 (M4): times a lease can have, 0 < expires_at <= renewal_until <= now + 10 years;
         // anything else is refused before any reminder or status does arithmetic on it.
         guard Self.timesOk(e, now: now()) else { throw Inconsistent("handle \(e.handle): times out of range") }

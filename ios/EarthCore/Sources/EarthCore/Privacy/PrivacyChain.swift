@@ -244,7 +244,8 @@ public struct PrivacyQueries: PrivacyChainReads {
         let j = try await rest.get("/earth/personhood/v1/handles?" + (q.percentEncodedQuery ?? ""))
         let hs = j.handles.array.map { h in
             HandleEntry(handle: h.handle.string(default: ""), address: h.address.string(default: ""), status: h.status.string(default: ""),
-                        expiresAt: h.expires_at.int64(default: 0), renewalUntil: h.renewal_until.int64(default: 0))
+                        expiresAt: h.expires_at.int64(default: 0), renewalUntil: h.renewal_until.int64(default: 0),
+                        owner: Handles.owner(h.owner.string))
         }
         return HandleDirectory.Page(handles: hs, next: j.next.string(default: ""))
     }

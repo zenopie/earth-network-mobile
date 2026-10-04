@@ -1051,7 +1051,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         let t = now()
         store.mutate { s in
             s.pendingMoves.removeAll { $0.txHash == p.txHash && $0.incoming == p.incoming }
-            if p.incoming { Self.undoIncoming(&s, p, now: t) }
+            if p.incoming { Self.undoIncoming(&s, p, now: t) } else { Self.clearSwitchTargetIfUnmoved(&s) }
         }
     }
 
@@ -1140,7 +1140,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// one is freed at once). A claim by an identity holding none bounds its
     /// predecessor by the longest lease; a renewal or change does not.
     /// Nothing renews on its own: the app reminds the owner before expiry.
-    public func bindHandle(_ handle: String, address: ShieldedAddress? = nil) async throws -> TxResult {
+    public func bindHandle(_ handle: String, address: ShieldedAddress? = nil, renewOnly: Bool = false) async throws -> TxResult {
         let mx = await maxActions()
         // The lease this bind gets (Params), validated before anything is sent (audit 5, L6).
         let leaseNow = try Self.leaseParam(try await reads.personhoodParams().handleLeaseSeconds, "handle lease")
@@ -1149,6 +1149,12 @@ public final class PrivacyWallet: @unchecked Sendable {
         let lb = try await leaseBounds()
         return try await locked {
             try require(Handles.valid(handle), "\"\(handle)\" is not a handle: 3-32 of a-z, 0-9 and -, no dash at either end")
+            // Audit 6 (M7): a renewal binds only the handle held (or, holding none, one this
+            // identity may hold): a bind of another would be a change, freeing the held one.
+            if renewOnly {
+                let held = store.state.handle
+                try require(held.isEmpty || held == handle, "this identity holds @\(held); renewing @\(handle) would change to it and free @\(held)")
+            }
             let holds = !store.state.handle.isEmpty
             try require(holds || !store.state.handleMovedOut, "this identity moved its handle to another; it cannot claim one again")
             try checkNoMove(PendingMove.handleKind)
@@ -1266,28 +1272,35 @@ public final class PrivacyWallet: @unchecked Sendable {
         }
     }
 
-    /// Audit 5 (M1, L11): squares the store's handle with the chain's
-    /// directory `dir`, read at `readAt` (wallet clock): a handle the chain
-    /// swept (absent or free) is dropped; with none held, a single entry
-    /// naming this wallet's own address is taken as held (a restore lost
-    /// it; renewing it is refused at no cost if it is not). Nothing changes
-    /// while a move is in flight or when the directory predates the store's
-    /// last change. Returns every non-free entry naming this wallet's
-    /// address, for the reminders.
+    /// Audit 5 (M1, L11), audit 6 (M6): squares the store's handle with the
+    /// chain's directory `dir`, read at `readAt` (wallet clock): a handle the
+    /// chain swept (absent or free), or one whose entry names another owner,
+    /// is dropped; with none held, the one entry whose owner is this
+    /// identity's handle-scope nullifier is taken as held (a restore lost
+    /// it). An entry merely naming this wallet's address is never adopted:
+    /// anyone may bind a handle to any address. Nothing changes while a move
+    /// is in flight or when the directory predates the store's last change.
+    /// Returns, while no handle is held, the non-free entries naming this
+    /// wallet's address whose owner is not someone else (unverified: a
+    /// directory without owners), for the cards and reminders.
     public func reconcileHandle(_ dir: [String: HandleEntry], readAt: Int64) async -> [HandleEntry] {
         await locked {
             let t = now()
             let own = keys.address.encode()
-            let addressed = dir.values.filter { $0.address == own && $0.status(at: t) != HandleEntry.free }.sorted { $0.handle < $1.handle }
+            let mine = handleOwner
+            let addressed = dir.values.filter { $0.address == own && $0.status(at: t) != HandleEntry.free && ($0.owner.isEmpty || $0.owner == mine) }
+                .sorted { $0.handle < $1.handle }
+            let owned = dir.values.filter { $0.owner == mine && $0.status(at: t) != HandleEntry.free }
             let s = store.state
             let moving = s.pendingMoves.contains { $0.kind == PendingMove.handleKind && !$0.confirmed }
             if !moving, readAt > s.handleSetAt {
                 if !s.handle.isEmpty {
-                    if let e = dir[s.handle], e.status(at: t) != HandleEntry.free {} else {
+                    if let e = dir[s.handle], e.status(at: t) != HandleEntry.free, e.owner.isEmpty || e.owner == mine {} else {
                         store.mutate { $0.handle = ""; $0.handleSetAt = t }; persistNoThrow()
                     }
-                } else if !s.handleMovedOut, addressed.count == 1 {
-                    let h = addressed[0].handle
+                }
+                if store.state.handle.isEmpty, !store.state.handleMovedOut, owned.count == 1 {
+                    let h = owned[0].handle
                     store.mutate { $0.handle = h; $0.handleSetAt = t }; persistNoThrow()
                 }
                 // The chain's expiry of the handle held: whether it is live (chain 203d3b2).
@@ -1297,9 +1310,13 @@ public final class PrivacyWallet: @unchecked Sendable {
                     store.mutate { $0.handleExpiresFor = cur.handle; $0.handleExpiresAt = e.expiresAt }; persistNoThrow()
                 }
             }
-            return addressed
+            // Audit 6 (M7): while a handle is held, no other entry is offered (a bind of it would change, freeing the held one).
+            return store.state.handle.isEmpty ? addressed : []
         }
     }
+
+    /// This identity's handle-scope nullifier as a directory entry's owner (64 lowercase hex; audit 6, M6).
+    public var handleOwner: String { PrivacyHash.scopeNullifier(idSecret: keys.idSecret, scope: PrivacyHash.handleScope()).hex }
 
     // MARK: - assembly
 

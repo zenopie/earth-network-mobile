@@ -403,11 +403,13 @@ public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
         Self.parseHandles(try await stream("/handles?from_index=\(fromIndex)\(try q("limit", limit))"))
     }
 
-    /// /handles: rows [handle, address, status, expires_at, renewal_until], the snapshot's height and size.
-    static func parseHandles(_ j: JSON) -> HandleDirectory.StreamPage {
+    /// /handles: rows [handle, address, status, expires_at, renewal_until, owner], the
+    /// snapshot's height and size. owner (audit 6, M6: 64 hex, the chain's
+    /// HandleEntry.owner) is optional: a row without it says no owner.
+    public static func parseHandles(_ j: JSON) -> HandleDirectory.StreamPage {
         let rows = j.handles.array.map { r in
             HandleEntry(handle: r[0].string ?? "", address: r[1].string ?? "", status: r[2].string ?? "",
-                        expiresAt: r[3].int64 ?? 0, renewalUntil: r[4].int64 ?? 0)
+                        expiresAt: r[3].int64 ?? 0, renewalUntil: r[4].int64 ?? 0, owner: Handles.owner(r[5].string))
         }
         return HandleDirectory.StreamPage(handles: rows, height: j.height.int64, size: j.size.int64(default: 0),
                                           fromIndex: j.from_index.int64(default: 0), lastPage: j.last_page.bool(default: false))

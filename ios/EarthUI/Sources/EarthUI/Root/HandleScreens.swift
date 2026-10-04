@@ -86,7 +86,8 @@ struct HandleScreen: View {
             }
             // Audit 5 (M1): entries naming this wallet's address that the store does not hold (a restore
             // loses track of a handle): renewing one is checked by the chain, at no cost if it is not ours.
-            ForEach(model.addressedHandles.filter { $0.handle != model.handle }, id: \.handle) { a in
+            // Audit 6 (M7): only while no handle is held (a bind of another would free it), and renew-only.
+            ForEach(model.handle.isEmpty ? model.addressedHandles : [], id: \.handle) { a in
                 EarthDetailRow(label: "Names this wallet", value: "@\(a.handle)")
                 EarthDetailRow(label: "Expires", value: day(a.expiresAt))
                 note("If this identity holds it, renew it here. If it does not, the chain refuses and nothing is charged.")
@@ -181,11 +182,15 @@ struct HandleScreen: View {
         }
     }
 
+    /// Renew-only (audit 6, M7): the wallet refuses a bind that would change
+    /// the handle held; the sheet names a change as one all the same.
     private func bind(_ h: String) {
-        tx.requestPrivate(.private(action: "Renew @\(h) for a year", rows: [("Pays", "@\(h) · \(Handles.truncate(model.shieldedAddress))")],
+        let changing = !model.handle.isEmpty && model.handle != h
+        tx.requestPrivate(.private(action: changing ? "Change handle to @\(h)" : "Renew @\(h) for a year",
+                                   rows: [("Pays", "@\(h) · \(Handles.truncate(model.shieldedAddress))")],
                                    gas: PrivacyWallet.bindHandleGasEstimate),
                           host: .handle, onSuccess: { await refreshed() }) { w in
-            try await w.bindHandle(h)
+            try await w.bindHandle(h, renewOnly: true)
         }
     }
 
@@ -195,7 +200,7 @@ struct HandleScreen: View {
         tx.requestPrivate(.private(action: "Renew @\(h) for a year", rows: [("Pays", "@\(h) · \(Handles.truncate(model.shieldedAddress))")],
                                    gas: PrivacyWallet.bindHandleGasEstimate),
                           host: .handle, onSuccess: { await refreshed() }) { w in
-            try await w.bindHandle(h)
+            try await w.bindHandle(h, renewOnly: true)
         }
     }
 
