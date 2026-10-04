@@ -24,13 +24,17 @@ import network.erth.wallet.wallet.UnlockMethod
  * against the same backoff: a guess here is a guess at the unlock.
  */
 @Composable
-fun ConfirmUnlockDialog(onConfirmed: () -> Unit, onDismiss: () -> Unit) {
+fun ConfirmUnlockDialog(onConfirmed: (secret: String) -> Unit, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var error by remember { mutableStateOf<String?>(null) }
     var lockout by remember { mutableStateOf(UnlockAttempts.status(context).message) }
     var checking by remember { mutableStateOf(false) }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        // Audit 6, K2: the PIN pad is not screenshot or recorded.
+        properties = DialogProperties(usePlatformDefaultWidth = false, securePolicy = androidx.compose.ui.window.SecureFlagPolicy.SecureOn),
+    ) {
         UnlockGate(
             method = UnlockMethod.current(context),
             onSecret = { secret ->
@@ -43,7 +47,7 @@ fun ConfirmUnlockDialog(onConfirmed: () -> Unit, onDismiss: () -> Unit) {
                     checking = false
                     if (ok) {
                         UnlockAttempts.recordSuccess(context)
-                        onConfirmed()
+                        onConfirmed(secret)
                     } else {
                         val after = UnlockAttempts.recordFailure(context)
                         lockout = after.message

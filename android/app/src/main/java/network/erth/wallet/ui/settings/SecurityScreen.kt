@@ -56,12 +56,23 @@ class SecurityViewModel(app: Application) : AndroidViewModel(app) {
      * method recorded. Every failure path here leaves the wallet exactly as it
      * was rather than sealed by a half that no longer exists.
      */
+    /**
+     * The current secret, from a fresh unlock just before the change (audit
+     * 6, M1). Held only while the flow is open.
+     */
+    private var confirmedSecret: String? = null
+
+    fun confirmed(secret: String) { confirmedSecret = secret }
+
+    fun cancel() { confirmedSecret = null }
+
     fun apply(method: UnlockMethod, secret: String, stagedSlot: String?) {
         viewModelScope.launch {
             val ctx = getApplication<Application>()
-            val ok = withContext(Dispatchers.IO) {
+            val old = confirmedSecret
+            val ok = old != null && withContext(Dispatchers.IO) {
                 runCatching {
-                    SessionManager.changeSecret(ctx, secret)
+                    SessionManager.changeSecret(ctx, old, secret)
                 }.isSuccess
             }
             if (!ok) {
@@ -77,6 +88,7 @@ class SecurityViewModel(app: Application) : AndroidViewModel(app) {
             // A wallet with no biometric half has no business holding a key
             // that could still release one.
             if (!method.usesBiometric) BiometricVault.forget(ctx)
+            confirmedSecret = null
             _method.value = method
             _error.value = null
             _changed.value = true
@@ -107,6 +119,21 @@ fun SecurityScreen(modifier: Modifier = Modifier) {
     val changed by model.changed.collectAsStateWithLifecycle()
 
     var changing by remember { mutableStateOf(false) }
+    var confirming by remember { mutableStateOf(false) }
+
+    // Audit 6, M1: a fresh unlock before the secret can change. The new
+    // secret gates every other wallet's recovery phrase, so an unlocked
+    // phone alone must not be able to choose it.
+    if (confirming) {
+        network.erth.wallet.ui.unlock.ConfirmUnlockDialog(
+            onConfirmed = { secret ->
+                confirming = false
+                model.confirmed(secret)
+                changing = true
+            },
+            onDismiss = { confirming = false },
+        )
+    }
 
     if (changing && !changed) {
         UnlockSetupFlow(
@@ -124,6 +151,7 @@ fun SecurityScreen(modifier: Modifier = Modifier) {
     LaunchedEffect(changed) {
         if (changed) {
             changing = false
+            model.cancel()
             model.acknowledge()
         }
     }
@@ -192,7 +220,7 @@ fun SecurityScreen(modifier: Modifier = Modifier) {
         )
         Spacer(Modifier.height(dimens.space12))
         EarthButton(
-            onClick = { changing = true },
+            onClick = { confirming = true },
             text = "Change how you unlock",
             modifier = Modifier.fillMaxWidth(),
         )

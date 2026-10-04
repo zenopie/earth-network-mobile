@@ -276,8 +276,15 @@ object SessionManager {
      * produce an unopenable wallet.
      */
     @Throws(Exception::class)
-    fun changeSecret(context: Context, newSecret: String) {
+    @Synchronized
+    fun changeSecret(context: Context, oldSecret: String, newSecret: String) {
         requireActive()
+        // Audit 6, M1: an unlocked phone alone must not choose the secret
+        // that later gates every wallet's recovery phrase. The caller got
+        // [oldSecret] from a fresh unlock (ConfirmUnlockDialog, failures
+        // counted by UnlockAttempts); it is checked again here so no path
+        // can re-seal without it.
+        if (!verifySecret(oldSecret)) throw SecurityException("The current unlock did not match")
         saveVersionedStorageToEncryption(context, newSecret)
         sessionPin = newSecret
     }
