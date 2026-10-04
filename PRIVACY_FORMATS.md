@@ -6,7 +6,8 @@ and `zk/orchard` (Orchard-style bundles: ORCHARD_DESIGN.md sections 12-14 of
 the chain), and the Android code reproduces those byte for byte
 (`android/.../privacy/zk`, `privacy/tx`, tested against vectors generated from
 the chain by `android/tools/orchardvectors/gen.sh <chain checkout> [ref]`,
-last run against chain privacy/orchard **203d3b2**; `tools/privacyvectors` is
+last run against chain privacy/orchard **203d3b2**, regenerated
+byte-identically at **c0ad1dd** by audit 6; `tools/privacyvectors` is
 the retired transfer-circuit generator, whose `dexamm_test.go.in` still
 writes the dex vectors).
 
@@ -834,7 +835,8 @@ run is gone (a chain switch).
   from the directory.
 - **The directory, never one handle.** Every lookup reads the whole
   directory: the backend's `GET {base}/handles?from_index=&limit=1000`
-  (rows [handle, address, status, expires_at, renewal_until]; a snapshot at
+  (rows [handle, address, status, expires_at, renewal_until, owner]; owner
+  optional, see §4i; a snapshot at
   `height`, read from index 0 in aligned pages until `last_page`, started
   over (at most 3 times) when `height` changes between pages; refused when
   out of handle order, a status other than live/renewal/free, a malformed
@@ -846,7 +848,8 @@ run is gone (a chain switch).
   in its renewal period (not payable).
   Audit 5 (M4, L4, L7): a directory with an entry whose times no lease has
   (not 0 < expires_at ≤ renewal_until ≤ now + 10 years) or with more than
-  1,000,000 rows (the backend's cap; also checked against page 0's `size`)
+  250,000 rows (audit 6, H2: was 1,000,000; also checked against page 0's
+  `size`), or an address longer than 256 characters,
   is refused whole; the lease params are taken at most 10 years; a
   set_caretaker expires_at outside (0, now + 10 years] is replaced by the
   block time + R; reminder and countdown arithmetic saturates.
@@ -882,8 +885,11 @@ run is gone (a chain switch).
   shows a move as done only once confirmed and does not offer "register
   there" while one is in doubt; a failed write to the new wallet's store
   is kept for a retry (that wallet also finds the move in its own notes).
-  The first move fixes the target wallet (by store id); a target that
-  already has a registration or a handle is warned about. The recovery
+  The first confirmed move fixes the target wallet (by store id; audit 6
+  M5: a move in flight holds it only while in flight, and a refused,
+  failed or expired one frees it); a target whose identity moved a handle
+  or split away, or that holds one of its own, is refused for that move
+  before anything is sent; one with a registration is warned about. The recovery
   phrase is shown only after a fresh PIN or biometric unlock (counted
   against the unlock backoff) and dropped when the screen is paused or
   left; the backup box can be ticked only once it was shown.
@@ -987,6 +993,61 @@ run is gone (a chain switch).
   at 18 places, then **up** to an integer (was truncated); quotes and
   min-out use it (dex_amm.json and iOS corecheck re-derived from x/dex at
   203d3b2; deposit vectors unchanged).
+
+## 4i. Audit round 6 wallet rules (chain c0ad1dd)
+
+- **Indexer denoms (M2, M3).** A row's public amount is `<digits><denom>`
+  with the denom matching the SDK rule `[a-zA-Z][a-zA-Z0-9/:._-]{2,127}`
+  and never starting `asset/` (the wallet's own name for an asset id it
+  cannot resolve); anything else and the row is not opened against it. The
+  same holds for a stake row's denom. A denom is learned (asset id → denom
+  for v1 and wallet-stake ciphertexts) only from a note of this wallet's
+  whose cm it reproduces, or from the chain's asset list (`GET
+  /earth/shielded/v1/assets`, every page, at most 4,096 entries, each
+  learned only if its `asset_id` is `AssetID(denom)`), read at most once a
+  sync and only when a note of ours carries an id the wallet cannot
+  resolve. The persisted `denoms` are the denoms of the notes held (at
+  most 4,096); the lookup is built once a sync. A held note named
+  `asset/<hex>` whose id becomes known is renamed (same asset, same cm).
+  A row that cannot be opened is skipped, never thrown on: a page's rows
+  are opened before the tree grows.
+- **The send tip (M4).** `verified_height` (store) is the indexer height
+  of the last verified sync (checked against the chain's tree and tip),
+  kept across resets. A tx's tip (LCD latest height) more than 1,000
+  blocks past it is refused (the wallet syncs once and tries again, then
+  refuses) before anything is laid out. A pending mark (note, stake note,
+  vote, move) whose timeout_height is more than 1,050 blocks past the
+  current `verified_height` came from an inflated tip: it is settled by
+  the tx's status alone (missing or failed: released; notes after the
+  15-minute mempool grace).
+- **Handle owners (M6).** The chain adds `owner` to every handle entry
+  (Query/Handle, Query/Handles): the handle-scope nullifier that holds it,
+  64 hex digits (lowercase; any case accepted), the same value as
+  MsgBindHandle's membership nullifier and MsgMoveHandle's new_owner. The
+  backend stream carries it as the row's sixth element. Absent or
+  malformed, an entry has no owner. The wallet adopts a directory entry as
+  its handle only if `owner` equals its own `H(TAG_SN, id_secret,
+  Scope("handle"))` (hex); an entry merely naming its address is never
+  adopted (anyone may bind any address). A held handle whose entry names
+  another owner is dropped. While no handle is held, entries naming the
+  wallet's address whose owner is absent are shown as unverified, with a
+  renew-only bind; entries with another owner are not shown.
+- **Renew-only binds (M7).** Renew (the held handle, reminders, the
+  address cards) binds only the handle held, or, holding none, the one
+  named; a bind that would change the held handle (freeing it) is refused
+  locally. Address cards are hidden while a handle is held.
+- **One store per wallet (M8).** The app keeps one wallet object and one
+  store per wallet per process, across lock and unlock; a stake-vote run
+  re-reads the voted positions from the store before each cast and merges
+  its progress into the stored run.
+- **Public add-liquidity (M9).** MsgAddLiquidity carries `min_shares`
+  (field 5) = min(⌊e·S/R_e⌋, ⌊t·S/R_t⌋) less 1 % from fresh pool and share
+  supply reads, as the shielded deposit; "" only for an empty pool; a read
+  that fails refuses the deposit (D7). Golden (both platforms):
+  creator "earth1creator", pool 2, 1000uerth, 300uusd, min_shares "148" =
+  `0a0d65617274683163726561746f7210021a0d0a057565727468120431303030220b0a047575736412033330302a03313438`.
+- **PIN change (M1, Android).** Changing the unlock secret needs a fresh
+  unlock with the current one (counted against the unlock backoff).
 
 ## 4a. Indexer URL scheme (backend README "URL scheme for wallets")
 

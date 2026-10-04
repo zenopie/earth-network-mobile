@@ -188,7 +188,8 @@ class Audit5Test {
         a.store.state.handle = ""; a.store.state.handleSetAt = 0
         val dir = chain.handleDirectory()
         val addressed = a.reconcileHandle(dir.chainDirectory(), chain.now + 1)
-        assertEquals(listOf("alice"), addressed.map { it.handle })
+        // Adopted by its owner (audit 6, M6); held, no other entry is offered (M7).
+        assertEquals(emptyList<String>(), addressed.map { it.handle })
         assertEquals("alice", a.store.state.handle)
         // Reminded on, from the address match alone.
         chain.now += chain.handleLease - 86_400

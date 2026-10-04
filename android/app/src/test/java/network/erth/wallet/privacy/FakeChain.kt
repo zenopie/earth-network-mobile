@@ -159,6 +159,8 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     data class HandleRec(val handle: String, val nullifier: Fr, val address: String, val expiresAt: Long)
     val handles = java.util.TreeMap<String, HandleRec>()
     val handleMovedOut = HashSet<Fr>()
+    /** What a served entry's owner says (audit 6, M6): the holder's nullifier unless a test overrides it ("" = a directory without owners). */
+    var ownerHex: ((HandleRec) -> String)? = null
     /** Every Query/Handles (start) and backend /handles (from_index) page asked: never one handle. */
     val handleAsks = ArrayList<String>()
     /** Passports ever registered: a re-registration's leaf has a predecessor (x/personhood PassportsSeen). */
@@ -1034,7 +1036,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     private fun entry(h: HandleRec): network.erth.wallet.privacy.handles.HandleEntry? {
         val renewalUntil = h.expiresAt + handleRenewal
         val status = when { now < h.expiresAt -> "live"; now < renewalUntil -> "renewal"; else -> return null }
-        return network.erth.wallet.privacy.handles.HandleEntry(h.handle, h.address, status, h.expiresAt, renewalUntil)
+        return network.erth.wallet.privacy.handles.HandleEntry(h.handle, h.address, status, h.expiresAt, renewalUntil, owner = ownerHex?.invoke(h) ?: h.nullifier.toHex())
     }
 
     private fun directory() = handles.values.mapNotNull(::entry)
