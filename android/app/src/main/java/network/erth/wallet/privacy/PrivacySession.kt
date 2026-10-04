@@ -24,6 +24,15 @@ import network.erth.wallet.wallet.SecureWalletManager
 object PrivacySession {
     @Volatile private var current: Pair<String, PrivacyWallet>? = null
 
+    /**
+     * Audit 6 (M8): one [PrivacyWallet] per wallet per process, by store id,
+     * kept across lock and unlock: a cast still finishing in a job the lock
+     * suspended writes to the same wallet and store a resumed run reads, and
+     * the wallet's lock orders them. Dropped only when its private data is
+     * forgotten.
+     */
+    private val wallets = HashMap<String, PrivacyWallet>()
+
     /** The selected wallet's private side. Blocking (derives keys, opens the store). */
     @Synchronized
     fun wallet(context: Context): PrivacyWallet {
@@ -32,9 +41,10 @@ object PrivacySession {
         current?.let { (a, w) -> if (a == address) return w }
         val keys = SecureWalletManager.executeWithMnemonic(app) { PrivacyKeys.fromMnemonic(it) }
         val id = storeId(keys)
+        wallets[id]?.let { w -> current = address to w; return w }
         val w = PrivacyWallet(
             keys = keys,
-            store = PrivacyStore.open(app.filesDir, id),
+            store = PrivacyStore.shared(app.filesDir, id),
             indexer = HttpPrivacyIndexer(Constants.EARTH_API_URL),
             chain = RestPrivateChain,
             reads = RestChainReads,
@@ -42,6 +52,7 @@ object PrivacySession {
             chainId = Constants.EARTH_CHAIN_ID,
             roots = network.erth.wallet.privacy.chain.LcdChainRoots,
         )
+        wallets[id] = w
         current = address to w
         return w
     }
@@ -64,6 +75,7 @@ object PrivacySession {
         val keys = SecureWalletManager.executeWithMnemonic(app) { PrivacyKeys.fromMnemonic(it) }
         synchronized(this) {
             clear()
+            wallets.remove(storeId(keys))
             PrivacyStore.delete(app.filesDir, storeId(keys))
         }
     }
@@ -98,9 +110,13 @@ object PrivacySession {
         return object : PrivacyWallet.MoveRecorder {
             override val targetId = targetId
             override fun record(move: network.erth.wallet.privacy.sync.PendingMove) =
-                PrivacyWallet.recordIncoming(PrivacyStore.open(app.filesDir, targetId), move, System.currentTimeMillis() / 1000)
+                PrivacyWallet.recordIncoming(PrivacyStore.shared(app.filesDir, targetId), move, System.currentTimeMillis() / 1000)
             override fun rollback(move: network.erth.wallet.privacy.sync.PendingMove) =
-                PrivacyWallet.rollbackIncoming(PrivacyStore.open(app.filesDir, targetId), move, System.currentTimeMillis() / 1000)
+                PrivacyWallet.rollbackIncoming(PrivacyStore.shared(app.filesDir, targetId), move, System.currentTimeMillis() / 1000)
+            override fun refusal(move: network.erth.wallet.privacy.sync.PendingMove): String? {
+                val store = PrivacyStore.shared(app.filesDir, targetId)
+                return synchronized(store) { PrivacyWallet.targetRefusal(store.state, move.kind, System.currentTimeMillis() / 1000) }
+            }
         }
     }
 
@@ -114,13 +130,25 @@ object PrivacySession {
     }
 
     /** What a switch target already holds (audit 5, L8): a registration, a handle. */
-    data class TargetInfo(val storeId: String, val registered: Boolean, val handle: String)
+    data class TargetInfo(
+        val storeId: String,
+        val registered: Boolean,
+        val handle: String,
+        /** Why it cannot take this identity's handle / caretaker vote (audit 6, M5), or null. */
+        val handleRefusal: String? = null,
+        val voteRefusal: String? = null,
+    )
 
     fun targetInfo(context: Context, index: Int): TargetInfo {
         val app = context.applicationContext
         val id = storeIdOf(app, index)
-        val st = runCatching { PrivacyStore.open(app.filesDir, id).state }.getOrNull()
-        return TargetInfo(id, st?.identity != null || st?.pendingRegistration != null, st?.handle.orEmpty())
+        val st = runCatching { PrivacyStore.shared(app.filesDir, id).state }.getOrNull()
+        val now = System.currentTimeMillis() / 1000
+        return TargetInfo(
+            id, st?.identity != null || st?.pendingRegistration != null, st?.handle.orEmpty(),
+            st?.let { PrivacyWallet.targetRefusal(it, network.erth.wallet.privacy.sync.PendingMove.HANDLE, now) },
+            st?.let { PrivacyWallet.targetRefusal(it, network.erth.wallet.privacy.sync.PendingMove.CARETAKER, now) },
+        )
     }
 
     /** Forget the cached wallet (lock, wallet switch); everything that held it is stopped first. */

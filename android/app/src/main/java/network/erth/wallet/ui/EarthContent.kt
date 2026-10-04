@@ -475,10 +475,12 @@ internal fun EarthContent(
             fun check(idx: Int) {
                 scope.launch {
                     val info = withContext(Dispatchers.IO) { runCatching { PrivacySession.targetInfo(context, idx) }.getOrNull() }
+                    // Audit 6 (M5): what the wallet refuses to move there, said up front.
                     targetWarning = when {
                         info == null || info.storeId == switchTarget -> null
+                        info.handleRefusal != null || info.voteRefusal != null ->
+                            listOfNotNull(info.handleRefusal?.let { "Your handle cannot move there: $it." }, info.voteRefusal?.let { "Your caretaker vote cannot move there: $it." }).joinToString(" ")
                         info.registered -> "That wallet already has a registration. Switching to it replaces this identity with it; anything it holds stays with it."
-                        info.handle.isNotEmpty() -> "That wallet already holds @${info.handle}; a handle cannot be moved to it."
                         else -> null
                     }
                 }

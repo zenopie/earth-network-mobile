@@ -541,6 +541,10 @@ class WalletSync(
         private fun settleMoves(s: PrivacyState, kind: String, recordKind: Int, matches: (PendingMove) -> Boolean) {
             val incoming = when (recordKind) { RECORD_HOLDS -> true; RECORD_MOVED_OUT -> false; else -> return }
             s.pendingMoves.replaceAll { if (it.kind == kind && it.incoming == incoming && matches(it)) it.copy(confirmed = true) else it }
+            // Audit 6 (M5): a confirmed outgoing move fixes the switch target.
+            if (!incoming && s.switchTarget.isEmpty()) {
+                s.pendingMoves.firstOrNull { !it.incoming && it.confirmed && it.target.isNotEmpty() }?.let { s.switchTarget = it.target }
+            }
             s.pendingMoves.removeAll { it.confirmed && (it.incoming || it.recorded) }
         }
 

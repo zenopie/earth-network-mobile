@@ -574,6 +574,18 @@ class PrivacyStore private constructor(private val dir: File?) {
 
         fun open(root: File, walletId: String): PrivacyStore = PrivacyStore(File(root, "privacy/$walletId").apply { mkdirs() })
 
+        private val sharedStores = HashMap<String, PrivacyStore>()
+
+        /**
+         * The process's one store for a wallet's directory (audit 6, M8):
+         * two instances on one directory each save their whole state over
+         * the other's. Every app path opens stores through this.
+         */
+        fun shared(root: File, walletId: String): PrivacyStore = synchronized(sharedStores) {
+            val dir = File(root, "privacy/$walletId").canonicalPath
+            sharedStores.getOrPut(dir) { open(root, walletId) }
+        }
+
         /**
          * Deletes a wallet's private data (notes, identity, records, trees)
          * when the wallet is forgotten (audit 3): every file is overwritten
@@ -583,6 +595,10 @@ class PrivacyStore private constructor(private val dir: File?) {
          */
         fun delete(root: File, walletId: String? = null) {
             val target = if (walletId == null) File(root, "privacy") else File(root, "privacy/$walletId")
+            synchronized(sharedStores) {
+                val prefix = target.canonicalPath
+                sharedStores.keys.removeAll { it == prefix || it.startsWith(prefix + File.separator) }
+            }
             if (!target.exists()) return
             target.walkBottomUp().forEach { f ->
                 if (f.isFile) runCatching {

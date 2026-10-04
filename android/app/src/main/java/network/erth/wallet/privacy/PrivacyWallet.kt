@@ -840,6 +840,8 @@ class PrivacyWallet(
         val targetId: String
         fun record(move: PendingMove)
         fun rollback(move: PendingMove)
+        /** Why the target cannot take [move] (audit 6, M5; [targetRefusal]), or null. */
+        fun refusal(move: PendingMove): String? = null
     }
 
     private fun checkNoMove(kind: String) =
@@ -853,8 +855,11 @@ class PrivacyWallet(
      */
     private fun moveRun(move: PendingMove, recorder: MoveRecorder?, assemble: (fee: Long) -> Assembled): TxResult {
         recorder?.let { rc ->
-            val fixed = store.state.switchTarget
+            // Audit 6 (M5): the target a confirmed move went to, or one a move
+            // still in flight names; a refused, failed or expired move frees it.
+            val fixed = switchTargetNow()
             check(fixed.isEmpty() || fixed == rc.targetId) { "this identity already moved to another wallet; switch to that one" }
+            rc.refusal(move)?.let { throw IllegalStateException(it) }
         }
         return run(
             accepted = { hash, timeout ->
@@ -862,16 +867,36 @@ class PrivacyWallet(
                 val ok = recorder?.let { rc -> runCatching { rc.record(p.copy(incoming = true, target = "", recorded = true)) }.isSuccess } ?: true
                 val s = store.state
                 s.pendingMoves.add(p.copy(recorded = ok))
-                if (recorder != null && s.switchTarget.isEmpty()) s.switchTarget = recorder.targetId
                 store.save()
             },
             rejected = { hash ->
                 store.state.pendingMoves.removeAll { it.txHash == hash && !it.incoming }
+                clearSwitchTargetIfUnmoved(store.state)
                 store.save()
                 recorder?.let { rc -> runCatching { rc.rollback(move.copy(txHash = hash, incoming = true)) } }
             },
             assemble = assemble,
         )
+    }
+
+    /**
+     * The wallet this identity's moves must go to (audit 6, M5): the one a
+     * confirmed move went to, else the one a move still in flight names
+     * (empty: any).
+     */
+    private fun switchTargetNow(): String = store.state.let { s ->
+        s.switchTarget.ifEmpty { s.pendingMoves.firstOrNull { !it.incoming && !it.confirmed && it.target.isNotEmpty() }?.target.orEmpty() }
+    }
+
+    /**
+     * Frees the switch target when nothing moved (audit 6, M5): no handle or
+     * split moved out and no move of this identity confirmed or in flight.
+     * Returns whether it changed.
+     */
+    private fun clearSwitchTargetIfUnmoved(s: network.erth.wallet.privacy.sync.PrivacyState): Boolean {
+        if (s.switchTarget.isEmpty() || s.handleMovedOut || s.caretakerMovedOut || s.pendingMoves.any { !it.incoming }) return false
+        s.switchTarget = ""
+        return true
     }
 
     /** The move [hash] is in a block and succeeded: this identity no longer holds what it moved. */
@@ -883,6 +908,8 @@ class PrivacyWallet(
         if (!p.incoming) {
             if (p.kind == PendingMove.HANDLE) { s.handle = ""; s.handleMovedOut = true; s.handleSetAt = now() }
             else { s.caretakerSplit = emptyMap(); s.caretakerSplitUnknown = false; s.caretakerExpiresAt = 0; s.caretakerMovedOut = true }
+            // Audit 6 (M5): the target is fixed only by a confirmed move.
+            if (s.switchTarget.isEmpty() && p.target.isNotEmpty()) s.switchTarget = p.target
         }
         if (p.incoming || p.recorded) s.pendingMoves.removeAt(i) else s.pendingMoves[i] = p.copy(confirmed = true)
         store.save()
@@ -892,7 +919,7 @@ class PrivacyWallet(
     private fun dropMove(p: PendingMove) {
         val s = store.state
         s.pendingMoves.removeAll { it.txHash == p.txHash && it.incoming == p.incoming }
-        if (p.incoming) undoIncoming(s, p, now())
+        if (p.incoming) undoIncoming(s, p, now()) else clearSwitchTargetIfUnmoved(s)
         store.save()
     }
 
@@ -906,6 +933,8 @@ class PrivacyWallet(
     @Synchronized
     fun resolvePendingMoves(): Boolean {
         val s = store.state
+        // Audit 6 (M5): a target fixed by a move that never landed (before this fix) is freed.
+        if (clearSwitchTargetIfUnmoved(s)) store.save()
         for (p in s.pendingMoves.toList()) {
             if (p.confirmed) continue
             val r = runCatching { chain.tx(p.txHash) }.getOrNull()
@@ -1768,6 +1797,25 @@ class PrivacyWallet(
                 s.pendingMoves.add(p.copy(incoming = true, target = "", recorded = true, confirmed = false))
             }
             store.save()
+        }
+
+        /**
+         * Why a target wallet cannot take a move of [kind] (audit 6, M5, I1):
+         * its identity moved one away already (the chain refuses that owner),
+         * or it holds one of its own (a handle; a live caretaker split) that
+         * the move would overwrite here. Null: it can.
+         */
+        fun targetRefusal(s: network.erth.wallet.privacy.sync.PrivacyState, kind: String, now: Long): String? = when (kind) {
+            PendingMove.HANDLE -> when {
+                s.handleMovedOut -> "that wallet's identity already moved a handle away; it can never hold one again"
+                s.handle.isNotEmpty() -> "that wallet already holds @${s.handle}"
+                else -> null
+            }
+            else -> when {
+                s.caretakerMovedOut -> "that wallet's identity already moved a caretaker vote away; it can never hold one again"
+                s.caretakerExpiresAt > now && (s.caretakerSplit.isNotEmpty() || s.caretakerSplitUnknown) -> "that wallet already holds a caretaker vote"
+                else -> null
+            }
         }
 
         /** Undoes [recordIncoming] for a move that definitely did not happen. */

@@ -152,6 +152,12 @@ class StakeVoteController(
                     }
                     ensureActive()
                     if (!stillOurs()) throw CancellationException("the stake vote run was dropped")
+                    // Audit 6 (M8): the positions voted as the store says now,
+                    // not as this job read them: another job (a suspended
+                    // cast that finished) may have voted one since.
+                    if (item is PrivacyWallet.StakeVoteItem.Position &&
+                        synchronized(w) { w.store.state.stakeVoteRun?.votedPositions?.contains(item.id) == true }
+                    ) continue
                     // A position's vote is persisted the moment the node takes it
                     // (audit 4, L5), before the wait for its block: a run resumed
                     // after a suspend or a lost process never votes it again.
@@ -165,11 +171,16 @@ class StakeVoteController(
                     // As the last sync left it: a note voted (or pending) or a position gone is skipped.
                     val hash = (if (first?.isCompleted == false && shownFee != null) PrivacyWallet.withShownFee(shownFee) { w.castStakeVote(run.proposalId, item, options, accepted) }
                         else w.castStakeVote(run.proposalId, item, options, accepted)) ?: continue
-                    run = run.copy(
-                        done = run.done + 1,
-                        votedPositions = if (item is PrivacyWallet.StakeVoteItem.Position) run.votedPositions + item.id else run.votedPositions,
-                    )
-                    synchronized(w) { w.store.state.stakeVoteRun = run; w.store.save() }
+                    // Merged into the run as stored (audit 6, M8), never a stale copy written over it.
+                    run = synchronized(w) {
+                        val cur = w.store.state.stakeVoteRun?.takeIf { it.proposalId == run.proposalId } ?: run
+                        val next = cur.copy(
+                            done = cur.done + 1,
+                            votedPositions = if (item is PrivacyWallet.StakeVoteItem.Position) cur.votedPositions + item.id else cur.votedPositions,
+                        )
+                        w.store.state.stakeVoteRun = next; w.store.save()
+                        next
+                    }
                     show(Progress(run.proposalId, run.done, run.total))
                     first?.complete(hash)
                 }
