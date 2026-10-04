@@ -3,7 +3,7 @@ import XCTest
 
 /// Every private msg built by the wallet, against the chain's gogoproto
 /// Marshal of the same msg and the chain's own Sighash of it
-/// (android/tools/orchardvectors). Ports PrivateMsgsTest.kt.
+/// (tools/privacyvectors). Ports PrivateMsgsTest.kt.
 final class PrivateMsgsTests: XCTestCase {
     let chainID = "earth-1"
     func fb(_ i: UInt64) -> Data { Vectors.fe(i).bytes }

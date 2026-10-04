@@ -3,7 +3,7 @@ import XCTest
 @testable import EarthCore
 
 /// Grumpkin, hash to curve, value commitments and the binding signature
-/// against chain zk/orchard (android/tools/orchardvectors). Ports
+/// against chain zk/orchard (tools/privacyvectors). Ports
 /// OrchardVectorsTest.kt.
 final class OrchardVectorsTests: XCTestCase {
     let o = Vectors.obj("orchard")

@@ -84,7 +84,7 @@ the chain's Orchard-style bundles and stake tree (PRIVACY_FORMATS.md). With
 full Xcode, `swift test` runs it against the same golden vectors Android
 reads (`Tests/EarthCoreTests/Resources/privacy`, copied from
 `android/app/src/test/resources/privacy`, generated from the chain by
-`android/tools/orchardvectors/gen.sh`): Grumpkin, value commitments and the
+`tools/privacyvectors/gen.sh`, which writes both copies): Grumpkin, value commitments and the
 binding signature byte for byte, every private msg's encoding, sighash and
 fee, the chain's action and membership fixtures, and wallet flows against an
 in-memory chain (`FakeChain`), one test file per feature. The end of that

@@ -16,12 +16,14 @@ section is marked **[chain]**, **[wallet]** or **[shared]** (a canonical
 format the chain and the web app also implement).
 
 **Ground truth.** Chain-pinned values are tested against vectors generated
-from the chain's own Go code: `android/tools/orchardvectors/gen.sh <chain
+from the chain's own Go code: `tools/privacyvectors/gen.sh <chain
 checkout> [ref]` writes `android/app/src/test/resources/privacy/vectors.json`
-(and `dex_amm.json`, the action/membership fixtures), which iOS copies.
+(and `dex_amm.json`, the action/membership fixtures) and the identical iOS
+copy.
 Wallet-defined formats are pinned by golden tests on both platforms
-(`KeysAndNotesTest`, `BlindNoteTest`, `ReauditFixesTest`, `Audit5Test`,
-`Audit6Test` and their iOS `…Tests` twins). The circuits are in
+(Android `KeysAndNotesTest`, `BlindNoteTest`, `RestoreTest`,
+`HandleOwnershipTest`, `DenomsTest`, `DexTest`; iOS `KeysAndNotesTests`,
+`BlindNoteTests`, `RestoreTests`, `HandlesTests`, `DenomTests`, `DexTests`). The circuits are in
 `circuits/{action,stake,vote,membership,lean_poa*}`; a circuit `main()`'s
 `pub` parameters, in order, are its public inputs.
 
@@ -327,7 +329,7 @@ registration cannot be restored from the mnemonic (register again).
 DSC's issuer C= (unknown when unparsable). Sync keeps the 32 newest tagged
 records (value 0, never spent). Golden (mnemonic `abandon ×11 about`,
 dsc_key = 77, country "FR", built_at = 1790000000), pinned in
-`ReauditFixesTest` and `ReauditFixesTests`:
+`RestoreTest` and `RestoreTests`:
 
     4552024652000000006ab13b8000000000000000000000000000000000000000000000000000000000000000
     4d1d3756b83dfd918fa510770bc257079b000000
@@ -355,8 +357,8 @@ accepted only if the magic, version and kind are known, the tag recomputes
 (checked first), every padding byte is zero, a held handle is a valid
 handle (§14), a kind-1 caretaker record has expires_at ≠ 0, and a recorded
 split has 1-20 distinct options of 1-100 percent summing to 100. A written
-expires_at is clamped to [1, 2^32 − 1]. Goldens are pinned in `Audit5Test`
-and `Audit5Tests`. Who writes what:
+expires_at is clamped to [1, 2^32 − 1]. Goldens are pinned in `RestoreTest`
+and `RestoreTests` (`stateRecordsRoundTripAndRefuseForgeries`). Who writes what:
 
 | tx | to this identity's address | to the new identity's address |
 | --- | --- | --- |
@@ -1601,7 +1603,7 @@ vote accepts all of them: Android 553 (403 action, 100 stake, 36 membership,
 (`PRIVACY_TOML_DIR`) proves and verifies every stake and vote witness of both
 platforms with VKs equal to the chain's genesis keys. Suites: `StakeVoteFlowTest`
 (concurrent proposals, refusals, restored wallets learning votes, the
-snapshot nullifier tree, the weight rule), `HandlesTest`, `Fix6Test`,
-`Fix7Test`, `Fix8Test` (stake note v2, moves, debt tree, clear_before) and
-their iOS twins, plus the audit suites (`AuditFixesTest`, `ReauditFixesTest`,
-`Audit3Test`…`Audit6Test`).
+snapshot nullifier tree, the weight rule), `StakeTest` / `StakeNoteTests`
+(stake note v2, moves, debt tree, clear_before), `HandlesTest`,
+`LeaseBoundsTest`, `NoteDiscoveryTest`, `UnstakeTest`, `SyncTest`,
+`RestoreTest`, `WalletFlowTest` and their iOS counterparts.

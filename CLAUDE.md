@@ -56,6 +56,7 @@ circuit.
 
 For iOS commands see `ios/README.md`. The short version:
 
+    cd ios/EarthCore  && swift test                  # privacy core, shared vectors
     cd ios/EarthCore  && swift run corecheck         # domain layer + passport
     cd tools/txcheck   && go run . ../../ios/EarthCore/.artifacts
     cd ios/ProverGate  && swift run progate --witness ../EarthCore/.artifacts/passport_witness.json

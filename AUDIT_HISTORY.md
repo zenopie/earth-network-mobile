@@ -2,7 +2,7 @@
 
 How the Android and iOS wallets reached the formats in PRIVACY_FORMATS.md:
 one entry per round, oldest first, with the chain commit each round's
-vectors were generated against (`android/tools/orchardvectors/gen.sh`) and
+vectors were generated against (`tools/privacyvectors/gen.sh`) and
 what it found and changed. Android went first each round, then iOS with the
 same bytes; the web app (app-orch) kept its own log. Nothing was pushed.
 This file replaces the per-round `*_PROGRESS.md` files and
@@ -50,10 +50,6 @@ This file replaces the per-round `*_PROGRESS.md` files and
   Swoirenberg: about 150 ms each). A restore whose record country hint
   misses scans about 90k timestamps before the full country search (about
   30 s in a debug build).
-- **Stale reference.** CLAUDE.md still names `tools/privacyvectors/gen.sh`
-  (the retired transfer-era generator; its `dexamm_test.go.in` still writes
-  the dex vectors); the privacy vectors come from
-  `android/tools/orchardvectors/gen.sh`.
 
 ## Before the Orchard port
 
@@ -222,3 +218,16 @@ record in the fee cap. Dead code removed: the 11-input stake witness, the
 four-slot vote, chain-minted stake rows. 553 Android (403 action, 100
 stake, 36 membership, 14 vote) / 529 iOS witnesses pass; vectors identical
 at dff3a9b and b46a4bb. Android 1.0.39 (versionCode 46); iOS build 19.
+
+## Pre-audit cleanup (2026-10-04)
+
+No behaviour change. PRIVACY_FORMATS.md rewritten as a current-state spec
+(code wins where the old layered doc disagreed; differences listed in the
+commit). Progress logs folded into this file. Dead code of removed features
+and unused helpers, resources and transparent msg builders removed on both
+platforms; comments describe current behaviour instead of audit rounds;
+tests reorganised by feature (Android 230, iOS EarthCore 232, unchanged
+counts). The pre-Orchard vector generator was retired: the current one moved
+from `android/tools/orchardvectors` to `tools/privacyvectors` and now writes
+both platforms' copies (regenerated at b46a4bb: byte-identical). Circuit
+comments tidied with identical bytecode, ABI and VKs.
