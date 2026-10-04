@@ -384,6 +384,15 @@ class PrivateTxEngine(
         /** A credit lane's (a redelegation's) writes, and MsgRedelegate's base beyond [STAKE_GAS]'s (700,000). */
         const val CREDIT_GAS = 3 * 150_000L + 300_000L
         /**
+         * MsgRedelegate's gas for the (src, dst) pair's x/staking record at
+         * its worst (chain b46a4bb redelegateGas): 2,500 an entry read and
+         * written, 2,500 more each while the pair is at its 1,024-entry cap,
+         * and 128 re-filed moves at 20,000. Simulation prices the real record;
+         * this keeps the cap above it without asking the node about the
+         * pair before the move is sent.
+         */
+        const val REDELEGATE_RECORD_GAS = 1_024 * (2_500L + 2_500L) + 128 * 20_000L
+        /**
          * A stake vote's fixed part: gasVote (250,000) and its proof; the
          * chain adds a note write for the vote and one per used vote
          * nullifier (chain 48b631c: gasVote + proof + (1 + used) x note_gas).
@@ -407,7 +416,7 @@ class PrivateTxEngine(
             for (b in PrivateMsgs.bundles(msg)) g += BUNDLE_GAS + ACTION_GAS * b.actionsCount
             PrivateMsgs.stake(msg)?.let { p ->
                 g += STAKE_GAS
-                if (!Fr.fromBytes(p.creditNullifier.toByteArray()).isZero) g += CREDIT_GAS
+                if (!Fr.fromBytes(p.creditNullifier.toByteArray()).isZero) g += CREDIT_GAS + REDELEGATE_RECORD_GAS
             }
             if (a.membership != null) g += MEMBERSHIP_GAS
             a.vote?.let { g += VOTE_GAS + (1L + it.used) * NOTE_GAS }

@@ -237,7 +237,12 @@ object PrivacyQueries {
     /** shieldedstaking params.min_delegation (uerth). */
     fun minDelegation(): Long = get("/earth/shieldedstaking/v1/params").getJSONObject("params").long("min_delegation")
 
-    /** Query/Validator's live book: backing and derth supply (exact integers; the rate is their quotient). */
+    /**
+     * Query/Validator's live book: backing and derth supply (exact integers;
+     * the rate is their quotient), its queue, and whether x/staking has it
+     * unbonded (what a move from it carries depends on that). Read for the
+     * validators of a quote only: the same ids the quote already names.
+     */
     fun validatorBook(valoper: String): network.erth.wallet.privacy.PrivacyChainReads.ValidatorBook {
         val j = get("/earth/shieldedstaking/v1/validators/$valoper")
         fun int(k: String) = j.optString(k, "0").ifEmpty { "0" }.let { v ->
@@ -246,7 +251,8 @@ object PrivacyQueries {
         }
         val pending = j.optJSONObject("state")?.optString("pending_delegation", "0")?.ifEmpty { "0" } ?: "0"
         require(pending.all { it in '0'..'9' } && pending.length <= 80) { "validator pending_delegation is not a non-negative integer" }
-        return network.erth.wallet.privacy.PrivacyChainReads.ValidatorBook(int("backing"), int("supply"), java.math.BigInteger(pending))
+        val status = get("/cosmos/staking/v1beta1/validators/$valoper").optJSONObject("validator")?.optString("status").orEmpty()
+        return network.erth.wallet.privacy.PrivacyChainReads.ValidatorBook(int("backing"), int("supply"), java.math.BigInteger(pending), status == "BOND_STATUS_UNBONDED")
     }
 
     /** shieldedstaking params.epoch_seconds and x/staking params.unbonding_time, in seconds. */

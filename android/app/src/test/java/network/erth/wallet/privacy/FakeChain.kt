@@ -189,12 +189,17 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     fun book(v: String): Pair<BigInteger, BigInteger> = books[v] ?: (BigInteger.valueOf(10_000_000_000_000) to BigInteger.valueOf(9_000_000_000_000))
     /** ERTH queued for delegation per validator (what a move leaves first): 0 unless a test sets it. */
     val queues = HashMap<String, BigInteger>()
+    /** Validators x/staking has unbonded: a move from one leaves its queue first. */
+    val unbonded = HashSet<String>()
     var minDelegation = 1L
     /** Applied to every book's backing just before a tx's credit check: the rate moving between quote and block. */
     var rateDriftPpm = 0L
     /** x/staking's longest unbonding time (MaxUnbonding); the label window adds 600 s. */
     var maxUnbondingSeconds = 21L * 86_400
     val labelWindow: Long get() = maxUnbondingSeconds + 600
+    /** types.ClearBeforeSlackSeconds: how far below ClearBefore(now) a proof's clear_before may be. */
+    val CLEAR_BEFORE_SLACK = 3_600L
+
     fun clearBefore(): Long = if (now <= labelWindow) 0 else now - labelWindow
     /** Open moves: key -> (src, dst, move_time, credited). */
     data class Move(val key: Fr, val src: String, val dst: String, val moveTime: Long, val credited: Long)
@@ -225,7 +230,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     }
 
     fun validatorBookRead(v: String): PrivacyChainReads.ValidatorBook =
-        book(v).let { (b, sup) -> PrivacyChainReads.ValidatorBook(b, sup, queues[v] ?: BigInteger.ZERO) }
+        book(v).let { (b, sup) -> PrivacyChainReads.ValidatorBook(b, sup, queues[v] ?: BigInteger.ZERO, v in unbonded) }
 
     override fun debtRows(fromIndex: Long, limit: Int): DebtRowsPage {
         if (!indexerDebtRows) throw IndexerBaseMoved("no /debt_rows (test)")
@@ -727,9 +732,11 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 val (bA, sA) = book(m.srcValidator)
                 val u = BigInteger.valueOf(m.amount) * bA / sA
                 require(u >= BigInteger.valueOf(minDelegation)) { "the redelegation is worth less than the minimum (code 1103)" }
-                // What arrives: dust beyond the queue stays with the source (bondedDust), x/staking truncates a uerth.
+                // What arrives (chain b46a4bb): pro rata out of the queue and the
+                // bonded stake, up to bondedDust + a truncated uerth short of u; all
+                // of it only out of an unbonded source's queue.
                 val q = queues[m.srcValidator] ?: BigInteger.ZERO
-                val arrived = if (u <= q) u else (u - BigInteger.valueOf(1001)).max(BigInteger.ZERO)
+                val arrived = if (m.srcValidator in unbonded && u <= q) u else (u - BigInteger.valueOf(1001)).max(BigInteger.ZERO)
                 checkCredit(m.dstValidator, arrived, m.dstDerth)
             }
             is MsgUpdatePosition -> require(positions.getValue(m.positionId).ownerTag == f(m.stake.ownerTag)) { "not the position's owner" }
@@ -850,8 +857,13 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             require(nfs.none { it in stakeNullifiers }) { "stake nullifier spent" }
             require(nfs.toSet().size == nfs.size) { "duplicate stake nullifier" }
             if (nfs.isNotEmpty()) require(f(stake.anchor) in stakeRoots) { "unknown stake anchor" }
-            if (stake.clearBefore != 0L) {
-                require(stake.clearBefore <= clearBefore()) { "clear_before ${stake.clearBefore} is after ${clearBefore()}: labels newer than that may still be slashed" }
+            // Every stake proof names the current clear_before (within an hour below it) and debt root (chain b46a4bb checkStakeClear).
+            val cb = clearBefore()
+            if (cb == 0L) {
+                require(stake.clearBefore == 0L) { "clear_before must be 0 while the block time is within the label window" }
+            } else {
+                val lo = if (cb > CLEAR_BEFORE_SLACK) cb - CLEAR_BEFORE_SLACK else 1L
+                require(stake.clearBefore in lo..cb) { "clear_before ${stake.clearBefore} is not within [$lo, $cb] (code 1113)" }
                 require(f(stake.debtRoot) == debtRoot()) { "debt root is not the current slash debt root (a slash reached a redelegation since: re-prove)" }
             }
             if (!simulate) {

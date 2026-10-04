@@ -130,7 +130,7 @@ class Fix8Test {
         dumpWitnesses(chain, "fix8FullExit")
     }
 
-    /** A young chain (younger than the label window) names clear_before 0 and a zero debt root, as the chain requires. */
+    /** While the block time is below the label window (the chain says clear_before 0) a proof names 0 and a zero debt root, as the chain requires. */
     @Test
     fun aYoungChainNamesNoClear() {
         val chain = FakeChain(now = 1_000_000)
@@ -189,6 +189,32 @@ class Fix8Test {
     }
 
     // ---- moving stake ------------------------------------------------------------
+
+    /**
+     * A move arrives whole only out of an unbonded source's queue (chain
+     * b46a4bb, audit 7 A7-1): from a bonded one it leaves pro rata, so the
+     * quote takes u - 1001 even when the queue covers u, and lands.
+     */
+    @Test
+    fun aMoveArrivesWholeOnlyFromAnUnbondedQueue() {
+        val chain = FakeChain()
+        val a = staked(chain)
+        chain.queues[vA] = java.math.BigInteger.valueOf(10_000_000)
+        val bonded = a.quoteMove(vA, vB, 500_000)
+        chain.unbonded += vA
+        val whole = a.quoteMove(vA, vB, 500_000)
+        assertTrue(whole.dstDerth > bonded.dstDerth)
+        // Quoted whole from a bonded source, the chain would refuse it.
+        chain.unbonded -= vA
+        assertThrows(Throwable::class.java) { a.redelegate(whole) }
+        a.sync()
+        a.redelegate(bonded); a.sync()
+        assertEquals(bonded.dstDerth, a.at(vB).single().amount)
+        chain.unbonded += vA
+        val again = a.quoteMove(vA, vB, 500_000)
+        a.redelegate(again); a.sync()
+        assertEquals(bonded.dstDerth + again.dstDerth, a.at(vB).sumOf { it.amount })
+    }
 
     @Test
     fun moveStakeLabelsTheCreditAndLeavesTheChange() {

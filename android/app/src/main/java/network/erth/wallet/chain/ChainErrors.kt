@@ -49,6 +49,9 @@ object ChainErrors {
         // A slash reached a moved-in stake between the proof and its block: the debt root changed.
         Known("shieldedstaking", 1113, "is not the current slash debt root",
             "A slash reached stake moved between validators just as this was sent, so the chain turned it down. Nothing was spent: try again.", byText = true),
+        // Chain b46a4bb: every stake proof names the label window's clear_before as of the last hour.
+        Known("shieldedstaking", 1113, "name the label window's current clear_before",
+            "This took too long between its quote and its block, so the chain turned it down. Nothing was spent and no fee was paid: try again.", byText = true),
         // CheckTx refuses an anchor lapsing within 120 s.
         Known("shielded", 1103, "pick a newer anchor",
             "This wallet's notes were anchored to a note tree the chain is about to stop accepting. Sync and try again.", byText = true),

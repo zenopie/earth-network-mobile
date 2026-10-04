@@ -144,7 +144,13 @@ interface PrivacyChainReads {
      * (rate = backing / supply), and the ERTH waiting to be delegated at the
      * epoch's end (what a redelegation moves out of first).
      */
-    data class ValidatorBook(val backing: java.math.BigInteger, val supply: java.math.BigInteger, val pendingDelegation: java.math.BigInteger = java.math.BigInteger.ZERO)
+    data class ValidatorBook(
+        val backing: java.math.BigInteger,
+        val supply: java.math.BigInteger,
+        val pendingDelegation: java.math.BigInteger = java.math.BigInteger.ZERO,
+        /** x/staking BOND_STATUS_UNBONDED: no slash reaches it, so a move from it leaves its queue first. */
+        val unbonded: Boolean = false,
+    )
 
     fun personhoodParams(): PersonhoodParams
     fun leaseBounds(): LeaseBounds
@@ -1589,13 +1595,13 @@ class PrivacyWallet(
         check(a.supply.signum() > 0 && java.math.BigInteger.valueOf(amount) <= a.supply) { "more derth than this validator has" }
         val u = java.math.BigInteger.valueOf(amount).multiply(a.backing).divide(a.supply)
         if (u < java.math.BigInteger.valueOf(min)) throw IllegalArgumentException("this stake is worth ${u}uerth, less than the ${min}uerth a move must carry")
-        // What arrives at dst: u, less up to 0.001 ERTH left in src's book
-        // (a bonded part at most bondedDust stays) or x/staking's truncation
-        // of the bonded part. The chain splits u between src's queue and its
-        // bonded stake pro rata (chain be780c5, audit 7 A7-1), so even a
-        // queue that covers u no longer means all of it arrives: the one
-        // bound that holds either way is u - 1001.
-        val arrives = (u - java.math.BigInteger.valueOf(BONDED_DUST + 1)).max(java.math.BigInteger.ZERO)
+        // What arrives at dst (chain b46a4bb, audit 7 A7-1): u splits between
+        // src's queue and its bonded stake pro rata, and up to 0.001 ERTH of
+        // the bonded part may stay in src's book (bondedDust) or be truncated
+        // by x/staking, so u - 1001. All of u only when src is unbonded (no
+        // slash reaches it: the queue goes first) and its queue covers u.
+        val arrives = if (a.unbonded && u <= a.pendingDelegation) u
+        else (u - java.math.BigInteger.valueOf(BONDED_DUST + 1)).max(java.math.BigInteger.ZERO)
         val credit = creditFor(arrives, reads.validatorBook(dst))
         if (credit < min || credit <= 0) throw IllegalArgumentException("this move would credit less than the least derth a move may credit; move more")
         return MoveQuote(src, dst, amount, u.min(java.math.BigInteger.valueOf(Long.MAX_VALUE)).toLong(), credit, haircutOf(plan), creditTarget(dst) != null, d.windowSeconds)

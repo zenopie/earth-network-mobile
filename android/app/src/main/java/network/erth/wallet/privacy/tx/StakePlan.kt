@@ -47,7 +47,7 @@ class StakePlan(
 
     /**
      * What the proof names of the slash debt: [clearBefore] and [debtRoot]
-     * (0 and zero only while the chain is younger than the label window), and
+     * (0 and zero only while the block time is below the label window, which no real chain sees), and
      * whether lane A's labelled input clears ([witness] and [retained], read
      * from the debt tree at debtRoot) or keeps its label.
      */
