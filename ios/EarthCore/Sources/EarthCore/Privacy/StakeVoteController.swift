@@ -211,7 +211,11 @@ public final class StakeVoteController: @unchecked Sendable {
                     try Task.checkCancellation()
                     try checkSession(sid)
                     // The run is still this one (a chain switch drops it: audit 4, L2).
-                    guard await w.currentStakeVoteRun()?.proposalID == run.proposalID else { throw CancellationError() }
+                    guard let stored = await w.currentStakeVoteRun(), stored.proposalID == run.proposalID else { throw CancellationError() }
+                    // Audit 6 (M8): the positions voted as the store says now,
+                    // not as this task read them: another task (a suspended
+                    // cast that finished) may have voted one since.
+                    if case let .position(pid, _) = item, stored.votedPositions.contains(pid) { continue }
                     // A position's vote is persisted the moment the node takes it
                     // (audit 4, L5), before the wait for its block: a run resumed
                     // after a suspend or a lost app never votes it again.
@@ -228,9 +232,10 @@ public final class StakeVoteController: @unchecked Sendable {
                         cast = try await w.castStakeVote(proposalID: run.proposalID, item: item, options: options, accepted: accepted)
                     }
                     guard let r = cast else { continue }
-                    run.done += 1
-                    if case let .position(id, _) = item { run.votedPositions.insert(id) }
-                    await w.setStakeVoteRun(run)
+                    // Merged into the run as stored (audit 6, M8), never a stale copy written over it.
+                    var voted: UInt64?
+                    if case let .position(pid, _) = item { voted = pid }
+                    run = await w.advanceStakeVoteRun(run, positionID: voted)
                     set(Progress(proposalID: run.proposalID, done: run.done, total: run.total), session: sid)
                     pendingFirst?.resume(returning: r.hash); pendingFirst = nil
                 }
@@ -276,6 +281,21 @@ extension PrivacyWallet {
         var r: StakeVoteRun?
         await lockedNoThrow { r = store.state.stakeVoteRun }
         return r
+    }
+
+    /// One more cast of `run` (and `positionID` voted), merged into the run as
+    /// stored under the wallet's lock (audit 6, M8); returns the run now.
+    func advanceStakeVoteRun(_ run: StakeVoteRun, positionID: UInt64?) async -> StakeVoteRun {
+        var out = run
+        await lockedNoThrow {
+            var cur = store.state.stakeVoteRun.flatMap { $0.proposalID == run.proposalID ? $0 : nil } ?? run
+            cur.done += 1
+            if let positionID { cur.votedPositions.insert(positionID) }
+            store.mutate { $0.stakeVoteRun = cur }
+            persistNoThrow()
+            out = cur
+        }
+        return out
     }
 
     /// Records a position voted in the persisted run, called from inside the

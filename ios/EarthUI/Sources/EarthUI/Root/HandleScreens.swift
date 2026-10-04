@@ -283,9 +283,15 @@ struct SwitchIdentityScreen: View {
     private func pick(_ index: Int) {
         target = index; phrase = nil; backedUp = false
         guard let info = model.switchTargetInfo(ofWallet: index), info.storeID != model.switchTarget else { targetWarning = nil; return }
-        targetWarning = info.registered
-            ? "That wallet already has a registration. Switching to it replaces this identity with it; anything it holds stays with it."
-            : !info.handle.isEmpty ? "That wallet already holds @\(info.handle); a handle cannot be moved to it." : nil
+        // Audit 6 (M5): what the wallet refuses to move there, said up front.
+        if info.handleRefusal != nil || info.voteRefusal != nil {
+            targetWarning = [info.handleRefusal.map { "Your handle cannot move there: \($0)." }, info.voteRefusal.map { "Your caretaker vote cannot move there: \($0)." }]
+                .compactMap { $0 }.joined(separator: " ")
+        } else {
+            targetWarning = info.registered
+                ? "That wallet already has a registration. Switching to it replaces this identity with it; anything it holds stays with it."
+                : nil
+        }
     }
 
     private func suffix(_ moved: Bool, _ flying: Bool) -> String { flying ? " (sent, waiting for the chain)" : moved ? " (moved)" : "" }

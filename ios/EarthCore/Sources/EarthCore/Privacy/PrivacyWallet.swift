@@ -948,6 +948,42 @@ public final class PrivacyWallet: @unchecked Sendable {
         var targetID: String { get }
         func record(_ move: PendingMove) throws
         func rollback(_ move: PendingMove) throws
+        /// Why the target cannot take `move` (audit 6, M5; `targetRefusal`), or nil.
+        func refusal(_ move: PendingMove) -> String?
+    }
+
+    /// Why a target wallet cannot take a move of `kind` (audit 6, M5, I1):
+    /// its identity moved one away already (the chain refuses that owner),
+    /// or it holds one of its own (a handle; a live caretaker split) that the
+    /// move would overwrite here. Nil: it can.
+    public static func targetRefusal(_ s: PrivacyState, kind: String, now: Int64) -> String? {
+        if kind == PendingMove.handleKind {
+            if s.handleMovedOut { return "that wallet's identity already moved a handle away; it can never hold one again" }
+            if !s.handle.isEmpty { return "that wallet already holds @\(s.handle)" }
+            return nil
+        }
+        if s.caretakerMovedOut { return "that wallet's identity already moved a caretaker vote away; it can never hold one again" }
+        if s.caretakerExpiresAt > now, !s.caretakerSplit.isEmpty || s.caretakerSplitUnknown { return "that wallet already holds a caretaker vote" }
+        return nil
+    }
+
+    /// The wallet this identity's moves must go to (audit 6, M5): the one a
+    /// confirmed move went to, else the one a move still in flight names
+    /// (empty: any).
+    private func switchTargetNow() -> String {
+        let s = store.state
+        if !s.switchTarget.isEmpty { return s.switchTarget }
+        return s.pendingMoves.first { !$0.incoming && !$0.confirmed && !$0.target.isEmpty }?.target ?? ""
+    }
+
+    /// Frees the switch target when nothing moved (audit 6, M5): no handle or
+    /// split moved out and no move of this identity confirmed or in flight.
+    /// Returns whether it changed.
+    @discardableResult
+    static func clearSwitchTargetIfUnmoved(_ s: inout PrivacyState) -> Bool {
+        if s.switchTarget.isEmpty || s.handleMovedOut || s.caretakerMovedOut || s.pendingMoves.contains(where: { !$0.incoming }) { return false }
+        s.switchTarget = ""
+        return true
     }
 
     private func checkNoMove(_ kind: String) throws {
@@ -961,8 +997,11 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// tx that may yet land or fail) stays pending for `resolvePendingMoves`.
     private func moveRun(_ move: PendingMove, _ recorder: MoveRecorder?, _ assemble: (UInt64) throws -> Assembled) async throws -> TxResult {
         if let rc = recorder {
-            let fixed = store.state.switchTarget
+            // Audit 6 (M5): the target a confirmed move went to, or one a move
+            // still in flight names; a refused, failed or expired move frees it.
+            let fixed = switchTargetNow()
             try require(fixed.isEmpty || fixed == rc.targetID, "this identity already moved to another wallet; switch to that one")
+            if let why = rc.refusal(move) { throw PrivacyError(why) }
         }
         return try await run(accepted: { [self] hash, timeout in
             var p = move
@@ -975,13 +1014,13 @@ public final class PrivacyWallet: @unchecked Sendable {
             }
             p.recorded = ok
             let pm = p
-            store.mutate { s in
-                s.pendingMoves.append(pm)
-                if let rc = recorder, s.switchTarget.isEmpty { s.switchTarget = rc.targetID }
-            }
+            store.mutate { s in s.pendingMoves.append(pm) }
             persistNoThrow()
         }, rejected: { [self] hash in
-            store.mutate { s in s.pendingMoves.removeAll { $0.txHash == hash && !$0.incoming } }
+            store.mutate { s in
+                s.pendingMoves.removeAll { $0.txHash == hash && !$0.incoming }
+                Self.clearSwitchTargetIfUnmoved(&s)
+            }
             persistNoThrow()
             if let rc = recorder {
                 var inc = move
@@ -1000,6 +1039,8 @@ public final class PrivacyWallet: @unchecked Sendable {
             if !p.incoming {
                 if p.kind == PendingMove.handleKind { s.handle = ""; s.handleMovedOut = true; s.handleSetAt = t }
                 else { s.caretakerSplit = [:]; s.caretakerSplitUnknown = false; s.caretakerExpiresAt = 0; s.caretakerMovedOut = true }
+                // Audit 6 (M5): the target is fixed only by a confirmed move.
+                if s.switchTarget.isEmpty, !p.target.isEmpty { s.switchTarget = p.target }
             }
             if p.incoming || p.recorded { s.pendingMoves.remove(at: i) } else { s.pendingMoves[i].confirmed = true }
         }
@@ -1025,6 +1066,8 @@ public final class PrivacyWallet: @unchecked Sendable {
     }
 
     private func resolvePendingMovesLocked() async -> Bool {
+        // Audit 6 (M5): a target fixed by a move that never landed (before this fix) is freed.
+        store.mutate { Self.clearSwitchTargetIfUnmoved(&$0) }
         for p in store.state.pendingMoves where !p.confirmed {
             let r = try? await chain.tx(p.txHash)
             if let r, r.code == 0 { confirmMove(p.txHash) }
@@ -2137,4 +2180,9 @@ public final class PrivacyWallet: @unchecked Sendable {
     }
 
     private func setSaveError(_ e: String?) { snapLock.lock(); saveErrorValue = e; snapLock.unlock() }
+}
+
+public extension PrivacyWallet.MoveRecorder {
+    /// No refusal by default: the chain still refuses an owner that cannot take the move (at no fee).
+    func refusal(_ move: PendingMove) -> String? { nil }
 }

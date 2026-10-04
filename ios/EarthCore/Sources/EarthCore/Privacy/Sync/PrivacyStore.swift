@@ -386,6 +386,21 @@ public final class PrivacyStore {
 
     public static func memory() -> PrivacyStore { try! PrivacyStore(dir: nil) } // no file: nothing to fail
 
+    nonisolated(unsafe) private static var sharedStores: [String: PrivacyStore] = [:]
+    private static let sharedLock = NSLock()
+
+    /// The process's one store for a wallet's directory (audit 6, M8): two
+    /// instances on one directory each save their whole state over the
+    /// other's. Every app path opens stores through this.
+    public static func shared(root: URL, walletID: String) throws -> PrivacyStore {
+        let key = root.appendingPathComponent("privacy").appendingPathComponent(walletID).standardizedFileURL.path
+        sharedLock.lock(); defer { sharedLock.unlock() }
+        if let s = sharedStores[key] { return s }
+        let s = try open(root: root, walletID: walletID)
+        sharedStores[key] = s
+        return s
+    }
+
     public static func open(root: URL, walletID: String) throws -> PrivacyStore {
         let top = root.appendingPathComponent("privacy")
         let d = top.appendingPathComponent(walletID)
@@ -406,6 +421,10 @@ public final class PrivacyStore {
     public static func delete(root: URL, walletID: String? = nil) throws {
         let top = root.appendingPathComponent("privacy")
         let target = walletID.map { top.appendingPathComponent($0) } ?? top
+        sharedLock.lock()
+        let prefix = target.standardizedFileURL.path
+        sharedStores = sharedStores.filter { $0.key != prefix && !$0.key.hasPrefix(prefix + "/") }
+        sharedLock.unlock()
         let fm = FileManager.default
         guard fm.fileExists(atPath: target.path) else { return }
         if let e = fm.enumerator(at: target, includingPropertiesForKeys: [.isRegularFileKey]) {

@@ -454,6 +454,11 @@ public final class WalletSync {
         for i in s.pendingMoves.indices where s.pendingMoves[i].kind == kind && s.pendingMoves[i].incoming == incoming && matches(s.pendingMoves[i]) {
             s.pendingMoves[i].confirmed = true
         }
+        // Audit 6 (M5): a confirmed outgoing move fixes the switch target.
+        if !incoming, s.switchTarget.isEmpty,
+           let m = s.pendingMoves.first(where: { !$0.incoming && $0.confirmed && !$0.target.isEmpty }) {
+            s.switchTarget = m.target
+        }
         s.pendingMoves.removeAll { $0.confirmed && ($0.incoming || $0.recorded) }
     }
 

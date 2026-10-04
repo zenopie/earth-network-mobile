@@ -43,7 +43,29 @@ enum PrivacySession {
     /// Deletes every wallet's private data (notes, identity, records, trees):
     /// forgetting the wallets forgets what they held privately too (audit 3).
     static func forgetAll() throws {
+        lock.lock(); wallets = [:]; controllers = [:]; lock.unlock()
         try PrivacyStore.delete(root: try dataRoot())
+    }
+
+    /// Audit 6 (M8): one `PrivacyWallet` (and its one store) per wallet per
+    /// process, by store id, kept across lock and unlock: a cast still
+    /// finishing in a task the lock suspended writes to the same wallet and
+    /// store a resumed run reads, and the wallet's lock orders them. Dropped
+    /// only when the private data is forgotten.
+    nonisolated(unsafe) private static var wallets: [String: PrivacyWallet] = [:]
+    /// The stake-vote controller of each wallet (by store id), so a resumed
+    /// run waits for the task the lock suspended (audit 6, M8).
+    nonisolated(unsafe) private static var controllers: [String: StakeVoteController] = [:]
+    private static let lock = NSLock()
+
+    /// `w`'s one stake-vote controller, made by `make` the first time.
+    static func stakeVotes(for w: PrivacyWallet, make: () -> StakeVoteController) -> StakeVoteController {
+        let id = storeID(w.keys)
+        lock.lock(); defer { lock.unlock() }
+        if let c = controllers[id] { return c }
+        let c = make()
+        controllers[id] = c
+        return c
     }
 
     /// The app's one handle directory (see HandleDirectory): the privacy
@@ -66,29 +88,48 @@ enum PrivacySession {
     struct Recorder: PrivacyWallet.MoveRecorder {
         let targetID: String
         func record(_ move: PendingMove) throws {
-            try PrivacyWallet.recordIncoming(try PrivacyStore.open(root: try PrivacySession.dataRoot(), walletID: targetID), move,
+            try PrivacyWallet.recordIncoming(try PrivacyStore.shared(root: try PrivacySession.dataRoot(), walletID: targetID), move,
                                              now: Int64(Date().timeIntervalSince1970))
         }
         func rollback(_ move: PendingMove) throws {
-            try PrivacyWallet.rollbackIncoming(try PrivacyStore.open(root: try PrivacySession.dataRoot(), walletID: targetID), move,
+            try PrivacyWallet.rollbackIncoming(try PrivacyStore.shared(root: try PrivacySession.dataRoot(), walletID: targetID), move,
                                                now: Int64(Date().timeIntervalSince1970))
+        }
+        func refusal(_ move: PendingMove) -> String? {
+            guard let st = (try? PrivacyStore.shared(root: try PrivacySession.dataRoot(), walletID: targetID))?.state else { return nil }
+            return PrivacyWallet.targetRefusal(st, kind: move.kind, now: Int64(Date().timeIntervalSince1970))
         }
     }
 
-    /// What a switch target already holds (audit 5, L8): a registration, a handle.
-    static func targetInfo(_ keys: PrivacyKeys) -> (storeID: String, registered: Bool, handle: String) {
+    /// What a switch target already holds (audit 5, L8): a registration, a
+    /// handle; and why it cannot take this identity's handle or caretaker
+    /// vote (audit 6, M5).
+    static func targetInfo(_ keys: PrivacyKeys) -> TargetInfo {
         let id = storeID(keys)
-        let st = (try? PrivacyStore.open(root: try dataRoot(), walletID: id))?.state
-        return (id, st?.identity != nil || st?.pendingRegistration != nil, st?.handle ?? "")
+        let st = (try? PrivacyStore.shared(root: try dataRoot(), walletID: id))?.state
+        let t = Int64(Date().timeIntervalSince1970)
+        return TargetInfo(storeID: id, registered: st?.identity != nil || st?.pendingRegistration != nil, handle: st?.handle ?? "",
+                          handleRefusal: st.flatMap { PrivacyWallet.targetRefusal($0, kind: PendingMove.handleKind, now: t) },
+                          voteRefusal: st.flatMap { PrivacyWallet.targetRefusal($0, kind: PendingMove.caretakerKind, now: t) })
+    }
+
+    struct TargetInfo {
+        let storeID: String
+        let registered: Bool
+        let handle: String
+        let handleRefusal: String?
+        let voteRefusal: String?
     }
 
     static func open(mnemonic: String, client: EarthClient) throws -> PrivacyWallet {
         let keys = try PrivacyKeys.fromMnemonic(mnemonic)
         let id = storeID(keys)
-        return PrivacyWallet(
+        lock.lock(); defer { lock.unlock() }
+        if let w = wallets[id] { return w }
+        let w = PrivacyWallet(
             keys: keys,
             // An unreadable store is an error the user sees, never an empty wallet (audit 3).
-            store: try PrivacyStore.open(root: try dataRoot(), walletID: id),
+            store: try PrivacyStore.shared(root: try dataRoot(), walletID: id),
             indexer: HTTPPrivacyIndexer(),
             chain: RESTPrivateChain(rest: client.rest),
             reads: PrivacyQueries(rest: client.rest),
@@ -97,5 +138,7 @@ enum PrivacySession {
             // Every root the indexer serves is checked against the chain's own (C3).
             roots: LCDChainRoots(rest: client.rest)
         )
+        wallets[id] = w
+        return w
     }
 }

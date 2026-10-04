@@ -746,12 +746,15 @@ public final class AppModel {
             privacy = w
             shieldedAddress = w.address.encode()
             publishPrivacy()
-            let votes = StakeVoteController(wallet: { w }, onProgress: { [weak self] p in
-                Task { @MainActor in
-                    self?.stakeVoteProgress = p
-                    if p?.running == false { await self?.syncPrivacy() }
-                }
-            })
+            // One controller per wallet (audit 6, M8): a resumed run waits for the cast the lock suspended.
+            let votes = PrivacySession.stakeVotes(for: w) {
+                StakeVoteController(wallet: { w }, onProgress: { [weak self] p in
+                    Task { @MainActor in
+                        self?.stakeVoteProgress = p
+                        if p?.running == false { await self?.syncPrivacy() }
+                    }
+                })
+            }
             stakeVotes = votes
             // A stake vote the app lost (killed in the background) goes on.
             Task { await votes.resume() }
@@ -879,7 +882,7 @@ public final class AppModel {
     }
 
     /// The store id of the wallet at `index` and what it already holds (audit 5, L8).
-    func switchTargetInfo(ofWallet index: Int) -> (storeID: String, registered: Bool, handle: String)? {
+    func switchTargetInfo(ofWallet index: Int) -> PrivacySession.TargetInfo? {
         guard let keys = try? privacyKeys(ofWallet: index) else { return nil }
         return PrivacySession.targetInfo(keys)
     }
