@@ -1958,32 +1958,6 @@ class PrivacyWallet(
         return nfValues.subList(0, n).toList()
     }
 
-    /** What a stake vote on a proposal weighs: notes, positions that can vote, uerth. */
-    data class StakeWeight(val notes: Int, val positionIds: Set<Long>, val uerth: Long)
-
-    /**
-     * This wallet's weight on [proposalId]: per validator, its eligible derth
-     * notes in votes of up to [PrivateMsgs.MAX_VOTE_NOTES] (each the rounded
-     * [voteWeight] of its notes' sum), and every position created before the
-     * snapshot's block (the chain refuses later ones), each at its validator's
-     * rate at the snapshot.
-     */
-    fun stakeVoteWeight(proposalId: Long, positions: List<PrivacyChainReads.Position>): StakeWeight {
-        val snap = snapshot(proposalId)
-        val notes = eligible(proposalId, snap)
-        val ps = votingPositions(positions, snap)
-        val d = if (notes.any { it.label != null }) runCatching { debtView() }.getOrNull() else null
-        val noteWeight = notes.groupBy { it.denom }.entries.fold(0L) { acc, (denom, ns) ->
-            val rate = snap.rates[parseDerth(denom)] ?: BigDecimal.ONE
-            ns.sortedWith(VOTE_ORDER).chunked(PrivateMsgs.MAX_VOTE_NOTES).fold(acc) { a, part ->
-                val v = Amounts.satSum(part) { voteValue(it, d) }
-                if (v <= 0) a else Amounts.satAdd(a, derthValue(voteWeight(v), rate))
-            }
-        }
-        val total = Amounts.satAdd(noteWeight, Amounts.satSum(ps) { derthValue(it.derth, snap.rates[it.validator] ?: BigDecimal.ONE) })
-        return StakeWeight(notes.size, ps.map { it.id }.toSet(), total)
-    }
-
     /**
      * Derth notes that may vote on [proposalId]: in the stake tree at the
      * snapshot, not spent before it as far as sync knows (the cast checks the
@@ -2488,7 +2462,6 @@ class PrivacyWallet(
         fun notYetText(waitSeconds: Long): String =
             if (waitSeconds > 2 * SECONDS_PER_DAY) "this identity replaced another too recently for this action; it opens in ${waitSeconds / SECONDS_PER_DAY + 1} days"
             else "this registration is too recent for this action; try again in ${waitSeconds / 3600 + 1}h"
-        const val ANML_PER_CLAIM = 1_000_000L
         /**
          * MsgRegister's gas, for the fee estimate before simulating: the
          * passport proof (3M) and DSC chain (300k), the fee bundle's two

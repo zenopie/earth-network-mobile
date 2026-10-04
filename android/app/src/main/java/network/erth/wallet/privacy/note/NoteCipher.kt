@@ -138,31 +138,28 @@ object NoteCipher {
     internal fun encryptBlindWith(esk: ByteArray, note: NotePlaintext, ekPub: ByteArray): ByteArray =
         sealBlind(X25519PrivateKeyParameters(esk, 0), ekPub, blindPlaintext(note))
 
-    private fun sealBlind(esk: X25519PrivateKeyParameters, ekPub: ByteArray, pt: ByteArray, salt: ByteArray = BLIND_SALT): ByteArray {
+    private fun sealBlind(esk: X25519PrivateKeyParameters, ekPub: ByteArray, pt: ByteArray): ByteArray {
         val epk = esk.generatePublicKey().encoded
         val shared = ByteArray(32)
         X25519Agreement().apply { init(esk) }.calculateAgreement(X25519PublicKeyParameters(ekPub, 0), shared, 0)
-        return epk + aead(true, hkdf(shared, salt, epk), pt)
+        return epk + aead(true, hkdf(shared, BLIND_SALT, epk), pt)
     }
 
-    private fun blindPlaintext(n: NotePlaintext, version: Byte = BLIND_VERSION): ByteArray =
-        blindPlaintext(n.rho, n.rcm, n.memo, version)
-
-    private fun blindPlaintext(rho: Fr, rcm: Fr, memo: ByteArray, version: Byte): ByteArray {
-        require(memo.size <= MEMO_BYTES) { "memo exceeds $MEMO_BYTES bytes" }
+    private fun blindPlaintext(n: NotePlaintext): ByteArray {
+        require(n.memo.size <= MEMO_BYTES) { "memo exceeds $MEMO_BYTES bytes" }
         return ByteBuffer.allocate(BLIND_PLAINTEXT_BYTES)
-            .put(version).put(rho.toBytes()).put(rcm.toBytes()).put(memo.copyOf(MEMO_BYTES)).array()
+            .put(BLIND_VERSION).put(n.rho.toBytes()).put(n.rcm.toBytes()).put(n.memo.copyOf(MEMO_BYTES)).array()
     }
 
-    /** Opens a 177-byte blind ciphertext under [salt] and [version]: (rho, rcm, memo with its padding dropped). */
-    private fun openBlind(ct: ByteArray, ek: X25519PrivateKeyParameters, salt: ByteArray, version: Byte): Triple<Fr, Fr, ByteArray>? {
+    /** Opens a 177-byte v2 ciphertext: (rho, rcm, memo with its padding dropped). */
+    private fun openBlind(ct: ByteArray, ek: X25519PrivateKeyParameters): Triple<Fr, Fr, ByteArray>? {
         if (ct.size != BLIND_CIPHERTEXT_BYTES) return null
         return try {
             val epk = ct.copyOf(32)
             val shared = ByteArray(32)
             X25519Agreement().apply { init(ek) }.calculateAgreement(X25519PublicKeyParameters(epk, 0), shared, 0)
-            val pt = aead(false, hkdf(shared, salt, epk), ct.copyOfRange(32, ct.size))
-            if (pt.size != BLIND_PLAINTEXT_BYTES || pt[0] != version) return null
+            val pt = aead(false, hkdf(shared, BLIND_SALT, epk), ct.copyOfRange(32, ct.size))
+            if (pt.size != BLIND_PLAINTEXT_BYTES || pt[0] != BLIND_VERSION) return null
             val memo = pt.copyOfRange(65, pt.size)
             Triple(Fr.fromBytes(pt.copyOfRange(1, 33)), Fr.fromBytes(pt.copyOfRange(33, 65)), memo.copyOf(memo.indexOfLast { it.toInt() != 0 } + 1))
         } catch (e: Exception) {
@@ -179,7 +176,7 @@ object NoteCipher {
         tryDecryptBlind(ct, cm, denom, value, keys.ek(), keys.ownerPk)
 
     internal fun tryDecryptBlind(ct: ByteArray, cm: Fr, denom: String, value: Long, ek: X25519PrivateKeyParameters, ownerPk: Fr): NotePlaintext? {
-        val (rho, rcm, memo) = openBlind(ct, ek, BLIND_SALT, BLIND_VERSION) ?: return null
+        val (rho, rcm, memo) = openBlind(ct, ek) ?: return null
         val n = NotePlaintext(denom, value, rho, rcm, memo)
         return if (n.cm(ownerPk) != cm) null else n
     }

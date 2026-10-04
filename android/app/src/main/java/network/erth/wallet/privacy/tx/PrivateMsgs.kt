@@ -257,19 +257,6 @@ object PrivateMsgs {
         else -> null
     }
 
-    /** A msg's stake proof with [p] in its place (the engine swaps placeholders for quotes). */
-    fun withStake(msg: MessageLite, p: StakeProof): MessageLite = when (msg) {
-        is MsgDelegate -> msg.toBuilder().setStake(p).build()
-        is MsgRestake -> msg.toBuilder().setStake(p).build()
-        is MsgUndelegate -> msg.toBuilder().setStake(p).build()
-        is MsgLockPosition -> msg.toBuilder().setStake(p).build()
-        is MsgUpdatePosition -> msg.toBuilder().setStake(p).build()
-        is MsgUnlockPosition -> msg.toBuilder().setStake(p).build()
-        is MsgPositionVote -> msg.toBuilder().setStake(p).build()
-        is MsgRedelegate -> msg.toBuilder().setStake(p).build()
-        else -> throw IllegalArgumentException("no stake proof: ${msg.javaClass.simpleName}")
-    }
-
     /**
      * StakeFields: anchor, nf_0, nf_1, cm, Bytes(ct), credit_nf, credit_cm,
      * Bytes(credit_ct), owner_tag, clear_before, debt_root (an absent
@@ -303,11 +290,7 @@ object PrivateMsgs {
         else -> feeAfter(msg, 0)
     }
 
-    /**
-     * The whole fee the tx declares (types.TotalFee): the private fee alone
-     * since the chain retired MsgClaimUnbonding, the one msg that paid
-     * fee_from_output (chain 48b631c).
-     */
+    /** The whole fee the tx declares (types.TotalFee): the private fee. */
     fun totalFee(msg: MessageLite): Long = privateFee(msg)
 
     /** The msg's own fields, bound after the bundle digests (each msg's Go SighashFields). */

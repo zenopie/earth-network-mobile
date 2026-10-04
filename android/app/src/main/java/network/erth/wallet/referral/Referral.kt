@@ -20,9 +20,9 @@ import network.erth.wallet.privacy.handles.Handles
  *    the store link through the install and hands it to the app on first run.
  *    This is the one that covers someone who did not have the app yet.
  *  - **App Link.** A verified `https://erth.network/ref/<handle>` intent,
- *    for someone who already has it installed. Only that (audit 5, M5): the
- *    `earth://ref` custom scheme is unverified, so any page could fire one
- *    first and lock in its own referrer.
+ *    for someone who already has it installed. Only that: a custom scheme is
+ *    unverified, so any page could fire one first and lock in its own
+ *    referrer.
  *
  * Stored in plain SharedPreferences rather than the encrypted store: it is a
  * public handle, it is needed before any wallet exists, and it must survive
@@ -33,7 +33,7 @@ import network.erth.wallet.privacy.handles.Handles
  * another keeps the first, so a referrer cannot be overwritten by whoever
  * happens to send the most recent link. The registrant sees it and may
  * remove or replace it ([clear]); one that does not resolve to a live
- * handle at registration is cleared (audit 5, M5).
+ * handle at registration is cleared.
  */
 object Referral {
 
@@ -65,7 +65,7 @@ object Referral {
 
     /** Forgets the stored referrer: removed or replaced by the registrant, or not a live handle. */
     fun clear(context: Context) {
-        // Audit 6 (K3): the install referrer is not asked again, so a removed one stays removed.
+        // The install referrer is not asked again, so a removed one stays removed.
         prefs(context).edit().remove(KEY_HANDLE).putBoolean(KEY_CHECKED, true).apply()
     }
 

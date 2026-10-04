@@ -97,8 +97,8 @@ data class ChainIdentity(val chainId: String, val genesis: String?)
  *     ours checked against its cm; a split payout's rows sharing one
  *     ciphertext are each a note of their own;
  *  3. every nullifier, up to the height the notes reached;
- *  4. the stake tree the same way (the wallet's own stake ciphertexts, and
- *     the blind stake ciphertexts of the notes the chain minted);
+ *  4. the stake tree the same way (every stake note is a stake proof's
+ *     output, carrying the wallet's own stake ciphertext);
  *  5. every identity leaf and zeroing up to the same height; registration
  *     record notes matched to their leaf (restore), a pending registration
  *     resolved (C2);

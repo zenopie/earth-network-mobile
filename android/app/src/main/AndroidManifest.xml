@@ -55,9 +55,8 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="https" android:host="erth.network" android:pathPrefix="/ref" />
             </intent-filter>
-
-            <!-- No custom scheme (audit 5, M5): earth://ref is unverified, so
-                 any page could fire one and lock in its own referrer. -->
+            <!-- No custom scheme: one is unverified, so any page could fire
+                 it and lock in its own referrer. -->
         </activity>
 
         <!-- ZXing Capture Activity with forced portrait orientation -->

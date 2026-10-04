@@ -14,27 +14,12 @@ import org.json.JSONObject
  */
 object Personhood {
 
-    /** Unix seconds at the next UTC midnight, when the claim window reopens. */
-    fun nextClaimOpensAt(): Long {
-        val nowSec = System.currentTimeMillis() / 1000
-        return (nowSec / SECONDS_PER_DAY + 1) * SECONDS_PER_DAY
-    }
-
-    private const val SECONDS_PER_DAY = 86_400L
-
     /**
      * How many humans are currently registered: the denominator of the human
      * emission stream, since every registration carries the same weight.
      */
     fun registrationCount(): Long {
         val (code, body) = EarthRest.get("/earth/personhood/v1/registration_count")
-        if (code !in 200..299) return 0L
-        return JSONObject(body).optString("count", "0").toLongOrNull() ?: 0L
-    }
-
-    /** How many caretaker splits are live (cast or refreshed within R). */
-    fun caretakerVoterCount(): Long {
-        val (code, body) = EarthRest.get("/earth/personhood/v1/caretaker_voter_count")
         if (code !in 200..299) return 0L
         return JSONObject(body).optString("count", "0").toLongOrNull() ?: 0L
     }

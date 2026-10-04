@@ -296,12 +296,13 @@ class WalletFlowTest {
         // Stake votes: the derth note from before the snapshot, one vote per validator, its rounded amount.
         a.sync()
         chain.openProposal(11)
-        val weight = a.stakeVoteWeight(11, emptyList())
         val notes = a.stakeNotes.filter { it.spendable && it.denom == derth }
         assertEquals(1, notes.size)
-        assertEquals(notes.size, weight.notes)
-        assertEquals(PrivacyWallet.voteWeight(notes.sumOf { it.amount }), weight.uerth)
-        val voted = a.stakeVoteItems(11).mapNotNull { a.castStakeVote(11, it, yes) }
+        val items = a.stakeVoteItems(11)
+        val preview = a.stakeVotePreview(11, items.single())!!
+        assertEquals(notes.size, preview.notes)
+        assertEquals(PrivacyWallet.voteWeight(notes.sumOf { it.amount }), preview.uerth)
+        val voted = items.mapNotNull { a.castStakeVote(11, it, yes) }
         assertEquals(1, voted.size)
         a.sync()
         assertEquals(total, bal(a, derth))

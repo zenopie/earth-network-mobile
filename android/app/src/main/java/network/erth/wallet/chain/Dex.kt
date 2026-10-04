@@ -4,7 +4,6 @@ import com.google.protobuf.Any as ProtoAny
 import cosmos.base.v1beta1.CoinOuterClass
 import network.erth.earth.proto.dex.MsgAddLiquidity
 import network.erth.earth.proto.dex.MsgRemoveLiquidity
-import network.erth.earth.proto.dex.MsgSwap
 import org.json.JSONObject
 
 /**
@@ -141,16 +140,6 @@ object Dex {
 
     /** The token only shields hold: its pool's legs are note paths (MsgNoteSwap, MsgAddLiquidityShielded). */
     const val SHIELDED_ONLY = "uanml"
-
-    fun msgSwap(creator: String, tokenInDenom: String, tokenInAmount: String, denomOut: String, minOut: String): ProtoAny {
-        val msg = MsgSwap.newBuilder()
-            .setCreator(creator)
-            .setTokenIn(coin(tokenInDenom, tokenInAmount))
-            .setDenomOut(denomOut)
-            .setMinAmountOut(minOut)
-            .build()
-        return EarthTx.anyOf("/earth.dex.v1.MsgSwap", msg)
-    }
 
     /**
      * [minShares]: the fewest shares the deposit accepts (field 5, audit 6

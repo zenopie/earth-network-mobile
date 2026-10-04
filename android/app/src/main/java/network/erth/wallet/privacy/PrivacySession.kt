@@ -80,13 +80,6 @@ object PrivacySession {
         }
     }
 
-    private val clearListeners = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
-
-    /** Runs [l] whenever the session's wallet is dropped (lock, session end, wallet switch): what holds the wallet lets go. */
-    fun onClear(l: () -> Unit) { clearListeners.add(l) }
-
-    fun removeOnClear(l: () -> Unit) { clearListeners.remove(l) }
-
     /**
      * The privacy keys of the wallet at [index] (another of this phone's
      * wallets): what an identity switch names its moves to. The mnemonic is
@@ -151,9 +144,8 @@ object PrivacySession {
         )
     }
 
-    /** Forget the cached wallet (lock, wallet switch); everything that held it is stopped first. */
+    /** Forget the cached wallet (lock, wallet switch). */
     fun clear() {
-        clearListeners.forEach { runCatching { it() } }
         current = null
     }
 

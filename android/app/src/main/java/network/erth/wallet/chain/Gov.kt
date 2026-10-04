@@ -1,7 +1,5 @@
 package network.erth.wallet.chain
 
-import com.google.protobuf.Any as ProtoAny
-import cosmos.gov.v1.MsgVote
 import cosmos.gov.v1.VoteOption
 import org.json.JSONObject
 
@@ -20,11 +18,6 @@ import org.json.JSONObject
  * merging them here would make one of them look like a detail of the other.
  */
 object Gov {
-
-    const val MSG_VOTE_TYPE_URL = "/cosmos.gov.v1.MsgVote"
-
-    /** A vote carries no coins and touches one record; it does not need 400k. */
-    const val VOTE_GAS_LIMIT = 150_000L
 
     data class Proposal(
         val id: Long,
@@ -141,21 +134,4 @@ object Gov {
 
     private fun JSONObject?.count(field: String): Long =
         this?.optString(field, "0")?.toLongOrNull() ?: 0L
-
-    /**
-     * A vote on [proposalId], ready for [EarthTx.broadcast].
-     *
-     * Weighted by bonded stake alone: an address with nothing delegated can
-     * broadcast this successfully and still move the tally by nothing, so the
-     * screen says so rather than letting it look like a vote that failed.
-     */
-    fun msgVote(voter: String, proposalId: Long, vote: Vote): ProtoAny =
-        EarthTx.anyOf(
-            MSG_VOTE_TYPE_URL,
-            MsgVote.newBuilder()
-                .setProposalId(proposalId)
-                .setVoter(voter)
-                .setOption(vote.proto)
-                .build(),
-        )
 }
