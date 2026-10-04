@@ -394,8 +394,8 @@ class Audit4Test {
         }
         val a = wallet(chain, indexer = forged)
         a.sync()
-        assertTrue(a.stakeVoteItems(1).contains(PrivacyWallet.StakeVoteItem.Note(v.k.position)))
-        assertNotNull(a.castStakeVote(1, PrivacyWallet.StakeVoteItem.Note(v.k.position), yes))
+        assertTrue(a.stakeVoteItems(1).contains(PrivacyWallet.StakeVoteItem.Validator(vB, 3)))
+        assertNotNull(a.castStakeVote(1, PrivacyWallet.StakeVoteItem.Validator(vB, 3), yes))
         assertEquals(1, chain.stakeVotes.size)
     }
 
@@ -417,7 +417,7 @@ class Audit4Test {
         a.sync()
         chain.indexerNfTree = false
         val sims = chain.simulated
-        val e = assertThrows(IllegalStateException::class.java) { a.castStakeVote(1, PrivacyWallet.StakeVoteItem.Note(v.k.position), yes) }
+        val e = assertThrows(IllegalStateException::class.java) { a.castStakeVote(1, PrivacyWallet.StakeVoteItem.Validator(vB, 3), yes) }
         assertTrue(e.message!!, "sync saw no spend" in e.message!!)
         assertEquals(sims, chain.simulated)
     }
@@ -430,9 +430,9 @@ class Audit4Test {
         val snap = a.snapshot(1)
         val i = a.store.state.stakeNotes.indexOfFirst { it.position == v.k.position }
         a.store.state.stakeNotes[i] = a.store.state.stakeNotes[i].copy(spentHeight = snap.height)
-        assertFalse(a.stakeVoteItems(1).contains(PrivacyWallet.StakeVoteItem.Note(v.k.position)))
+        assertEquals(listOf(PrivacyWallet.StakeVoteItem.Validator(vB, 2)), a.stakeVoteItems(1))
         a.store.state.stakeNotes[i] = a.store.state.stakeNotes[i].copy(spentHeight = snap.height + 1)
-        assertTrue(a.stakeVoteItems(1).contains(PrivacyWallet.StakeVoteItem.Note(v.k.position)))
+        assertEquals(listOf(PrivacyWallet.StakeVoteItem.Validator(vB, 3)), a.stakeVoteItems(1))
     }
 
     /** The snapshot's nf_size is the LCD's: an indexer's larger count is never fetched (L4). */
@@ -449,7 +449,7 @@ class Audit4Test {
         }
         val a = wallet(chain, indexer = idx)
         a.sync()
-        assertNotNull(a.castStakeVote(1, PrivacyWallet.StakeVoteItem.Note(v.k.position), yes))
+        assertNotNull(a.castStakeVote(1, PrivacyWallet.StakeVoteItem.Validator(vB, 3), yes))
         // The LCD's nf_size (a handful): one aligned page, nothing past it.
         assertEquals(listOf(0L to PrivacyWallet.NF_PAGE), asked)
     }
@@ -459,13 +459,14 @@ class Audit4Test {
     fun stakeVotesSurviveAReset() {
         val v = voting()
         val a = v.a
-        a.castStakeVote(1, PrivacyWallet.StakeVoteItem.Note(v.k.position), yes)
+        a.castStakeVote(1, PrivacyWallet.StakeVoteItem.Validator(vB, 3), yes)
         val votes = a.store.state.stakeVotes.toList()
-        assertEquals(1, votes.size)
+        // One vote, three notes: each note's vote nullifier is remembered.
+        assertEquals(3, votes.size)
         a.store.reset(v.chain.chainId)
         assertEquals(votes, a.store.state.stakeVotes)
         a.sync()
-        assertNull(a.castStakeVote(1, PrivacyWallet.StakeVoteItem.Note(v.k.position), yes))
+        assertNull(a.castStakeVote(1, PrivacyWallet.StakeVoteItem.Validator(vB, 3), yes))
         assertEquals(1, v.chain.stakeVotes.size)
     }
 
@@ -550,15 +551,6 @@ class Audit4Test {
 
     // ---- M7: hostile bodies and Errors ----
 
-    /** PoC 3 (automation): an Error thrown by an action is a failed action, never an escape. */
-    @Test
-    fun poc3_errorsStayInsideTheAutomation() = runBlocking {
-        val failed = ArrayList<Throwable>()
-        val due = PrivacyAutomation.Inputs(86_400L * 100 + 50_000, maturedUnbonds = listOf("unbond/v/1"))
-        PrivacyAutomation.runPass(sync = {}, inputs = { due }, act = { throw StackOverflowError("org.json recursion") }, pause = {}, onFailure = { _, e -> failed.add(e) })
-        assertTrue(failed.single() is StackOverflowError)
-    }
-
     private fun serve(handler: (String) -> Pair<String, ByteArray>): ServerSocket {
         val server = ServerSocket(0, 50, java.net.InetAddress.getByName("127.0.0.1"))
         thread(isDaemon = true) {
@@ -624,7 +616,8 @@ class Audit4Test {
         val pos = a.stakeVoteItems(12).filterIsInstance<PrivacyWallet.StakeVoteItem.Position>().single()
         var acceptedHash: String? = null
         chain.unconfirmedNext = 1
-        assertThrows(Exception::class.java) { a.castStakeVote(12, pos, yes) { acceptedHash = it } }
+        val (p, c) = a.positions().single { it.first.id == pos.id }
+        assertThrows(Exception::class.java) { a.positionVote(p, c, 12, yes) { acceptedHash = it } }
         assertNotNull(acceptedHash)
         assertTrue(acceptedHash in chain.txs)
         assertEquals(1, chain.positionVotes.size)
@@ -635,10 +628,10 @@ class Audit4Test {
     fun refusedVoteIsForgotten() {
         val v = voting()
         v.chain.rejectNext = 1
-        assertThrows(UnsignedTx.TxRejected::class.java) { v.a.castStakeVote(1, PrivacyWallet.StakeVoteItem.Note(v.k.position), yes) }
+        assertThrows(UnsignedTx.TxRejected::class.java) { v.a.castStakeVote(1, PrivacyWallet.StakeVoteItem.Validator(vB, 3), yes) }
         assertTrue(v.a.store.state.stakeVotes.isEmpty())
-        assertNotNull(v.a.castStakeVote(1, PrivacyWallet.StakeVoteItem.Note(v.k.position), yes))
-        assertEquals(1, v.a.store.state.stakeVotes.size)
+        assertNotNull(v.a.castStakeVote(1, PrivacyWallet.StakeVoteItem.Validator(vB, 3), yes))
+        assertEquals(3, v.a.store.state.stakeVotes.size)
     }
     // ---- the backend's paging rule (fixed page sizes, aligned cursors) ----
 
@@ -687,7 +680,7 @@ class Audit4Test {
     @Test
     fun walletRequestsFollowThePagingRule() {
         val v = voting()
-        assertNotNull(v.a.castStakeVote(1, PrivacyWallet.StakeVoteItem.Note(v.k.position), yes))
+        assertNotNull(v.a.castStakeVote(1, PrivacyWallet.StakeVoteItem.Validator(vB, 3), yes))
         assertTrue(v.chain.misaligned.toString(), v.chain.misaligned.isEmpty())
     }
 

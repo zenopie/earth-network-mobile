@@ -27,7 +27,6 @@ import network.erth.earth.proto.shielded.Action
 import network.erth.earth.proto.shielded.Bundle
 import network.erth.earth.proto.shielded.MsgSend
 import network.erth.earth.proto.shielded.ValueBalance
-import network.erth.earth.proto.shieldedstaking.MsgClaimUnbonding
 import network.erth.earth.proto.shieldedstaking.MsgDelegate
 import network.erth.earth.proto.shieldedstaking.MsgLockPosition
 import network.erth.earth.proto.shieldedstaking.MsgPositionVote
@@ -151,13 +150,18 @@ class PrivateMsgsTest {
             "restake" to MsgRestake.newBuilder().setBundle(fee(95, 2000)).setValidator(validator)
                 .setStake(stake(95, 2, 1)).build(),
             "undelegate" to MsgUndelegate.newBuilder().setBundle(fee(100, 2000)).setValidator(validator).setAmount(400000)
-                .setStake(stake(100, 1, 1, mints = true)).build(),
-            "claim_unbonding" to MsgClaimUnbonding.newBuilder().setValidator(validator).setEpoch(17).setAmount(400000)
-                .setPc(fb(111)).setCiphertext(bct(111)).setFeeFromOutput(2000).setStake(stake(110, 2, 0)).build(),
-            "claim_unbonding_fee_bundle" to MsgClaimUnbonding.newBuilder().setBundle(fee(115, 2000)).setValidator(validator)
-                .setEpoch(17).setAmount(400000).setPc(fb(116)).setCiphertext(bct(116)).setStake(stake(117, 1, 1)).build(),
+                .setStake(stake(100, 1, 1)).setPc(fb(101)).setCiphertext(bct(101)).build(),
+            "undelegate_whole" to MsgUndelegate.newBuilder().setBundle(fee(102, 2000)).setValidator(validator).setAmount(400000)
+                .setStake(stake(102, 2, 0)).setPc(fb(103)).setCiphertext(bct(103)).build(),
             "stake_vote" to MsgStakeVote.newBuilder().setBundle(fee(120, 2000)).setProposalId(5).setValidator(validator)
-                .addAllOptions(opts()).setWeight(400000).setProof(ByteString.copyFrom(byteArrayOf(0x70, 0x7e))).setVoteNullifier(fb(121)).build(),
+                .addAllOptions(opts()).setWeight(400000).setProof(ByteString.copyFrom(byteArrayOf(0x70, 0x7e)))
+                .addAllVoteNullifiers(listOf(fb(121), zero32, zero32, zero32)).build(),
+            "stake_vote_four" to MsgStakeVote.newBuilder().setBundle(fee(122, 2000)).setProposalId(5).setValidator(validator)
+                .addAllOptions(opts()).setWeight(1_230_000).setProof(ByteString.copyFrom(byteArrayOf(0x70, 0x7e)))
+                .addAllVoteNullifiers(listOf(fb(123), fb(124), fb(125), fb(126))).build(),
+            "stake_vote_two" to MsgStakeVote.newBuilder().setBundle(fee(127, 2000)).setProposalId(6).setValidator(validator)
+                .addAllOptions(opts()).setWeight(999).setProof(ByteString.copyFrom(byteArrayOf(0x70, 0x7e)))
+                .addAllVoteNullifiers(listOf(fb(128), fb(129), zero32, zero32)).build(),
             "lock_position" to MsgLockPosition.newBuilder().setBundle(fee(140, 2000)).setValidator(validator).setAmount(400000)
                 .addSplits(w(2, 100)).setStake(stake(140, 1, 1)).build(),
             "update_position" to MsgUpdatePosition.newBuilder().setBundle(fee(150, 2000)).setPositionId(9)
@@ -207,7 +211,7 @@ class PrivateMsgsTest {
     @Test
     fun stakeFieldsMatchTheChain() {
         val want = json.getJSONArray("stake_fields_undelegate")
-        val got = PrivateMsgs.stakeFields(stake(100, 1, 1, mints = true))
+        val got = PrivateMsgs.stakeFields(stake(100, 1, 1))
         assertEquals(want.length(), got.size)
         for (i in got.indices) assertEquals("field $i", want.getString(i), got[i].toHex())
     }
@@ -215,8 +219,8 @@ class PrivateMsgsTest {
     @Test
     fun bindingAndFieldEncodings() {
         val b = json.getJSONObject("registration_binding")
-        assertEquals(b.getString("with_affiliate"), PrivateMsgs.registrationBinding(msgs["register"] as MsgRegister).toHex())
-        assertEquals(b.getString("none"), PrivateMsgs.registrationBinding(msgs["register_no_affiliate"] as MsgRegister).toHex())
+        assertEquals(b.getString("with_affiliate"), PrivateMsgs.registrationBinding(msgs["register"] as MsgRegister, chainId).toHex())
+        assertEquals(b.getString("none"), PrivateMsgs.registrationBinding(msgs["register_no_affiliate"] as MsgRegister, chainId).toHex())
         assertEquals(b.getString("affiliate_field"), Privacy.affiliateField("alice-01").toHex())
         assertEquals(b.getString("affiliate_field"), PrivateMsgs.affiliateField(msgs["register"] as MsgRegister).toHex())
         assertEquals(json.getString("options_bytes"), hex(PrivateMsgs.optionsBytes(opts())))

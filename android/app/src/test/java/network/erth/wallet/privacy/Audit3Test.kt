@@ -3,8 +3,6 @@ package network.erth.wallet.privacy
 import cosmos.gov.v1.VoteOption as GovVoteOption
 import cosmos.gov.v1.WeightedVoteOption
 import kotlinx.coroutines.flow.first
-import network.erth.wallet.privacy.PrivacyAutomation.Action
-import network.erth.wallet.privacy.PrivacyAutomation.Inputs
 import network.erth.wallet.privacy.chain.PrivacyQueries
 import network.erth.wallet.privacy.keys.PrivacyKeys
 import network.erth.wallet.privacy.note.NoteCipher
@@ -201,11 +199,10 @@ class Audit3Test {
         chain.mintStake(PrivacyWallet.derthDenom(v1), 7, Privacy.stakePc(Fr.of(5), other.first.first, other.first.second), other.second)
         chain.emptyBlock()
         chain.openProposal(1)
-        val n = a.stakeNotes.first { it.spendable }
-        val e = assertThrows(PrivacyWallet.SyncFirst::class.java) { a.stakeVote(1, n, yes) }
+        val e = assertThrows(PrivacyWallet.SyncFirst::class.java) { a.stakeVote(1, v1, yes) }
         assertTrue(e.message!!.contains("sync first"))
         a.sync()
-        a.stakeVote(1, a.stakeNotes.first { it.spendable }, yes)
+        a.stakeVote(1, v1, yes)
     }
 
     @Test
@@ -215,13 +212,9 @@ class Audit3Test {
         assertNull(PrivacyQueries.durationSeconds("99999999999999999999999s"))
         assertEquals(1_814_400L, PrivacyQueries.durationSeconds("1814400s"))
         assertEquals(0L, PrivacyQueries.durationSeconds("0.5s"))
-        assertNull(PrivacyAutomation.maturesBy(0, Long.MAX_VALUE, 0, Long.MAX_VALUE, 0))
-        assertNull(PrivacyAutomation.maturesBy(1, 3, Long.MAX_VALUE, 1, Long.MAX_VALUE))
-        assertNull(PrivacyAutomation.maturesBy(-1, 3, 0, 1, 1))
-        assertTrue(PrivacyAutomation.matured(
-            listOf(network.erth.wallet.privacy.note.OwnedStakeNote(0, 1, "unbond/v/99999999999999999999999", 5, Fr.ONE, Fr.ONE, Fr.ONE, Fr.ONE)),
-            1_000, 4, 0, 10, 10, emptyMap(),
-        ).isEmpty())
+        assertNull(PrivacyWallet.unbondDueBy(0, Long.MAX_VALUE, 0, 0, Long.MAX_VALUE, 0))
+        assertNull(PrivacyWallet.unbondDueBy(1, 3, Long.MAX_VALUE, 0, 1, Long.MAX_VALUE))
+        assertNull(PrivacyWallet.unbondDueBy(-1, 3, 0, 0, 1, 1))
     }
 
     // ---- 4. restore takes the block time from the indexer; 13. retry ----
@@ -393,100 +386,6 @@ class Audit3Test {
         assertTrue(ours.isNotEmpty())
         assertTrue(asked.none { it in ours })
         assertNotNull(other)
-    }
-
-    // ---- 7. automation spacing; 14b. logs ----
-
-    @Test
-    fun automationSpacesActionsWithASyncBetween() = kotlinx.coroutines.runBlocking {
-        val events = ArrayList<String>()
-        val due = mutableListOf("unbond/v/1", "unbond/v/2")
-        val taken = PrivacyAutomation.runPass(
-            sync = { events.add("sync") },
-            inputs = { Inputs(now = 20_000L * 86_400 + 5 * 3600, maturedUnbonds = due.toList()) },
-            act = { a -> events.add(PrivacyAutomation.kind(a)); due.remove((a as Action.ClaimUnbonding).denom) },
-            pause = { ms -> events.add("pause"); assertTrue(ms in PrivacyAutomation.ACTION_PAUSE_MIN_MS..PrivacyAutomation.ACTION_PAUSE_MAX_MS) },
-        )
-        assertEquals(2, taken.size)
-        assertEquals(listOf("sync", PrivacyAutomation.kind(taken[0]), "pause", "sync", PrivacyAutomation.kind(taken[1])), events)
-    }
-
-    @Test
-    fun automationTriesEachActionOncePerPass() = kotlinx.coroutines.runBlocking {
-        var pauses = 0
-        val taken = PrivacyAutomation.runPass(
-            sync = {},
-            // A claim that keeps failing stays due: tried once this pass.
-            inputs = { Inputs(now = 20_000L * 86_400, maturedUnbonds = listOf("unbond/v/1", "unbond/v/2")) },
-            act = { throw IllegalStateException("not matured after all") },
-            pause = { pauses++ },
-            random = java.util.Random(1),
-        )
-        assertEquals(2, taken.size)
-        assertEquals(taken.size - 1, pauses)
-    }
-
-    @Test
-    fun automationLogsNameNoDenom() {
-        val k = PrivacyAutomation.kind(Action.ClaimUnbonding("unbond/earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq/3"))
-        assertEquals("ClaimUnbonding", k)
-    }
-
-    // ---- 8. the stake vote run stops with the session ----
-
-    private fun staked(chain: FakeChain): PrivacyWallet {
-        val v2 = "earthvaloper1qyqszqgpqyqszqgpqyqszqgpqyqszqgpjnp7du"
-        val a = wallet(chain)
-        repeat(4) { funded(chain, a, 2_000_000) }
-        a.sync()
-        a.delegate(v1, 1_000_000); a.sync()
-        a.delegate(v2, 1_000_000); a.sync()
-        a.lockPosition(v1, 100_000, mapOf(2L to 100L)); a.sync()
-        chain.openProposal(12)
-        return a
-    }
-
-    private fun <T> await(flow: kotlinx.coroutines.flow.StateFlow<T>, cond: (T) -> Boolean): T = kotlinx.coroutines.runBlocking {
-        kotlinx.coroutines.withTimeout(60_000) { flow.first { cond(it) } }
-    }
-
-    @Test
-    fun stakeVoteSuspendsOnLockAndResumes() {
-        val chain = FakeChain()
-        val a = staked(chain)
-        val waiting = kotlinx.coroutines.CompletableDeferred<Unit>()
-        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default)
-        val c = StakeVoteController(scope, { a }, pause = { waiting.complete(Unit); kotlinx.coroutines.awaitCancellation() })
-        c.startAndAwaitFirst(12, yes)
-        kotlinx.coroutines.runBlocking { waiting.await() }
-        // A second start while one runs is refused.
-        assertThrows(IllegalStateException::class.java) { c.startAndAwaitFirst(12, yes) }
-        c.suspend()
-        assertNull(c.progress.value)
-        Thread.sleep(200)
-        assertNull(c.progress.value)
-        val kept = a.store.state.stakeVoteRun!!
-        assertEquals(1, kept.done)
-        // The next unlock (a new controller, as after a restart) picks it up.
-        val c2 = StakeVoteController(scope, { a }, pause = {})
-        c2.resume()
-        val p = await(c2.progress) { it?.finished == true }!!
-        assertEquals(3, p.done)
-        assertNull(a.store.state.stakeVoteRun)
-    }
-
-    /** Resume reads only the selected wallet's own store: another wallet's run is never cast with these keys. */
-    @Test
-    fun resumeIsPerWallet() {
-        val chain = FakeChain()
-        val a = staked(chain)
-        val b = PrivacyWallet(PrivacyKeys.fromMnemonic("legal winner thank year wave sausage worth useful legal winner thank yellow"),
-            PrivacyStore.memory(), chain, chain, reads(chain), chain.prover, chain.chainId, chain, now = { chain.now })
-        a.store.state.stakeVoteRun = network.erth.wallet.privacy.sync.StakeVoteRun(12, listOf(1 to "1"), emptySet(), 3, 0)
-        val c = StakeVoteController(kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default), { b }, pause = {})
-        c.resume()
-        assertNull(c.progress.value)
-        assertEquals(0, chain.stakeVotes.size)
     }
 
     // ---- 9. forget; 10. saves ----

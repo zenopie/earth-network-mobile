@@ -289,9 +289,9 @@ class Audit6Test {
         try {
             val s1 = PrivacyStore.shared(dir, "w")
             assertSame(s1, PrivacyStore.shared(dir, "w"))
-            s1.state.stakeVoteRun = network.erth.wallet.privacy.sync.StakeVoteRun(1, emptyList(), setOf(42L), 1)
+            s1.state.pendingUnbonds.add(network.erth.wallet.privacy.sync.PendingUnbond("AB", "v", 42, Fr.ONE, 1, 9))
             s1.save()
-            assertEquals(setOf(42L), PrivacyStore.shared(dir, "w").state.stakeVoteRun?.votedPositions)
+            assertEquals(42L, PrivacyStore.shared(dir, "w").state.pendingUnbonds.single().derth)
             PrivacyStore.delete(dir, "w")
             assertTrue(PrivacyStore.shared(dir, "w") !== s1)
         } finally {

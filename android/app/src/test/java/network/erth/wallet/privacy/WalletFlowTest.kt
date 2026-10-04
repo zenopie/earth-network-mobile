@@ -274,18 +274,21 @@ class WalletFlowTest {
         assertTrue(a.positions().isEmpty())
         assertEquals(1_800_000L, bal(a, derth))
 
-        // Stake votes: every derth note from before the snapshot, one a tx.
+        // Stake votes: every derth note from before the snapshot, one vote
+        // per validator (up to four notes), one weight: their rounded sum.
         a.sync()
         chain.openProposal(11)
         val weight = a.stakeVoteWeight(11, emptyList())
         val notes = a.stakeNotes.filter { it.spendable && it.denom == derth }
+        assertTrue(notes.size in 2..4)
         assertEquals(notes.size, weight.notes)
-        assertEquals(notes.sumOf { PrivacyWallet.voteWeight(it.amount) }, weight.uerth)
+        assertEquals(PrivacyWallet.voteWeight(notes.sumOf { it.amount }), weight.uerth)
         val voted = a.stakeVoteItems(11).mapNotNull { a.castStakeVote(11, it, yes) }
-        assertEquals(notes.size, voted.size)
+        assertEquals(1, voted.size)
         a.sync()
         assertEquals(1_800_000L, bal(a, derth))
-        assertEquals(notes.sumOf { PrivacyWallet.voteWeight(it.amount) }, chain.stakeVotes.sumOf { it.third })
+        assertEquals(PrivacyWallet.voteWeight(notes.sumOf { it.amount }), chain.stakeVotes.single().third)
+        assertEquals(listOf(notes.size), chain.stakeVoteSlots)
 
         // A handle: claimed by a fresh registrant at once, naming this wallet's shielded address.
         chain.now += 31 * 86_400
@@ -301,23 +304,22 @@ class WalletFlowTest {
         a.voteRemoval(3, yes = true)
         assertEquals(3L, chain.removalVotes.single().first)
 
-        // Unstake (two notes, change back as a created stake note); the
-        // automation claims once epoch 4 (the fake's) has matured.
+        // Unstake (two notes, change back as a created stake note): the msg
+        // names a pool note of ours; at maturity the chain pays it there by
+        // itself (chain 48b631c), and the wallet sends nothing more.
         a.sync()
         a.undelegate(validator, 1_000_000)
         a.sync()
-        val unbond = PrivacyWallet.unbondDenom(validator, 4)
-        assertEquals(1_111_111L, bal(a, unbond))
         assertEquals(800_000L, bal(a, derth))
-        val start = chain.now
-        assertTrue(PrivacyAutomation.matured(a.stakeNotes, start, 5, start, 86_400, 21 * 86_400, emptyMap()).isEmpty())
-        val ready = PrivacyAutomation.matured(a.stakeNotes, start + 21 * 86_400 + 3600, 5, start, 86_400, 21 * 86_400, emptyMap())
-        assertEquals(listOf(unbond), ready)
+        val u = a.pendingUnbonds.single()
+        assertEquals(listOf(1_111_111L, 4L, 1L), listOf(u.value, u.epoch, u.payoutId))
         val erthPre = bal(a, "uerth")
-        a.claimUnbonding(ready.single())
+        val txsBefore = chain.txs.size
+        chain.payUnbonds()
         a.sync()
-        assertEquals(0L, bal(a, unbond))
-        assertTrue(bal(a, "uerth") - erthPre in 1_100_000 until 1_111_111)
+        assertEquals(txsBefore, chain.txs.size)
+        assertEquals(1_111_111L, bal(a, "uerth") - erthPre)
+        assertTrue(a.pendingUnbonds.isEmpty())
 
         // Both wallets, restored from their mnemonics, find everything again:
         // pool self-mints, stake mints (by spc), created stake notes (by

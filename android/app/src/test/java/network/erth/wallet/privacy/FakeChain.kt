@@ -18,7 +18,6 @@ import network.erth.earth.proto.personhood.MsgRegister
 import network.erth.earth.proto.personhood.MsgSetCaretaker
 import network.erth.earth.proto.shielded.Bundle
 import network.erth.earth.proto.shielded.MsgSend
-import network.erth.earth.proto.shieldedstaking.MsgClaimUnbonding
 import network.erth.earth.proto.shieldedstaking.MsgDelegate
 import network.erth.earth.proto.shieldedstaking.MsgLockPosition
 import network.erth.earth.proto.shieldedstaking.MsgPositionVote
@@ -170,7 +169,12 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     /** Referral notes minted (handle, pc). */
     val referralNotes = ArrayList<Pair<String, Fr>>()
     val referralPositions = ArrayList<Long>()
-    val claimedUnbonds = ArrayList<String>()
+    /** Undelegations waiting for their payout (chain 48b631c): id, validator, value, pc, ciphertext. */
+    data class Payout(val id: Long, val validator: String, val value: Long, val pc: Fr, val ct: ByteArray)
+    val unbondPayouts = ArrayList<Payout>()
+    var nextPayoutId = 1L
+    /** Used slots of every stake vote, in order. */
+    val stakeVoteSlots = ArrayList<Int>()
     /** The fake's epoch and derth rate (uerth per derth = 10/9 at delegation: 9/10 minted). */
     val epoch = 4L
 
@@ -258,6 +262,20 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     /** Ends a block with no tx in it. */
     fun emptyBlock() = block()
 
+    /**
+     * The unbonding period passes: the chain pays every queued undelegation
+     * by itself (MintNoteSplit to its pc and ciphertext; [split] cuts a
+     * payout into chunks as the chain would past 2^63-1). Nothing is sent.
+     */
+    fun payUnbonds(split: (Payout) -> List<Long> = { listOf(it.value) }) {
+        for (p in unbondPayouts) {
+            require(split(p).sum() == p.value)
+            mintSplit("uerth", split(p), p.pc, p.ct)
+        }
+        unbondPayouts.clear()
+        block()
+    }
+
     /** The LP unbonding period passes: every private withdrawal pays both legs as notes. */
     fun matureWithdrawals() {
         for (w in withdrawals) {
@@ -294,9 +312,18 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         val m = check(tx, simulate = true).first
         PrivateMsgs.bundles(m).forEach { b -> b.actionsList.forEach { simulatedNullifiers.add(f(it.nullifier)) } }
         PrivateMsgs.stake(m)?.nullifiersList?.forEach { simulatedNullifiers.add(f(it)) }
-        val actions = PrivateMsgs.bundles(m).sumOf { it.actionsCount }
-        return 200_000L + 100_000L * PrivateMsgs.bundles(m).size + 350_000L * actions + (if (PrivateMsgs.stake(m) != null) 400_000 else 0)
+        return gasOf(m)
     }
+
+    /** What the fake's ante charges [m]: its shape alone (a vote: gasVote + proof + (1 + used) x note, chain 48b631c). */
+    fun gasOf(m: MessageLite): Long {
+        val actions = PrivateMsgs.bundles(m).sumOf { it.actionsCount }
+        val vote = if (m is MsgStakeVote) 2_250_000L + (1L + m.voteNullifiersList.count { !f(it).isZero }) * 150_000L else 0L
+        return 200_000L + 100_000L * PrivateMsgs.bundles(m).size + 350_000L * actions + (if (PrivateMsgs.stake(m) != null) 400_000 else 0) + vote
+    }
+
+    /** Every committed private tx's gas_limit over the gas it uses (chain A-L1: at most 5). */
+    val gasRatios = ArrayList<Double>()
 
     /** Whether a committed tx must carry a timeout_height (the wallet always sets one). */
     var requireTimeout = true
@@ -312,6 +339,8 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     var dropNext = 0
     /** Broadcasts accepted (CheckTx) that then fail in their block (DeliverTx code 5): nothing changes. */
     var failInBlockNext = 0
+    /** The last committed msg. */
+    var lastMsg: MessageLite? = null
     /** Every tx by hash, as Query/GetTx answers. */
     val txs = HashMap<String, TxResult>()
 
@@ -344,7 +373,8 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         }
         check(tx, simulate = true)
         accepted(hash)
-        val (_, events) = check(tx, simulate = false)
+        val (m, events) = check(tx, simulate = false)
+        lastMsg = m
         block()
         val r = TxResult(hash, height - 1, now, events)
         txs[hash] = r
@@ -381,7 +411,6 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             PrivateMsgs.SET_CARETAKER -> MsgSetCaretaker.parseFrom(any.value)
             PrivateMsgs.PROPOSE_REMOVAL -> MsgProposeRemoval.parseFrom(any.value)
             PrivateMsgs.VOTE_REMOVAL -> MsgVoteRemoval.parseFrom(any.value)
-            PrivateMsgs.CLAIM_UNBONDING -> MsgClaimUnbonding.parseFrom(any.value)
             else -> error("fake chain does not know ${any.typeUrl}")
         }
     }
@@ -429,11 +458,11 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 only("dexlp/${m.poolId}")
                 require(m.erthCiphertext.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES && m.tokenCiphertext.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES)
             }
-            is MsgClaimUnbonding -> {
+            is MsgUndelegate -> {
                 only(null)
-                require(m.ciphertext.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES)
-                // Exactly one way to pay: the bundle, or from the output.
-                require((PrivateMsgs.privateFee(m) == 0L) != (m.feeFromOutput == 0L))
+                // The payout's pc and ciphertext (chain 48b631c): checked like any mint.
+                require(m.pc.size() == 32 && !f(m.pc).isZero) { "pc" }
+                require(m.ciphertext.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES) { "the payout needs its 177-byte blind ciphertext" }
             }
             is MsgRegister -> {
                 only(null)
@@ -455,14 +484,13 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     }
 
     /** Whether the msg has the chain mint a stake note to spc_mint (its blind stake ciphertext is then required). */
-    private fun mintsStake(m: MessageLite) = m is MsgDelegate || m is MsgUndelegate || m is MsgUnlockPosition
+    private fun mintsStake(m: MessageLite) = m is MsgDelegate || m is MsgUnlockPosition
 
     /** The stake proof's chain-supplied publics: asset, v_out. */
     private fun stakeStatement(m: MessageLite): Pair<String?, Long> = when (m) {
         is MsgDelegate -> PrivacyWallet.derthDenom(m.validator) to 0L
         is MsgRestake -> PrivacyWallet.derthDenom(m.validator) to 0L
         is MsgUndelegate -> PrivacyWallet.derthDenom(m.validator) to m.amount
-        is MsgClaimUnbonding -> PrivacyWallet.unbondDenom(m.validator, m.epoch) to m.amount
         is MsgLockPosition -> PrivacyWallet.derthDenom(m.validator) to m.amount
         else -> null to 0L
     }
@@ -589,8 +617,20 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     private fun shares(erth: Long, anml: Long): BigInteger =
         minOf(BigInteger.valueOf(erth) * lpSupply / poolErth, BigInteger.valueOf(anml) * lpSupply / poolAnml)
 
+    /** Denoms governance send-disabled (bank SendEnabled false): refused at every pool edge (chain 48b631c, A-L2). */
+    var sendDisabled: Set<String> = emptySet()
+
     /** The action's own checks, before anything is written (atomic with the spend in the ante). */
     private fun precheck(m: MessageLite, rem: Map<String, Long>) {
+        // The ante's release-map check and the module mint (audit 6, A-L2): a
+        // dex note swap and a private delegation release out of the pool.
+        val edges = when (m) {
+            is MsgNoteSwap -> rem.keys + m.denomOut
+            is MsgDelegate -> rem.keys
+            is MsgSend -> rem.keys
+            else -> emptySet()
+        }
+        edges.firstOrNull { it in sendDisabled }?.let { throw IllegalArgumentException("$it transfers are currently disabled: send transactions are disabled") }
         when (m) {
             is MsgNoteSwap -> {
                 val (denomIn, amountIn) = rem.entries.single()
@@ -608,14 +648,23 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             }
             is MsgVoteRemoval -> require(m.optionId in removalBallots) { "no open ballot" }
             is MsgProposeRemoval -> require(m.optionId !in removalBallots) { "ballot already open" }
-            is MsgClaimUnbonding -> require((m.hasBundle()) == (m.feeFromOutput == 0L))
             // Wave 3 (F3): option weights only in their canonical LegacyDec form.
             is MsgStakeVote -> {
                 require(m.optionsList.all { it.weight == PrivateMsgs.legacyDec(it.weight) }) { "a vote weight is not canonical" }
                 val snap = snapshots[m.proposalId] ?: error("no open snapshot for proposal ${m.proposalId}")
                 require(m.weight in 1..Long.MAX_VALUE) { "weight must be positive" }
-                require(m.voteNullifier.size() == 32 && !f(m.voteNullifier).isZero) { "vote_nullifier" }
-                require((m.proposalId to f(m.voteNullifier)) !in voteNullifiers) { "this stake note already voted on this proposal (code 1119)" }
+                // Chain C-L3: at most three significant digits.
+                require(PrivacyWallet.voteWeight(m.weight) == m.weight) { "weight has more than 3 significant digits" }
+                // Chain 48b631c: exactly four slots, used ones first (at least one), distinct, zeros after.
+                require(m.voteNullifiersCount == PrivateMsgs.MAX_VOTE_NOTES) { "a stake vote carries exactly 4 vote nullifiers" }
+                require(m.voteNullifiersList.all { it.size() == 32 }) { "vote_nullifiers" }
+                val vs = m.voteNullifiersList.map(::f)
+                val used = vs.takeWhile { !it.isZero }
+                require(used.isNotEmpty() && vs.drop(used.size).all { it.isZero }) { "used vote nullifiers first, then zeros" }
+                require(used.toSet().size == used.size) { "repeated vote nullifier" }
+                used.firstOrNull { (m.proposalId to it) in voteNullifiers }?.let {
+                    throw IllegalArgumentException("this stake note already voted on this proposal (code 1119): proposal ${m.proposalId}, vote nullifier ${it.toHex().uppercase()}")
+                }
                 require(snap.nfSize >= 0)
             }
             is MsgRegister -> if (m.affiliateHandle.isNotEmpty()) {
@@ -686,8 +735,14 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         require(auth.fee.amountCount == 1 && auth.fee.getAmount(0).denom == "uerth" && auth.fee.getAmount(0).amount == total.toString()) { "declared fee != msg fee" }
         require(total >= minFee) { "below min fee" }
         if (!simulate) require(BigDecimal(total) >= price.multiply(BigDecimal(auth.fee.gasLimit))) { "below min gas price" }
+        // Chain 48b631c (audit 6, A-L1): a private tx's gas_limit is at most 5x the gas it uses.
+        if (!simulate) {
+            val used = gasOf(m)
+            require(auth.fee.gasLimit <= 5 * used) { "gas limit ${auth.fee.gasLimit} exceeds what this private tx uses (${used})" }
+            gasRatios.add(auth.fee.gasLimit.toDouble() / used)
+        }
         val bundles = PrivateMsgs.bundles(m)
-        require(bundles.size in (if (PrivateMsgs.feeFromOutput(m) > 0) 0 else 1)..2) { "bundle count" }
+        require(bundles.size in 1..2) { "bundle count" }
         val rem = remainders(m)
         checkRelease(m, rem)
         val sighash = PrivateMsgs.sighash(m, chainId, txf)
@@ -720,7 +775,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             if (!simulate) {
                 val w = prover.votes.removeFirstOrNull() ?: error("no vote proof")
                 val expect = listOf(snap.root, snap.nfRoot, Privacy.assetId(PrivacyWallet.derthDenom(m.validator)),
-                    Privacy.u64(m.weight), Privacy.u64(m.proposalId), f(m.voteNullifier), sighash)
+                    Privacy.u64(m.weight), Privacy.u64(m.proposalId)) + m.voteNullifiersList.map(::f) + listOf(sighash)
                 require(w.publicInputs() == expect) { "vote proof is for other public inputs" }
             }
         }
@@ -761,7 +816,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             is MsgSend -> if (rem.isNotEmpty()) rem.forEach { (d, v) -> unshielded.getOrPut(m.receiver) { HashMap() }.merge(d, v, Long::plus) }
             is MsgRegister -> {
                 val binding = PrivateMsgs.decimalField(m.publicSignalsList[1])
-                require(binding == PrivateMsgs.registrationBinding(m)) { "binding" }
+                require(binding == PrivateMsgs.registrationBinding(m, chainId)) { "binding" }
                 // Round 2 (R1): a landed binding is never used again.
                 require(usedBindings.add(binding)) { "binding already used (ErrBindingUsed)" }
                 val dsc = PrivateMsgs.decimalField(m.publicSignalsList[3])
@@ -795,15 +850,20 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             is MsgVoteProposal -> votes.add(m.proposalId to m.optionValue)
             is MsgDelegate -> mintStake(PrivacyWallet.derthDenom(m.validator), m.amount * 9 / 10, spcMint!!, stake.spcCiphertext.toByteArray())
             is MsgRestake -> {}
-            is MsgUndelegate -> mintStake(PrivacyWallet.unbondDenom(m.validator, epoch), m.amount * 10 / 9, spcMint!!, stake.spcCiphertext.toByteArray())
-            is MsgClaimUnbonding -> {
-                claimedUnbonds.add(PrivacyWallet.unbondDenom(m.validator, m.epoch))
-                mint("uerth", m.amount - m.feeFromOutput, f(m.pc), m.ciphertext.toByteArray())
+            is MsgUndelegate -> {
+                // Booked at the live rate and queued: the chain pays it at maturity by itself.
+                val id = nextPayoutId++
+                val value = m.amount * 10 / 9
+                unbondPayouts.add(Payout(id, m.validator, value, f(m.pc), m.ciphertext.toByteArray()))
+                events.add("shieldedstaking_undelegate" to mapOf("validator" to m.validator, "derth" to m.amount.toString(),
+                    "value" to value.toString(), "epoch" to epoch.toString(), "payout_id" to id.toString()))
             }
             is MsgStakeVote -> {
-                voteNullifiers.add(m.proposalId to f(m.voteNullifier))
+                val used = m.voteNullifiersList.map(::f).filter { !it.isZero }
+                used.forEach { voteNullifiers.add(m.proposalId to it) }
                 stakeVotes.add(Triple(m.proposalId, m.validator, m.weight))
-                events.add("shieldedstaking_stake_vote" to mapOf("vote_nullifier" to f(m.voteNullifier).toHex()))
+                stakeVoteSlots.add(used.size)
+                events.add("shieldedstaking_stake_vote" to mapOf("vote_nullifiers" to m.voteNullifiersList.joinToString(",") { f(it).toHex() }))
             }
             is MsgNoteSwap -> {
                 val (denomIn, amountIn) = rem.entries.single()

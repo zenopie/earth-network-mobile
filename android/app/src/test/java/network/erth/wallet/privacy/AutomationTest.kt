@@ -1,9 +1,5 @@
 package network.erth.wallet.privacy
 
-import network.erth.wallet.privacy.PrivacyAutomation.Action
-import network.erth.wallet.privacy.PrivacyAutomation.Inputs
-import network.erth.wallet.privacy.note.OwnedStakeNote
-import network.erth.wallet.privacy.zk.Fr
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -13,19 +9,10 @@ class AutomationTest {
     private val now = day * 86_400 + 5 * 3600
 
     /**
-     * Round 5 (user decision): nothing that spends a fee is automatic. The
-     * day's claim, the caretaker vote and the handle are reminders; the one
-     * automatic action is the end of an undelegation the user started.
+     * Round 5, and chain 48b631c (user decision): the wallet sends nothing on
+     * its own. The day's claim, the caretaker vote and the handle are
+     * reminders; an undelegation pays out by itself (nothing to claim).
      */
-    @Test
-    fun onlyMaturedUnbondingClaimsAreAutomatic() {
-        assertTrue(PrivacyAutomation.decide(Inputs(now, emptyList())).isEmpty())
-        val n = stake(3, "unbond/v/1")
-        assertEquals(listOf<Action>(Action.ClaimUnbonding(n.denom)), PrivacyAutomation.decide(Inputs(now, listOf(n.denom))))
-        // The only action kind there is (a sealed interface the JVM lists).
-        assertEquals(listOf("ClaimUnbonding"), Action::class.java.permittedSubclasses.map { it.simpleName })
-    }
-
     @Test
     fun remindersInsteadOfActions() {
         val base = Reminders.Inputs(now, identityLive = true, claimOpensAt = 0, claimedToday = false, caretakerExpiresAt = 0, handle = "", handleEntry = null)
@@ -52,26 +39,23 @@ class AutomationTest {
     }
 
     @Test
-    fun maturityComesFromEpochTimingAlone() {
+    fun payoutTimeComesFromEpochTimingAlone() {
         val day = 86_400L
         val unbonding = 21 * day
-        // Epoch 10 began at t; epoch 9 ended exactly then, epoch 7 at least two epochs earlier.
+        val m = PrivacyWallet.PAYOUT_MARGIN_S
+        // Epoch 10 began at t and ends at t + day.
         val t = 1_800_000_000L
-        assertEquals(t + unbonding + PrivacyAutomation.MATURITY_MARGIN_S, PrivacyAutomation.maturesBy(9, 10, t, day, unbonding))
-        assertEquals(t - 2 * day + unbonding + PrivacyAutomation.MATURITY_MARGIN_S, PrivacyAutomation.maturesBy(7, 10, t, day, unbonding))
-        // The epoch in progress has not been undelegated yet.
-        assertEquals(null, PrivacyAutomation.maturesBy(10, 10, t, day, unbonding))
-
-        val n9 = stake(1, "unbond/v/9")
-        val n10 = stake(2, "unbond/v/10")
-        val by9 = PrivacyAutomation.maturesBy(9, 10, t, day, unbonding)!!
-        assertTrue(PrivacyAutomation.matured(listOf(n9, n10), by9 - 1, 10, t, day, unbonding, emptyMap()).isEmpty())
-        assertEquals(listOf(n9.denom), PrivacyAutomation.matured(listOf(n9, n10), by9, 10, t, day, unbonding, emptyMap()))
-        // A claim the chain refused waits out its retry.
-        assertTrue(PrivacyAutomation.matured(listOf(n9), by9, 10, t, day, unbonding, mapOf("unbond/v/9" to by9 + 1)).isEmpty())
-        // Spent or pending notes are never claimed twice.
-        assertTrue(PrivacyAutomation.matured(listOf(n9.copy(pendingAt = 1)), by9, 10, t, day, unbonding, emptyMap()).isEmpty())
+        // Booked in the epoch in progress: it ends with it, then unbonds.
+        assertEquals(t + day + unbonding + m, PrivacyWallet.unbondDueBy(10, 10, t, t + day, day, unbonding))
+        // A late epoch end (the end time passed): at least one epoch from its start.
+        assertEquals(t + day + unbonding + m, PrivacyWallet.unbondDueBy(10, 10, t, t, day, unbonding))
+        // An ended epoch: 9 ended at t, 7 at least two epochs earlier.
+        assertEquals(t + unbonding + m, PrivacyWallet.unbondDueBy(9, 10, t, t + day, day, unbonding))
+        assertEquals(t - 2 * day + unbonding + m, PrivacyWallet.unbondDueBy(7, 10, t, t + day, day, unbonding))
+        // Chain-supplied numbers never wrap.
+        assertEquals(null, PrivacyWallet.unbondDueBy(0, Long.MAX_VALUE, 0, 0, Long.MAX_VALUE, 0))
+        assertEquals(null, PrivacyWallet.unbondDueBy(1, 1, Long.MAX_VALUE, Long.MAX_VALUE, 1, Long.MAX_VALUE))
+        assertEquals(null, PrivacyWallet.unbondDueBy(-1, 3, 0, 1, 1, 1))
+        assertEquals(null, PrivacyWallet.unbondDueBy(1, 3, 0, 1, 0, 1))
     }
-
-    private fun stake(pos: Long, denom: String) = OwnedStakeNote(pos, 1, denom, 5, Fr.ONE, Fr.ONE, Fr.ONE, Fr.ONE)
 }

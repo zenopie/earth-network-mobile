@@ -164,7 +164,7 @@ class HandlesTest {
         val prep = register(chain, b, passport = "222", referrer = PrivacyWallet.Referrer(res.entry.handle, res.address))
         // The binding commits to the handle alone (chain 203d3b2): the chain makes the referral note.
         assertEquals(
-            Privacy.registrationBinding(b.keys.idc, prep.anml.pc, prep.anml.ciphertext, prep.erth.pc, prep.erth.ciphertext, Privacy.affiliateField("alice")),
+            Privacy.registrationBinding(chain.chainId, b.keys.idc, prep.anml.pc, prep.anml.ciphertext, prep.erth.pc, prep.erth.ciphertext, Privacy.affiliateField("alice")),
             prep.binding,
         )
         // Minted to the handle's owner_pk with the opening derived from the passport nullifier and the leaf.

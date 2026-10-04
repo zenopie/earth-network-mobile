@@ -386,74 +386,30 @@ class ReauditFixesTest {
         return a
     }
 
-    private fun <T> await(flow: kotlinx.coroutines.flow.StateFlow<T>, cond: (T) -> Boolean): T = kotlinx.coroutines.runBlocking {
-        kotlinx.coroutines.withTimeout(60_000) { flow.first { cond(it) } }
-    }
-
     /**
-     * K5, through the UI's own entry point (StakeVoteController, what the
-     * proposal screen's confirm runs): notes and position votes shuffled,
-     * one at a time, a sync and a 20-120 s pause between each, progress
-     * reported, the persisted run cleared at the end.
+     * K5, as the chain now takes it (48b631c): one vote per validator and one
+     * per position, each its own tx the user confirms; nothing is cast in the
+     * background. A validator voted once is not voted again.
      */
     @Test
-    fun stakeVotesFromTheUiAreSpacedOut() {
+    fun stakeVotesAreOneTxPerValidatorAndPosition() {
         val chain = FakeChain()
         val a = staked(chain)
-        val pauses = java.util.Collections.synchronizedList(ArrayList<Long>())
-        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default)
-        val c = StakeVoteController(scope, { a }, pause = { pauses.add(it) })
-        val before = chain.height
-        val first = c.startAndAwaitFirst(12, yes)
-        assertTrue(first.matches(Regex("[0-9A-F]{64}")))
-        val p = await(c.progress) { it?.finished == true }!!
-        assertEquals(3, p.total)
-        assertEquals(3, p.done)
-        assertEquals(2, chain.stakeVotes.size)
-        assertEquals(1, chain.positionVotes.size)
-        assertEquals(2, pauses.size)
-        assertTrue(pauses.all { it in StakeVoteController.VOTE_PAUSE_MIN_MS..StakeVoteController.VOTE_PAUSE_MAX_MS })
-        // Separate blocks: each cast laid out after a sync saw the last.
-        assertEquals(before + 3, chain.height)
-        assertEquals(null, a.store.state.stakeVoteRun)
-    }
-
-    /** K5: cancelled while it waits, nothing more is cast and nothing is resumed. */
-    @Test
-    fun stakeVoteCanBeCancelled() {
-        val chain = FakeChain()
-        val a = staked(chain)
-        val waiting = kotlinx.coroutines.CompletableDeferred<Unit>()
-        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default)
-        val c = StakeVoteController(scope, { a }, pause = { waiting.complete(Unit); kotlinx.coroutines.awaitCancellation() })
-        c.startAndAwaitFirst(12, yes)
-        kotlinx.coroutines.runBlocking { waiting.await() }
-        assertTrue(c.progress.value!!.nextAt != null)
-        c.cancel()
-        val p = await(c.progress) { it?.cancelled == true }!!
-        assertEquals(1, p.done)
-        assertEquals(1, chain.stakeVotes.size + chain.positionVotes.size)
-        assertEquals(null, a.store.state.stakeVoteRun)
-    }
-
-    /** K5: a run the process lost resumes on unlock, never voting a position twice. */
-    @Test
-    fun stakeVoteResumesAfterAKill() {
-        val chain = FakeChain()
-        val a = staked(chain)
-        val pos = a.positions().single()
-        a.positionVote(pos.first, pos.second, 12, yes)
         a.sync()
-        a.store.state.stakeVoteRun = network.erth.wallet.privacy.sync.StakeVoteRun(12, listOf(1 to "1"), setOf(pos.first.id), 3, 1)
-        a.store.save()
-        val pauses = java.util.Collections.synchronizedList(ArrayList<Long>())
-        val c = StakeVoteController(kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default), { a }, pause = { pauses.add(it) })
-        c.resume()
-        val p = await(c.progress) { it?.finished == true }!!
-        assertEquals(3, p.done)
-        assertEquals(1, chain.positionVotes.size)
+        val items = a.stakeVoteItems(12)
+        assertEquals(3, items.size)
+        assertEquals(2, items.count { it is PrivacyWallet.StakeVoteItem.Validator })
+        val before = chain.height
+        for (item in items) {
+            org.junit.Assert.assertNotNull(a.castStakeVote(12, item, yes))
+            a.sync()
+        }
         assertEquals(2, chain.stakeVotes.size)
-        assertEquals(2, pauses.size)
+        assertEquals(1, chain.positionVotes.size)
+        assertEquals(before + 3, chain.height)
+        // Final: the validators' notes have voted.
+        assertEquals(null, a.castStakeVote(12, items.first(), yes))
+        assertEquals(2, chain.stakeVotes.size)
     }
 
     /** Info: a claim for day 0 is refused (iOS trapped on the underflow). */

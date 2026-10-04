@@ -118,11 +118,14 @@ class ZkVectorsTest {
         assertEquals(d.getString("pc"), pc.toHex())
         assertEquals(d.getString("cm"), Privacy.cm(Privacy.assetId("uanml"), 1_000_000, pc).toHex())
         assertEquals(d.getString("nf"), Privacy.nf(nk, rho, 4_000_000_000).toHex())
-        assertEquals(d.getString("reg_none"), Privacy.registrationBinding(idc, fe(1), "anml".toByteArray(), fe(2), "erth".toByteArray(), Fr.ZERO).toHex())
-        // The chain's pinned vector (zk/privacy TestRegistrationBindingPinned).
-        assertEquals("20ce5fccf5e6e20a8a7b80f7565e41a7c73dbb16ac5e53746e7234ba8b305b0c", d.getString("reg_pinned"))
+        assertEquals(d.getString("reg_none"), Privacy.registrationBinding("earth-1", idc, fe(1), "anml".toByteArray(), fe(2), "erth".toByteArray(), Fr.ZERO).toHex())
+        // The chain's pinned vector (zk/privacy TestRegistrationBindingPinned; the chain id since audit 6, B6-4).
+        assertEquals("148b3513a501b6ff9c02314f355cb83fb544e22b2a9df79552fe49c944424159", d.getString("reg_pinned"))
         assertEquals(d.getString("reg_pinned"),
-            Privacy.registrationBinding(Fr.of(1), Fr.of(2), "anml".toByteArray(), Fr.of(3), "erth".toByteArray(), Fr.ZERO).toHex())
+            Privacy.registrationBinding("earth-1", Fr.of(1), Fr.of(2), "anml".toByteArray(), Fr.of(3), "erth".toByteArray(), Fr.ZERO).toHex())
+        // Another network's binding differs: a registration does not replay across chains.
+        assertEquals(d.getString("reg_testnet"),
+            Privacy.registrationBinding("earth-testnet-1", Fr.of(1), Fr.of(2), "anml".toByteArray(), Fr.of(3), "erth".toByteArray(), Fr.ZERO).toHex())
         // The stake tree.
         val spc = Privacy.stakePc(opk, rho, rcm)
         assertEquals(d.getString("spc"), spc.toHex())

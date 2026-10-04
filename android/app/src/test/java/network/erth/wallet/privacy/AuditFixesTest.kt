@@ -118,7 +118,8 @@ class AuditFixesTest {
         a.undelegate(validator, 200_000)
         a.sync()
         assertTrue(a.balances().keys.containsAll(listOf("uerth", "uanml", "dexlp/1", PrivacyWallet.derthDenom(validator))))
-        assertTrue(a.unbondDenoms().isNotEmpty())
+        // The undelegation waits for its payout (no claim note any more).
+        assertEquals(1, a.pendingUnbonds.size)
 
         val restored = wallet(chain)
         restored.sync()
