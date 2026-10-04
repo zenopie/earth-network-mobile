@@ -53,7 +53,7 @@ class ZkVectorsTest {
     }
 
     /**
-     * Chain 203d3b2: the referral note's opening the chain derives
+     * The referral note's opening the chain derives
      * (zk/privacy.ReferralOpening) and the pc / cm a handle owner's wallet
      * recomputes from the mint row (5 ERTH to OwnerPK(7100+i)).
      */
@@ -131,7 +131,7 @@ class ZkVectorsTest {
         assertEquals(d.getString("spc"), spc.toHex())
         val derthAsset = Privacy.assetId("derth/earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq")
         assertEquals(d.getString("stake_cm"), Privacy.stakeCm(derthAsset, 1_800_000, spc, Fr.ZERO).toHex())
-        // Slash labels and the debt tree's leaves (chain dff3a9b), and zk/debt TestNoirParity's pins (= Noir test_go_parity_debt).
+        // Slash labels and the debt tree's leaves, and zk/debt TestNoirParity's pins (= Noir test_go_parity_debt).
         val label = Privacy.stakeLabel(fe(1009), 1_790_000_000, 400_000)
         assertEquals(d.getString("stake_label"), label.toHex())
         assertEquals(d.getString("stake_cm_labelled"), Privacy.stakeCm(derthAsset, 1_800_000, spc, label).toHex())

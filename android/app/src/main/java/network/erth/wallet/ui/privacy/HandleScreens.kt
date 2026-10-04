@@ -141,7 +141,7 @@ fun HandleScreen(
                     EarthDetailRow("Expires", date(e.expiresAt))
                     EarthDetailRow("Renewable until", date(e.renewalUntil))
                     if (st == HandleEntry.RENEWAL) {
-                        // Chain 203d3b2: past expiry, a renewal is bounded like a claim, and the handle cannot be moved.
+                        // Past expiry, a renewal is bounded like a claim, and the handle cannot be moved.
                         val claimFrom = if (state.predecessorAt > 0) Handles.satAdd(Handles.satAdd(state.predecessorAt, state.handleLeaseSeconds), 86_400 + 3_600) else 0L
                         Spacer(Modifier.height(dimens.space8))
                         Note(
@@ -338,7 +338,7 @@ fun SwitchIdentityScreen(
         val unrecorded = outgoing.any { !it.recorded }
         val handleMoved = state?.handleMovedOut == true
         val voteMoved = state?.caretakerMovedOut == true
-        // Chain 203d3b2: only a live handle moves (not one in its renewal period).
+        // Only a live handle moves (not one in its renewal period).
         val handleInRenewal = state?.handleEntry?.let { it.statusAt(now) == HandleEntry.RENEWAL } == true
         val holdsHandle = state?.handle?.isNotEmpty() == true && !handleInFlight && !handleInRenewal
         val holdsVote = !voteInFlight && (state?.caretakerExpiresAt ?: 0L) > now &&

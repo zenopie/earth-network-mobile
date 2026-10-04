@@ -55,9 +55,8 @@ import network.erth.wallet.passport.PassportSession
  * dispatch has to be the one on top when the passport touches the phone.
  * Everything else here would happily be a route.
  *
- * It finishes back to whatever launched it. The old flow pushed fragments into
- * HostActivity, so backing out of the scanner landed in the old app's shell
- * rather than where the person started — which is the bug this replaces.
+ * It finishes back to whatever launched it, so backing out of the scanner
+ * lands where the person started.
  */
 class RegistrationActivity : ComponentActivity() {
 

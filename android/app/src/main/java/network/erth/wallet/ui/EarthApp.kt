@@ -253,12 +253,10 @@ fun EarthApp(
                     balancesVisible = balancesVisible,
                     onToggleBalances = { balancesVisible = !balancesVisible },
                     onSettings = { nav.push(EarthRoute.Settings) },
-                    // Wallet only. Earn had it too, but balancesVisible is read
-                    // by HomeScreen alone, so the eye there toggled state that
-                    // masked nothing.
+                    // Wallet only: balancesVisible is read by HomeScreen alone,
+                    // so an eye elsewhere would toggle state that masks nothing.
                     showsBalances = route == EarthRoute.Wallet,
-                    // No tab carries an action any more. Swap had one for
-                    // liquidity; pools live on Earn now, behind a selector.
+                    // No tab carries an action (pools live on Earn, behind a selector).
                     tabAction = null,
                 )
                 else -> EarthDetailTopBar(title = route.title(), onBack = { nav.pop() })
@@ -363,10 +361,8 @@ fun EarthApp(
         }
     }
 
-    // The free-gas gate. It hung off TxFlow before, so it applies to every
-    // transaction from an underfunded account rather than only to
-    // registration — which matters because registration is not necessarily
-    // the first thing a new human tries.
+    // The sheets for every transaction. Their "get gas" action only explains
+    // that free gas comes with registration (TxController.requestGas).
     TxSheets(
         controller = tx,
         balanceUerth = state?.balanceUerth ?: 0L,
@@ -374,11 +370,8 @@ fun EarthApp(
         onGetGas = {
             val address = state?.address
             if (!address.isNullOrEmpty()) {
-                // The grant lands as a bank send from the gas wallet, and that
-                // send has to make it into a block — so the balance is polled,
-                // not read once. A single refresh here always ran before the
-                // grant existed, which left the sheet insisting the account was
-                // unfunded after the gas had arrived.
+                // requestGas ignores these arguments: it only sets the
+                // explanation the sheet shows (no grant is asked for here).
                 tx.requestGas(
                     address = address,
                     fetchBalance = {
@@ -388,8 +381,6 @@ fun EarthApp(
                             }.getOrDefault(0L)
                         }
                     },
-                    // Bring the rest of the UI in line once it lands; the
-                    // sheet reads its balance from this view model.
                     onFunded = { wallet.refresh() },
                 )
             }

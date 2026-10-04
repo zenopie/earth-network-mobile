@@ -119,7 +119,7 @@ object SecureWalletManager {
      * Validate a BIP-39 mnemonic: every word in the list, and the checksum.
      *
      * Deriving a key is not a check. BIP-32 turns any string into a seed, so a
-     * single mistyped word used to import cleanly as a different, empty wallet
+     * single mistyped word would import cleanly as a different, empty wallet
      * — indistinguishable from funds having vanished. The checksum is what
      * catches that.
      */

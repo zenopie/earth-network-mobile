@@ -49,8 +49,8 @@ interface PrivacyIndexer {
         throw UnsupportedOperationException("this indexer serves no handle directory")
     /**
      * The slash debt tree, whole, by leaf index (rows from leaf 1, each with
-     * its latest retained), its size and root as the indexer synced them
-     * (chain dff3a9b). The wallet checks the rebuilt root against the
+     * its latest retained), its size and root as the indexer synced them.
+     * The wallet checks the rebuilt root against the
      * chain's own Query/DebtTree before using a row.
      */
     fun debtRows(fromIndex: Long, limit: Int): DebtRowsPage =
@@ -112,8 +112,8 @@ data class LatestRoots(val note: RootRecord?, val identity: RootRecord?, val syn
 
 /**
  * A stake tree leaf: every one a stake proof's output with its 201-byte
- * wallet stake ciphertext (chain dff3a9b: the chain mints no stake note, so
- * no row has a public denom, amount or pc any more).
+ * wallet stake ciphertext (the chain mints no stake note, so no row has a
+ * public denom, amount or pc).
  */
 data class StakeNoteRow(
     val position: Long,
@@ -379,7 +379,7 @@ class HttpPrivacyIndexer(
             return StakeSnapshotsPage(rows, j.getLong("next_height"), j.getBoolean("complete"), j.getLong("synced_height"))
         }
 
-        /** The notes stream format this wallet reads (backend README "Note stream format 2", chain 203d3b2). */
+        /** The notes stream format this wallet reads (backend README "Note stream format 2"). */
         const val NOTE_FORMAT = 2
         private val NOTE_FIELDS = listOf("position", "height", "cm", "ciphertext", "amount", "owner_pk", "rho", "rcm")
 

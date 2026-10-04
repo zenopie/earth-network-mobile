@@ -325,7 +325,7 @@ class WalletFlowTest {
 
         // Unstake (the note, change back as a created stake note): the msg
         // names a pool note of ours; at maturity the chain pays it there by
-        // itself (chain 48b631c), and the wallet sends nothing more.
+        // itself, and the wallet sends nothing more.
         a.sync()
         a.undelegate(validator, 1_000_000)
         a.sync()
@@ -353,7 +353,7 @@ class WalletFlowTest {
 
     /**
      * Any number of notes: a payment spending 15 small notes in one bundle
-     * (the old circuit's 3-note limit is gone), a multi-asset bundle, Max
+     * (no per-bundle note limit below max_actions), a multi-asset bundle, Max
      * unshielding every note a bundle carries with the fee from the amount,
      * and merge only past max_actions_per_bundle.
      */

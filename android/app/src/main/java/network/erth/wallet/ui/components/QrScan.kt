@@ -9,7 +9,7 @@ import com.journeyapps.barcodescanner.ScanOptions
 /**
  * Scan a QR code, and hand back the address inside it.
  *
- * Wraps the ZXing activity the old app already depended on rather than building
+ * Wraps the ZXing capture activity rather than building
  * a CameraX preview: this is a one-shot capture with no UI of its own to speak
  * of, and the permission prompt, the torch, the orientation handling and the
  * decode loop all come with it.

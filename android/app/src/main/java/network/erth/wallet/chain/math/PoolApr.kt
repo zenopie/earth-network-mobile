@@ -49,16 +49,10 @@ object AprMath {
     /**
      * The pool's 14-day-weighted volume, in real uerth.
      *
-     * A read, not a calculation. This used to reproduce the chain's decay
-     * client-side, and the chain stopped decaying: it scales new volume by a
-     * chain-wide index instead, so the stored figure carried a multiplier that
-     * grew 7.7% a day forever. Nothing here divided it out, and the fee APR
-     * inflated with it — right by accident on day one, out by 18x within a
-     * month.
-     *
-     * The chain now de-scales it before returning it, so there is nothing left
-     * to mirror. Reimplementing chain arithmetic in a client is what caused the
-     * drift; not having any to reimplement is the fix.
+     * A read, not a calculation: the chain scales stored volume by a
+     * chain-wide index and de-scales it before returning it, so there is
+     * nothing to mirror. Reimplementing that arithmetic here would drift from
+     * the chain's (the stored figure's multiplier grows 7.7% a day).
      */
     fun volumeErth(pool: Dex.Pool): BigInteger =
         pool.volumeErth.toBigIntegerOrNull() ?: BigInteger.ZERO

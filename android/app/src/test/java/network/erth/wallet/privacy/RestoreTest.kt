@@ -102,7 +102,7 @@ class RestoreTest : WalletTest() {
         a.undelegate(validator, 200_000)
         a.sync()
         assertTrue(a.balances().keys.containsAll(listOf("uerth", "uanml", "dexlp/1", PrivacyWallet.derthDenom(validator))))
-        // The undelegation waits for its payout (no claim note any more).
+        // The undelegation waits for its payout (nothing to claim).
         assertEquals(1, a.pendingUnbonds.size)
 
         val restored = wallet(chain)

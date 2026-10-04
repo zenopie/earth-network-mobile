@@ -20,12 +20,8 @@ import network.erth.wallet.wallet.SecureWalletManager
 /**
  * One path for every transaction: confirm, broadcast, report.
  *
- * The Compose successor to TxFlow, and it exists for the same reason: before
- * TxFlow each screen broadcast on its own and reported the outcome in a pair of
- * toasts, so nobody could see what they were about to sign or read why it
- * failed. Keeping that in one place is also what makes the gas gate universal —
- * any transaction from an underfunded account offers free gas, not just
- * registration.
+ * One place, so every transaction shows what is about to be signed before it
+ * is, and why it failed when it does; no screen broadcasts on its own.
  *
  * The screens never touch this directly. A screen raises intent ("stake 100"),
  * its view model turns that into messages and hands them here; the sheets are
@@ -52,7 +48,7 @@ class TxController : ViewModel() {
     var awaitingGas: Boolean by mutableStateOf(false)
         private set
 
-    /** Why the backend or Play refused the last request for gas. */
+    /** Why no gas can be had here (see [requestGas]). */
     var gasError: String? by mutableStateOf(null)
         private set
 
@@ -82,15 +78,10 @@ class TxController : ViewModel() {
         build: (Context) -> List<ProtoAny>,
     ) {
         // The fee comes from the gas limit and nowhere else, and the sheet is
-        // shown the same number that will be broadcast.
-        //
-        // It used to be passed twice — once in `details` for the sheet, once
-        // here for the broadcast — and the two drifted. Claiming rewards
-        // scales its gas by validator count but declared the flat default fee,
-        // so with a balance between the two the sheet said "funded", never
-        // offered free gas, and the transaction was then rejected by
-        // the node for insufficient fee. Making it impossible to state twice is
-        // the fix; correcting the one call site would only have postponed it.
+        // shown the same number that will be broadcast. A fee stated
+        // separately for the sheet and the broadcast can drift (a gas limit
+        // that scales, say, by validator count under a flat fee): the sheet
+        // would say "funded" and the node would reject the tx.
         val fee = feeFor(gasLimit)
 
         this.build = build
@@ -208,8 +199,9 @@ class TxController : ViewModel() {
          * A private tx's gas for the confirm sheet: what the sheet shows is
          * the most the tx may then pay without asking again (a
          * higher simulated fee shows the sheet again at it). Two actions
-         * (4.7M at x/shielded's defaults), a stake or membership proof
-         * (2.6M), the tx's bytes and the 10% headroom fit under it.
+         * (4.7M at x/shielded's defaults), a stake proof (3.15M) or a
+         * membership proof (2.15M), the tx's bytes and the 10% headroom fit
+         * under it (PrivateTxEngine's gas schedule).
          */
         const val PRIVATE_GAS_ESTIMATE = 10_000_000L
 
@@ -233,12 +225,11 @@ class TxController : ViewModel() {
         /**
          * What a "max" button leaves behind so the account can still act.
          *
-         * Subtracting one minimum fee is not enough. Staking the maximum used
-         * to leave exactly [DEFAULT_FEE_UERTH] — one 400,000-gas transaction
-         * and nothing more — so the very next thing a staker wants to do,
-         * claiming rewards, needed 2,750 against a 2,000 balance and was
-         * unaffordable the moment it was offered. The position was staked and
-         * the account was stranded.
+         * Subtracting one minimum fee is not enough: staking the maximum would
+         * leave exactly [DEFAULT_FEE_UERTH] — one 400,000-gas transaction and
+         * nothing more — so the next thing a staker wants to do, claiming
+         * rewards across validators, would be unaffordable and the account
+         * stranded.
          *
          * A million gas covers the realistic follow-ups: claim across a few
          * validators, then unstake. At 0.005uerth that is 5,000 uerth — small

@@ -14,8 +14,8 @@ import kotlin.concurrent.thread
  * Registers the full BouncyCastle JCE provider at the top of the provider list.
  * Android ships a stripped-down "BC" provider that lacks algorithms jMRTD needs
  * for the passport BAC/PACE handshake (3DES + ISO-9797 retail MAC), so we replace
- * it with the bundled `bcprov` before any crypto runs. (This was previously done
- * transitively by a since-removed dependency; passport reading needs it.)
+ * it with the bundled `bcprov` before any crypto runs. Nothing else installs
+ * it, and passport reading needs it.
  */
 class App : Application() {
     override fun onCreate() {

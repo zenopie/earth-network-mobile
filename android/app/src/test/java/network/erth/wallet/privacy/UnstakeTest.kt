@@ -33,7 +33,7 @@ class UnstakeTest : WalletTest() {
         val m = chain.lastMsg as network.erth.earth.proto.shieldedstaking.MsgUndelegate
         assertEquals(32, m.pc.size())
         assertEquals(network.erth.wallet.privacy.note.NoteCipher.BLIND_CIPHERTEXT_BYTES, m.ciphertext.size())
-        // Chain dff3a9b: lane A's output (the change) with its 201-byte ciphertext; no credit lane.
+        // Lane A's output (the change) with its 201-byte ciphertext; no credit lane.
         assertEquals(network.erth.wallet.privacy.note.NoteCipher.STAKE_CIPHERTEXT_BYTES, m.stake.ciphertext.size())
         assertTrue(Fr.fromBytes(m.stake.creditCommitment.toByteArray()).isZero && m.stake.creditCiphertext.isEmpty)
         // The change is the proof's own output; nothing minted into the stake tree.

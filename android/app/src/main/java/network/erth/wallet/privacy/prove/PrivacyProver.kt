@@ -29,7 +29,7 @@ object PrivacyProver {
         // Every kind asks the same SRS: bb honours only a process's first SRS
         // initialization, so whichever proves first sizes it for all four.
         // The hint must be at least the largest circuit's dyadic size: vote
-        // (21,716 gates with two labelled slots, chain dff3a9b) is a 2^15
+        // (21,716 gates with two labelled slots) is a 2^15
         // circuit; membership 5,659, action 8,098 and stake 16,242 are 2^14.
         // The bundled 2^15 + 1 points cover them all.
         MEMBERSHIP("membership", SRS_SIZE, 8),

@@ -100,7 +100,7 @@ class PrivateTxTest : WalletTest() {
         val a = wallet(chain, alice)
         mintTo(chain, a, "uerth", 500_000)
         a.sync()
-        // As a mark the old code made against an inflated tip, for a tx the node never relayed.
+        // A mark an older version made against an inflated tip, for a tx the node never relayed.
         val n = a.store.state.notes[0]
         a.store.state.notes[0] = n.copy(pendingAt = chain.now, pendingUntil = 1_000_000_000_000_050L, pendingTx = "AB".repeat(32))
         a.sync()

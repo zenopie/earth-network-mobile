@@ -172,7 +172,7 @@ class IdentitySwitchTest : WalletTest() {
         val e = runCatching { a.moveHandle(a.newOwner(bKeys, Privacy.handleScope()), bKeys, CheckingRecorder(cStore, { chain.now }, "c")) }.exceptionOrNull()
         assertTrue("$e", e is IllegalStateException && e.message!!.contains("already holds"))
         assertEquals(sent, chain.txs.size)
-        // A target fixed by the old code with no move behind it is freed.
+        // A target fixed in an older store with no move behind it is freed.
         a.store.state.switchTarget = "stale"
         a.resolvePendingMoves()
         assertEquals("", a.store.state.switchTarget)

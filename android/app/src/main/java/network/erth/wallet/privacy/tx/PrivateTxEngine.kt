@@ -235,8 +235,8 @@ class PrivateTxEngine(
      * The chain's wallet format rules, checked before broadcast: every
      * action's output ciphertext exactly 217 bytes (dummies too); a stake
      * proof's every field 32 bytes, exactly two lane A nullifiers, and a
-     * 201-byte wallet stake ciphertext exactly for each non-zero commitment
-     * (chain dff3a9b); debt_root zero exactly when clear_before is 0.
+     * 201-byte wallet stake ciphertext exactly for each non-zero
+     * commitment; debt_root zero exactly when clear_before is 0.
      */
     private fun checkShape(msg: MessageLite) {
         for (b in PrivateMsgs.bundles(msg)) for (a in b.actionsList) {
@@ -378,14 +378,14 @@ class PrivateTxEngine(
          * A stake proof: its proof (2,000,000), two note writes per lane A
          * nullifier slot and one for its output (the indexed nullifier tree
          * rewrites two paths an insert), and the msg's base (at most 400,000;
-         * chain dff3a9b PrivateActionGas).
+         * the chain's PrivateActionGas).
          */
         const val STAKE_GAS = 3_150_000L
         /** A credit lane's (a redelegation's) writes, and MsgRedelegate's base beyond [STAKE_GAS]'s (700,000). */
         const val CREDIT_GAS = 3 * 150_000L + 300_000L
         /**
          * MsgRedelegate's gas for the (src, dst) pair's x/staking record at
-         * its worst (chain b46a4bb redelegateGas): 2,500 an entry read and
+         * its worst (the chain's redelegateGas): 2,500 an entry read and
          * written, 2,500 more each while the pair is at its 1,024-entry cap,
          * and 128 re-filed moves at 20,000. Simulation prices the real record;
          * this keeps the cap above it without asking the node about the
@@ -395,7 +395,7 @@ class PrivateTxEngine(
         /**
          * A stake vote's fixed part: gasVote (250,000) and its proof; the
          * chain adds a note write for the vote and one per used vote
-         * nullifier (chain 48b631c: gasVote + proof + (1 + used) x note_gas).
+         * nullifier (gasVote + proof + (1 + used) x note_gas).
          */
         const val VOTE_GAS = 2_250_000L
         /** A membership proof and its nullifier write. */
@@ -404,7 +404,7 @@ class PrivateTxEngine(
         const val NOTE_GAS = 150_000L
         /**
          * MsgBindHandle's writes beyond the one in [MEMBERSHIP_GAS]: the chain
-         * prices a bind as nine note writes (chain 203d3b2).
+         * prices a bind as nine note writes.
          */
         const val BIND_HANDLE_EXTRA_GAS = 8 * NOTE_GAS
         /** MsgRegister: the passport proof (3,000,000), the DSC chain (300,000) and two minted notes. */

@@ -65,7 +65,7 @@ object SwapMath {
     }
 
     /**
-     * The chain's feeOf (chain 203d3b2: rounded up, so a small
+     * The chain's feeOf (rounded up, so a small
      * swap cannot pay nothing):
      * LegacyDec(amount).Mul(fee).Quo(100).Ceil().TruncateInt(). Mul is exact
      * for an 18-place fee; Quo rounds its 18th place half-even

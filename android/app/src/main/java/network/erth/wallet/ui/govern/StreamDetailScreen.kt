@@ -43,9 +43,8 @@ private enum class Lens { Actual, Preferred }
  * differ, and the gap between them is the only measure of whether a vote
  * changed anything.
  *
- * Restores the pair of pie charts the old CaretakerFund and DeflationFund
- * screens had, which the first Compose pass replaced with a single stacked bar
- * showing only your own split.
+ * Two pie charts, not one bar of your own split: the comparison is the
+ * point.
  */
 @Composable
 fun StreamDetailScreen(

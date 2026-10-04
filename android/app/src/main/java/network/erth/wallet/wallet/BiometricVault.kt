@@ -162,10 +162,9 @@ object BiometricVault {
             return
         } catch (e: Exception) {
             // Anything else — a Keystore daemon hiccup, a locked secure element
-            // straight after boot — says nothing about the key. It used to be
-            // treated like an enrolment change and wiped biometric unlock, so
-            // one transient error sent the user to their PIN for good. Refuse
-            // this attempt and keep the slot.
+            // straight after boot — says nothing about the key. Treating it
+            // like an enrolment change would wipe biometric unlock over one
+            // transient error. Refuse this attempt and keep the slot.
             onResult(null)
             return
         }

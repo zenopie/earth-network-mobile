@@ -109,7 +109,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     val stakeNullifiers = LinkedHashMap<Fr, Long>()
     /** The stake nullifier indexed tree's values in insertion order (leaf i + 1), ORCHARD_DESIGN 15. */
     val stakeNfValues = ArrayList<Fr>()
-    /** Every stake root the chain recorded (the empty tree's at the first block, chain dff3a9b). */
+    /** Every stake root the chain recorded (the empty tree's at the first block). */
     val stakeRoots = HashSet<Fr>()
     /** Proposal snapshots: note root and size, nullifier tree root and size (sentinel included), block. */
     data class Snap(val proposalId: Long, val root: Fr, val treeSize: Long, val nfRoot: Fr, val nfSize: Long, val height: Long)
@@ -173,7 +173,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     /** Referral notes minted (handle, pc). */
     val referralNotes = ArrayList<Pair<String, Fr>>()
     val referralPositions = ArrayList<Long>()
-    /** Undelegations waiting for their payout (chain 48b631c): id, validator, value, pc, ciphertext. */
+    /** Undelegations waiting for their payout: id, validator, value, pc, ciphertext. */
     data class Payout(val id: Long, val validator: String, val value: Long, val pc: Fr, val ct: ByteArray)
     val unbondPayouts = ArrayList<Payout>()
     var nextPayoutId = 1L
@@ -182,7 +182,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     /** The fake's epoch and derth rate (uerth per derth = 10/9 at delegation: 9/10 minted). */
     val epoch = 4L
 
-    // ---- x/shieldedstaking books, moves and the slash debt (chain dff3a9b) ----
+    // ---- x/shieldedstaking books, moves and the slash debt ----
 
     /** Each validator's live book (backing, supply): rate 10/9 uerth per derth unless a test sets one. */
     val books = HashMap<String, Pair<BigInteger, BigInteger>>()
@@ -404,7 +404,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         return gasOf(m)
     }
 
-    /** What the fake's ante charges [m]: its shape alone (a vote: gasVote + proof + (1 + used) x note, chain 48b631c). */
+    /** What the fake's ante charges [m]: its shape alone (a vote: gasVote + proof + (1 + used) x note). */
     fun gasOf(m: MessageLite): Long {
         val actions = PrivateMsgs.bundles(m).sumOf { it.actionsCount }
         val vote = if (m is MsgStakeVote) 2_250_000L + (1L + m.voteNullifiersList.count { !f(it).isZero }) * 150_000L else 0L
@@ -550,14 +550,14 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             }
             is MsgUndelegate -> {
                 only(null)
-                // The payout's pc and ciphertext (chain 48b631c): checked like any mint.
+                // The payout's pc and ciphertext: checked like any mint.
                 require(m.pc.size() == 32 && !f(m.pc).isZero) { "pc" }
                 require(m.ciphertext.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES) { "the payout needs its 177-byte blind ciphertext" }
             }
             is MsgRegister -> {
                 only(null)
                 require(m.ciphertextAnml.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES && m.ciphertextErth.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES)
-                // The referral is the handle alone (chain 203d3b2); the chain makes its note.
+                // The referral is the handle alone; the chain makes its note.
                 if (m.affiliateHandle.isNotEmpty()) require(network.erth.wallet.privacy.handles.Handles.valid(m.affiliateHandle)) { "affiliate_handle" }
             }
             is MsgBindHandle -> {
@@ -699,7 +699,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     private fun shares(erth: Long, anml: Long): BigInteger =
         minOf(BigInteger.valueOf(erth) * lpSupply / poolErth, BigInteger.valueOf(anml) * lpSupply / poolAnml)
 
-    /** Denoms governance send-disabled (bank SendEnabled false): refused at every pool edge (chain 48b631c). */
+    /** Denoms governance send-disabled (bank SendEnabled false): refused at every pool edge. */
     var sendDisabled: Set<String> = emptySet()
 
     /** The action's own checks, before anything is written (atomic with the spend in the ante). */
@@ -732,7 +732,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 val (bA, sA) = book(m.srcValidator)
                 val u = BigInteger.valueOf(m.amount) * bA / sA
                 require(u >= BigInteger.valueOf(minDelegation)) { "the redelegation is worth less than the minimum (code 1103)" }
-                // What arrives (chain b46a4bb): pro rata out of the queue and the
+                // What arrives: pro rata out of the queue and the
                 // bonded stake, up to bondedDust + a truncated uerth short of u; all
                 // of it only out of an unbonded source's queue.
                 val q = queues[m.srcValidator] ?: BigInteger.ZERO
@@ -754,7 +754,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 require(m.weight in 1..Long.MAX_VALUE) { "weight must be positive" }
                 // At most three significant digits.
                 require(PrivacyWallet.voteWeight(m.weight) == m.weight) { "weight has more than 3 significant digits" }
-                // Chain dff3a9b: exactly two slots, used ones first (at least one), distinct, zeros after.
+                // Exactly two slots, used ones first (at least one), distinct, zeros after.
                 require(m.voteNullifiersCount == PrivateMsgs.MAX_VOTE_NOTES) { "a stake vote carries exactly 2 vote nullifiers" }
                 require(m.voteNullifiersList.all { it.size() == 32 }) { "vote_nullifiers" }
                 val vs = m.voteNullifiersList.map(::f)
@@ -816,7 +816,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         require(m.toByteArray().contentEquals(body.getMessages(0).value.toByteArray())) { "msg bytes are not canonical" }
         // Every action's output ciphertext exactly 217 bytes, dummies included.
         for (b in PrivateMsgs.bundles(m)) for (a in b.actionsList) require(a.ciphertext.size() == NoteCipher.CIPHERTEXT_BYTES) { "action ciphertext ${a.ciphertext.size()} bytes" }
-        // Stake proofs (chain dff3a9b): every field 32 bytes, a 201-byte ciphertext exactly for a non-zero commitment.
+        // Stake proofs: every field 32 bytes, a 201-byte ciphertext exactly for a non-zero commitment.
         PrivateMsgs.stake(m)?.let { p ->
             require(p.nullifiersCount == 2) { "a stake proof carries exactly two nullifiers" }
             for (b in p.nullifiersList + listOf(p.anchor, p.ownerTag, p.commitment, p.creditNullifier, p.creditCommitment, p.debtRoot)) require(b.size() == 32) { "a stake field of ${b.size()} bytes" }
@@ -835,7 +835,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         require(auth.fee.amountCount == 1 && auth.fee.getAmount(0).denom == "uerth" && auth.fee.getAmount(0).amount == total.toString()) { "declared fee != msg fee" }
         require(total >= minFee) { "below min fee" }
         if (!simulate) require(BigDecimal(total) >= price.multiply(BigDecimal(auth.fee.gasLimit))) { "below min gas price" }
-        // Chain 48b631c: a private tx's gas_limit is at most 5x the gas it uses.
+        // A private tx's gas_limit is at most 5x the gas it uses.
         if (!simulate) {
             val used = gasOf(m)
             require(auth.fee.gasLimit <= 5 * used) { "gas limit ${auth.fee.gasLimit} exceeds what this private tx uses (${used})" }
@@ -857,7 +857,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             require(nfs.none { it in stakeNullifiers }) { "stake nullifier spent" }
             require(nfs.toSet().size == nfs.size) { "duplicate stake nullifier" }
             if (nfs.isNotEmpty()) require(f(stake.anchor) in stakeRoots) { "unknown stake anchor" }
-            // Every stake proof names the current clear_before (within an hour below it) and debt root (chain b46a4bb checkStakeClear).
+            // Every stake proof names the current clear_before (within an hour below it) and debt root (the chain's checkStakeClear).
             val cb = clearBefore()
             if (cb == 0L) {
                 require(stake.clearBefore == 0L) { "clear_before must be 0 while the block time is within the label window" }

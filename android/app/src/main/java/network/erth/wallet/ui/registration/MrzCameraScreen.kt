@@ -249,7 +249,7 @@ private const val MRZ_ASPECT = 7f
 /**
  * Pull the three BAC fields out of recognised text.
  *
- * Ported unchanged from the fragment, including its tolerance: OCR reliably
+ * Tolerant on purpose: OCR reliably
  * mangles this typeface, so it looks for any adjacent pair of lines where the
  * first begins "P<" and the second is long enough, rather than insisting the
  * whole zone parsed cleanly. The chip itself rejects a wrong key a moment

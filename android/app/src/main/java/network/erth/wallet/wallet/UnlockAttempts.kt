@@ -8,24 +8,20 @@ import android.provider.Settings
 /**
  * Brute-force backoff for the unlock screen.
  *
- * Separate from [PinSecurityManager] because that one cannot work here:
- * it keeps its counter in preferences encrypted by the session key, and the
- * session key is what the PIN produces. Reading it before unlocking throws,
- * which is why the old PIN fragment never called it and had no limit at all.
- *
- * Plain SharedPreferences is the right store for this. A failed-attempt count
+ * Kept in plain SharedPreferences, not in storage encrypted by the session
+ * key: the session key is what the PIN produces, so a counter under it could
+ * not be read before unlocking. A failed-attempt count
  * is not a secret — it is a counter — and encrypting it with the key it is
  * meant to protect buys nothing. The threat this defends against is someone
  * who has picked up an unlocked-screen phone and is guessing four digits;
  * against an attacker with root neither store helps, because they can clear
  * either one.
  *
- * The schedule matches PinSecurityManager's so the two behave alike: three
- * attempts, then 30s, 5m, 15m, and an hour thereafter.
+ * The schedule: three attempts, then 30s, 5m, 15m, and an hour thereafter.
  *
- * Timed on [SystemClock.elapsedRealtime], not the wall clock. The deadline
- * used to be wall-clock, so setting the date forward in Settings ended the
- * lockout, and the backoff with it. elapsedRealtime cannot be set and counts
+ * Timed on [SystemClock.elapsedRealtime], not the wall clock: setting the
+ * date forward in Settings would end a wall-clock lockout, and the backoff
+ * with it. elapsedRealtime cannot be set and counts
  * through sleep, but restarts at zero on boot; so the deadline is stored with
  * the boot it belongs to, and a reboot restarts the lockout in force rather
  * than ending it. Same design as the iOS app's UnlockAttempts.
@@ -35,7 +31,7 @@ object UnlockAttempts {
     private const val PREF_FILE = "unlock_attempts"
     private const val KEY_FAILED = "failed"
     private const val KEY_LOCKOUTS = "lockouts"
-    // "until" held a wall-clock deadline; these replace it.
+    // Older builds stored a wall-clock deadline under "until"; it is migrated once and removed.
     private const val KEY_LEGACY_UNTIL = "until"
     private const val KEY_DEADLINE = "deadline_elapsed"
     private const val KEY_WAIT = "wait"

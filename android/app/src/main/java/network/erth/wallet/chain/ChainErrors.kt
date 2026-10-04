@@ -21,15 +21,15 @@ object ChainErrors {
             "This identity moved its caretaker vote to another identity and can never cast one again."),
         Known("dex", 1120, "amount exceeds the pool cap",
             "That amount is past the pool's cap (2^120 units). Use a smaller amount."),
-        // Chain 203d3b2: x/dex refuses at start a withdrawal whose note leg is above 16 notes' worth.
+        // x/dex refuses at start a withdrawal whose note leg is above 16 notes' worth.
         Known("dex", 1101, "the most one withdrawal pays as notes",
             "That withdrawal is too large to be paid as private notes in one go. Withdraw in smaller parts.", byText = true),
-        // A denom the bank has send-disabled is refused at every pool edge
-        // (chain 48b631c): shield, unshield, a dex note swap,
-        // a private delegation's ERTH, a module mint into the pool.
+        // A denom the bank has send-disabled is refused at every pool edge:
+        // shield, unshield, a dex note swap, a private delegation's ERTH, a
+        // module mint into the pool.
         Known("bank", 5, "send transactions are disabled",
             "Transfers of this token are switched off on the chain, so it can't enter or leave private notes right now: no shielding, unshielding, note swaps or private staking with it. Notes you already hold still move privately.", byText = true),
-        // Chain 48b631c: a switch stays under its Document Signer.
+        // A switch stays under its Document Signer.
         Known("personhood", 1127, "identity switch must be proven under the live registration's document signer",
             "This switch was refused. A switch must be proven with the same passport you registered with, and this one was signed by a different issuing key."),
         // The signer's (or country's) daily cap; a switch counts against its signer's.
@@ -38,7 +38,7 @@ object ChainErrors {
         // MsgMoveHandle moves only a live handle.
         Known("personhood", 1116, "renew it before moving it",
             "That handle is past its expiry (in its renewal period), and only a live handle can be moved. Renew it first, then move it.", byText = true),
-        // Chain dff3a9b: a credit (a delegation's derth, a move's arrival) is
+        // A credit (a delegation's derth, a move's arrival) is
         // quoted at the live rate with a margin; a rate that outran it is
         // refused in the ante, before anything is spent or paid.
         Known("shieldedstaking", 1103, "re-quote with a margin",
@@ -49,7 +49,7 @@ object ChainErrors {
         // A slash reached a moved-in stake between the proof and its block: the debt root changed.
         Known("shieldedstaking", 1113, "is not the current slash debt root",
             "A slash reached stake moved between validators just as this was sent, so the chain turned it down. Nothing was spent: try again.", byText = true),
-        // Chain b46a4bb: every stake proof names the label window's clear_before as of the last hour.
+        // Every stake proof names the label window's clear_before as of the last hour.
         Known("shieldedstaking", 1113, "name the label window's current clear_before",
             "This took too long between its quote and its block, so the chain turned it down. Nothing was spent and no fee was paid: try again.", byText = true),
         // CheckTx refuses an anchor lapsing within 120 s.

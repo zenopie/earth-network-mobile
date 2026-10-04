@@ -22,10 +22,9 @@ object Constants {
     // (`/blockchain?minHeight=&maxHeight=`). Everything else goes through the
     // LCD, and the explorer falls back to the LCD if this is unreachable — a
     // deployment that exposes only the REST port stays fully functional.
-    // Now set: the tunnel fronts the RPC on 443 too, so it is reachable over
-    // HTTPS and no longer trips network_security_config.xml's cleartext ban.
-    // This was empty against the old node, where only 443 was fronted and the
-    // RPC was cleartext-only, costing the explorer its block-range reads.
+    // The tunnel fronts the RPC on 443, so it is reached over HTTPS and
+    // network_security_config.xml's cleartext ban holds. Empty disables it:
+    // the explorer then reads blocks one at a time from the LCD.
     //
     // For a locally-served chain: "http://127.0.0.1:26657" with
     // `adb reverse tcp:26657 tcp:26657`, or "http://10.0.2.2:26657".

@@ -48,12 +48,10 @@ sealed interface TxOutcome {
 /**
  * The result sheet.
  *
- * The Compose successor to the Toast that used to carry
- * `"Failed: ${e.message}"` — one truncated line for two seconds, which is the
- * worst possible treatment of a chain error. Those messages are long, they are
- * usually the only explanation of what happened, and
+ * A sheet rather than a toast: a chain error is long, it is usually the
+ * only explanation of what happened, and
  * "out of gas in location: ReadFlat; gasWanted: 400000, gasUsed: 400324"
- * diagnoses a problem in one read and is useless at forty characters.
+ * diagnoses a problem in one read and is useless truncated to one line.
  */
 @Composable
 fun TxResultSheet(outcome: TxOutcome, onDismiss: () -> Unit) {
@@ -88,14 +86,12 @@ fun TxResultSheet(outcome: TxOutcome, onDismiss: () -> Unit) {
                 )
         }
 
-    // The badge pops in: half size, past full, then settles. Carried over from
-    // the old app's StatusModal, curve for curve — 0.5 to 1.1 over 200ms, back
-    // to 1.0 over 150ms, accelerate-decelerate throughout.
+    // The badge pops in: half size, past full, then settles — 0.5 to 1.1 over
+    // 200ms, back to 1.0 over 150ms, accelerate-decelerate throughout.
     //
-    // The glyph inside is deliberately not animated. The old code drew the
-    // checkmark statically and said so; a check that draws itself competes with
-    // the circle for the same moment of attention, and the circle is what
-    // carries the arrival.
+    // The glyph inside is deliberately not animated: a check that draws
+    // itself competes with the circle for the same moment of attention, and
+    // the circle is what carries the arrival.
     val pop = remember { Animatable(BADGE_START_SCALE) }
     LaunchedEffect(outcome) {
         pop.snapTo(BADGE_START_SCALE)
@@ -186,7 +182,7 @@ private fun describe(error: Throwable?): String {
     return if (known != null) "$known\n\n$detail" else detail
 }
 
-// The old StatusModal's success animation, in its own numbers.
+// The success badge's animation.
 private const val BADGE_START_SCALE = 0.5f
 private const val BADGE_OVERSHOOT_SCALE = 1.1f
 private const val BADGE_SETTLED_SCALE = 1.0f

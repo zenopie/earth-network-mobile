@@ -44,16 +44,13 @@ import network.erth.wallet.ui.theme.EarthTheme
 /**
  * Earn: the two ways to put capital to work — staking, and pools.
  *
- * Pools used to be their own route, reached from a Liquidity button on the swap
- * tab, on the argument that providing liquidity is adjacent to swapping. The
- * question people actually arrive with is "where do I earn on what I hold",
- * which has one answer rather than two places to look — so both live here now,
- * one selector apart. iOS is laid out the same way.
+ * Pools are here rather than beside swapping: the question people arrive
+ * with is "where do I earn on what I hold", which has one answer rather than
+ * two places to look, so both live here, one selector apart. iOS is laid out
+ * the same way.
  *
- * The daily ANML claim used to sit here too. It moved to the wallet screen's
- * action row, where it belongs: claiming ANML is a one-tap action on a balance,
- * not a position to manage, and putting it beside staking made this screen
- * answer two unrelated questions.
+ * The daily ANML claim is on the wallet screen's action row, not here:
+ * claiming ANML is a one-tap action on a balance, not a position to manage.
  *
  * There is no Zodl equivalent — Zcash has no staking — so this borrows the
  * shape of their address panel instead: a large-radius card carrying the

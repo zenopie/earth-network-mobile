@@ -34,7 +34,7 @@ class AmountsTest {
         assertEquals(0L, PrivacyWallet.derthValue(5, BigDecimal("-1")))
     }
 
-    /** A stake row is [position, height, cm, ciphertext] (format 2, chain dff3a9b); an older row's extra columns are ignored, never trusted. */
+    /** A stake row is [position, height, cm, ciphertext] (format 2); an older row's extra columns are ignored, never trusted. */
     @Test
     fun stakeRowsCarryNoPublicAmount() {
         val page = JSONObject(

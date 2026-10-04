@@ -113,7 +113,7 @@ interface PrivacyChainReads {
     )
 
     /**
-     * x/personhood Query/LeaseBounds (chain 203d3b2): the lease lengths the
+     * x/personhood Query/LeaseBounds: the lease lengths the
      * chain's predecessor bounds use now (the longest handle lease ever in
      * force; the caretaker lease including a held longer one after a cut),
      * the activation margin, and both bounds at [blockTime]. Every
@@ -131,7 +131,7 @@ interface PrivacyChainReads {
     )
 
     /**
-     * x/shieldedstaking Query/DebtTree{start, limit} (chain dff3a9b): the
+     * x/shieldedstaking Query/DebtTree{start, limit}: the
      * slash debt tree's rows from leaf start+1 in insertion order (each with
      * its latest retained), its size (sentinel included, 0 before the first
      * row) and current root, the label window and the clear_before a proof
@@ -329,7 +329,7 @@ class PrivacyWallet(
 
     /**
      * Whether the local note tree's root, every bundle's anchor, stays an
-     * anchor long enough (chain 203d3b2): CheckTx refuses one lapsing within
+     * anchor long enough: CheckTx refuses one lapsing within
      * 120 s of the last block, and a proposer leaves out a tx whose anchor
      * lapsed by its block. [ANCHOR_MARGIN] covers proving and the tx's
      * timeout_height on top. Null: the node could not say (the chain's own
@@ -452,7 +452,7 @@ class PrivacyWallet(
     )
 
     /**
-     * Chain 203d3b2: [handle] is in its renewal period, so renewing or
+     * [handle] is in its renewal period, so renewing or
      * changing it is bounded like a claim, which this identity (it replaced
      * another too recently) cannot make yet. Nothing was sent.
      */
@@ -462,14 +462,14 @@ class PrivacyWallet(
             "replaced another too recently to make one; that opens in ${waitSeconds / SECONDS_PER_DAY + 1} days. Until its renewal period ends nobody else can take it",
     )
 
-    /** Chain 203d3b2: the caretaker vote lapsed; casting again is a new vote, which this identity cannot make yet. Nothing was sent. */
+    /** The caretaker vote lapsed; casting again is a new vote, which this identity cannot make yet. Nothing was sent. */
     class CaretakerLapsed(waitSeconds: Long) : NotYet(
         waitSeconds,
         "your caretaker vote has lapsed: casting again counts as a new vote, and this identity replaced another too recently to make one; " +
             "that opens in ${waitSeconds / SECONDS_PER_DAY + 1} days",
     )
 
-    /** Chain 203d3b2: MsgMoveHandle moves only a live handle. Nothing was sent. */
+    /** MsgMoveHandle moves only a live handle. Nothing was sent. */
     class HandleNotMovable(val handle: String) : IllegalStateException(
         "@$handle is past its expiry (in its renewal period), and only a live handle can be moved: renew it first, then move it",
     )
@@ -565,7 +565,7 @@ class PrivacyWallet(
      * /gas/register note (its ciphertext is not bound). [referrer], when the
      * registrant names one, is a handle, bound into the affiliate field as
      * H(TAG_AFFILIATE, Bytes(handle)); the chain mints the referrer's half
-     * itself, to the address the handle resolves to (chain 203d3b2).
+     * itself, to the address the handle resolves to.
      */
     class RegistrationPrep(val anml: NoteOut, val erth: NoteOut, val gas: NoteOut, val referrer: String, val binding: Fr, val idc: Fr)
 
@@ -734,7 +734,7 @@ class PrivacyWallet(
      * (null), and the chain checks that in its ante, before any fee: a
      * renewal or refresh of a live one goes through, anything else is
      * refused at no cost ([boundAttempt] says why, with the wait). Held but
-     * known lapsed ([held] false; chain 203d3b2: a handle in its renewal
+     * known lapsed ([held] false; a handle in its renewal
      * period, a split past its expiry) needs the bound like a claim, so
      * [lapsed] is thrown before anything is sent.
      */
@@ -761,8 +761,8 @@ class PrivacyWallet(
     /**
      * Whether the split this wallet holds is live at chain time [t]: true, or
      * false when the chain's own expiry has passed (a lapsed split the sweep
-     * has not reached is not held: refreshing it is a new split, bounded;
-     * chain 203d3b2), null when it holds none or knows only an estimate.
+     * has not reached is not held: refreshing it is a new split, bounded),
+     * null when it holds none or knows only an estimate.
      */
     private fun caretakerHeldLive(t: Long): Boolean? {
         if (!holdsSplit()) return null
@@ -1031,7 +1031,7 @@ class PrivacyWallet(
         val holds = store.state.handle.isNotEmpty()
         check(holds || !store.state.handleMovedOut) { "this identity moved its handle to another; it cannot claim one again" }
         checkNoMove(PendingMove.HANDLE)
-        // Chain 203d3b2: only a live handle renews or changes unbounded; one in its
+        // Only a live handle renews or changes unbounded; one in its
         // renewal period is bounded like a claim, by the longest lease ever in force.
         val lb = leaseBounds()
         // The lease this bind gets (Params), validated before anything is sent.
@@ -1096,7 +1096,7 @@ class PrivacyWallet(
         require(newOwner != Privacy.scopeNullifier(keys.idSecret, Privacy.handleScope())) { "the new owner is this identity" }
         target?.let { require(newOwner == newOwner(it, Privacy.handleScope())) { "new_owner is not the target wallet's" } }
         checkNoMove(PendingMove.HANDLE)
-        // Chain 203d3b2: MsgMoveHandle refuses a handle that is not live (its renewal period).
+        // MsgMoveHandle refuses a handle that is not live (its renewal period).
         handleExpiresAt().takeIf { it > 0 }?.let { if (it <= chainNow()) throw HandleNotMovable(handle) }
         val move = PendingMove(PendingMove.HANDLE, "", 0, incoming = false, handle = handle, target = recorder?.targetId.orEmpty())
         // State records: moved out for this identity, held for the new one.
@@ -1156,7 +1156,7 @@ class PrivacyWallet(
             if (s.handle.isEmpty() && !s.handleMovedOut && owned.size == 1) {
                 s.handle = owned[0].handle; s.handleSetAt = t; store.save()
             }
-            // The chain's expiry of the handle held: whether it is live (chain 203d3b2).
+            // The chain's expiry of the handle held: whether it is live.
             dir[s.handle]?.takeIf { s.handle.isNotEmpty() && it.statusAt(t) != HandleEntry.FREE }?.let { e ->
                 if (s.handleExpiresFor != s.handle || s.handleExpiresAt != e.expiresAt) { s.handleExpiresFor = s.handle; s.handleExpiresAt = e.expiresAt; store.save() }
             }
@@ -1595,7 +1595,7 @@ class PrivacyWallet(
         check(a.supply.signum() > 0 && java.math.BigInteger.valueOf(amount) <= a.supply) { "more derth than this validator has" }
         val u = java.math.BigInteger.valueOf(amount).multiply(a.backing).divide(a.supply)
         if (u < java.math.BigInteger.valueOf(min)) throw IllegalArgumentException("this stake is worth ${u}uerth, less than the ${min}uerth a move must carry")
-        // What arrives at dst (chain b46a4bb): u splits between
+        // What arrives at dst: u splits between
         // src's queue and its bonded stake pro rata, and up to 0.001 ERTH of
         // the bonded part may stay in src's book (bondedDust) or be truncated
         // by x/staking, so u - 1001. All of u only when src is unbonded (no
@@ -2358,7 +2358,7 @@ class PrivacyWallet(
             }
         }
 
-        /** The event an undelegation emits: its epoch, value and payout_id (chain 48b631c). */
+        /** The event an undelegation emits: its epoch, value and payout_id. */
         const val UNDELEGATE_EVENT = "shieldedstaking_undelegate"
 
         /** The notes one stake vote takes first: the largest (the most weight in one msg), then by position. */

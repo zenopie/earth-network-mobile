@@ -7,8 +7,8 @@ import androidx.compose.ui.unit.dp
  * Spacing and radii, on a 4dp grid.
  *
  * Named by role rather than size so a screen asks for "the gap between a label
- * and its value", not "8dp". The old XML layouts hand-picked padding per file,
- * which is why no two screens agreed on their margins.
+ * and its value", not "8dp": padding picked per file is how no two screens
+ * end up agreeing on their margins.
  */
 data class EarthDimens(
     val space2: Dp = 2.dp,

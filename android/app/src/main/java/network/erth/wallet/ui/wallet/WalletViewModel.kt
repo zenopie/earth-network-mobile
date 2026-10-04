@@ -24,10 +24,8 @@ import network.erth.wallet.wallet.SecureWalletManager
  * Wallet state, loaded from the chain.
  *
  * Every read is wrapped: a wallet that cannot reach its node should show zeroes
- * and stay usable, not fall over. The old fragments each decided this for
- * themselves and disagreed — some showed "Error", some showed nothing, one
- * showed a balance of zero that was indistinguishable from a real zero. Here
- * [reachable] carries that distinction explicitly.
+ * and stay usable, not fall over. A zero shown for an unreachable node must
+ * not look like a real zero: [reachable] carries that distinction.
  */
 class WalletViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -88,9 +86,8 @@ class WalletViewModel(app: Application) : AndroidViewModel(app) {
 
                 val loaded = withContext(Dispatchers.IO) {
                     // One balances call for every denom, rather than one call
-                    // per denom the app happens to know the name of. The extra
-                    // tokens were always in the response; nothing was reading
-                    // past the two it asked for.
+                    // per denom the app knows the name of: every token held
+                    // is in the response.
                     val balances = runCatching { Bank.balances(address) }
                         .getOrElse { _reachable.value = false; emptyMap() }
                     val holdings = Tokens.holdings(balances)

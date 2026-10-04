@@ -72,7 +72,7 @@ class DenomsTest : WalletTest() {
         val w = wallet(chain, alice)
         mintTo(chain, w, "uerth", 5_000)
         w.sync()
-        // As a store the old code let an indexer relabel.
+        // As an older version's store, which let an indexer relabel.
         val n = w.store.state.notes[0]
         w.store.state.notes[0] = n.copy(note = n.note.copy(denom = NotePlaintext.UNRESOLVED_PREFIX + Privacy.assetId("uerth").toHex()))
         w.sync()

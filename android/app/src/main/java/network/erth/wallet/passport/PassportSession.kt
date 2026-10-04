@@ -23,15 +23,9 @@ import java.util.TimeZone
 /**
  * Reading a passport and registering from it, with no UI attached.
  *
- * Lifted out of PassportScannerFragment, which mixed the NFC session, the
- * proof, the broadcast and four kinds of fragment navigation in one 855-line
- * class. The parts worth keeping are here; what is left there was screen
- * plumbing for a screen that no longer exists.
- *
- * Nothing in this file touches a view, so the Compose flow above it can decide
- * what to show and when — including the confirmation, which used to block a
- * background thread on a CountDownLatch because the scan owned that thread and
- * had nowhere else to ask.
+ * Nothing in this file touches a view, so the Compose flow above it decides
+ * what to show and when — including the confirmation, which is a step of
+ * its own rather than a background thread blocked waiting for an answer.
  */
 object PassportSession {
 
@@ -157,12 +151,10 @@ object PassportSession {
             // passport number or date rather than anything wrong with the
             // document — by far the most common failure in this flow.
             //
-            // Caught by type, not by message: this used to test the message for
-            // "BAC", and jmrtd does not put that word in it. What it actually
-            // says is "Mutual authentication failed ... SW = 0x6985", so every
-            // refused key fell through to Failure.Error and the screen asked
-            // the user to hold the passport flatter — sending them back to the
-            // chip over and over instead of to the three fields they mistyped.
+            // Caught by type, not by message: jmrtd's message ("Mutual
+            // authentication failed ... SW = 0x6985") names no "BAC", and a
+            // refused key reported as Failure.Error would send the user back
+            // to the chip instead of to the three fields they mistyped.
             Log.e(TAG, "passport refused the access key", e)
             Result.failure(FailureException(Failure.WrongMrz))
         } catch (e: Exception) {

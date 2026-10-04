@@ -60,15 +60,12 @@ import network.erth.wallet.wallet.UnlockMethod
 /**
  * First run: choose a PIN, then make a wallet.
  *
- * This is the branch HostActivity had and the Compose rewrite did not carry
- * over. Without it a fresh install opens straight onto the PIN screen, and
- * because nothing had ever sealed a wallet there was no PIN that could
- * work — three attempts, then a lockout, and no way to reach the wallet
- * screens because they live behind the same gate.
+ * Without it a fresh install would open onto the PIN screen, and with no
+ * wallet sealed no PIN could work — three attempts, then a lockout, and no
+ * way to reach the wallet screens behind the same gate.
  *
- * The wallet screens themselves are the existing ones. Only the way in is new,
- * so there is one create screen and one import screen in the app rather than a
- * first-run copy of each that could drift.
+ * The wallet screens are the app's own create and import screens, not
+ * first-run copies of them that could drift.
  */
 class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
 

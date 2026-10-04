@@ -78,8 +78,9 @@ fun EarthDetailRow(label: String, value: String, modifier: Modifier = Modifier) 
  * A chain error or transaction hash.
  *
  * Selectable, because the whole point of showing it is that it can be taken
- * somewhere else. This is the successor to the toast that used to truncate
- * "out of gas in location: ReadFlat; gasWanted: 400000, gasUsed: 400324".
+ * somewhere else, and shown whole: truncated,
+ * "out of gas in location: ReadFlat; gasWanted: 400000, gasUsed: 400324"
+ * says nothing.
  */
 @Composable
 fun EarthCodeBlock(text: String, modifier: Modifier = Modifier) {

@@ -53,7 +53,7 @@ class GasGrantRegisterBodyTest {
         assertEquals("BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=", body.getString("pc_gas"))
         assertEquals(java.util.Base64.getEncoder().encodeToString(ctGas), body.getString("ciphertext_gas"))
         assertEquals("rsa_2048_sha256", body.getString("signature_algorithm"))
-        // A referral by handle alone (chain 203d3b2): the backend refuses affiliate_pc / affiliate_ciphertext.
+        // A referral by handle alone: the backend refuses affiliate_pc / affiliate_ciphertext.
         assertEquals("alice-01", body.getString("affiliate_handle"))
         assertEquals(false, body.has("affiliate_pc"))
         assertEquals(false, body.has("affiliate_ciphertext"))

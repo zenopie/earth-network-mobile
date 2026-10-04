@@ -50,9 +50,9 @@ import javax.crypto.spec.GCMParameterSpec
  * some Keystore corruption. When it goes, the wallet goes with it and only the
  * recovery phrase brings it back.
  *
- * That costs nothing that was previously available. `allowBackup="false"` means
- * the ciphertext never leaves the device in the first place, so there was no
- * copy to restore from and no path that survived a wipe. What it does is make
+ * That takes away no restore path: `allowBackup="false"` means the ciphertext
+ * never leaves the device, so there is no copy to restore from after a wipe
+ * anyway. What it does is make
  * the recovery phrase the single thing standing between a user and their funds,
  * which the onboarding flow already says and should keep saying loudly.
  *

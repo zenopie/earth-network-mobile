@@ -80,10 +80,9 @@ object WalletCrypto {
     /**
      * Derive ECKey from mnemonic using the Cosmos BIP-44 path m/44'/118'/0'/0/0.
      *
-     * Coin type 118, not 529. 529 is Secret Network and is what this derived
-     * before the port; the two produce different addresses from the same words,
-     * so the number here is the difference between finding your funds and
-     * concluding they are gone.
+     * Coin type 118, not 529 (Secret Network's): the two produce different
+     * addresses from the same words, so the number here is the difference
+     * between finding your funds and concluding they are gone.
      */
     fun deriveKeyFromMnemonic(mnemonic: String): ECKey {
         return try {

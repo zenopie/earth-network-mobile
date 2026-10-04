@@ -149,10 +149,10 @@ fun PersonhoodScreen(
                 colors = network.erth.wallet.ui.designsystem.component.EarthButtonDefaults.secondaryColors(),
             )
 
-            // There is no way to leave from here any more. The chain removed
-            // MsgUnregister: retiring a registration freed its nullifier, and
-            // Register pays the registration reward to any nullifier that is
-            // not already live, so leaving and returning was a way to draw the
+            // There is no way to leave from here: the chain has no
+            // MsgUnregister. Retiring a registration would free its nullifier,
+            // and Register pays the registration reward to any nullifier that
+            // is not already live, so leaving and returning would draw the
             // reward pool repeatedly.
             //
             // Moving a registration still works: register the same passport

@@ -24,17 +24,11 @@ import network.erth.wallet.wallet.UnlockMethod
 /**
  * The app.
  *
- * Three states: set up, locked, or open. The old app split these across a
- * launcher activity, an update check, a host activity and a fragment, and the
- * transitions between them do not need four activities.
+ * Three states: set up, locked, or open, in one activity.
  *
- * The first state was missing until now, and its absence was fatal on a fresh
- * install. This screen only ever asked whether a session was open, so with no
- * wallet it showed the PIN screen — and since nothing in the Compose app had
- * ever sealed a wallet, no PIN could be right. Three attempts, then a
- * lockout, and the wallet screens that would have fixed it sit behind the same
- * gate. HostActivity branched on whether a PIN was set and was deleted with
- * the old app; this is that branch, back.
+ * Set up comes first, before any unlock: with no wallet sealed, no PIN can be
+ * right, so showing the PIN screen on a fresh install would end in a lockout
+ * with the wallet screens that could fix it behind the same gate.
  *
  * Open follows the session, not the unlock that started it: [AutoLock] can
  * end the session underneath this screen, and the gate has to come back when

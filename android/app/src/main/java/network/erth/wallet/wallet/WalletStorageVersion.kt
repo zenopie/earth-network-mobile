@@ -124,7 +124,7 @@ object WalletStorageVersion {
     }
 
     /**
-     * Migrate wallet storage from old version to current version
+     * Migrates wallet storage written by an older build to the current version.
      */
     @Throws(Exception::class)
     private fun migrateStorage(oldStorage: VersionedWalletStorage): VersionedWalletStorage {

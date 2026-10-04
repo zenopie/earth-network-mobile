@@ -202,12 +202,7 @@ class UpdateCheckActivity : AppCompatActivity() {
     }
 
     /**
-     * Proceed to main app.
-     *
-     * The Compose app, not HostActivity. HostActivity is still installed and
-     * still reachable for the screens not yet ported, but it is no longer what
-     * a cold start lands on — two shells both claiming to be the app is how the
-     * PIN ends up opening the old one.
+     * Proceed to the app: [MainActivity], the one shell.
      */
     private fun proceedToMainApp() {
         Log.d(TAG, "Proceeding to main app")

@@ -118,9 +118,8 @@ object EarthTx {
      * [TxUnconfirmedException] if it hasn't appeared within the timeout. Runs on
      * the caller's (IO) thread.
      *
-     * The timeout used to return the hash as if it had landed, so a transaction
-     * still in the mempool — or one that later failed in DeliverTx — was shown
-     * as a success. Not knowing is its own outcome.
+     * A timeout is not a success: the tx may still be in the mempool, or fail
+     * in DeliverTx later. Not knowing is its own outcome.
      */
     internal fun awaitCommit(txHash: String, attempts: Int = 20, delayMs: Long = 800): String {
         for (i in 0 until attempts) {

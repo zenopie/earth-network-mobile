@@ -1217,7 +1217,7 @@ internal fun EarthContent(
                         shieldedErth = loaded.shieldedErthUerth,
                         onSuccess = { onRefresh(); markets.refresh() },
                         run = { ctx ->
-                            // Both legs are notes: refused here, before proving, when too large (chain 203d3b2).
+                            // Both legs are notes: refused here, before proving, when too large.
                             network.erth.wallet.privacy.PrivacyWallet.checkWithdrawalNoteLegs(
                                 sharesOut, network.erth.wallet.privacy.chain.PrivacyQueries.lpShareSupply(pool.id),
                                 pool.erthReserve.toBigInteger(), pool.tokenReserve.toBigInteger(), pool.tokenDenom, erthNote = true, tokenNote = true,

@@ -223,7 +223,7 @@ class PrivacyState {
      * When the handle [handleExpiresFor] stops being live (the chain's
      * expires_at, from its bind or the chain's directory). Counts only while
      * it is [handle]; otherwise unknown. Past it, a renewal or change is
-     * bounded like a claim and a move is refused (chain 203d3b2).
+     * bounded like a claim and a move is refused.
      */
     var handleExpiresAt: Long = 0
     var handleExpiresFor: String = ""

@@ -35,10 +35,9 @@ import network.erth.wallet.ui.theme.EarthTheme
  * the whole reason the screen exists, so it happens on a tap of the row rather
  * than behind a menu — there is nothing else a row could usefully do.
  *
- * No delete. The old app had one and it removed the only copy of a mnemonic
- * behind a single confirm; until this can show the phrase and make you
- * acknowledge you have it, leaving a wallet in the list costs nothing and
- * removing one can cost everything.
+ * No delete: it would remove the only copy of a mnemonic. Until this can show
+ * the phrase and make you acknowledge you have it, leaving a wallet in the
+ * list costs nothing and removing one can cost everything.
  */
 @Composable
 fun WalletsScreen(

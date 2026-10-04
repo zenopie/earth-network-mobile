@@ -339,7 +339,7 @@ class WalletSync(
         /**
          * The memo of an unlock's record note (a value-0 pool note to itself in
          * the unlock's fee bundle; the stake note it merges into carries no
-         * memo since chain dff3a9b): the owner-tag counter of the position it
+         * memo): the owner-tag counter of the position it
          * closed, so a wallet restored from the mnemonic knows the tags of
          * closed positions too and never locks under one again. Tagged
          * like the record (only nk makes one): a note carrying a huge counter
@@ -918,7 +918,7 @@ class WalletSync(
         // its cm with it.
         val amount = publicAmount(r.amount)
         val opened: NotePlaintext = when (r.ciphertext.size) {
-            // An open mint (chain 203d3b2: the referral note to a handle we
+            // An open mint (the referral note to a handle we
             // hold): no ciphertext, the opening on the row. Ours if its
             // owner_pk is ours and the opening with the public amount
             // recomputes the row's cm (which the tree check pins to the
@@ -1044,8 +1044,8 @@ class WalletSync(
      * once its tx can no longer land: the chain's tip (LCD) is past
      * the tx's timeout_height and this wallet has read the nullifier stream
      * through that height without seeing its nullifier. Never by the wall
-     * clock, which says nothing about the chain. Marks made before txs carried
-     * a timeout (no pendingUntil) keep the old 15-minute rule.
+     * clock, which says nothing about the chain. A mark from an older version
+     * (no pendingUntil) is released by a 15-minute rule.
      */
     private fun releaseStalePending(s: PrivacyState) {
         val now = now()
@@ -1105,8 +1105,8 @@ class WalletSync(
 
     /**
      * A stake row is ours if its ciphertext opens (the wallet stake note,
-     * 201 bytes, label inside): every stake note is a stake proof's output
-     * (chain dff3a9b). A zero note (a full exit's padding output) is dropped.
+     * 201 bytes, label inside): every stake note is a stake proof's output.
+     * A zero note (a full exit's padding output) is dropped.
      */
     internal fun openStake(r: StakeNoteRow): OwnedStakeNote? {
         val s = store.state

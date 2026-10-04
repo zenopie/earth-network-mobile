@@ -165,7 +165,7 @@ class HandlesTest {
         val b = wallet(chain, bob)
         val res = chain.handleDirectory().resolveForPayment("@alice") as HandleDirectory.Resolution.Payable
         val prep = register(chain, b, passport = "222", referrer = PrivacyWallet.Referrer(res.entry.handle, res.address))
-        // The binding commits to the handle alone (chain 203d3b2): the chain makes the referral note.
+        // The binding commits to the handle alone: the chain makes the referral note.
         assertEquals(
             Privacy.registrationBinding(chain.chainId, b.keys.idc, prep.anml.pc, prep.anml.ciphertext, prep.erth.pc, prep.erth.ciphertext, Privacy.affiliateField("alice")),
             prep.binding,
