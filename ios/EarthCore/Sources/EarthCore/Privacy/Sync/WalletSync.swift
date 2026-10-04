@@ -796,7 +796,10 @@ public final class WalletSync {
         store.mutate { s in
             s.rootsVerified = problems.isEmpty
             s.rootsError = problems.first
-            if problems.isEmpty { s.verifiedGeneration = s.syncGeneration }
+            if problems.isEmpty {
+                s.verifiedGeneration = s.syncGeneration
+                s.verifiedHeight = max(s.verifiedHeight, roots.syncedHeight)
+            }
         }
         return problems.isEmpty
     }
@@ -1030,14 +1033,29 @@ public final class WalletSync {
             return readThrough >= until && tipHeight > until
         }
         var status: [String: TxStatus?] = [:]
-        for h in Set(st.notes.filter { $0.unspent && due($0.pendingAt, $0.pendingUntil, poolRead) }.compactMap(\.pendingTx) +
-                     st.stakeNotes.filter { $0.unspent && due($0.pendingAt, $0.pendingUntil, stakeRead) }.compactMap(\.pendingTx)) {
+        // Audit 6 (M4): marks whose timeout no sane tip gives are asked about too.
+        func outsized(_ at: Int64?, _ until: UInt64?) -> Bool {
+            guard let at, let until else { return false }
+            return !PrivateTxEngine.timeoutSane(until, verifiedNow: st.verifiedHeight) && t - at > Self.pendingTimeout
+        }
+        for h in Set(st.notes.filter { $0.unspent && (due($0.pendingAt, $0.pendingUntil, poolRead) || outsized($0.pendingAt, $0.pendingUntil)) }.compactMap(\.pendingTx) +
+                     st.stakeNotes.filter { $0.unspent && (due($0.pendingAt, $0.pendingUntil, stakeRead) || outsized($0.pendingAt, $0.pendingUntil)) }.compactMap(\.pendingTx)) {
             status[h] = await chain.txStatus(h)
         }
         var missing = false
         func release(_ at: Int64?, _ until: UInt64?, _ hash: String?, _ readThrough: UInt64) -> Bool {
             guard let at else { return false }
-            guard until != nil else { return t - at > Self.pendingTimeout }
+            guard let until else { return t - at > Self.pendingTimeout }
+            // Audit 6 (M4): a timeout no sane tip gives (a node inflated the
+            // tip at send) is never reached: the tx's status alone settles
+            // it, after the mempool's grace.
+            if !PrivateTxEngine.timeoutSane(until, verifiedNow: st.verifiedHeight) {
+                guard let hash, t - at > Self.pendingTimeout else { return false }
+                switch status[hash] ?? nil {
+                case .missing?, .failed?: return true
+                default: return false
+                }
+            }
             guard due(at, until, readThrough) else { return false }
             // Marks from before audit 4 carry no hash: the timeout alone.
             guard let hash else { return true }

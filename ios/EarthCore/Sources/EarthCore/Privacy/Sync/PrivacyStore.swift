@@ -231,6 +231,11 @@ public struct PrivacyState: Codable, Sendable {
     /// checks of that same sync succeeded. Txs need the two equal.
     public var syncGeneration: UInt64 = 0
     public var verifiedGeneration: UInt64?
+    /// The height the last verified sync reached (the indexer's, checked
+    /// against the chain's tree and tip). Audit 6 (M4): a tx's tip is bounded
+    /// by it, and a pending mark whose timeout is far past it is resolved by
+    /// the tx's status alone. Kept across resets (heights only grow).
+    public var verifiedHeight: UInt64 = 0
     /// UTC days a claim was broadcast for (so a claim is not offered twice).
     public var claimedDays: Set<UInt64> = []
     /// When the caretaker split was last cast (unix seconds), and the split (option -> percent).
@@ -290,7 +295,7 @@ public struct PrivacyState: Codable, Sendable {
         case chainID, genesis, notesNext, notesHeight, nullifiersNext, identityNext, zeroedNext, notes, identity, pendingRegistration,
              regRecords, rootsVerified, rootsError, claimedDays, caretakerCastAt, caretakerSplit, caretakerExpiresAt, caretakerMovedOut, handle, handleMovedOut,
              unbondRetryAt, nextOtagCounter, stakeNext, stakeHeight, stakeNullifiersNext, stakeNotes, denoms, closedOtagMax, stakeVoteRun,
-             syncGeneration, verifiedGeneration, stakeVotes, identityHeights, identityRowsSeen,
+             syncGeneration, verifiedGeneration, verifiedHeight, stakeVotes, identityHeights, identityRowsSeen,
              handleSetAt, caretakerSplitUnknown, handleRecordPos, caretakerRecordPos, voidRecordHeights, pendingMoves, switchTarget,
              handleExpiresAt, handleExpiresFor
     }
@@ -317,6 +322,7 @@ public struct PrivacyState: Codable, Sendable {
         stakeVotes = try v(.stakeVotes, [])
         syncGeneration = try v(.syncGeneration, 0)
         verifiedGeneration = try c.decodeIfPresent(UInt64.self, forKey: .verifiedGeneration)
+        verifiedHeight = try v(.verifiedHeight, 0)
         identityHeights = try v(.identityHeights, []); identityRowsSeen = try v(.identityRowsSeen, 0)
         handleSetAt = try v(.handleSetAt, 0); caretakerSplitUnknown = try v(.caretakerSplitUnknown, false)
         handleRecordPos = try c.decodeIfPresent(UInt64.self, forKey: .handleRecordPos)
@@ -495,6 +501,7 @@ public final class PrivacyStore {
         s.voidRecordHeights = old.voidRecordHeights
         s.pendingMoves = old.pendingMoves
         s.switchTarget = old.switchTarget
+        s.verifiedHeight = old.verifiedHeight
     }
 
     /// A relaunch of the same chain id under a new genesis, confirmed by the

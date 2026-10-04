@@ -139,6 +139,17 @@ public struct PrivateTxEngine: Sendable {
     public static let timeoutBlocks: UInt64 = 50
     /// The absolute cap on a private fee: 2 ERTH (audit 3).
     public static let maxPrivateFee: UInt64 = 2_000_000
+    /// How far past the last verified sync height a tip may be (audit 6, M4).
+    public static let maxTipAhead: UInt64 = 1_000
+
+    public static func tipSane(_ tip: UInt64, verified: UInt64) -> Bool { tip < verified || tip - verified <= maxTipAhead }
+
+    /// Whether a pending mark's timeout_height `until` could have come from a
+    /// sane tip, given the last verified height now (heights only grow): an
+    /// outsized one is resolved by the tx's status alone (audit 6, M4).
+    public static func timeoutSane(_ until: UInt64, verifiedNow: UInt64) -> Bool {
+        until < verifiedNow || until - verifiedNow <= maxTipAhead + timeoutBlocks
+    }
 
     // The chain's default gas schedule (x/shielded params, the proof
     // modules' verification charges), for the wallet's own estimate.
@@ -170,6 +181,15 @@ public struct PrivateTxEngine: Sendable {
         public let fee: UInt64
         public let shown: UInt64
         public var errorDescription: String? { "The fee is now \(fee)uerth, more than the \(shown)uerth shown; confirm again." }
+    }
+
+    /// The node's tip is not near the last verified sync height (audit 6, M4): sync and retry.
+    public struct TipOutOfRange: Swift.Error, LocalizedError {
+        public let tip: UInt64
+        public let verified: UInt64
+        public var errorDescription: String? {
+            "The node says the chain is at height \(tip), far from the \(verified) this wallet last verified; sync again."
+        }
     }
 
     /// The fee the node's pricing asks is past the wallet's cap: nothing is proven or sent.
@@ -204,8 +224,15 @@ public struct PrivateTxEngine: Sendable {
         return min(maxFee, o ? UInt64.max : twice)
     }
 
-    private func timeoutHeight() async throws -> UInt64 {
-        let (t, o) = try await chain.tipHeight().addingReportingOverflow(Self.timeoutBlocks)
+    /// The node's tip + `timeoutBlocks`. Audit 6 (M4): a tip past the last
+    /// verified sync height (`verifiedHeight`, nil: no bound) by more than
+    /// `maxTipAhead` is refused before anything is laid out: a node inflating
+    /// it would leave the spent notes pending until a height the chain never
+    /// reaches.
+    private func timeoutHeight(_ verifiedHeight: UInt64?) async throws -> UInt64 {
+        let tip = try await chain.tipHeight()
+        if let v = verifiedHeight, !Self.tipSane(tip, verified: v) { throw TipOutOfRange(tip: tip, verified: v) }
+        let (t, o) = tip.addingReportingOverflow(Self.timeoutBlocks)
         guard !o else { throw PrivacyError("the chain's height is out of range") }
         return t
     }
@@ -221,8 +248,8 @@ public struct PrivateTxEngine: Sendable {
     /// may show. Simulated with random placeholder nullifiers (audit 3): the
     /// node learns nothing about which notes would be spent before the user
     /// confirms (gas is the tx's shape, the same either way).
-    public func quote(_ assemble: (UInt64) throws -> Assembled, memo: String = "") async throws -> Quote {
-        try await price(assemble, memo: memo, timeout: try await timeoutHeight(), placeholders: true).0
+    public func quote(_ assemble: (UInt64) throws -> Assembled, memo: String = "", verifiedHeight: UInt64? = nil) async throws -> Quote {
+        try await price(assemble, memo: memo, timeout: try await timeoutHeight(verifiedHeight), placeholders: true).0
     }
 
     /// Prices, proves and broadcasts. The tx's `memo`, timeout_height (the
@@ -233,10 +260,10 @@ public struct PrivateTxEngine: Sendable {
     /// `accepted` gets the hash and the timeout height before the broadcast:
     /// spent notes stay pending until the chain is past it and says the tx is
     /// not in it; `rejected`, a refusal proving the tx is in no mempool.
-    public func run(_ assemble: (UInt64) throws -> Assembled, memo: String = "", shownFee: UInt64? = nil,
+    public func run(_ assemble: (UInt64) throws -> Assembled, memo: String = "", shownFee: UInt64? = nil, verifiedHeight: UInt64? = nil,
                     accepted: (String, Assembled, UInt64) -> Void = { _, _, _ in },
                     rejected: (String, Assembled) -> Void = { _, _ in }) async throws -> (TxResult, Assembled) {
-        let timeout = try await timeoutHeight()
+        let timeout = try await timeoutHeight(verifiedHeight)
         let (q, a) = try await price(assemble, memo: memo, timeout: timeout, placeholders: false)
         if let shownFee, q.fee > shownFee { throw FeeAboveQuote(fee: q.fee, shown: shownFee) }
         let tx = PrivateMsgs.TxFields(memo: memo, timeoutHeight: timeout, gasLimit: q.gasLimit)

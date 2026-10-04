@@ -284,14 +284,33 @@ public final class PrivacyWallet: @unchecked Sendable {
         // lost answer or a killed app never leaves them spendable. They stay
         // pending until the chain is past the tx's timeout_height and says the
         // tx is not in a block (WalletSync.releaseStalePending).
-        let (result, _) = try await engine.run(assemble, memo: memo, shownFee: Self.shownFee, accepted: { [self] hash, a, timeout in
-            markPending(a.spends, a.stakeSpends, timeoutHeight: timeout, hash: hash)
-            accepted(hash, timeout)
-        }, rejected: { [self] hash, a in
-            unmarkPending(a.spends, a.stakeSpends, hash: hash)
-            rejected(hash)
-        })
+        let (result, _) = try await tipChecked { [self] in
+            try await engine.run(assemble, memo: memo, shownFee: Self.shownFee, verifiedHeight: store.state.verifiedHeight, accepted: { [self] hash, a, timeout in
+                markPending(a.spends, a.stakeSpends, timeoutHeight: timeout, hash: hash)
+                accepted(hash, timeout)
+            }, rejected: { [self] hash, a in
+                unmarkPending(a.spends, a.stakeSpends, hash: hash)
+                rejected(hash)
+            })
+        }
         return result
+    }
+
+    /// Audit 6 (M4): a tip far past the last verified sync height is either a
+    /// stale sync (sync, and try once more) or a node lying about the tip
+    /// (refused again: nothing was laid out, proven or sent). Under the lock.
+    private func tipChecked<T>(_ body: () async throws -> T) async throws -> T {
+        do {
+            return try await body()
+        } catch is PrivateTxEngine.TipOutOfRange {
+            _ = try await syncLocked()
+            try requireVerified()
+            do {
+                return try await body()
+            } catch let e as PrivateTxEngine.TipOutOfRange {
+                throw PrivacyError("the node says the chain is at height \(e.tip), far past the \(e.verified) this wallet verified; try another node or sync again")
+            }
+        }
     }
 
     /// The fee the confirm sheet showed, for the private run in this task
@@ -353,9 +372,11 @@ public final class PrivacyWallet: @unchecked Sendable {
         let m = await maxActions()
         return try await locked {
             let out = try NoteOut.to(to, denom: denom, value: amount, memo: memo)
-            return try await engine.quote { fee in
-                let b = try self.bundle([out], release: [Self.fee: fee], maxActions: m)
-                return Assembled(bundles: [b]) { bs, _, _ in MsgSend(bundle: bs[0], fee: fee) }
+            return try await tipChecked { [self] in
+                try await engine.quote({ fee in
+                    let b = try self.bundle([out], release: [Self.fee: fee], maxActions: m)
+                    return Assembled(bundles: [b]) { bs, _, _ in MsgSend(bundle: bs[0], fee: fee) }
+                }, verifiedHeight: store.state.verifiedHeight)
             }
         }
     }
@@ -1008,6 +1029,10 @@ public final class PrivacyWallet: @unchecked Sendable {
             let r = try? await chain.tx(p.txHash)
             if let r, r.code == 0 { confirmMove(p.txHash) }
             else if let r { store.mutate { _ = $0.voidRecordHeights.insert(r.height) }; dropMove(p) }
+            // Audit 6 (M4): a timeout no sane tip gives is settled by the tx's status alone.
+            else if !PrivateTxEngine.timeoutSane(p.timeoutHeight, verifiedNow: store.state.verifiedHeight) {
+                if await roots.txStatus(p.txHash) == .missing { dropMove(p) }
+            }
             else if let tip = try? await chain.tipHeight(), tip > p.timeoutHeight { dropMove(p) }
         }
         persistNoThrow()
@@ -1607,7 +1632,11 @@ public final class PrivacyWallet: @unchecked Sendable {
                 next = nil
             } else {
                 if tip == nil { tip = .some(try? await chain.tipHeight()) }
-                if let until = v.until, let t = tip ?? nil, t > until { next = nil } else { continue }
+                if let until = v.until, let t = tip ?? nil, t > until { next = nil }
+                // Audit 6 (M4): a timeout no sane tip gives is settled by the tx's status alone.
+                else if let until = v.until, let h = v.txHash, !PrivateTxEngine.timeoutSane(until, verifiedNow: store.state.verifiedHeight),
+                        await roots.txStatus(h) == .missing { next = nil }
+                else { continue }
             }
             store.mutate { s in
                 s.stakeVotes.removeAll { $0.proposalID == v.proposalID && $0.vnf == v.vnf }
