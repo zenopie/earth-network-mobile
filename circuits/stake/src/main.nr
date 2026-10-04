@@ -15,7 +15,11 @@
 //! Up to two inputs (amount 0 = none: no path, nf = 0) under `anchor`, up to
 //! two outputs (amount 0 = none: cm_out = 0), all of one `asset`, and
 //!
-//!   in_0 + in_1 + v_in == out_0 + out_1 + v_out        (u64 amounts)
+//!   in_0 + in_1 + v_in == out_0 + out_1 + v_out
+//!
+//! Every note amount (in_i, out_i) is at most 2^63 - 1 (privacy_core
+//! NOTE_VALUE_BITS, inside stake_cm): what every wallet holds and the chain
+//! mints. v_in and v_out are public u64 amounts, not notes.
 //!
 //! v_in is value the chain adds (none today), v_out value leaving the notes
 //! to the chain (undelegated, locked, voted, claimed). spc_mint is a stake pc
@@ -31,6 +35,7 @@
 //!   otag, sighash
 
 use privacy_core::{bind, DEPTH, merkle_root, owner_pk, owner_tag, stake_cm, stake_nf, stake_pc};
+use privacy_core::{h4, TAG_STAKE};
 
 fn main(
     nk: Field,
@@ -75,7 +80,7 @@ fn main(
         assert(cm_out[i] == c * made, "bad output commitment");
         total_out += out_amount[i] as Field;
     }
-    // Each side is at most 3 * (2^64 - 1): no wrap in the field.
+    // Each side is at most 2 * (2^63 - 1) + (2^64 - 1): no wrap in the field.
     assert(total_in == total_out, "amounts do not balance");
     assert(spc_mint == stake_pc(opk, mint_rho, mint_rcm), "bad mint pc");
     assert(otag == owner_tag(opk, tag_salt), "bad owner tag");
@@ -127,8 +132,11 @@ fn none_out() -> Out {
     Out { amount: 0, rho: 0x99, rcm: 0x9a }
 }
 
+/// H(TAG_STAKE, asset, amount, spc) for any u64 amount (stake_cm without its
+/// bound), so a test can hold an amount above 2^63 - 1 that only the circuit
+/// refuses.
 fn cm_of(nk: Field, asset: Field, amount: u64, rho: Field, rcm: Field) -> Field {
-    stake_cm(asset, amount, stake_pc(owner_pk(nk), rho, rcm))
+    h4(TAG_STAKE, asset, amount as Field, stake_pc(owner_pk(nk), rho, rcm))
 }
 
 /// A tree holding notes a (position 0) and b (position 1) of NK, asset ASSET:
@@ -244,10 +252,46 @@ fn test_vote_whole_notes() {
 }
 
 #[test]
-fn test_u64_max() {
-    let (ins, root) = two_notes(0xffffffffffffffff, 0xffffffffffffffff);
-    let outs = [Out { amount: 0xffffffffffffffff, rho: 0xc1, rcm: 0xc2 }, Out { amount: 0xffffffffffffffff, rho: 0xd1, rcm: 0xd2 }];
+fn test_note_max() {
+    let m: u64 = 0x7fffffffffffffff;
+    let (ins, root) = two_notes(m, m);
+    let outs = [Out { amount: m, rho: 0xc1, rcm: 0xc2 }, Out { amount: m, rho: 0xd1, rcm: 0xd2 }];
     prove(honest(NK, ins, outs, root, 0, 0));
+}
+
+#[test]
+fn test_public_v_out_above_note_max() {
+    // v_out is a public amount leaving the notes, not a note: two full notes
+    // leave as 2^64 - 2.
+    let m: u64 = 0x7fffffffffffffff;
+    let (ins, root) = two_notes(m, m);
+    prove(honest(NK, ins, [none_out(), none_out()], root, 0, 0xfffffffffffffffe));
+}
+
+// ---- the 2^63 - 1 note bound: a wallet holds nothing larger
+
+#[test(should_fail_with = "assert_max_bit_size")]
+fn test_output_above_note_max() {
+    // Two 2^62 notes merged into one of 2^63: balanced, only the bound fails.
+    let h: u64 = 0x4000000000000000;
+    let (ins, root) = two_notes(h, h);
+    let outs = [Out { amount: 0x8000000000000000, rho: 0xc1, rcm: 0xc2 }, none_out()];
+    prove(honest(NK, ins, outs, root, 0, 0));
+}
+
+#[test(should_fail_with = "assert_max_bit_size")]
+fn test_output_above_note_max_from_v_in() {
+    let outs = [Out { amount: 0xffffffffffffffff, rho: 0xc1, rcm: 0xc2 }, none_out()];
+    prove(honest(NK, [none_in(), none_in()], outs, 0, 0xffffffffffffffff, 0));
+}
+
+#[test(should_fail_with = "assert_max_bit_size")]
+fn test_input_above_note_max() {
+    // A 2^63 note in the tree (none can exist on chain), split in two.
+    let (ins, root) = two_notes(0x8000000000000000, 1);
+    let h: u64 = 0x4000000000000000;
+    let outs = [Out { amount: h, rho: 0xc1, rcm: 0xc2 }, Out { amount: h, rho: 0xd1, rcm: 0xd2 }];
+    prove(honest(NK, [ins[0], none_in()], outs, root, 0, 0));
 }
 
 // ---- negative

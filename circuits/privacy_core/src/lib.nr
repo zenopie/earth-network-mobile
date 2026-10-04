@@ -15,6 +15,20 @@ pub mod value;
 
 pub global DEPTH: u32 = 32;
 
+/// Every note value and stake note amount is at most 2^63 - 1: what every
+/// wallet holds (Android Long, iOS Int64, web; PRIVACY_FORMATS section 3,
+/// Amounts) and the most the chain mints (x/shielded MaxNoteValue,
+/// ORCHARD_DESIGN section 16). note_cm and stake_cm enforce it, so no circuit
+/// opens or creates a commitment to a larger value: a bundle cannot make a
+/// note no wallet can see.
+pub global NOTE_VALUE_BITS: u32 = 63;
+
+/// value < 2^NOTE_VALUE_BITS: one range constraint on the value's own
+/// witness, no new witness.
+pub fn assert_note_value(value: u64) {
+    (value as Field).assert_max_bit_size::<NOTE_VALUE_BITS>();
+}
+
 pub global TAG_ID: Field = 0x65617274682e6964; // "earth.id"
 pub global TAG_OWNER: Field = 0x65617274682e6f776e6572; // "earth.owner"
 pub global TAG_LEAF: Field = 0x65617274682e6c656166; // "earth.leaf"
@@ -95,8 +109,9 @@ pub fn note_pc(owner_pk: Field, rho: Field, rcm: Field) -> Field {
     h4(TAG_PC, owner_pk, rho, rcm)
 }
 
-/// cm = H(TAG_CM, asset, value, pc)
+/// cm = H(TAG_CM, asset, value, pc), value at most 2^63 - 1 (NOTE_VALUE_BITS).
 pub fn note_cm(asset: Field, value: u64, pc: Field) -> Field {
+    assert_note_value(value);
     h4(TAG_CM, asset, value as Field, pc)
 }
 
@@ -117,8 +132,10 @@ pub fn stake_pc(owner_pk: Field, rho: Field, rcm: Field) -> Field {
 
 /// Stake note commitment = H(TAG_STAKE, asset, amount, spc). asset is the
 /// stake asset's id: zk/privacy.AssetID("derth/<valoper>") for delegated
-/// stake, AssetID("unbond/<valoper>/<epoch>") for an unbonding claim.
+/// stake, AssetID("unbond/<valoper>/<epoch>") for an unbonding claim. amount
+/// at most 2^63 - 1 (NOTE_VALUE_BITS).
 pub fn stake_cm(asset: Field, amount: u64, spc: Field) -> Field {
+    assert_note_value(amount);
     h4(TAG_STAKE, asset, amount as Field, spc)
 }
 
@@ -281,4 +298,21 @@ fn test_merkle_index_direction() {
     }
     assert(r1 == expect);
     assert(merkle_root(7, 0, sib) != r1);
+}
+
+#[test]
+fn test_note_value_bound() {
+    let max: u64 = 0x7fffffffffffffff;
+    let _ = note_cm(ASSET_ERTH, max, 1);
+    let _ = stake_cm(ASSET_ERTH, max, 1);
+}
+
+#[test(should_fail_with = "assert_max_bit_size")]
+fn test_note_cm_above_bound() {
+    let _ = note_cm(ASSET_ERTH, 0x8000000000000000, 1);
+}
+
+#[test(should_fail_with = "assert_max_bit_size")]
+fn test_stake_cm_above_bound() {
+    let _ = stake_cm(ASSET_ERTH, 0xffffffffffffffff, 1);
 }

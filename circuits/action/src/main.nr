@@ -10,6 +10,11 @@
 //!   nf = H(TAG_NF, nk, rho, s_pos)
 //! Output (dummy when o_value == 0, nothing special):
 //!   cm_out = H(TAG_CM, o_asset, o_value, o_pc)
+//! Both values are at most 2^63 - 1 (privacy_core NOTE_VALUE_BITS, inside
+//! note_cm): what every wallet holds and the chain mints (ORCHARD_DESIGN
+//! section 16), so no bundle creates a note its owner's wallet cannot see.
+//! The spend bound is implied (every note in the tree came from a bounded
+//! output or a bounded chain mint) but checked anyway, at no extra size.
 //! Net value commitment, each asset under its own canonical base:
 //!   cv = s_value*G(s_asset) - o_value*G(o_asset) + rcv*R
 //! Binding: sighash, the chain's hash of the whole msg (every action's anchor,
@@ -30,8 +35,8 @@
 //! wallet gives a dummy spend a fresh rho (unique nf, recorded like any
 //! other) and any anchor in the chain's window; a dummy output a random pc.
 //!
-//! Size (bb v5.0.0 gates, noir-recursive): 8,120, 72 below the 2^13 = 8,192
-//! dyadic size. Any added constraint risks 2^14 and doubles prove time:
+//! Size (bb v5.0.0 gates, noir-recursive): 8,098, 94 below the 2^13 = 8,192
+//! dyadic size (8,120 before the 2^63 - 1 note bound). Any added constraint risks 2^14 and doubles prove time:
 //! re-run `bb gates` after every change (scripts/orchard-bundles.sh prints it).
 //!
 //! Public input order: anchor, nf, cm_out, cv_x, cv_y, sighash
@@ -123,7 +128,7 @@ fn action(
 
 // ---------------------------------------------------------------- tests
 
-use privacy_core::ASSET_ERTH;
+use privacy_core::{ASSET_ERTH, h4, TAG_CM};
 use privacy_core::value::{point_hint_at, R, value_base};
 use std::embedded_curve_ops::{EmbeddedCurvePoint, EmbeddedCurveScalar, multi_scalar_mul};
 
@@ -207,7 +212,9 @@ fn hint(asset: Field) -> (u32, Field) {
 
 /// The spend note sits at position 5 of an otherwise empty tree (a dummy
 /// spend is left out). The public cv is computed independently of
-/// value_commit, as a sum of separate scalar multiplications.
+/// value_commit, as a sum of separate scalar multiplications. Commitments
+/// are taken with raw_cm, without note_cm's bound, so a fixture can hold a
+/// value above 2^63 - 1 that only the circuit refuses.
 fn fixture(s_asset: Field, s_value: u64, o_asset: Field, o_value: u64) -> Fx {
     let nk = 0x6e6b;
     let s_rho = 11;
@@ -219,7 +226,7 @@ fn fixture(s_asset: Field, s_value: u64, o_asset: Field, o_value: u64) -> Fx {
         s_path[i] = z[i];
     }
     let leaf = if s_value != 0 {
-        note_cm(s_asset, s_value, note_pc(owner_pk(nk), s_rho, s_rcm))
+        raw_cm(s_asset, s_value, note_pc(owner_pk(nk), s_rho, s_rcm))
     } else {
         0
     };
@@ -243,11 +250,16 @@ fn fixture(s_asset: Field, s_value: u64, o_asset: Field, o_value: u64) -> Fx {
         o_hint: hint(o_asset),
         anchor,
         nf: note_nf(nk, s_rho, s_pos),
-        cm_out: note_cm(o_asset, o_value, o_pc),
+        cm_out: raw_cm(o_asset, o_value, o_pc),
         cv_x: cv.x,
         cv_y: cv.y,
         sighash: 0x5169,
     }
+}
+
+/// H(TAG_CM, asset, value, pc) for any u64 value (note_cm without its bound).
+fn raw_cm(asset: Field, value: u64, pc: Field) -> Field {
+    h4(TAG_CM, asset, value as Field, pc)
 }
 
 fn mul(p: EmbeddedCurvePoint, v: Field) -> EmbeddedCurvePoint {
@@ -296,8 +308,27 @@ fn test_both_dummy() {
 
 #[test]
 fn test_max_values() {
-    let m: u64 = 0xffffffffffffffff;
+    let m: u64 = 0x7fffffffffffffff;
     run_main(fixture(ASSET_A, m, ASSET_ERTH, m));
+}
+
+// ---- the 2^63 - 1 note bound: a wallet holds nothing larger
+
+#[test(should_fail_with = "assert_max_bit_size")]
+fn test_output_above_note_max() {
+    // A well-formed cm_out and cv for an output of 2^63: only the bound fails.
+    run_main(fixture(ASSET_A, 0, ASSET_A, 0x8000000000000000));
+}
+
+#[test(should_fail_with = "assert_max_bit_size")]
+fn test_output_u64_max() {
+    run_main(fixture(ASSET_A, 0, ASSET_ERTH, 0xffffffffffffffff));
+}
+
+#[test(should_fail_with = "assert_max_bit_size")]
+fn test_spend_above_note_max() {
+    // A 2^63 note at position 5 under the anchor (none can exist on chain).
+    run_main(fixture(ASSET_A, 0x8000000000000000, ASSET_A, 0));
 }
 
 #[test]

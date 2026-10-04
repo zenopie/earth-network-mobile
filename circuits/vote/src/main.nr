@@ -13,7 +13,9 @@
 //!   3. vnf = H(TAG_VNF, nk, rho, position, proposal_id), the vote nullifier
 //!      the chain refuses a second time for this proposal;
 //!   4. 0 < weight <= amount (the vote's public weight; a wallet may vote
-//!      less than the note holds, e.g. a rounded weight).
+//!      less than the note holds, e.g. a rounded weight). amount, and so
+//!      weight, is at most 2^63 - 1 (privacy_core NOTE_VALUE_BITS, inside
+//!      stake_cm), the most a stake note holds.
 //!
 //! Nothing is spent and nothing is created: the note stays where it is and can
 //! vote on every other open proposal (each with its own vnf) and be spent as
@@ -137,8 +139,11 @@ fn tree4(leaves: [Field; 4]) -> (Field, [[Field; DEPTH]; 4]) {
     (root, paths)
 }
 
+/// H(TAG_STAKE, ASSET, amount, spc) for any u64 amount (stake_cm without its
+/// bound), so a test can hold an amount above 2^63 - 1 that only the circuit
+/// refuses.
 fn note_cm(nk: Field, amount: u64, rho: Field, rcm: Field) -> Field {
-    stake_cm(ASSET, amount, stake_pc(owner_pk(nk), rho, rcm))
+    privacy_core::h4(privacy_core::TAG_STAKE, ASSET, amount as Field, stake_pc(owner_pk(nk), rho, rcm))
 }
 
 /// Note tree: our note of 500 at position 1 (another note at 0).
@@ -362,6 +367,31 @@ fn test_vnf_of_another_position() {
 fn test_weight_above_amount() {
     let mut v = honest();
     v.weight = 501;
+    prove(v);
+}
+
+#[test]
+fn test_note_max() {
+    let m: u64 = 0x7fffffffffffffff;
+    let (note_root, paths) = tree4([note_cm(0xbad, 9, 0x01, 0x02), note_cm(NK, m, 0xa1, 0xa2), 0, 0]);
+    let mut v = honest();
+    v.note_root = note_root;
+    v.path = paths[1];
+    v.amount = m;
+    v.weight = m;
+    prove(v);
+}
+
+#[test(should_fail_with = "assert_max_bit_size")]
+fn test_amount_above_note_max() {
+    // A 2^63 stake note at position 1 (none can exist on chain).
+    let a: u64 = 0x8000000000000000;
+    let (note_root, paths) = tree4([note_cm(0xbad, 9, 0x01, 0x02), note_cm(NK, a, 0xa1, 0xa2), 0, 0]);
+    let mut v = honest();
+    v.note_root = note_root;
+    v.path = paths[1];
+    v.amount = a;
+    v.weight = a;
     prove(v);
 }
 
