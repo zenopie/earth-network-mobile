@@ -51,7 +51,7 @@ import org.junit.Test
 
 /**
  * Every private msg built by the wallet, against the chain's gogoproto Marshal
- * of the same msg and the chain's own Sighash of it (android/tools/orchardvectors).
+ * of the same msg and the chain's own Sighash of it (tools/privacyvectors).
  */
 class PrivateMsgsTest {
     private val chainId = "earth-1"
