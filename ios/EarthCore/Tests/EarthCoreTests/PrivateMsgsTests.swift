@@ -218,8 +218,8 @@ final class PrivateMsgsTests: XCTestCase {
         XCTAssertEqual(b["affiliate_field"] as? String, PrivacyHash.affiliateField(handle: "alice-01").hex)
     }
 
-    /// Chain wave 3 (06ea4d6): the module accounts, canonical weights, calendar dates.
-    func testWave3Vectors() throws {
+    /// The module accounts, canonical weights, calendar dates.
+    func testModuleAccountsCanonicalWeightsAndCalendarDates() throws {
         let mods = Vectors.json["module_accounts"] as! [String: String]
         XCTAssertEqual(Set(PrivateMsgs.moduleAccounts), Set(mods.keys))
         for name in PrivateMsgs.moduleAccounts {
@@ -233,5 +233,12 @@ final class PrivateMsgsTests: XCTestCase {
         XCTAssertFalse(PrivateMsgs.isCalendarDate("250231"))
         XCTAssertTrue(PrivateMsgs.isCalendarDate("240229"))
         XCTAssertFalse(PrivateMsgs.isCalendarDate("250229"))
+    }
+
+    /// legacyDec: a non-ASCII digit is refused, never a trap.
+    func testLegacyDecRefusesNonAsciiDigits() {
+        XCTAssertThrowsError(try PrivateMsgs.legacyDec("0.\u{0665}"))
+        XCTAssertThrowsError(try PrivateMsgs.legacyDec("\u{0661}"))
+        XCTAssertEqual("0.500000000000000000", try PrivateMsgs.legacyDec("0.5"))
     }
 }

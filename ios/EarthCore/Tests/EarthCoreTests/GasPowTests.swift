@@ -113,4 +113,19 @@ final class GasPowTests: XCTestCase {
         func set(_ x: Double) { l.lock(); v = x; l.unlock() }
         var value: Double { l.lock(); defer { l.unlock() }; return v }
     }
+
+    /// Cancelling the request stops the proof of work.
+    func testCancellingTheRequestStopsTheWork() async throws {
+        let g = self
+        let s = GasPowTests.Server(GasPow.maxBits, binding: g.binding, nullifier: g.nullifier)
+        let p = GasPowTests.Progress()
+        let outer = Task { try await g.request(s) { p.set($0) } }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        outer.cancel()
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let a = p.value
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+        XCTAssertEqual(a, p.value, "the hashcash stopped with the request")
+        XCTAssertEqual(24, GasPow.maxBits)
+    }
 }

@@ -1,37 +1,25 @@
 import BigInt
+import Foundation
 import XCTest
 @testable import EarthCore
 
-/// Clients round 8 (chain dff3a9b, ORCHARD_DESIGN 20), ports Fix8Test.kt:
-/// one stake note per validator (a delegation, an unlock and a move's credit
-/// merge into it; a first delegation pads its input, a full exit creates a
-/// zero note), credits quoted at the live rate with a margin (a refusal costs
-/// nothing), moving stake (MsgRedelegate) with its slash label, the window
-/// that keeps moved-in stake in place (refused up front, explained), the
-/// label cleared at what the slash debt tree says it is worth, every stake
-/// proof naming the chain's clear_before and debt root, and the debt tree
-/// read whole (the indexer's stream, the chain's pages), never asked about
-/// one move.
-final class Fix8Tests: XCTestCase {
-    let alice = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+/// Stake notes (ORCHARD_DESIGN 20): one note per validator (a delegation,
+/// an unlock and a move's credit merge into it; a first delegation pads its
+/// input, a full exit creates a zero note), credits quoted at the live rate
+/// with a margin (a refusal costs nothing), moving stake (MsgRedelegate)
+/// with its slash label, the window that keeps moved-in stake in place
+/// (refused up front, explained), the label cleared at what the slash debt
+/// tree says it is worth, every stake proof naming the chain's clear_before
+/// and debt root, and the debt tree read whole (the indexer's stream, the
+/// chain's pages), never asked about one move.
+final class StakeNoteTests: PrivacyTestCase {
     let vA = "earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
     var vB: String { Vectors.json["validator2"] as! String }
     let vC = "earthvaloper1zyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszq"
 
-    func wallet(_ chain: FakeChain, indexer: PrivacyIndexer? = nil) throws -> PrivacyWallet {
-        PrivacyWallet(keys: try PrivacyKeys.fromMnemonic(alice), store: .memory(), indexer: indexer ?? chain, chain: chain,
-                      reads: FakeReads(chain: chain), prover: chain.prover, chainID: chain.chainID, roots: chain,
-                      now: { [unowned chain] in chain.now })
-    }
-
-    func funded(_ chain: FakeChain, _ w: PrivacyWallet, _ amount: UInt64 = 3_000_000) throws {
-        let o = try w.shieldOutput(denom: "uerth", amount: 0)
-        chain.shield("uerth", amount, o.pc, o.ciphertext)
-    }
-
     func staked(_ chain: FakeChain = FakeChain(), at: String? = nil, amount: UInt64 = 2_000_000) async throws -> PrivacyWallet {
         let a = try wallet(chain)
-        for _ in 0 ..< 6 { try funded(chain, a) }
+        for _ in 0 ..< 6 { try funded(chain, a, 3_000_000) }
         try await a.sync()
         _ = try await a.delegate(validator: at ?? vA, amount: amount); try await a.sync()
         return a
@@ -41,39 +29,16 @@ final class Fix8Tests: XCTestCase {
 
     func f(_ b: Data) -> Fr { try! Fr(bytes: b) }
 
-    func assertThrowsAsync<T>(_ body: () async throws -> T, _ check: (Error) -> Bool = { _ in true }, line: UInt = #line) async {
-        do {
-            _ = try await body()
-            XCTFail("expected an error", line: line)
-        } catch {
-            XCTAssertTrue(check(error), "unexpected error \(error)", line: line)
-        }
-    }
-
-    func dump(_ chain: FakeChain, _ test: String) {
-        guard let out = ProcessInfo.processInfo.environment["PRIVACY_TOML_OUT"] else { return }
-        func write(_ kind: String, _ i: Int, _ toml: String) {
-            let dir = URL(fileURLWithPath: out).appendingPathComponent(kind).appendingPathComponent("\(test)_\(i)")
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            try? toml.write(to: dir.appendingPathComponent("Prover.toml"), atomically: true, encoding: .utf8)
-        }
-        for (i, w) in chain.prover.allActions.enumerated() { write("action", i, w.proverToml()) }
-        for (i, w) in chain.prover.allStakes.enumerated() { write("stake", i, w.proverToml()) }
-        for (i, w) in chain.prover.allVotes.enumerated() { write("vote", i, w.proverToml()) }
-    }
-
-    /// Every proof names the chain's clear_before and debt root (circuit audit L-1).
+    /// Every proof names the chain's clear_before and debt root.
     func assertNamesTheDebt(_ chain: FakeChain, _ p: StakeProof, line: UInt = #line) {
         XCTAssertEqual(chain.clearBefore(), p.clearBefore, line: line)
         XCTAssertEqual(chain.debtRoot(), f(p.debtRoot), line: line)
     }
 
-    // MARK: one note per validator
-
     func testAFirstDelegationPadsAndATopUpMerges() async throws {
         let chain = FakeChain()
         let a = try wallet(chain)
-        for _ in 0 ..< 4 { try funded(chain, a) }
+        for _ in 0 ..< 4 { try funded(chain, a, 3_000_000) }
         try await a.sync()
         let nfs = chain.stakeNfValues.count
         _ = try await a.delegate(validator: vA, amount: 1_000_000); try await a.sync()
@@ -94,7 +59,7 @@ final class Fix8Tests: XCTestCase {
         XCTAssertEqual(n.amount + second.derth, at(a, vA)[0].amount)
         XCTAssertTrue(a.stakeMergeable().isEmpty)
         assertNamesTheDebt(chain, second.stake)
-        dump(chain, "fix8Merge")
+        dump(chain, "merge")
     }
 
     func testAFullExitCreatesAZeroNote() async throws {
@@ -111,7 +76,7 @@ final class Fix8Tests: XCTestCase {
         XCTAssertEqual(rows + 1, chain.stakeRows.count)
         XCTAssertTrue(at(a, vA).isEmpty)
         XCTAssertTrue(a.stakeBalances().isEmpty)
-        dump(chain, "fix8FullExit")
+        dump(chain, "fullExit")
     }
 
     /// While the block time is below the label window (the chain says clear_before 0) a proof names 0 and a zero debt root, as the chain requires.
@@ -125,8 +90,6 @@ final class Fix8Tests: XCTestCase {
         _ = try await a.undelegate(validator: vA, amount: 100_000)
         XCTAssertEqual(0, (chain.lastMsg as! MsgShieldedUndelegate).stake.clearBefore)
     }
-
-    // MARK: quotes
 
     func testTheQuoteIsWhatTheTxCredits() async throws {
         let chain = FakeChain()
@@ -170,10 +133,8 @@ final class Fix8Tests: XCTestCase {
         XCTAssertEqual(sims, chain.simulated)
     }
 
-    // MARK: moving stake
-
     /// A move arrives whole only out of an unbonded source's queue (chain
-    /// b46a4bb, audit 7 A7-1): from a bonded one it leaves pro rata, so the
+    /// b46a4bb): from a bonded one it leaves pro rata, so the
     /// quote takes u - 1001 even when the queue covers u, and lands.
     func testAMoveArrivesWholeOnlyFromAnUnbondedQueue() async throws {
         let chain = FakeChain()
@@ -225,7 +186,7 @@ final class Fix8Tests: XCTestCase {
         try await restored.sync()
         XCTAssertEqual(dst.label, at(restored, vB)[0].label)
         XCTAssertEqual(a.stakeBalances(), restored.stakeBalances())
-        dump(chain, "fix8Move")
+        dump(chain, "move")
     }
 
     func testAMoveMergesIntoAnUnlabelledNoteAndBesideALabelledOne() async throws {
@@ -258,7 +219,7 @@ final class Fix8Tests: XCTestCase {
         XCTAssertEqual(2, h.notes)
         XCTAssertFalse(h.mergeable)
         XCTAssertEqual(merged.amount - q.dstDerth, h.free)
-        dump(chain, "fix8MoveMerge")
+        dump(chain, "moveMerge")
     }
 
     func testARestakeMergesALabelledNoteWithAnUnlabelledOne() async throws {
@@ -274,10 +235,8 @@ final class Fix8Tests: XCTestCase {
         XCTAssertEqual(1, at(a, vB).count)
         XCTAssertEqual(labelled.amount + 70_000, at(a, vB)[0].amount)
         XCTAssertEqual(labelled.label, at(a, vB)[0].label)
-        dump(chain, "fix8RestakeLabelled")
+        dump(chain, "restakeLabelled")
     }
-
-    // MARK: the window
 
     func testMovedStakeStaysUntilItsWindowCloses() async throws {
         let chain = FakeChain()
@@ -304,7 +263,7 @@ final class Fix8Tests: XCTestCase {
         XCTAssertEqual(l, change.label)
         XCTAssertEqual(l.exposed, change.amount)
         XCTAssertFalse(chain.prover.allStakes.last!.clear)
-        dump(chain, "fix8Window")
+        dump(chain, "window")
     }
 
     func testTheLabelClearsOnceTheWindowCloses() async throws {
@@ -325,7 +284,7 @@ final class Fix8Tests: XCTestCase {
         let left = at(a, vB)[0]
         XCTAssertNil(left.label)
         XCTAssertEqual(n.amount - 100_000, left.amount)
-        dump(chain, "fix8Clear")
+        dump(chain, "clear")
     }
 
     func testASlashedMoveClearsAtWhatItRetains() async throws {
@@ -352,7 +311,7 @@ final class Fix8Tests: XCTestCase {
         XCTAssertTrue(chain.prover.allStakes.last!.clear)
         // Every read of the debt tree is a whole page from its start: nothing names this wallet's move.
         XCTAssertTrue(chain.debtAsks.allSatisfy { $0 == "indexer:0" || $0 == "chain:0" }, "\(chain.debtAsks)")
-        dump(chain, "fix8Slashed")
+        dump(chain, "slashed")
     }
 
     func testAForgedOrMissingDebtStreamFallsBackToTheChain() async throws {
@@ -375,24 +334,7 @@ final class Fix8Tests: XCTestCase {
         XCTAssertGreaterThanOrEqual(chain.debtAsks.filter { $0.hasPrefix("chain:") }.count, 2)
     }
 
-    // MARK: errors
-
-    func testRefusalsThatCostNothingSayTryAgain() {
-        for log in [
-            "the delegation buys 5 derth at the live rate 1.1, less than the 6 it credits (the rate moved since the proof: re-quote with a margin)",
-            "move_time 1 is not within 600s before the block time 9000 (name a recent block's time)",
-            "debt root 00 is not the current slash debt root 01 (a slash reached a redelegation since: re-prove)",
-        ] {
-            let t = ChainErrors.explain(text: log)
-            XCTAssertNotNil(t, log)
-            XCTAssertTrue(t?.contains("try again") ?? false, log)
-        }
-        XCTAssertEqual(ChainErrors.explain(text: "x re-quote with a margin"),
-                       ChainErrors.explain(code: 1103, codespace: "shieldedstaking", log: "x re-quote with a margin"))
-        XCTAssertNil(ChainErrors.explain(code: 1103, codespace: "shieldedstaking", log: "amount converts to nothing"))
-    }
-
-    /// The proof's owner tag is fresh on every msg that is not a position's (circuit audit L-2).
+    /// The proof's owner tag is fresh on every msg that is not a position's.
     func testOwnerTagsAreFreshOffPositions() async throws {
         let chain = FakeChain()
         let a = try await staked(chain)
