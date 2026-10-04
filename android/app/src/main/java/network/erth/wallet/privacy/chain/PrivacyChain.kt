@@ -379,7 +379,7 @@ object RestPrivateChain : PrivateChain {
 /**
  * The chain's own view of the three trees (LCD), against which every root
  * the indexer served is checked before the wallet builds anything on it
- * (WalletSync.verifyRoots; PRIVACY_FORMATS 4b says what this trusts). The
+ * (WalletSync.verifyRoots; PRIVACY_FORMATS §18 says what this trusts). The
  * identity and stake trees are read at the height the indexer's root is
  * from (`x-cosmos-block-height`), pinned only when the node echoes exactly
  * that height; otherwise (a pruned height, another height echoed) the

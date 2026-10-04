@@ -603,7 +603,7 @@ class PrivacyWallet(
     /**
      * Broadcasts the registration, its fee paid by a fee bundle (the gas
      * grant's note, on a first registration) that also carries the
-     * registration record note (PRIVACY_FORMATS.md 3a: a value-0 note to
+     * registration record note (PRIVACY_FORMATS.md §6: a value-0 note to
      * ourselves whose memo lets a wallet restored from the mnemonic find the
      * leaf), and records the registration as pending before anything else,
      * then tries to resolve it. [publicSignals] are the passport
@@ -787,7 +787,7 @@ class PrivacyWallet(
         return runCatching { Math.addExact(s.caretakerCastAt, reads.personhoodParams().caretakerVoteSeconds) }.getOrDefault(0)
     }
 
-    /** A value-0 state record note (PRIVACY_FORMATS.md 3b) to [to]'s own address, tagged with its nk. */
+    /** A value-0 state record note (PRIVACY_FORMATS.md §6) to [to]'s own address, tagged with its nk. */
     private fun stateRecord(to: PrivacyKeys, memo: (Fr) -> ByteArray): NoteOut = NoteOut.to(to.address, FEE, 0, memo(to.nk))
 
     private fun leaseParam(v: Long, name: String): Long {
@@ -2377,7 +2377,7 @@ class PrivacyWallet(
 
         /**
          * A stake vote's public weight for a note of [amount] uderth
-         * (PRIVACY_FORMATS 4e): the amount rounded down to three significant
+         * (PRIVACY_FORMATS §15): the amount rounded down to three significant
          * decimal digits (whole below 1000), so the published weight names a
          * bucket rather than the note's exact amount (a delegation's minted
          * amount is public). Gives up less than 1% of the note's voice.
@@ -2441,7 +2441,7 @@ class PrivacyWallet(
         fun votingPositions(positions: List<PrivacyChainReads.Position>, snap: PrivacyChainReads.Snapshot) =
             positions.filter { snap.height == 0L || it.createdHeight < snap.height }
 
-        /** Owner-tag counters scanned past the highest known (PRIVACY_FORMATS.md 1). */
+        /** Owner-tag counters scanned past the highest known (PRIVACY_FORMATS.md §7). */
         const val OTAG_GAP = 1024
 
         /**

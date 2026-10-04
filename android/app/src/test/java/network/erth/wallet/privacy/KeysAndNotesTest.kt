@@ -32,8 +32,7 @@ class KeysAndNotesTest {
         assertEquals(KNOWN_ADDRESS, keys.address.encode())
         assertEquals(Privacy.idc(keys.idSecret), keys.idc)
         assertNotEquals(keys.idSecret, other.idSecret)
-        // Owner-tag salts (PRIVACY_FORMATS.md section 1; the self-mint
-        // counters are gone), cross-checked with an independent Python HMAC
+        // Owner-tag salts (PRIVACY_FORMATS.md §7), cross-checked with an independent Python HMAC
         // derivation.
         assertEquals("0685f54037389aaceee42288ed8c8c996a884e297ffee771c73370ca885e1618", keys.otagSalt(0).toHex())
         assertEquals("2e52e73b7af259664a34df8bcee1c0476009a37e0ab2e52b285bae497845a9ba", keys.otagSalt(1).toHex())

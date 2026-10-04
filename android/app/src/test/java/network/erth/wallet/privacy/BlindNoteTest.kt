@@ -53,7 +53,7 @@ class BlindNoteTest {
     }
 
     /**
-     * The wallet stake note v2 (wallet-defined, PRIVACY_FORMATS 3: 201 bytes,
+     * The wallet stake note v2 (wallet-defined, PRIVACY_FORMATS §5: 201 bytes,
      * the label inside) under the same keys: an unlabelled note (the cm the
      * chain's vectors pin) and a labelled one. The iOS port pins the same
      * bytes; the layout is cross-checked by an independent decryption

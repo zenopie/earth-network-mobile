@@ -37,11 +37,11 @@ object Privacy {
     // Stake note slash labels and the slash debt tree (circuits/stake, circuits/vote; ORCHARD_DESIGN 20).
     val TAG_SLABEL = tag("earth.slabel")
     val TAG_DEBTL = tag("earth.debtl")
-    // Wallet-defined (PRIVACY_FORMATS.md 3a): the registration record note's tag.
+    // Wallet-defined (PRIVACY_FORMATS.md §6): the registration record note's tag.
     val TAG_RECTAG = tag("earth.rectag")
-    // Wallet-defined (PRIVACY_FORMATS.md 1): an unlock's closed owner-tag counter.
+    // Wallet-defined (PRIVACY_FORMATS.md §6): an unlock's closed owner-tag counter.
     val TAG_UNLOCKTAG = tag("earth.unlocktag")
-    // Wallet-defined (PRIVACY_FORMATS.md 3b): a handle or caretaker state record's tag.
+    // Wallet-defined (PRIVACY_FORMATS.md §6): a handle or caretaker state record's tag.
     val TAG_STATETAG = tag("earth.statetag")
 
     /** The fee asset, privacy_core::ASSET_ERTH. */

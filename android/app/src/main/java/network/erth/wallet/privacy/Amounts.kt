@@ -2,7 +2,7 @@ package network.erth.wallet.privacy
 
 /**
  * Note and stake amounts are u64 on chain. The wallet holds them as Long and
- * so only takes values in 0..2^63-1 (PRIVACY_FORMATS.md 3, "Amounts"): a
+ * so only takes values in 0..2^63-1 (PRIVACY_FORMATS.md §4, "Amounts"): a
  * public amount or a decrypted value above that is ignored, never wrapped to
  * a negative. No supply reaches 2^63, so nothing real is lost; iOS (UInt64)
  * applies the same bound. Totals shown to the user saturate; amounts a tx is

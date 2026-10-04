@@ -63,7 +63,7 @@ data class PendingRegistration(
 )
 
 /**
- * A registration record note found by sync (PRIVACY_FORMATS.md 3a), its tag
+ * A registration record note found by sync (PRIVACY_FORMATS.md §6), its tag
  * checked: what a wallet restored from the mnemonic finds its identity leaf
  * by. [height] is the registration's block. The search for its leaf is
  * persisted: the leaves appended at [height] as the stream passed

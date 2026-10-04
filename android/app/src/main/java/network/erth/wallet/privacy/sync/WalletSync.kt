@@ -283,7 +283,7 @@ class WalletSync(
         /** The largest tree position the circuits take (u32). */
         private const val MAX_POSITION = 0xffffffffL
 
-        /** Registration record memo: "ER", version 2 (PRIVACY_FORMATS.md 3a). Version 1 (untagged) is ignored. */
+        /** Registration record memo: "ER", version 2 (PRIVACY_FORMATS.md §6). Version 1 (untagged) is ignored. */
         val REG_MAGIC = byteArrayOf(0x45, 0x52, 0x02)
 
         /** Bytes of the record memo's tag. */
@@ -330,7 +330,7 @@ class WalletSync(
             return Triple(dsc, country, builtAt)
         }
 
-        /** Unlock memo: "EU", version 1 (PRIVACY_FORMATS.md 1). */
+        /** Unlock memo: "EU", version 1 (PRIVACY_FORMATS.md §6). */
         val UNLOCK_MAGIC = byteArrayOf(0x45, 0x55, 0x01)
 
         private fun unlockTag(nk: Fr, counter: Int): ByteArray =
@@ -360,7 +360,7 @@ class WalletSync(
         }
 
         /**
-         * State records (PRIVACY_FORMATS.md 3b): value-0 notes
+         * State records (PRIVACY_FORMATS.md §6): value-0 notes
          * whose memo says what this identity holds in a scope, so a wallet
          * restored from the mnemonic knows its handle and caretaker split
          * (or that it moved them away). "EH" handle, "EC" caretaker, version 1.
@@ -744,7 +744,7 @@ class WalletSync(
 
     /**
      * Every local root against the chain's own (the LCD: PRIVACY_FORMATS
-     * 4b says what that trusts). Only a positive contradiction is a mismatch,
+     * §18 says what that trusts). Only a positive contradiction is a mismatch,
      * which wipes the synced data and throws [ChainMismatch]: a note root the
      * chain recorded at another tree size, or an identity or stake tree that
      * differs from the chain's read at exactly the indexer's root height (the
@@ -1013,7 +1013,7 @@ class WalletSync(
     private fun syncNullifiers(s: PrivacyState, limit: Int): List<OwnedNote> {
         val mine = s.notes.withIndex().filter { it.value.unspent }.associate { it.value.nf to it.index }
         // The spot-check sample never holds one of ours (spent or not): asking
-        // the chain about it would name our note (PRIVACY_FORMATS 4b).
+        // the chain about it would name our note (PRIVACY_FORMATS §18).
         val own = s.notes.mapTo(HashSet()) { it.nf }
         val spent = ArrayList<OwnedNote>()
         // Only up to the height the note stream reached: a note found next

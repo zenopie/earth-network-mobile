@@ -45,9 +45,9 @@ class PrivacyKeys private constructor(
         return Fr.fromWideBytes(hmac(label.toByteArray() + nk.toBytes() + c))
     }
 
-    // No self-mint counters (removed for chain fced976): every note the
-    // chain mints to this wallet carries a blind ciphertext of fresh secrets
-    // (PRIVACY_FORMATS.md section 1), found by trial decryption.
+    // No counter is derived for a note the chain mints to this wallet: it
+    // carries a v2 ciphertext of fresh secrets (PRIVACY_FORMATS.md §5), found
+    // by trial decryption.
 
     /**
      * Groundworks position [counter]'s owner-tag salt: a position stores

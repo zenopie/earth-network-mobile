@@ -254,7 +254,7 @@ class RestoreTest : WalletTest() {
         assertTrue(chain.blockTimeAsks.all { it in rows })
     }
 
-    /** The record memo, version 2 with its tag (PRIVACY_FORMATS 3a golden). */
+    /** The record memo, version 2 with its tag (PRIVACY_FORMATS §6 golden). */
     @Test
     fun recordMemoGolden() {
         val k = PrivacyKeys.fromMnemonic(alice)
