@@ -1,7 +1,7 @@
 //! vote — one owner's private vote with up to MAX_NOTES stake notes at one
 //! validator on one x/gov proposal, without spending them, revealing one
 //! weight (earth-network-chain x/shieldedstaking, ORCHARD_DESIGN.md sections
-//! 15 and 18).
+//! 15, 18 and 20).
 //!
 //! When a proposal enters voting the chain snapshots two roots: the stake note
 //! tree's (`note_root`) and the stake nullifier indexed tree's (`nf_root`).
@@ -16,10 +16,15 @@
 //!      with low.value < nf_i < low.next_value, or low.next_value = 0);
 //!   3. vnf_i = H(TAG_VNF, nk, rho_i, position_i, proposal_id), its vote
 //!      nullifier, which the chain refuses a second time for this proposal;
+//!   4. its value: its amount, or, for a note holding a redelegation's
+//!      exposure (label (move_key, move_time, exposed)), its amount less what
+//!      slashes have cut from the exposure so far: amount - exposed +
+//!      debt_retained(move_key, exposed) against `debt_root`, the CURRENT slash
+//!      debt tree (a slash after the snapshot still counts);
 //!
 //! an unused slot (amount_i = 0) has vnf_i = 0 and proves nothing; and
 //!
-//!   4. 0 < weight <= sum of the amounts (the vote's one public weight; the
+//!   5. 0 < weight <= sum of the values (the vote's one public weight; the
 //!      wallet publishes the sum rounded down to three significant digits).
 //!      Each amount is at most 2^63 - 1 (privacy_core NOTE_VALUE_BITS,
 //!      inside stake_cm), the most a stake note holds.
@@ -37,16 +42,20 @@
 //! proposal, validator, fee bundle, ...).
 //!
 //! Public input order:
-//!   note_root, nf_root, asset, weight, proposal_id, vnf[0..MAX_NOTES], sighash
+//!   note_root, nf_root, debt_root, asset, weight, proposal_id,
+//!   vnf[0..MAX_NOTES], sighash
 
 use privacy_core::{
-    assert_not_in_indexed, bind, DEPTH, merkle_root, owner_pk, stake_cm, stake_nf, stake_pc,
-    vote_nf,
+    assert_not_in_indexed, bind, debt_retained, DEPTH, merkle_root, owner_pk, stake_cm, stake_label,
+    stake_nf, stake_pc, vote_nf,
 };
 
-/// The most notes one vote proof carries. 4 keeps the circuit under 2^15
-/// gates (27,6xx), the bundled SRS's 2^15 + 1 points; 5 would not fit.
-global MAX_NOTES: u32 = 4;
+/// The most notes one vote proof carries. With one stake note per validator
+/// (ORCHARD_DESIGN.md section 20) a vote uses one; the second covers a note
+/// a redelegation into a validator with a labelled note made beside it. 2
+/// slots with a debt lookup each keep the circuit within 2^15 gates, the
+/// bundled SRS's 2^15 + 1 points.
+global MAX_NOTES: u32 = 2;
 
 fn main(
     nk: Field,
@@ -55,13 +64,23 @@ fn main(
     rcm: [Field; MAX_NOTES],
     pos: [u32; MAX_NOTES],
     path: [[Field; DEPTH]; MAX_NOTES],
+    move_key: [Field; MAX_NOTES],
+    move_time: [u64; MAX_NOTES],
+    exposed: [u64; MAX_NOTES],
     low_value: [Field; MAX_NOTES],
     low_next_value: [Field; MAX_NOTES],
     low_next_index: [u32; MAX_NOTES],
     low_index: [u32; MAX_NOTES],
     low_path: [[Field; DEPTH]; MAX_NOTES],
+    debt_low_key: [Field; MAX_NOTES],
+    debt_low_next_key: [Field; MAX_NOTES],
+    debt_low_next_index: [u32; MAX_NOTES],
+    debt_low_retained: [u64; MAX_NOTES],
+    debt_low_index: [u32; MAX_NOTES],
+    debt_low_path: [[Field; DEPTH]; MAX_NOTES],
     note_root: pub Field,
     nf_root: pub Field,
+    debt_root: pub Field,
     asset: pub Field,
     weight: pub u64,
     proposal_id: pub u64,
@@ -72,7 +91,26 @@ fn main(
     let mut total: u128 = 0;
     for i in 0..MAX_NOTES {
         if amount[i] != 0 {
-            let cm = stake_cm(asset, amount[i], stake_pc(opk, rho[i], rcm[i]));
+            let lab = move_key[i] != 0;
+            let mut label: Field = 0;
+            let mut value: u64 = amount[i];
+            if lab {
+                assert((exposed[i] != 0) & (exposed[i] <= amount[i]), "bad exposure");
+                label = stake_label(move_key[i], move_time[i], exposed[i]);
+                let retained = debt_retained(
+                    move_key[i],
+                    exposed[i],
+                    debt_low_key[i],
+                    debt_low_next_key[i],
+                    debt_low_next_index[i],
+                    debt_low_retained[i],
+                    debt_low_index[i],
+                    debt_low_path[i],
+                    debt_root,
+                );
+                value = amount[i] - exposed[i] + retained;
+            }
+            let cm = stake_cm(asset, amount[i], stake_pc(opk, rho[i], rcm[i]), label);
             assert(
                 merkle_root(cm, pos[i], path[i]) == note_root,
                 "note not in snapshot stake tree",
@@ -88,10 +126,10 @@ fn main(
                 nf_root,
             );
             assert(vnf[i] == vote_nf(nk, rho[i], pos[i], proposal_id), "bad vote nullifier");
+            total += value as u128;
         } else {
             assert(vnf[i] == 0, "unused slot has a vote nullifier");
         }
-        total += amount[i] as u128;
     }
     assert(weight != 0, "zero weight");
     assert(weight as u128 <= total, "weight exceeds the notes");
@@ -100,12 +138,16 @@ fn main(
 
 // ---------------------------------------------------------------- tests
 
-use privacy_core::{h2, nf_leaf, zero_hashes};
+use privacy_core::{debt_leaf, h2, nf_leaf, zero_hashes};
 
 global NK: Field = 0x5eed;
 global ASSET: Field = 0xde27;
 global SIGHASH: Field = 0x5164;
 global PROPOSAL: u64 = 7;
+/// The labelled note's move (position 3): key, time, exposure.
+global MK: Field = 0x4d4b;
+global MT: u64 = 1000;
+global EX: u64 = 100;
 
 /// One slot's witness.
 struct Slot {
@@ -114,12 +156,25 @@ struct Slot {
     rcm: Field,
     pos: u32,
     path: [Field; DEPTH],
+    mk: Field,
+    mt: u64,
+    ex: u64,
     low_value: Field,
     low_next_value: Field,
     low_next_index: u32,
     low_index: u32,
     low_path: [Field; DEPTH],
+    debt: Debt,
     vnf: Field,
+}
+
+struct Debt {
+    low_key: Field,
+    low_next_key: Field,
+    low_next_index: u32,
+    low_retained: u64,
+    low_index: u32,
+    low_path: [Field; DEPTH],
 }
 
 struct V {
@@ -127,9 +182,14 @@ struct V {
     slots: [Slot; MAX_NOTES],
     note_root: Field,
     nf_root: Field,
+    debt_root: Field,
     asset: Field,
     weight: u64,
     proposal_id: u64,
+}
+
+fn no_debt() -> Debt {
+    Debt { low_key: 0, low_next_key: 0, low_next_index: 0, low_retained: 0, low_index: 0, low_path: [0; DEPTH] }
 }
 
 fn unused() -> Slot {
@@ -139,11 +199,15 @@ fn unused() -> Slot {
         rcm: 0x78,
         pos: 0,
         path: [0; DEPTH],
+        mk: 0,
+        mt: 0,
+        ex: 0,
         low_value: 0,
         low_next_value: 0,
         low_next_index: 0,
         low_index: 0,
         low_path: [0; DEPTH],
+        debt: no_debt(),
         vnf: 0,
     }
 }
@@ -154,11 +218,20 @@ fn prove(v: V) {
     let mut rcm = [0; MAX_NOTES];
     let mut pos = [0; MAX_NOTES];
     let mut path = [[0; DEPTH]; MAX_NOTES];
+    let mut mk = [0; MAX_NOTES];
+    let mut mt = [0; MAX_NOTES];
+    let mut ex = [0; MAX_NOTES];
     let mut low_value = [0; MAX_NOTES];
     let mut low_next_value = [0; MAX_NOTES];
     let mut low_next_index = [0; MAX_NOTES];
     let mut low_index = [0; MAX_NOTES];
     let mut low_path = [[0; DEPTH]; MAX_NOTES];
+    let mut d_low_key = [0; MAX_NOTES];
+    let mut d_low_next_key = [0; MAX_NOTES];
+    let mut d_low_next_index = [0; MAX_NOTES];
+    let mut d_low_retained = [0; MAX_NOTES];
+    let mut d_low_index = [0; MAX_NOTES];
+    let mut d_low_path = [[0; DEPTH]; MAX_NOTES];
     let mut vnf = [0; MAX_NOTES];
     for i in 0..MAX_NOTES {
         let s = v.slots[i];
@@ -167,11 +240,20 @@ fn prove(v: V) {
         rcm[i] = s.rcm;
         pos[i] = s.pos;
         path[i] = s.path;
+        mk[i] = s.mk;
+        mt[i] = s.mt;
+        ex[i] = s.ex;
         low_value[i] = s.low_value;
         low_next_value[i] = s.low_next_value;
         low_next_index[i] = s.low_next_index;
         low_index[i] = s.low_index;
         low_path[i] = s.low_path;
+        d_low_key[i] = s.debt.low_key;
+        d_low_next_key[i] = s.debt.low_next_key;
+        d_low_next_index[i] = s.debt.low_next_index;
+        d_low_retained[i] = s.debt.low_retained;
+        d_low_index[i] = s.debt.low_index;
+        d_low_path[i] = s.debt.low_path;
         vnf[i] = s.vnf;
     }
     main(
@@ -181,13 +263,23 @@ fn prove(v: V) {
         rcm,
         pos,
         path,
+        mk,
+        mt,
+        ex,
         low_value,
         low_next_value,
         low_next_index,
         low_index,
         low_path,
+        d_low_key,
+        d_low_next_key,
+        d_low_next_index,
+        d_low_retained,
+        d_low_index,
+        d_low_path,
         v.note_root,
         v.nf_root,
+        v.debt_root,
         v.asset,
         v.weight,
         v.proposal_id,
@@ -223,30 +315,31 @@ fn tree4(leaves: [Field; 4]) -> (Field, [[Field; DEPTH]; 4]) {
     (root, paths)
 }
 
-/// H(TAG_STAKE, ASSET, amount, spc) for any u64 amount (stake_cm without its
-/// bound), so a test can hold an amount above 2^63 - 1 that only the circuit
-/// refuses.
-fn note_cm(nk: Field, amount: u64, rho: Field, rcm: Field) -> Field {
-    privacy_core::h4(
+/// H(TAG_STAKE, ASSET, amount, spc, label) for any u64 amount (stake_cm
+/// without its bound).
+fn note_cm(nk: Field, amount: u64, rho: Field, rcm: Field, label: Field) -> Field {
+    privacy_core::h5(
         privacy_core::TAG_STAKE,
         ASSET,
         amount as Field,
         stake_pc(owner_pk(nk), rho, rcm),
+        label,
     )
 }
 
 /// Note tree: another owner's note of 9 at position 0, ours of 500, 300 and
 /// 200 at positions 1, 2 and 3 (rho 0xa1, 0xb1, 0xc1; rcm 0xa2, 0xb2, 0xc2).
+/// The note at 3 holds a redelegation's exposure of 100 (MK, MT).
 global AMOUNTS: [u64; 4] = [9, 500, 300, 200];
 global RHOS: [Field; 4] = [0x01, 0xa1, 0xb1, 0xc1];
 global RCMS: [Field; 4] = [0x02, 0xa2, 0xb2, 0xc2];
 
 fn notes() -> (Field, [[Field; DEPTH]; 4]) {
     tree4([
-        note_cm(0xbad, AMOUNTS[0], RHOS[0], RCMS[0]),
-        note_cm(NK, AMOUNTS[1], RHOS[1], RCMS[1]),
-        note_cm(NK, AMOUNTS[2], RHOS[2], RCMS[2]),
-        note_cm(NK, AMOUNTS[3], RHOS[3], RCMS[3]),
+        note_cm(0xbad, AMOUNTS[0], RHOS[0], RCMS[0], 0),
+        note_cm(NK, AMOUNTS[1], RHOS[1], RCMS[1], 0),
+        note_cm(NK, AMOUNTS[2], RHOS[2], RCMS[2], 0),
+        note_cm(NK, AMOUNTS[3], RHOS[3], RCMS[3], stake_label(MK, MT, EX)),
     ])
 }
 
@@ -278,39 +371,64 @@ fn empty_nullifiers() -> (Field, [Field; DEPTH]) {
     (root, paths[0])
 }
 
+/// The slash debt tree holding one row (key, retained): its root and the
+/// witness for `lookup` (the row if lookup == key, else its low leaf).
+fn debt(key: Field, retained: u64, lookup: Field) -> (Field, Debt) {
+    let (root, paths) = tree4([debt_leaf(0, key, 1, 0), debt_leaf(key, 0, 0, retained), 0, 0]);
+    if lookup.lt(key) {
+        (root, Debt { low_key: 0, low_next_key: key, low_next_index: 1, low_retained: 0, low_index: 0, low_path: paths[0] })
+    } else {
+        (root, Debt { low_key: key, low_next_key: 0, low_next_index: 0, low_retained: retained, low_index: 1, low_path: paths[1] })
+    }
+}
+
 /// Our note at position p, its low leaf the sentinel of the empty tree.
 fn slot_empty_tree(p: u32) -> Slot {
     let (_, paths) = notes();
     let (_, low_path) = empty_nullifiers();
-    Slot {
-        amount: AMOUNTS[p],
-        rho: RHOS[p],
-        rcm: RCMS[p],
-        pos: p,
-        path: paths[p],
-        low_value: 0,
-        low_next_value: 0,
-        low_next_index: 0,
-        low_index: 0,
-        low_path,
-        vnf: vote_nf(NK, RHOS[p], p, PROPOSAL),
+    let mut s = unused();
+    s.amount = AMOUNTS[p];
+    s.rho = RHOS[p];
+    s.rcm = RCMS[p];
+    s.pos = p;
+    s.path = paths[p];
+    s.low_path = low_path;
+    s.vnf = vote_nf(NK, RHOS[p], p, PROPOSAL);
+    s
+}
+
+/// Our notes at positions 1 and 2 in the two slots, against the empty
+/// nullifier tree: weight 800, their sum.
+fn two() -> V {
+    let (note_root, _) = notes();
+    let (nf_root, _) = empty_nullifiers();
+    let (debt_root, _) = debt(0x9999, 1, 0);
+    V {
+        nk: NK,
+        slots: [slot_empty_tree(1), slot_empty_tree(2)],
+        note_root,
+        nf_root,
+        debt_root,
+        asset: ASSET,
+        weight: 800,
+        proposal_id: PROPOSAL,
     }
 }
 
-/// Our three notes (positions 1, 2, 3) in slots 0..2, slot 3 unused, against
-/// the empty nullifier tree: weight 1,000, their sum.
-fn three() -> V {
-    let (note_root, _) = notes();
-    let (nf_root, _) = empty_nullifiers();
-    V {
-        nk: NK,
-        slots: [slot_empty_tree(1), slot_empty_tree(2), slot_empty_tree(3), unused()],
-        note_root,
-        nf_root,
-        asset: ASSET,
-        weight: 1000,
-        proposal_id: PROPOSAL,
-    }
+/// The labelled note (position 3) in slot 0 against the debt tree holding
+/// (key, retained), alone.
+fn labelled(key: Field, retained: u64) -> V {
+    let mut v = two();
+    let (debt_root, d) = debt(key, retained, MK);
+    v.debt_root = debt_root;
+    v.slots[0] = slot_empty_tree(3);
+    v.slots[0].mk = MK;
+    v.slots[0].mt = MT;
+    v.slots[0].ex = EX;
+    v.slots[0].debt = d;
+    v.slots[1] = unused();
+    v.weight = 200;
+    v
 }
 
 /// An honest vote of the note at position 1 alone (slot 0), its low leaf lo
@@ -318,33 +436,21 @@ fn three() -> V {
 fn honest() -> V {
     let (note_root, paths) = notes();
     let (nf_root, _, nf_paths) = nullifiers(false);
+    let (debt_root, _) = debt(0x9999, 1, 0);
     let nf = nf_at(1);
-    V {
-        nk: NK,
-        slots: [
-            Slot {
-                amount: 500,
-                rho: 0xa1,
-                rcm: 0xa2,
-                pos: 1,
-                path: paths[1],
-                low_value: nf - 1,
-                low_next_value: nf + 1,
-                low_next_index: 2,
-                low_index: 1,
-                low_path: nf_paths[1],
-                vnf: vote_nf(NK, 0xa1, 1, PROPOSAL),
-            },
-            unused(),
-            unused(),
-            unused(),
-        ],
-        note_root,
-        nf_root,
-        asset: ASSET,
-        weight: 500,
-        proposal_id: PROPOSAL,
-    }
+    let mut s = unused();
+    s.amount = 500;
+    s.rho = 0xa1;
+    s.rcm = 0xa2;
+    s.pos = 1;
+    s.path = paths[1];
+    s.low_value = nf - 1;
+    s.low_next_value = nf + 1;
+    s.low_next_index = 2;
+    s.low_index = 1;
+    s.low_path = nf_paths[1];
+    s.vnf = vote_nf(NK, 0xa1, 1, PROPOSAL);
+    V { nk: NK, slots: [s, unused()], note_root, nf_root, debt_root, asset: ASSET, weight: 500, proposal_id: PROPOSAL }
 }
 
 // ---- positive
@@ -362,88 +468,75 @@ fn test_vote_partial_weight() {
 }
 
 #[test]
-fn test_three_notes_one_weight() {
-    // 500 + 300 + 200: one weight for all three.
-    prove(three());
+fn test_two_notes_one_weight() {
+    prove(two());
 }
 
 #[test]
-fn test_three_notes_rounded_weight() {
-    // The wallet's rounding down to three digits (999 here) is below the sum.
-    let mut v = three();
-    v.weight = 999;
+fn test_two_notes_rounded_weight() {
+    let mut v = two();
+    v.weight = 799;
     prove(v);
 }
 
 #[test]
-fn test_used_slot_anywhere() {
-    // Unused slots may sit between used ones (the chain asks for a prefix,
-    // the circuit does not care).
-    let mut v = three();
-    v.slots[3] = v.slots[1];
-    v.slots[1] = unused();
+fn test_used_slot_second() {
+    // An unused slot may come first (the chain asks for a prefix, the circuit
+    // does not care).
+    let mut v = two();
+    v.slots[0] = unused();
+    v.weight = 300;
     prove(v);
 }
 
 #[test]
-fn test_four_notes() {
-    // Four used slots: our three notes and, in a second tree, a fourth.
-    let z = zero_hashes();
-    let cms = [
-        note_cm(NK, 100, 0xd1, 0xd2),
-        note_cm(NK, AMOUNTS[1], RHOS[1], RCMS[1]),
-        note_cm(NK, AMOUNTS[2], RHOS[2], RCMS[2]),
-        note_cm(NK, AMOUNTS[3], RHOS[3], RCMS[3]),
-    ];
-    let (root, paths) = tree4(cms);
-    let _ = z;
-    let mut v = three();
-    v.note_root = root;
-    for i in 0..3 {
-        v.slots[i].path = paths[i + 1];
-    }
-    let (_, low_path) = empty_nullifiers();
-    v.slots[3] = Slot {
-        amount: 100,
-        rho: 0xd1,
-        rcm: 0xd2,
-        pos: 0,
-        path: paths[0],
-        low_value: 0,
-        low_next_value: 0,
-        low_next_index: 0,
-        low_index: 0,
-        low_path,
-        vnf: vote_nf(NK, 0xd1, 0, PROPOSAL),
-    };
-    v.weight = 1100;
+fn test_labelled_unslashed_votes_its_amount() {
+    // The move was never slashed: absent from the debt tree, the note votes
+    // all 200.
+    prove(labelled(0x9999, 1));
+}
+
+#[test]
+fn test_labelled_unslashed_below_the_row() {
+    prove(labelled(0x1111, 1));
+}
+
+#[test]
+fn test_labelled_slashed_votes_its_haircut_value() {
+    // Slashed: the exposure of 100 is worth 40, the note 140.
+    let mut v = labelled(MK, 40);
+    v.weight = 140;
+    prove(v);
+}
+
+#[test]
+fn test_labelled_beside_an_unlabelled_note() {
+    let mut v = labelled(MK, 40);
+    v.slots[1] = slot_empty_tree(1);
+    v.weight = 640;
     prove(v);
 }
 
 #[test]
 fn test_same_note_twice_same_vnf() {
-    // A note in two slots proves, but both slots carry the same vote
-    // nullifier: the chain refuses repeated vnfs, so it counts once.
-    let mut v = three();
+    let mut v = two();
     v.slots[1] = v.slots[0];
-    v.weight = 1000; // 500 + 500 + 200 >= 1000
+    v.weight = 1000;
     prove(v);
     assert(v.slots[0].vnf == v.slots[1].vnf);
 }
 
 #[test]
 fn test_same_notes_two_proposals() {
-    // The notes vote on proposal 7 and on proposal 8: different vote
-    // nullifiers, none a spend nullifier.
-    let a = three();
-    let mut b = three();
+    let a = two();
+    let mut b = two();
     b.proposal_id = 8;
-    for i in 0..3 {
+    for i in 0..2 {
         b.slots[i].vnf = vote_nf(NK, b.slots[i].rho, b.slots[i].pos, 8);
     }
     prove(a);
     prove(b);
-    for i in 0..3 {
+    for i in 0..2 {
         assert(a.slots[i].vnf != b.slots[i].vnf);
         assert(a.slots[i].vnf != nf_at(a.slots[i].pos));
     }
@@ -451,8 +544,6 @@ fn test_same_notes_two_proposals() {
 
 #[test]
 fn test_largest_nullifier() {
-    // nf above every inserted nullifier: the low leaf is the last one
-    // (next_value 0).
     let nf = nf_at(1);
     let lo = nf - 1;
     let (root, paths) = tree4([nf_leaf(0, lo, 1), nf_leaf(lo, 0, 0), 0, 0]);
@@ -478,9 +569,10 @@ fn test_empty_nullifier_tree() {
 }
 
 #[test]
-fn test_restaked_after_snapshot_still_votes() {
-    // Spent after the snapshot: nf is in the CURRENT nullifier tree but not in
-    // the snapshot's, which the vote proves against.
+fn test_merged_after_snapshot_still_votes() {
+    // Spent (merged into a newer note) after the snapshot: nf is in the
+    // CURRENT nullifier tree but not in the snapshot's, which the vote proves
+    // against. The pre-existing value keeps its vote.
     let (snap_root, _, _) = nullifiers(false);
     let (now_root, _, _) = nullifiers(true);
     let v = honest();
@@ -492,7 +584,7 @@ fn test_restaked_after_snapshot_still_votes() {
 #[test]
 fn test_note_max() {
     let m: u64 = 0x7fffffffffffffff;
-    let (note_root, paths) = tree4([note_cm(0xbad, 9, 0x01, 0x02), note_cm(NK, m, 0xa1, 0xa2), 0, 0]);
+    let (note_root, paths) = tree4([note_cm(0xbad, 9, 0x01, 0x02, 0), note_cm(NK, m, 0xa1, 0xa2, 0), 0, 0]);
     let mut v = honest();
     v.note_root = note_root;
     v.slots[0].path = paths[1];
@@ -506,22 +598,18 @@ fn test_weight_u64_max_over_big_notes() {
     // Two maximal notes sum to 2^64 - 2: the sum is held in a u128.
     let m: u64 = 0x7fffffffffffffff;
     let (note_root, paths) = tree4([
-        note_cm(0xbad, 9, 0x01, 0x02),
-        note_cm(NK, m, 0xa1, 0xa2),
-        note_cm(NK, m, 0xb1, 0xb2),
+        note_cm(0xbad, 9, 0x01, 0x02, 0),
+        note_cm(NK, m, 0xa1, 0xa2, 0),
+        note_cm(NK, m, 0xb1, 0xb2, 0),
         0,
     ]);
-    let (nf_root, low_path) = empty_nullifiers();
-    let mut v = three();
+    let mut v = two();
     v.note_root = note_root;
-    v.nf_root = nf_root;
     v.slots[0].amount = m;
     v.slots[0].path = paths[1];
-    v.slots[0].low_path = low_path;
     v.slots[1].amount = m;
     v.slots[1].path = paths[2];
-    v.slots[2] = unused();
-    v.weight = 0xfffffffffffffffe; // 2 x (2^63 - 1) = 2^64 - 2
+    v.weight = 0xfffffffffffffffe;
     prove(v);
 }
 
@@ -529,52 +617,94 @@ fn test_weight_u64_max_over_big_notes() {
 
 #[test(should_fail_with = "weight exceeds the notes")]
 fn test_weight_above_sum() {
-    let mut v = three();
-    v.weight = 1001;
+    let mut v = two();
+    v.weight = 801;
+    prove(v);
+}
+
+#[test(should_fail_with = "weight exceeds the notes")]
+fn test_labelled_slashed_cannot_vote_its_nominal() {
+    // The haircut counts: 141 > 140.
+    let mut v = labelled(MK, 40);
+    v.weight = 141;
+    prove(v);
+}
+
+#[test(should_fail_with = "move is in the debt tree")]
+fn test_labelled_skips_its_row() {
+    // The slashed move proven absent with the sentinel as its low leaf.
+    let (debt_root, _) = debt(MK, 40, MK);
+    let (_, below) = debt(MK, 40, 0);
+    let mut v = labelled(MK, 40);
+    v.debt_root = debt_root;
+    v.slots[0].debt = below;
+    prove(v);
+}
+
+#[test(should_fail_with = "debt leaf not in debt tree")]
+fn test_labelled_stale_debt_root() {
+    // The witness of the tree before the slash, against the current root.
+    let (_, before) = debt(0x9999, 1, MK);
+    let mut v = labelled(MK, 40);
+    v.slots[0].debt = before;
+    prove(v);
+}
+
+#[test(should_fail_with = "note not in snapshot stake tree")]
+fn test_labelled_note_without_its_label() {
+    // Dropping the label to vote the exposure unhaircut.
+    let mut v = labelled(MK, 40);
+    v.slots[0].mk = 0;
+    v.slots[0].mt = 0;
+    v.slots[0].ex = 0;
+    prove(v);
+}
+
+#[test(should_fail_with = "note not in snapshot stake tree")]
+fn test_labelled_understated_exposure() {
+    let mut v = labelled(0x9999, 1);
+    v.slots[0].ex = 1;
     prove(v);
 }
 
 #[test(should_fail_with = "unused slot has a vote nullifier")]
 fn test_unused_slot_with_vnf() {
-    // A vote nullifier in an unused slot would burn another note's vnf.
-    let mut v = three();
-    v.slots[3].vnf = vote_nf(NK, 0xd1, 0, PROPOSAL);
+    let mut v = honest();
+    v.slots[1].vnf = vote_nf(NK, 0xd1, 0, PROPOSAL);
     prove(v);
 }
 
 #[test(should_fail_with = "note not in snapshot stake tree")]
 fn test_slot_of_another_owner() {
-    // Slot 2 holds the other owner's note (position 0), not provable under NK.
     let (_, paths) = notes();
-    let mut v = three();
-    v.slots[2].amount = 9;
-    v.slots[2].rho = 0x01;
-    v.slots[2].rcm = 0x02;
-    v.slots[2].pos = 0;
-    v.slots[2].path = paths[0];
-    v.slots[2].vnf = vote_nf(NK, 0x01, 0, PROPOSAL);
-    v.weight = 800;
+    let mut v = two();
+    v.slots[1].amount = 9;
+    v.slots[1].rho = 0x01;
+    v.slots[1].rcm = 0x02;
+    v.slots[1].pos = 0;
+    v.slots[1].path = paths[0];
+    v.slots[1].vnf = vote_nf(NK, 0x01, 0, PROPOSAL);
+    v.weight = 509;
     prove(v);
 }
 
 #[test(should_fail_with = "note not in snapshot stake tree")]
 fn test_inflated_amount_in_one_slot() {
-    let mut v = three();
+    let mut v = two();
     v.slots[1].amount = 301;
-    v.weight = 1001;
+    v.weight = 801;
     prove(v);
 }
 
 #[test(should_fail_with = "bad vote nullifier")]
 fn test_wrong_vnf_in_one_slot() {
-    let mut v = three();
-    v.slots[2].vnf = vote_nf(NK, RHOS[3], 3, PROPOSAL + 1);
+    let mut v = two();
+    v.slots[1].vnf = vote_nf(NK, RHOS[2], 2, PROPOSAL + 1);
     prove(v);
 }
 
 #[test(should_fail_with = "nullifier is in the nullifier tree")]
 fn test_spent_before_snapshot() {
-    // nf was inserted before the snapshot: its predecessor's next is nf.
     let (root, _, paths) = nullifiers(true);
     let mut v = honest();
     v.nf_root = root;
@@ -586,7 +716,6 @@ fn test_spent_before_snapshot() {
 
 #[test(should_fail_with = "low leaf not below the nullifier")]
 fn test_spent_before_snapshot_own_leaf() {
-    // ... nor by its own leaf as the low leaf.
     let (root, _, paths) = nullifiers(true);
     let nf = nf_at(1);
     let mut v = honest();
@@ -601,7 +730,6 @@ fn test_spent_before_snapshot_own_leaf() {
 
 #[test(should_fail_with = "low leaf not in nullifier tree")]
 fn test_spent_before_snapshot_stale_low_leaf() {
-    // ... nor by the low leaf as it was before nf's insertion.
     let (root, _, paths) = nullifiers(true);
     let mut v = honest();
     v.nf_root = root;
@@ -618,7 +746,6 @@ fn test_forged_low_leaf() {
 
 #[test(should_fail_with = "low leaf not in nullifier tree")]
 fn test_empty_slot_as_low_leaf() {
-    // An empty slot (leaf 0) is no leaf: no tagged hash equals 0.
     let (_, _, paths) = nullifiers(false);
     let mut v = honest();
     v.slots[0].low_value = 0;
@@ -631,7 +758,6 @@ fn test_empty_slot_as_low_leaf() {
 
 #[test(should_fail_with = "low leaf not below the nullifier")]
 fn test_low_leaf_above() {
-    // hi (index 2) is a real leaf, but above nf.
     let (_, _, paths) = nullifiers(false);
     let nf = nf_at(1);
     let mut v = honest();
@@ -673,9 +799,8 @@ fn test_weight_above_amount() {
 
 #[test(should_fail_with = "assert_max_bit_size")]
 fn test_amount_above_note_max() {
-    // A 2^63 stake note at position 1 (none can exist on chain).
     let a: u64 = 0x8000000000000000;
-    let (note_root, paths) = tree4([note_cm(0xbad, 9, 0x01, 0x02), note_cm(NK, a, 0xa1, 0xa2), 0, 0]);
+    let (note_root, paths) = tree4([note_cm(0xbad, 9, 0x01, 0x02, 0), note_cm(NK, a, 0xa1, 0xa2, 0), 0, 0]);
     let mut v = honest();
     v.note_root = note_root;
     v.slots[0].path = paths[1];
@@ -693,7 +818,6 @@ fn test_zero_weight() {
 
 #[test(should_fail_with = "zero weight")]
 fn test_no_notes() {
-    // Every slot unused: nothing to vote with.
     let mut v = honest();
     v.slots[0] = unused();
     v.weight = 0;
@@ -717,7 +841,6 @@ fn test_other_validator() {
 
 #[test(should_fail_with = "note not in snapshot stake tree")]
 fn test_another_owners_note() {
-    // The other note (position 0) belongs to 0xbad: not provable under NK.
     let (_, paths) = notes();
     let mut v = honest();
     v.slots[0].amount = 9;
@@ -731,7 +854,6 @@ fn test_another_owners_note() {
 
 #[test(should_fail_with = "note not in snapshot stake tree")]
 fn test_note_after_snapshot() {
-    // A note appended after the snapshot is not under the snapshot root.
     let mut v = honest();
     v.note_root = v.note_root + 1;
     prove(v);

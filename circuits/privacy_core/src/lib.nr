@@ -47,6 +47,10 @@ pub global TAG_OTAG: Field = 0x65617274682e6f746167; // "earth.otag"
 // Stake nullifier indexed tree leaves and stake vote nullifiers (circuits/vote).
 pub global TAG_SNFL: Field = 0x65617274682e736e666c; // "earth.snfl"
 pub global TAG_VNF: Field = 0x65617274682e766e66; // "earth.vnf"
+// Stake note slash labels and the slash debt tree (circuits/stake, circuits/vote;
+// ORCHARD_DESIGN.md section 20).
+pub global TAG_SLABEL: Field = 0x65617274682e736c6162656c; // "earth.slabel"
+pub global TAG_DEBTL: Field = 0x65617274682e646562746c; // "earth.debtl"
 
 /// Asset id of `uerth` = H(TAG_ASSET, 5, 0x7565727468) (zk/privacy.AssetID).
 pub global ASSET_ERTH: Field = 0xad44a14c7205c61e39db2c64b79005ffb14a2a927977e8cda2208be2e3fe54c;
@@ -130,13 +134,61 @@ pub fn stake_pc(owner_pk: Field, rho: Field, rcm: Field) -> Field {
     h4(TAG_SPC, owner_pk, rho, rcm)
 }
 
-/// Stake note commitment = H(TAG_STAKE, asset, amount, spc). asset is the
-/// stake asset's id: zk/privacy.AssetID("derth/<valoper>") for delegated
-/// stake (unbonding claims are retired). amount
-/// at most 2^63 - 1 (NOTE_VALUE_BITS).
-pub fn stake_cm(asset: Field, amount: u64, spc: Field) -> Field {
+/// Stake note commitment = H(TAG_STAKE, asset, amount, spc, label). asset is
+/// the stake asset's id: zk/privacy.AssetID("derth/<valoper>"). amount at
+/// most 2^63 - 1 (NOTE_VALUE_BITS). label is 0 for an ordinary note, or
+/// stake_label(move_key, move_time, exposed) for a note holding derth a
+/// redelegation credited while that redelegation can still be slashed.
+pub fn stake_cm(asset: Field, amount: u64, spc: Field, label: Field) -> Field {
     assert_note_value(amount);
-    h4(TAG_STAKE, asset, amount as Field, spc)
+    h5(TAG_STAKE, asset, amount as Field, spc, label)
+}
+
+/// Slash label = H(TAG_SLABEL, move_key, move_time, exposed): the note holds
+/// `exposed` derth credited by the redelegation `move_key` (its credit lane's
+/// nullifier) made at `move_time` (unix seconds), which a slash of its source
+/// for an infraction before the move may still cut (the slash debt tree).
+pub fn stake_label(move_key: Field, move_time: u64, exposed: u64) -> Field {
+    h4(TAG_SLABEL, move_key, move_time as Field, exposed as Field)
+}
+
+/// Leaf of the slash debt indexed tree = H(TAG_DEBTL, key, next_key,
+/// next_index, retained): one slashed redelegation `key` (its move key), its
+/// successor in numeric order (next_key = 0 for the largest), and `retained`,
+/// the derth its credited `exposed` is still worth after the slashes so far.
+/// Leaf 0 is the sentinel (0, smallest key, its index, 0). Matches
+/// zk/privacy.DebtLeaf.
+pub fn debt_leaf(key: Field, next_key: Field, next_index: u32, retained: u64) -> Field {
+    h5(TAG_DEBTL, key, next_key, next_index as Field, retained as Field)
+}
+
+/// What `exposed` derth of the redelegation `key` is worth under the slash
+/// debt tree `root`: the row's `retained` when the redelegation was slashed
+/// (a leaf with that key), else all of it (a low leaf below the key whose
+/// successor is above it, or the largest). One path either way.
+pub fn debt_retained(
+    key: Field,
+    exposed: u64,
+    low_key: Field,
+    low_next_key: Field,
+    low_next_index: u32,
+    low_retained: u64,
+    low_index: u32,
+    low_path: [Field; DEPTH],
+    root: Field,
+) -> u64 {
+    let leaf = debt_leaf(low_key, low_next_key, low_next_index, low_retained);
+    assert(merkle_root(leaf, low_index, low_path) == root, "debt leaf not in debt tree");
+    if low_key == key {
+        assert(low_retained <= exposed, "debt row above the exposure");
+        low_retained
+    } else {
+        assert(low_key.lt(key), "debt leaf not below the move");
+        if low_next_key != 0 {
+            assert(key.lt(low_next_key), "move is in the debt tree");
+        }
+        exposed
+    }
 }
 
 /// Stake nullifier = H(TAG_SNF, nk, rho, position) (the stake tree's own
@@ -260,9 +312,11 @@ fn test_tags_distinct() {
         TAG_OTAG,
         TAG_SNFL,
         TAG_VNF,
+        TAG_SLABEL,
+        TAG_DEBTL,
     ];
-    for i in 0..18 {
-        for j in 0..18 {
+    for i in 0..20 {
+        for j in 0..20 {
             if i != j {
                 assert(t[i] != t[j]);
             }
@@ -304,7 +358,7 @@ fn test_merkle_index_direction() {
 fn test_note_value_bound() {
     let max: u64 = 0x7fffffffffffffff;
     let _ = note_cm(ASSET_ERTH, max, 1);
-    let _ = stake_cm(ASSET_ERTH, max, 1);
+    let _ = stake_cm(ASSET_ERTH, max, 1, 0);
 }
 
 #[test(should_fail_with = "assert_max_bit_size")]
@@ -314,5 +368,77 @@ fn test_note_cm_above_bound() {
 
 #[test(should_fail_with = "assert_max_bit_size")]
 fn test_stake_cm_above_bound() {
-    let _ = stake_cm(ASSET_ERTH, 0xffffffffffffffff, 1);
+    let _ = stake_cm(ASSET_ERTH, 0xffffffffffffffff, 1, 0);
+}
+
+#[test]
+fn test_debt_retained() {
+    // A tree of the sentinel and one row (key 10, retained 7).
+    let z = zero_hashes();
+    let sentinel = debt_leaf(0, 10, 1, 0);
+    let row = debt_leaf(10, 0, 0, 7);
+    let mut p0 = [0; DEPTH];
+    let mut p1 = [0; DEPTH];
+    for i in 1..DEPTH {
+        p0[i] = z[i];
+        p1[i] = z[i];
+    }
+    p0[0] = row;
+    p1[0] = sentinel;
+    let root = merkle_root(sentinel, 0, p0);
+    assert(root == merkle_root(row, 1, p1));
+    // The slashed move: its row.
+    assert(debt_retained(10, 9, 10, 0, 0, 7, 1, p1, root) == 7);
+    // A move below it, and one above it: untouched.
+    assert(debt_retained(4, 9, 0, 10, 1, 0, 0, p0, root) == 9);
+    assert(debt_retained(12, 9, 10, 0, 0, 7, 1, p1, root) == 9);
+}
+
+#[test(should_fail_with = "move is in the debt tree")]
+fn test_debt_retained_skips_its_row() {
+    // The slashed move cannot prove itself absent with the sentinel.
+    let z = zero_hashes();
+    let sentinel = debt_leaf(0, 10, 1, 0);
+    let row = debt_leaf(10, 0, 0, 7);
+    let mut p0 = [0; DEPTH];
+    for i in 1..DEPTH {
+        p0[i] = z[i];
+    }
+    p0[0] = row;
+    let root = merkle_root(sentinel, 0, p0);
+    let _ = debt_retained(10, 9, 0, 10, 1, 0, 0, p0, root);
+}
+
+#[test(should_fail_with = "debt leaf not in debt tree")]
+fn test_debt_retained_stale_root() {
+    let z = zero_hashes();
+    let mut p = [0; DEPTH];
+    for i in 0..DEPTH {
+        p[i] = z[i];
+    }
+    // The empty tree's sentinel against a root that holds a row.
+    let sentinel = debt_leaf(0, 10, 1, 0);
+    let row = debt_leaf(10, 0, 0, 7);
+    let mut p0 = p;
+    p0[0] = row;
+    let root = merkle_root(sentinel, 0, p0);
+    let _ = debt_retained(10, 9, 0, 0, 0, 0, 0, p, root);
+}
+
+// ---- Go parity (earth-network-chain zk/debt TestNoirParity)
+
+#[test]
+fn test_go_parity_debt() {
+    assert(debt_leaf(1, 2, 3, 4) == 0x0b28cc858d976ddad0ede75ca9538f9b5ab36538964f6e241b8e89be2711e82a);
+    assert(stake_label(0x4d4b, 1000, 200) == 0x2dfbc154973d1d3ec6e03137ba41b5c2cf5119f66cc69e3e58c033a77c80a881);
+    assert(stake_cm(1, 2, 3, 4) == 0x0ffc538b4162732774bd5026e7a07bd00d2fe406af55231fa0c255c321ad4232);
+    // debt.EmptyRoot: the sentinel alone; and the tree of one row (10, 7).
+    let z = zero_hashes();
+    let mut p = [0; DEPTH];
+    for i in 0..DEPTH {
+        p[i] = z[i];
+    }
+    assert(merkle_root(debt_leaf(0, 0, 0, 0), 0, p) == 0x0cea3d3e26cd2710109d7cbff5bf48570ba54332f812d538893f0958007f6903);
+    p[0] = debt_leaf(10, 0, 0, 7);
+    assert(merkle_root(debt_leaf(0, 10, 1, 0), 0, p) == 0x2a7c0afbf11f7ecd5cf533fbb282bf8eb0bf5df39d697c0b3ac04699a80b15b7);
 }
