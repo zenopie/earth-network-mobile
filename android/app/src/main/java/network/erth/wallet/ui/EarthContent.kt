@@ -295,8 +295,7 @@ internal fun EarthContent(
                         amountValue = "${formatUerth(amountIn.toLong())} " +
                             denomIn.removePrefix("u").uppercase(),
                         minReceived = "${formatUerth(minOut.toLong())} " +
-                            denomOut.removePrefix("u").uppercase() +
-                            if (denomOut == Constants.UERTH_DENOM) " (fee paid from it)" else "",
+                            denomOut.removePrefix("u").uppercase(),
                     ),
                     shieldedErth = loaded.shieldedErthUerth,
                     onSuccess = {
@@ -304,7 +303,8 @@ internal fun EarthContent(
                         markets.refresh()
                     },
                     run = { ctx ->
-                        PrivacySession.wallet(ctx).noteSwap(denomIn, amountIn.toLong(), denomOut, minOut.toLong()).hash
+                        // Audit 6 (D1): an amount past a note's range is refused, never truncated.
+                        PrivacySession.wallet(ctx).noteSwap(denomIn, amountIn.longValueExact(), denomOut, minOut.longValueExact()).hash
                     },
                 )
             },

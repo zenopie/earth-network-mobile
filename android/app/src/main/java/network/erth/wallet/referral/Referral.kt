@@ -65,7 +65,8 @@ object Referral {
 
     /** Forgets the stored referrer: removed or replaced by the registrant, or not a live handle. */
     fun clear(context: Context) {
-        prefs(context).edit().remove(KEY_HANDLE).apply()
+        // Audit 6 (K3): the install referrer is not asked again, so a removed one stays removed.
+        prefs(context).edit().remove(KEY_HANDLE).putBoolean(KEY_CHECKED, true).apply()
     }
 
     /**

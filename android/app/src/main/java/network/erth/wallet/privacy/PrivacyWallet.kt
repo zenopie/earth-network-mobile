@@ -1766,9 +1766,9 @@ class PrivacyWallet(
     companion object {
         /**
          * The most a withdrawal's note-paid leg may be worth when it starts:
-         * a quarter of one note this wallet can hold (2^63 - 1), so the pool
-         * can move 4x against the provider before maturity, as x/dex allows
-         * for its own cap. Exactly x/dex's maxWithdrawalNoteLeg (chain
+         * a quarter of the most a split payout carries, so the pool can move
+         * 4x against the provider before maturity, as x/dex allows for its
+         * own cap. Exactly x/dex's maxWithdrawalNoteLeg (chain
          * 8ed1278): MaxSplitNotes / 4 = 32 notes of MaxNoteValue (2^63 - 1),
          * paid as several notes, each one this wallet can hold (Amounts).
          */
