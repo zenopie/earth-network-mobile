@@ -1,0 +1,603 @@
+{
+  "_comment": "Passport register-circuit variants. Source of truth for circuits/tools/variants.py (which generates each variant's Noir main from this list) and, as android/app/src/main/assets/circuits/passport_variants.json, for both wallets. key/scheme/hashes are edited by hand; everything below them is derived or measured by `variants.py build`. See PASSPORT_COVERAGE.md.",
+  "hash_limits": {
+    "sha1": {
+      "e_content_max": 439,
+      "signed_attrs_max": 247
+    },
+    "sha224": {
+      "e_content_max": 695,
+      "signed_attrs_max": 256
+    },
+    "sha256": {
+      "e_content_max": 695,
+      "signed_attrs_max": 256
+    },
+    "sha384": {
+      "e_content_max": 751,
+      "signed_attrs_max": 239
+    },
+    "sha512": {
+      "e_content_max": 751,
+      "signed_attrs_max": 239
+    }
+  },
+  "download_base": "https://api.erth.network/circuits/",
+  "srs": {
+    "18": {
+      "points": 262145,
+      "sha256": "8f5cd75519c2e995fa47aa7ecd7b213b9ae13824bc4b0f15025a63acd8c139eb"
+    },
+    "19": {
+      "points": 524289,
+      "sha256": "1df37a2ce1da3713c7300691a65ffe84de144ea64899d5cfbf0061aaaeb6ad31"
+    },
+    "20": {
+      "points": 1048577,
+      "sha256": "0f238856e55722f15a4d64ef0de12b4260e218245590bd3a6c900aee188de8e5"
+    }
+  },
+  "variants": [
+    {
+      "id": "lean_poa_rsa2048_sha256",
+      "key": "rsa2048",
+      "scheme": "pkcs1",
+      "hashes": [
+        "sha256",
+        "sha256",
+        "sha256"
+      ],
+      "e_content_max": 695,
+      "signed_attrs_max": 256,
+      "gates": 151014,
+      "log2_circuit_size": 18,
+      "bundled": true,
+      "sha256": "b123ee5feb373c1ecc4e6a2c55e0c072398cbee6212c95b81e6dd456ef35756d",
+      "bytes": 403696
+    },
+    {
+      "id": "lean_poa_rsa2048_sha1",
+      "key": "rsa2048",
+      "scheme": "pkcs1",
+      "hashes": [
+        "sha1",
+        "sha1",
+        "sha1"
+      ],
+      "e_content_max": 439,
+      "signed_attrs_max": 247,
+      "gates": 216540,
+      "log2_circuit_size": 18,
+      "bundled": true,
+      "sha256": "5c0026ff44919cd4f2166e67eb6dc16bb850984f23db2c8ba012c7cadee8ee6d",
+      "bytes": 1702353
+    },
+    {
+      "id": "lean_poa_rsa2048_sha1_sha256_sha256",
+      "key": "rsa2048",
+      "scheme": "pkcs1",
+      "hashes": [
+        "sha1",
+        "sha256",
+        "sha256"
+      ],
+      "e_content_max": 439,
+      "signed_attrs_max": 256,
+      "gates": 154916,
+      "log2_circuit_size": 18,
+      "bundled": true,
+      "sha256": "6027dc8a1e3baaa6e4beb55c695a700bc10590e9d149e96b1efbac11e06b2539",
+      "bytes": 566221
+    },
+    {
+      "id": "lean_poa_rsa2048_sha256_sha1_sha1",
+      "key": "rsa2048",
+      "scheme": "pkcs1",
+      "hashes": [
+        "sha256",
+        "sha1",
+        "sha1"
+      ],
+      "e_content_max": 695,
+      "signed_attrs_max": 247,
+      "gates": 251020,
+      "log2_circuit_size": 18,
+      "bundled": true,
+      "sha256": "74fa3fab33b407e5d80e2bf2ae185d624d6014263d02d5de9e87290353dae006",
+      "bytes": 1946384
+    },
+    {
+      "id": "lean_poa_rsa2048_sha512_sha512_sha256",
+      "key": "rsa2048",
+      "scheme": "pkcs1",
+      "hashes": [
+        "sha512",
+        "sha512",
+        "sha256"
+      ],
+      "e_content_max": 751,
+      "signed_attrs_max": 256,
+      "gates": 306477,
+      "log2_circuit_size": 19,
+      "bundled": false,
+      "sha256": "ddd2150fd51d972a328590a3ed3cdf9b445fe3d99105ebb52c02c2c03361a070",
+      "bytes": 2384613
+    },
+    {
+      "id": "lean_poa_rsa2048_sha512",
+      "key": "rsa2048",
+      "scheme": "pkcs1",
+      "hashes": [
+        "sha512",
+        "sha512",
+        "sha512"
+      ],
+      "e_content_max": 751,
+      "signed_attrs_max": 239,
+      "gates": 338962,
+      "log2_circuit_size": 19,
+      "bundled": false,
+      "sha256": "e9e0364677e563229ab1c1626440d65e36b1835058d3399c579cfe115923e2ef",
+      "bytes": 2951350
+    },
+    {
+      "id": "lean_poa_rsa3072_sha256",
+      "key": "rsa3072",
+      "scheme": "pkcs1",
+      "hashes": [
+        "sha256",
+        "sha256",
+        "sha256"
+      ],
+      "e_content_max": 695,
+      "signed_attrs_max": 256,
+      "gates": 192485,
+      "log2_circuit_size": 18,
+      "bundled": true,
+      "sha256": "8e0304e42d8ed59dc4ce7cd558139cde0f94cb8d9b9fc4c8fd0e311fab263f4e",
+      "bytes": 594532
+    },
+    {
+      "id": "lean_poa_rsa3072_sha1",
+      "key": "rsa3072",
+      "scheme": "pkcs1",
+      "hashes": [
+        "sha1",
+        "sha1",
+        "sha1"
+      ],
+      "e_content_max": 439,
+      "signed_attrs_max": 247,
+      "gates": 258016,
+      "log2_circuit_size": 18,
+      "bundled": true,
+      "sha256": "a51f52fd7b13fcf24c5b31878afd2459450c8fc0a036c8fcdbe3c558837b75d2",
+      "bytes": 1897352
+    },
+    {
+      "id": "lean_poa_rsa4096_sha256",
+      "key": "rsa4096",
+      "scheme": "pkcs1",
+      "hashes": [
+        "sha256",
+        "sha256",
+        "sha256"
+      ],
+      "e_content_max": 695,
+      "signed_attrs_max": 256,
+      "gates": 249588,
+      "log2_circuit_size": 18,
+      "bundled": true,
+      "sha256": "3d713b02fcde13dc9e67317a7cee6d440d5bd8ba60fe195cac8ad75bdaa6e3e6",
+      "bytes": 874569
+    },
+    {
+      "id": "lean_poa_rsa4096_sha1",
+      "key": "rsa4096",
+      "scheme": "pkcs1",
+      "hashes": [
+        "sha1",
+        "sha1",
+        "sha1"
+      ],
+      "e_content_max": 439,
+      "signed_attrs_max": 247,
+      "gates": 315119,
+      "log2_circuit_size": 19,
+      "bundled": false,
+      "sha256": "ece3f38ab3b4c806a94ae90e247f00b20e1f904d704ba3d749184c0bcc6a2751",
+      "bytes": 2184416
+    },
+    {
+      "id": "lean_poa_rsa4096_sha512_sha512_sha256",
+      "key": "rsa4096",
+      "scheme": "pkcs1",
+      "hashes": [
+        "sha512",
+        "sha512",
+        "sha256"
+      ],
+      "e_content_max": 751,
+      "signed_attrs_max": 256,
+      "gates": 405076,
+      "log2_circuit_size": 19,
+      "bundled": false,
+      "sha256": "73458de80f309baa8f58c78dec9d624cb6850a594fa27bc9ce65feb1e26a4ced",
+      "bytes": 2868746
+    },
+    {
+      "id": "lean_poa_rsa4096_sha512",
+      "key": "rsa4096",
+      "scheme": "pkcs1",
+      "hashes": [
+        "sha512",
+        "sha512",
+        "sha512"
+      ],
+      "e_content_max": 751,
+      "signed_attrs_max": 239,
+      "gates": 437569,
+      "log2_circuit_size": 19,
+      "bundled": false,
+      "sha256": "2d0170c47a5154a220baf2dc88895d3e9118feb211c1febbbdcb1e37629e798c",
+      "bytes": 3435326
+    },
+    {
+      "id": "lean_poa_rsa2048_pss_sha256",
+      "key": "rsa2048",
+      "scheme": "pss",
+      "hashes": [
+        "sha256",
+        "sha256",
+        "sha256"
+      ],
+      "e_content_max": 695,
+      "signed_attrs_max": 256,
+      "gates": 196169,
+      "log2_circuit_size": 18,
+      "bundled": true,
+      "sha256": "ef702e8c9281311f3100f212c48c84bdf5ae0084c5c50c87e0ad1b6ec645e3f8",
+      "bytes": 444387
+    },
+    {
+      "id": "lean_poa_rsa2048_pss_sha384",
+      "key": "rsa2048",
+      "scheme": "pss",
+      "hashes": [
+        "sha384",
+        "sha384",
+        "sha384"
+      ],
+      "e_content_max": 751,
+      "signed_attrs_max": 239,
+      "gates": 521515,
+      "log2_circuit_size": 19,
+      "bundled": false,
+      "sha256": "d2561b7f62b520aad2496258cacc0b902b1e3fa5e71ba28ce93439bdfaccfbc7",
+      "bytes": 4818563
+    },
+    {
+      "id": "lean_poa_rsa2048_pss_sha512_sha512_sha256",
+      "key": "rsa2048",
+      "scheme": "pss",
+      "hashes": [
+        "sha512",
+        "sha512",
+        "sha256"
+      ],
+      "e_content_max": 751,
+      "signed_attrs_max": 256,
+      "gates": 351629,
+      "log2_circuit_size": 19,
+      "bundled": false,
+      "sha256": "ecf53a573e58c38f29e9c34b42f26c75241e912ef2457da137f5992e6cc0c82b",
+      "bytes": 2427174
+    },
+    {
+      "id": "lean_poa_rsa2048_pss_sha512",
+      "key": "rsa2048",
+      "scheme": "pss",
+      "hashes": [
+        "sha512",
+        "sha512",
+        "sha512"
+      ],
+      "e_content_max": 751,
+      "signed_attrs_max": 239,
+      "gates": 472248,
+      "log2_circuit_size": 19,
+      "bundled": false,
+      "sha256": "db0dcef8bba76ad220f7df95c375bedaf7841f269abc67fddc25ed1e49e28d41",
+      "bytes": 4305772
+    },
+    {
+      "id": "lean_poa_rsa3072_pss_sha256",
+      "key": "rsa3072",
+      "scheme": "pss",
+      "hashes": [
+        "sha256",
+        "sha256",
+        "sha256"
+      ],
+      "e_content_max": 695,
+      "signed_attrs_max": 256,
+      "gates": 255457,
+      "log2_circuit_size": 18,
+      "bundled": true,
+      "sha256": "4f630bf5697eef539df891e2e1c80fb64bb6e6204b496f99743c0d5436651976",
+      "bytes": 647419
+    },
+    {
+      "id": "lean_poa_rsa3072_pss_sha384",
+      "key": "rsa3072",
+      "scheme": "pss",
+      "hashes": [
+        "sha384",
+        "sha384",
+        "sha384"
+      ],
+      "e_content_max": 751,
+      "signed_attrs_max": 239,
+      "gates": 612633,
+      "log2_circuit_size": 20,
+      "bundled": false,
+      "sha256": "21ed774a51b33ef9ee6bd07537a2a80d29a5a0fc849271aa42ec54bdbae9bcef",
+      "bytes": 5516492
+    },
+    {
+      "id": "lean_poa_rsa4096_pss_sha256",
+      "key": "rsa4096",
+      "scheme": "pss",
+      "hashes": [
+        "sha256",
+        "sha256",
+        "sha256"
+      ],
+      "e_content_max": 695,
+      "signed_attrs_max": 256,
+      "gates": 330353,
+      "log2_circuit_size": 19,
+      "bundled": false,
+      "sha256": "a2e1849f270f507cad9ebc8078c7e673eacdaf55286bf54a55ce441e5af8d2c6",
+      "bytes": 936910
+    },
+    {
+      "id": "lean_poa_p224_sha256_sha224_sha224",
+      "key": "p224",
+      "scheme": "ecdsa",
+      "hashes": [
+        "sha256",
+        "sha224",
+        "sha224"
+      ],
+      "e_content_max": 695,
+      "signed_attrs_max": 256,
+      "gates": 148630,
+      "log2_circuit_size": 18,
+      "bundled": true,
+      "sha256": "85dc67cf560c91ce46a900fd6fcab1f3ef9d2a21611d2a6b5679890c7a4e260d",
+      "bytes": 833928
+    },
+    {
+      "id": "lean_poa_p224_sha256_sha256_sha224",
+      "key": "p224",
+      "scheme": "ecdsa",
+      "hashes": [
+        "sha256",
+        "sha256",
+        "sha224"
+      ],
+      "e_content_max": 695,
+      "signed_attrs_max": 256,
+      "gates": 148646,
+      "log2_circuit_size": 18,
+      "bundled": true,
+      "sha256": "3462a0f673484baf647f35ba33cc75535b789be241529855ef40683c5c917a6d",
+      "bytes": 834123
+    },
+    {
+      "id": "lean_poa_p256_sha256",
+      "key": "p256",
+      "scheme": "ecdsa",
+      "hashes": [
+        "sha256",
+        "sha256",
+        "sha256"
+      ],
+      "e_content_max": 695,
+      "signed_attrs_max": 256,
+      "gates": 138556,
+      "log2_circuit_size": 18,
+      "bundled": true,
+      "sha256": "a7cfb9a6f8dffdbdda50d2c8bc061870be478f8f3d8351692ce97b43c10e4a27",
+      "bytes": 134400
+    },
+    {
+      "id": "lean_poa_p256_sha1",
+      "key": "p256",
+      "scheme": "ecdsa",
+      "hashes": [
+        "sha1",
+        "sha1",
+        "sha1"
+      ],
+      "e_content_max": 439,
+      "signed_attrs_max": 247,
+      "gates": 204092,
+      "log2_circuit_size": 18,
+      "bundled": true,
+      "sha256": "3fe39867b860b76855c8d0f5339a26fb0beb2a8946e5973698918d27a64bcf9f",
+      "bytes": 1428489
+    },
+    {
+      "id": "lean_poa_p384_sha256",
+      "key": "p384",
+      "scheme": "ecdsa",
+      "hashes": [
+        "sha256",
+        "sha256",
+        "sha256"
+      ],
+      "e_content_max": 695,
+      "signed_attrs_max": 256,
+      "gates": 300920,
+      "log2_circuit_size": 19,
+      "bundled": false,
+      "sha256": "6a47ddabf0075f5c1287c899694a701f399c97d85f62dba3b58126bcef103332",
+      "bytes": 2066870
+    },
+    {
+      "id": "lean_poa_p384_sha384",
+      "key": "p384",
+      "scheme": "ecdsa",
+      "hashes": [
+        "sha384",
+        "sha384",
+        "sha384"
+      ],
+      "e_content_max": 751,
+      "signed_attrs_max": 239,
+      "gates": 488731,
+      "log2_circuit_size": 19,
+      "bundled": false,
+      "sha256": "52af9dbcf388935155180bbea8eb71e1ae31693d95cfcaedf9cb99b983e52227",
+      "bytes": 4624833
+    },
+    {
+      "id": "lean_poa_p521_sha512",
+      "key": "p521",
+      "scheme": "ecdsa",
+      "hashes": [
+        "sha512",
+        "sha512",
+        "sha512"
+      ],
+      "e_content_max": 751,
+      "signed_attrs_max": 239,
+      "gates": 659250,
+      "log2_circuit_size": 20,
+      "bundled": false,
+      "sha256": "adf6599e62a83b375aaf508fa18a90e482d66bfb60bac202bc6fbc69a0fb43c3",
+      "bytes": 5631728
+    },
+    {
+      "id": "lean_poa_bp224_sha224",
+      "key": "bp224",
+      "scheme": "ecdsa",
+      "hashes": [
+        "sha224",
+        "sha224",
+        "sha224"
+      ],
+      "e_content_max": 695,
+      "signed_attrs_max": 256,
+      "gates": 148606,
+      "log2_circuit_size": 18,
+      "bundled": true,
+      "sha256": "21410c475e791482266f61b938152cd9558a930fac156346b8381c585d417498",
+      "bytes": 834484
+    },
+    {
+      "id": "lean_poa_bp224_sha1",
+      "key": "bp224",
+      "scheme": "ecdsa",
+      "hashes": [
+        "sha1",
+        "sha1",
+        "sha1"
+      ],
+      "e_content_max": 439,
+      "signed_attrs_max": 247,
+      "gates": 214174,
+      "log2_circuit_size": 18,
+      "bundled": true,
+      "sha256": "d88626377bc2227ef0baa08a41e1a1f72915aa9575741d08dca0219b4605e4dc",
+      "bytes": 2129507
+    },
+    {
+      "id": "lean_poa_bp256_sha256",
+      "key": "bp256",
+      "scheme": "ecdsa",
+      "hashes": [
+        "sha256",
+        "sha256",
+        "sha256"
+      ],
+      "e_content_max": 695,
+      "signed_attrs_max": 256,
+      "gates": 188206,
+      "log2_circuit_size": 18,
+      "bundled": true,
+      "sha256": "23aca618e4b53bbeaee5e374018ca3dedaa215193ae950d12fb708ce2fd82b4b",
+      "bytes": 1268860
+    },
+    {
+      "id": "lean_poa_bp384_sha256",
+      "key": "bp384",
+      "scheme": "ecdsa",
+      "hashes": [
+        "sha256",
+        "sha256",
+        "sha256"
+      ],
+      "e_content_max": 695,
+      "signed_attrs_max": 256,
+      "gates": 300920,
+      "log2_circuit_size": 19,
+      "bundled": false,
+      "sha256": "dccf6c86ae2896f8bd6395dcb1388b3db1d24e813ff60ecb3a519846f337a875",
+      "bytes": 2086652
+    },
+    {
+      "id": "lean_poa_bp384_sha384",
+      "key": "bp384",
+      "scheme": "ecdsa",
+      "hashes": [
+        "sha384",
+        "sha384",
+        "sha384"
+      ],
+      "e_content_max": 751,
+      "signed_attrs_max": 239,
+      "gates": 488731,
+      "log2_circuit_size": 19,
+      "bundled": false,
+      "sha256": "98ca2f5178305c4fd3c93c978fdebd8c983cab0d65a8e7b9858e1510cd8fe494",
+      "bytes": 4640965
+    },
+    {
+      "id": "lean_poa_bp512_sha384",
+      "key": "bp512",
+      "scheme": "ecdsa",
+      "hashes": [
+        "sha384",
+        "sha384",
+        "sha384"
+      ],
+      "e_content_max": 751,
+      "signed_attrs_max": 239,
+      "gates": 649426,
+      "log2_circuit_size": 20,
+      "bundled": false,
+      "sha256": "e992b5e7ab6b2f69b70cd26e0afbb267a80767cff66d3a3242336b5402081e80",
+      "bytes": 5926325
+    },
+    {
+      "id": "lean_poa_bp512_sha512",
+      "key": "bp512",
+      "scheme": "ecdsa",
+      "hashes": [
+        "sha512",
+        "sha512",
+        "sha512"
+      ],
+      "e_content_max": 751,
+      "signed_attrs_max": 239,
+      "gates": 649564,
+      "log2_circuit_size": 20,
+      "bundled": false,
+      "sha256": "f67fe27a12f2d41f6afda46f7a7bb00a6a5a31cd5e6b6d05056f438892c19ff5",
+      "bytes": 5928137
+    }
+  ]
+}
