@@ -140,7 +140,7 @@ struct GasWarning: View {
 
     private var prompt: String {
         if shielded && !canGrant {
-            return "Not enough shielded ERTH for the fee. Private actions pay from your shielded balance: your registration reward, or ERTH sent to your shielded address."
+            return "Not enough shielded ERTH for the fee. Private actions pay from your shielded balance: shield some from Portfolio, or have ERTH sent to your shielded address."
         }
         if !canGrant { return "Not enough ERTH in your public account for the fee. Unshield some from Portfolio, or send ERTH here." }
         return "Not enough ERTH for the fee. Tap to get free gas for this transaction."

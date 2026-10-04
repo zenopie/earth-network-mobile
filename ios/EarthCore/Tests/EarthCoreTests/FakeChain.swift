@@ -150,6 +150,26 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     var queues: [String: BigUInt] = [:]
     /// Validators x/staking has unbonded: a move from one leaves its queue first.
     var unbonded: Set<String> = []
+    /// The module's x/staking delegation D per validator (default: the backing less the queue, all bonded).
+    var delegated: [String: BigUInt] = [:]
+    /// U: undelegated privately, not yet from x/staking (0 unless a test sets it).
+    var undelegating: [String: BigUInt] = [:]
+    /// W: the module's unwithdrawn rewards (0 unless a test sets it); a move withdraws them into the queue first.
+    var rewards: [String: BigUInt] = [:]
+    /// Validators taking no delegation, with the chain's reason (1102).
+    var refusals: [String: String] = [:]
+    /// The module's (src, dst) x/staking redelegation records: (entries, counted entries).
+    var redelegationLoads: [String: (entries: UInt64, counted: UInt64)] = [:]
+    static func pair(_ src: String, _ dst: String) -> String { src + ">" + dst }
+    /// Every Query/Validators read.
+    var validatorsReads = 0
+    /// x/staking's validators: the tests' own, and any a private delegation or move named.
+    var stakingValidators = [
+        "earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+        "earthvaloper1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5pmxnhd",
+        "earthvaloper1qyqszqgpqyqszqgpqyqszqgpqyqszqgpjnp7du",
+        "earthvaloper1zyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszq",
+    ]
     var minDelegation: UInt64 = 1
     /// Applied to every book's backing just before a tx's credit check: the rate moving between quote and block.
     var rateDriftPPM: UInt64 = 0
@@ -191,9 +211,27 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
                                          windowSeconds: labelWindow, clearBefore: clearBefore())
     }
 
-    func validatorBookRead(_ v: String) -> PrivacyReads.Book {
-        let b = book(v)
-        return PrivacyReads.Book(backing: b.backing, supply: b.supply, pendingDelegation: queues[v] ?? 0, unbonded: unbonded.contains(v))
+    /// Query/Validators: x/staking's validators, and any a test gave a book, a queue or a refusal.
+    func validatorsRead() -> PrivacyReads.ValidatorList {
+        validatorsReads += 1
+        var ops: [String] = []
+        for v in stakingValidators + validators + books.keys.sorted() + refusals.keys.sorted() + queues.keys.sorted() + unbonded.sorted()
+        where !ops.contains(v) { ops.append(v) }
+        return PrivacyReads.ValidatorList(height: Int64(height), validators: ops.map(quoteOf))
+    }
+
+    func quoteOf(_ v: String) -> PrivacyReads.ValidatorQuote {
+        let (b, sup) = book(v)
+        let p = queues[v] ?? 0
+        var loads: [String: PrivacyReads.RedelegationLoad] = [:]
+        for (k, e) in redelegationLoads where k.hasPrefix(v + ">") {
+            loads[String(k.dropFirst(v.count + 1))] = PrivacyReads.RedelegationLoad(entries: e.entries, countedEntries: e.counted)
+        }
+        return PrivacyReads.ValidatorQuote(
+            validator: v, backing: b, supply: sup, pendingDelegation: p, pendingUndelegation: undelegating[v] ?? 0,
+            delegation: delegated[v] ?? (b > p ? b - p : 0), rewards: rewards[v] ?? 0,
+            status: unbonded.contains(v) ? PrivacyReads.bondStatusUnbonded : PrivacyReads.bondStatusBonded,
+            delegatable: refusals[v] == nil, refusal: refusals[v] ?? "", moniker: "moniker-\(v)", redelegations: loads)
     }
 
     func debtRows(fromIndex: UInt64, limit: Int) async throws -> DebtRowsPage {
@@ -394,8 +432,19 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         let actions = m.bundles.reduce(0) { $0 + $1.actions.count }
         var vote: UInt64 = 0
         if let v = m as? MsgStakeVote { vote = 2_250_000 + (1 + UInt64(v.voteNullifiers.count)) * 150_000 }
-        return 200_000 + 100_000 * UInt64(m.bundles.count) + 350_000 * UInt64(actions) + (m.stakeProof != nil ? 400_000 : 0) + vote
+        var red: UInt64 = 0
+        if let r = m as? MsgRedelegate { red = redelegateGas(r.srcValidator, r.dstValidator) }
+        return 200_000 + 100_000 * UInt64(m.bundles.count) + 350_000 * UInt64(actions) + (m.stakeProof != nil ? 400_000 : 0) + vote + red
     }
+
+    /// The chain's redelegateGas beyond the 400,000 above: 700,000 base, 2,500 an entry, the merge at the cap.
+    func redelegateGas(_ src: String, _ dst: String) -> UInt64 {
+        let (n, counted) = redelegationLoads[Self.pair(src, dst)] ?? (0, 0)
+        return 300_000 + n * 2_500 + (counted >= 1_024 ? n * 2_500 + 128 * 20_000 : 0)
+    }
+
+    /// The last committed tx's gas_limit.
+    var lastGasLimit: UInt64 = 0
 
     /// Every committed private tx's gas_limit over the gas it uses (the chain allows at most 5).
     var gasRatios: [Double] = []
@@ -647,20 +696,25 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         case let m as MsgAddLiquidityShielded:
             if !m.minShares.isEmpty { try need(shares(rem["uerth"]!, rem["uanml"]!) >= BigInt(m.minShares)!, "below min_shares") }
         case let m as MsgShieldedDelegate:
+            if let r = refusals[m.validator] { throw Refused(why: "\(r) (code 1102)") }
             try need(m.amount >= minDelegation, "a delegation is at least \(minDelegation)uerth")
             try checkCredit(m.validator, BigUInt(m.amount), m.derth)
         case let m as MsgRedelegate:
             try need(m.srcValidator != m.dstValidator, "source and destination are the same validator (code 1120)")
+            if let r = refusals[m.dstValidator] { throw Refused(why: "\(r) (code 1102)") }
             try need(m.moveTime >= 1 && m.moveTime <= UInt64(now) && UInt64(now) - m.moveTime <= 600,
                      "move_time \(m.moveTime) is not within 600s before the block time \(now) (name a recent block's time)")
             let (bA, sA) = book(m.srcValidator)
             let u = BigUInt(m.amount) * bA / sA
             try need(u >= BigUInt(minDelegation), "the redelegation is worth less than the minimum (code 1103)")
             // What arrives: pro rata out of the queue and the
-            // bonded stake, up to bondedDust + a truncated uerth short of u; all
-            // of it only out of an unbonded source's queue.
-            let q = queues[m.srcValidator] ?? 0
-            let arrived = unbonded.contains(m.srcValidator) && u <= q ? u : (u > 1001 ? u - 1001 : 0)
+            // bonded stake, up to bondedDust + a truncated uerth short of u
+            // (the least it can be); all of it only when the value leaves the
+            // queue first (src unbonded, or its bonded part D - U nothing)
+            // and the queue, its rewards withdrawn into it, covers u.
+            let src = quoteOf(m.srcValidator)
+            let queueFirst = unbonded.contains(m.srcValidator) || src.delegation <= src.pendingUndelegation
+            let arrived = queueFirst && u <= src.pendingDelegation + src.rewards ? u : (u > 1001 ? u - 1001 : 0)
             try checkCredit(m.dstValidator, arrived, m.dstDerth)
         case let m as MsgUpdatePosition:
             try need(positions[m.positionID]?.ownerTag == (try f(m.stake.ownerTag)), "not the position's owner")
@@ -757,6 +811,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
             let used = gasOf(m)
             try need(tx.gasLimit <= 5 * used, "gas limit \(tx.gasLimit) exceeds what this private tx uses (\(used))")
             gasRatios.append(Double(tx.gasLimit) / Double(used))
+            lastGasLimit = tx.gasLimit
         }
         let bundles = m.bundles
         try need((1 ... 2).contains(bundles.count), "bundle count")
@@ -1101,7 +1156,6 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         registeredIdc.removeValue(forKey: index)
     }
 
-    func rates(epoch: UInt64?) async throws -> [RateRow] { [] }
 
     func stakeNotes(fromPos: UInt64, limit: Int?) async throws -> StakeNotesPage {
         let n = try aligned("stake/notes", fromPos, limit)
@@ -1249,7 +1303,7 @@ struct FakeReads: PrivacyChainReads, @unchecked Sendable {
 
     func debtTree(start: UInt64, limit: Int) async throws -> PrivacyReads.DebtTreePage { chain.debtTreeRead(start: start, limit: limit) }
 
-    func validatorBook(_ valoper: String) async throws -> PrivacyReads.Book { chain.validatorBookRead(valoper) }
+    func validators() async throws -> PrivacyReads.ValidatorList { chain.validatorsRead() }
 
     func minDelegation() async throws -> UInt64 { chain.minDelegation }
 }

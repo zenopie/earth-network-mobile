@@ -16,10 +16,10 @@ public protocol PrivacyChainReads: Sendable {
     func stakeNullifierTree(start: UInt64, limit: Int) async throws -> PrivacyReads.NfTreePage
     /// x/shieldedstaking Query/DebtTree{start, limit} (at most 1000 a page).
     func debtTree(start: UInt64, limit: Int) async throws -> PrivacyReads.DebtTreePage
-    /// x/shieldedstaking Query/Validator for `valoper`: what a delegation or a
-    /// redelegation's credit is quoted at. The validator is named by the msg
-    /// itself, so asking says nothing the tx does not.
-    func validatorBook(_ valoper: String) async throws -> PrivacyReads.Book
+    /// x/shieldedstaking Query/Validators, every page at one height: what
+    /// every staking quote reads. Never a query about one validator (asked
+    /// shortly before a public msg, it would tie the asking IP to that intent).
+    func validators() async throws -> PrivacyReads.ValidatorList
     /// x/shieldedstaking params.min_delegation (uerth, and the least derth one may credit).
     func minDelegation() async throws -> UInt64
     /// About when an undelegation booked in `epoch` is paid, from chain-wide
@@ -150,23 +150,95 @@ public enum PrivacyReads {
         public let unbondingSeconds: Int64
     }
 
-    public struct ValidatorBook: Sendable {
-        public let validator: String
-        public let rate: Decimal
-        public let supply: UInt64
+    public static let bondStatusBonded = "BOND_STATUS_BONDED"
+    public static let bondStatusUnbonded = "BOND_STATUS_UNBONDED"
+
+    /// One entry of x/shieldedstaking Query/Validators (ORCHARD_DESIGN 12.2):
+    /// what a delegation, undelegation, redelegation or stake vote at
+    /// `validator` is quoted from. B = `backing`, S = `supply` (rate = B / S,
+    /// exact integers; `rate` the chain's LegacyDec of it, for display), the
+    /// queue P = `pendingDelegation`, U = `pendingUndelegation`, the module's
+    /// delegation D = `delegation` and unwithdrawn rewards W = `rewards`
+    /// (B = D + W + P - U), x/staking's `status` ("" for a book whose
+    /// validator x/staking removed), `jailed`, `tombstoned`, whether a
+    /// delegation or a redelegation into it is taken now (`delegatable`, else
+    /// `refusal`, the chain's reason), and the module's redelegation record
+    /// out of it per destination (`redelegations`, what MsgRedelegate's gas
+    /// grows with). Ports PrivacyChainReads.ValidatorQuote.
+    public struct ValidatorQuote: Sendable, Equatable {
+        public var validator: String
+        public var backing: BigUInt
+        public var supply: BigUInt
+        public var pendingDelegation: BigUInt
+        public var pendingUndelegation: BigUInt
+        public var delegation: BigUInt
+        public var rewards: BigUInt
+        public var rate: Decimal
+        public var status: String
+        public var jailed: Bool
+        public var tombstoned: Bool
+        public var delegatable: Bool
+        public var refusal: String
+        public var moniker: String
+        /// x/staking's commission rate, a fraction (0.10 for 10%).
+        public var commission: Double
+        /// x/staking's bonded tokens (the validator's whole stake, not the module's).
+        public var tokens: BigUInt
+        public var redelegations: [String: RedelegationLoad]
+
+        public init(validator: String, backing: BigUInt, supply: BigUInt, pendingDelegation: BigUInt = 0, pendingUndelegation: BigUInt = 0,
+                    delegation: BigUInt? = nil, rewards: BigUInt = 0, rate: Decimal? = nil, status: String = PrivacyReads.bondStatusBonded,
+                    jailed: Bool = false, tombstoned: Bool = false, delegatable: Bool = true, refusal: String = "", moniker: String = "",
+                    commission: Double = 0, tokens: BigUInt = 0, redelegations: [String: RedelegationLoad] = [:]) {
+            self.validator = validator; self.backing = backing; self.supply = supply
+            self.pendingDelegation = pendingDelegation; self.pendingUndelegation = pendingUndelegation
+            self.delegation = delegation ?? (backing + pendingUndelegation > pendingDelegation ? backing + pendingUndelegation - pendingDelegation : 0)
+            self.rewards = rewards
+            self.rate = rate ?? (supply == 0 ? 1 : (Decimal(string: String(backing)) ?? 0) / (Decimal(string: String(supply)) ?? 1))
+            self.status = status; self.jailed = jailed; self.tombstoned = tombstoned; self.delegatable = delegatable
+            self.refusal = refusal; self.moniker = moniker; self.commission = commission; self.tokens = tokens
+            self.redelegations = redelegations
+        }
+
+        public var removed: Bool { status.isEmpty }
+        public var bonded: Bool { status == PrivacyReads.bondStatusBonded }
+
+        /// Whether a move out of here leaves the queue first (8.7 step 3): no
+        /// slash can reach the stake (x/staking unbonded or removed it, or the
+        /// bonded part D - U is nothing). Otherwise the value leaves the queue
+        /// and the bonded stake pro rata.
+        public var queueFirst: Bool { removed || status == PrivacyReads.bondStatusUnbonded || delegation <= pendingUndelegation }
+
+        /// The queue a move draws on: P, and W, which a move withdraws into it first.
+        public var queue: BigUInt { pendingDelegation + rewards }
     }
 
-    /// x/shieldedstaking Query/Validator: the live backing and derth supply
-    /// (rate = backing / supply), and the ERTH waiting to be delegated at the
-    /// epoch's end (what a redelegation moves out of first).
-    public struct Book: Sendable, Equatable {
-        public let backing: BigUInt
-        public let supply: BigUInt
-        public let pendingDelegation: BigUInt
-        /// x/staking BOND_STATUS_UNBONDED: no slash reaches it, so a move from it leaves its queue first.
-        public let unbonded: Bool
-        public init(backing: BigUInt, supply: BigUInt, pendingDelegation: BigUInt = 0, unbonded: Bool = false) {
-            self.backing = backing; self.supply = supply; self.pendingDelegation = pendingDelegation; self.unbonded = unbonded
+    /// RedelegationLoad: the pair's x/staking record, its `entries` and `countedEntries` (those of positive height).
+    public struct RedelegationLoad: Sendable, Equatable {
+        public let entries: UInt64
+        public let countedEntries: UInt64
+        public init(entries: UInt64, countedEntries: UInt64) { self.entries = entries; self.countedEntries = countedEntries }
+    }
+
+    /// Query/Validators, every page, read at one `height`.
+    public struct ValidatorList: Sendable, Equatable {
+        public let height: Int64
+        public let validators: [ValidatorQuote]
+        private let byOperator: [String: Int]
+
+        public init(height: Int64, validators: [ValidatorQuote]) {
+            self.height = height; self.validators = validators
+            var m: [String: Int] = [:]
+            for (i, v) in validators.enumerated() where m[v.validator] == nil { m[v.validator] = i }
+            byOperator = m
+        }
+
+        public subscript(_ valoper: String) -> ValidatorQuote? { byOperator[valoper].map { validators[$0] } }
+
+        /// `valoper`'s entry; a validator the list does not carry has no book and no x/staking record.
+        public func of(_ valoper: String) throws -> ValidatorQuote {
+            guard let v = self[valoper] else { throw PrivacyError("the chain lists no validator \(valoper)") }
+            return v
         }
     }
 
@@ -310,11 +382,6 @@ public struct PrivacyQueries: PrivacyChainReads {
                                          epochSeconds: t.epochSeconds, unbondingSeconds: t.unbondingSeconds)
     }
 
-    public func validator(_ valoper: String) async throws -> PrivacyReads.ValidatorBook {
-        let j = try await rest.get("/earth/shieldedstaking/v1/validators/\(valoper)")
-        return PrivacyReads.ValidatorBook(validator: valoper, rate: Decimal(string: j.rate.string(default: "1")) ?? 1, supply: j.supply.uint64(default: 0))
-    }
-
     public func snapshot(proposalID: UInt64) async throws -> PrivacyReads.Snapshot {
         let s = try await rest.get("/earth/shieldedstaking/v1/snapshots/\(proposalID)").snapshot
         var rates: [String: Decimal] = [:]
@@ -355,23 +422,25 @@ public struct PrivacyQueries: PrivacyChainReads {
         try await rest.get("/earth/shieldedstaking/v1/params").params.min_delegation.uint64(default: 0)
     }
 
-    /// Query/Validator's live book: backing and derth supply (exact integers;
-    /// the rate is their quotient), its queue, and whether x/staking has it
-    /// unbonded (what a move from it carries depends on that). Read for the
-    /// validators of a quote only: the same ids the quote already names.
-    public func validatorBook(_ valoper: String) async throws -> PrivacyReads.Book {
-        let j = try await rest.get("/earth/shieldedstaking/v1/validators/\(valoper)")
-        func int(_ v: JSON, _ name: String) throws -> BigUInt {
-            let s = v.string ?? "0"
-            guard !s.isEmpty, s.count <= 80, s.allSatisfy({ $0.isASCII && $0.isNumber }), let b = BigUInt(s, radix: 10) else {
-                throw PrivacyError("validator \(name) is not a non-negative integer")
-            }
-            return b
+    /// The last validator list read (`validators()`): what pickers, monikers
+    /// and stake values show between reads. Nil until the first.
+    public static var cachedValidators: PrivacyReads.ValidatorList? { ValidatorPages.cache.get() }
+
+    /// Query/Validators, every page at one height (ValidatorPages), kept as
+    /// `cachedValidators`. Read with every sync and every quote; the only
+    /// read of a validator's book, status or redelegations the app makes.
+    public func validators() async throws -> PrivacyReads.ValidatorList {
+        let rest = self.rest
+        let list = try await ValidatorPages.readAll { key, height in
+            let path = "/earth/shieldedstaking/v1/validators?pagination.limit=\(ValidatorPages.pageLimit)" +
+                (key.isEmpty ? "" : "&pagination.key=" + (key.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? key))
+            guard let height else { return try ValidatorPages.parse(try await rest.get(path)) }
+            // Not served at that height (pruned, or a node behind it): read again.
+            guard let (j, echo) = try? await rest.getEcho(path, height: UInt64(height)), echo == nil || echo == UInt64(height) else { return nil }
+            return try ValidatorPages.parse(j)
         }
-        let status = try await rest.get("/cosmos/staking/v1beta1/validators/\(valoper)").validator.status.string ?? ""
-        return PrivacyReads.Book(backing: try int(j.backing, "backing"), supply: try int(j.supply, "supply"),
-                                 pendingDelegation: try int(j.state.pending_delegation, "pending_delegation"),
-                                 unbonded: status == "BOND_STATUS_UNBONDED")
+        ValidatorPages.cache.set(list)
+        return list
     }
 
     /// Chain-wide timing, the same answer for everyone: with the epoch it says
@@ -565,20 +634,13 @@ public struct LCDChainRoots: ChainRoots {
         return out
     }
 
-    /// x/staking's validators, every status, every page (public; at most Denoms.max).
+    /// Every validator with a book or an x/staking record, from the
+    /// validator list (the one the sync that asks just read; read now when
+    /// there is none), at most Denoms.max.
     public func validatorOperators() async -> [String]? {
-        var out: [String] = []
-        var key = ""
-        while out.count < Denoms.max {
-            let q = "pagination.limit=500" + (key.isEmpty ? "" : "&pagination.key=" + (key.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? key))
-            guard let j = try? await rest.get("/cosmos/staking/v1beta1/validators?" + q) else { return nil }
-            let a = j.validators.array
-            for v in a { if let op = v.operator_address.string, !op.isEmpty { out.append(op) } }
-            let next = j.pagination.next_key.string(default: "")
-            if next.isEmpty || next == key || a.isEmpty { break }
-            key = next
-        }
-        return out
+        let list: PrivacyReads.ValidatorList?
+        if let cached = PrivacyQueries.cachedValidators { list = cached } else { list = try? await PrivacyQueries(rest: rest).validators() }
+        return list.map { Array($0.validators.map(\.validator).prefix(Denoms.max)) }
     }
 
     /// A tx this wallet broadcast, by hash: 404 missing, a non-zero code failed.

@@ -106,7 +106,7 @@ struct MoveStakeSheet: View {
 
     private var sources: [PrivacyWallet.StakeHolding] { model.stakeHoldings.filter { $0.free > 0 } }
 
-    private var destinations: [String] { model.validators.map(\.operatorAddress).filter { $0 != source } }
+    private var destinations: [String] { model.stakeTargets.filter { $0 != source } }
 
     private var available: BigInt { BigInt(sources.first { $0.validator == source }?.free ?? 0) }
 
@@ -123,12 +123,11 @@ struct MoveStakeSheet: View {
     }
 
     private func moniker(_ op: String) -> String {
-        let m = model.validators.first { $0.operatorAddress == op }?.moniker ?? ""
-        return m.isEmpty ? op : m
+        model.moniker(of: op)
     }
 
     private func commission(_ op: String) -> String {
-        String(format: "%.0f%% commission", (model.validators.first { $0.operatorAddress == op }?.commission ?? 0) * 100)
+        String(format: "%.0f%% commission", (model.commission(of: op) ?? 0) * 100)
     }
 
     private func review() {

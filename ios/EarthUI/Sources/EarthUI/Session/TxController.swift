@@ -217,23 +217,18 @@ public final class TxController {
     ///
     /// One grant exists: a registration's, a shielded note paid against the
     /// registration itself (the backend checks it as the chain will) to a pc
-    /// of our own with its v2 ciphertext, so its spend is unlinkable. ERTH for
-    /// a signed tx's fee comes from unshielding. A 202 is treated like a 200:
-    /// the chain is the only authority on arrival.
+    /// of our own with its v2 ciphertext, so its spend is unlinkable. Only
+    /// the registration's sheet offers it; every other sheet says where its
+    /// fee comes from (GasWarning). A 202 is treated like a 200: the chain is
+    /// the only authority on arrival.
     public func requestGas(in model: AppModel) async {
-        guard !requestingGas, !awaitingGas, !model.address.isEmpty, let details = pending else { return }
+        guard !requestingGas, !awaitingGas, !model.address.isEmpty, let reg = pending?.registration else { return }
         requestingGas = true
         gasError = nil
         do {
-            if let reg = details.registration {
-                defer { gasWork = nil }
-                _ = try await GasGrant.request(.register(reg.msg, pcGas: reg.pcGas, ciphertextGas: reg.ciphertextGas)) { p in
-                    Task { @MainActor [weak self] in if self?.requestingGas == true { self?.gasWork = p } }
-                }
-            } else if details.shielded {
-                throw GasGrant.Refused(status: 0, message: "Fees for private actions are paid from shielded ERTH: your registration reward, or ERTH sent to your shielded address.")
-            } else {
-                throw GasGrant.Refused(status: 0, message: "Need ERTH in your public account for fees? Unshield some from Portfolio.")
+            defer { gasWork = nil }
+            _ = try await GasGrant.request(.register(reg.msg, pcGas: reg.pcGas, ciphertextGas: reg.ciphertextGas)) { p in
+                Task { @MainActor [weak self] in if self?.requestingGas == true { self?.gasWork = p } }
             }
         } catch {
             requestingGas = false

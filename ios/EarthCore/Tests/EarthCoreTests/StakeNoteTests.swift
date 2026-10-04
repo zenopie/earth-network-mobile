@@ -345,6 +345,81 @@ final class StakeNoteTests: PrivacyTestCase {
         XCTAssertEqual(tags.count, Set(tags).count)
     }
 
+    /// The value leaves the queue first, and arrives whole, wherever no slash
+    /// can reach src's stake: also a bonded validator whose bonded part D - U
+    /// is nothing; the queue counts the rewards a move withdraws into it.
+    func testAMoveArrivesWholeWhereNoSlashReachesTheStake() async throws {
+        let chain = FakeChain()
+        let a = try await staked(chain)
+        let bonded = try await a.quoteMove(src: vA, dst: vB, amount: 500_000)
+        // P + W covers u (555,555), D <= U: the queue goes first.
+        chain.queues[vA] = 300_000
+        chain.rewards[vA] = 300_000
+        chain.delegated[vA] = 1_000
+        chain.undelegating[vA] = 1_000
+        let whole = try await a.quoteMove(src: vA, dst: vB, amount: 500_000)
+        XCTAssertGreaterThan(whole.dstDerth, bonded.dstDerth)
+        // Without the rewards the queue no longer covers it.
+        chain.rewards[vA] = nil
+        let without = try await a.quoteMove(src: vA, dst: vB, amount: 500_000)
+        XCTAssertEqual(bonded.dstDerth, without.dstDerth)
+        chain.rewards[vA] = 300_000
+        _ = try await a.redelegate(whole); try await a.sync()
+        XCTAssertEqual(whole.dstDerth, at(a, vB).map(\.amount).reduce(0, +))
+    }
+
+    /// A validator the list says takes no stake is refused before anything is laid out, with the chain's reason.
+    func testAValidatorNotTakingStakeIsRefusedUpFront() async throws {
+        let chain = FakeChain()
+        let a = try await staked(chain)
+        chain.refusals[vB] = "\(vB) is jailed: validator cannot take delegations"
+        let sims = chain.simulated
+        await assertThrowsAsync({ try await a.quoteDelegate(validator: self.vB, amount: 1_000_000) }) { "\($0)".contains("jailed") }
+        await assertThrowsAsync({ try await a.quoteMove(src: self.vA, dst: self.vB, amount: 500_000) }) { "\($0)".contains("jailed") }
+        XCTAssertEqual(sims, chain.simulated)
+        // Leaving it is not refused: undelegations and moves out do not depend on it.
+        chain.refusals = [vA: "\(vA) is jailed"]
+        let u = try await a.quoteUndelegate(validator: vA, amount: 100_000)
+        XCTAssertGreaterThan(u.value, 0)
+        _ = try await a.redelegate(try await a.quoteMove(src: vA, dst: vB, amount: 500_000)); try await a.sync()
+        XCTAssertFalse(at(a, vB).isEmpty)
+    }
+
+    /// Every quote reads the whole list again, never one validator; an undelegation is quoted at the live rate.
+    func testQuotesReadTheWholeValidatorList() async throws {
+        let chain = FakeChain()
+        let a = try await staked(chain)
+        let before = chain.validatorsReads
+        _ = try await a.quoteDelegate(validator: vA, amount: 1_000_000)
+        _ = try await a.quoteMove(src: vA, dst: vB, amount: 500_000)
+        let u = try await a.quoteUndelegate(validator: vA, amount: 900_000)
+        XCTAssertEqual(before + 3, chain.validatorsReads)
+        XCTAssertEqual(1_000_000, u.value)
+        XCTAssertEqual(0, u.haircut)
+        try await a.sync()
+        XCTAssertEqual(before + 4, chain.validatorsReads)
+    }
+
+    /// A move whose pair may reach its entry cap before it lands declares the
+    /// merge's gas on top of its simulation; one far from the cap, or already
+    /// at it (simulated), does not.
+    func testAMoveNearThePairsEntryCapDeclaresTheMerge() async throws {
+        XCTAssertEqual(0, PrivacyWallet.redelegateHeadroom(entries: 10, counted: 10))
+        XCTAssertEqual(0, PrivacyWallet.redelegateHeadroom(entries: 1_100, counted: 1_024))
+        XCTAssertEqual(0, PrivacyWallet.redelegateHeadroom(entries: 972, counted: 972))
+        XCTAssertEqual((973 + 51) * 2_500 + 128 * 20_000, PrivacyWallet.redelegateHeadroom(entries: 973, counted: 973))
+        let chain = FakeChain()
+        let a = try await staked(chain)
+        chain.redelegationLoads[FakeChain.pair(vA, vB)] = (1_000, 1_000)
+        let q = try await a.quoteMove(src: vA, dst: vB, amount: 500_000)
+        XCTAssertEqual(1_000, q.pairEntries)
+        XCTAssertEqual(1_000, q.pairCounted)
+        _ = try await a.redelegate(q); try await a.sync()
+        let m = try XCTUnwrap(chain.lastMsg as? MsgRedelegate)
+        let gas = chain.gasOf(m)
+        XCTAssertGreaterThanOrEqual(chain.lastGasLimit, gas + gas / 10 + PrivacyWallet.redelegateHeadroom(entries: 1_000, counted: 1_000))
+    }
+
     func testTheMsgShapesAreTheChains() {
         XCTAssertEqual("/earth.shieldedstaking.v1.MsgRedelegate", MsgRedelegate.typeURL)
         XCTAssertEqual(DebtTree.emptyRoot, FakeChain().debtRoot())

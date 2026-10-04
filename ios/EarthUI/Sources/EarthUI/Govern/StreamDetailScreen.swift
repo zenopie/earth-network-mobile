@@ -644,7 +644,7 @@ struct ProposalDetailScreen: View {
 
     /// The validator's name, for the sheets.
     private func name(_ valoper: String) -> String {
-        model.validators.first { $0.operatorAddress == valoper }?.moniker ?? valoper
+        model.moniker(of: valoper)
     }
 
     /// Stake votes without spending: one vote per validator,

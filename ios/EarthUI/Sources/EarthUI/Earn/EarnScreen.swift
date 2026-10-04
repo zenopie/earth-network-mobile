@@ -235,16 +235,15 @@ struct EarnScreen: View {
     private var bonded: Int64 { Int64(model.totalBonded.description) ?? 0 }
 
     private func moniker(_ operatorAddress: String) -> String {
-        let named = model.validators.first { $0.operatorAddress == operatorAddress }?.moniker
-        // A validator that has left the bonded set still holds the delegation,
-        // so a missing join falls back to the operator address rather than
-        // dropping the row — stake that does not appear is worse than stake
-        // with an ugly label.
-        return (named?.isEmpty == false ? named : nil) ?? operatorAddress
+        // Joined against the validator list (every status). A validator the
+        // list lacks still holds the delegation, so a missing join falls back
+        // to the operator address rather than dropping the row — stake that
+        // does not appear is worse than stake with an ugly label.
+        model.moniker(of: operatorAddress)
     }
 
     private func commission(_ operatorAddress: String) -> Double? {
-        model.validators.first { $0.operatorAddress == operatorAddress }?.commission
+        model.commission(of: operatorAddress)
     }
 
     private func subtitle(commission: Double?) -> String {

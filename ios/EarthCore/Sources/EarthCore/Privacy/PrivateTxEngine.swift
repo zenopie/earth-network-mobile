@@ -90,11 +90,15 @@ public struct Assembled {
     public let stake: StakePlan?
     public let membership: MembershipWitnessSpec?
     public let vote: VoteWitnessSpec?
+    /// Gas declared beyond the simulation and its headroom: what the chain
+    /// may charge by the tx's block that it did not when simulated (a move's
+    /// pair reaching its entry cap: PrivacyWallet.redelegateHeadroom).
+    public let extraGas: UInt64
     public let build: ([ShieldedBundle], StakeProof?, Membership?) throws -> any PrivateMsg
 
     public init(bundles: [BundlePlan], stake: StakePlan? = nil, membership: MembershipWitnessSpec? = nil, vote: VoteWitnessSpec? = nil,
-                build: @escaping ([ShieldedBundle], StakeProof?, Membership?) throws -> any PrivateMsg) {
-        self.bundles = bundles; self.stake = stake; self.membership = membership; self.vote = vote; self.build = build
+                extraGas: UInt64 = 0, build: @escaping ([ShieldedBundle], StakeProof?, Membership?) throws -> any PrivateMsg) {
+        self.bundles = bundles; self.stake = stake; self.membership = membership; self.vote = vote; self.extraGas = extraGas; self.build = build
     }
 
     /// The pool notes the msg spends.
@@ -176,9 +180,9 @@ public struct PrivateTxEngine: Sendable {
     /// MsgRedelegate's gas for the (src, dst) pair's x/staking record at its
     /// worst (the chain's redelegateGas): 2,500 an entry read and written,
     /// 2,500 more each while the pair is at its 1,024-entry cap, and 128
-    /// re-filed moves at 20,000. Simulation prices the real record; this
-    /// keeps the cap above it without asking the node about the pair before
-    /// the move is sent. As Android.
+    /// re-filed moves at 20,000. Simulation prices the real record (and
+    /// Assembled.extraGas a merge the pair may reach before the tx lands);
+    /// this keeps the cap above both whatever the node says. As Android.
     public static let redelegateRecordGas: UInt64 = 1_024 * (2_500 + 2_500) + 128 * 20_000
     /// A stake vote's fixed part: gasVote (250,000) and its proof (2,000,000);
     /// the chain adds a note write for the vote and one per vote nullifier,
@@ -384,8 +388,9 @@ public struct PrivateTxEngine: Sendable {
             let d = try draft(a, placeholders: placeholders)
             let raw = UnsignedTx.build(d, gasLimit: 0, memo: memo, timeoutHeight: timeout)
             let gas = try await chain.simulate(raw)
-            let (limit, o) = gas.addingReportingOverflow(max(gas / 10, Self.minHeadroom))
-            guard !o else { throw PrivacyError("the simulated gas is out of range") }
+            let (headed, o1) = gas.addingReportingOverflow(max(gas / 10, Self.minHeadroom))
+            let (limit, o) = headed.addingReportingOverflow(a.extraGas)
+            guard !o1, !o else { throw PrivacyError("the simulated gas is out of range") }
             let need = max(minFee, Self.feeFor(price: price, gas: limit))
             // The guess is re-laid at the fee its layout needs; after that a
             // layout whose gas the fee covers is final (a fee needing one more

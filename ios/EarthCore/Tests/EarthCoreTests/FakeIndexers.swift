@@ -53,7 +53,6 @@ final class WrappedIndexer: PrivacyIndexer, @unchecked Sendable {
         return rootsOverride?(r) ?? r
     }
 
-    func rates(epoch: UInt64?) async throws -> [RateRow] { try await inner.rates(epoch: epoch) }
     func stakeNotes(fromPos: UInt64, limit: Int?) async throws -> StakeNotesPage { try await inner.stakeNotes(fromPos: fromPos, limit: limit) }
     func stakeNullifiers(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<Fr> {
         if let o = stakeNullifiersFromOverride, let p = o(fromHeight) { return p }
@@ -124,7 +123,6 @@ final class FrozenIndexer: PrivacyIndexer, @unchecked Sendable {
         try await chain.identityZeroed(fromHeight: fromHeight, limit: limit)
     }
     func rootsLatest() async throws -> LatestRoots { if let roots { return roots }; return try await chain.rootsLatest() }
-    func rates(epoch: UInt64?) async throws -> [RateRow] { [] }
     func stakeNotes(fromPos: UInt64, limit: Int?) async throws -> StakeNotesPage { try await chain.stakeNotes(fromPos: fromPos, limit: limit) }
     func stakeNullifiers(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<Fr> {
         try await chain.stakeNullifiers(fromHeight: fromHeight, limit: limit)

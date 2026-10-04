@@ -17,7 +17,6 @@ public protocol PrivacyIndexer: Sendable {
     func identity(fromIndex: UInt64, limit: Int?) async throws -> IdentityPage
     func identityZeroed(fromHeight: UInt64, limit: Int?) async throws -> HeightPage<UInt64>
     func rootsLatest() async throws -> LatestRoots
-    func rates(epoch: UInt64?) async throws -> [RateRow]
     /// x/shieldedstaking's stake note tree, by position.
     func stakeNotes(fromPos: UInt64, limit: Int?) async throws -> StakeNotesPage
     /// Its spent nullifiers, by height.
@@ -236,14 +235,6 @@ public struct StakeSnapshotsPage: Sendable {
     }
 }
 
-public struct RateRow: Sendable {
-    public let validator: String
-    public let rate: String
-    public let supply: String
-    public let epoch: UInt64?
-    public let height: UInt64
-}
-
 /// `PrivacyIndexer` over HTTP. Only ever talks to `host`: the status's
 /// `base` is accepted only as exactly `/privacy/<chain_id>/<genesis>` for
 /// `chainID`, so a hostile status cannot point the stream requests
@@ -390,14 +381,6 @@ public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
     }
 
     public func rootsLatest() async throws -> LatestRoots { try Self.parseRoots(await stream("/roots/latest")) }
-
-    public func rates(epoch: UInt64?) async throws -> [RateRow] {
-        let j = try await stream("/rates" + (epoch.map { "?epoch=\($0)" } ?? ""))
-        return j.rates.array.map { r in
-            RateRow(validator: r[0].string(default: ""), rate: r[1].string(default: "0"), supply: r[2].string(default: "0"),
-                    epoch: r[3].uint64, height: r[4].uint64(default: 0))
-        }
-    }
 
     public func stakeNotes(fromPos: UInt64, limit: Int?) async throws -> StakeNotesPage {
         try Self.parseStakeNotes(await stream("/stake/notes?from_pos=\(fromPos)\(try q("limit", limit))"))

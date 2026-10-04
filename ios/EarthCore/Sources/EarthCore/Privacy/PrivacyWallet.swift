@@ -225,6 +225,11 @@ public final class PrivacyWallet: @unchecked Sendable {
     @discardableResult
     public func sync() async throws -> WalletSync.Result {
         _ = await maxActions()
+        // The validator list (Query/Validators, whole) is read again with
+        // every sync, as with every quote: what pickers and stake values
+        // show, and the derth denoms sync names stake notes by. A failed read
+        // keeps the last one.
+        _ = try? await reads.validators()
         return try await locked {
             await fillPendingRegistration()
             _ = await resolvePendingMovesLocked()
@@ -1593,10 +1598,39 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// What of a redelegation's value beyond the source's queue may stay in its book (chain bondedDust, 0.001 ERTH).
     public static let bondedDust: UInt64 = 1_000
 
+    /// What of a move's value `u` arrives at dst (ORCHARD_DESIGN 8.7, 12.2),
+    /// from src's list entry `a`: all of u when the value leaves the queue
+    /// first (`ValidatorQuote.queueFirst`) and the queue P + W covers it;
+    /// otherwise u splits between the queue and the bonded stake pro rata, a
+    /// bonded part of at most 0.001 ERTH stays in src's book and x/staking
+    /// may truncate a uerth: u - 1001.
+    public static func arrives(_ a: PrivacyReads.ValidatorQuote, _ u: BigUInt) -> BigUInt {
+        if a.queueFirst && u <= a.queue { return u }
+        let dust = BigUInt(bondedDust + 1)
+        return u > dust ? u - dust : 0
+    }
+
+    /// x/shieldedstaking MaxEntryHeightsPerPair: at this many counted entries a move first merges two.
+    public static let maxEntryHeightsPerPair: UInt64 = 1_024
+
+    /// Gas a move declares beyond its simulation's headroom: the pair's
+    /// record gains at most an entry a block until the tx lands (within
+    /// PrivateTxEngine.timeoutBlocks of the tip), and the 10% headroom covers
+    /// those entries' 2,500 each, but not the merge (2,500 an entry more and
+    /// 128 x 20,000, the chain's redelegateGas) the move pays once the pair
+    /// reaches `maxEntryHeightsPerPair` counted entries. So when it could
+    /// reach the cap before the tx lands without being there when simulated,
+    /// that much more; otherwise nothing (at the cap, the simulation priced it).
+    public static func redelegateHeadroom(entries: UInt64, counted: UInt64) -> UInt64 {
+        let ahead = PrivateTxEngine.timeoutBlocks + 1
+        if counted >= maxEntryHeightsPerPair || counted + ahead < maxEntryHeightsPerPair { return 0 }
+        return (Swift.min(entries, maxEntryHeightsPerPair) + ahead) * 2_500 + 128 * 20_000
+    }
+
     /// derth bought for `value` uerth at `book`'s live rate, less a margin for
     /// the rate's drift until the tx's block (ORCHARD_DESIGN 20.8): the chain
     /// refuses a credit the value does not buy, in its ante, at no cost.
-    static func creditFor(_ value: BigUInt, _ book: PrivacyReads.Book) throws -> UInt64 {
+    static func creditFor(_ value: BigUInt, _ book: PrivacyReads.ValidatorQuote) throws -> UInt64 {
         if book.supply == 0 {
             try require(book.backing == 0, "this validator's book is settling (no derth, some backing); try again after the epoch ends")
             return UInt64(min(value, BigUInt(Int64.max)))
@@ -1622,7 +1656,8 @@ public final class PrivacyWallet: @unchecked Sendable {
         try require(amount > 0, "the amount must be positive")
         let min = try await reads.minDelegation()
         try require(amount >= min, "a private delegation is at least \(min)uerth")
-        let derth = try Self.creditFor(BigUInt(amount), try await reads.validatorBook(validator))
+        let book = try Self.takesStake(try await reads.validators().of(validator))
+        let derth = try Self.creditFor(BigUInt(amount), book)
         try require(derth >= min && derth > 0, "\(amount)uerth buys less than the least derth a delegation may credit; stake more")
         return try await locked {
             let denom = Self.derthDenom(validator)
@@ -1710,6 +1745,34 @@ public final class PrivacyWallet: @unchecked Sendable {
         }
     }
 
+    /// An undelegation's quote, for its confirm sheet: `amount` derth worth
+    /// `value` uerth at the validator's live rate now (what the chain books it
+    /// at, floor(amount x B / S); a slash before the payout lowers what
+    /// arrives), and the `haircut` a cleared label takes (0: none).
+    public struct UndelegateQuote: Sendable, Equatable {
+        public let validator: String
+        public let amount: UInt64
+        public let value: UInt64
+        public let haircut: UInt64
+    }
+
+    public func quoteUndelegate(validator: String, amount: UInt64) async throws -> UndelegateQuote {
+        try require(amount > 0, "the amount must be positive")
+        let haircut = try await leaveHaircut(validator: validator, amount: amount)
+        let book = try await reads.validators().of(validator)
+        try require(book.supply > 0 && BigUInt(amount) <= book.supply, "more derth than this validator has")
+        let value = BigUInt(amount) * book.backing / book.supply
+        return UndelegateQuote(validator: validator, amount: amount, value: UInt64(Swift.min(value, BigUInt(Int64.max))), haircut: haircut)
+    }
+
+    /// `book`, refused with the chain's own reason when it takes no delegation or redelegation now (1102).
+    static func takesStake(_ book: PrivacyReads.ValidatorQuote) throws -> PrivacyReads.ValidatorQuote {
+        guard book.delegatable else {
+            throw PrivacyError("this validator is not taking stake now" + (book.refusal.isEmpty ? "" : ": \(book.refusal)"))
+        }
+        return book
+    }
+
     /// Undelegates `amount` derth/`validator` (ORCHARD_DESIGN 18.1, 20): the
     /// stake proof spends it (the change, or a zero note when nothing is left,
     /// back to us) and the msg names where the chain pays it out, a fresh pool
@@ -1757,7 +1820,9 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// unlabelled note there (`merges`) or a new note; `haircut` is a cleared
     /// label's slash cut on the src side (0: none). The credited derth is
     /// labelled: it cannot move again until the label window
-    /// (`windowSeconds`) has passed.
+    /// (`windowSeconds`) has passed. `pairEntries` and `pairCounted` are the
+    /// (src, dst) x/staking record's entries when quoted: what the move's gas
+    /// headroom is sized by (`redelegateHeadroom`).
     public struct MoveQuote: Sendable, Equatable {
         public let src: String
         public let dst: String
@@ -1767,6 +1832,8 @@ public final class PrivacyWallet: @unchecked Sendable {
         public let haircut: UInt64
         public let merges: Bool
         public let windowSeconds: UInt64
+        public var pairEntries: UInt64 = 0
+        public var pairCounted: UInt64 = 0
     }
 
     /// The note at `dst` a move's credit merges into: our largest unlabelled one there (none: the lane pads, making a second note beside a labelled one).
@@ -1783,22 +1850,19 @@ public final class PrivacyWallet: @unchecked Sendable {
             return (Self.haircutOf(try leave(src, amount: amount, d)), d.windowSeconds)
         }
         let min = try await reads.minDelegation()
-        let a = try await reads.validatorBook(src)
+        let list = try await reads.validators()
+        let a = try list.of(src)
+        let b = try Self.takesStake(try list.of(dst))
         try require(a.supply > 0 && BigUInt(amount) <= a.supply, "more derth than this validator has")
         let u = BigUInt(amount) * a.backing / a.supply
         try require(u >= BigUInt(min), "this stake is worth \(u)uerth, less than the \(min)uerth a move must carry")
-        // What arrives at dst: u splits between
-        // src's queue and its bonded stake pro rata, and up to 0.001 ERTH of
-        // the bonded part may stay in src's book (bondedDust) or be truncated
-        // by x/staking, so u - 1001. All of u only when src is unbonded (no
-        // slash reaches it: the queue goes first) and its queue covers u.
-        let dust = BigUInt(Self.bondedDust + 1)
-        let arrives = a.unbonded && u <= a.pendingDelegation ? u : (u > dust ? u - dust : 0)
-        let credit = try Self.creditFor(arrives, try await reads.validatorBook(dst))
+        let credit = try Self.creditFor(Self.arrives(a, u), b)
         try require(credit >= min && credit > 0, "this move would credit less than the least derth a move may credit; move more")
         let merges = await locked { creditTarget(dst) != nil }
+        let load = a.redelegations[dst]
         return MoveQuote(src: src, dst: dst, amount: amount, value: UInt64(Swift.min(u, BigUInt(Int64.max))), dstDerth: credit,
-                         haircut: haircut, merges: merges, windowSeconds: window)
+                         haircut: haircut, merges: merges, windowSeconds: window,
+                         pairEntries: load?.entries ?? 0, pairCounted: load?.countedEntries ?? 0)
     }
 
     /// Moves `q.amount` derth from `q.src` to `q.dst` with no unbonding gap
@@ -1826,7 +1890,8 @@ public final class PrivacyWallet: @unchecked Sendable {
                 throw QuoteChanged(message: "a slash reached stake you moved to this validator since the quote; review it again")
             }
             return try await run { fee in
-                Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake) { bs, sp, _ in
+                Assembled(bundles: [try self.feeBundle(fee, maxActions: mx)], stake: stake,
+                          extraGas: Self.redelegateHeadroom(entries: q.pairEntries, counted: q.pairCounted)) { bs, sp, _ in
                     MsgRedelegate(bundle: bs[0], srcValidator: q.src, dstValidator: q.dst, amount: q.amount, stake: sp!,
                                   dstDerth: q.dstDerth, moveTime: moveTime)
                 }

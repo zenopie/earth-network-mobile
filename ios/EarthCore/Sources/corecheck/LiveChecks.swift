@@ -38,6 +38,14 @@ func checkLive() async {
         Check.that("commission is a fraction", (0 ... 1).contains(v.commission))
     }
 
+    // The validator list every staking quote reads, whole, at one height.
+    if let list = try? await PrivacyQueries(rest: client.rest).validators() {
+        Check.that("validator list parses", list.height > 0 && !list.validators.isEmpty, detail: "got \(list.validators.count) at \(list.height)")
+        Check.that("validator list carries the bonded set", Set(validators.map(\.operatorAddress)).isSubset(of: Set(list.validators.map(\.validator))))
+    } else {
+        Check.that("validator list reads", false, detail: "Query/Validators failed")
+    }
+
     let pools = await client.pools()
     Check.that("dex pools parse", !pools.isEmpty, detail: "got \(pools.count)")
     if let p = pools.first {

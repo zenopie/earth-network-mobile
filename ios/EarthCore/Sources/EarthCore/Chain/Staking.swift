@@ -13,6 +13,10 @@ public enum Staking {
         public let tokens: String
         /// Commission as a fraction — 0.10 is 10%.
         public let commission: Double
+
+        public init(operatorAddress: String, moniker: String, tokens: String, commission: Double) {
+            self.operatorAddress = operatorAddress; self.moniker = moniker; self.tokens = tokens; self.commission = commission
+        }
     }
 
     public struct Delegation: Sendable, Equatable, Identifiable {

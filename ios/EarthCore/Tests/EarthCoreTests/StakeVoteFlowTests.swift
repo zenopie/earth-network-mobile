@@ -80,7 +80,7 @@ final class StakeVoteFlowTests: PrivacyTestCase {
         func snapshot(proposalID: UInt64) async throws -> PrivacyReads.Snapshot { snap }
         func positions() async throws -> [PrivacyReads.Position] { try await inner.positions() }
         func debtTree(start: UInt64, limit: Int) async throws -> PrivacyReads.DebtTreePage { try await inner.debtTree(start: start, limit: limit) }
-        func validatorBook(_ valoper: String) async throws -> PrivacyReads.Book { try await inner.validatorBook(valoper) }
+        func validators() async throws -> PrivacyReads.ValidatorList { try await inner.validators() }
         func minDelegation() async throws -> UInt64 { try await inner.minDelegation() }
         func stakeNullifierTree(start: UInt64, limit: Int) async throws -> PrivacyReads.NfTreePage {
             PrivacyReads.NfTreePage(values: Array(values.dropFirst(Int(start)).prefix(limit)), size: UInt64(values.count) + 1)

@@ -118,8 +118,7 @@ struct PositionsView: View {
     }
 
     private func moniker(_ op: String) -> String {
-        let m = model.validators.first { $0.operatorAddress == op }?.moniker ?? ""
-        return m.isEmpty ? op : m
+        model.moniker(of: op)
     }
 
     private func optionName(_ id: UInt64) -> String {
@@ -237,7 +236,6 @@ struct LockStakeSheet: View {
     }
 
     private func moniker(_ op: String) -> String {
-        let m = model.validators.first { $0.operatorAddress == op }?.moniker ?? ""
-        return m.isEmpty ? op : m
+        model.moniker(of: op)
     }
 }

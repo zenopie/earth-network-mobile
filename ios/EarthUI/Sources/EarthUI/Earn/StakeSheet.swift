@@ -108,13 +108,12 @@ struct StakeSheet: View {
     /// Unstaking can only come from somewhere private stake may leave now
     /// (moved-in stake whose window is open stays where it is).
     private var choices: [String] {
-        guard unstaking else { return model.validators.map(\.operatorAddress) }
+        guard unstaking else { return model.stakeTargets }
         return model.stakeHoldings.filter { $0.free > 0 }.map(\.validator)
     }
 
     private func moniker(_ op: String) -> String {
-        let m = model.validators.first { $0.operatorAddress == op }?.moniker ?? ""
-        return m.isEmpty ? op : m
+        model.moniker(of: op)
     }
 
     private var available: BigInt {
@@ -140,7 +139,7 @@ struct StakeSheet: View {
             let held = model.privateStake[PrivacyWallet.derthDenom(option)] ?? 0
             return "\(Figures.whole(BigInt(model.derthValue(held, validator: option)))) ERTH staked · \(Figures.whole(BigInt(held))) derth"
         }
-        let c = model.validators.first { $0.operatorAddress == option }?.commission ?? 0
+        let c = model.commission(of: option) ?? 0
         return String(format: "%.0f%% commission", c * 100)
     }
 
@@ -153,12 +152,14 @@ struct StakeSheet: View {
         Task { @MainActor in
             do {
                 if taking {
-                    // What clearing a moved-in label costs, read before the sheet and sent as shown.
-                    let cut = try await w.leaveHaircut(validator: validator, amount: amount)
+                    // The quote: the value at the validator's live rate, and
+                    // what clearing a moved-in label costs, sent as shown.
+                    let q = try await w.quoteUndelegate(validator: validator, amount: amount)
+                    let cut = q.haircut
                     tx.requestPrivate(.private(
                         action: "Unstake",
                         rows: [
-                            ("Amount", "\(Figures.balance(value)) derth (\(Figures.balance(BigInt(model.derthValue(amount, validator: validator)))) ERTH)"),
+                            ("Amount", "\(Figures.balance(value)) derth (\(Figures.balance(BigInt(q.value))) ERTH)"),
                             ("From validator", name),
                             fee,
                         ],

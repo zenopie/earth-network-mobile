@@ -68,8 +68,9 @@ public final class AppModel {
     public private(set) var labelWindowSeconds: UInt64 = 0
     /// x/assembly's open removal ballots.
     public private(set) var removalBallots: [PrivacyReads.RemovalBallot] = []
-    /// Live rate_v (ERTH per derth) for every validator this wallet holds
-    /// derth or a position with. Missing until the first read lands.
+    /// Live rate_v (ERTH per derth) of every validator with a book, from the
+    /// validator list (read whole, so no read names which ones this wallet
+    /// holds). Missing until the first read lands.
     public private(set) var derthRates: [String: Decimal] = [:]
     /// R: how long a caretaker split counts after it is cast (default 365 days).
     public private(set) var leaseSeconds: Int64 = 365 * 86_400
@@ -127,7 +128,13 @@ public final class AppModel {
     /// show for it — the shares have left and the assets have not arrived — so
     /// without this the wait looks like the funds went nowhere.
     public private(set) var lpUnbondings: [Dex.Unbonding] = []
+    /// Bonded validators, from the validator list (Query/Validators).
     public private(set) var validators: [Staking.Validator] = []
+    /// Bonded validators taking stake now: what the stake and move pickers
+    /// offer (a jailed or tombstoned one, or a book settling, the chain refuses).
+    public private(set) var stakeTargets: [String] = []
+    /// Every validator's moniker and commission, whatever its status (the list's).
+    public private(set) var validatorNames: [String: (moniker: String, commission: Double)] = [:]
     public private(set) var delegations: [Staking.Delegation] = []
     public private(set) var unbondings: [Staking.UnbondingEntry] = []
     public private(set) var rewards: BigInt = 0
@@ -613,7 +620,7 @@ public final class AppModel {
         async let fee = client.swapFeePercent()
         async let lpUnbonding = client.lpUnbondingSeconds()
         async let lpQueue = client.unbondings(address)
-        async let validators = client.bondedValidators()
+        async let validatorList = PrivacyQueries(rest: client.rest).validators()
         async let delegations = client.delegations(address)
         async let unbondings = client.unbondingDelegations(address)
         async let rewards = client.totalRewards(address)
@@ -625,7 +632,7 @@ public final class AppModel {
         self.swapFeePercent = Decimal(string: await fee) ?? self.swapFeePercent
         self.lpUnbondingSeconds = await lpUnbonding
         self.lpUnbondings = await lpQueue
-        self.validators = await validators
+        applyValidatorList((try? await validatorList) ?? PrivacyQueries.cachedValidators)
         self.delegations = await delegations
         self.unbondings = await unbondings
         self.rewards = BigInt(await rewards) ?? 0
@@ -806,7 +813,8 @@ public final class AppModel {
         }
         await refreshStakeHoldings()
         await refreshRemovalBallots()
-        await refreshDerthRates()
+        // The list the sync just read.
+        applyValidatorList(PrivacyQueries.cachedValidators)
         if let p = try? await queries.personhoodParams() { leaseSeconds = p.caretakerVoteSeconds }
         // The claim wait uses the lease the chain's bound uses (LeaseBounds: the longest ever in force), never Params.
         if let b = try? await queries.leaseBounds(), (1 ... Handles.maxAheadSeconds).contains(b.handleLeaseSeconds) { handleLeaseSeconds = b.handleLeaseSeconds }
@@ -895,30 +903,29 @@ public final class AppModel {
         if let ballots = try? await PrivacyQueries(rest: client.rest).removalBallots() { removalBallots = ballots }
     }
 
-    /// The live rate of every validator, in one read of the indexer: a
-    /// per-validator query for the ones this wallet holds would tell the node
-    /// which they are. Falls back to asking about every bonded validator (and
-    /// any other held) alike.
-    func refreshDerthRates() async {
-        let held = Set(privateStake.keys.map { String($0.dropFirst("derth/".count)) } + positions.map(\.position.validator))
-        guard !held.isEmpty else { return }
-        if let rows = try? await HTTPPrivacyIndexer().rates(epoch: nil) {
-            let indexed = Dictionary(rows.compactMap { r in Decimal(string: r.rate).map { (r.validator, $0) } }) { $1 }
-            if !indexed.isEmpty {
-                derthRates.merge(indexed) { $1 }
-                return
-            }
+    /// The validator list (Query/Validators, read whole: every sync, every
+    /// quote and every refresh): names, rates and who takes stake, for every
+    /// validator alike. Never a query about one validator: it would tell the
+    /// node which ones this wallet holds or is about to act on.
+    func applyValidatorList(_ list: PrivacyReads.ValidatorList?) {
+        guard let list else { return }
+        let bonded = list.validators.filter(\.bonded)
+        validators = bonded.map {
+            Staking.Validator(operatorAddress: $0.validator, moniker: $0.moniker, tokens: String($0.tokens), commission: $0.commission)
         }
-        let all = held.union(validators.map(\.operatorAddress))
-        let queries = PrivacyQueries(rest: client.rest)
-        let read = await withTaskGroup(of: (String, Decimal)?.self) { group in
-            for v in all { group.addTask { (try? await queries.validator(v)).map { (v, $0.rate) } } }
-            var out: [String: Decimal] = [:]
-            for await r in group { if let r { out[r.0] = r.1 } }
-            return out
-        }
-        derthRates.merge(read) { $1 }
+        stakeTargets = bonded.filter(\.delegatable).map(\.validator)
+        validatorNames = Dictionary(list.validators.map { ($0.validator, (moniker: $0.moniker, commission: $0.commission)) }) { a, _ in a }
+        derthRates = Dictionary(list.validators.map { ($0.validator, $0.rate) }) { a, _ in a }
     }
+
+    /// `valoper`'s moniker, or its address when it has none.
+    public func moniker(of valoper: String) -> String {
+        let m = validatorNames[valoper]?.moniker ?? ""
+        return m.isEmpty ? valoper : m
+    }
+
+    /// `valoper`'s commission (nil: not in the list).
+    public func commission(of valoper: String) -> Double? { validatorNames[valoper]?.commission }
 
     /// Gas the account can actually pay with. A new human has none of it, which
     /// is what the gas gate exists for.
