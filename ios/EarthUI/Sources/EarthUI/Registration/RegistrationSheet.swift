@@ -25,7 +25,7 @@ struct RegistrationSheet: View {
     @State private var key = MRZ.Key(documentNumber: "", dateOfBirth: "", dateOfExpiry: "")
 
     /// A referrer from a referral link is shown filled in (the person did not type it); they may
-    /// remove or replace it (audit 5, M5), and one that does not resolve is cleared.
+    /// remove or replace it, and one that does not resolve is cleared.
     @State private var referrer = ReferralStore.get().map { "@\($0)" } ?? ""
     @State private var referrerLocked = ReferralStore.get() != nil
 

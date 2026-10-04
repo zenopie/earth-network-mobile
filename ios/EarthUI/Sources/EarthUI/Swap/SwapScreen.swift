@@ -269,7 +269,7 @@ struct SwapScreen: View {
                 ("Network fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
             ]
         ), onSuccess: { amount = ""; await model.refresh() }) { w in
-            // Audit 6 (D1): an amount past a note's range is refused, never trapped on.
+            // An amount past a note's range is refused, never trapped on.
             guard let amountIn = UInt64(input.description), amountIn <= UInt64(Int64.max),
                   let minOut = UInt64(floor.description), minOut <= UInt64(Int64.max) else {
                 throw PrivacyError("that amount is more than one note can hold")

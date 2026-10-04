@@ -79,7 +79,7 @@ public enum Msg {
     public struct AddLiquidity: ProtoMessage {
         public static let typeURL = "/earth.dex.v1.MsgAddLiquidity"
         public let creator: String, poolID: UInt64, amountA: Coin, amountB: Coin
-        /// The fewest shares the deposit accepts, a decimal integer ("" none): field 5 (audit 6, M9).
+        /// The fewest shares the deposit accepts, a decimal integer ("" none): field 5.
         public let minShares: String
 
         public init(creator: String, poolID: UInt64, amountA: Coin, amountB: Coin, minShares: String) {

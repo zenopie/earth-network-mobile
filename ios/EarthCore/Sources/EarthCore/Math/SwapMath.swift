@@ -119,7 +119,7 @@ public enum SwapMath {
     /// A deposit's other leg for `amount` of one side, against reserves
     /// `from` (that side's) and `to`: ceil(amount x to / from). x/dex prices a
     /// deposit at shares = min(floor(in_e x S / R_e), floor(in_t x S / R_t))
-    /// and pulls each leg rounded up, ceil(shares x R / S) (audit 4, C2); a
+    /// and pulls each leg rounded up, ceil(shares x R / S); a
     /// leg rounded up here never makes the other side the binding one, so the
     /// shares are all the typed side buys and the pull never exceeds either
     /// leg (at most one unit comes back as a refund). 0 for an empty pool.
@@ -159,7 +159,7 @@ public enum SwapMath {
         return withSlippage(min(erthIn * supply / re, tokenIn * supply / rt), bps: bps).description
     }
 
-    /// The chain's `feeOf` (chain 203d3b2, audit 5 L-DX4: rounded up, so a
+    /// The chain's `feeOf` (chain 203d3b2: rounded up, so a
     /// small swap cannot pay nothing):
     /// LegacyDec(amount).Mul(fee).Quo(100).Ceil().TruncateInt(). Mul is exact
     /// for an 18-place fee; Quo rounds its 18th place half-even

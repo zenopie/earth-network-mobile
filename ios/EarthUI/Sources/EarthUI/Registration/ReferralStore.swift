@@ -2,7 +2,7 @@ import EarthCore
 import Foundation
 
 /// Where a referrer handle arrives from and where it is kept until
-/// registration (audit 5, M5; ports `referral/Referral.kt`). Only the
+/// registration (ports `referral/Referral.kt`). Only the
 /// verified universal link `https://erth.network/ref/<handle>` names one
 /// (`ReferralLink`); there is no custom scheme. Kept in plain defaults: it is
 /// a public handle, needed before any wallet exists.

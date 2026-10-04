@@ -246,7 +246,7 @@ public struct RateRow: Sendable {
 
 /// `PrivacyIndexer` over HTTP. Only ever talks to `host`: the status's
 /// `base` is accepted only as exactly `/privacy/<chain_id>/<genesis>` for
-/// `chainID` (K10), so a hostile status cannot point the stream requests
+/// `chainID`, so a hostile status cannot point the stream requests
 /// anywhere else, and no path ever traps building its URL.
 public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
     public let host: URL
@@ -285,7 +285,7 @@ public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
 
     public enum Error: Swift.Error { case http(Int, String), notJSON, noBase, badBase(String), badPath(String), busy(Int), badLimit(Int) }
 
-    /// K10: `base` is exactly `/privacy/<chain_id>/<genesis>` for the chain
+    /// `base` is exactly `/privacy/<chain_id>/<genesis>` for the chain
     /// the wallet follows (`expected`), as the same status names it, with a
     /// chain id of [A-Za-z0-9._-] (at most 64, first alphanumeric) and a
     /// genesis of 16 lowercase hex digits. A nil chain id is refused.
@@ -303,7 +303,7 @@ public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
         set { lock.lock(); _base = newValue; lock.unlock() }
     }
 
-    /// `getOnce`, backing off while the indexer sheds load (audit 4: /privacy
+    /// `getOnce`, backing off while the indexer sheds load (/privacy
     /// answers 503 with Retry-After past its in-flight cap, 429 past a
     /// client's rate): Retry-After or 1, 2, 4, 8 s (at most 30), then an error.
     private func get(_ path: String) async throws -> JSON {
@@ -346,7 +346,7 @@ public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
     }
 
     private func q(_ name: String, _ v: Int?) throws -> String {
-        // The backend serves only its fixed page sizes (audit 4 paging rule); anything else is a 400.
+        // The backend serves only its fixed page sizes (its paging rule); anything else is a 400.
         if let v, !WalletSync.pageSizes.contains(v) { throw Error.badLimit(v) }
         return v.map { "&\(name)=\($0)" } ?? ""
     }
@@ -435,7 +435,7 @@ public final class HTTPPrivacyIndexer: PrivacyIndexer, @unchecked Sendable {
     }
 
     /// /handles: rows [handle, address, status, expires_at, renewal_until, owner], the
-    /// snapshot's height and size. owner (audit 6, M6: 64 hex, the chain's
+    /// snapshot's height and size. owner (64 hex, the chain's
     /// HandleEntry.owner) is optional: a row without it says no owner.
     public static func parseHandles(_ j: JSON) -> HandleDirectory.StreamPage {
         let rows = j.handles.array.map { r in

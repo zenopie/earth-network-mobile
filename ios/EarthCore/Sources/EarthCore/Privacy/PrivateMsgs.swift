@@ -289,7 +289,7 @@ public enum PrivateMsgs {
         }
     }
 
-    /// a + b, clamped at UInt64.max (audit L1: sums of chain-published amounts never trap or wrap).
+    /// a + b, clamped at UInt64.max (sums of chain-published amounts never trap or wrap).
     public static func saturatingAdd(_ a: UInt64, _ b: UInt64) -> UInt64 {
         let (s, o) = a.addingReportingOverflow(b)
         return o ? .max : s
@@ -384,7 +384,7 @@ public enum PrivateMsgs {
         while frac.count > 18, frac.last == "0" { frac.removeLast() }
         guard frac.count <= 18 else { throw Error.badWeight(weight) }
         frac += String(repeating: "0", count: 18 - frac.count)
-        // ASCII digits only (audit 4: Character.isNumber takes "٥", which BigUInt would not parse).
+        // ASCII digits only (Character.isNumber takes "٥", which BigUInt would not parse).
         guard let scaled = BigUInt(intPart + frac, radix: 10) else { throw Error.badWeight(weight) }
         let one = BigUInt(10).power(18)
         guard scaled > 0, scaled <= one else { throw Error.badWeight(weight) }
@@ -392,13 +392,13 @@ public enum PrivateMsgs {
     }
 
     /// OptionsBytes: per option, u64 BE option, u32 BE length, the weight's LegacyDec string.
-    /// `opts` with every weight in its canonical LegacyDec form ("1" -> "1.000000000000000000"): the only form the chain takes (wave 3, F3).
+    /// `opts` with every weight in its canonical LegacyDec form ("1" -> "1.000000000000000000"): the only form the chain takes.
     public static func canonicalOptions(_ opts: [WeightedVoteOption]) throws -> [WeightedVoteOption] {
         try opts.map { WeightedVoteOption(option: $0.option, weight: try legacyDec($0.weight)) }
     }
 
     /// Every module account the chain declares (app_config moduleAccPerms):
-    /// an unshield to one is refused (wave 3, B/F2). Address = the first 20
+    /// an unshield to one is refused. Address = the first 20
     /// bytes of SHA-256(name) (authtypes.NewModuleAddress).
     public static let moduleAccounts = [
         "fee_collector", "distribution", "mint", "bonded_tokens_pool", "not_bonded_tokens_pool", "gov", "nft", "transfer",
@@ -410,7 +410,7 @@ public enum PrivateMsgs {
     /// The module whose account `address` (20 raw bytes) is, or nil.
     public static func moduleAccount(of address: Data) -> String? { moduleAccounts.first { moduleAddress($0) == address } }
 
-    /// Whether YYMMDD `s` is a real calendar date (the chain refuses 250231; wave 3, I1).
+    /// Whether YYMMDD `s` is a real calendar date (the chain refuses 250231).
     public static func isCalendarDate(_ s: String) -> Bool {
         guard s.count == 6, s.allSatisfy({ $0.isASCII && $0.isNumber }), let n = Int(s) else { return false }
         let y = 2000 + n / 10000, m = n / 100 % 100, d = n % 100

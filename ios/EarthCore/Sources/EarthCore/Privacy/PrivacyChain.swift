@@ -247,7 +247,7 @@ public struct PrivacyQueries: PrivacyChainReads {
         let l = p.handle_lease_seconds.int64(default: 0)
         let n = p.handle_renewal_seconds.int64(default: 0)
         // Zero falls back to the chain's defaults (365 days; 30 days for the renewal period).
-        // Audit 5 (L7): every duration at most Handles.maxAheadSeconds, so no sum of it with a
+        // Every duration at most Handles.maxAheadSeconds, so no sum of it with a
         // time can trap (a node's 2^63 lease is not one).
         let m = Handles.maxAheadSeconds
         return PrivacyReads.PersonhoodParams(caretakerVoteSeconds: min(r > 0 ? r : 365 * 86_400, m), identityRootWindowSeconds: min(w > 0 ? w : 3_600, m),
@@ -434,7 +434,7 @@ public struct RESTPrivateChain: PrivateChain {
     }
 
     /// Broadcasts, waits for the block and reads the tx back. Throws on any
-    /// non-zero code. `accepted` runs at CheckTx code 0, before the wait (K7).
+    /// non-zero code. `accepted` runs at CheckTx code 0, before the wait.
     public func broadcast(_ tx: Data, accepted: @Sendable (String) -> Void) async throws -> TxResult {
         let j: JSON
         do {
@@ -501,7 +501,7 @@ public struct RESTPrivateChain: PrivateChain {
 /// from (`x-cosmos-block-height`), pinned only when the node echoes exactly
 /// that height; otherwise (a pruned height, another height echoed) the
 /// latest state is read and marked unpinned, which can verify equal trees but
-/// never condemn different ones (K9). Ports LcdChainRoots.
+/// never condemn different ones. Ports LcdChainRoots.
 public struct LCDChainRoots: ChainRoots {
     public let rest: EarthRest
 
@@ -545,7 +545,7 @@ public struct LCDChainRoots: ChainRoots {
     }
 
     /// x/shielded Query/Assets, every page, at most `Denoms.max` entries
-    /// (audit 6, M2). The caller learns an entry only if its id is the denom's own.
+    /// The caller learns an entry only if its id is the denom's own.
     public func assets() async -> [(denom: String, id: Fr)]? {
         var out: [(denom: String, id: Fr)] = []
         var key = ""
@@ -581,7 +581,7 @@ public struct LCDChainRoots: ChainRoots {
         return out
     }
 
-    /// A tx this wallet broadcast, by hash: 404 missing, a non-zero code failed (audit 4).
+    /// A tx this wallet broadcast, by hash: 404 missing, a non-zero code failed.
     public func txStatus(_ hash: String) async -> TxStatus? {
         do {
             let tr = try await rest.get("/cosmos/tx/v1beta1/txs/\(hash)").tx_response

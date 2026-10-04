@@ -277,7 +277,7 @@ struct SendSheet: View {
                     try await w.send(to: address, denom: denom, amount: amount)
                 }
             } else {
-                // Audit 5 (L12): a note that cannot be built is said, not dropped.
+                // A note that cannot be built is said, not dropped.
                 guard let w = model.privacy else { resolution = .notPayable("This wallet's private side is not open; unlock and try again."); return }
                 let out: NoteOut
                 do { out = try w.shieldOutput(denom: denom, to: address) } catch {

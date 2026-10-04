@@ -88,12 +88,12 @@ public final class AppModel {
     public private(set) var predecessorAt: UInt64 = 0
     /// What is due (a claim, a renewal): reminders, never actions taken unasked.
     public private(set) var reminders: [Reminders.Reminder] = []
-    /// Non-free directory entries naming this wallet's address (audit 5, M1).
+    /// Non-free directory entries naming this wallet's address.
     public private(set) var addressedHandles: [HandleEntry] = []
     /// The split is held but was restored without its options.
     public private(set) var caretakerSplitUnknown = false
     /// Moves away from this identity not yet confirmed or not yet recorded in the new wallet, and moves to it
-    /// the chain has not confirmed (audit 5, M2); the store id of the wallet the moves went to ("" none yet).
+    /// the chain has not confirmed; the store id of the wallet the moves went to ("" none yet).
     public private(set) var outgoingMoves: [PendingMove] = []
     public private(set) var incomingMoves: [PendingMove] = []
     public private(set) var switchTarget = ""
@@ -480,7 +480,7 @@ public final class AppModel {
 
     public func forget() {
         closePrivacy()
-        // The wallets' private data goes with them (audit 3); a failure is shown, not dropped.
+        // The wallets' private data goes with them; a failure is shown, not dropped.
         do { try PrivacySession.forgetAll() } catch { privacySyncError = describe(error) }
         store.delete()
         sessionPin = nil
@@ -702,7 +702,7 @@ public final class AppModel {
     /// Private stake in derth, positions included. A count of notes' units,
     /// not ERTH: what decides whether the wallet can stake-vote at all.
     public var privateStakeTotal: UInt64 {
-        // Saturating: amounts a node publishes never trap a sum (L1).
+        // Saturating: amounts a node publishes never trap a sum.
         PrivateMsgs.saturatingAdd(privateStake.values.reduce(0, PrivateMsgs.saturatingAdd),
                                   positions.reduce(0) { PrivateMsgs.saturatingAdd($0, $1.position.derth) })
     }
@@ -824,8 +824,8 @@ public final class AppModel {
     /// query for it alone) and caretaker standing, and the reminders due.
     func refreshPersonal() async {
         guard let w = privacy else { return }
-        // Every wallet reads the chain's own directory, whole, holder or not (audit 5: L3, L5),
-        // and squares its handle with it (M1, L11: a handle a restore lost, one the chain swept).
+        // Every wallet reads the chain's own directory, whole, holder or not,
+        // and squares its handle with it (a handle a restore lost, one the chain swept).
         var addressed: [HandleEntry] = []
         var dir: [String: HandleEntry]?
         do {
@@ -848,7 +848,7 @@ public final class AppModel {
             addressed: addressed, ownAddress: w.address.encode()))
     }
 
-    /// Settles moves in flight by their tx and retries recording confirmed ones in the new wallet (audit 5, M2).
+    /// Settles moves in flight by their tx and retries recording confirmed ones in the new wallet.
     func checkMoves() async {
         guard let w = privacy else { return }
         await w.resolvePendingMoves()
@@ -861,13 +861,13 @@ public final class AppModel {
         await refreshPersonal()
     }
 
-    /// The store id of the wallet at `index` and what it already holds (audit 5, L8).
+    /// The store id of the wallet at `index` and what it already holds.
     func switchTargetInfo(ofWallet index: Int) -> PrivacySession.TargetInfo? {
         guard let keys = try? privacyKeys(ofWallet: index) else { return nil }
         return PrivacySession.targetInfo(keys)
     }
 
-    /// The recorder that writes moves into the wallet whose keys are `keys` (audit 5, M2).
+    /// The recorder that writes moves into the wallet whose keys are `keys`.
     func moveRecorder(for keys: PrivacyKeys) -> PrivacyWallet.MoveRecorder { PrivacySession.Recorder(targetID: PrivacySession.storeID(keys)) }
 
     /// The handle directory's verdict on paying `input` ("@alice", "alice"):
@@ -895,7 +895,7 @@ public final class AppModel {
         if let ballots = try? await PrivacyQueries(rest: client.rest).removalBallots() { removalBallots = ballots }
     }
 
-    /// The live rate of every validator, in one read of the indexer (L5): a
+    /// The live rate of every validator, in one read of the indexer: a
     /// per-validator query for the ones this wallet holds would tell the node
     /// which they are. Falls back to asking about every bonded validator (and
     /// any other held) alike.

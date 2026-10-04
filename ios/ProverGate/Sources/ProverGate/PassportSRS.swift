@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-/// The passport circuits' SRS as a local file (audit 3).
+/// The passport circuits' SRS as a local file.
 ///
 /// The privacy circuits' SRS ships in the app (32,769 points, 2 MiB), so a
 /// private proof never fetches anything. The passport circuits need up to
@@ -33,7 +33,7 @@ public enum PassportSRS {
 
     /// Fetches the file if it is missing. Call once at launch, detached; a
     /// failure leaves nothing behind and is retried on the next launch.
-    /// Audit 4: streamed to a staged file and hashed as it comes, never more
+    /// Streamed to a staged file and hashed as it comes, never more
     /// than the range's bytes read (a server ignoring Range, or streaming
     /// without end, is cut off there); a redirect is not followed.
     public static func prefetch() async {

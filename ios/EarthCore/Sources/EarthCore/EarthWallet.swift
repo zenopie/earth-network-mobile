@@ -15,7 +15,7 @@ public struct EarthKey {
 
     public init(mnemonic: String, passphrase: String = "", path: String = Constants.derivationPath) throws {
         var seed = BIP39.seed(fromMnemonic: mnemonic, passphrase: passphrase)
-        // Audit 4: the seed is zeroed once the key is derived.
+        // The seed is zeroed once the key is derived.
         defer { seed.resetBytes(in: 0 ..< seed.count) }
         try self.init(seed: seed, path: path)
     }

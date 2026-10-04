@@ -84,9 +84,9 @@ struct HandleScreen: View {
             if model.incomingMoves.contains(where: { $0.kind == PendingMove.handleKind }) {
                 note("@\(model.handle) was moved here and is waiting for the chain to confirm the move.")
             }
-            // Audit 5 (M1): entries naming this wallet's address that the store does not hold (a restore
+            // Entries naming this wallet's address that the store does not hold (a restore
             // loses track of a handle): renewing one is checked by the chain, at no cost if it is not ours.
-            // Audit 6 (M7): only while no handle is held (a bind of another would free it), and renew-only.
+            // Only while no handle is held (a bind of another would free it), and renew-only.
             ForEach(model.handle.isEmpty ? model.addressedHandles : [], id: \.handle) { a in
                 EarthDetailRow(label: "Names this wallet", value: "@\(a.handle)")
                 EarthDetailRow(label: "Expires", value: day(a.expiresAt))
@@ -143,7 +143,7 @@ struct HandleScreen: View {
 
     @ViewBuilder
     private var claim: some View {
-        // Clamped (audit 5, L7): a hostile lease param cannot trap here.
+        // Clamped: a hostile lease param cannot trap here.
         let waitUntil = model.predecessorAt > 0
             ? Handles.satAdd(Handles.satAdd(Int64(clamping: model.predecessorAt), model.handleLeaseSeconds), 86_400 + 3_600) : 0
         if model.handleMovedOut && model.handle.isEmpty {
@@ -182,7 +182,7 @@ struct HandleScreen: View {
         }
     }
 
-    /// Renew-only (audit 6, M7): the wallet refuses a bind that would change
+    /// Renew-only: the wallet refuses a bind that would change
     /// the handle held; the sheet names a change as one all the same.
     private func bind(_ h: String) {
         let changing = !model.handle.isEmpty && model.handle != h
@@ -216,10 +216,10 @@ struct HandleScreen: View {
 /// can be moved to the new identity first, so it keeps them with no wait;
 /// otherwise the new identity waits until they lapse (up to a year).
 ///
-/// Audit 5: a move counts as done only once the chain confirmed it (M2); the
+/// A move counts as done only once the chain confirmed it; the
 /// recovery phrase is shown after a fresh unlock and dropped when the app
 /// leaves the foreground or the screen closes; the backup box needs the
-/// phrase shown first (L9); the first move fixes the target (L8).
+/// phrase shown first; the first move fixes the target.
 struct SwitchIdentityScreen: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
@@ -277,7 +277,7 @@ struct SwitchIdentityScreen: View {
         !voteInFlight && model.caretakerExpiresAt > now && (!(model.privacy?.snapshot.caretakerSplit.isEmpty ?? true) || model.caretakerSplitUnknown)
     }
 
-    /// The wallet this identity's moves already went to, by store id (audit 5, L8).
+    /// The wallet this identity's moves already went to, by store id.
     private func findFrozen() {
         let id = model.switchTarget
         guard !id.isEmpty else { frozenTarget = nil; return }
@@ -288,7 +288,7 @@ struct SwitchIdentityScreen: View {
     private func pick(_ index: Int) {
         target = index; phrase = nil; backedUp = false
         guard let info = model.switchTargetInfo(ofWallet: index), info.storeID != model.switchTarget else { targetWarning = nil; return }
-        // Audit 6 (M5): what the wallet refuses to move there, said up front.
+        // What the wallet refuses to move there, said up front.
         if info.handleRefusal != nil || info.voteRefusal != nil {
             targetWarning = [info.handleRefusal.map { "Your handle cannot move there: \($0)." }, info.voteRefusal.map { "Your caretaker vote cannot move there: \($0)." }]
                 .compactMap { $0 }.joined(separator: " ")
@@ -371,7 +371,7 @@ struct SwitchIdentityScreen: View {
                     if phrase == nil { confirming = true } else { phrase = nil }
                 }
                 .disabled(target == nil)
-                // Ticked only once the phrase was shown for this target (audit 5, L9).
+                // Ticked only once the phrase was shown for this target.
                 let canTick = target != nil && revealedFor == target
                 Toggle(canTick ? "I have backed up the new wallet's recovery phrase" : "Show the new wallet's recovery phrase to confirm you have backed it up",
                        isOn: Binding(get: { backedUp && canTick }, set: { backedUp = $0 }))
@@ -396,7 +396,7 @@ struct SwitchIdentityScreen: View {
 
     /// Each move names the new wallet's nullifier in that scope, derived from
     /// its keys on this phone, and is recorded in its store before the
-    /// broadcast (audit 5, M2). Shown as moved only once confirmed.
+    /// broadcast. Shown as moved only once confirmed.
     private func move() {
         guard let t = target, let keys = try? model.privacyKeys(ofWallet: t) else { return }
         let handle = model.handle

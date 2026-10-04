@@ -21,7 +21,7 @@ enum DeviceProver {
         PassportProving.install(prove, ready: { passportFits })
         PrivacyProving.install(PrivacyDeviceProver())
         // The passport SRS, fetched once at launch rather than when a proof
-        // needs it (audit 3; the privacy SRS is bundled).
+        // needs it (the privacy SRS is bundled).
         Task.detached(priority: .background) { await PassportSRS.prefetch() }
     }
 
@@ -121,7 +121,7 @@ struct PrivacyDeviceProver: PrivacyProver {
         Bundle.main.url(forResource: name, withExtension: "json", subdirectory: "circuits").flatMap { try? Data(contentsOf: $0) }
     }
 
-    /// The bundled privacy SRS: the Android asset folder, referenced (audit 3).
+    /// The bundled privacy SRS: the Android asset folder, referenced.
     static let privacySRS = Bundle.main.path(forResource: "bn254_g1_32769", ofType: "dat", inDirectory: "srs")
 
     private static let prover: PrivacyCircuitProver = {
@@ -130,7 +130,7 @@ struct PrivacyDeviceProver: PrivacyProver {
         return PrivacyCircuitProver(manifests: manifests, privacySRS: privacySRS) {
             // Asked only while nothing is provisioned, just before reserving
             // with what it returns. The passport size only from the local
-            // file: a private proof never fetches the SRS (audit 3). Without
+            // file: a private proof never fetches the SRS. Without
             // it, a registration later in this launch asks for a relaunch.
             guard PrivacyProving.registrationMayFollow, let path = PassportSRS.path, let m = manifest(largestPassportCircuit) else {
                 reservedForPassport = false

@@ -38,7 +38,7 @@ public final class TxController {
         public var feeUerth: String { feeOverride.map(String.init) ?? Fees.forGas(gasLimit) }
 
         /// A private tx's fee as the chain priced it, when that was more than
-        /// the estimate first shown: the sheet asks again at it (audit 3).
+        /// the estimate first shown: the sheet asks again at it.
         public var feeOverride: UInt64?
 
         /// A private tx: unsigned, proven on the phone, its fee paid from a
@@ -287,7 +287,7 @@ public final class TxController {
         guard let details = pending, build != nil || runPrivate != nil else { return }
         let build = self.build
         let runPrivate = self.runPrivate
-        // Audit 6 (I2): taken now, so what `onSuccess` queues (a chained
+        // Taken now, so what `onSuccess` queues (a chained
         // request, like the caretaker move after a handle move) is not
         // cleared when this one finishes.
         let onSuccess = self.onSuccess
@@ -301,7 +301,7 @@ public final class TxController {
             let hash: String
             if let runPrivate {
                 guard let w = model.privacy else { throw WalletStore.Error.notFound }
-                // The fee the sheet showed bounds what the private run may pay (audit 3).
+                // The fee the sheet showed bounds what the private run may pay.
                 hash = try await PrivacyWallet.$shownFee.withValue(UInt64(details.feeUerth)) { try await runPrivate(w).hash }
                 model.publishPrivacy()
             } else {
@@ -332,9 +332,9 @@ public final class TxController {
         build: @escaping (EarthKey) async throws -> [ProtoAny],
         model: AppModel
     ) async throws -> String {
-        // Decrypted again at the moment of signing. (Audit 6, K7: the
-        // unlocked session does hold the phrases, in AppModel.wallets; this
-        // read keeps signing on the sealed copy, not on that list.)
+        // Decrypted again at the moment of signing. (The unlocked session
+        // does hold the phrases, in AppModel.wallets; this read keeps
+        // signing on the sealed copy, not on that list.)
         guard let pin = model.pin else { throw WalletStore.Error.notFound }
         let store = model.store
         let wallets = try await Task.detached { try store.unlock(pin: pin) }.value

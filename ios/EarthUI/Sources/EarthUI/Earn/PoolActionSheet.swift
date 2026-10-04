@@ -244,7 +244,7 @@ struct PoolActionSheet: View {
                 ("Fee", "\(Token.erth.format(TransactionSigner.defaultFeeUerth)) ERTH"),
             ]
         )) { key in
-            // Audit 6 (M9): the same bound as the shielded deposit's, from fresh reads at confirm.
+            // The same bound as the shielded deposit's, from fresh reads at confirm.
             let minShares = try await Self.minShares(client: client, poolID: poolID, erthIn: erthIn, tokenIn: tokenIn)
             return [client.msgAddLiquidity(
                 creator: key.address,
@@ -283,7 +283,7 @@ struct PoolActionSheet: View {
     /// The fewest LP shares a pool deposit accepts (public and shielded
     /// alike): the shares the pool would mint now over fresh reserves and
     /// share supply, less 1% for trades landing first. "" (no bound) only for
-    /// an empty pool. Audit 6 (D7): a pool or supply the node cannot read
+    /// an empty pool. A pool or supply the node cannot read
     /// refuses the deposit rather than sending it unbounded, and the
     /// reserves are read with the supply, never the sheet's stale ones.
     static func minShares(client: EarthClient, poolID: UInt64, erthIn: BigInt, tokenIn: BigInt) async throws -> String {

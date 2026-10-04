@@ -21,14 +21,14 @@ public struct ChainTip: Sendable, Equatable {
     public init(height: UInt64, time: UInt64?) { self.height = height; self.time = time }
 }
 
-/// What the chain says of a tx by hash (audit 4): committed, failed in its block, or unknown to it.
+/// What the chain says of a tx by hash: committed, failed in its block, or unknown to it.
 public enum TxStatus: Sendable, Equatable { case committed, failed, missing }
 
 /// A tree's state as the chain reports it: size and latest recorded root
 /// (nil for an empty tree); `pinned` only when the node answered at exactly
 /// the height asked for (its echoed `x-cosmos-block-height`), false when that
 /// height was unavailable or the echo differed and the state is some other
-/// height's (K9).
+/// height's.
 public struct TreeState: Sendable, Equatable {
     public let size: UInt64
     public let root: Fr?
@@ -38,7 +38,7 @@ public struct TreeState: Sendable, Equatable {
 
 /// The chain's own view of the three trees (the LCD in the app, the fake
 /// chain in tests), against which every tree the indexer served is checked
-/// (audit C3): an indexer can omit, add or forge rows, and a wallet that
+/// An indexer can omit, add or forge rows, and a wallet that
 /// trusted it would show forged notes and build proofs nobody accepts.
 public protocol ChainRoots: Sendable {
     /// x/shielded Query/Root for `root`: nil when the chain never recorded it.
@@ -53,21 +53,21 @@ public protocol ChainRoots: Sendable {
     func stakeNullifierSpent(_ nf: Fr) async -> Bool?
     /// The chain's latest block height (nil: unknown).
     func latestHeight() async -> UInt64?
-    /// A block's time (unix seconds): a registration's activated_at (K1). Nil when the node cannot say.
+    /// A block's time (unix seconds): a registration's activated_at. Nil when the node cannot say.
     func blockTime(_ height: UInt64) async -> UInt64?
-    /// The LCD's chain id and genesis key (first block hash, 16 hex); nil when it cannot say (K6).
+    /// The LCD's chain id and genesis key (first block hash, 16 hex); nil when it cannot say.
     func chainIdentity() async -> ChainIdentity?
-    /// The chain's latest block, with its time when the node says it (audit 4: every indexer height and time is bounded by it).
+    /// The chain's latest block, with its time when the node says it (every indexer height and time is bounded by it).
     func latestBlock() async -> ChainTip?
     /// x/shielded Query/Tree at `height`: the note tree's size then (nil: the node cannot say).
     func noteTree(height: UInt64?) async -> TreeState?
     /// A tx by `hash` (one this wallet broadcast, so the node knows it
     /// already): nil when the node could not say. A pending note is released
-    /// only on missing or failed (audit 4).
+    /// only on missing or failed.
     func txStatus(_ hash: String) async -> TxStatus?
     /// x/shielded Query/Assets: (denom, asset id) pairs, at most
     /// `Denoms.max`; nil when the node cannot say. Each is learned only if
-    /// the id is the denom's own hash (audit 6, M2).
+    /// the id is the denom's own hash.
     func assets() async -> [(denom: String, id: Fr)]?
     /// x/staking's validators, every status (public): a stake ciphertext
     /// carries derth/<valoper>'s asset id only, so a wallet restored from the
@@ -107,13 +107,12 @@ public struct ChainIdentity: Sendable, Equatable {
 ///     ours checked against its cm; a split payout's rows sharing one
 ///     ciphertext are each a note of their own;
 ///  3. every nullifier, up to the height the notes reached;
-///  4. the stake tree the same way (the wallet's own stake ciphertexts, and
-///     the blind stake ciphertexts of the notes the chain minted);
+///  4. the stake tree the same way (the wallet's own stake ciphertexts);
 ///  5. every identity leaf and zeroing up to the same height; registration
 ///     record notes matched to their leaf (restore), a pending registration
-///     resolved (C2);
+///     resolved;
 ///  6. the local roots checked against the indexer's latest (repeating the
-///     pass while the indexer moves) and then against the chain's own (C3).
+///     pass while the indexer moves) and then against the chain's own.
 ///
 /// Nothing is ever requested about one note or one leaf: the trees, and with
 /// them this wallet's Merkle paths, are built here from the full streams.
@@ -123,13 +122,13 @@ public final class WalletSync {
         public var errorDescription: String? { message }
     }
 
-    /// The chain disagrees with what the indexer served: nothing synced is trusted (C3).
+    /// The chain disagrees with what the indexer served: nothing synced is trusted.
     public struct ChainMismatch: Swift.Error, LocalizedError {
         public let message: String
         public var errorDescription: String? { message }
     }
 
-    /// The indexer names another genesis the LCD does not confirm: nothing is wiped, nothing synced (K6).
+    /// The indexer names another genesis the LCD does not confirm: nothing is wiped, nothing synced.
     public struct GenesisUnverified: Swift.Error, LocalizedError {
         public let message: String
         public var errorDescription: String? { message }
@@ -151,11 +150,11 @@ public final class WalletSync {
 
     /// Pending marks made before txs carried a timeout_height are released after this long (wall clock).
     public static let pendingTimeout: Int64 = 15 * 60
-    /// One sync's time limit, its retries included (audit 3).
+    /// One sync's time limit, its retries included.
     public static let syncTimeoutSeconds: Double = 10 * 60
-    /// What rootsError says while a sync has not finished (audit 3).
+    /// What rootsError says while a sync has not finished.
     public static let syncUnfinished = "unverified: the last sync did not finish; sync again"
-    /// Block heights asked of the LCD with a record's own when the indexer serves no block time (audit 3).
+    /// Block heights asked of the LCD with a record's own when the indexer serves no block time.
     public static let coverSet = 16
     /// LCD cover-set fetches a record may make.
     public static let maxCoverTries = 3
@@ -166,7 +165,7 @@ public final class WalletSync {
         public var errorDescription: String? { message }
     }
     /// The page size every stream is asked with (the backend's paging rule,
-    /// audit 4: `limit` is 100 or 1000, a position or index cursor a multiple
+    /// `limit` is 100 or 1000, a position or index cursor a multiple
     /// of it). Every wallet asks for the same URLs, so a CDN keeps one copy.
     public static let pageSize = 1000
     /// The page sizes the backend serves (PRIVACY_PAGE_SIZES).
@@ -176,23 +175,23 @@ public final class WalletSync {
     /// The aligned page holding `cursor`: page k is positions [k*limit, (k+1)*limit).
     public static func aligned(_ cursor: UInt64, _ limit: Int) -> UInt64 { cursor - cursor % UInt64(limit) }
     /// Blocks an indexer height may run past the chain's tip as the LCD
-    /// reports it. Anything further is Inconsistent (audit 4): a height past
+    /// reports it. Anything further is Inconsistent: a height past
     /// the tip would poison the persisted cursors for good.
     public static let tipSlack: UInt64 = 10
     /// Seconds an indexer row's block time may run past the tip's time (or the wallet's clock).
     public static let timeSlack: UInt64 = 3_600
-    /// No block time before this (2025-01-01 UTC) is one of earth-1's (audit 4, H1).
+    /// No block time before this (2025-01-01 UTC) is one of earth-1's.
     public static let minBlockTime: UInt64 = 1_735_689_600
-    /// Identity row heights kept (a uniform sample) to draw a record's LCD cover set from (audit 4, M2).
+    /// Identity row heights kept (a uniform sample) to draw a record's LCD cover set from.
     public static let identityHeightSample = 256
     /// Passes over the streams while the indexer keeps moving, before giving up on pinning a height.
     static let maxPasses = 4
     /// The largest tree position the circuits take (u32).
     static let maxPosition: UInt64 = 0xffff_ffff
 
-    /// Nullifiers of this sync's streams (pool, stake) spot-checked against the chain (K9).
+    /// Nullifiers of this sync's streams (pool, stake) spot-checked against the chain.
     public static let nullifierSample = 4
-    /// Blocks the indexer may trail the chain by before what it served is labelled stale (K9).
+    /// Blocks the indexer may trail the chain by before what it served is labelled stale.
     public static let staleBlocks: UInt64 = 30
 
     /// Registration record memo: "ER", version 2 (PRIVACY_FORMATS.md 3a). Version 1 (untagged) is ignored.
@@ -218,7 +217,7 @@ public final class WalletSync {
     }
 
     /// (dsc_key, country, built_at) if `memo` is a version-2 registration
-    /// record whose tag is `nk`'s (K1): anyone can send this wallet a value-0
+    /// record whose tag is `nk`'s: anyone can send this wallet a value-0
     /// note with any memo, and an untagged record would cost a leaf search
     /// per leaf at its height. The tag is checked before anything else is
     /// done with it.
@@ -244,7 +243,7 @@ public final class WalletSync {
         return zip(a, b).reduce(UInt8(0)) { $0 | ($1.0 ^ $1.1) } == 0
     }
 
-    /// Unlock memo: "EU", version 1 (PRIVACY_FORMATS.md 1, K11).
+    /// Unlock memo: "EU", version 1 (PRIVACY_FORMATS.md 1).
     static let unlockMagic = Data([0x45, 0x55, 0x01])
 
     static func unlockTag(nk: Fr, counter: UInt32) -> Data {
@@ -276,7 +275,7 @@ public final class WalletSync {
         return counter
     }
 
-    // MARK: state records (PRIVACY_FORMATS.md 3b, audit 5 M1)
+    // MARK: state records (PRIVACY_FORMATS.md 3b)
 
     /// State records: value-0 notes whose memo says what this identity holds
     /// in a scope, so a wallet restored from the mnemonic knows its handle
@@ -409,7 +408,7 @@ public final class WalletSync {
         return .caretaker(kind: base, expiresAt: exp, split: split)
     }
 
-    /// Applies a state record found at note `position` (audit 5, M1): the
+    /// Applies a state record found at note `position`: the
     /// newest record says what this identity holds, unless the wallet
     /// already applied a newer one (or acted since: a reset keeps the
     /// cursor), or the record's tx failed in its block (`height` void). A
@@ -426,7 +425,7 @@ public final class WalletSync {
             default: s.handle = ""; s.handleMovedOut = true
             }
             s.handleSetAt = now
-            // A move's record is in the chain: the move is no longer in doubt (audit 5, M2).
+            // A move's record is in the chain: the move is no longer in doubt.
             settleMoves(&s, kind: PendingMove.handleKind, recordKind: kind) { $0.handle == handle }
         case let .caretaker(kind, expiresAt, split):
             if let p = s.caretakerRecordPos, position <= p { return }
@@ -460,7 +459,7 @@ public final class WalletSync {
         for i in s.pendingMoves.indices where s.pendingMoves[i].kind == kind && s.pendingMoves[i].incoming == incoming && matches(s.pendingMoves[i]) {
             s.pendingMoves[i].confirmed = true
         }
-        // Audit 6 (M5): a confirmed outgoing move fixes the switch target.
+        // A confirmed outgoing move fixes the switch target.
         if !incoming, s.switchTarget.isEmpty,
            let m = s.pendingMoves.first(where: { !$0.incoming && $0.confirmed && !$0.target.isEmpty }) {
             s.switchTarget = m.target
@@ -532,11 +531,11 @@ public final class WalletSync {
     private var deadline = Double.infinity
     private let poolSample = Reservoir(WalletSync.nullifierSample)
     private let stakeSample = Reservoir(WalletSync.nullifierSample)
-    /// The chain's tip (LCD) every indexer height and row time this sync is bounded by (audit 4).
+    /// The chain's tip (LCD) every indexer height and row time this sync is bounded by.
     private var tip: ChainTip?
-    /// Our own tx landed but the indexer never reported its spend: what it served is not the chain's (audit 4).
+    /// Our own tx landed but the indexer never reported its spend: what it served is not the chain's.
     private var ownSpendMissing = false
-    /// Audit 6 (M2): the asset-id lookup, built once per sync from the
+    /// The asset-id lookup, built once per sync from the
     /// persisted denoms and grown as notes of our own name new ones.
     private var assetDenoms = AssetDenoms()
     /// Whether this sync has read the chain's asset list (at most once a sync, and only when a note of ours needs it).
@@ -552,7 +551,7 @@ public final class WalletSync {
     }
 
     /// `h`, an indexer's height (a row's, a cursor, a synced_height), at most
-    /// the chain's tip plus `tipSlack` (audit 4, M1): past it the tip is read
+    /// the chain's tip plus `tipSlack`: past it the tip is read
     /// again once (the chain moved), then the page is Inconsistent.
     @discardableResult
     private func bounded(_ name: String, _ h: UInt64) async throws -> UInt64 {
@@ -577,7 +576,7 @@ public final class WalletSync {
         return o ? .max : v
     }
 
-    /// Whether `t` can be a block time of this chain (audit 4, H1): never 0, never before `minBlockTime`, never past the tip.
+    /// Whether `t` can be a block time of this chain: never 0, never before `minBlockTime`, never past the tip.
     private func timeOK(_ t: UInt64) -> Bool { t >= Self.minBlockTime && t <= maxTime() }
 
     public init(indexer: PrivacyIndexer, store: PrivacyStore, keys: PrivacyKeys, chainID: String, chain: ChainRoots,
@@ -605,7 +604,7 @@ public final class WalletSync {
         }
     }
 
-    /// Audit 3: before a sync's first request the roots are unverified, and
+    /// Before a sync's first request the roots are unverified, and
     /// persisted so: a sync that fails part way (an indexer that serves
     /// forged notes and then breaks a later stream) leaves nothing labelled
     /// verified. Only `verifyRoots` at the end of this same sync sets the new
@@ -662,10 +661,10 @@ public final class WalletSync {
         await resolveUnresolved()
         await releaseStalePending()
         let verified = try await verifyRoots(roots)
-        // Audit 4 (M5): a registration is matched only against an identity
+        // A registration is matched only against an identity
         // tree this same sync verified against the chain's; an unverified one
         // waits (its leaves are kept) for a sync that verifies. Once a sync,
-        // after every pass: the record search is budgeted per sync (K1).
+        // after every pass: the record search is budgeted per sync.
         if verified {
             await matchRecords()
             resolvePending()
@@ -677,7 +676,7 @@ public final class WalletSync {
                       identityRoot: store.identityTree.root(), newStake: newStake, identityStatus: identityStatus(), verified: verified)
     }
 
-    /// K6: the indexer names a (chain id, genesis) other than the store's.
+    /// The indexer names a (chain id, genesis) other than the store's.
     /// The LCD must confirm it (its chain id, its block 1 hash) before
     /// anything is wiped; an indexer's word alone never drops the identity.
     /// A first sync goes ahead when the LCD cannot say (the root checks still
@@ -698,13 +697,14 @@ public final class WalletSync {
             try store.save()
             throw GenesisUnverified(message: m)
         }
-        // A store from before K6 (same chain id, no genesis recorded) is
-        // treated like a switch: the synced data goes, the registration stays.
-        let preK6 = old.chainID == chainID && old.genesis == nil
-        if switching || preK6 { try store.switchGenesis(genesis!) } else { try store.reset(chainID: chainID, genesis: genesis) }
+        // A store with no genesis recorded (same chain id, written before the
+        // wallet kept one) is treated like a switch: the synced data goes,
+        // the registration stays.
+        let noGenesisRecorded = old.chainID == chainID && old.genesis == nil
+        if switching || noGenesisRecorded { try store.switchGenesis(genesis!) } else { try store.reset(chainID: chainID, genesis: genesis) }
     }
 
-    /// Every height /roots/latest names, bounded by the chain's tip (audit 4).
+    /// Every height /roots/latest names, bounded by the chain's tip.
     private func boundRoots(_ roots: LatestRoots) async throws {
         try await bounded("roots synced", roots.syncedHeight)
         for r in [roots.note, roots.identity, roots.stake].compactMap({ $0 }) { try await bounded("root", r.height) }
@@ -728,7 +728,7 @@ public final class WalletSync {
         return tip
     }
 
-    /// C3: every local root against the chain's own (the LCD:
+    /// Every local root against the chain's own (the LCD:
     /// PRIVACY_FORMATS 4b says what that trusts). Only a positive
     /// contradiction is a mismatch, which wipes the synced data and throws
     /// `ChainMismatch`: a note root the chain recorded at another tree size,
@@ -736,7 +736,7 @@ public final class WalletSync {
     /// exactly the indexer's root height (the node echoed that height).
     /// Everything that cannot be established leaves the roots unverified,
     /// and the wallet builds nothing on them and labels what it shows until a
-    /// later sync verifies them (K8, K9): a note root the chain no longer
+    /// later sync verifies them: a note root the chain no longer
     /// holds (pruned after its window: an indexer far behind, or a forged
     /// root; the two look the same), a tree read at another height, the
     /// indexer still moving, a sampled nullifier the chain does not hold
@@ -753,14 +753,14 @@ public final class WalletSync {
             } else if !rec!.valid {
                 problems.append("unverified: the indexer is too far behind the chain (its note root is no longer an anchor)")
             }
-            // Audit 4 (M1): the indexer dates its root as the chain does.
+            // The indexer dates its root as the chain does.
             if let h = rec?.height, let n = roots.note, h != n.height {
                 problems.append("unverified: the indexer dates its note root at height \(n.height), the chain at \(h)")
             }
         }
         let tip = try atIndexerTip(roots)
         if !tip { problems.append("unverified: the indexer kept moving; sync again") }
-        // Audit 4 (M1): the height the indexer claims to be synced to is
+        // The height the indexer claims to be synced to is
         // checked, not taken: the chain's note tree at exactly that height
         // (pinned) must be the one served. A stale indexer naming the
         // current height is caught here (every spend appends notes).
@@ -797,7 +797,7 @@ public final class WalletSync {
         for nf in stakeSample.items where await chain.stakeNullifierSpent(nf) == false { invented = true }
         if invented { problems.append("unverified: the indexer reported a spend the chain does not hold") }
         if ownSpendMissing { problems.append("unverified: a tx of this wallet is in a block but the indexer did not report its spend") }
-        // Behind the chain's tip as the LCD says it (audit 4), the indexer's
+        // Behind the chain's tip as the LCD says it, the indexer's
         // height having been checked against the chain's note tree above.
         if let tipHeight = try? await readTip().height {
             if tipHeight > roots.syncedHeight, tipHeight - roots.syncedHeight > Self.staleBlocks {
@@ -832,7 +832,7 @@ public final class WalletSync {
         return Array(rows.dropFirst(n))
     }
 
-    /// Positions must follow the cursor one by one and stay within the tree (L7).
+    /// Positions must follow the cursor one by one and stay within the tree.
     private func checkPositions(_ positions: [UInt64], from next: UInt64, _ what: String) throws {
         for (i, p) in positions.enumerated() {
             let (want, o) = next.addingReportingOverflow(UInt64(i))
@@ -841,7 +841,7 @@ public final class WalletSync {
         }
     }
 
-    /// Audit 3: a position page must say where it ends (next = from + rows)
+    /// A position page must say where it ends (next = from + rows)
     /// and a page that says more follows must carry rows; otherwise the same
     /// page could be asked for forever while the wallet lock is held.
     private func checkPositions(_ name: String, from: UInt64, rows: Int, next: UInt64, complete: Bool) throws {
@@ -850,7 +850,7 @@ public final class WalletSync {
         if complete && rows == 0 { throw Inconsistent(message: "an empty \(name) page from \(from) says more follows") }
     }
 
-    /// Audit 3: a height page never moves backwards, and one that says more follows moves forwards.
+    /// A height page never moves backwards, and one that says more follows moves forwards.
     private func checkHeights<T>(_ name: String, from: UInt64, _ page: HeightPage<T>) async throws {
         try await bounded(name, page)
         if page.nextHeight < from || (page.complete && page.nextHeight <= from) {
@@ -894,7 +894,7 @@ public final class WalletSync {
     /// carries v2, so the mnemonic alone finds everything. A value-0 v1 note
     /// is kept only as a registration record (its memo).
     func open(_ r: NoteRow) -> OwnedNote? {
-        // Audit 6 (M2, M3): the row's amount is only checked here, never
+        // The row's amount is only checked here, never
         // learned from: a denom is learned once a note of ours reproduces
         // its cm with it.
         let amount = Self.publicAmount(r.amount)
@@ -934,7 +934,7 @@ public final class WalletSync {
                 let t = now()
                 store.mutate { Self.applyStateRecord(&$0, position: r.position, height: r.height, rec, now: t) }
             }
-            // An unlock's record (K11): the owner-tag counter of the position it closed.
+            // An unlock's record: the owner-tag counter of the position it closed.
             if let c = Self.parseUnlockMemo(nk: keys.nk, note.memo), store.state.closedOtagMax.map({ c > $0 }) ?? true {
                 store.mutate { $0.closedOtagMax = c }
             }
@@ -949,21 +949,22 @@ public final class WalletSync {
         guard let amount else { return nil }
         let digits = amount.prefix { $0.isASCII && $0.isNumber }
         let denom = String(amount.dropFirst(digits.count))
-        // Audit 6 (M3): an SDK denom only; never the wallet's own "asset/" name.
+        // An SDK denom only; never the wallet's own "asset/" name.
         guard !digits.isEmpty, Denoms.valid(denom), let v = UInt64(digits), v <= UInt64(Int64.max) else { return nil }
         return (v, denom)
     }
 
-    /// A denom a note of ours carries (its cm binds it): learned and kept (audit 6, M2).
+    /// A denom a note of ours carries (its cm binds it): learned and kept.
     private func learnOwn(_ denom: String) {
         if assetDenoms.learn(denom), store.state.denoms.count < Denoms.max { store.mutate { _ = $0.denoms.insert(denom) } }
     }
 
-    /// Audit 6 (M2): the persisted denoms are the ones of notes this wallet
+    /// The persisted denoms are the ones of notes this wallet
     /// holds (anything else a store learned before is dropped), at most
     /// `Denoms.max`, and the lookup is built from them once for the sync. A
     /// held note named "asset/<hex>" whose id is now known is renamed (same
-    /// asset, same cm), which also undoes audit 6 M3's relabel.
+    /// asset, same cm), which also undoes a relabel an indexer slipped into
+    /// a store before rows' denoms were checked.
     private func beginDenoms() {
         chainAssetsRead = false
         validatorsRead = false
@@ -991,7 +992,7 @@ public final class WalletSync {
 
     /// A held note whose asset id the wallet cannot name: the chain's asset
     /// list, read at most once a sync, each entry learned only if its id is
-    /// the denom's own (audit 6, M2).
+    /// the denom's own.
     private func resolveUnresolved() async {
         guard !chainAssetsRead, store.state.notes.contains(where: { $0.note.denom.hasPrefix(NotePlaintext.unresolvedPrefix) }) else { return }
         chainAssetsRead = true
@@ -1032,7 +1033,7 @@ public final class WalletSync {
     }
 
     /// A note marked pending by a broadcast is released (spendable again)
-    /// only once its tx can no longer land (audit 3): the chain's tip (LCD)
+    /// only once its tx can no longer land: the chain's tip (LCD)
     /// is past the tx's timeout_height and this wallet has read the nullifier
     /// stream through that height without seeing its nullifier. Never by the
     /// wall clock. Marks made before txs carried a timeout keep the old
@@ -1045,13 +1046,13 @@ public final class WalletSync {
         let st = store.state
         let poolRead = st.nullifiersNext == 0 ? 0 : st.nullifiersNext - 1
         let stakeRead = st.stakeNullifiersNext == 0 ? 0 : st.stakeNullifiersNext - 1
-        // Past its timeout and read through: the chain's word on its tx (audit 4, M1).
+        // Past its timeout and read through: the chain's word on its tx.
         func due(_ at: Int64?, _ until: UInt64?, _ readThrough: UInt64) -> Bool {
             guard at != nil, let until, let tipHeight else { return false }
             return readThrough >= until && tipHeight > until
         }
         var status: [String: TxStatus?] = [:]
-        // Audit 6 (M4): marks whose timeout no sane tip gives are asked about too.
+        // Marks whose timeout no sane tip gives are asked about too.
         func outsized(_ at: Int64?, _ until: UInt64?) -> Bool {
             guard let at, let until else { return false }
             return !PrivateTxEngine.timeoutSane(until, verifiedNow: st.verifiedHeight) && t - at > Self.pendingTimeout
@@ -1064,7 +1065,7 @@ public final class WalletSync {
         func release(_ at: Int64?, _ until: UInt64?, _ hash: String?, _ readThrough: UInt64) -> Bool {
             guard let at else { return false }
             guard let until else { return t - at > Self.pendingTimeout }
-            // Audit 6 (M4): a timeout no sane tip gives (a node inflated the
+            // A timeout no sane tip gives (a node inflated the
             // tip at send) is never reached: the tx's status alone settles
             // it, after the mempool's grace.
             if !PrivateTxEngine.timeoutSane(until, verifiedNow: st.verifiedHeight) {
@@ -1075,7 +1076,7 @@ public final class WalletSync {
                 }
             }
             guard due(at, until, readThrough) else { return false }
-            // Marks from before audit 4 carry no hash: the timeout alone.
+            // A mark made before marks carried the hash: the timeout alone.
             guard let hash else { return true }
             switch status[hash] ?? nil {
             case .missing?, .failed?: return true
@@ -1201,7 +1202,7 @@ public final class WalletSync {
             for r in page.rows {
                 try await bounded("identity", r.height)
                 if let z = r.zeroedHeight { try await bounded("identity zeroing", z) }
-                // Audit 4 (H1): a row's block time is one of this chain's.
+                // A row's block time is one of this chain's.
                 if let t = r.time, t != 0, !timeOK(t) { throw Inconsistent(message: "identity leaf \(r.index) carries block time \(t), outside the chain's") }
             }
             // Rows already held are dropped unchecked: a leaf zeroed since reads differently.
@@ -1230,7 +1231,7 @@ public final class WalletSync {
         }
     }
 
-    /// A uniform sample of identity row heights (registration blocks), the cover set's decoys (audit 4, M2).
+    /// A uniform sample of identity row heights (registration blocks), the cover set's decoys.
     private func offerIdentityHeight(_ h: UInt64) {
         store.mutate { s in
             s.identityRowsSeen &+= 1
@@ -1242,8 +1243,8 @@ public final class WalletSync {
 
     /// Matches record notes to the leaves appended at their heights (several
     /// registrations may share a block), newest record first, stopping at the
-    /// newest that matched (it is the identity). K1, bounded, and (audit 3)
-    /// never asking the LCD about this wallet's own registration block alone:
+    /// newest that matched (it is the identity). Bounded, and never asking
+    /// the LCD about this wallet's own registration block alone:
     ///
     ///  1. activated_at is the registration block's time. The indexer's
     ///     identity rows carry it (the record keeps it as the leaves pass):
@@ -1261,7 +1262,7 @@ public final class WalletSync {
     ///     hashes over all records and a record at most `recordSearchCap`.
     ///
     /// A time already tried is not tried again; a new one (or new leaves at
-    /// the record's height) is, even after the record was given up (K13).
+    /// the record's height) is, even after the record was given up.
     private func matchRecords() async {
         var budget = Int64(searchBudget)
         let perTime = Self.predecessors * UInt64(Self.allCountries.count)
@@ -1278,7 +1279,7 @@ public final class WalletSync {
             }
             var found: (UInt64, Fr, UInt64, UInt64)?
             var lcdTime: UInt64?
-            // 1. The indexer's block time (bounded by the chain's tip as it streamed, audit 4).
+            // 1. The indexer's block time (bounded by the chain's tip as it streamed).
             let rowTime = rec.time.flatMap { timeOK($0) ? $0 : nil }
             if let t = rowTime, !rec.tried.contains(t) {
                 found = tryTime(rec, leaves, t)
@@ -1310,7 +1311,7 @@ public final class WalletSync {
             if let (index, country, at, pred) = found {
                 let cur = store.state.identity
                 // At an index at least the identity's: a match there replaces
-                // one made before (audit 4, M5: an identity from an unverified
+                // one made before (an identity from an unverified
                 // tree, or another time, is re-matched rather than kept).
                 if cur == nil || index >= cur!.leafIndex {
                     let nullifier = (cur?.leafIndex == index ? cur?.passportNullifier : nil) ?? ""
@@ -1355,7 +1356,7 @@ public final class WalletSync {
         if let t = rec.chainTime { return (t, rec) }
         if rec.coverTries >= Self.maxCoverTries { return (nil, rec) }
         if rec.cover.isEmpty {
-            // Never past the chain's tip (audit 4, M2): a decoy the chain has
+            // Never past the chain's tip: a decoy the chain has
             // not reached yet is no decoy, the LCD sees which height is real.
             var tipHeight = rec.height
             if let t = tip { tipHeight = t.height } else if let t = try? await readTip() { tipHeight = t.height }
@@ -1404,7 +1405,7 @@ public final class WalletSync {
             out.cursor += 1
             out.work += cost
             spent += cost
-            // Checked (audit 4, H1): a candidate that wraps, or that cannot be a block time, is skipped.
+            // Checked: a candidate that wraps, or that cannot be a block time, is skipped.
             let (t, o) = Int64(clamping: rec.builtAt).addingReportingOverflow(off)
             if o || t < 0 || !timeOK(UInt64(t)) { continue }
             for l in leaves {
@@ -1420,7 +1421,7 @@ public final class WalletSync {
         return (nil, out)
     }
 
-    /// C2: a committed registration whose leaf the wallet has not matched
+    /// A committed registration whose leaf the wallet has not matched
     /// yet. Once the local identity tree holds its index, the leaf is
     /// recomputed for the hinted country, unknown, and every A..Z pair; the
     /// identity record replaces the pending one. It is never dropped

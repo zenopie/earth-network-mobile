@@ -41,13 +41,13 @@ enum PrivacySession {
     }
 
     /// Deletes every wallet's private data (notes, identity, records, trees):
-    /// forgetting the wallets forgets what they held privately too (audit 3).
+    /// forgetting the wallets forgets what they held privately too.
     static func forgetAll() throws {
         lock.lock(); wallets = [:]; lock.unlock()
         try PrivacyStore.delete(root: try dataRoot())
     }
 
-    /// Audit 6 (M8): one `PrivacyWallet` (and its one store) per wallet per
+    /// One `PrivacyWallet` (and its one store) per wallet per
     /// process, by store id, kept across lock and unlock: a cast still
     /// finishing in a task the lock suspended writes to the same wallet and
     /// store a resumed run reads, and the wallet's lock orders them. Dropped
@@ -69,8 +69,8 @@ enum PrivacySession {
     /// address, so nothing on disk pairs the transparent address with the shielded one.
     static func storeID(_ keys: PrivacyKeys) -> String { String(PrivacyHash.h(PrivacyHash.tagOwner, keys.ownerPK).hex.prefix(16)) }
 
-    /// Writes a switch's moves into another wallet's private store (audit 5,
-    /// M2): before the broadcast, as pending; undone only on a definite
+    /// Writes a switch's moves into another wallet's private store: before
+    /// the broadcast, as pending; undone only on a definite
     /// refusal. Addressed by store id, so a retry needs no recovery phrase.
     struct Recorder: PrivacyWallet.MoveRecorder {
         let targetID: String
@@ -88,9 +88,9 @@ enum PrivacySession {
         }
     }
 
-    /// What a switch target already holds (audit 5, L8): a registration, a
+    /// What a switch target already holds: a registration, a
     /// handle; and why it cannot take this identity's handle or caretaker
-    /// vote (audit 6, M5).
+    /// vote.
     static func targetInfo(_ keys: PrivacyKeys) -> TargetInfo {
         let id = storeID(keys)
         let st = (try? PrivacyStore.shared(root: try dataRoot(), walletID: id))?.state
@@ -115,14 +115,14 @@ enum PrivacySession {
         if let w = wallets[id] { return w }
         let w = PrivacyWallet(
             keys: keys,
-            // An unreadable store is an error the user sees, never an empty wallet (audit 3).
+            // An unreadable store is an error the user sees, never an empty wallet.
             store: try PrivacyStore.shared(root: try dataRoot(), walletID: id),
             indexer: HTTPPrivacyIndexer(),
             chain: RESTPrivateChain(rest: client.rest),
             reads: PrivacyQueries(rest: client.rest),
             prover: PrivacyProving.prover,
             chainID: Constants.chainID,
-            // Every root the indexer serves is checked against the chain's own (C3).
+            // Every root the indexer serves is checked against the chain's own.
             roots: LCDChainRoots(rest: client.rest)
         )
         wallets[id] = w

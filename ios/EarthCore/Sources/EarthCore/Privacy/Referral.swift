@@ -1,6 +1,6 @@
 import Foundation
 
-/// Where a referrer handle may come from (audit 5, M5): only the verified
+/// Where a referrer handle may come from: only the verified
 /// universal link `https://erth.network/ref/<handle>`, exactly. Ports
 /// `Referral.handleFromLink` in `referral/Referral.kt`; there is no custom
 /// scheme (an unverified one lets any page fire a link first and lock in

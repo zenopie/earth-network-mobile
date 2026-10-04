@@ -18,12 +18,12 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// proofs and note writes, and the tx's bytes.
     public static let registerGasEstimate: UInt64 = 7_000_000
     /// A private tx's gas for the confirm sheet: what the sheet shows is the
-    /// most the tx may then pay without asking again (audit 3: a higher
+    /// most the tx may then pay without asking again (a higher
     /// simulated fee shows the sheet again at it). Two actions, a stake or
     /// membership proof, the tx's bytes and the 10% headroom fit under it.
     public static let privateGasEstimate: UInt64 = 10_000_000
     /// A handle bind's: the chain prices it as nine note writes (chain
-    /// 203d3b2, audit 5 L-P5), 1.2M more than `privateGasEstimate`'s
+    /// 203d3b2), 1.2M more than `privateGasEstimate`'s
     /// membership, with a three-action fee bundle (the state record). As Android.
     public static let bindHandleGasEstimate: UInt64 = 12_500_000
     /// Slack against the chain's clock for bounds the wallet must stay under.
@@ -36,7 +36,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     public static let lpPrefix = "dexlp/"
     /// Owner-tag counters scanned past the highest known (PRIVACY_FORMATS.md 1).
     public static let otagGap: UInt32 = 1024
-    /// A pending registration whose tx failed in its block (K7).
+    /// A pending registration whose tx failed in its block.
     public static let txFailed = "the registration tx failed"
 
     public let keys: PrivacyKeys
@@ -45,7 +45,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     private let chain: PrivateChain
     private let reads: PrivacyChainReads
     public let chainID: String
-    /// The chain's own trees, every synced root is checked against (C3).
+    /// The chain's own trees, every synced root is checked against.
     private let roots: ChainRoots
     private let now: @Sendable () -> Int64
     private let engine: PrivateTxEngine
@@ -79,9 +79,9 @@ public final class PrivacyWallet: @unchecked Sendable {
         /// This identity's handle ("" for none), and whether it moved one away.
         public let handle: String
         public let handleMovedOut: Bool
-        /// The split is held but was restored without its options (audit 5, M1).
+        /// The split is held but was restored without its options.
         public let caretakerSplitUnknown: Bool
-        /// Moves in flight, either way (audit 5, M2), and the wallet a switch's moves went to.
+        /// Moves in flight, either way, and the wallet a switch's moves went to.
         public let pendingMoves: [PendingMove]
         public let switchTarget: String
         /// Undelegations waiting for their payout (local only; chain 48b631c).
@@ -89,7 +89,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         public let syncedHeight: UInt64
         /// A committed registration whose leaf is not matched yet (nil: none), and why, if it failed.
         public let pendingRegistration: PendingRegistration?
-        /// Whether the last sync's roots matched the chain's (C3); no private tx is built on unverified ones.
+        /// Whether the last sync's roots matched the chain's; no private tx is built on unverified ones.
         public let rootsVerified: Bool
         public let rootsError: String?
         /// x/shielded max_actions_per_bundle: the most notes (and outputs) one bundle carries.
@@ -114,8 +114,8 @@ public final class PrivacyWallet: @unchecked Sendable {
             genesis = s.genesis
         }
 
-        /// Spendable pool balance per denom (pending spends excluded). Audit 6
-        /// (S2): saturating at 2^63-1, as Android.
+        /// Spendable pool balance per denom (pending spends excluded),
+        /// saturating at 2^63-1, as Android.
         public var poolBalances: [String: UInt64] {
             var out: [String: UInt64] = [:]
             for n in notes where n.unspent && n.pendingAt == nil {
@@ -238,7 +238,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         try await WalletSync(indexer: indexer, store: store, keys: keys, chainID: chainID, chain: roots, now: now).sync()
     }
 
-    /// K7: a registration recorded at acceptance whose block the wallet has
+    /// A registration recorded at acceptance whose block the wallet has
     /// not seen (the wait timed out, the app was killed) is looked up by its
     /// hash: committed, it gets its leaf index and activated_at; failed in
     /// its block, the failure is kept for the UI (a new registration
@@ -262,7 +262,7 @@ public final class PrivacyWallet: @unchecked Sendable {
 
     private func today() -> UInt64 { UInt64(max(0, now()) / Self.secondsPerDay) }
 
-    /// Audit 5 (L2): the chain's time, the LCD tip's block time, for what the
+    /// The chain's time, the LCD tip's block time, for what the
     /// chain checks against its own clock (predecessor bounds, the removal
     /// day); the device clock only when the node cannot say.
     private func chainNow() async -> Int64 {
@@ -273,13 +273,13 @@ public final class PrivacyWallet: @unchecked Sendable {
     // MARK: - running
 
     /// Proves and broadcasts. Only on trees the chain itself vouched for at
-    /// the last sync (C3): a proof over an indexer's forged tree is refused by
+    /// the last sync: a proof over an indexer's forged tree is refused by
     /// the chain anyway, and its notes may not exist.
     private func run(memo: String = "", accepted: (String, UInt64) -> Void = { _, _ in }, rejected: (String) -> Void = { _ in },
                      _ assemble: (UInt64) throws -> Assembled) async throws -> TxResult {
         try requireVerified()
         try await requireFreshAnchor()
-        // The spent notes are marked before the tx is sent (K7, audit 4),
+        // The spent notes are marked before the tx is sent,
         // under its hash: a wait that times out (the tx may still land), a
         // lost answer or a killed app never leaves them spendable. They stay
         // pending until the chain is past the tx's timeout_height and says the
@@ -296,7 +296,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         return result
     }
 
-    /// Audit 6 (M4): a tip far past the last verified sync height is either a
+    /// A tip far past the last verified sync height is either a
     /// stale sync (sync, and try once more) or a node lying about the tip
     /// (refused again: nothing was laid out, proven or sent). Under the lock.
     private func tipChecked<T>(_ body: () async throws -> T) async throws -> T {
@@ -315,7 +315,7 @@ public final class PrivacyWallet: @unchecked Sendable {
 
     /// The fee the confirm sheet showed, for the private run in this task
     /// (TxController binds it around the run): a fee above it throws
-    /// `PrivateTxEngine.FeeAboveQuote` and the sheet asks again (audit 3).
+    /// `PrivateTxEngine.FeeAboveQuote` and the sheet asks again.
     /// Every tx the app sends comes from a confirm sheet, so it is always
     /// bound there; unbound (tests) only the cap applies.
     @TaskLocal public static var shownFee: UInt64?
@@ -358,7 +358,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         }
     }
 
-    /// Audit 3: only on roots verified by the last sync, in that sync's own
+    /// Only on roots verified by the last sync, in that sync's own
     /// generation (a sync that failed part way leaves them unverified).
     private func requireVerified() throws {
         let s = store.state
@@ -441,7 +441,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     }
 
     /// The identity is too recent for this action (or replaced another too recently); it opens `waitSeconds` from now.
-    /// `notHeld` (audit 5, M1): a renewal or refresh sent with no bound, by an identity whose own bound has not
+    /// `notHeld`: a renewal or refresh sent with no bound, by an identity whose own bound has not
     /// passed, which the chain refused (in its ante, before any fee): this identity holds nothing there.
     /// `lapsed` (chain 203d3b2): held but not live, so bounded like a claim, which this identity cannot make yet;
     /// refused before anything was sent (a handle in its renewal period, a caretaker split past its expiry).
@@ -525,7 +525,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         try Self.requireTransferable(denom)
         try require(!denom.hasPrefix(Self.lpPrefix), "LP shares leave the pool only by a withdrawal")
         try require(!feeFromAmount || denom == Self.fee, "only an ERTH unshield pays its fee from the amount")
-        // Wave 3 (B/F2): the chain refuses an unshield to any module account.
+        // The chain refuses an unshield to any module account.
         if let module = PrivateMsgs.moduleAccount(of: Data(try Bech32.decode(receiver).data)) {
             throw PrivacyError("\(receiver) is the \(module) module account; it cannot receive an unshield")
         }
@@ -635,8 +635,8 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// grant's note, on a first registration) that also carries the
     /// registration record note (PRIVACY_FORMATS.md 3a: a value-0 note to
     /// ourselves whose memo lets a wallet restored from the mnemonic find the
-    /// leaf), and records the registration as pending before anything else
-    /// (C2), then tries to resolve it. `publicSignals` are the passport
+    /// leaf), and records the registration as pending before anything else,
+    /// then tries to resolve it. `publicSignals` are the passport
     /// proof's: [current_date, address, nullifier, dsc_key].
     public func register(_ prep: RegistrationPrep, proof: Data, publicSignals: [String], signatureAlgorithm: String, dscDer: Data) async throws -> TxResult {
         let mx = await maxActions()
@@ -650,7 +650,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             let record = try NoteOut.to(keys.address, denom: Self.fee, value: 0,
                                         memo: WalletSync.regMemo(nk: keys.nk, dscKey: dscKey, country: hint, builtAt: UInt64(max(0, now()))))
             let pending: (String, UInt64) -> Void = { [self] hash, _ in
-                // K7: by hash, the moment the node accepts it; the leaf comes later.
+                // By hash, the moment the node accepts it; the leaf comes later.
                 store.mutate {
                     $0.pendingRegistration = PendingRegistration(
                         txHash: hash, leafIndex: nil, dscKey: dscKey, passportNullifier: publicSignals[2],
@@ -730,7 +730,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     public func claimOpensAt() -> Int64? {
         let snap = snapshot
         guard snap.identityStatus == .live, let id = snap.identity else { return nil }
-        // Checked throughout (audit 4, H1): an activated_at no block can have
+        // Checked throughout: an activated_at no block can have
         // (sync bounds them; an old store may hold one) has no answer, never a trap.
         guard id.activatedAt <= UInt64(Int64.max) else { return nil }
         let a = Int64(id.activatedAt)
@@ -742,13 +742,13 @@ public final class PrivacyWallet: @unchecked Sendable {
         return day == t ? 0 : at
     }
 
-    /// The day every activation bound keeps from now (wave 3: the largest identity root window).
+    /// The day every activation bound keeps from now (the largest identity root window).
     public static let activationMargin: Int64 = 86_400
 
     /// The chain's lease bounds now (Query/LeaseBounds), checked before use:
     /// lease lengths in range, a sane margin, and bounds that are what the
     /// lengths give at its block time. Every max_predecessor below comes from
-    /// these lease lengths, never from Params (audit 5 P3; mobile audit 5 L1).
+    /// these lease lengths, never from Params.
     private func leaseBounds() async throws -> PrivacyReads.LeaseBounds {
         let lb = try await reads.leaseBounds()
         guard lb.blockTime > 0 else { throw PrivacyError("the node's lease bounds have no block time") }
@@ -853,7 +853,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// unless its owner casts again (the app reminds them).
     public func setCaretaker(split: [UInt64: UInt64]) async throws -> TxResult {
         let mx = await maxActions()
-        // Validated before anything is sent (audit 5, L6): nothing after the broadcast can trap on it.
+        // Validated before anything is sent: nothing after the broadcast can trap on it.
         // r0: the lease a cast gets now (Params), for the record's expiry estimate. The
         // bound: LeaseBounds' caretaker lease, which a held longer one keeps after a cut.
         let r0 = try Self.leaseParam(try await reads.personhoodParams().caretakerVoteSeconds, "caretaker lease")
@@ -867,7 +867,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             let m = try membership(scope: PrivacyHash.caretakerScope(), excludedDsc: .zero, excludedCountry: .zero,
                                    maxActivation: PrivacyHash.noBound, maxPredecessor: maxPred)
             let w = Self.weights(split)
-            // The state record: what a wallet restored from the mnemonic finds (audit 5, M1). Its
+            // The state record: what a wallet restored from the mnemonic finds. Its
             // expiry is the wallet's estimate; the chain's own (from the result) replaces it here.
             let estimate = Handles.satAdd(now(), r0)
             let record = try stateRecord(keys) { nk in
@@ -881,7 +881,7 @@ public final class PrivacyWallet: @unchecked Sendable {
                     }
                 }
             }
-            // Audit 5 (M4, L6): the node's expires_at only within the lease range; else the block time + R, saturating.
+            // The node's expires_at only within the lease range; else the block time + R, saturating.
             let limit = Handles.satAdd(now(), Handles.maxAheadSeconds)
             let exp = r.attr("set_caretaker", "expires_at").flatMap(Int64.init).flatMap { $0 > 0 && $0 <= limit ? $0 : nil }
             let at = r.time > 0 ? r.time : now()
@@ -935,7 +935,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         }
     }
 
-    /// Writes a move into the new identity's wallet (audit 5, M2): before the
+    /// Writes a move into the new identity's wallet: before the
     /// broadcast, as pending, so neither a lost answer nor a killed app can
     /// strand what moved; undone only on a definite refusal. `targetID` is
     /// that wallet's store id.
@@ -943,11 +943,11 @@ public final class PrivacyWallet: @unchecked Sendable {
         var targetID: String { get }
         func record(_ move: PendingMove) throws
         func rollback(_ move: PendingMove) throws
-        /// Why the target cannot take `move` (audit 6, M5; `targetRefusal`), or nil.
+        /// Why the target cannot take `move` (`targetRefusal`), or nil.
         func refusal(_ move: PendingMove) -> String?
     }
 
-    /// Why a target wallet cannot take a move of `kind` (audit 6, M5, I1):
+    /// Why a target wallet cannot take a move of `kind`:
     /// its identity moved one away already (the chain refuses that owner),
     /// or it holds one of its own (a handle; a live caretaker split) that the
     /// move would overwrite here. Nil: it can.
@@ -962,7 +962,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         return nil
     }
 
-    /// The wallet this identity's moves must go to (audit 6, M5): the one a
+    /// The wallet this identity's moves must go to: the one a
     /// confirmed move went to, else the one a move still in flight names
     /// (empty: any).
     private func switchTargetNow() -> String {
@@ -971,7 +971,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         return s.pendingMoves.first { !$0.incoming && !$0.confirmed && !$0.target.isEmpty }?.target ?? ""
     }
 
-    /// Frees the switch target when nothing moved (audit 6, M5): no handle or
+    /// Frees the switch target when nothing moved: no handle or
     /// split moved out and no move of this identity confirmed or in flight.
     /// Returns whether it changed.
     @discardableResult
@@ -992,7 +992,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// tx that may yet land or fail) stays pending for `resolvePendingMoves`.
     private func moveRun(_ move: PendingMove, _ recorder: MoveRecorder?, _ assemble: (UInt64) throws -> Assembled) async throws -> TxResult {
         if let rc = recorder {
-            // Audit 6 (M5): the target a confirmed move went to, or one a move
+            // The target a confirmed move went to, or one a move
             // still in flight names; a refused, failed or expired move frees it.
             let fixed = switchTargetNow()
             try require(fixed.isEmpty || fixed == rc.targetID, "this identity already moved to another wallet; switch to that one")
@@ -1034,7 +1034,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             if !p.incoming {
                 if p.kind == PendingMove.handleKind { s.handle = ""; s.handleMovedOut = true; s.handleSetAt = t }
                 else { s.caretakerSplit = [:]; s.caretakerSplitUnknown = false; s.caretakerExpiresAt = 0; s.caretakerMovedOut = true }
-                // Audit 6 (M5): the target is fixed only by a confirmed move.
+                // The target is fixed only by a confirmed move.
                 if s.switchTarget.isEmpty, !p.target.isEmpty { s.switchTarget = p.target }
             }
             if p.incoming || p.recorded { s.pendingMoves.remove(at: i) } else { s.pendingMoves[i].confirmed = true }
@@ -1050,7 +1050,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         }
     }
 
-    /// Settles every move in flight by its tx (audit 5, M2): committed, it is
+    /// Settles every move in flight by its tx: committed, it is
     /// applied; failed in its block, or unknown to the chain past its
     /// timeout_height, it is undone (and its state records void). A move the
     /// chain cannot say anything about yet stays. Returns whether any is
@@ -1061,13 +1061,13 @@ public final class PrivacyWallet: @unchecked Sendable {
     }
 
     private func resolvePendingMovesLocked() async -> Bool {
-        // Audit 6 (M5): a target fixed by a move that never landed (before this fix) is freed.
+        // A target fixed by a move that never landed (a store from an earlier version) is freed.
         store.mutate { Self.clearSwitchTargetIfUnmoved(&$0) }
         for p in store.state.pendingMoves where !p.confirmed {
             let r = try? await chain.tx(p.txHash)
             if let r, r.code == 0 { confirmMove(p.txHash) }
             else if let r { store.mutate { _ = $0.voidRecordHeights.insert(r.height) }; dropMove(p) }
-            // Audit 6 (M4): a timeout no sane tip gives is settled by the tx's status alone.
+            // A timeout no sane tip gives is settled by the tx's status alone.
             else if !PrivateTxEngine.timeoutSane(p.timeoutHeight, verifiedNow: store.state.verifiedHeight) {
                 if await roots.txStatus(p.txHash) == .missing { dropMove(p) }
             }
@@ -1093,7 +1093,7 @@ public final class PrivacyWallet: @unchecked Sendable {
 
     /// Writes `p` (a move to this store's identity) into `store`: what it now
     /// holds, and the move as pending until its own wallet settles it by hash
-    /// (audit 5, M2). Used by the mover for the other wallet's store.
+    /// Used by the mover for the other wallet's store.
     public static func recordIncoming(_ store: PrivacyStore, _ p: PendingMove, now: Int64) throws {
         store.mutate { s in
             if p.kind == PendingMove.handleKind { s.handle = p.handle; s.handleSetAt = now }
@@ -1137,14 +1137,14 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// Nothing renews on its own: the app reminds the owner before expiry.
     public func bindHandle(_ handle: String, address: ShieldedAddress? = nil, renewOnly: Bool = false) async throws -> TxResult {
         let mx = await maxActions()
-        // The lease this bind gets (Params), validated before anything is sent (audit 5, L6).
+        // The lease this bind gets (Params), validated before anything is sent.
         let leaseNow = try Self.leaseParam(try await reads.personhoodParams().handleLeaseSeconds, "handle lease")
         // Chain 203d3b2: only a live handle renews or changes unbounded; one in its
         // renewal period is bounded like a claim, by the longest lease ever in force.
         let lb = try await leaseBounds()
         return try await locked {
             try require(Handles.valid(handle), "\"\(handle)\" is not a handle: 3-32 of a-z, 0-9 and -, no dash at either end")
-            // Audit 6 (M7): a renewal binds only the handle held (or, holding none, one this
+            // A renewal binds only the handle held (or, holding none, one this
             // identity may hold): a bind of another would be a change, freeing the held one.
             if renewOnly {
                 let held = store.state.handle
@@ -1202,7 +1202,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     public func releaseHandle() async throws -> TxResult {
         let mx = await maxActions()
         return try await locked {
-            // Audit 5 (L12): the chain refuses a release by a holder of none only after taking the fee.
+            // The chain refuses a release by a holder of none only after taking the fee.
             try require(!store.state.handle.isEmpty, "this identity holds no handle to release")
             try checkNoMove(PendingMove.handleKind)
             let m = try membership(scope: PrivacyHash.handleScope(), excludedDsc: .zero, excludedCountry: .zero,
@@ -1267,7 +1267,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         }
     }
 
-    /// Audit 5 (M1, L11), audit 6 (M6): squares the store's handle with the
+    /// Squares the store's handle with the
     /// chain's directory `dir`, read at `readAt` (wallet clock): a handle the
     /// chain swept (absent or free), or one whose entry names another owner,
     /// is dropped; with none held, the one entry whose owner is this
@@ -1305,12 +1305,12 @@ public final class PrivacyWallet: @unchecked Sendable {
                     store.mutate { $0.handleExpiresFor = cur.handle; $0.handleExpiresAt = e.expiresAt }; persistNoThrow()
                 }
             }
-            // Audit 6 (M7): while a handle is held, no other entry is offered (a bind of it would change, freeing the held one).
+            // While a handle is held, no other entry is offered (a bind of it would change, freeing the held one).
             return store.state.handle.isEmpty ? addressed : []
         }
     }
 
-    /// This identity's handle-scope nullifier as a directory entry's owner (64 lowercase hex; audit 6, M6).
+    /// This identity's handle-scope nullifier as a directory entry's owner (64 lowercase hex).
     public var handleOwner: String { PrivacyHash.scopeNullifier(idSecret: keys.idSecret, scope: PrivacyHash.handleScope()).hex }
 
     // MARK: - assembly
@@ -1338,7 +1338,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         let mx = await maxActions()
         let t = await chainNow()
         return try await locked {
-            // The chain's day (audit 5, L2): its scope is the including block's UTC day.
+            // The chain's day: its scope is the including block's UTC day.
             let day = UInt64(max(0, t) / Self.secondsPerDay)
             // The predecessor bound: the start of today (UTC) less a day, whatever the root window; no activation bound.
             let maxPred = UInt64(max(0, Int64(day) * Self.secondsPerDay - Self.activationMargin))
@@ -1542,9 +1542,9 @@ public final class PrivacyWallet: @unchecked Sendable {
         }
     }
 
-    /// The clear_before and debt root every stake proof names (circuit audit
-    /// L-1: also when it clears nothing, so a clearing proof looks like any
-    /// other), and the clear of `l` when its window has closed.
+    /// The clear_before and debt root every stake proof names (also when it
+    /// clears nothing, so a clearing proof looks like any other), and the
+    /// clear of `l` when its window has closed.
     private static func clearOf(_ l: StakeLabel?, _ d: DebtView) throws -> StakePlan.Clear {
         if d.clearBefore == 0 { return .none }
         guard let l, d.clearable(l) else { return StakePlan.Clear(clearBefore: d.clearBefore, debtRoot: d.root) }
@@ -1787,7 +1787,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         try require(a.supply > 0 && BigUInt(amount) <= a.supply, "more derth than this validator has")
         let u = BigUInt(amount) * a.backing / a.supply
         try require(u >= BigUInt(min), "this stake is worth \(u)uerth, less than the \(min)uerth a move must carry")
-        // What arrives at dst (chain b46a4bb, audit 7 A7-1): u splits between
+        // What arrives at dst (chain b46a4bb): u splits between
         // src's queue and its bonded stake pro rata, and up to 0.001 ERTH of
         // the bonded part may stay in src's book (bondedDust) or be truncated
         // by x/staking, so u - 1001. All of u only when src is unbonded (no
@@ -1984,7 +1984,7 @@ public final class PrivacyWallet: @unchecked Sendable {
                                  mx: Int) async throws -> TxResult {
         let denom = Self.derthDenom(validator)
         let tree = store.stakeTree
-        // Audit 3: a snapshot past the local tree (stake landed since the last
+        // A snapshot past the local tree (stake landed since the last
         // sync) cannot be checked here: "sync first", never a trap.
         guard snap.treeSize <= tree.size else { throw SyncFirst() }
         guard tree.rootAt(snap.treeSize) == snap.root else {
@@ -2002,7 +2002,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         for note in candidates {
             if chosen.count == MsgStakeVote.maxVoteNotes { break }
             guard let low = nfs.nonMembership(PrivacyHash.stakeNF(nk: keys.nk, rho: note.rho, position: note.position)) else {
-                // Audit 4 (M3): skipped only when sync, too, saw the spend at
+                // Skipped only when sync, too, saw the spend at
                 // or before the snapshot's block. Otherwise the two disagree (a
                 // stream or a snapshot that is not the chain's): an error, never
                 // a vote silently skipped.
@@ -2121,7 +2121,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// x/shieldedstaking ErrVoteNullifierUsed.
     public static let voteNullifierUsed = 1119
 
-    /// The codespace `voteNullifierUsed` is registered in: the code alone could be any module's (audit 4).
+    /// The codespace `voteNullifierUsed` is registered in: the code alone could be any module's.
     public static let voteCodespace = "shieldedstaking"
 
     /// Whether `e` is the chain refusing a vote nullifier already used on the proposal.
@@ -2182,7 +2182,7 @@ public final class PrivacyWallet: @unchecked Sendable {
             } else {
                 if tip == nil { tip = .some(try? await chain.tipHeight()) }
                 if let until = v.until, let t = tip ?? nil, t > until { next = nil }
-                // Audit 6 (M4): a timeout no sane tip gives is settled by the tx's status alone.
+                // A timeout no sane tip gives is settled by the tx's status alone.
                 else if let until = v.until, let h = v.txHash, !PrivateTxEngine.timeoutSane(until, verifiedNow: store.state.verifiedHeight),
                         await roots.txStatus(h) == .missing { next = nil }
                 else { continue }
@@ -2216,7 +2216,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         if stale { nfValues = []; nfTrees = [] }
         if let t = nfTrees.first(where: { $0.root == nfRoot }) { return t.tree }
         try require(snap.nfSize <= Merkle.capacity && snap.nfSize <= UInt64(Int.max), "nf_size \(snap.nfSize)")
-        // Audit 4 (L4): nf_size is the LCD's (snapshot()), so the fetch below
+        // nf_size is the LCD's (snapshot()), so the fetch below
         // is bounded by the chain's own count, never an indexer's.
         let n = Int(snap.nfSize > 0 ? snap.nfSize - 1 : 0)
         for chainOnly in [false, true] {
@@ -2282,7 +2282,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     private let snapshotLock = NSLock()
     private var snapshots: [UInt64: PrivacyReads.Snapshot] = [:]
     /// The genesis the per-wallet caches (snapshots, the stake nullifier
-    /// tree) were built under: dropped when the store's changes (audit 4, L2).
+    /// tree) were built under: dropped when the store's changes.
     private var cacheGenesis: String?
 
     private func cachedSnapshot(_ id: UInt64) -> PrivacyReads.Snapshot? {
@@ -2299,9 +2299,9 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// Set when the genesis changed: the nullifier values and trees (held under the wallet's lock) are dropped at their next use.
     private var nfCacheStale = false
 
-    /// `proposalID`'s snapshot, from the chain's own Query/Snapshot (audit 4,
-    /// M3): its stake root and size, nullifier root and size, block and
-    /// validator rates are taken from the LCD, never from the indexer (a
+    /// `proposalID`'s snapshot, from the chain's own Query/Snapshot: its
+    /// stake root and size, nullifier root and size, block and validator
+    /// rates are taken from the LCD, never from the indexer (a
     /// forged nf_root would make a note look spent before the snapshot). The
     /// proposal id is public, so asking names nothing of this wallet. The
     /// note root is then checked against the wallet's verified stake tree and
@@ -2331,7 +2331,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         return store.state.stakeNotes.filter {
             $0.denom.hasPrefix(Self.derthPrefix) && $0.amount > 0 && $0.position < snap.treeSize &&
                 // Spent in the snapshot's own block is spent before it (the
-                // snapshot is the trees at that block's end; audit 4).
+                // snapshot is the trees at that block's end).
                 ($0.spentHeight == nil || snap.height <= 0 || $0.spentHeight! > UInt64(snap.height)) &&
                 !voted(proposalID, PrivacyHash.voteNF(nk: nk, rho: $0.rho, position: $0.position, proposalID: proposalID))
         }
@@ -2488,7 +2488,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     }
 
     private func positionsLocked(_ all: [PrivacyReads.Position]) -> [(position: PrivacyReads.Position, counter: UInt32)] {
-        // A restored wallet knows the closed positions' counters from their unlock memos (K11).
+        // A restored wallet knows the closed positions' counters from their unlock memos.
         let closedNext = store.state.closedOtagMax.map { $0 == UInt32.max ? $0 : $0 + 1 } ?? 0
         let next = max(store.state.nextOtagCounter, closedNext)
         // Closed positions vanish from the chain, so the window must cross a
@@ -2565,7 +2565,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// Closes `position`: the stake proof (its owner tag) merges the
     /// position's derth into our note at its validator, or pads when we hold
     /// none there (ORCHARD_DESIGN 20.3). The fee bundle carries a value-0
-    /// record note to ourselves naming the closed counter (K11), so no
+    /// record note to ourselves naming the closed counter, so no
     /// restore ever locks under its tag again.
     public func unlockPosition(_ position: PrivacyReads.Position, counter: UInt32) async throws -> TxResult {
         let mx = await maxActions()
@@ -2720,7 +2720,7 @@ public final class PrivacyWallet: @unchecked Sendable {
 
     /// Saves where nothing can be thrown (a broadcast's acceptance callback):
     /// a failure is kept and shown (`Snapshot.saveError`), never dropped
-    /// (audit 3). The next save that succeeds clears it.
+    /// The next save that succeeds clears it.
     func persistNoThrow() {
         do {
             try store.save()

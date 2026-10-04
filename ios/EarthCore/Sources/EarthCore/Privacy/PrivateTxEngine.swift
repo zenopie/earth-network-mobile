@@ -39,7 +39,7 @@ public protocol PrivateChain: Sendable {
     func simulate(_ tx: Data) async throws -> UInt64
     /// Broadcasts `tx` and waits for its block. `accepted` runs with the tx
     /// hash as soon as the node accepts it into the mempool (CheckTx code 0),
-    /// before the wait (K7): the caller records what it spent there, so a
+    /// before the wait: the caller records what it spent there, so a
     /// wait that times out or a killed app cannot lose it.
     func broadcast(_ tx: Data, accepted: @Sendable (String) -> Void) async throws -> TxResult
     /// A tx by hash: nil while the node does not know it (still in the mempool, or dropped).
@@ -142,18 +142,18 @@ public struct PrivateTxEngine: Sendable {
     /// Covers a fee's varint growing by a byte or two between the simulated and the final tx.
     public static let minHeadroom: UInt64 = 20_000
     static let maxRelays = 4
-    /// Blocks past the chain's tip a private tx stays valid for (its timeout_height; audit 3).
+    /// Blocks past the chain's tip a private tx stays valid for (its timeout_height).
     public static let timeoutBlocks: UInt64 = 50
-    /// The absolute cap on a private fee: 2 ERTH (audit 3).
+    /// The absolute cap on a private fee: 2 ERTH.
     public static let maxPrivateFee: UInt64 = 2_000_000
-    /// How far past the last verified sync height a tip may be (audit 6, M4).
+    /// How far past the last verified sync height a tip may be.
     public static let maxTipAhead: UInt64 = 1_000
 
     public static func tipSane(_ tip: UInt64, verified: UInt64) -> Bool { tip < verified || tip - verified <= maxTipAhead }
 
     /// Whether a pending mark's timeout_height `until` could have come from a
     /// sane tip, given the last verified height now (heights only grow): an
-    /// outsized one is resolved by the tx's status alone (audit 6, M4).
+    /// outsized one is resolved by the tx's status alone.
     public static func timeoutSane(_ until: UInt64, verifiedNow: UInt64) -> Bool {
         until < verifiedNow || until - verifiedNow <= maxTipAhead + timeoutBlocks
     }
@@ -190,7 +190,7 @@ public struct PrivateTxEngine: Sendable {
     /// One note write (x/shielded note_gas default).
     public static let noteGas: UInt64 = 150_000
     /// MsgBindHandle's writes beyond the one in `membershipGas`: the chain
-    /// prices a bind as nine note writes (chain 203d3b2, audit 5 L-P5).
+    /// prices a bind as nine note writes (chain 203d3b2).
     public static let bindHandleExtraGas: UInt64 = 8 * noteGas
 
     /// The absolute cap on any private fee, in uerth.
@@ -203,7 +203,7 @@ public struct PrivateTxEngine: Sendable {
         public var errorDescription: String? { "The fee is now \(fee)uerth, more than the \(shown)uerth shown; confirm again." }
     }
 
-    /// The node's tip is not near the last verified sync height (audit 6, M4): sync and retry.
+    /// The node's tip is not near the last verified sync height: sync and retry.
     public struct TipOutOfRange: Swift.Error, LocalizedError {
         public let tip: UInt64
         public let verified: UInt64
@@ -238,7 +238,7 @@ public struct PrivateTxEngine: Sendable {
         return g
     }
 
-    /// The most this tx may pay (audit 3): twice the wallet's own estimate
+    /// The most this tx may pay: twice the wallet's own estimate
     /// from the tx's shape at the chain's default gas schedule, priced like
     /// the node's quote (and at least min_fee), never more than `maxFee`.
     public func feeCap(_ msg: any PrivateMsg, _ a: Assembled, txBytes: Int, minFee: UInt64, price: Decimal) -> UInt64 {
@@ -247,7 +247,7 @@ public struct PrivateTxEngine: Sendable {
         return min(maxFee, o ? UInt64.max : twice)
     }
 
-    /// The node's tip + `timeoutBlocks`. Audit 6 (M4): a tip past the last
+    /// The node's tip + `timeoutBlocks`. A tip past the last
     /// verified sync height (`verifiedHeight`, nil: no bound) by more than
     /// `maxTipAhead` is refused before anything is laid out: a node inflating
     /// it would leave the spent notes pending until a height the chain never
@@ -268,7 +268,7 @@ public struct PrivateTxEngine: Sendable {
     }
 
     /// Lays out, prices and simulates without proving: what a confirm sheet
-    /// may show. Simulated with random placeholder nullifiers (audit 3): the
+    /// may show. Simulated with random placeholder nullifiers: the
     /// node learns nothing about which notes would be spent before the user
     /// confirms (gas is the tx's shape, the same either way).
     public func quote(_ assemble: (UInt64) throws -> Assembled, memo: String = "", verifiedHeight: UInt64? = nil) async throws -> Quote {
@@ -318,7 +318,7 @@ public struct PrivateTxEngine: Sendable {
         guard msg.totalFee == q.fee else { throw PrivacyError("the msg must pay exactly the quoted fee") }
         try Self.checkShape(msg)
         let raw = UnsignedTx.build(msg, tx: tx)
-        // Audit 4: what the tx spends is marked before it is sent, under the
+        // What the tx spends is marked before it is sent, under the
         // hash computed here (the chain's own: SHA-256 of the bytes). A
         // broadcast whose answer is lost (a timeout, a killed app) after the
         // node took it never leaves its notes spendable; they are released

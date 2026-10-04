@@ -24,7 +24,7 @@ public struct EarthRest: Sendable {
     /// are far below it.
     public static let maxBodyBytes = 8 * 1024 * 1024
 
-    /// The deepest JSON nesting any response may have (audit 4), checked before parsing.
+    /// The deepest JSON nesting any response may have, checked before parsing.
     public static let maxJSONDepth = 64
 
     /// Refuses `data` when its JSON arrays/objects nest deeper than `max`
@@ -45,14 +45,14 @@ public struct EarthRest: Sendable {
         }
     }
 
-    /// JSON of `data`, its nesting bounded first (audit 4).
+    /// JSON of `data`, its nesting bounded first.
     static func parseJSON(_ data: Data) throws -> Any {
         try checkJSONDepth(data)
         guard let o = try? JSONSerialization.jsonObject(with: data) else { throw Error.notJSON(String(decoding: data.prefix(200), as: UTF8.self)) }
         return o
     }
 
-    /// A session that never follows a redirect (audit 4): a 3xx comes back as
+    /// A session that never follows a redirect: a 3xx comes back as
     /// the response (a non-2xx, an error), never a request to another origin.
     public static func session(_ config: URLSessionConfiguration) -> URLSession {
         URLSession(configuration: config, delegate: NoRedirects.shared, delegateQueue: nil)
@@ -112,7 +112,7 @@ public struct EarthRest: Sendable {
 
     /// `get(_:height:)` with the height the node says it answered at (its
     /// `x-cosmos-block-height` response header; nil when absent). A caller
-    /// pinning state to a height checks the two agree (K9).
+    /// pinning state to a height checks the two agree.
     public func getEcho(_ path: String, height: UInt64) async throws -> (JSON, UInt64?) {
         guard let url = lcd.appendingPathChecked(path) else { throw Error.missing(path) }
         var r = URLRequest(url: url)
@@ -152,7 +152,7 @@ private extension URL {
     /// `appendingPathComponent` escapes the separators in a multi-segment path
     /// and drops any query string, so paths are joined textually instead. A
     /// path that does not parse (a tx hash or denom the node or user supplied)
-    /// throws rather than traps (audit 3).
+    /// throws rather than traps.
     func appendingPath(_ path: String) throws -> URL {
         guard let u = URL(string: absoluteString.trimmingTrailingSlash + path) else { throw EarthRest.Error.missing(path) }
         return u

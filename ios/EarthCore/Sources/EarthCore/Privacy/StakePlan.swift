@@ -11,7 +11,7 @@ import Foundation
 ///
 /// `denom` nil: a position's update or vote, whose lane A is all zero (its
 /// public asset 0). Every proof names the chain's current clear_before and
-/// debt root (`clear`) whether or not it clears a label (circuit audit L-1):
+/// debt root (`clear`) whether or not it clears a label:
 /// a proof naming them only to clear would be linkable to the redelegation
 /// that labelled the note.
 public struct StakePlan: Sendable {
@@ -176,6 +176,6 @@ public struct StakePlan: Sendable {
                       out: try out(keys, denom: denom, amount: sum, label: label))
     }
 
-    /// A fresh owner-tag salt: every proof that is not a position's links to nothing (circuit audit L-2).
+    /// A fresh owner-tag salt: every proof that is not a position's links to nothing.
     public static func freshSalt() -> Fr { NotePlaintext.randomField() }
 }

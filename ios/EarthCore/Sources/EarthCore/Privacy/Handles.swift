@@ -19,13 +19,13 @@ public enum Handles {
     /// Seconds before expiry the reminder starts (and it stays through the renewal period).
     public static let reminderLeadSeconds: Int64 = 30 * 86400
 
-    /// The furthest ahead any lease time the wallet takes may lie (audit 5,
-    /// M4): a directory entry's expiry and renewal end, a caretaker split's
+    /// The furthest ahead any lease time the wallet takes may lie: a
+    /// directory entry's expiry and renewal end, a caretaker split's
     /// expiry, and the lease params themselves. Anything past it is a hostile
     /// or broken answer, refused or clamped before it reaches any arithmetic.
     public static let maxAheadSeconds: Int64 = 10 * 365 * 86400
 
-    /// A directory entry's owner (audit 6, M6): the handle-scope nullifier
+    /// A directory entry's owner: the handle-scope nullifier
     /// that holds it, as 64 lowercase hex digits (the MsgBindHandle
     /// membership nullifier, MsgMoveHandle new_owner). Anything else, or
     /// none, is "": no owner said, and nothing is adopted on it.
@@ -35,7 +35,7 @@ public enum Handles {
         return h.utf8.count == 64 && h.utf8.allSatisfy({ ($0 >= 0x30 && $0 <= 0x39) || ($0 >= 0x61 && $0 <= 0x66) }) ? h : ""
     }
 
-    /// The longest address a directory entry may carry (audit 6, H2): an erthz1 address is far shorter.
+    /// The longest address a directory entry may carry: an erthz1 address is far shorter.
     public static let maxAddressLen = 256
 
     /// a + b, clamped to the Int64 range rather than trapping.
@@ -95,7 +95,7 @@ public struct HandleEntry: Equatable, Sendable {
     public let status: String
     public let expiresAt: Int64
     public let renewalUntil: Int64
-    /// `Handles.owner`: the holder's handle-scope nullifier (hex), "" when the source does not say (audit 6, M6).
+    /// `Handles.owner`: the holder's handle-scope nullifier (hex), "" when the source does not say.
     public let owner: String
 
     public init(handle: String, address: String, status: String, expiresAt: Int64, renewalUntil: Int64, owner: String = "") {
@@ -158,8 +158,8 @@ public actor HandleDirectory {
 
     /// Query/Handles' largest page, and the backend stream's page.
     public static let page = 1000
-    /// Audit 5 (L4): the most rows the wallet holds; more fails closed.
-    /// Audit 6 (H2): near the backend's 200k (README), well under what a phone holds.
+    /// The most rows the wallet holds; more fails closed.
+    /// Near the backend's 200k (README), well under what a phone holds.
     public static let maxRows = 250_000
     public static let maxPages = maxRows / page
     public static let freshSeconds: Int64 = 60
@@ -220,7 +220,7 @@ public actor HandleDirectory {
         guard e.handle > after, out[e.handle] == nil else { throw Inconsistent("the directory is out of order at \(e.handle)") }
         guard Self.statuses.contains(e.status) else { throw Inconsistent("handle \(e.handle): status \(e.status.prefix(20))") }
         guard e.address.utf8.count <= Handles.maxAddressLen else { throw Inconsistent("handle \(e.handle): address too long") }
-        // Audit 5 (M4): times a lease can have, 0 < expires_at <= renewal_until <= now + 10 years;
+        // Times a lease can have, 0 < expires_at <= renewal_until <= now + 10 years;
         // anything else is refused before any reminder or status does arithmetic on it.
         guard Self.timesOk(e, now: now()) else { throw Inconsistent("handle \(e.handle): times out of range") }
         guard out.count < Self.maxRows else { throw Inconsistent("the directory has more than \(Self.maxRows) handles") }

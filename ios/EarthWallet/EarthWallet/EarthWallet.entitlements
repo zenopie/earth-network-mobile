@@ -15,7 +15,7 @@
 	     application identifier) is declared in Info.plist alongside
 	     NFCReaderUsageDescription; both are required and iOS refuses the
 	     session if either is missing. -->
-	<!-- Referral links (audit 5, M5): https://erth.network/ref/<handle> opens
+	<!-- Referral links: https://erth.network/ref/<handle> opens
 	     the app only as a universal link, verified by the apple-app-site-association
 	     file erth.network serves; there is no custom URL scheme, which any page
 	     could fire first to lock in its own referrer. Needs the Associated

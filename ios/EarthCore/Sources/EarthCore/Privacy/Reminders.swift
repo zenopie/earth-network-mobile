@@ -34,7 +34,7 @@ public enum Reminders {
         /// This identity's handle ("" for none) and its directory entry (nil: not found).
         public var handle: String
         public var handleEntry: HandleEntry?
-        /// Audit 5 (M1): directory entries naming this wallet's own address (a handle held but not in
+        /// Directory entries naming this wallet's own address (a handle held but not in
         /// the store, after a restore): reminded like the held one.
         public var addressed: [HandleEntry]
         /// This wallet's shielded address ("" unknown): a held handle paying another is pointed out.
@@ -51,7 +51,7 @@ public enum Reminders {
     public static func due(_ i: Inputs) -> [Reminder] {
         var out: [Reminder] = []
         if i.identityLive, !i.claimedToday, i.claimOpensAt == 0 { out.append(.anmlReady) }
-        // Clamped throughout (audit 5, M4): a hostile time saturates, never traps.
+        // Clamped throughout: a hostile time saturates, never traps.
         let c = i.caretakerExpiresAt
         if i.identityLive, c > 0, i.now >= Handles.satSub(c, leadSeconds), i.now < Handles.satAdd(c, lapsedSeconds) {
             out.append(.caretakerExpiring(expiresAt: c, lapsed: i.now >= c))

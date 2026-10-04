@@ -12,7 +12,7 @@ public struct NoteOut: Sendable {
 
     /// A note of `value` `denom` to `to`.
     public static func to(_ to: ShieldedAddress, denom: String, value: UInt64, memo: Data = Data()) throws -> NoteOut {
-        // Audit 6 (P2): the circuits bound a note to 2^63-1; refused here, before proving.
+        // The circuits bound a note to 2^63-1; refused here, before proving.
         guard value <= UInt64(Int64.max) else { throw PrivacyError("a note holds at most 2^63-1 of a denom") }
         let n = NotePlaintext.fresh(denom, value, memo: memo)
         return NoteOut(denom: denom, value: value, pc: n.pc(ownerPK: to.ownerPK), ciphertext: try NoteCipher.encrypt(n, to: to), note: n)

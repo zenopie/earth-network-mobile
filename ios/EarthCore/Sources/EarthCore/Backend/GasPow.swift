@@ -13,7 +13,7 @@ import Foundation
 /// is about four million hashes: a few seconds on a phone.
 public enum GasPow {
     public static let version = "earth-gas-pow/v1"
-    /// The most bits the wallet will work for (audit 4): the server's policy
+    /// The most bits the wallet will work for: the server's policy
     /// caps POW_MAX_BITS at 24 (it ships at 22); a server asking more is
     /// refused rather than worked for (each bit doubles the phone's work).
     public static let maxBits = 24

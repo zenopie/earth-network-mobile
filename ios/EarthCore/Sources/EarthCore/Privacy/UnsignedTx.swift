@@ -23,7 +23,7 @@ public enum UnsignedTx {
         build(msg, gasLimit: tx.gasLimit, memo: tx.memo, timeoutHeight: tx.timeoutHeight)
     }
 
-    /// The tx hash the chain will name `txBytes` by: SHA-256 of the raw bytes, uppercase hex (audit 4: known before broadcast).
+    /// The tx hash the chain will name `txBytes` by: SHA-256 of the raw bytes, uppercase hex (known before broadcast).
     public static func hash(_ txBytes: Data) -> String {
         SHA256.hash(data: txBytes).map { String(format: "%02X", $0) }.joined()
     }

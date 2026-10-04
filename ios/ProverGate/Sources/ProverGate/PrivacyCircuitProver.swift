@@ -69,14 +69,14 @@ public enum SRS {
     }
 
     /// Provisions `size` (a power of two: size + 1 points) from a local `.dat`
-    /// prefix of the transcript (audit 3: proving a private tx never fetches
+    /// prefix of the transcript (proving a private tx never fetches
     /// the SRS). The file is checked to hold every point first: noir_rs
     /// slices it unchecked, and a short file is a Rust panic.
     public static func reserve(points size: UInt32, datPath: String, sha256: String? = nil) throws {
         guard !isProvisioned else { return }
         let have = ((try? FileManager.default.attributesOfItem(atPath: datPath))?[.size] as? NSNumber)?.uint64Value ?? 0
         guard have >= (UInt64(size) + 1) * 64 else { throw Failure.shortFile(datPath) }
-        // Audit 4: the bundled file is checked by hash, not only by length (as Android).
+        // The bundled file is checked by hash, not only by length (as Android).
         if let sha256, !fileMatches(datPath, bytes: have, sha256: sha256) { throw Failure.corrupt(datPath) }
         _ = try Swoirenberg.setup_srs(circuit_size: size, srs_path: datPath)
         markProvisioned()
@@ -176,7 +176,7 @@ public final class PrivacyCircuitProver: @unchecked Sendable {
             } else if let p = privacySRS {
                 try SRS.reserve(points: SRS.privacyPoints, datPath: p, sha256: SRS.privacySHA256)
             } else {
-                // Audit 4: a private proof never downloads its SRS (the
+                // A private proof never downloads its SRS (the
                 // download would say when, and from where, this wallet
                 // proves); without the bundled file it fails, clearly.
                 throw SRS.Failure.missing

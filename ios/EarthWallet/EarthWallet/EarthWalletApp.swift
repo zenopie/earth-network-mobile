@@ -41,7 +41,7 @@ struct EarthWalletApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
-                // Referral links (audit 5, M5): only the verified universal link
+                // Referral links: only the verified universal link
                 // https://erth.network/ref/<handle> (associated domains); no custom scheme.
                 .onOpenURL { ReferralStore.capture($0) }
                 .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { ReferralStore.capture($0.webpageURL) }

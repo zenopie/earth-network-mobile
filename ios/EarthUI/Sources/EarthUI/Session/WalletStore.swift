@@ -379,7 +379,7 @@ public struct WalletStore: Sendable {
         let status = bytes.withUnsafeMutableBytes {
             SecRandomCopyBytes(kSecRandomDefault, $0.count, $0.baseAddress!)
         }
-        // Audit 4: a secret from a failed generator (all zeros) would guard nothing.
+        // A secret from a failed generator (all zeros) would guard nothing.
         precondition(status == errSecSuccess, "SecRandomCopyBytes failed: \(status)")
         return bytes.base64EncodedString()
     }

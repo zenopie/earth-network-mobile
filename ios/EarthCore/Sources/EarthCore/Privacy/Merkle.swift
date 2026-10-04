@@ -62,7 +62,7 @@ public final class MemNodeStore: NodeStore {
 public final class FileNodeStore: NodeStore {
     private let dir: URL
     private var handles: [Int: FileHandle] = [:]
-    /// The first I/O failure since the last `takeError` (audit 3: a tree
+    /// The first I/O failure since the last `takeError` (a tree
     /// that could not be written is reported by the store's save, never
     /// silently lost; no `try!` on a file that may not open).
     private var error: String?

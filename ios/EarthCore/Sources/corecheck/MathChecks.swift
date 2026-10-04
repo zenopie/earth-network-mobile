@@ -15,7 +15,7 @@ func checkMath() {
         let tokenForHub: (out: String, fee: String)
     }
     let fee = Decimal(string: "0.3")!
-    // Chain 203d3b2: the fee rounds up (audit 5 L-DX4).
+    // Chain 203d3b2: the fee rounds up.
     let vectors = [
         Vector(erth: "1000000000", token: "500000000", amountIn: "1000000",
                hubForToken: ("498003", "3000"), tokenForHub: ("1990018", "5989")),

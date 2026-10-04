@@ -109,7 +109,7 @@ public enum BIP39 {
     /// Validate separately, at the point where the user types it.
     public static func seed(fromMnemonic mnemonic: String, passphrase: String = "") -> Data {
         var password = Data(normalize(mnemonic).utf8)
-        // Audit 4: the phrase's bytes are zeroed once used (a String itself cannot be; this copy can).
+        // The phrase's bytes are zeroed once used (a String itself cannot be; this copy can).
         defer { password.resetBytes(in: 0 ..< password.count) }
         let salt = Data(("mnemonic" + passphrase).decomposedStringWithCompatibilityMapping.utf8)
         return Hashes.pbkdf2SHA512(password: password, salt: salt, rounds: 2048, keyLength: 64)

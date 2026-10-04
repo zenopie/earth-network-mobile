@@ -117,7 +117,7 @@ struct BalanceWidget: View {
             }
 
             // Why the private side (notes, stake, registration) is not
-            // verified against the chain (K9): shown, never hidden.
+            // verified against the chain: shown, never hidden.
             if let notice = model.privacySyncError {
                 Spacer().frame(height: 6)
                 Text("Private balances, stake and registration: \(notice)")

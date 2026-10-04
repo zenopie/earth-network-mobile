@@ -48,7 +48,7 @@ struct WalletsScreen: View {
             }
             .background(theme.colors.bgPrimary)
             .task { model.loadWallets() }
-            // Audit 6 (K6): the phrase lives only while the screen is in front, as on Android.
+            // The phrase lives only while the screen is in front, as on Android.
             .onChange(of: scenePhase) { if scenePhase != .active { revealed = nil } }
             .onDisappear { revealed = nil }
             .sheet(item: $adding) { AddWalletSheet(mode: $0).earthThemed() }

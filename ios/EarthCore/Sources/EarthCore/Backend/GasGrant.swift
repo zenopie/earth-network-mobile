@@ -2,17 +2,13 @@ import Foundation
 
 /// The backend's side of "free gas".
 ///
-/// A new human has no ERTH and, more awkwardly, no on-chain account: an address
-/// the chain has never seen cannot sign anything at all, because the ante
-/// handler rejects an unknown signer before it looks at who is paying. So the
-/// fee cannot simply be waived — something has to put coins there.
-///
-/// What earns them is personhood, judged by the chain's own rules rather than
-/// anything about the device. Before registration, the backend runs the
-/// chain's checks on the very `MsgRegister` about to be broadcast — proof,
-/// address binding, DSC chain — and pays if the chain would accept it, once per
-/// passport per month. After registration, it pays a registered human once a
-/// day. Either way, nothing the app merely says is trusted.
+/// A new human holds no ERTH, and a registration's fee is paid from a
+/// shielded note, so something has to put one there. What earns it is
+/// personhood, judged by the chain's own rules rather than anything about the
+/// device: the backend runs the chain's checks on the very `MsgRegister` about
+/// to be broadcast — proof, address binding, DSC chain — and pays a gas note
+/// if the chain would accept it, once per passport per month. Nothing the app
+/// merely says is trusted.
 public enum GasGrant {
 
     /// Which grant to ask for.
@@ -160,7 +156,7 @@ public enum GasGrant {
         func stamp(_ bits: Int) async throws -> GasPow.Stamp? {
             guard bits > 0 else { return nil }
             let ts = clock()
-            // Off the caller's thread, but cancelled with it (audit 4): a
+            // Off the caller's thread, but cancelled with it: a
             // detached task does not inherit the caller's cancellation.
             let work = Task.detached(priority: .userInitiated) {
                 try GasPow.solve(ts: ts, binding: binding, nullifier: nullifier, bits: bits, progress: progress)

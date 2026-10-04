@@ -10,8 +10,8 @@ public struct IdentityRecord: Codable, Equatable, Sendable {
     public let activatedAt: UInt64
     /// The passport nullifier: public in the registration, the switch/expiry key.
     public let passportNullifier: String
-    /// Matched against an identity tree the chain verified in the same sync
-    /// (audit 4, M5), or resolved from the registration's own committed tx.
+    /// Matched against an identity tree the chain verified in the same sync,
+    /// or resolved from the registration's own committed tx.
     /// A reset keeps only a verified identity; one from before is not.
     public var verified: Bool
     /// The leaf's predecessor_at: the switch or re-entry that made it (then
@@ -39,7 +39,7 @@ public struct IdentityRecord: Codable, Equatable, Sendable {
 }
 
 /// A registration the node accepted whose identity leaf the wallet has not
-/// resolved yet (C2, K7): everything needed to rebuild the identity record,
+/// resolved yet: everything needed to rebuild the identity record,
 /// persisted the moment the broadcast is accepted (before the wait for its
 /// block), so neither a lagging indexer, a wait that times out nor a killed
 /// app can lose it. `leafIndex` and `activatedAt` come from the committed tx
@@ -67,7 +67,7 @@ public struct PendingRegistration: Codable, Equatable, Sendable {
 /// A registration record note found by sync (PRIVACY_FORMATS.md 3a), its tag
 /// checked: what a wallet restored from the mnemonic finds its identity leaf
 /// by. `height` is the registration's block. The search for its leaf is
-/// persisted (K1): the leaves appended at `height` as the stream passed
+/// persisted: the leaves appended at `height` as the stream passed
 /// them, whether it matched or was given up, and how far the bounded
 /// fallback search got, so a killed app or a later sync resumes it and never
 /// repeats it.
@@ -132,7 +132,7 @@ public struct RegRecord: Codable, Equatable, Sendable {
 /// fallback search is spent, or the chain's time did not match. Exhausted
 /// never blocks a restore for good: an exact time not tried before (the
 /// indexer's, the LCD's) is still tried, and a store reset finds the record
-/// afresh (K13).
+/// afresh.
 public enum RecordStatus: String, Codable, Sendable { case open, matched, exhausted }
 
 /// An undelegation of this wallet whose payout has not arrived (chain
@@ -177,7 +177,7 @@ public struct StakeVoteRecord: Codable, Equatable, Sendable {
     }
 }
 
-/// A move of a handle or caretaker split (audit 5, M2), recorded before its
+/// A move of a handle or caretaker split, recorded before its
 /// broadcast in both wallets: the mover's (`incoming` false: it still holds
 /// what it is moving until the tx is confirmed) and the new identity's
 /// (`incoming` true: it holds it already, rolled back only if the tx is
@@ -224,21 +224,21 @@ public struct PrivacyState: Codable, Sendable {
     public var zeroedNext: UInt64 = 0
     public var notes: [OwnedNote] = []
     public var identity: IdentityRecord?
-    /// A committed registration not yet matched to its leaf (C2).
+    /// A committed registration not yet matched to its leaf.
     public var pendingRegistration: PendingRegistration?
     /// Registration record notes found (restore, L8).
     public var regRecords: [RegRecord] = []
-    /// Whether the last sync's roots matched the chain's own (C3), and why not.
+    /// Whether the last sync's roots matched the chain's own, and why not.
     public var rootsVerified: Bool = false
     public var rootsError: String?
-    /// Sync generations (audit 3): `syncGeneration` is bumped, with
+    /// Sync generations: `syncGeneration` is bumped, with
     /// `rootsVerified` cleared and persisted, before a sync's first request;
     /// `verifiedGeneration` is set to it only when every stream and the root
     /// checks of that same sync succeeded. Txs need the two equal.
     public var syncGeneration: UInt64 = 0
     public var verifiedGeneration: UInt64?
     /// The height the last verified sync reached (the indexer's, checked
-    /// against the chain's tree and tip). Audit 6 (M4): a tx's tip is bounded
+    /// against the chain's tree and tip). A tx's tip is bounded
     /// by it, and a pending mark whose timeout is far past it is resolved by
     /// the tx's status alone. Kept across resets (heights only grow).
     public var verifiedHeight: UInt64 = 0
@@ -270,15 +270,15 @@ public struct PrivacyState: Codable, Sendable {
     public var caretakerRecordPos: UInt64?
     /// Heights of this wallet's txs that failed in their block: their state records are void.
     public var voidRecordHeights: Set<UInt64> = []
-    /// Moves in flight, either way (audit 5, M2).
+    /// Moves in flight, either way.
     public var pendingMoves: [PendingMove] = []
-    /// The store id of the wallet a switch moves to, fixed by its first move (audit 5, L8).
+    /// The store id of the wallet a switch moves to, fixed by its first move.
     public var switchTarget: String = ""
     /// Undelegations whose payout has not arrived yet.
     public var pendingUnbonds: [PendingUnbond] = []
     /// Next unused Groundworks owner-tag counter (PrivacyKeys.otagSalt).
     public var nextOtagCounter: UInt32 = 0
-    /// The highest owner-tag counter of a position this wallet closed, from its unlock memos (nil: none; K11).
+    /// The highest owner-tag counter of a position this wallet closed, from its unlock memos (nil: none).
     public var closedOtagMax: UInt32?
     /// Every stake vote cast: (proposal, vote nullifier).
     public var stakeVotes: [StakeVoteRecord] = []
@@ -293,7 +293,7 @@ public struct PrivacyState: Codable, Sendable {
     public var labelWindowSeconds: UInt64 = 0
     /// Every denom seen in a public amount: resolves the asset ids ciphertexts carry.
     public var denoms: Set<String> = []
-    /// A uniform sample of identity row heights (registration blocks): a record's LCD cover set is drawn from it (audit 4).
+    /// A uniform sample of identity row heights (registration blocks): a record's LCD cover set is drawn from it.
     public var identityHeights: [UInt64] = []
     public var identityRowsSeen: UInt64 = 0
 
@@ -354,13 +354,13 @@ public final class PrivacyStore {
     public let identityTree: MerkleTree
     public let stakeTree: MerkleTree
 
-    /// state.json exists but does not parse: shown as an error, never silently replaced by an empty state (audit 3).
+    /// state.json exists but does not parse: shown as an error, never silently replaced by an empty state.
     public struct CorruptState: Swift.Error, LocalizedError {
         public let message: String
         public var errorDescription: String? { message }
     }
 
-    /// A save failed (the state file, or a tree's files): surfaced, never silent (audit 3).
+    /// A save failed (the state file, or a tree's files): surfaced, never silent.
     public struct SaveFailed: Swift.Error, LocalizedError {
         public let message: String
         public var errorDescription: String? { message }
@@ -397,7 +397,7 @@ public final class PrivacyStore {
     nonisolated(unsafe) private static var sharedStores: [String: PrivacyStore] = [:]
     private static let sharedLock = NSLock()
 
-    /// The process's one store for a wallet's directory (audit 6, M8): two
+    /// The process's one store for a wallet's directory: two
     /// instances on one directory each save their whole state over the
     /// other's. Every app path opens stores through this.
     public static func shared(root: URL, walletID: String) throws -> PrivacyStore {
@@ -413,7 +413,7 @@ public final class PrivacyStore {
         let top = root.appendingPathComponent("privacy")
         let d = top.appendingPathComponent(walletID)
         try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
-        // C4: the notes, trees and registration are derivable from the
+        // The notes, trees and registration are derivable from the
         // mnemonic and the chain; a device backup (iCloud, iTunes/Finder)
         // would only carry this wallet's private history off the device.
         excludeFromBackup(top)
@@ -422,7 +422,7 @@ public final class PrivacyStore {
     }
 
     /// Deletes a wallet's private data (notes, identity, records, trees) when
-    /// the wallet is forgotten (audit 3): every file is overwritten with
+    /// the wallet is forgotten: every file is overwritten with
     /// zeros and synced before it is unlinked (best effort on flash; the
     /// app's sandbox and Data Protection are the real boundary). `walletID`
     /// nil: every wallet's.
@@ -464,7 +464,7 @@ public final class PrivacyStore {
     /// Persists state after the trees, so a crash between the two leaves
     /// state behind (and resyncs) rather than ahead. The state is written
     /// atomically (a temp file renamed over it); any failure, the trees'
-    /// included, throws (audit 3: never silent).
+    /// included, throws (never silent).
     public func save() throws {
         noteTree.flush(); identityTree.flush(); stakeTree.flush()
         for f in fileStores { if let e = f.takeError() { throw SaveFailed(message: "could not save this wallet's private data: \(e)") } }
@@ -479,9 +479,9 @@ public final class PrivacyStore {
 
     /// Forgets the synced data. On the same chain (an inconsistent sync, a
     /// root mismatch) it keeps the owner-tag counter, the registration (its
-    /// leaf only when it was matched against a verified tree, audit 4 M5; or
+    /// leaf only when it was matched against a verified tree; or
     /// the one pending) and what the wallet itself cast (claims, caretaker
-    /// split, handle, the moves, its stake votes, audit 4 L1); a different chain or genesis (a relaunch under the same chain
+    /// split, handle, the moves, its stake votes); a different chain or genesis (a relaunch under the same chain
     /// id) keeps only the owner-tag counter.
     public func reset(chainID: String?) throws { try reset(chainID: chainID, genesis: state.genesis) }
 
@@ -533,7 +533,7 @@ public final class PrivacyStore {
     }
 
     /// A relaunch of the same chain id under a new genesis, confirmed by the
-    /// LCD (K6): the synced data goes, but the registration stays (the
+    /// LCD: the synced data goes, but the registration stays (the
     /// identity record, its passport nullifier, a pending registration) and
     /// so do the owner-tag counters; the old chain's bookkeeping does not.
     public func switchGenesis(_ genesis: String) throws {

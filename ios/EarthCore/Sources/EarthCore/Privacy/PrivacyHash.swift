@@ -162,7 +162,7 @@ public enum PrivacyHash {
 
     /// The passport proof's `address` input:
     /// H(TAG_REG, Bytes(chain_id), idc, pc_anml, Bytes(ct_anml), pc_erth, Bytes(ct_erth), affiliate).
-    /// The chain id (audit 6, B6-4) keeps a registration seen on one network
+    /// The chain id keeps a registration seen on one network
     /// from being replayed onto another.
     public static func registrationBinding(chainID: String, idc: Fr, pcAnml: Fr, ctAnml: Data, pcErth: Fr, ctErth: Data, affiliate: Fr) -> Fr {
         h(tagReg, bytes(Data(chainID.utf8)), idc, pcAnml, bytes(ctAnml), pcErth, bytes(ctErth), affiliate)

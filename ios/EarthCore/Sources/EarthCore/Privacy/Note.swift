@@ -61,7 +61,7 @@ public struct OwnedNote: Hashable, Sendable, Codable {
     public var pendingAt: Int64?
     /// That tx's timeout_height: the note is released only once the chain is past it (nil: a pre-timeout mark).
     public var pendingUntil: UInt64?
-    /// That tx's hash: released only once the chain says it is missing or failed (audit 4; nil: a mark from before).
+    /// That tx's hash: released only once the chain says it is missing or failed (nil: a mark made before marks carried the hash).
     public var pendingTx: String?
 
     public init(position: UInt64, height: UInt64, note: NotePlaintext, cm: Fr, nf: Fr, spentHeight: UInt64? = nil, pendingAt: Int64? = nil,
@@ -72,7 +72,7 @@ public struct OwnedNote: Hashable, Sendable, Codable {
 
     public var unspent: Bool { spentHeight == nil }
 
-    /// The same note under another name for its asset (audit 6, M3: an "asset/<hex>" note whose id is now known).
+    /// The same note under another name for its asset (an "asset/<hex>" note whose id is now known).
     func withDenom(_ denom: String) -> OwnedNote {
         var n = OwnedNote(position: position, height: height,
                           note: NotePlaintext(denom: denom, value: note.value, rho: note.rho, rcm: note.rcm, memo: note.memo),
@@ -142,7 +142,7 @@ public struct OwnedStakeNote: Hashable, Sendable, Codable {
 }
 
 /// Asset id -> denom, for the ids note ciphertexts carry. Seeded with the fee
-/// and personhood denoms. Audit 6 (M2, M3): it learns only denoms the wallet
+/// and personhood denoms. It learns only denoms the wallet
 /// has reason to trust (a note of its own whose cm the denom reproduces, or
 /// the chain's asset list, each entry checked against its id), never a public
 /// amount an indexer merely serves; only well-formed denoms (`Denoms.valid`),
@@ -178,7 +178,7 @@ public struct AssetDenoms {
     public func resolve(_ asset: Fr) -> String { byID[asset] ?? NotePlaintext.unresolvedPrefix + asset.hex }
 }
 
-/// Which denoms the wallet accepts from outside (audit 6, M2, M3): the SDK's
+/// Which denoms the wallet accepts from outside: the SDK's
 /// own denom rule (`[a-zA-Z][a-zA-Z0-9/:._-]{2,127}`), and never the wallet's
 /// internal "asset/<hex>" name for an id it cannot resolve.
 public enum Denoms {
