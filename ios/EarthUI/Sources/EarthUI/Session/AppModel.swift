@@ -62,6 +62,10 @@ public final class AppModel {
     public private(set) var unshieldableErth: UInt64 = 0
     /// This wallet's Groundworks positions (public positions whose key is ours).
     public private(set) var positions: [OwnedPosition] = []
+    /// This wallet's private stake per validator: what may move now, what waits for its window (chain dff3a9b).
+    public private(set) var stakeHoldings: [PrivacyWallet.StakeHolding] = []
+    /// The chain's label window as last read (0: never): how long moved stake stays put.
+    public private(set) var labelWindowSeconds: UInt64 = 0
     /// x/assembly's open removal ballots.
     public private(set) var removalBallots: [PrivacyReads.RemovalBallot] = []
     /// Live rate_v (ERTH per derth) for every validator this wallet holds
@@ -752,6 +756,8 @@ public final class AppModel {
         mergeable = [:]
         unshieldableErth = 0
         positions = []
+        stakeHoldings = []
+        labelWindowSeconds = 0
         derthRates = [:]
         handle = ""; handleEntry = nil; handleMovedOut = false; handleDirectoryError = nil
         caretakerExpiresAt = 0; caretakerMovedOut = false; predecessorAt = 0; reminders = []
@@ -798,12 +804,20 @@ public final class AppModel {
         if let mine = try? await w.positions() {
             positions = mine.map { OwnedPosition(position: $0.position, counter: $0.counter) }
         }
+        await refreshStakeHoldings()
         await refreshRemovalBallots()
         await refreshDerthRates()
         if let p = try? await queries.personhoodParams() { leaseSeconds = p.caretakerVoteSeconds }
         // The claim wait uses the lease the chain's bound uses (LeaseBounds: the longest ever in force), never Params.
         if let b = try? await queries.leaseBounds(), (1 ... Handles.maxAheadSeconds).contains(b.handleLeaseSeconds) { handleLeaseSeconds = b.handleLeaseSeconds }
         await refreshPersonal()
+    }
+
+    /// This wallet's stake per validator (the chain's debt view is read only when a label is held).
+    func refreshStakeHoldings() async {
+        guard let w = privacy else { return }
+        stakeHoldings = await w.stakeHoldings()
+        labelWindowSeconds = w.labelWindowSeconds
     }
 
     /// Re-reads this identity's handle (from the whole directory, never a

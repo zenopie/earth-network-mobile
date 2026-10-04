@@ -73,6 +73,12 @@ struct TxConfirmSheet: View {
                     EarthDetailRow(label: row.0, value: row.1)
                 }
             }
+            ForEach(Array(details.notes.enumerated()), id: \.offset) { _, note in
+                Text(note)
+                    .font(EarthType.bodySmall)
+                    .foregroundStyle(theme.colors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
             if !funded {
                 // The gas gate's place. A new human has no ERTH and no account

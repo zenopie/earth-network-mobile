@@ -78,14 +78,15 @@ struct StakeSheet: View {
                             // the stake stops earning immediately and arrives
                             // weeks later, with nothing on screen in between
                             // but the unbonding row.
-                            Text("Unstaked ERTH arrives in this wallet as private ERTH once the unbonding period ends. Nothing more to do or pay.")
+                            Text("Unstaked ERTH arrives in this wallet as private ERTH once the unbonding period ends. Nothing more to do or pay."
+                                 + (model.stakeHoldings.contains { $0.locked > 0 } ? " Stake moved here recently can be unstaked once its window closes." : ""))
                                 .font(EarthType.bodySmall)
                                 .foregroundStyle(theme.colors.textTertiary)
                         } else {
                             // derth is not a coin: a stake note only its owner
                             // can merge, vote, lock or unstake. Nothing can
                             // send or sell it.
-                            Text("Staked ERTH stays locked to this wallet: it can't be sent, unshielded or traded, only unstaked.")
+                            Text("Staked ERTH stays locked to this wallet: it can't be sent, unshielded or traded, only unstaked or moved.")
                                 .font(EarthType.bodySmall)
                                 .foregroundStyle(theme.colors.textTertiary)
                         }
@@ -104,10 +105,11 @@ struct StakeSheet: View {
         }
     }
 
-    /// Unstaking can only come from somewhere private stake already is.
+    /// Unstaking can only come from somewhere private stake may leave now
+    /// (moved-in stake whose window is open stays where it is).
     private var choices: [String] {
         guard unstaking else { return model.validators.map(\.operatorAddress) }
-        return model.privateStake.keys.map { String($0.dropFirst("derth/".count)) }.sorted()
+        return model.stakeHoldings.filter { $0.free > 0 }.map(\.validator)
     }
 
     private func moniker(_ op: String) -> String {
@@ -118,7 +120,7 @@ struct StakeSheet: View {
     private var available: BigInt {
         if unstaking {
             guard let validator else { return 0 }
-            return BigInt(model.privateStake[PrivacyWallet.derthDenom(validator)] ?? 0)
+            return BigInt(model.stakeHoldings.first { $0.validator == validator }?.free ?? 0)
         }
         // Leave a reserve, not one fee: staking everything-but-the-fee leaves
         // no shielded ERTH to pay for unstaking.
@@ -143,26 +145,62 @@ struct StakeSheet: View {
     }
 
     private func review() {
-        guard let value = parsed, let validator, let amount = UInt64(value.description) else { return }
+        guard let value = parsed, let validator, let amount = UInt64(value.description), let w = model.privacy else { return }
         let taking = unstaking
-        tx.requestPrivate(.private(
-            action: taking ? "Unstake" : "Stake privately",
-            rows: [
-                ("Amount", taking
-                    ? "\(Figures.balance(value)) derth (\(Figures.balance(BigInt(model.derthValue(amount, validator: validator)))) ERTH)"
-                    : "\(Figures.balance(value)) ERTH"),
-                (taking ? "From validator" : "Validator", moniker(validator)),
-                ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
-            ]
-        ), onSuccess: { await model.refresh() }) { w in
-            if taking {
-                // A stake proof spends two notes: spread over more, it is
-                // refused with "merge first" (a merge is the user's own tx,
-                // on the Notes screen).
-                return try await w.undelegate(validator: validator, amount: amount)
-            }
-            return try await w.delegate(validator: validator, amount: amount)
-        }
+        let name = moniker(validator)
+        let fee = ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded")
         dismiss()
+        Task { @MainActor in
+            do {
+                if taking {
+                    // What clearing a moved-in label costs, read before the sheet and sent as shown.
+                    let cut = try await w.leaveHaircut(validator: validator, amount: amount)
+                    tx.requestPrivate(.private(
+                        action: "Unstake",
+                        rows: [
+                            ("Amount", "\(Figures.balance(value)) derth (\(Figures.balance(BigInt(model.derthValue(amount, validator: validator)))) ERTH)"),
+                            ("From validator", name),
+                            fee,
+                        ],
+                        notes: [StakeNotes.haircut(cut, from: nil)].compactMap { $0 }
+                    ), onSuccess: { await model.refresh() }) { w in
+                        // A stake proof spends two notes (at most one holding
+                        // moved-in stake): spread over more, it is refused
+                        // with "merge them first".
+                        try await w.undelegate(validator: validator, amount: amount, maxHaircut: cut)
+                    }
+                } else {
+                    // The quote: the derth the chain credits at the live rate, less a margin.
+                    let q = try await w.quoteDelegate(validator: validator, amount: amount)
+                    tx.requestPrivate(.private(
+                        action: "Stake privately",
+                        rows: [
+                            ("Amount", "\(Figures.balance(value)) ERTH"),
+                            ("You receive", "\(Figures.balance(BigInt(q.derth))) derth"),
+                            ("Validator", name),
+                            fee,
+                        ],
+                        notes: ["Quoted at the validator's live rate with a small margin. If the rate moves past it before this lands, the chain refuses it and nothing is spent: just try again.",
+                                StakeNotes.haircut(q.haircut, from: nil)].compactMap { $0 }
+                    ), onSuccess: { await model.refresh() }) { w in
+                        try await w.delegate(q)
+                    }
+                }
+            } catch {
+                tx.showFailure(taking ? "Unstake" : "Stake privately", error, model: model)
+            }
+        }
+    }
+}
+
+/// The sentences the staking sheets add for the chain's slash debt.
+enum StakeNotes {
+    /// What a confirm sheet says when the tx settles a slash's cut of stake
+    /// moved in from another validator (the label clears at what the debt
+    /// tree says it is worth). Nil when nothing is cut.
+    static func haircut(_ haircut: UInt64, from: String?) -> String? {
+        guard haircut > 0 else { return nil }
+        return "A slash of the validator this stake was moved from\(from.map { " (\($0))" } ?? "") reached it before its window closed: "
+            + "\(Figures.balance(BigInt(haircut))) derth of it is gone, and this transaction settles that."
     }
 }

@@ -25,6 +25,9 @@ public final class TxController {
         public let action: String
         /// Label/value lines, in the order they should be read.
         public let rows: [(String, String)]
+        /// Sentences the user must read before confirming: a slash's cut of
+        /// moved stake this tx settles, when moved stake can move again.
+        public var notes: [String] = []
         public var gasLimit: UInt64 = TransactionSigner.defaultGasLimit
 
         /// Always `Fees.forGas(gasLimit)`. Derived rather than passed so the
@@ -65,9 +68,11 @@ public final class TxController {
         }
 
         /// A private action's sheet: its fee estimated from the private gas estimate.
-        public static func `private`(action: String, rows: [(String, String)], gas: UInt64 = PrivacyWallet.privateGasEstimate,
+        public static func `private`(action: String, rows: [(String, String)], notes: [String] = [], gas: UInt64 = PrivacyWallet.privateGasEstimate,
                                      registration: (msg: MsgRegisterPrivate, pcGas: Data, ciphertextGas: Data)? = nil) -> Details {
-            Details(action: action, rows: rows, gasLimit: gas, shielded: true, registration: registration)
+            var d = Details(action: action, rows: rows, gasLimit: gas, shielded: true, registration: registration)
+            d.notes = notes
+            return d
         }
     }
 
@@ -191,6 +196,11 @@ public final class TxController {
         self.onSuccess = onSuccess
         self.host = host
         pending = d
+    }
+
+    /// Reports a failure that happened before any sheet (a read the action needed, a quote): nothing was sent.
+    public func showFailure(_ action: String, _ error: Swift.Error, model: AppModel) {
+        outcome = .failed(action: action, reason: model.describe(error))
     }
 
     public func cancel() {

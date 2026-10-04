@@ -30,7 +30,7 @@ struct EarnScreen: View {
     @State private var staking: StakeIntent?
     @State private var mode = Mode.stake
 
-    enum StakeIntent: String, Identifiable { case stake, unstake; var id: String { rawValue } }
+    enum StakeIntent: String, Identifiable { case stake, unstake, move; var id: String { rawValue } }
 
     enum Mode: Hashable { case stake, liquidity }
 
@@ -59,7 +59,11 @@ struct EarnScreen: View {
         .background(theme.colors.bgPrimary)
         .scrollContentBackground(.hidden)
         .sheet(item: $staking) { intent in
-            StakeSheet(unstaking: intent == .unstake).earthThemed()
+            if intent == .move {
+                MoveStakeSheet().earthThemed()
+            } else {
+                StakeSheet(unstaking: intent == .unstake).earthThemed()
+            }
         }
     }
 
@@ -80,6 +84,9 @@ struct EarnScreen: View {
                     EarthButton(title: "Unstake", role: .secondary) { staking = .unstake }
                         .disabled(model.privateStake.isEmpty)
                 }
+                Spacer().frame(height: theme.space.x8)
+                EarthButton(title: "Move stake", role: .secondary) { staking = .move }
+                    .disabled(!model.stakeHoldings.contains { $0.free > 0 })
                 Text("Staking is private: shielded ERTH becomes staked ERTH (derth) whose value rises each epoch as rewards compound. Nothing links it to you.")
                     .font(EarthType.caption)
                     .foregroundStyle(theme.colors.textTertiary)
@@ -90,13 +97,23 @@ struct EarnScreen: View {
                     EarthLabel("Your private stake")
                     ForEach(model.privateStake.sorted { $0.key < $1.key }, id: \.key) { denom, amount in
                         let op = String(denom.dropFirst("derth/".count))
+                        let h = model.stakeHoldings.first { $0.validator == op }
+                        // Moved-in stake stays where it is until its window
+                        // closes (a slash of the validator it left can still
+                        // reach it), and a second note here (beside such
+                        // stake, or from another device) merges on a tap.
+                        let parts = [
+                            h?.lockedUntil.map { "\(Figures.balance(BigInt(h!.locked))) derth can move again after \(PrivacyWallet.dateText($0))" },
+                            (h?.notes ?? 0) > 1 ? (h!.mergeable ? "\(h!.notes) notes · tap to merge" : "\(h!.notes) notes") : nil,
+                        ].compactMap { $0 }
                         EarthListRow(
                             initial: String(moniker(op).prefix(1)).uppercased(),
                             name: moniker(op),
-                            subtitle: "\(Figures.balance(BigInt(amount))) derth · " + subtitle(commission: commission(op)),
+                            subtitle: parts.isEmpty ? "\(Figures.balance(BigInt(amount))) derth · " + subtitle(commission: commission(op)) : parts.joined(separator: " · "),
                             value: "\(Figures.balance(BigInt(model.derthValue(amount, validator: op)))) ERTH",
                             badgeBackground: theme.colors.accentTint,
-                            badgeForeground: theme.colors.accentInk
+                            badgeForeground: theme.colors.accentInk,
+                            action: h?.mergeable == true ? { merge(op) } : nil
                         )
                     }
                 }
@@ -241,6 +258,19 @@ struct EarnScreen: View {
 
     /// One withdraw per validator, so the gas scales with how many you
     /// delegate to.
+    /// Merge a validator's notes into one (MsgRestake), on the user's tap only.
+    private func merge(_ validator: String) {
+        tx.requestPrivate(.private(
+            action: "Merge stake notes",
+            rows: [
+                ("Validator", moniker(validator)),
+                ("Fee (estimate)", "\(Token.erth.format(Fees.forGas(PrivacyWallet.privateGasEstimate))) ERTH, shielded"),
+            ]
+        ), onSuccess: { await model.refresh() }) { w in
+            try await w.restake(validator: validator)
+        }
+    }
+
     private func claimAll() {
         let validators = model.delegations.map(\.validator)
         tx.request(.init(
