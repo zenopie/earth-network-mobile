@@ -279,6 +279,15 @@ stake note above that is ignored (never wrapped to a negative; no supply
 reaches it). Totals shown to the user saturate; amounts a tx is built from
 are checked (an overflow is an error, never a wrong change); derth × rate
 saturates at 2^63 − 1 (a negative rate is 0).
+The circuits enforce the same bound (privacy_core `NOTE_VALUE_BITS = 63`,
+inside `note_cm` and `stake_cm`): an action's spend and output value, a
+stake proof's input and output amounts and a vote's note amount are each at
+most 2^63 − 1, so no proof can create a note a wallet ignores (the action
+circuit had allowed outputs up to 2^64 − 1; chain ORCHARD_DESIGN §16). A
+witness above it fails `nargo execute` and cannot be proven. The witness
+format is unchanged; the action, stake and vote circuits (and their chain
+verifying keys) are new. Public amounts (`v_in`, `v_out`, a bundle's
+balance) are not notes and stay u64.
 
 ## 3a. Registration (binding, gas grant, record note, restore)
 

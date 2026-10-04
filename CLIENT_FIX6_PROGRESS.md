@@ -70,3 +70,22 @@ Never pushed. Formats: PRIVACY_FORMATS.md §3, §3a, §4a, §4h.
 ## Docs
 - [x] PRIVACY_FORMATS.md: 203d3b2 summary, §3 open notes, §3a affiliate
   field / referral opening / gas body, §4a notes format 2, new §4h, §5
+
+## Circuit note bound (chain d9d2366)
+- [x] privacy_core NOTE_VALUE_BITS = 63 in note_cm/stake_cm: action (spend,
+  output), stake (inputs, outputs), vote (amount) refuse a value above
+  2^63-1 (810c38d). Gates: action 8,120 -> 8,098, stake 9,647 -> 9,672,
+  vote 9,046 -> 9,072, membership 5,659 unchanged. ABI unchanged: no
+  witness builder changes.
+- [x] action/stake/vote.json rebuilt and bundled (b7b2094); every bundled
+  circuit's VK equals chain-orch genesis (genesis sha256 77af7586...652d).
+  orchardvectors regenerated against chain d9d2366: unchanged.
+- [x] testDebugUnitTest 189/189; assembleDebug ok; 440 Android witnesses
+  pass nargo execute. swift test 195/195; corecheck 149/149; xcodebuild
+  simulator BUILD SUCCEEDED; 416 iOS witnesses pass nargo execute;
+  ProverGate proves iOS stake, action and vote witnesses and the action
+  fixture with the new circuits.
+- [!] Pre-existing, not from this change: ProverGate testMembership fails,
+  and so would on-device membership proving: Kind.membership (iOS
+  PrivacyCircuitProver) and Kind.MEMBERSHIP (Android PrivacyProver) split 7
+  public inputs, but membership has 8 since max_predecessor (313f9c8).
