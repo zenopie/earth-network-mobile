@@ -34,7 +34,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     public static let fee = "uerth"
     public static let derthPrefix = "derth/"
     public static let lpPrefix = "dexlp/"
-    /// Owner-tag counters scanned past the highest known (PRIVACY_FORMATS.md 1).
+    /// Owner-tag counters scanned past the highest known (PRIVACY_FORMATS.md 7).
     public static let otagGap: UInt32 = 1024
     /// A pending registration whose tx failed in its block.
     public static let txFailed = "the registration tx failed"
@@ -633,7 +633,7 @@ public final class PrivacyWallet: @unchecked Sendable {
 
     /// Broadcasts the registration, its fee paid by a fee bundle (the gas
     /// grant's note, on a first registration) that also carries the
-    /// registration record note (PRIVACY_FORMATS.md 3a: a value-0 note to
+    /// registration record note (PRIVACY_FORMATS.md 6: a value-0 note to
     /// ourselves whose memo lets a wallet restored from the mnemonic find the
     /// leaf), and records the registration as pending before anything else,
     /// then tries to resolve it. `publicSignals` are the passport
@@ -806,7 +806,7 @@ public final class PrivacyWallet: @unchecked Sendable {
         }
     }
 
-    /// A value-0 state record note (PRIVACY_FORMATS.md 3b) to `to`'s own address, tagged with its nk.
+    /// A value-0 state record note (PRIVACY_FORMATS.md 6) to `to`'s own address, tagged with its nk.
     private func stateRecord(_ to: PrivacyKeys, _ memo: (Fr) -> Data) throws -> NoteOut {
         try NoteOut.to(to.address, denom: Self.fee, value: 0, memo: memo(to.nk))
     }
@@ -2132,7 +2132,7 @@ public final class PrivacyWallet: @unchecked Sendable {
     }
 
     /// A stake vote's public weight for a note of `amount` uderth
-    /// (PRIVACY_FORMATS 4e): the amount rounded down to three significant
+    /// (PRIVACY_FORMATS 15): the amount rounded down to three significant
     /// decimal digits (whole below 1000), so the published weight names a
     /// bucket rather than the note's exact amount (a delegation's minted
     /// amount is public). Gives up less than 1% of the note's voice.

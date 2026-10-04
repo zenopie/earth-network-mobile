@@ -34,10 +34,10 @@ public enum PrivacyHash {
     // Stake note slash labels and the slash debt tree (circuits/stake, circuits/vote; ORCHARD_DESIGN 20).
     public static let tagSLabel = tag("earth.slabel")
     public static let tagDebtL = tag("earth.debtl")
-    // Wallet-defined (PRIVACY_FORMATS.md 3a, 1): the registration record's and an unlock memo's tags.
+    // Wallet-defined (PRIVACY_FORMATS.md 6): the registration record's and an unlock memo's tags.
     public static let tagRecTag = tag("earth.rectag")
     public static let tagUnlockTag = tag("earth.unlocktag")
-    // Wallet-defined (PRIVACY_FORMATS.md 3b): a handle or caretaker state record's tag.
+    // Wallet-defined (PRIVACY_FORMATS.md 6): a handle or caretaker state record's tag.
     public static let tagStateTag = tag("earth.statetag")
 
     /// The fee asset, privacy_core::ASSET_ERTH.

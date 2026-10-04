@@ -3,7 +3,7 @@ import Foundation
 
 /// The wallet's privacy keys, all derived from the BIP-39 mnemonic so the
 /// mnemonic stays the only backup. Ports `privacy/keys/PrivacyKeys.kt`; the
-/// derivation is the wallet's own (PRIVACY_FORMATS.md §1), pinned by golden
+/// derivation is the wallet's own (PRIVACY_FORMATS.md §2), pinned by golden
 /// tests on both platforms:
 ///
 ///     m/2026'/118'/0'/0'   id_secret   (identity: idc = H(TAG_ID, id_secret))
@@ -65,9 +65,9 @@ public final class PrivacyKeys: @unchecked Sendable {
         try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: ekSecret)
     }
 
-    // No self-mint counters (removed for chain fced976): every note the
-    // chain mints to this wallet carries a blind ciphertext of fresh secrets
-    // (PRIVACY_FORMATS.md section 1), found by trial decryption.
+    // Nothing here derives a note's secrets from a counter: every note the
+    // chain mints to this wallet carries a value-blind ciphertext of fresh
+    // secrets (PRIVACY_FORMATS.md 5), found by trial decryption.
 
     private func counted(_ label: String, _ counter: UInt32) -> Fr {
         let c = Data([UInt8(counter >> 24 & 0xff), UInt8(counter >> 16 & 0xff), UInt8(counter >> 8 & 0xff), UInt8(counter & 0xff)])

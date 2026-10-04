@@ -194,7 +194,7 @@ public final class WalletSync {
     /// Blocks the indexer may trail the chain by before what it served is labelled stale.
     public static let staleBlocks: UInt64 = 30
 
-    /// Registration record memo: "ER", version 2 (PRIVACY_FORMATS.md 3a). Version 1 (untagged) is ignored.
+    /// Registration record memo: "ER", version 2 (PRIVACY_FORMATS.md 6). Version 1 (untagged) is ignored.
     static let regMagic = Data([0x45, 0x52, 0x02])
     /// Bytes of the record memo's tag.
     static let regTagBytes = 16
@@ -243,7 +243,7 @@ public final class WalletSync {
         return zip(a, b).reduce(UInt8(0)) { $0 | ($1.0 ^ $1.1) } == 0
     }
 
-    /// Unlock memo: "EU", version 1 (PRIVACY_FORMATS.md 1).
+    /// Unlock memo: "EU", version 1 (PRIVACY_FORMATS.md 6).
     static let unlockMagic = Data([0x45, 0x55, 0x01])
 
     static func unlockTag(nk: Fr, counter: UInt32) -> Data {
@@ -275,7 +275,7 @@ public final class WalletSync {
         return counter
     }
 
-    // MARK: state records (PRIVACY_FORMATS.md 3b)
+    // MARK: state records (PRIVACY_FORMATS.md 6)
 
     /// State records: value-0 notes whose memo says what this identity holds
     /// in a scope, so a wallet restored from the mnemonic knows its handle
@@ -729,7 +729,7 @@ public final class WalletSync {
     }
 
     /// Every local root against the chain's own (the LCD:
-    /// PRIVACY_FORMATS 4b says what that trusts). Only a positive
+    /// PRIVACY_FORMATS 18 says what that trusts). Only a positive
     /// contradiction is a mismatch, which wipes the synced data and throws
     /// `ChainMismatch`: a note root the chain recorded at another tree size,
     /// or an identity or stake tree that differs from the chain's read at
@@ -919,7 +919,7 @@ public final class WalletSync {
         default:
             return nil
         }
-        // A value past 2^63-1 is not one the wallet holds (PRIVACY_FORMATS 3, amounts; as Android).
+        // A value past 2^63-1 is not one the wallet holds (PRIVACY_FORMATS 4; as Android).
         if note.value > UInt64(Int64.max) { return nil }
         if note.value == 0 {
             if let m = Self.parseRegMemo(nk: keys.nk, note.memo), !store.state.regRecords.contains(where: { $0.position == r.position }) {
@@ -1005,7 +1005,7 @@ public final class WalletSync {
         var mine: [Fr: Int] = [:]
         for (i, n) in store.state.notes.enumerated() where n.unspent { mine[n.nf] = i }
         // The spot-check sample never holds one of ours (spent or not): asking
-        // the chain about it would name our note (PRIVACY_FORMATS 4b).
+        // the chain about it would name our note (PRIVACY_FORMATS 18).
         let own = Set(store.state.notes.map(\.nf))
         var spent: [OwnedNote] = []
         // Only up to the height the note stream reached: a note found next
