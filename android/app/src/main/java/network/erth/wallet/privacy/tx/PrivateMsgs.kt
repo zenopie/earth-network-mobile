@@ -18,7 +18,6 @@ import network.erth.earth.proto.personhood.MsgRegister
 import network.erth.earth.proto.personhood.MsgSetCaretaker
 import network.erth.earth.proto.shielded.Bundle
 import network.erth.earth.proto.shielded.MsgSend
-import network.erth.earth.proto.shieldedstaking.MsgClaimUnbonding
 import network.erth.earth.proto.shieldedstaking.MsgDelegate
 import network.erth.earth.proto.shieldedstaking.MsgLockPosition
 import network.erth.earth.proto.shieldedstaking.MsgPositionVote
@@ -62,7 +61,6 @@ object PrivateMsgs {
     const val DELEGATE = "/earth.shieldedstaking.v1.MsgDelegate"
     const val RESTAKE = "/earth.shieldedstaking.v1.MsgRestake"
     const val UNDELEGATE = "/earth.shieldedstaking.v1.MsgUndelegate"
-    const val CLAIM_UNBONDING = "/earth.shieldedstaking.v1.MsgClaimUnbonding"
     const val STAKE_VOTE = "/earth.shieldedstaking.v1.MsgStakeVote"
     const val LOCK_POSITION = "/earth.shieldedstaking.v1.MsgLockPosition"
     const val UPDATE_POSITION = "/earth.shieldedstaking.v1.MsgUpdatePosition"
@@ -95,8 +93,8 @@ object PrivateMsgs {
         return Privacy.affiliateField(m.affiliateHandle)
     }
 
-    fun registrationBinding(m: MsgRegister): Fr = Privacy.registrationBinding(
-        f(m.idc), f(m.pcAnml), m.ciphertextAnml.toByteArray(), f(m.pcErth), m.ciphertextErth.toByteArray(), affiliateField(m),
+    fun registrationBinding(m: MsgRegister, chainId: String): Fr = Privacy.registrationBinding(
+        chainId, f(m.idc), f(m.pcAnml), m.ciphertextAnml.toByteArray(), f(m.pcErth), m.ciphertextErth.toByteArray(), affiliateField(m),
     )
 
     /**
@@ -215,7 +213,6 @@ object PrivateMsgs {
         is MsgDelegate -> listOf(msg.bundle)
         is MsgRestake -> listOf(msg.bundle)
         is MsgUndelegate -> listOf(msg.bundle)
-        is MsgClaimUnbonding -> if (msg.hasBundle()) listOf(msg.bundle) else emptyList()
         is MsgStakeVote -> listOf(msg.bundle)
         is MsgLockPosition -> listOf(msg.bundle)
         is MsgUpdatePosition -> listOf(msg.bundle)
@@ -227,9 +224,20 @@ object PrivateMsgs {
         else -> throw IllegalArgumentException("not a private msg: ${msg.javaClass.simpleName}")
     }
 
-    /** A stake vote with its vote nullifier and proof set (the sighash binds the nullifier, not the proof). */
-    fun withVote(msg: MessageLite, vnf: Fr, proof: ByteArray): MessageLite = when (msg) {
-        is MsgStakeVote -> msg.toBuilder().setVoteNullifier(ByteString.copyFrom(vnf.toBytes())).setProof(ByteString.copyFrom(proof)).build()
+    /** Vote nullifier slots in every MsgStakeVote (x/shieldedstaking MaxVoteNotes, circuits/vote MAX_NOTES). */
+    const val MAX_VOTE_NOTES = 4
+
+    /**
+     * A stake vote with its vote nullifiers and proof set (the sighash binds
+     * the nullifiers, not the proof): exactly [MAX_VOTE_NOTES], the used
+     * slots' first, then zeros.
+     */
+    fun withVote(msg: MessageLite, vnfs: List<Fr>, proof: ByteArray): MessageLite = when (msg) {
+        is MsgStakeVote -> {
+            require(vnfs.size == MAX_VOTE_NOTES) { "a stake vote carries exactly $MAX_VOTE_NOTES vote nullifiers" }
+            msg.toBuilder().clearVoteNullifiers().addAllVoteNullifiers(vnfs.map { ByteString.copyFrom(it.toBytes()) })
+                .setProof(ByteString.copyFrom(proof)).build()
+        }
         else -> throw IllegalArgumentException("not a stake vote: ${msg.javaClass.simpleName}")
     }
 
@@ -238,7 +246,6 @@ object PrivateMsgs {
         is MsgDelegate -> msg.stake
         is MsgRestake -> msg.stake
         is MsgUndelegate -> msg.stake
-        is MsgClaimUnbonding -> msg.stake
         is MsgLockPosition -> msg.stake
         is MsgUpdatePosition -> msg.stake
         is MsgUnlockPosition -> msg.stake
@@ -279,14 +286,12 @@ object PrivateMsgs {
         else -> feeAfter(msg, 0)
     }
 
-    /** fee_from_output: only an unbonding claim pays its fee out of what it produces. */
-    fun feeFromOutput(msg: MessageLite): Long = when (msg) {
-        is MsgClaimUnbonding -> msg.feeFromOutput
-        else -> 0
-    }
-
-    /** The whole fee the tx declares (types.TotalFee). */
-    fun totalFee(msg: MessageLite): Long = privateFee(msg) + feeFromOutput(msg)
+    /**
+     * The whole fee the tx declares (types.TotalFee): the private fee alone
+     * since the chain retired MsgClaimUnbonding, the one msg that paid
+     * fee_from_output (chain 48b631c).
+     */
+    fun totalFee(msg: MessageLite): Long = privateFee(msg)
 
     /** The msg's own fields, bound after the bundle digests (each msg's Go SighashFields). */
     fun sighashFields(msg: MessageLite): List<Fr> = when (msg) {
@@ -305,14 +310,13 @@ object PrivateMsgs {
         is MsgVoteRemoval -> listOf(u(msg.optionId), u(msg.optionValue.toLong()))
         is MsgDelegate -> stakeFields(msg.stake) + listOf(bytes(msg.validator), u(msg.amount))
         is MsgRestake -> stakeFields(msg.stake) + listOf(bytes(msg.validator))
-        is MsgUndelegate -> stakeFields(msg.stake) + listOf(bytes(msg.validator), u(msg.amount))
-        is MsgClaimUnbonding -> stakeFields(msg.stake) + listOf(
-            bytes(msg.validator), u(msg.epoch), u(msg.amount), f(msg.pc), bytes(msg.ciphertext), u(msg.feeFromOutput),
-        )
-        // A vote carries no stake proof (ORCHARD_DESIGN 15): its vote proof's statement is the chain's.
-        is MsgStakeVote -> listOf(
-            u(msg.proposalId), bytes(msg.validator), Privacy.bytes(optionsBytes(msg.optionsList)), u(msg.weight), f(msg.voteNullifier),
-        )
+        is MsgUndelegate -> stakeFields(msg.stake) + listOf(bytes(msg.validator), u(msg.amount), f(msg.pc), bytes(msg.ciphertext))
+        // A vote carries no stake proof (ORCHARD_DESIGN 15, 18.2): its vote proof's statement is the chain's.
+        is MsgStakeVote -> {
+            require(msg.voteNullifiersCount == MAX_VOTE_NOTES) { "a stake vote carries exactly $MAX_VOTE_NOTES vote nullifiers" }
+            listOf(u(msg.proposalId), bytes(msg.validator), Privacy.bytes(optionsBytes(msg.optionsList)), u(msg.weight)) +
+                msg.voteNullifiersList.map { f(it) }
+        }
         is MsgLockPosition -> stakeFields(msg.stake) + listOf(
             bytes(msg.validator), u(msg.amount), Privacy.bytes(splitsBytes(msg.splitsList)),
         )
@@ -365,7 +369,6 @@ object PrivateMsgs {
         is MsgDelegate -> DELEGATE
         is MsgRestake -> RESTAKE
         is MsgUndelegate -> UNDELEGATE
-        is MsgClaimUnbonding -> CLAIM_UNBONDING
         is MsgStakeVote -> STAKE_VOTE
         is MsgLockPosition -> LOCK_POSITION
         is MsgUpdatePosition -> UPDATE_POSITION

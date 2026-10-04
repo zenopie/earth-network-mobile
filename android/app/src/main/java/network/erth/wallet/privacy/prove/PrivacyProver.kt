@@ -27,14 +27,16 @@ object PrivacyProver {
 
     internal enum class Kind(val file: String, val srsSize: Int, val publicInputs: Int) {
         // Every kind asks the same SRS: bb honours only a process's first SRS
-        // initialization, so whichever proves first sizes it for all three
-        // (twice the next power of two above the largest gate count, stake's
-        // 9,672; membership 5,659, action 8,098 and vote 9,072 fit under it:
-        // 2^14 circuits, which the bundled 2^15 + 1 points cover).
+        // initialization, so whichever proves first sizes it for all four.
+        // The hint must be at least the largest circuit's dyadic size: vote
+        // (27,543 gates since its four note slots, chain 48b631c) is a 2^15
+        // circuit; membership 5,659, action 8,098 and stake 9,672 are 2^14.
+        // The bundled 2^15 + 1 points cover them all.
         MEMBERSHIP("membership", SRS_SIZE, 8),
         ACTION("action", SRS_SIZE, 6),
         STAKE("stake", SRS_SIZE, 11),
-        VOTE("vote", SRS_SIZE, 7),
+        // note_root, nf_root, asset, weight, proposal_id, vnf[0..3], sighash.
+        VOTE("vote", SRS_SIZE, 10),
     }
 
     /** The privacy circuits' SRS size hint (2^15: 32,769 points). */

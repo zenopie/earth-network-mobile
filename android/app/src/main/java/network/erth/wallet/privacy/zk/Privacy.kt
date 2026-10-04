@@ -142,10 +142,12 @@ object Privacy {
 
     /**
      * The passport proof's `address` input:
-     * H(TAG_REG, idc, pc_anml, Bytes(ct_anml), pc_erth, Bytes(ct_erth), affiliate).
+     * H(TAG_REG, Bytes(chain_id), idc, pc_anml, Bytes(ct_anml), pc_erth, Bytes(ct_erth), affiliate).
+     * The chain id (audit 6, B6-4) keeps a registration seen on one network
+     * from being replayed onto another.
      */
-    fun registrationBinding(idc: Fr, pcAnml: Fr, ctAnml: ByteArray, pcErth: Fr, ctErth: ByteArray, affiliate: Fr): Fr =
-        h(TAG_REG, idc, pcAnml, bytes(ctAnml), pcErth, bytes(ctErth), affiliate)
+    fun registrationBinding(chainId: String, idc: Fr, pcAnml: Fr, ctAnml: ByteArray, pcErth: Fr, ctErth: ByteArray, affiliate: Fr): Fr =
+        h(TAG_REG, bytes(chainId.toByteArray(Charsets.UTF_8)), idc, pcAnml, bytes(ctAnml), pcErth, bytes(ctErth), affiliate)
 
     /**
      * The registration binding's affiliate field for a referrer named by

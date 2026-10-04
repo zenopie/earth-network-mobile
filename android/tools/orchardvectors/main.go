@@ -178,7 +178,7 @@ func main() {
 		"gen": hx(orchard.TagGen), "cv_r": hx(orchard.TagCvR), "bsig": hx(orchard.TagBsig), "bundle": hx(orchard.TagBundle),
 	}
 	val := "earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
-	denoms := []string{"uerth", "uanml", "", stakingtypes.DerthDenom(val), stakingtypes.UnbondDenom(val, 17), "dexlp/1",
+	denoms := []string{"uerth", "uanml", "", stakingtypes.DerthDenom(val), "dexlp/1",
 		"ibc/27394FB092D2ECCD56123C74F36E4C1F926001CEADA9CA97EA622B25F41E5EB2"}
 	assets := map[string]string{}
 	for _, d := range denoms {
@@ -212,8 +212,10 @@ func main() {
 		"pc":        hx(pc),
 		"cm":        hx(privacy.CM(privacy.AssetID("uanml"), 1_000_000, pc)),
 		"nf":        hx(privacy.NF(nk, rho, 4_000_000_000)),
-		"reg_none":  hx(privacy.RegistrationBinding(privacy.IDC(idSecret), fe(1), []byte("anml"), fe(2), []byte("erth"), fr.Element{})),
-		"reg_pinned": hx(privacy.RegistrationBinding(u(1), u(2), []byte("anml"), u(3), []byte("erth"), fr.Element{})),
+		"reg_none":  hx(privacy.RegistrationBinding(chainID, privacy.IDC(idSecret), fe(1), []byte("anml"), fe(2), []byte("erth"), fr.Element{})),
+		// The chain's own pin (zk/privacy TestRegistrationBindingPinned, audit 6 B6-4).
+		"reg_pinned": hx(privacy.RegistrationBinding("earth-1", u(1), u(2), []byte("anml"), u(3), []byte("erth"), fr.Element{})),
+		"reg_testnet": hx(privacy.RegistrationBinding("earth-testnet-1", u(1), u(2), []byte("anml"), u(3), []byte("erth"), fr.Element{})),
 		"spc":       hx(spc),
 		"stake_cm":  hx(privacy.StakeCM(privacy.AssetID(stakingtypes.DerthDenom(val)), 1_800_000, spc)),
 		"stake_nf":  hx(privacy.StakeNF(nk, rho, 4_000_000_000)),
@@ -489,12 +491,12 @@ func main() {
 		AffiliateHandle: "alice-01",
 	}
 	add("register", reg)
-	bind, err := reg.Binding(ac)
+	bind, err := reg.Binding(ac, chainID)
 	must(err)
 	reg0 := *reg
 	reg0.AffiliateHandle = ""
 	add("register_no_affiliate", &reg0)
-	bind0, err := reg0.Binding(ac)
+	bind0, err := reg0.Binding(ac, chainID)
 	must(err)
 	out["registration_binding"] = map[string]string{"with_affiliate": hx(bind), "affiliate_field": hx(privacy.AffiliateField("alice-01")), "none": hx(bind0)}
 	// The referral note's opening (chain 203d3b2: the chain mints it to the handle's owner_pk).
@@ -534,19 +536,31 @@ func main() {
 
 	add("delegate", &stakingtypes.MsgDelegate{Bundle: fee(90, 502000), Validator: val, Amount: 500000, Stake: stakeProof(90, 0, 0, true)})
 	add("restake", &stakingtypes.MsgRestake{Bundle: fee(95, 2000), Validator: val, Stake: stakeProof(95, 2, 1, false)})
-	add("undelegate", &stakingtypes.MsgUndelegate{Bundle: fee(100, 2000), Validator: val, Amount: 400000, Stake: stakeProof(100, 1, 1, true)})
-	add("claim_unbonding", &stakingtypes.MsgClaimUnbonding{Validator: val, Epoch: 17, Amount: 400000, Pc: fb(111), Ciphertext: bct(111), FeeFromOutput: 2000, Stake: stakeProof(110, 2, 0, false)})
-	cb := fee(115, 2000)
-	add("claim_unbonding_fee_bundle", &stakingtypes.MsgClaimUnbonding{Bundle: &cb, Validator: val, Epoch: 17, Amount: 400000, Pc: fb(116), Ciphertext: bct(116), Stake: stakeProof(117, 1, 1, false)})
+	// Chain 48b631c: the undelegation names its payout (pc 6, ciphertext 7); no stake note is minted.
+	add("undelegate", &stakingtypes.MsgUndelegate{Bundle: fee(100, 2000), Validator: val, Amount: 400000, Stake: stakeProof(100, 1, 1, false), Pc: fb(101), Ciphertext: bct(101)})
+	add("undelegate_whole", &stakingtypes.MsgUndelegate{Bundle: fee(102, 2000), Validator: val, Amount: 400000, Stake: stakeProof(102, 2, 0, false), Pc: fb(103), Ciphertext: bct(103)})
 	// Wave 3 (F3): canonical LegacyDec weights only.
 	opts := []*govv1.WeightedVoteOption{{Option: govv1.OptionYes, Weight: "0.700000000000000000"}, {Option: govv1.OptionNo, Weight: "0.300000000000000000"}}
-	add("stake_vote", &stakingtypes.MsgStakeVote{Bundle: fee(120, 2000), ProposalId: 5, Validator: val, Options: opts, Weight: 400000, Proof: []byte{0x70, 0x7e}, VoteNullifier: fb(121)})
+	// Chain 48b631c: four vote nullifier slots, the used ones first, then zeros.
+	zero := make([]byte, 32)
+	add("stake_vote", &stakingtypes.MsgStakeVote{Bundle: fee(120, 2000), ProposalId: 5, Validator: val, Options: opts, Weight: 400000, Proof: []byte{0x70, 0x7e},
+		VoteNullifiers: [][]byte{fb(121), zero, zero, zero}})
+	add("stake_vote_four", &stakingtypes.MsgStakeVote{Bundle: fee(122, 2000), ProposalId: 5, Validator: val, Options: opts, Weight: 1_230_000, Proof: []byte{0x70, 0x7e},
+		VoteNullifiers: [][]byte{fb(123), fb(124), fb(125), fb(126)}})
+	add("stake_vote_two", &stakingtypes.MsgStakeVote{Bundle: fee(127, 2000), ProposalId: 6, Validator: val, Options: opts, Weight: 999, Proof: []byte{0x70, 0x7e},
+		VoteNullifiers: [][]byte{fb(128), fb(129), zero, zero}})
+	// RoundVoteWeight (C-L3): three significant digits, rounded down.
+	rw := map[string]string{}
+	for _, w := range []uint64{1, 999, 1000, 1009, 123_456, 399_999_999, 1_000_000_000_000, 18_446_744_073_709_551_615, 9_223_372_036_854_775_807} {
+		rw[fmt.Sprint(w)] = fmt.Sprint(stakingtypes.RoundVoteWeight(w))
+	}
+	out["round_vote_weight"] = rw
 	splits := []allocationtypes.AllocationWeight{{OptionId: 2, Percent: 100}}
 	add("lock_position", &stakingtypes.MsgLockPosition{Bundle: fee(140, 2000), Validator: val, Amount: 400000, Splits: splits, Stake: stakeProof(140, 1, 1, false)})
 	add("update_position", &stakingtypes.MsgUpdatePosition{Bundle: fee(150, 2000), PositionId: 9, Splits: splits, Stake: stakeProof(150, 0, 0, false)})
 	add("unlock_position", &stakingtypes.MsgUnlockPosition{Bundle: fee(160, 2000), PositionId: 9, Stake: stakeProof(160, 0, 0, true)})
 	add("position_vote", &stakingtypes.MsgPositionVote{Bundle: fee(170, 2000), PositionId: 9, ProposalId: 5, Options: opts, Stake: stakeProof(170, 0, 0, false)})
-	sp := stakeProof(100, 1, 1, true)
+	sp := stakeProof(100, 1, 1, false)
 	sf := sp.StakeFields()
 	sfs := make([]string, len(sf))
 	for i := range sf {
@@ -569,7 +583,6 @@ func main() {
 	out["msgs"] = msgs
 	out["validator"] = val
 	out["derth_denom"] = stakingtypes.DerthDenom(val)
-	out["unbond_denom_17"] = stakingtypes.UnbondDenom(val, 17)
 	out["options_bytes"] = hex.EncodeToString(stakingtypes.OptionsBytes(opts))
 	out["splits_bytes"] = hex.EncodeToString(stakingtypes.SplitsBytes([]allocationtypes.AllocationWeight{{OptionId: 1, Percent: 60}, {OptionId: 7, Percent: 40}}))
 

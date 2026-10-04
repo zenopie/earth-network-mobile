@@ -90,9 +90,19 @@ class MembershipWitnessSpec(private val make: (signal: Fr) -> MembershipWitness)
     fun witness(signal: Fr): MembershipWitness = make(signal)
 }
 
-/** A vote proof's statement, waiting for the sighash; [vnf] is known before (the sighash binds it). */
-class VoteWitnessSpec(val vnf: Fr, private val make: (sighash: Fr) -> VoteWitness) {
-    fun witness(sighash: Fr): VoteWitness = make(sighash).also { check(it.vnf == vnf) { "the vote witness is for another vote nullifier" } }
+/**
+ * A vote proof's statement, waiting for the sighash; [vnfs] (all four slots,
+ * the used ones first, then zeros) are known before: the sighash binds them.
+ */
+class VoteWitnessSpec(val vnfs: List<Fr>, private val make: (sighash: Fr) -> VoteWitness) {
+    init {
+        require(vnfs.size == PrivateMsgs.MAX_VOTE_NOTES) { "a vote has ${PrivateMsgs.MAX_VOTE_NOTES} vote nullifier slots" }
+    }
+
+    /** How many slots carry a note (the chain charges a note write for each). */
+    val used: Int get() = vnfs.count { !it.isZero }
+
+    fun witness(sighash: Fr): VoteWitness = make(sighash).also { check(it.vnfs == vnfs) { "the vote witness is for other vote nullifiers" } }
 }
 
 /**
@@ -197,7 +207,7 @@ class PrivateTxEngine(
         }
         val built = a.build(bundles, stake, membership)
         val msg = a.vote?.let { v ->
-            PrivateMsgs.withVote(built, v.vnf, proofSized(prover.proveVote(v.witness(sighash).also { it.check() })))
+            PrivateMsgs.withVote(built, v.vnfs, proofSized(prover.proveVote(v.witness(sighash).also { it.check() })))
         } ?: built
         check(PrivateMsgs.sighash(msg, chainId, tx) == sighash)
         check(PrivateMsgs.totalFee(msg) == q.fee) { "the msg must pay exactly the quoted fee" }
@@ -280,7 +290,7 @@ class PrivateTxEngine(
      * from the tx's shape at x/shielded's (and the proof modules') default
      * gas, priced like the node's quote, and never more than [maxFee]. A node
      * whose simulation or prices ask more than that is refused before
-     * anything is proven; so is the automation, which has no sheet.
+     * anything is proven.
      */
     fun feeCap(msg: MessageLite, a: Assembled, txBytes: Int, minFee: Long, price: BigDecimal): Long {
         val estimate = maxOf(minFee, feeFor(price, estimateGas(msg, a, txBytes)))
@@ -291,8 +301,13 @@ class PrivateTxEngine(
         val bundles = a.bundles.map { it.proto() }.map { if (placeholders) randomNullifiers(it) else it }
         val stake = a.stake?.proto(PLACEHOLDER)?.let { if (placeholders) randomNullifiers(it) else it }
         val msg = a.build(bundles, stake, a.membership?.let { placeholderMembership(it, placeholders) })
-        // A quote's vote nullifier is random too: the node learns nothing of the note before the user confirms.
-        return a.vote?.let { PrivateMsgs.withVote(msg, if (placeholders) Fr.fromBytes(randomField().toByteArray()) else it.vnf, PLACEHOLDER) } ?: msg
+        // A quote's vote nullifiers are random too (the used slots'; an unused
+        // slot stays 0, as the gas counts them): the node learns nothing of
+        // the notes before the user confirms.
+        return a.vote?.let { v ->
+            val vnfs = if (placeholders) v.vnfs.map { if (it.isZero) it else Fr.fromBytes(randomField().toByteArray()) } else v.vnfs
+            PrivateMsgs.withVote(msg, vnfs, PLACEHOLDER)
+        } ?: msg
     }
 
     private fun randomField(): ByteString = ByteString.copyFrom(network.erth.wallet.privacy.note.NotePlaintext.randomField().toBytes())
@@ -359,8 +374,12 @@ class PrivateTxEngine(
          * nullifier tree is indexed, two more per nullifier slot (ORCHARD_DESIGN 15).
          */
         const val STAKE_GAS = 3_200_000L
-        /** A stake vote (fixed): 250,000, its proof and one note write; nothing spent or minted. */
-        const val VOTE_GAS = 2_400_000L
+        /**
+         * A stake vote's fixed part: gasVote (250,000) and its proof; the
+         * chain adds a note write for the vote and one per used vote
+         * nullifier (chain 48b631c: gasVote + proof + (1 + used) x note_gas).
+         */
+        const val VOTE_GAS = 2_250_000L
         /** A membership proof and its nullifier write. */
         const val MEMBERSHIP_GAS = 2_150_000L
         /** One note write (x/shielded note_gas default). */
@@ -379,7 +398,7 @@ class PrivateTxEngine(
             for (b in PrivateMsgs.bundles(msg)) g += BUNDLE_GAS + ACTION_GAS * b.actionsCount
             if (PrivateMsgs.stake(msg) != null) g += STAKE_GAS
             if (a.membership != null) g += MEMBERSHIP_GAS
-            if (a.vote != null) g += VOTE_GAS
+            a.vote?.let { g += VOTE_GAS + (1L + it.used) * NOTE_GAS }
             if (msg is network.erth.earth.proto.personhood.MsgRegister) g += REGISTER_GAS
             if (msg is network.erth.earth.proto.personhood.MsgBindHandle) g += BIND_HANDLE_EXTRA_GAS
             return g

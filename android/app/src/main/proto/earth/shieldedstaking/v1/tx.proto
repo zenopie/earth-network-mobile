@@ -15,8 +15,7 @@ import "earth/shielded/v1/tx.proto";
 // proof's StakeFields first (anchor, nf_0, nf_1, cm_0, cm_1, Bytes(ct_0),
 // Bytes(ct_1), spc_mint, owner_tag, Bytes(spc_ciphertext)), then the msg's
 // own fields. No msg names a fee: it is the bundle's uerth balance less what
-// the msg moves (a delegation's amount); only MsgClaimUnbonding may instead
-// pay fee_from_output.
+// the msg moves (a delegation's amount).
 
 // StakeProof is a circuits/stake proof and its public values. The chain
 // supplies asset, v_in (0), v_out and the sighash. Public input order:
@@ -31,8 +30,8 @@ message StakeProof {
   bytes spc_mint = 6;
   bytes owner_tag = 7;
   // The blind stake ciphertext (177 bytes) of the note minted to spc_mint:
-  // required on Delegate, Undelegate, UnlockPosition; empty
-  // otherwise.
+  // required on Delegate and UnlockPosition; empty otherwise (spc_mint is
+  // proven for every msg but used only by those two).
   bytes spc_ciphertext = 8;
 }
 
@@ -53,35 +52,34 @@ message MsgRestake {
   StakeProof stake = 4;
 }
 
-// sighash fields: StakeFields, Bytes(validator), amount.
+// The chain pays the undelegation out by itself at maturity: value x
+// payout / requested uerth as pool notes to pc with ciphertext (several notes
+// of at most 2^63-1, the same ciphertext, when it is split). No stake note is
+// minted: stake.spc_ciphertext is empty, stake.spc_mint is unused.
+// sighash fields: StakeFields, Bytes(validator), amount, pc, Bytes(ciphertext).
 message MsgUndelegate {
   earth.shielded.v1.Bundle bundle = 1;
   string validator = 2;
   uint64 amount = 3;
   reserved 4;
   StakeProof stake = 5;
+  // The payout notes' pc (32 bytes) and amount-blind v2 ciphertext (177 bytes).
+  bytes pc = 6;
+  bytes ciphertext = 7;
 }
 
-// bundle is absent with fee_from_output. sighash fields: StakeFields,
-// Bytes(validator), epoch, amount, pc, Bytes(ciphertext), fee_from_output.
-message MsgClaimUnbonding {
-  earth.shielded.v1.Bundle bundle = 1;
-  string validator = 2;
-  uint64 epoch = 3;
-  uint64 amount = 4;
-  bytes pc = 5;
-  bytes ciphertext = 6;
-  uint64 fee_from_output = 7;
-  reserved 8;
-  StakeProof stake = 9;
-}
+// MsgClaimUnbonding is retired (chain 48b631c): undelegations pay out by
+// themselves.
 
-// A stake note's vote without spending it (ORCHARD_DESIGN 15): proof is
-// circuits/vote against the proposal's snapshot (note root, nullifier tree
-// root); vote_nullifier = H(TAG_VNF, nk, rho, position, proposal_id), refused
-// a second time on the proposal (code 1119). Nothing is spent or minted.
+// Up to four stake notes of one owner at one validator vote with ONE weight,
+// without being spent (ORCHARD_DESIGN 18.2): proof is circuits/vote against
+// the proposal's snapshot (note root, nullifier tree root). vote_nullifiers:
+// exactly four, the used slots' H(TAG_VNF, nk, rho, position, proposal_id)
+// first (distinct), then zeros; each refused a second time on the proposal
+// (code 1119). weight: the notes' sum rounded down to three significant
+// digits. Nothing is spent or minted.
 // sighash fields (no StakeFields): proposal_id, Bytes(validator),
-// Bytes(OptionsBytes(options)), weight, vote_nullifier.
+// Bytes(OptionsBytes(options)), weight, vote_nullifiers[0..3].
 message MsgStakeVote {
   earth.shielded.v1.Bundle bundle = 1;
   uint64 proposal_id = 2;
@@ -92,7 +90,9 @@ message MsgStakeVote {
   // stake (7): the spend-to-vote stake proof, gone.
   reserved 7;
   bytes proof = 8;
-  bytes vote_nullifier = 9;
+  // vote_nullifier (9): the one-note vote's, replaced by vote_nullifiers.
+  reserved 9;
+  repeated bytes vote_nullifiers = 10;
 }
 
 // sighash fields: StakeFields, Bytes(validator), amount,

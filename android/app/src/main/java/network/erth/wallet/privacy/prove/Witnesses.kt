@@ -228,21 +228,38 @@ data class MembershipWitness(
 }
 
 /**
- * The vote circuit's witness (circuits/vote): one derth stake note under the
- * proposal's snapshot note root, its spend nullifier absent from the snapshot
- * stake nullifier tree (a low leaf under nf_root), 0 < weight <= amount, and
- * its vote nullifier on the proposal. Public inputs in the chain's order
- * (MsgStakeVote.VotePublicInputs): note_root, nf_root, asset, weight,
- * proposal_id, vnf, sighash.
+ * One used slot of a vote witness: a derth stake note under the proposal's
+ * snapshot note root and the low leaf proving its spend nullifier absent from
+ * the snapshot stake nullifier tree.
  */
-data class VoteWitness(
-    val nk: Fr,
+data class VoteSlot(
     val amount: Long,
     val rho: Fr,
     val rcm: Fr,
     val pos: Long,
     val path: List<Fr>,
     val low: network.erth.wallet.privacy.zk.IndexedTree.Witness,
+) {
+    init {
+        require(path.size == Merkle.DEPTH && low.lowPath.size == Merkle.DEPTH)
+        require(pos in 0..0xffffffffL && low.lowIndex in 0..0xffffffffL && low.lowNextIndex in 0..0xffffffffL) { "a u32" }
+        require(amount > 0) { "a used slot holds a note" }
+    }
+}
+
+/**
+ * The vote circuit's witness (circuits/vote, ORCHARD_DESIGN 18.2): up to
+ * [MAX_NOTES] derth stake notes of one owner (one nk) at one validator, each
+ * under the proposal's snapshot note root with its spend nullifier absent
+ * from the snapshot stake nullifier tree, and one weight, 0 < weight <= their
+ * sum. [slots] are the used slots, in order; the rest are unused (amount 0,
+ * vote nullifier 0, every other field 0). Public inputs in the chain's order
+ * (MsgStakeVote.VotePublicInputs): note_root, nf_root, asset, weight,
+ * proposal_id, vnf[0..3], sighash.
+ */
+data class VoteWitness(
+    val nk: Fr,
+    val slots: List<VoteSlot>,
     val noteRoot: Fr,
     val nfRoot: Fr,
     val asset: Fr,
@@ -251,48 +268,67 @@ data class VoteWitness(
     val sighash: Fr,
 ) {
     init {
-        require(path.size == Merkle.DEPTH && low.lowPath.size == Merkle.DEPTH)
-        require(pos in 0..0xffffffffL && low.lowIndex in 0..0xffffffffL && low.lowNextIndex in 0..0xffffffffL) { "a u32" }
+        require(slots.size in 1..MAX_NOTES) { "a vote carries 1..$MAX_NOTES notes" }
     }
 
-    /** The note's spend nullifier: private, never published by a vote. */
-    val spendNf: Fr by lazy { Privacy.stakeNf(nk, rho, pos) }
-    val vnf: Fr by lazy { Privacy.voteNf(nk, rho, pos, proposalId) }
+    /** The used slots' spend nullifiers: private, never published by a vote. */
+    val spendNfs: List<Fr> by lazy { slots.map { Privacy.stakeNf(nk, it.rho, it.pos) } }
+
+    /** Every slot's vote nullifier: the used ones', then 0 for each unused slot. */
+    val vnfs: List<Fr> by lazy {
+        slots.map { Privacy.voteNf(nk, it.rho, it.pos, proposalId) } + List(MAX_NOTES - slots.size) { Fr.ZERO }
+    }
 
     /** What the circuit asserts, checked before spending seconds on a proof that cannot verify. */
     fun check() {
-        val cm = Privacy.stakeCm(asset, amount, Privacy.stakePc(Privacy.ownerPk(nk), rho, rcm))
-        require(Merkle.rootFromPath(cm, pos, path) == noteRoot) { "the stake note is not under the snapshot root" }
-        require(low.proves(spendNf, nfRoot)) { "the stake note was spent before the snapshot" }
+        val opk = Privacy.ownerPk(nk)
+        for ((i, sl) in slots.withIndex()) {
+            val cm = Privacy.stakeCm(asset, sl.amount, Privacy.stakePc(opk, sl.rho, sl.rcm))
+            require(Merkle.rootFromPath(cm, sl.pos, sl.path) == noteRoot) { "stake note $i is not under the snapshot root" }
+            require(sl.low.proves(spendNfs[i], nfRoot)) { "stake note $i was spent before the snapshot" }
+        }
+        require(vnfs.take(slots.size).toSet().size == slots.size) { "the same note twice" }
         require(weight != 0L) { "zero vote weight" }
-        require(java.lang.Long.compareUnsigned(weight, amount) <= 0) { "the vote weighs more than the note" }
+        val sum = slots.fold(java.math.BigInteger.ZERO) { a, sl -> a + java.math.BigInteger.valueOf(sl.amount) }
+        require(java.math.BigInteger(java.lang.Long.toUnsignedString(weight)) <= sum) { "the vote weighs more than its notes" }
     }
 
     fun publicInputs(): List<Fr> =
-        listOf(noteRoot, nfRoot, asset, Privacy.u64(weight), Privacy.u64(proposalId), vnf, sighash)
+        listOf(noteRoot, nfRoot, asset, Privacy.u64(weight), Privacy.u64(proposalId)) + vnfs + listOf(sighash)
 
-    fun noirInputs(): Map<String, Any> = mapOf(
-        "nk" to nk.toNoir(),
-        "amount" to hex(amount),
-        "rho" to rho.toNoir(),
-        "rcm" to rcm.toNoir(),
-        "pos" to hex(pos),
-        "path" to path.map { it.toNoir() },
-        "low_value" to low.lowValue.toNoir(),
-        "low_next_value" to low.lowNextValue.toNoir(),
-        "low_next_index" to hex(low.lowNextIndex),
-        "low_index" to hex(low.lowIndex),
-        "low_path" to low.lowPath.map { it.toNoir() },
-        "note_root" to noteRoot.toNoir(),
-        "nf_root" to nfRoot.toNoir(),
-        "asset" to asset.toNoir(),
-        "weight" to hex(weight),
-        "proposal_id" to hex(proposalId),
-        "vnf" to vnf.toNoir(),
-        "sighash" to sighash.toNoir(),
-    )
+    fun noirInputs(): Map<String, Any> {
+        val zero = Fr.ZERO.toNoir()
+        val zeros = List(Merkle.DEPTH) { zero }
+        fun <T> slot(i: Int, used: (VoteSlot) -> T, unused: T): T = slots.getOrNull(i)?.let(used) ?: unused
+        val idx = 0 until MAX_NOTES
+        return mapOf(
+            "nk" to nk.toNoir(),
+            "amount" to idx.map { i -> slot(i, { hex(it.amount) }, "0x0") },
+            "rho" to idx.map { i -> slot(i, { it.rho.toNoir() }, zero) },
+            "rcm" to idx.map { i -> slot(i, { it.rcm.toNoir() }, zero) },
+            "pos" to idx.map { i -> slot(i, { hex(it.pos) }, "0x0") },
+            "path" to idx.map { i -> slot(i, { s -> s.path.map { it.toNoir() } }, zeros) },
+            "low_value" to idx.map { i -> slot(i, { it.low.lowValue.toNoir() }, zero) },
+            "low_next_value" to idx.map { i -> slot(i, { it.low.lowNextValue.toNoir() }, zero) },
+            "low_next_index" to idx.map { i -> slot(i, { hex(it.low.lowNextIndex) }, "0x0") },
+            "low_index" to idx.map { i -> slot(i, { hex(it.low.lowIndex) }, "0x0") },
+            "low_path" to idx.map { i -> slot(i, { s -> s.low.lowPath.map { it.toNoir() } }, zeros) },
+            "note_root" to noteRoot.toNoir(),
+            "nf_root" to nfRoot.toNoir(),
+            "asset" to asset.toNoir(),
+            "weight" to hex(weight),
+            "proposal_id" to hex(proposalId),
+            "vnf" to vnfs.map { it.toNoir() },
+            "sighash" to sighash.toNoir(),
+        )
+    }
 
     fun proverToml(): String = toml(noirInputs())
+
+    companion object {
+        /** circuits/vote MAX_NOTES: the most notes one vote proof carries. */
+        const val MAX_NOTES = 4
+    }
 }
 
 private fun hex(v: Long): String = "0x" + java.lang.Long.toUnsignedString(v, 16)
