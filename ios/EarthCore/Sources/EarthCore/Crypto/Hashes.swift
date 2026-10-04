@@ -9,6 +9,25 @@ public enum Hashes {
         Data(SHA256.hash(data: data))
     }
 
+    /// The hashes passports are signed with, by the name the register
+    /// circuits use (sha1, sha224, sha256, sha384, sha512).
+    ///
+    /// SHA-1 included on purpose: passports signed with it are still valid,
+    /// and every byte it hashes there is issuer-formed (PASSPORT_COVERAGE.md).
+    public static func passport(_ name: String, _ data: Data) -> Data? {
+        switch name {
+        case "sha1": return Data(Insecure.SHA1.hash(data: data))
+        case "sha224":
+            var out = [UInt8](repeating: 0, count: Int(CC_SHA224_DIGEST_LENGTH))
+            data.withUnsafeBytes { _ = CC_SHA224($0.baseAddress, CC_LONG(data.count), &out) }
+            return Data(out)
+        case "sha256": return sha256(data)
+        case "sha384": return Data(SHA384.hash(data: data))
+        case "sha512": return Data(SHA512.hash(data: data))
+        default: return nil
+        }
+    }
+
     /// The Cosmos address hash: RIPEMD160(SHA256(x)).
     public static func hash160(_ data: Data) -> Data {
         RIPEMD160.hash(sha256(data))

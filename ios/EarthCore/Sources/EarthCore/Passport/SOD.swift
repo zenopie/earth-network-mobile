@@ -7,8 +7,8 @@ import Foundation
 /// come out of it, and each is a slice of the original bytes rather than
 /// anything re-derived:
 ///
-///  - `eContent`, which holds `sha256(DG1)`,
-///  - `signedAttrs`, which holds `sha256(eContent)`,
+///  - `eContent`, which holds DG1's hash,
+///  - `signedAttrs`, which holds eContent's hash,
 ///  - the signature over `signedAttrs`, and the certificate that verifies it.
 ///
 /// The circuit re-walks that same chain in zero knowledge, which is why the
@@ -32,6 +32,14 @@ public struct SOD {
     /// The Document Signer's signature over `signedAttributes`.
     public let signature: Data
     public let certificate: Certificate
+    /// The LDS security object's hashAlgorithm: the data-group hashes.
+    public let dataGroupHashOID: String
+    /// SignerInfo digestAlgorithm: the hash of eContent in the signed attributes.
+    public let digestAlgorithmOID: String
+    /// SignerInfo signatureAlgorithm, and its parameters' DER (nil when absent
+    /// or NULL): RSASSA-PSS states its hash, mask and salt there.
+    public let signatureAlgorithmOID: String
+    public let signatureParameters: Data?
 
     public init(efSOD: Data) throws {
         // ContentInfo ::= SEQUENCE { contentType OID, [0] EXPLICIT content }
@@ -55,6 +63,9 @@ public struct SOD {
         // EncapsulatedContentInfo ::= SEQUENCE { eContentType, [0] EXPLICIT eContent }
         guard let wrapper = try encap.first(tag: DER.Tag.context(0)) else { throw Error.noContent }
         self.eContent = try wrapper.child(0).expect(tag: DER.Tag.octetString).content
+        // LDSSecurityObject ::= SEQUENCE { version, hashAlgorithm, dataGroupHashValues, ... }
+        self.dataGroupHashOID = try DER.parse(eContent).expect(tag: DER.Tag.sequence)
+            .child(1).expect(tag: DER.Tag.sequence).child(0).oid
 
         guard let certificates = members.first(where: { $0.tag == DER.Tag.context(0) }) else {
             throw Error.noCertificate
@@ -72,13 +83,21 @@ public struct SOD {
         else { throw Error.noSigner }
 
         let signerFields = try signer.children()
+        // SignerInfo ::= SEQUENCE { version, sid, digestAlgorithm,
+        //     [0] signedAttrs OPTIONAL, signatureAlgorithm, signature, ... }
+        guard signerFields.count >= 5 else { throw Error.noSigner }
+        self.digestAlgorithmOID = try signerFields[2].expect(tag: DER.Tag.sequence).child(0).oid
+        let algorithmIndex = signerFields[3].tag == DER.Tag.context(0) ? 4 : 3
+        let algorithm = try signerFields[algorithmIndex].expect(tag: DER.Tag.sequence).children()
+        self.signatureAlgorithmOID = try algorithm[0].oid
+        self.signatureParameters = algorithm.count > 1 && algorithm[1].tag != DER.Tag.null ? algorithm[1].encoded : nil
 
         // The signed attributes are stored under an implicit [0], but the
         // signature is computed over the explicit `SET OF` encoding. Re-tagging
         // is not cosmetic: sign or verify against the stored bytes and the
         // digest is over a different first byte, so nothing matches.
         guard let attributes = signerFields.first(where: { $0.tag == DER.Tag.context(0) }) else {
-            throw Error.noSignedAttributes
+            throw PassportInputs.Error.unsupported("unsigned attributes")
         }
         self.signedAttributes = DER.encode(tag: DER.Tag.set, content: attributes.content)
 

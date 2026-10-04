@@ -16,11 +16,99 @@ private let checkAddress = "earth1v4shyarg94nxj7r5w4ex2tthv9kxcet5fft9fs"
 /// bech32 one, because the input builder decodes and checksums it.
 
 
+/// The repo root: Sources/corecheck -> Sources -> EarthCore -> ios -> root.
+private let repoRoot = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+
+/// The variant manifest the app bundles (the Android asset, which iOS references).
+private let variants: PassportVariants = {
+    let url = repoRoot.appendingPathComponent("android/app/src/main/assets/circuits/passport_variants.json")
+    return try! PassportVariants(json: Data(contentsOf: url))
+}()
+
 func checkPassport(writingTo artifacts: URL) {
+    PassportVariants.installed = variants
     checkMRZ()
     checkCertificates()
     checkSODAndInputs(writingTo: artifacts)
+    checkSharedFixtures()
     checkRegistration()
+}
+
+/// Every register-circuit variant's shared fixture (circuits/fixtures, a
+/// synthetic passport from circuits/tools/variants.py whose witness the
+/// circuit's nargo tests and the chain's verifier fixtures prove): this
+/// builds the same witness, byte for byte, as Android's PassportInputsTest
+/// checks it does. And every scheme no circuit covers is refused by name.
+private func checkSharedFixtures() {
+    Check.group("shared passport fixtures, every variant")
+    let fixtures = repoRoot.appendingPathComponent("circuits/fixtures")
+    Check.equal("33 variants", variants.variants.count, 33)
+    for v in variants.variants {
+        let dir = fixtures.appendingPathComponent(v.id)
+        guard let dg1 = try? Data(contentsOf: dir.appendingPathComponent("dg1.bin")),
+              let sod = try? Data(contentsOf: dir.appendingPathComponent("sod.bin")),
+              let raw = try? Data(contentsOf: dir.appendingPathComponent("expected.json")),
+              let expected = try? JSONSerialization.jsonObject(with: raw) as? [String: Any],
+              let want = expected["witness"] as? [String: Any]
+        else {
+            Check.that("\(v.id) fixture present", false)
+            continue
+        }
+        do {
+            let inputs = try PassportInputs.build(
+                dg1: dg1, efSOD: sod, currentDateYYMMDD: expected["current_date"] as! Int,
+                addressField: expected["address"] as! String, variants: variants)
+            Check.equal("\(v.id) selected", inputs.algorithm, v.id)
+            Check.equal("\(v.id) scheme", inputs.scheme, expected["scheme"] as? String)
+            Check.equal("\(v.id) witness keys", Set(inputs.witness.keys), Set(want.keys))
+            let same = want.allSatisfy { k, value in
+                if let a = value as? [String] { return inputs.witness[k] as? [String] == a }
+                return inputs.witness[k] as? String == value as? String
+            }
+            Check.that("\(v.id) witness is the reference's, byte for byte", same)
+        } catch {
+            Check.that("\(v.id) builds", false, detail: "\(error)")
+        }
+        if let tampered = try? Data(contentsOf: dir.appendingPathComponent("dg1_tampered.bin")) {
+            Check.equal("\(v.id) refuses a DG1 its SOD does not sign",
+                        (try? PassportInputs.build(dg1: tampered, efSOD: sod, currentDateYYMMDD: 250101,
+                                                   addressField: "0x1", variants: variants)).map { _ in "built" }
+                            ?? errorCode { _ = try PassportInputs.build(dg1: tampered, efSOD: sod, currentDateYYMMDD: 250101,
+                                                                        addressField: "0x1", variants: variants) },
+                        expected["dg1_tampered_error"] as? String)
+        }
+    }
+
+    let unsupported = fixtures.appendingPathComponent("unsupported")
+    let names = ((try? FileManager.default.contentsOfDirectory(atPath: unsupported.path)) ?? []).sorted()
+    Check.that("unsupported fixtures present", names.count >= 10, detail: "\(names.count)")
+    for name in names {
+        let dir = unsupported.appendingPathComponent(name)
+        guard let dg1 = try? Data(contentsOf: dir.appendingPathComponent("dg1.bin")),
+              let sod = try? Data(contentsOf: dir.appendingPathComponent("sod.bin")),
+              let raw = try? Data(contentsOf: dir.appendingPathComponent("expected.json")),
+              let want = (try? JSONSerialization.jsonObject(with: raw) as? [String: Any])?["unsupported"] as? String
+        else { continue }
+        do {
+            _ = try PassportInputs.build(dg1: dg1, efSOD: sod, currentDateYYMMDD: 250101, addressField: "0x1", variants: variants)
+            Check.that("\(name) is refused", false)
+        } catch let PassportInputs.Error.unsupported(scheme) {
+            Check.equal("\(name) names its scheme", scheme, want)
+            Check.equal("\(name) message", PassportInputs.Error.unsupported(scheme).localizedDescription,
+                        "This passport's signature type isn't supported yet (\(want))")
+        } catch {
+            Check.that("\(name) is refused as unsupported", false, detail: "\(error)")
+        }
+    }
+}
+
+private func errorCode(_ body: () throws -> Void) -> String? {
+    do { try body(); return nil } catch let PassportInputs.Error.data(code) { return code } catch { return "\(error)" }
 }
 
 /// The half of the passport flow that is neither NFC nor Barretenberg.
@@ -64,7 +152,7 @@ private func checkRegistration() {
     }
 
     let proof = runBlocking { try await PassportRegistration.prove(scan: scan, binding: binding, using: prover) }
-    Check.equal("the prover is handed the circuit the certificate selects", seenAlgorithm, "lean_poa")
+    Check.equal("the prover is handed the circuit the passport selects", seenAlgorithm, "lean_poa_p256_sha256")
     Check.equal("the circuit's address input is the registration binding", seenAddress, binding.noir)
     Check.equal("nullifier is the third public signal", proof?.nullifier, "12345")
 
@@ -72,7 +160,7 @@ private func checkRegistration() {
     // look up the wrong verifying key, so it is caught rather than broadcast.
     let wrongProver: PassportRegistration.Prover = { _ in
         PassportRegistration.Proof(proof: Data([0x01]), publicSignals: [],
-                                   signatureAlgorithm: "lean_poa_rsa2048")
+                                   signatureAlgorithm: "lean_poa_rsa2048_sha256")
     }
     Check.that("a proof from the wrong circuit is refused",
                runBlocking { try await PassportRegistration.prove(scan: scan, binding: binding, using: wrongProver) } == nil)
@@ -204,12 +292,6 @@ private func checkCertificates() {
     // Sources/corecheck -> Sources -> EarthCore -> ios -> the repo root, then
     // across to the sibling chain checkout, the same way tools/chainverify
     // reaches barretenberg-go.
-    let repoRoot = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
     let chain = repoRoot.deletingLastPathComponent().appendingPathComponent("earth-network-chain")
     let roots = [
         chain.appendingPathComponent("x/pki/certs/testdata"),
@@ -236,20 +318,18 @@ private func checkCertificates() {
     let expected = [
         Expected(file: "csca_brainpoolP256r1.der",
                  canonical: "424b9a5779aa0cdcc1b029e0f24050069f1dfa67283699102f04a86a1704062c499f372437077efebab13e96144615e1c7465542c9118e558141bafc157d7134",
-                 algorithm: "lean_poa_brainpool256"),
+                 algorithm: "bp256"),
         Expected(file: "csca_brainpoolP512r1.der",
                  canonical: "a74f349b83eb95a5bb94b327858b52004972594b9f7c2b792efb492ad79339618435e9843e4c9f57259dceabbce17b8d0d684f31437162e5e4c258c468afb18d002ac9bd479f1c7cf9974415b78d0ef6a9721e6e8a3120c0d86388a6929aa5dc732e913cd9da1f3e80c5b0ebe0b3622a3ccc15de496b646e575574a92318ebcb",
-                 algorithm: "lean_poa_brainpool512"),
+                 algorithm: "bp512"),
         Expected(file: "csca_self_signed.der",
                  canonical: "16e2246498ae73cf0210f92513927aa5dbbd2653d55afc0ec19290490cc98f7956e97399cf90584877abf8449fc6697dda915f671958c312ef2d37a83a5dc959",
-                 algorithm: "lean_poa_brainpool256"),
+                 algorithm: "bp256"),
         Expected(file: "csca_rsa.der",
                  canonical: "d2677449f65dbc0637e55414fbe6a0db9ab1dd6b6e3a7d893aa56b1ebfa2fbe56e4c6fd385a2817fdf01b6cf46977b4faa8700174e521b5d560a2732fd59e6d4d1e89c026c2f1c71f58249ed19b04127bdbea89ed19ff289e749c155a98de66b0bad6de53be0915bcbe20fd9a11c78e7c81324c8550d427384c38bfb09224ca4baf8e4fba249c62770ee21a0447a59f5b25b1b14f11f003d397f3fe0539d9fa82b3af07d8882c457e8ac5657b459a7beb7fb2fbc4a4d84cc76b1c079161849342da24fdf1ac5d2d6189073840f5f843e059f0cf86cb3b3010713a69c95d9741d6b0b24876e75a15112ec39157c7a0f4493dca59e9739eb6e61e85a7def6eb419",
-                 algorithm: "lean_poa_rsa2048"),
-        // A 6144-bit RSA key: parses, canonicalises, and has no circuit. The
-        // right behaviour is to read it and then refuse to select a variant,
-        // rather than to fail earlier and report the wrong reason.
-        Expected(file: "csca_long_dn.der", canonical: "", algorithm: nil),
+                 algorithm: "rsa2048"),
+        // A 6144-bit RSA key: parses and canonicalises; no variant takes it.
+        Expected(file: "csca_long_dn.der", canonical: "", algorithm: "rsa6144"),
     ]
 
     for e in expected {
@@ -265,20 +345,21 @@ private func checkCertificates() {
             Check.equal("\(e.file) canonical key", certificate.canonicalPublicKey.hexString, e.canonical)
         }
         if let algorithm = e.algorithm {
-            Check.equal("\(e.file) circuit", try? certificate.registerAlgorithm, algorithm)
-        } else {
-            Check.throwsError("\(e.file) has no circuit to prove with") {
-                _ = try certificate.registerAlgorithm
+            let key: String
+            switch certificate.publicKey {
+            case let .ec(curve, _, _): key = curve.key
+            case let .rsa(modulus, _): key = "rsa\(modulus.magnitude.bitWidth)"
             }
+            Check.equal("\(e.file) key", key, algorithm)
         }
     }
 
-    // P-521 has no register circuit, and this certificate states its curve as
-    // explicit parameters — so it exercises both halves at once: the
-    // parameters parse, and no curve matches the order they carry.
+    // P-521 stated as explicit parameters: every one matches, so it is P-521.
     if let data = der("csca_p521_explicit.der") {
-        Check.throwsError("a curve with no circuit is refused, not misread") {
-            _ = try Certificate(der: data)
+        if case let .ec(curve, _, _)? = (try? Certificate(der: data))?.publicKey {
+            Check.equal("explicit P-521 parameters name P-521", curve.key, "p521")
+        } else {
+            Check.that("explicit P-521 parameters parse", false)
         }
     }
 }
@@ -314,16 +395,18 @@ private func checkSODAndInputs(writingTo artifacts: URL) {
     Check.group("witness map")
 
     let inputs = try! PassportInputs.build(dg1: passport.dg1, efSOD: passport.efSOD,
-                                           currentDateYYMMDD: 260819, address: checkAddress)
-    Check.equal("selects the P-256 circuit", inputs.algorithm, "lean_poa")
+                                           currentDateYYMMDD: 260819,
+                                           addressField: try! PassportInputs.addressField(checkAddress),
+                                           variants: variants)
+    Check.equal("selects the P-256 SHA-256 circuit", inputs.algorithm, "lean_poa_p256_sha256")
 
     let witness = inputs.witness
     // The names and widths the compiled circuit declares — see the abi in
-    // android/app/src/main/assets/circuits/lean_poa.json.
+    // android/app/src/main/assets/circuits/lean_poa_p256_sha256.json.
     Check.equal("dg1 is padded to 95", (witness["dg1"] as? [String])?.count, 95)
     Check.equal("dg1_len", witness["dg1_len"] as? String, "0x5d")
-    Check.equal("e_content is padded to 200", (witness["e_content"] as? [String])?.count, 200)
-    Check.equal("signed_attrs is padded to 200", (witness["signed_attrs"] as? [String])?.count, 200)
+    Check.equal("e_content is padded to 695", (witness["e_content"] as? [String])?.count, 695)
+    Check.equal("signed_attrs is padded to 256", (witness["signed_attrs"] as? [String])?.count, 256)
     Check.equal("dsc_pubkey_x is 32 bytes", (witness["dsc_pubkey_x"] as? [String])?.count, 32)
     Check.equal("dsc_pubkey_y is 32 bytes", (witness["dsc_pubkey_y"] as? [String])?.count, 32)
     Check.equal("sod_signature is r‖s", (witness["sod_signature"] as? [String])?.count, 64)
@@ -351,7 +434,7 @@ private func checkSODAndInputs(writingTo artifacts: URL) {
 
     // Noir's std ECDSA rejects a high s as malleable, and about half of real
     // signatures arrive that way, so this is not a rare path.
-    let n = Certificate.curves["1.2.840.10045.3.1.7"]!.order
+    let n = Certificate.curves.first { $0.key == "p256" }!.order
     let signatureBytes = (witness["sod_signature"] as! [String])
         .map { UInt8($0.dropFirst(2), radix: 16)! }
     let s = BigInt(sign: .plus, magnitude: BigUInt(Data(signatureBytes.suffix(32))))
@@ -368,12 +451,13 @@ private func checkSODAndInputs(writingTo artifacts: URL) {
     tampered[20] ^= 0x01
     Check.throwsError("a DG1 that does not match the SOD is refused") {
         _ = try PassportInputs.build(dg1: Data(tampered), efSOD: passport.efSOD,
-                                     currentDateYYMMDD: 260819, address: checkAddress)
+                                     currentDateYYMMDD: 260819,
+                                     addressField: try PassportInputs.addressField(checkAddress), variants: variants)
     }
 
     // Everything above shows the witness has the right shape. Whether it is
     // the *right* witness only the circuit can say, so it is written out for
-    // `progate --witness` to prove against the real lean_poa. That is the same
+    // `progate --witness` to prove against the real circuit. That is the same
     // arrangement as the prover gate: the offline checks are necessary, and the thing
     // that decides is downstream.
     let fixture: [String: Any] = [
