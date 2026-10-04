@@ -32,20 +32,24 @@ This file replaces the per-round `*_PROGRESS.md` files and
   partial). A lock that failed in its block published its owner tag without
   a position; a restored wallet may reuse that counter. Registrations made
   before the record note cannot be restored from the mnemonic.
-- **Privacy notes for the chain** (raised, not changed): a vote's slot
-  count is public (an unused slot cannot be padded), so a two-slot vote
-  hints at a labelled or second note; quotes ask Query/Validator (and a
-  move source's x/staking status) by validator id at review time, tying
-  the IP to an intent to stake there (a whole-set read would remove it); a
-  restored wallet learns earlier votes only from 1119 refusals, one vote
-  nullifier per refusal; Query/UnbondPayout is per id (never asked; the
-  wallet keeps its own record); stake rows carry no denom, so a validator
-  removed from x/staking after its last note leaves that note unnamed;
-  spent stake notes are never pruned (storage grows); a redelegation's fee
-  cap is about 15M gas higher than needed (the pair's record is not asked
-  about); the unlock record costs one more action (the stake ciphertext has
-  no memo); "merge notes" after a snapshot cannot reduce that proposal's
-  vote parts.
+- **Privacy notes for the chain** (raised, not changed): a restored
+  wallet learns earlier votes only from 1119 refusals, one vote nullifier
+  per refusal; Query/UnbondPayout is per id (never asked; the wallet keeps
+  its own record); stake rows carry no denom, so a note at a validator
+  whose book the chain has dropped (the validator list carries a removed
+  validator's book only while it lasts) stays unnamed; spent stake notes
+  are never pruned (storage grows); a redelegation's fee cap still allows
+  the pair's record at its worst (the list's entry counts size only the
+  merge headroom); the unlock record costs one more action (the stake
+  ciphertext has no memo); "merge notes" after a snapshot cannot reduce
+  that proposal's vote parts.
+- **Passport circuits accept one profile per key type** (circuits, not
+  changed): SHA-256 for the DG hash, eContent digest and signed
+  attributes; RSA PKCS#1 v1.5 with e = 65537 (no PSS). The apps refuse an
+  unsupported curve, RSA size or a DG/eContent hash that is not SHA-256 up
+  front, but a SHA-384/512 signature digest, RSA-PSS or another exponent is
+  found only when the witness fails to solve (a generic proving error, no
+  tx sent).
 - **Unmeasured.** Phone prove times for action and stake (Mac through
   Swoirenberg: about 150 ms each). A restore whose record country hint
   misses scans about 90k timestamps before the full country search (about
@@ -231,3 +235,58 @@ counts). The pre-Orchard vector generator was retired: the current one moved
 from `android/tools/orchardvectors` to `tools/privacyvectors` and now writes
 both platforms' copies (regenerated at b46a4bb: byte-identical). Circuit
 comments tidied with identical bytecode, ABI and VKs.
+
+## Final pre-audit pass (chain c3bf5ef, 2026-10-04)
+
+Fixes only; Android first, then iOS with the same behaviour.
+
+- **Validator list (chain b7e77f8).** Every per-validator read is gone:
+  Query/Validator and x/staking's `validators/{addr}` (asked for the
+  validators of each quote at review time), Earn's per-validator rate
+  fallback and the indexer's `/rates`. **iOS bug found:** AppModel's rate
+  fallback asked Query/Validator for every held validator by id, bonded or
+  not, telling the node which validators the wallet holds (Android's
+  fallback asked only about the bonded set). Both apps now read
+  `Query/Validators` whole: every page pinned to the first page's height
+  (`x-cosmos-block-height`), a page from another height or not served at
+  it restarting the read (4 tries); kept in memory; read again on every
+  sync, every quote and every Earn refresh. Quotes take S, B, P, U, D, W,
+  status, delegatable and refusal from it: delegate and move destinations
+  that are not delegatable are refused up front with the chain's reason;
+  a move arrives whole wherever the value leaves the queue first
+  (unbonded, removed, or D − U ≤ 0) and P + W covers it (previously only
+  an unbonded source, and P alone); an undelegation's sheet shows its value
+  at the live rate; a move whose pair is within 51 counted entries of the
+  1,024 cap declares the merge's gas on top of its simulation. Stake
+  pickers offer bonded validators that are delegatable; names, commissions
+  and rates come from the list for every validator; sync names derth
+  denoms from it (books of removed validators included). Grep of both
+  apps: no per-id validator, delegation-pair or redelegation query left.
+- **Android tx sheet gas (bug).** Every tx sheet offered "Get free gas",
+  but `TxController.requestGas` only set a message and `requestingGas` /
+  `awaitingGas` were never set. The one grant (`/gas/register`) belongs to
+  the registration's sheet, which keeps it; every other sheet now says
+  where its fee comes from, as iOS already did (iOS offers the grant only
+  on the registration sheet; its text was aligned and its unreachable
+  non-registration branches removed).
+- **ProverGateCore corecheck.** It checked a stale 15-input fixture; the
+  committed `lean_inputs.json` already matched the 13-input lean_poa. It
+  now checks the fixture against the compiled circuit's ABI (names,
+  shapes, widths, public order, return values, calendar date, non-zero
+  address). The gate and `progate --witness` compare their VK with the
+  chain's genesis key. The apps' passport path was correct: both build the
+  identical witness from a shared synthetic passport fixture (new Android
+  and iOS tests; the synthetic DSC now names an issuer, which BouncyCastle
+  requires), it proves and verifies with the genesis lean_poa VK, and
+  `bb write_vk` of every bundled circuit (seven passport variants, action,
+  stake, membership, vote) equals genesis.
+- **Vote padding (ba4d295)** verified end to end: fresh dumps, Android 553
+  witnesses (403 action, 100 stake, 36 membership, 14 vote) and iOS 529
+  (385, 100, 30, 14), all solve with `nargo execute`; ProverGate
+  (PRIVACY_TOML_DIR) proves and verifies all 1,082 with the genesis VKs.
+  The two passport witnesses (`lean_inputs.json`, the shared fixture)
+  solve lean_poa. Tests: Android 241, iOS EarthCore 243, corecheck 149/149,
+  ProverGateCore corecheck all pass; assembleDebug and the arm64 simulator
+  build succeed.
+
+Android 1.0.40 (versionCode 47); iOS build 20.

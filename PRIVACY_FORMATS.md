@@ -898,7 +898,11 @@ Body (bytes as standard base64): `proof`, `public_signals`,
 never `affiliate_pc` / `affiliate_ciphertext`, which the backend refuses
 with a 400), `pc_gas` and `ciphertext_gas` (a fresh v2 note to self, 177
 bytes, required), and optionally `pow`. The backend rebuilds MsgRegister
-from it and checks it as the chain would.
+from it and checks it as the chain would. Only the registration's confirm
+sheet offers it; every other sheet whose fee the balance cannot cover says
+where that fee comes from (shielded ERTH for a private action: shield some
+or receive privately; the public account for a signed one: unshield or
+receive) and offers no grant.
 
 **Proof of work** (backend services/pow.py): `"pow": {"ts": <int>,
 "nonce": "<str>"}`, a hashcash stamp:
