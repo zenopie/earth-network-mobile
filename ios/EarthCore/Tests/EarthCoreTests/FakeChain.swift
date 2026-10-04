@@ -955,7 +955,8 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
         let until = h.expiresAt + handleRenewal
         let status: String
         if now < h.expiresAt { status = HandleEntry.live } else if now < until { status = HandleEntry.renewal } else { return nil }
-        return HandleEntry(handle: h.handle, address: h.address, status: status, expiresAt: h.expiresAt, renewalUntil: until)
+        return HandleEntry(handle: h.handle, address: h.address, status: status, expiresAt: h.expiresAt, renewalUntil: until,
+                           owner: ownerHex?(h) ?? h.nullifier.hex)
     }
 
     private func directory() -> [HandleEntry] { handles.keys.sorted().compactMap { entry(handles[$0]!) } }
@@ -971,7 +972,7 @@ final class FakeChain: PrivateChain, PrivacyIndexer, ChainRoots, @unchecked Send
     func handles(fromIndex: Int64, limit: Int) async throws -> HandleDirectory.StreamPage {
         let n = try aligned("handles", UInt64(fromIndex), limit)
         handleAsks.append("indexer:\(fromIndex)")
-        let all = directory().map { e in forgeHandleAddress.map { HandleEntry(handle: e.handle, address: $0, status: e.status, expiresAt: e.expiresAt, renewalUntil: e.renewalUntil) } ?? e }
+        let all = directory().map { e in forgeHandleAddress.map { HandleEntry(handle: e.handle, address: $0, status: e.status, expiresAt: e.expiresAt, renewalUntil: e.renewalUntil, owner: e.owner) } ?? e }
         let rows = Array(all.dropFirst(Int(fromIndex)).prefix(n))
         return HandleDirectory.StreamPage(handles: rows, height: Int64(height - 1), size: Int64(all.count), fromIndex: fromIndex,
                                           lastPage: Int(fromIndex) + n >= all.count)

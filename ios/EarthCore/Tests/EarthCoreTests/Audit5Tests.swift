@@ -164,7 +164,8 @@ final class Audit5Tests: XCTestCase {
         _ = try await a.bindHandle("alice"); try await a.sync()
         a.store.mutate { $0.handle = ""; $0.handleSetAt = 0 }
         let addressed = await a.reconcileHandle(try await chain.handleDirectory().chainDirectory(), readAt: chain.now + 1)
-        XCTAssertEqual(["alice"], addressed.map(\.handle))
+        // Adopted by its owner (audit 6, M6); held, no other entry is offered (M7).
+        XCTAssertEqual([], addressed.map(\.handle))
         XCTAssertEqual("alice", a.store.state.handle)
         chain.now += chain.handleLease - 86_400
         let e = try await chain.handleDirectory().chainDirectory()["alice"]!
