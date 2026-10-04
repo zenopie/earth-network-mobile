@@ -49,7 +49,7 @@ device (the prover does not run on an emulator usefully):
     ./gradlew :app:connectedDebugAndroidTest \
       -Pandroid.testInstrumentationRunnerArguments.class=network.erth.wallet.LeanPoaDeviceTest
 
-`LeanPoaDeviceTest` proves the real ~130k-gate circuit on the phone and writes
+`LeanPoaDeviceTest` proves the real P-256 and RSA-2048 register circuits on the phone and writes
 the proof + VK to external files storage so the chain verifier can be run
 against genuine device output. `NoirDeviceTest` is the same idea on a toy
 circuit.
@@ -122,8 +122,12 @@ about versions; `app/build.gradle` carries deliberate excludes and pins.
 Changing a crypto or passport dependency usually means re-doing that work.
 
 **Compiled circuits are checked in** at `app/src/main/assets/circuits/*.json`
-(~14MB: seven passport signature-algorithm variants plus action, stake, vote
-and membership). Their bytecode fixes the VKs the chain's genesis pins, so
+(the 16 passport register-circuit variants of the 2^18 tier, ~16MB, stripped
+to bytecode and ABI, plus action, stake, vote and membership; the other 17
+variants are fetched on demand from the backend, pinned by sha256 in
+`passport_variants.json`). The passport variants are generated:
+`circuits/tools/variants.py gen` writes their Noir mains and shared fixtures
+from `circuits/variants.json`, `build` compiles and places them. Their bytecode fixes the VKs the chain's genesis pins, so
 they are never regenerated casually: a comment-only change to `circuits/`
 must recompile to identical bytecode and ABI (the `hash`, `debug_symbols` and
 `file_map` fields follow the source text and paths). They carry a `noir_version` that

@@ -1,8 +1,12 @@
 # Passport signature coverage
 
-Status: **research and proposed design (2026-10-04). Nothing here is
-implemented yet.** The circuits, chain, wallets and backend still run the
-seven SHA-256-only variants described in `lean_poa/SECURITY.md`.
+Status: **implemented (2026-10-04)** as designed in section 7, with option
+(b) for app size: the 16 variants of the 2^18 tier are bundled and the other
+17 are fetched on demand. Sources of truth: `variants.json` (the variants),
+`tools/variants.py` (their mains, fixtures and placement),
+`tools/passportgen/reference.py` (variant selection and witness, which both
+wallets match byte for byte). Measured gate counts and tiers are in
+`variants.json`.
 
 Goal: registration should accept every signature scheme that real, unexpired
 passports use (TD3 documents, valid in October 2026 or later).
@@ -163,7 +167,7 @@ Sunset: SHA-1 variants are ordinary VK entries. Governance can remove them once
 the last SHA-1-signed passport expires (estimated 2027–2028). Re-check the
 second-preimage literature before relaunches.
 
-## 6. Problems in the current branch
+## 6. Problems in the branch before this change (all fixed)
 
 1. **The eContent cap of 200 bytes** rejects any SHA-256 SOD with more than four data
    groups (header about 23 bytes plus 39 per group). Many EU passports carry
@@ -185,7 +189,7 @@ second-preimage literature before relaunches.
    core must serialize the modulus limbs directly.
 4. Only SHA-256, PKCS#1 v1.5 and e=65537 are supported: the gaps in section 3.
 
-## 7. Proposed design
+## 7. Design (implemented)
 
 ### 7.1 Structure
 
@@ -231,42 +235,45 @@ groups is the trade-off. A larger SOD gets the unsupported message.
 
 ### 7.2 Variants (33) and measured cost
 
-Each prototype is the generic core plus the real signature library at the
-proposed pins, compiled with nargo 1.0.0-beta.22 and counted with `bb gates`
-(bb 5.0.0). Ids follow the pattern `lean_poa_<key>[_pss]_<profile>`, for example
+Measured on the final circuits (nargo 1.0.0-beta.22, `bb gates`, bb 5.0.0;
+written into `variants.json` by `tools/variants.py build`). Ids follow the pattern `lean_poa_<key>[_pss]_<profile>`, for example
 `lean_poa_rsa2048_sha256` and `lean_poa_rsa4096_sha512_sha512_sha256`.
 
-| Variant | Gates | Dyadic | JSON |
+| Variant | Gates | Tier | Stripped JSON |
 | --- | --- | --- | --- |
-| P-256 A | 138,413 | 2^18 | 0.3 MB |
-| BP224 E | 148,462 | 2^18 | 1.8 |
-| P-224 F / G | 148,486 / 148,502 | 2^18 | 1.8 |
-| RSA-2048 A | 154,330 | 2^18 | 0.8 |
-| RSA-2048 C | 158,340 | 2^18 | 1.1 |
-| BP256 A | 188,063 | 2^18 | 2.4 |
-| RSA-3072 A | 197,470 | 2^18 | 1.1 |
-| P-256 B | 197,746 | 2^18 | 1.8 |
-| RSA-2048 PSS A | 199,486 | 2^18 | 0.9 |
-| BP224 B | 207,828 | 2^18 | 3.3 |
-| RSA-2048 B | 213,653 | 2^18 | 2.4 |
-| RSA-2048 D | 245,676 | 2^18 | 2.7 |
-| RSA-4096 A | 256,213 | 2^18 | 1.4 |
-| RSA-3072 B | 256,797 | 2^18 | 2.6 |
-| RSA-3072 PSS A | 260,441 | 2^18 | 1.1 |
-| P-384 A / BP384 A | 300,776 | 2^19 | 3.3 |
-| RSA-2048 I | 302,896 | 2^19 | 3.2 |
-| RSA-4096 B | 315,542 | 2^19 | 3.0 |
-| RSA-2048 J | 333,879 | 2^19 | 3.9 |
-| RSA-4096 PSS A | 336,978 | 2^19 | 1.5 |
-| RSA-2048 PSS I | 348,047 | 2^19 | 3.3 |
-| RSA-4096 I | 404,803 | 2^19 | 3.8 |
-| RSA-4096 J | 435,795 | 2^19 | 4.5 |
-| RSA-2048 PSS J | 467,163 | 2^19 | 5.6 |
-| P-384 H / BP384 H | 479,485 | 2^19 | 6.4 |
-| RSA-2048 PSS H | 516,431 | 2^19 | 6.2 |
-| RSA-3072 PSS H | 609,219 | 2^20 | 7.0 |
-| BP512 H / BP512 J | 640,181 / 640,320 | 2^20 | 7.9 |
-| P-521 J | 650,004 | 2^20 | 7.6 |
+| `lean_poa_p256_sha256` | 138,556 | 2^18 (bundled) | 0.1 MB |
+| `lean_poa_bp224_sha224` | 148,606 | 2^18 (bundled) | 0.8 MB |
+| `lean_poa_p224_sha256_sha224_sha224` | 148,630 | 2^18 (bundled) | 0.8 MB |
+| `lean_poa_p224_sha256_sha256_sha224` | 148,646 | 2^18 (bundled) | 0.8 MB |
+| `lean_poa_rsa2048_sha256` | 151,014 | 2^18 (bundled) | 0.4 MB |
+| `lean_poa_rsa2048_sha1_sha256_sha256` | 154,916 | 2^18 (bundled) | 0.6 MB |
+| `lean_poa_bp256_sha256` | 188,206 | 2^18 (bundled) | 1.3 MB |
+| `lean_poa_rsa3072_sha256` | 192,485 | 2^18 (bundled) | 0.6 MB |
+| `lean_poa_rsa2048_pss_sha256` | 196,169 | 2^18 (bundled) | 0.4 MB |
+| `lean_poa_p256_sha1` | 204,092 | 2^18 (bundled) | 1.4 MB |
+| `lean_poa_bp224_sha1` | 214,174 | 2^18 (bundled) | 2.1 MB |
+| `lean_poa_rsa2048_sha1` | 216,540 | 2^18 (bundled) | 1.7 MB |
+| `lean_poa_rsa4096_sha256` | 249,588 | 2^18 (bundled) | 0.9 MB |
+| `lean_poa_rsa2048_sha256_sha1_sha1` | 251,020 | 2^18 (bundled) | 1.9 MB |
+| `lean_poa_rsa3072_pss_sha256` | 255,457 | 2^18 (bundled) | 0.6 MB |
+| `lean_poa_rsa3072_sha1` | 258,016 | 2^18 (bundled) | 1.9 MB |
+| `lean_poa_p384_sha256` | 300,920 | 2^19 | 2.1 MB |
+| `lean_poa_bp384_sha256` | 300,920 | 2^19 | 2.1 MB |
+| `lean_poa_rsa2048_sha512_sha512_sha256` | 306,477 | 2^19 | 2.4 MB |
+| `lean_poa_rsa4096_sha1` | 315,119 | 2^19 | 2.2 MB |
+| `lean_poa_rsa4096_pss_sha256` | 330,353 | 2^19 | 0.9 MB |
+| `lean_poa_rsa2048_sha512` | 338,962 | 2^19 | 3.0 MB |
+| `lean_poa_rsa2048_pss_sha512_sha512_sha256` | 351,629 | 2^19 | 2.4 MB |
+| `lean_poa_rsa4096_sha512_sha512_sha256` | 405,076 | 2^19 | 2.9 MB |
+| `lean_poa_rsa4096_sha512` | 437,569 | 2^19 | 3.4 MB |
+| `lean_poa_rsa2048_pss_sha512` | 472,248 | 2^19 | 4.3 MB |
+| `lean_poa_p384_sha384` | 488,731 | 2^19 | 4.6 MB |
+| `lean_poa_bp384_sha384` | 488,731 | 2^19 | 4.6 MB |
+| `lean_poa_rsa2048_pss_sha384` | 521,515 | 2^19 | 4.8 MB |
+| `lean_poa_rsa3072_pss_sha384` | 612,633 | 2^20 | 5.5 MB |
+| `lean_poa_bp512_sha384` | 649,426 | 2^20 | 5.9 MB |
+| `lean_poa_bp512_sha512` | 649,564 | 2^20 | 5.9 MB |
+| `lean_poa_p521_sha512` | 659,250 | 2^20 | 5.6 MB |
 
 - **2^18**: 16 variants, nearly every passport (RSA-2048 SHA-256 alone is about 75% of DSCs).
 - **2^19**: 13 variants.
@@ -303,7 +310,7 @@ Today the circuits are 14 MB. Options:
   fetch leaks nothing new.
 - (c) fetch every variant on demand.
 
-This needs a decision before implementation.
+Decided: (b).
 
 ### 7.3 Chain (x/pki, x/personhood)
 

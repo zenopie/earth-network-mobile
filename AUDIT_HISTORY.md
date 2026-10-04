@@ -290,3 +290,28 @@ Fixes only; Android first, then iOS with the same behaviour.
   build succeed.
 
 Android 1.0.40 (versionCode 47); iOS build 20.
+
+## Passport signature coverage (chain e2f3e18, 2026-10-04)
+
+Every signature scheme unexpired passports use (circuits/PASSPORT_COVERAGE.md,
+with sources and the SHA-1 decision). Android first, iOS byte-identical.
+
+| Change | Commits |
+| --- | --- |
+| Research: coverage table, SHA-1 decision, design | 6442c5e |
+| Circuits: generic poa_core (hash functions as parameters, DER prefixes by digest length), 33 generated variants with nargo tests over shared synthetic passports, audited library pins, per-hash buffer maxima, RSA exponent committed | 4d38b31 |
+| The 16 bundled 2^18-tier circuits and passport_variants.json (the other 17 served by the backend, pinned by sha256) | dbaa03b |
+| Android: variant selection from the SOD's key, padding and three hashes; "This passport's signature type isn't supported yet (<scheme>)"; fetched circuits; tiered SRS | d2bdc4f |
+| iOS EarthCore: the same selection and witness, byte for byte | 8c6532d |
+| iOS: tiered SRS, fetched circuits, the passport gate on every variant | 050fb6e |
+
+Found and fixed: the 200-byte eContent cap (more than four SHA-256 data
+groups refused); Android's 2^18 SRS could not serve the 2^19 circuits;
+Android rejected explicit ECParameters and iOS matched them by group order
+only (now every parameter, as the chain); the BP512 circuit's SHA-256-only
+hashing; pre-audit noir-bignum; BoundedVec tails read by SHA-1/384/512.
+Tests: nargo 165 variant tests + 21 poa_core; Android 245; iOS EarthCore
+245 and corecheck 336; ProverGate gate on all 33 variants (VK = genesis).
+Not done: an on-device measurement of the 2^19 and 2^20 tiers; the
+androidTest PrivacyProverDeviceTest was already out of date and does not
+compile (unrelated).

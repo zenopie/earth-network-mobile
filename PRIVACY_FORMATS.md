@@ -24,7 +24,7 @@ Wallet-defined formats are pinned by golden tests on both platforms
 (Android `KeysAndNotesTest`, `BlindNoteTest`, `RestoreTest`,
 `HandleOwnershipTest`, `DenomsTest`, `DexTest`; iOS `KeysAndNotesTests`,
 `BlindNoteTests`, `RestoreTests`, `HandlesTests`, `DenomTests`, `DexTests`). The circuits are in
-`circuits/{action,stake,vote,membership,lean_poa*}`; a circuit `main()`'s
+`circuits/{action,stake,vote,membership,lean_poa_*}`; a circuit `main()`'s
 `pub` parameters, in order, are its public inputs.
 
 ## Contents
@@ -543,11 +543,55 @@ unless that is 0, activated_at ≤ max_activation, predecessor_at ≤
 max_predecessor, and binds signal (the msg's sighash). "No bound" is 2^63 −
 1 (`Privacy.NO_BOUND`). Vector `membership_public_inputs`.
 
-**passport** (`lean_poa*`, one per signature algorithm; registration only):
-public inputs `current_date` (u32 YYMMDD), `address` (the registration
-binding, §13), then the returned `nullifier` and `dsc_key` commitment. The
-wallet sends them as MsgRegister.public_signals, decimal, in that order:
-[current_date, address, nullifier, dsc_key].
+**passport** (`lean_poa_*`, 33 variants; registration only): one circuit per
+DSC key type (RSA-2048/3072/4096; ECDSA P-224/256/384/521, brainpoolP224r1/
+256r1/384r1/512r1), signature padding (PKCS#1 v1.5, PSS) and hash profile
+(data-group hash, eContent hash, signature hash), listed in
+`circuits/variants.json` and bundled as
+`assets/circuits/passport_variants.json` (PASSPORT_COVERAGE.md). Every
+variant has the same public inputs `current_date` (u32 YYMMDD), `address`
+(the registration binding, §13), then the returned `nullifier` and
+`dsc_key` commitment. The wallet sends them as MsgRegister.public_signals,
+decimal, in that order: [current_date, address, nullifier, dsc_key].
+`signature_algorithm` is the variant id.
+
+**Variant selection [wallet].** From EF.SOD: the LDS security object's
+hashAlgorithm (H_dg), SignerInfo digestAlgorithm (H_ec), signatureAlgorithm
+(PKCS#1: `shaXWithRSAEncryption`, or `rsaEncryption` with H_ec; PSS:
+`RSASSA-PSS` params, RFC 4055 defaults; ECDSA: `ecdsa-with-SHAx`, or
+`id-ecPublicKey` with H_ec) and the DSC key (RSA bit length and exponent;
+the curve by named OID, or by explicit ECParameters matching p, a, b, G, n
+and cofactor 1). The id is `lean_poa_<key>[_pss]_<hash>` when the three
+hashes agree, else `lean_poa_<key>[_pss]_<H_dg>_<H_ec>_<H_sig>`. Refused as
+unsupported, with the scheme named ("This passport's signature type isn't
+supported yet (RSA-2048 PSS, SHA-1)"): a DG1 that is not 93 bytes, absent
+signed attributes, an unknown hash, curve, key or signature OID, an MGF1
+hash other than the message hash, a trailer other than 1, a PSS salt over
+64, an RSA exponent that is even or outside [3, 2^17), no variant for the
+combination, or an eContent or signed-attributes encoding longer than the
+variant's maximum (by H_dg: SHA-1 439, SHA-224/256 695, SHA-384/512 751
+bytes; by H_sig: 247, 256, 239). The scheme strings and every rule are
+`circuits/tools/passportgen/reference.py`'s; the shared fixtures
+`circuits/fixtures/<variant>` and `fixtures/unsupported/*` hold its output,
+which both apps reproduce byte for byte (Android PassportInputsTest, iOS
+PassportInputsTests and corecheck).
+
+**Witness.** dg1 (95, zero-padded), dg1_len, e_content and signed_attrs
+zero-padded to the variant's maxima with their lengths, dg1_hash_offset and
+econtent_hash_offset (the index of the digest right after its DER prefix:
+`30 (H+5) 02 01 01 04 H` and `06 09 2A864886F70D010904 31 (H+2) 04 H`),
+current_date, address, then by key: RSA `dsc_modulus`, `dsc_redc`
+(floor(2^(2·bits+6) / n)), `sod_signature` as 120-bit little-endian limbs
+(18, 26, 35), `dsc_exponent`, and for PSS `pss_salt_len`; P-256
+`dsc_pubkey_x`, `dsc_pubkey_y`, `sod_signature` r‖s (low s); other curves
+the coordinates and `sod_signature_r`, `sod_signature_s` (low s), each at
+the curve's coordinate width. Bytes as "0x%02x" strings, scalars and limbs
+as "0x" lowercase hex.
+
+**Circuits.** The 16 variants of the 2^18 tier ship in the app (stripped to
+bytecode and ABI); the other 17 are fetched once, on demand, from
+`download_base` + `<id>.json.gz` (the backend's `/circuits`), inflated, and
+kept only if the JSON hashes to the variant's pinned `sha256`.
 
 **SRS.** Both apps bundle the first 32,769 G1 points of Aztec's bn254
 transcript (`crs.aztec.network/g1.dat` bytes 0..2,097,215, file
@@ -555,14 +599,17 @@ transcript (`crs.aztec.network/g1.dat` bytes 0..2,097,215, file
 `d769ac6c98f8fab858a7e9967f2b7f181d8ad9fdcdf55438c915696febf0e99c`), checked
 before use and passed to bb as a `.dat` path: proving a private tx never
 touches the network, and a missing file is an error (never a download). The
-passport circuits' SRS (too large to bundle) is fetched once at launch: a
-byte range of the same file, hash-pinned (Android 2^18 + 1 points, sha256
-`8f5cd75519c2e995fa47aa7ecd7b213b9ae13824bc4b0f15025a63acd8c139eb`; iOS
-2^19 + 1 points, `1df37a2ce1da3713c7300691a65ffe84de144ea64899d5cfbf0061aaaeb6ad31`),
-streamed to a staged file, hashed as it comes, cut off at the range's length
-(iOS 524,289 × 64 bytes), no redirect followed, kept out of backups; until
-it is there a passport proof downloads its own. iOS reserves the passport
-size for a private proof only from that local file.
+passport circuits' SRS (too large to bundle) comes in three tiers, each a
+byte range of the same file, hash-pinned in the manifest: 2^18 + 1 points
+(`8f5cd75519c2e995fa47aa7ecd7b213b9ae13824bc4b0f15025a63acd8c139eb`, fetched
+at launch), 2^19 + 1
+(`1df37a2ce1da3713c7300691a65ffe84de144ea64899d5cfbf0061aaaeb6ad31`) and
+2^20 + 1 (`0f238856e55722f15a4d64ef0de12b4260e218245590bd3a6c900aee188de8e5`),
+fetched before proving a variant of that tier; streamed to a staged file,
+hashed as it comes, cut off at the range's length, no redirect followed,
+kept out of backups. A larger tier's file serves a smaller circuit. iOS
+reserves the passport size for a private proof only from a local file (the
+largest bundled circuit, the 2^18 tier).
 
 **Witness dumps.** With `PRIVACY_TOML_OUT=<dir>` the wallet tests write every
 witness as `<dir>/{action,stake,membership,vote}/<test>_<i>/Prover.toml`
