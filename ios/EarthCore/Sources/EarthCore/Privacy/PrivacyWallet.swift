@@ -115,24 +115,27 @@ public final class PrivacyWallet: @unchecked Sendable {
             genesis = s.genesis
         }
 
-        /// Spendable pool balance per denom (pending spends excluded).
+        /// Spendable pool balance per denom (pending spends excluded). Audit 6
+        /// (S2): saturating at 2^63-1, as Android.
         public var poolBalances: [String: UInt64] {
             var out: [String: UInt64] = [:]
             for n in notes where n.unspent && n.pendingAt == nil {
-                out[n.note.denom] = PrivateMsgs.saturatingAdd(out[n.note.denom] ?? 0, n.note.value)
+                out[n.note.denom] = Self.satAdd63(out[n.note.denom] ?? 0, n.note.value)
             }
             return out
         }
 
+        static func satAdd63(_ a: UInt64, _ b: UInt64) -> UInt64 { min(PrivateMsgs.saturatingAdd(a, b), UInt64(Int64.max)) }
+
         /// Stake (derth/<valoper>) and unbonding claims (unbond/<valoper>/<epoch>) per denom: owner-locked, never sendable.
         public var stakeBalances: [String: UInt64] {
             var out: [String: UInt64] = [:]
-            for n in stakeNotes where n.spendable { out[n.denom] = PrivateMsgs.saturatingAdd(out[n.denom] ?? 0, n.amount) }
+            for n in stakeNotes where n.spendable { out[n.denom] = Self.satAdd63(out[n.denom] ?? 0, n.amount) }
             return out
         }
 
         /// Everything held privately: the pool's denoms and the stake denoms.
-        public var balances: [String: UInt64] { poolBalances.merging(stakeBalances, uniquingKeysWith: PrivateMsgs.saturatingAdd) }
+        public var balances: [String: UInt64] { poolBalances.merging(stakeBalances, uniquingKeysWith: Self.satAdd63) }
 
         /// Spendable note counts per denom with more than one note.
         public var mergeable: [String: Int] {

@@ -540,7 +540,7 @@ struct ProposalDetailScreen: View {
                 }
             } else {
                 if weight != nil { EarthDetailRow(label: "Your weight", value: weightText) }
-                Text("Every staked-ERTH note held before voting opened votes once, two notes to a vote, and each of your positions votes too. A stake vote is final.")
+                Text("Every staked-ERTH note held before voting opened votes once, one transaction and fee each, and each of your positions votes too. A stake vote is final.")
                     .font(EarthType.bodySmall)
                     .foregroundStyle(theme.colors.textTertiary)
             }

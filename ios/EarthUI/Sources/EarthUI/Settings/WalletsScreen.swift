@@ -14,6 +14,7 @@ struct WalletsScreen: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var adding: Adding?
     @State private var revealed: String?
@@ -47,6 +48,9 @@ struct WalletsScreen: View {
             }
             .background(theme.colors.bgPrimary)
             .task { model.loadWallets() }
+            // Audit 6 (K6): the phrase lives only while the screen is in front, as on Android.
+            .onChange(of: scenePhase) { if scenePhase != .active { revealed = nil } }
+            .onDisappear { revealed = nil }
             .sheet(item: $adding) { AddWalletSheet(mode: $0).earthThemed() }
         }
     }

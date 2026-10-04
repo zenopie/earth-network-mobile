@@ -308,7 +308,8 @@ final class AuditFixesTests: XCTestCase {
         chain.emptyBlock()
         try await a.sync()
         XCTAssertEqual(3, a.notes.count)
-        XCTAssertEqual(UInt64.max, bal(a, "uerth"))
+        // Audit 6 (S2): balance totals saturate at 2^63-1, as Android.
+        XCTAssertEqual(UInt64(Int64.max), bal(a, "uerth"))
         XCTAssertEqual(UInt64.max, a.snapshot.unshieldableErth)
         XCTAssertEqual(UInt64.max, PrivateMsgs.saturatingAdd(UInt64.max, 1))
         // Two notes that must both be spent sum past u64: refused, not a trap.
