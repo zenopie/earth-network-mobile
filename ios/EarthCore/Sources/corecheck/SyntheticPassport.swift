@@ -117,7 +117,14 @@ enum SyntheticPassport {
                     + DER.encode(tag: DER.Tag.objectIdentifier, content: encodeOID(p256OID)))
                 + DER.encode(tag: DER.Tag.bitString, content: Data([0x00]) + publicKeyPoint))
 
-        let name = DER.encode(tag: DER.Tag.sequence, content: Data())
+        // Issuer and subject CN=Synthetic DSC: a real certificate never has an
+        // empty distinguished name, and BouncyCastle (Android's parser) refuses
+        // one, so the fixture this writes is one both apps can read.
+        let name = DER.encode(tag: DER.Tag.sequence, content:
+            DER.encode(tag: DER.Tag.set, content:
+                DER.encode(tag: DER.Tag.sequence, content:
+                    DER.encode(tag: DER.Tag.objectIdentifier, content: encodeOID("2.5.4.3"))
+                        + DER.encode(tag: 0x13, content: Data("Synthetic DSC".utf8)))))
         let validity = DER.encode(tag: DER.Tag.sequence, content:
             utcTime("690806000000Z") + utcTime("940623000000Z"))
 
