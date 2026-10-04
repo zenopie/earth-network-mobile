@@ -4,5 +4,4 @@
     <!-- Read by the vendored Zodl components. -->
     <string name="general_back">Back</string>
     <string name="general_hideBalancesMost">-----</string>
-    <string name="tokenOnChain">on</string>
 </resources>

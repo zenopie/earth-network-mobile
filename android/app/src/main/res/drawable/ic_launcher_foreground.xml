@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Foreground: use the prepared adaptive foreground mipmap asset (provided in ic_launcher set) -->
-    <item>
-        <bitmap
-            android:gravity="center"
-            android:src="@mipmap/ic_launcher_adaptive_fore" />
-    </item>
-</layer-list>
