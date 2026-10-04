@@ -80,7 +80,7 @@ class ZkVectorsTest {
             "pc" to Privacy.TAG_PC, "cm" to Privacy.TAG_CM, "nf" to Privacy.TAG_NF, "reg" to Privacy.TAG_REG,
             "asset" to Privacy.TAG_ASSET, "signal" to Privacy.TAG_SIGNAL, "bytes" to Privacy.TAG_BYTES, "scope" to Privacy.TAG_SCOPE, "affiliate" to Privacy.TAG_AFFILIATE, "referral" to Privacy.TAG_REFERRAL,
             "stake" to Privacy.TAG_STAKE, "spc" to Privacy.TAG_SPC, "snf" to Privacy.TAG_SNF, "otag" to Privacy.TAG_OTAG,
-            "snfl" to Privacy.TAG_SNFL, "vnf" to Privacy.TAG_VNF,
+            "snfl" to Privacy.TAG_SNFL, "vnf" to Privacy.TAG_VNF, "slabel" to Privacy.TAG_SLABEL, "debtl" to Privacy.TAG_DEBTL,
             "gen" to network.erth.wallet.privacy.zk.Grumpkin.TAG_GEN, "cv_r" to network.erth.wallet.privacy.zk.Grumpkin.TAG_CV_R,
             "bsig" to network.erth.wallet.privacy.zk.Grumpkin.TAG_BSIG, "bundle" to network.erth.wallet.privacy.tx.PrivateMsgs.TAG_BUNDLE,
         )
@@ -129,7 +129,19 @@ class ZkVectorsTest {
         // The stake tree.
         val spc = Privacy.stakePc(opk, rho, rcm)
         assertEquals(d.getString("spc"), spc.toHex())
-        assertEquals(d.getString("stake_cm"), Privacy.stakeCm(Privacy.assetId("derth/earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"), 1_800_000, spc).toHex())
+        val derthAsset = Privacy.assetId("derth/earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq")
+        assertEquals(d.getString("stake_cm"), Privacy.stakeCm(derthAsset, 1_800_000, spc, Fr.ZERO).toHex())
+        // Slash labels and the debt tree's leaves (chain dff3a9b), and zk/debt TestNoirParity's pins (= Noir test_go_parity_debt).
+        val label = Privacy.stakeLabel(fe(1009), 1_790_000_000, 400_000)
+        assertEquals(d.getString("stake_label"), label.toHex())
+        assertEquals(d.getString("stake_cm_labelled"), Privacy.stakeCm(derthAsset, 1_800_000, spc, label).toHex())
+        assertEquals(d.getString("debt_leaf"), Privacy.debtLeaf(fe(1010), fe(1011), 4_000_000_000, 123_456).toHex())
+        assertEquals(d.getString("debt_leaf_1_2_3_4"), Privacy.debtLeaf(Fr.of(1), Fr.of(2), 3, 4).toHex())
+        assertEquals("0b28cc858d976ddad0ede75ca9538f9b5ab36538964f6e241b8e89be2711e82a", d.getString("debt_leaf_1_2_3_4"))
+        assertEquals("2dfbc154973d1d3ec6e03137ba41b5c2cf5119f66cc69e3e58c033a77c80a881", Privacy.stakeLabel(Fr.of(0x4d4b), 1000, 200).toHex())
+        assertEquals(d.getString("stake_label_4d4b"), Privacy.stakeLabel(Fr.of(0x4d4b), 1000, 200).toHex())
+        assertEquals("0ffc538b4162732774bd5026e7a07bd00d2fe406af55231fa0c255c321ad4232", Privacy.stakeCm(Fr.of(1), 2, Fr.of(3), Fr.of(4)).toHex())
+        assertEquals(d.getString("stake_cm_1_2_3_4"), Privacy.stakeCm(Fr.of(1), 2, Fr.of(3), Fr.of(4)).toHex())
         assertEquals(d.getString("stake_nf"), Privacy.stakeNf(nk, rho, 4_000_000_000).toHex())
         assertEquals(fe(1006), fr(d.getString("otag_salt")))
         assertEquals(d.getString("otag"), Privacy.ownerTag(opk, fe(1006)).toHex())
@@ -170,6 +182,47 @@ class ZkVectorsTest {
         // The chain refuses what it never inserts.
         assertThrows(IllegalArgumentException::class.java) { IndexedTree.build(listOf(vs[0], vs[0])) }
         assertThrows(IllegalArgumentException::class.java) { IndexedTree.build(listOf(Fr.ZERO)) }
+    }
+
+    /** The slash debt tree against zk/debt: roots by write (a row rewritten in place), witnesses for rows and absent moves. */
+    @Test
+    fun debtTree() {
+        val dj = json.getJSONObject("debt")
+        assertEquals(dj.getString("empty_root"), network.erth.wallet.privacy.zk.DebtTree.EMPTY_ROOT.toHex())
+        assertEquals("0cea3d3e26cd2710109d7cbff5bf48570ba54332f812d538893f0958007f6903", dj.getString("empty_root"))
+        val rows = dj.getJSONArray("rows").let { a -> (0 until a.length()).map { a.getJSONObject(it).let { r -> fr(r.getString("key")) to r.getLong("retained") } } }
+        val t = network.erth.wallet.privacy.zk.DebtTree.build(rows)
+        assertEquals(dj.getString("root"), t.root().toHex())
+        // Every write's root: the rows inserted so far, each at its latest retained then.
+        val writes = (0 until 9).map { fe(9000L + it) to 1_000L * (it + 1) } + listOf(fe(9002) to 7L)
+        val roots = dj.getJSONObject("roots_by_write")
+        for (k in roots.keys()) {
+            val n = k.toInt()
+            val upTo = LinkedHashMap<Fr, Long>()
+            writes.take(n).forEach { (key, r) -> upTo[key] = r }
+            assertEquals("root after $n writes", roots.getString(k), network.erth.wallet.privacy.zk.DebtTree.build(upTo.entries.map { it.key to it.value }).root().toHex())
+        }
+        val ws = dj.getJSONArray("witnesses")
+        for (i in 0 until ws.length()) {
+            val w = ws.getJSONObject(i)
+            val key = fr(w.getString("key"))
+            val mine = t.witness(key)!!
+            assertEquals(w.getString("low_key"), mine.lowKey.toHex())
+            assertEquals(w.getString("low_next_key"), mine.lowNextKey.toHex())
+            assertEquals(w.getLong("low_next_index"), mine.lowNextIndex)
+            assertEquals(w.getLong("low_retained"), mine.lowRetained)
+            assertEquals(w.getLong("low_index"), mine.lowIndex)
+            val p = w.getJSONArray("low_path")
+            assertEquals((0 until p.length()).map { p.getString(it) }, mine.lowPath.map { it.toHex() })
+            assertEquals(w.getLong("retained"), mine.retained(key, w.getLong("exposed"), t.root()))
+        }
+        // A row's own key read through its low leaf, or against another root, proves nothing.
+        val slashed = fe(9002)
+        assertEquals(7L, t.retainedOf(slashed))
+        assertNull(t.witness(Fr.of(1))!!.retained(slashed, 50_000, t.root()))
+        assertNull(t.witness(slashed)!!.retained(slashed, 50_000, network.erth.wallet.privacy.zk.DebtTree.EMPTY_ROOT))
+        assertThrows(IllegalArgumentException::class.java) { network.erth.wallet.privacy.zk.DebtTree.build(listOf(slashed to 1L, slashed to 2L)) }
+        assertThrows(IllegalArgumentException::class.java) { network.erth.wallet.privacy.zk.DebtTree.build(listOf(Fr.ZERO to 1L)) }
     }
 
     @Test

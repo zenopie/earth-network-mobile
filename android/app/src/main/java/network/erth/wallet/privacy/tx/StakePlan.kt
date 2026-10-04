@@ -6,106 +6,183 @@ import network.erth.wallet.privacy.keys.PrivacyKeys
 import network.erth.wallet.privacy.note.NoteCipher
 import network.erth.wallet.privacy.note.NotePlaintext
 import network.erth.wallet.privacy.note.OwnedStakeNote
+import network.erth.wallet.privacy.note.StakeLabel
+import network.erth.wallet.privacy.prove.StakeIn
 import network.erth.wallet.privacy.prove.StakeWitness
+import network.erth.wallet.privacy.zk.DebtTree
 import network.erth.wallet.privacy.zk.Fr
 import network.erth.wallet.privacy.zk.Merkle
 import network.erth.wallet.privacy.zk.Privacy
 
 /**
- * One stake proof laid out (circuits/stake): up to two of this wallet's
- * stake notes spent under [anchor], up to two created back to it, value
- * [vOut] leaving the notes to the chain, the stake pc the chain may mint to
- * ([mint]) and the owner tag's salt. Everything the sighash binds (the
- * StakeFields) is final once built.
+ * One stake proof laid out (circuits/stake v2, ORCHARD_DESIGN 20): lane A
+ * spends up to two of this wallet's notes of [denom] (or pads its first slot)
+ * and creates one note back to it (the merged note, the change, or a zero
+ * note), crediting [vIn] and releasing [vOut]; the credit lane ([credit])
+ * merges a redelegation's credit into the wallet's note at the destination.
+ * Everything the sighash binds (the StakeFields) is final once built.
  *
- * [denom] is the msg's stake denom (derth/<valoper>), null for a
- * position's update, unlock or vote,
- * whose public asset is 0.
+ * [denom] null: a position's update or vote, whose lane A is all zero (its
+ * public asset 0). Every proof names the chain's current clear_before and
+ * debt root ([clear]) whether or not it clears a label (circuit audit L-1):
+ * a proof naming them only to clear would be linkable to the redelegation
+ * that labelled the note.
  */
 class StakePlan(
     private val nk: Fr,
     val denom: String?,
     val spends: List<OwnedStakeNote>,
     private val paths: List<List<Fr>>,
-    val outputs: List<Out>,
-    val mint: Pair<Fr, Fr>,
+    /** Lane A's output; null for a msg that spends and creates nothing (a position's update or vote). */
+    val out: Out?,
+    val vIn: Long,
+    val vOut: Long,
+    val clear: Clear,
+    val credit: Credit?,
     val tagSalt: Fr,
     val anchor: Fr,
-    val vOut: Long,
-    /** The blind stake ciphertext of [mint]'s note: for a msg that mints one, empty otherwise. */
-    val mintCiphertext: ByteArray = ByteArray(0),
 ) {
-    /** A created stake note: its amount, secrets and ciphertext (to ourselves). */
-    class Out(val amount: Long, val rho: Fr, val rcm: Fr, val ciphertext: ByteArray)
+    /** A created stake note: its amount, secrets, label and ciphertext (to ourselves). */
+    class Out(val amount: Long, val rho: Fr, val rcm: Fr, val label: StakeLabel?, val ciphertext: ByteArray)
+
+    /**
+     * What the proof names of the slash debt: [clearBefore] and [debtRoot]
+     * (0 and zero only while the chain is younger than the label window), and
+     * whether lane A's labelled input clears ([witness] and [retained], read
+     * from the debt tree at debtRoot) or keeps its label.
+     */
+    data class Clear(val clearBefore: Long, val debtRoot: Fr, val witness: DebtTree.Witness? = null, val retained: Long = 0) {
+        val clears: Boolean get() = witness != null
+
+        companion object {
+            val NONE = Clear(0, Fr.ZERO)
+        }
+    }
+
+    /**
+     * The credit lane (a redelegation): the wallet's unlabelled note of
+     * [denom] merged with [vIn] ([spend], or a padding input when there is
+     * none), labelled with the move made at [moveTime].
+     */
+    class Credit(
+        val denom: String,
+        val spend: OwnedStakeNote?,
+        val path: List<Fr>?,
+        val vIn: Long,
+        val moveTime: Long,
+        val padRho: Fr,
+        val padRcm: Fr,
+        val out: Out,
+    ) {
+        /** The credit nullifier: the move's key. */
+        val nullifier: Fr get() = out.label!!.moveKey
+    }
 
     init {
-        require(spends.size <= 2 && outputs.size <= 2 && paths.size == spends.size)
+        require(spends.size <= 2 && paths.size == spends.size)
         require(spends.all { it.denom == denom && it.amount > 0 }) { "a stake proof spends notes of its own denom" }
-        require(outputs.all { it.amount > 0 })
-        val ins = spends.sumOf { java.math.BigInteger.valueOf(it.amount) }
-        val outs = outputs.sumOf { java.math.BigInteger.valueOf(it.amount) }.add(java.math.BigInteger.valueOf(vOut))
-        require(ins == outs) { "stake amounts do not balance: in $ins, out $outs" }
+        require(spends.count { it.label != null } <= 1) { "a stake proof spends at most one labelled note" }
+        require(denom != null || (spends.isEmpty() && out == null && vIn == 0L && vOut == 0L && credit == null)) { "a position's proof moves nothing" }
+        require(denom == null || out != null) { "a note-moving proof creates a note" }
+        require(!clear.clears || spends.any { it.label != null }) { "nothing to clear" }
+        require(clear.clearBefore != 0L || (clear.debtRoot.isZero && !clear.clears)) { "debt_root is zero exactly when clear_before is" }
+        val l = spends.firstNotNullOfOrNull { it.label }
+        if (out != null) {
+            require(out.label == (if (clear.clears) null else l)) { "the output keeps the label unless it clears" }
+            val ex = l?.exposed ?: 0L
+            fun big(v: Long) = java.math.BigInteger.valueOf(v)
+            val ins = spends.fold(java.math.BigInteger.ZERO) { a, n -> a + big(n.amount) } - big(ex) + big(if (clear.clears) clear.retained else 0L) + big(vIn)
+            val outs = big(out.amount - (out.label?.exposed ?: 0L)) + big(vOut)
+            require(ins == outs) { "stake amounts do not balance: in $ins, out $outs" }
+        }
+        credit?.let { c ->
+            require(c.spend == null || (c.spend.label == null && c.spend.denom == c.denom)) { "the credit lane merges only into an unlabelled note" }
+            require(c.out.amount == Math.addExact(c.spend?.amount ?: 0L, c.vIn))
+        }
     }
 
     val asset: Fr = denom?.let(Privacy::assetId) ?: Fr.ZERO
 
-    private val dummyIn = List(2) { NotePlaintext.randomField() to NotePlaintext.randomField() }
-    private val dummyOut = List(2) { NotePlaintext.randomField() to NotePlaintext.randomField() }
+    private val noneIn = List(2) { NotePlaintext.randomField() to NotePlaintext.randomField() }
+    private val noneOut = NotePlaintext.randomField() to NotePlaintext.randomField()
 
-    fun witness(sighash: Fr): StakeWitness = StakeWitness(
-        nk = nk,
-        inAmount = (0..1).map { spends.getOrNull(it)?.amount ?: 0L },
-        inRho = (0..1).map { spends.getOrNull(it)?.rho ?: dummyIn[it].first },
-        inRcm = (0..1).map { spends.getOrNull(it)?.rcm ?: dummyIn[it].second },
-        inPos = (0..1).map { spends.getOrNull(it)?.position ?: 0L },
-        inPath = (0..1).map { paths.getOrNull(it) ?: List(Merkle.DEPTH) { Fr.ZERO } },
-        outAmount = (0..1).map { outputs.getOrNull(it)?.amount ?: 0L },
-        outRho = (0..1).map { outputs.getOrNull(it)?.rho ?: dummyOut[it].first },
-        outRcm = (0..1).map { outputs.getOrNull(it)?.rcm ?: dummyOut[it].second },
-        mintRho = mint.first, mintRcm = mint.second, tagSalt = tagSalt,
-        anchor = anchor, asset = asset, vIn = 0, vOut = vOut, sighash = sighash,
-    )
+    private fun zeros() = List(Merkle.DEPTH) { Fr.ZERO }
+
+    fun witness(sighash: Fr): StakeWitness {
+        val ins = (0..1).map { i ->
+            spends.getOrNull(i)?.let { n -> StakeIn(n.amount, n.rho, n.rcm, n.position, paths[i], n.label) }
+                // A note-moving msg pads its first slot when it spends nothing of ours.
+                ?: if (i == 0 && out != null && spends.isEmpty()) StakeIn.padding(noneIn[0].first, noneIn[0].second)
+                else StakeIn.none(noneIn[i].first, noneIn[i].second)
+        }
+        val c = credit
+        val crIn = when {
+            c == null -> StakeIn.none(noneIn[1].first, noneIn[1].second)
+            c.spend != null -> StakeIn(c.spend.amount, c.spend.rho, c.spend.rcm, c.spend.position, c.path!!)
+            else -> StakeIn.padding(c.padRho, c.padRcm)
+        }
+        return StakeWitness(
+            nk = nk, ins = ins,
+            outAmount = out?.amount ?: 0L, outRho = out?.rho ?: noneOut.first, outRcm = out?.rcm ?: noneOut.second,
+            padOut = out != null,
+            clear = clear.clears, debt = clear.witness ?: DebtTree.Witness.NONE,
+            crIn = crIn, crOutRho = c?.out?.rho ?: noneOut.first, crOutRcm = c?.out?.rcm ?: noneOut.second,
+            tagSalt = tagSalt, anchor = anchor, asset = asset, vIn = vIn, vOut = vOut,
+            clearBefore = clear.clearBefore, debtRoot = clear.debtRoot,
+            crAsset = c?.let { Privacy.assetId(it.denom) } ?: Fr.ZERO, crVIn = c?.vIn ?: 0L, crMoveTime = c?.moveTime ?: 0L,
+            sighash = sighash,
+        )
+    }
 
     /** The msg's StakeProof, with [proof] (a placeholder before proving). */
     fun proto(proof: ByteArray): StakeProof {
         val w = witness(Fr.ZERO) // every public value but the sighash
+        fun b(f: Fr) = ByteString.copyFrom(f.toBytes())
+        check(w.commitment.isZero == (out == null)) { "lane A creates exactly when it moves notes" }
+        // The credit's label (in its ciphertext) names the nullifier the proof publishes.
+        check(credit == null || credit.nullifier == w.crNf) { "the credit's move key is not its nullifier" }
         return StakeProof.newBuilder()
             .setProof(ByteString.copyFrom(proof))
-            .setAnchor(ByteString.copyFrom(anchor.toBytes()))
-            .addAllNullifiers(w.nullifiers.map { ByteString.copyFrom(it.toBytes()) })
-            .addAllCommitments(w.commitments.map { ByteString.copyFrom(it.toBytes()) })
-            .addAllCiphertexts((0..1).map { ByteString.copyFrom(outputs.getOrNull(it)?.ciphertext ?: ByteArray(0)) })
-            .setSpcMint(ByteString.copyFrom(w.spcMint.toBytes()))
-            .setOwnerTag(ByteString.copyFrom(w.otag.toBytes()))
-            .setSpcCiphertext(ByteString.copyFrom(mintCiphertext))
+            .setAnchor(b(anchor))
+            .addAllNullifiers(w.nullifiers.map(::b))
+            .setOwnerTag(b(w.otag))
+            .setCommitment(b(w.commitment))
+            .setCiphertext(ByteString.copyFrom(out?.ciphertext ?: ByteArray(0)))
+            .setCreditNullifier(b(w.crNf))
+            .setCreditCommitment(b(w.crCm))
+            .setCreditCiphertext(ByteString.copyFrom(credit?.out?.ciphertext ?: ByteArray(0)))
+            .setClearBefore(clear.clearBefore)
+            .setDebtRoot(b(clear.debtRoot))
             .build()
     }
 
     companion object {
-        /** A created stake note of [amount] [denom] back to [keys], with its stake ciphertext. */
-        fun out(keys: PrivacyKeys, denom: String, amount: Long): Out {
+        /** A created stake note of [amount] [denom] back to [keys] with [label], and its stake ciphertext. */
+        fun out(keys: PrivacyKeys, denom: String, amount: Long, label: StakeLabel? = null): Out {
             val rho = NotePlaintext.randomField()
             val rcm = NotePlaintext.randomField()
-            val asset = Privacy.assetId(denom)
-            val cm = Privacy.stakeCm(asset, amount, Privacy.stakePc(keys.ownerPk, rho, rcm))
-            return Out(amount, rho, rcm, NoteCipher.encryptStake(NoteCipher.StakeOpening(asset, amount, rho, rcm), keys.ekPub, cm))
+            val o = NoteCipher.StakeOpening(Privacy.assetId(denom), amount, rho, rcm, label)
+            val cm = o.cm(keys.ownerPk)
+            return Out(amount, rho, rcm, label, NoteCipher.encryptStake(o, keys.ekPub, cm))
         }
 
         /**
-         * A stake note the chain will mint to us (spc_mint): fresh rho and
-         * rcm, and their blind stake ciphertext to our own address, which
-         * sync opens against the denom and amount the chain publishes.
+         * The credit lane of a redelegation into [denom]: [spend] (our
+         * unlabelled note there) or a fresh padding input, merged with [vIn]
+         * and labelled (move key = the lane's own nullifier, [moveTime],
+         * exposed = vIn).
          */
-        fun selfMint(keys: PrivacyKeys, memo: ByteArray = ByteArray(0)): Pair<Pair<Fr, Fr>, ByteArray> {
-            val rho = NotePlaintext.randomField()
-            val rcm = NotePlaintext.randomField()
-            return (rho to rcm) to NoteCipher.encryptBlindStake(rho, rcm, keys.ekPub, memo)
+        fun credit(keys: PrivacyKeys, denom: String, spend: OwnedStakeNote?, path: List<Fr>?, vIn: Long, moveTime: Long): Credit {
+            require(vIn > 0 && moveTime > 0)
+            require(spend == null || (spend.label == null && path != null))
+            val padRho = NotePlaintext.randomField()
+            val padRcm = NotePlaintext.randomField()
+            val nf = if (spend != null) spend.nf else Privacy.stakeNf(keys.nk, padRho, 0)
+            val label = StakeLabel(nf, moveTime, vIn)
+            return Credit(denom, spend, path, vIn, moveTime, padRho, padRcm, out(keys, denom, Math.addExact(spend?.amount ?: 0L, vIn), label))
         }
 
-        /**
-         * Secrets for a spc_mint or owner tag the msg does not use: fresh, so
-         * the public value links to nothing (the circuit still proves it).
-         */
-        fun throwaway(): Pair<Fr, Fr> = NotePlaintext.randomField() to NotePlaintext.randomField()
+        /** A fresh owner-tag salt: every proof that is not a position's links to nothing (circuit audit L-2). */
+        fun freshSalt(): Fr = NotePlaintext.randomField()
     }
 }

@@ -3,6 +3,7 @@ package network.erth.wallet.privacy.sync
 import network.erth.wallet.privacy.note.NotePlaintext
 import network.erth.wallet.privacy.note.OwnedNote
 import network.erth.wallet.privacy.note.OwnedStakeNote
+import network.erth.wallet.privacy.note.StakeLabel
 import network.erth.wallet.privacy.zk.FileNodeStore
 import network.erth.wallet.privacy.zk.Fr
 import network.erth.wallet.privacy.zk.MemNodeStore
@@ -252,6 +253,12 @@ class PrivacyState {
     var stakeNext: Long = 0
     var stakeHeight: Long = 0
     var stakeNullifiersNext: Long = 0
+    /**
+     * The chain's slash label window (Query/DebtTree window_seconds) as last
+     * read: when a moved stake's exposure may leave its note, for display
+     * between reads (0: never read).
+     */
+    var labelWindowSeconds: Long = 0
     val stakeNotes: MutableList<OwnedStakeNote> = ArrayList()
     /** Every denom seen in a public amount: resolves the asset ids ciphertexts carry. */
     val denoms: MutableSet<String> = sortedSetOf()
@@ -310,6 +317,7 @@ class PrivacyState {
         put("identity_heights", JSONArray(identityHeights)); put("identity_rows_seen", identityRowsSeen)
         put("next_otag_counter", nextOtagCounter); put("closed_otag_max", closedOtagMax)
         put("stake_next", stakeNext); put("stake_height", stakeHeight); put("stake_nullifiers_next", stakeNullifiersNext)
+        put("label_window_seconds", labelWindowSeconds)
         put("stake_notes", JSONArray().apply { stakeNotes.forEach { put(stakeJson(it)) } })
         put("denoms", JSONArray(denoms.toList()))
     }
@@ -377,6 +385,7 @@ class PrivacyState {
             identityHeights.addAll(longs(j.optJSONArray("identity_heights"))); identityRowsSeen = j.optLong("identity_rows_seen")
             nextOtagCounter = j.optInt("next_otag_counter"); closedOtagMax = j.optInt("closed_otag_max", -1)
             stakeNext = j.optLong("stake_next"); stakeHeight = j.optLong("stake_height"); stakeNullifiersNext = j.optLong("stake_nullifiers_next")
+            labelWindowSeconds = j.optLong("label_window_seconds")
             j.optJSONArray("stake_notes")?.let { a -> for (i in 0 until a.length()) stakeNotes.add(stakeFromJson(a.getJSONObject(i))) }
             j.optJSONArray("denoms")?.let { a -> for (i in 0 until a.length()) denoms.add(a.getString(i)) }
         }
@@ -407,6 +416,9 @@ class PrivacyState {
             .put("pending_at", n.pendingAt ?: JSONObject.NULL)
             .put("pending_until", n.pendingUntil ?: JSONObject.NULL)
             .put("pending_tx", n.pendingTx ?: JSONObject.NULL)
+            .apply {
+                n.label?.let { l -> put("move_key", l.moveKey.toHex()).put("move_time", l.moveTime).put("exposed", l.exposed) }
+            }
 
         private fun stakeFromJson(o: JSONObject) = OwnedStakeNote(
             position = o.getLong("position"), height = o.getLong("height"), denom = o.getString("denom"), amount = o.getLong("amount"),
@@ -416,6 +428,7 @@ class PrivacyState {
             pendingAt = if (o.isNull("pending_at")) null else o.getLong("pending_at"),
             pendingUntil = opt(o, "pending_until"),
             pendingTx = optString(o, "pending_tx"),
+            label = optString(o, "move_key")?.let { StakeLabel(Fr.fromHex(it), o.getLong("move_time"), o.getLong("exposed")) },
         )
 
         private fun optString(o: JSONObject, k: String): String? = if (!o.has(k) || o.isNull(k)) null else o.getString(k)
@@ -521,6 +534,7 @@ class PrivacyStore private constructor(private val dir: File?) {
                 keepHandleState(old, this)
                 pendingUnbonds.addAll(old.pendingUnbonds)
                 stakeVotes.addAll(old.stakeVotes)
+                labelWindowSeconds = old.labelWindowSeconds
             } else if (old.chainId == null) {
                 // Never synced: what a switch moved to this identity was
                 // recorded for the chain the app follows (PrivacySession.recorderFor).

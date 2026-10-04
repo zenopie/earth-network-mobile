@@ -219,6 +219,36 @@ object PrivacyQueries {
         return NfTreePage(values.take(1000), j.long("size"))
     }
 
+    /** Query/DebtTree: up to [limit] (at most 1000) rows from leaf start+1, the tree's size and root, the label window and clear_before. */
+    fun debtTree(start: Long, limit: Int): network.erth.wallet.privacy.PrivacyChainReads.DebtTreePage {
+        val j = get("/earth/shieldedstaking/v1/debt_tree?start=$start&limit=${limit.coerceIn(1, 1000)}")
+        val a = j.optJSONArray("rows")
+        val rows = (0 until (a?.length() ?: 0)).map { i ->
+            val r = a!!.getJSONObject(i)
+            val key = r.optString("key").decodeBase64()?.toByteArray()?.takeIf { it.size == 32 } ?: throw IOException("debt row ${start + 1 + i}: key is not 32 bytes")
+            val retained = network.erth.wallet.privacy.Amounts.parseU64(r.optString("retained", "0").ifEmpty { "0" }) ?: throw IOException("debt row ${start + 1 + i}: retained")
+            Fr.fromBytes(key) to retained
+        }
+        val root = j.optString("root").decodeBase64()?.toByteArray()?.takeIf { it.size == 32 }?.let { Fr.fromBytes(it) }
+            ?: throw IOException("debt_tree: no root")
+        return network.erth.wallet.privacy.PrivacyChainReads.DebtTreePage(rows.take(1000), j.long("size"), root, j.long("window_seconds"), j.long("clear_before"))
+    }
+
+    /** shieldedstaking params.min_delegation (uerth). */
+    fun minDelegation(): Long = get("/earth/shieldedstaking/v1/params").getJSONObject("params").long("min_delegation")
+
+    /** Query/Validator's live book: backing and derth supply (exact integers; the rate is their quotient). */
+    fun validatorBook(valoper: String): network.erth.wallet.privacy.PrivacyChainReads.ValidatorBook {
+        val j = get("/earth/shieldedstaking/v1/validators/$valoper")
+        fun int(k: String) = j.optString(k, "0").ifEmpty { "0" }.let { v ->
+            require(v.all { it in '0'..'9' } && v.length <= 80) { "validator $k is not a non-negative integer" }
+            java.math.BigInteger(v)
+        }
+        val pending = j.optJSONObject("state")?.optString("pending_delegation", "0")?.ifEmpty { "0" } ?: "0"
+        require(pending.all { it in '0'..'9' } && pending.length <= 80) { "validator pending_delegation is not a non-negative integer" }
+        return network.erth.wallet.privacy.PrivacyChainReads.ValidatorBook(int("backing"), int("supply"), java.math.BigInteger(pending))
+    }
+
     /** shieldedstaking params.epoch_seconds and x/staking params.unbonding_time, in seconds. */
     data class StakingTiming(val epochSeconds: Long, val unbondingSeconds: Long)
 
@@ -439,6 +469,24 @@ object LcdChainRoots : network.erth.wallet.privacy.sync.ChainRoots {
                 val id = runCatching { b64Field(e.optString("asset_id")) }.getOrNull() ?: continue
                 out.add(e.optString("denom") to id)
             }
+            val next = j.optJSONObject("pagination")?.optString("next_key").orEmpty()
+            if (next.isEmpty() || next == "null" || next == key || a.length() == 0) break
+            key = next
+        }
+        out
+    }.getOrNull()
+
+    /** x/staking's validators, every status, every page (public; at most Denoms.MAX). */
+    override fun validatorOperators(): List<String>? = runCatching {
+        val out = ArrayList<String>()
+        var key = ""
+        while (out.size < network.erth.wallet.privacy.note.Denoms.MAX) {
+            val q = "pagination.limit=500" + if (key.isEmpty()) "" else "&pagination.key=" + java.net.URLEncoder.encode(key, "UTF-8")
+            val path = "/cosmos/staking/v1beta1/validators?$q"
+            val (code, body) = EarthRest.get(path)
+            val j = json(code, body, path)
+            val a = j.optJSONArray("validators") ?: break
+            for (i in 0 until a.length()) a.optJSONObject(i)?.optString("operator_address")?.takeIf { it.isNotEmpty() }?.let(out::add)
             val next = j.optJSONObject("pagination")?.optString("next_key").orEmpty()
             if (next.isEmpty() || next == "null" || next == key || a.length() == 0) break
             key = next

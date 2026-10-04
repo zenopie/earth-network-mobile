@@ -74,6 +74,12 @@ interface ChainRoots {
      * (audit 6, M2).
      */
     fun assets(): List<Pair<String, Fr>>? = null
+    /**
+     * x/staking's validators, every status (public): a stake ciphertext
+     * carries derth/<valoper>'s asset id only, so a wallet restored from the
+     * mnemonic names its stake by trying each (null: the node cannot say).
+     */
+    fun validatorOperators(): List<String>? = null
 }
 
 /** Which chain the LCD serves: its chain id and the first 16 lowercase hex digits of its block 1 hash (null: unavailable). */
@@ -140,6 +146,7 @@ class WalletSync(
 
     /** Whether this sync has read the chain's asset list (at most once a sync, and only when a note of ours needs it). */
     private var chainAssetsRead = false
+    private var validatorsRead = false
 
     private fun readTip(): ChainTip =
         (runCatching { chain.latestBlock() }.getOrNull() ?: throw java.io.IOException("the node did not say its latest height; nothing was synced"))
@@ -331,11 +338,13 @@ class WalletSync(
             Privacy.h(Privacy.TAG_UNLOCKTAG, nk, Privacy.u64(counter.toLong() and 0xffffffffL)).toBytes().copyOf(REG_TAG_BYTES)
 
         /**
-         * The memo of an unlock's re-minted stake note: the owner-tag counter
-         * of the position it closed, so a wallet restored from the mnemonic
-         * knows the tags of closed positions too and never locks under one
-         * again (K11). Tagged like the record (only nk makes one): a gift of
-         * stake carrying a huge counter cannot stretch the owner-tag scan.
+         * The memo of an unlock's record note (a value-0 pool note to itself in
+         * the unlock's fee bundle; the stake note it merges into carries no
+         * memo since chain dff3a9b): the owner-tag counter of the position it
+         * closed, so a wallet restored from the mnemonic knows the tags of
+         * closed positions too and never locks under one again (K11). Tagged
+         * like the record (only nk makes one): a note carrying a huge counter
+         * cannot stretch the owner-tag scan.
          */
         fun unlockMemo(nk: Fr, counter: Int): ByteArray =
             java.nio.ByteBuffer.allocate(NoteCipher.MEMO_BYTES).put(UNLOCK_MAGIC).putInt(counter).put(unlockTag(nk, counter)).array()
@@ -942,6 +951,8 @@ class WalletSync(
                 }
             }
             parseStateMemo(keys.nk, note.memo)?.let { applyStateRecord(s, r.position, r.height, it, now()) }
+            // An unlock's record (K11): the owner-tag counter of the position it closed.
+            parseUnlockMemo(keys.nk, note.memo)?.let { c -> if (c > s.closedOtagMax) s.closedOtagMax = c }
             return null
         }
         return OwnedNote(r.position, r.height, note, r.cm, Privacy.nf(keys.nk, note.rho, r.position))
@@ -965,6 +976,7 @@ class WalletSync(
      */
     private fun beginDenoms(s: PrivacyState) {
         chainAssetsRead = false
+        validatorsRead = false
         val own = (s.notes.map { it.note.denom } + s.stakeNotes.map { it.denom }).filterTo(sortedSetOf(), Denoms::valid)
         s.denoms.clear()
         own.take(Denoms.MAX).forEach { s.denoms.add(it) }
@@ -1093,36 +1105,34 @@ class WalletSync(
     }
 
     /**
-     * A stake row is ours if its ciphertext opens: a stake proof's own
-     * output carries the wallet stake ciphertext (153 bytes, amount inside);
-     * a note the chain minted carries the blind stake ciphertext (177 bytes)
-     * of its secrets, checked against the denom and amount the chain
-     * published with it.
+     * A stake row is ours if its ciphertext opens (the wallet stake note,
+     * 201 bytes, label inside): every stake note is a stake proof's output
+     * (chain dff3a9b). A zero note (a full exit's padding output) is dropped.
      */
     internal fun openStake(r: StakeNoteRow): OwnedStakeNote? {
         val s = store.state
-        val (denom, amount, rho, rcm) = when (r.ciphertext.size) {
-            NoteCipher.STAKE_CIPHERTEXT_BYTES -> {
-                val o = NoteCipher.tryDecryptStake(r.ciphertext, r.cm, keys) ?: return null
-                StakeOpen(assetDenoms.resolve(o.asset), o.amount, o.rho, o.rcm)
-            }
-            NoteCipher.BLIND_CIPHERTEXT_BYTES -> {
-                // Audit 6 (M2, M3): an SDK denom, learned only once the note opens as ours.
-                val denom = r.denom?.takeIf(Denoms::valid) ?: return null
-                val amount = r.amount ?: return null
-                val (rho, rcm, memo) = NoteCipher.tryOpenBlindStake(r.ciphertext, r.cm, denom, amount, keys) ?: return null
-                parseUnlockMemo(keys.nk, memo)?.let { c -> if (c > s.closedOtagMax) s.closedOtagMax = c }
-                StakeOpen(denom, amount, rho, rcm)
-            }
-            else -> return null
-        }
+        val o = NoteCipher.tryDecryptStake(r.ciphertext, r.cm, keys) ?: return null
         // Zero, or past 2^63-1 (negative as a Long): nothing the wallet holds (Amounts).
-        if (amount <= 0L) return null
-        if (assetDenoms.learn(denom) && s.denoms.size < Denoms.MAX) s.denoms.add(denom)
-        return OwnedStakeNote(r.position, r.height, denom, amount, rho, rcm, r.cm, Privacy.stakeNf(keys.nk, rho, r.position))
+        if (o.amount <= 0L) return null
+        val denom = stakeDenom(o.asset) ?: return null
+        if (s.denoms.size < Denoms.MAX) s.denoms.add(denom)
+        return OwnedStakeNote(r.position, r.height, denom, o.amount, o.rho, o.rcm, r.cm, Privacy.stakeNf(keys.nk, o.rho, r.position), label = o.label)
     }
 
-    private data class StakeOpen(val denom: String, val amount: Long, val rho: Fr, val rcm: Fr)
+    /**
+     * derth/<valoper> for a stake note's asset id: known already, or found
+     * among the chain's validators (read at most once a sync; each candidate
+     * learned only as the hash of its own name). Null: no validator's (a stake
+     * note of an asset the wallet cannot name is not one it can use).
+     */
+    private fun stakeDenom(asset: Fr): String? {
+        assetDenoms.resolve(asset).takeIf { !it.startsWith(NotePlaintext.UNRESOLVED_PREFIX) }?.let { return it }
+        if (!validatorsRead) {
+            validatorsRead = true
+            runCatching { chain.validatorOperators() }.getOrNull()?.forEach { op -> assetDenoms.learn("derth/$op") }
+        }
+        return assetDenoms.resolve(asset).takeIf { !it.startsWith(NotePlaintext.UNRESOLVED_PREFIX) }
+    }
 
     private fun syncStakeNullifiers(s: PrivacyState, limit: Int) {
         val mine = s.stakeNotes.withIndex().filter { it.value.unspent }.associate { it.value.nf to it.index }

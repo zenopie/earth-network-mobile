@@ -47,7 +47,18 @@ interface PrivacyIndexer {
      */
     fun handles(fromIndex: Long, limit: Int): network.erth.wallet.privacy.handles.HandleDirectory.StreamPage =
         throw UnsupportedOperationException("this indexer serves no handle directory")
+    /**
+     * The slash debt tree, whole, by leaf index (rows from leaf 1, each with
+     * its latest retained), its size and root as the indexer synced them
+     * (chain dff3a9b). The wallet checks the rebuilt root against the
+     * chain's own Query/DebtTree before using a row.
+     */
+    fun debtRows(fromIndex: Long, limit: Int): DebtRowsPage =
+        throw UnsupportedOperationException("this indexer serves no debt rows")
 }
+
+/** /debt_rows: [rows] (leaf index, move key, retained), [size] the leaf count (sentinel included, 0 when empty), [root] at the synced height. */
+data class DebtRowsPage(val rows: List<Triple<Long, Fr, Long>>, val nextIndex: Long, val complete: Boolean, val size: Long, val root: Fr?)
 
 data class IndexerStatus(
     val chainId: String?,
@@ -100,18 +111,15 @@ data class RootRecord(val root: Fr, val treeSize: Long, val height: Long, val ti
 data class LatestRoots(val note: RootRecord?, val identity: RootRecord?, val syncedHeight: Long, val stake: RootRecord? = null)
 
 /**
- * A stake tree leaf. A note the chain minted carries its public [denom],
- * [amount] and stake pc [spc] and no ciphertext; a note a stake proof created
- * carries a ciphertext and none of the three.
+ * A stake tree leaf: every one a stake proof's output with its 201-byte
+ * wallet stake ciphertext (chain dff3a9b: the chain mints no stake note, so
+ * no row has a public denom, amount or pc any more).
  */
 data class StakeNoteRow(
     val position: Long,
     val height: Long,
     val cm: Fr,
     val ciphertext: ByteArray,
-    val denom: String?,
-    val amount: Long?,
-    val spc: Fr?,
 )
 
 data class StakeNotesPage(val rows: List<StakeNoteRow>, val nextPos: Long, val complete: Boolean, val syncedHeight: Long)
@@ -259,6 +267,9 @@ class HttpPrivacyIndexer(
     override fun handles(fromIndex: Long, limit: Int): network.erth.wallet.privacy.handles.HandleDirectory.StreamPage =
         parseHandles(stream("/handles?from_index=$fromIndex${limit(limit)}"))
 
+    override fun debtRows(fromIndex: Long, limit: Int): DebtRowsPage =
+        parseDebtRows(stream("/debt_rows?from_index=$fromIndex${limit(limit)}"))
+
     companion object {
         private val CHAIN_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
         private val GENESIS = Regex("[0-9a-f]{16}")
@@ -313,12 +324,21 @@ class HttpPrivacyIndexer(
                     height = r.getLong(1),
                     cm = Fr.fromHex(r.getString(2)),
                     ciphertext = if (r.isNull(3)) ByteArray(0) else r.getString(3).decodeBase64()?.toByteArray() ?: ByteArray(0),
-                    denom = if (r.isNull(4)) null else r.getString(4),
-                    amount = if (r.isNull(5)) null else network.erth.wallet.privacy.Amounts.parseU64(r.get(5).toString()),
-                    spc = if (r.isNull(6)) null else Fr.fromHex(r.getString(6)),
                 )
             }
             return StakeNotesPage(rows, j.getLong("next_pos"), j.getBoolean("complete"), j.getLong("synced_height"))
+        }
+
+        /** /debt_rows: rows [index, key (hex), retained, height, updated_height]; size, root (hex). */
+        fun parseDebtRows(j: JSONObject): DebtRowsPage {
+            val a = j.getJSONArray("rows")
+            val rows = (0 until a.length()).map { i ->
+                val r = a.getJSONArray(i)
+                val retained = network.erth.wallet.privacy.Amounts.parseU64(r.get(2).toString()) ?: throw IOException("debt row retained ${r.get(2)}")
+                Triple(r.getLong(0), Fr.fromHex(r.getString(1)), retained)
+            }
+            val root = if (j.isNull("root")) null else j.optString("root").takeIf { it.length == 64 }?.let { Fr.fromHex(it) }
+            return DebtRowsPage(rows, j.getLong("next_index"), j.getBoolean("complete"), j.optLong("size"), root)
         }
 
         /** /stake/nullifier-tree: rows [index, nullifier (hex), height]. */

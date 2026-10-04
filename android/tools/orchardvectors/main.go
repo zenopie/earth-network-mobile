@@ -33,6 +33,7 @@ import (
 	personhoodtypes "github.com/earth-network/earth/x/personhood/types"
 	shieldedtypes "github.com/earth-network/earth/x/shielded/types"
 	stakingtypes "github.com/earth-network/earth/x/shieldedstaking/types"
+	"github.com/earth-network/earth/zk/debt"
 	"github.com/earth-network/earth/zk/indexed"
 	"github.com/earth-network/earth/zk/merkle"
 	"github.com/earth-network/earth/zk/orchard"
@@ -98,26 +99,39 @@ func membership(seed uint64) personhoodtypes.Membership {
 	return personhoodtypes.Membership{Proof: []byte{0xbe, 0xef, byte(seed)}, Root: fb(seed + 100), Nullifier: fb(seed + 101)}
 }
 
-func stakeProof(seed uint64, spends, creates int, mints bool) stakingtypes.StakeProof {
-	p := stakingtypes.StakeProof{Proof: []byte{0x5e, byte(seed)}, Anchor: fb(seed), SpcMint: fb(seed + 7), OwnerTag: fb(seed + 8)}
-	if mints {
-		p.SpcCiphertext = bct(byte(seed))
-	}
+// stakeProof is a well-formed stake proof: spends lane A nullifiers (one or
+// two), creates lane A's output, credits fills the credit lane, clears names
+// a clear_before and debt root. Ciphertexts are 201-byte stand-ins.
+func stakeProof(seed uint64, spends int, creates, credits, clears bool) stakingtypes.StakeProof {
+	zero := make([]byte, 32)
+	p := stakingtypes.StakeProof{Proof: []byte{0x5e, byte(seed)}, Anchor: fb(seed), OwnerTag: fb(seed + 8),
+		Commitment: zero, CreditNullifier: zero, CreditCommitment: zero, DebtRoot: zero}
 	for i := 0; i < 2; i++ {
-		nf, cm := make([]byte, 32), make([]byte, 32)
-		var ct []byte
+		nf := zero
 		if i < spends {
 			nf = fb(seed + 1 + uint64(i))
 		}
-		if i < creates {
-			cm = fb(seed + 3 + uint64(i))
-			ct = []byte(fmt.Sprintf("sct-%d-%d", seed, i))
-		}
 		p.Nullifiers = append(p.Nullifiers, nf)
-		p.Commitments = append(p.Commitments, cm)
-		p.Ciphertexts = append(p.Ciphertexts, ct)
+	}
+	if creates {
+		p.Commitment, p.Ciphertext = fb(seed+3), sct(byte(seed))
+	}
+	if credits {
+		p.CreditNullifier, p.CreditCommitment, p.CreditCiphertext = fb(seed+4), fb(seed+5), sct(byte(seed+1))
+	}
+	if clears {
+		p.ClearBefore, p.DebtRoot = 1_790_000_000+seed, fb(seed+6)
 	}
 	return p
+}
+
+// sct is a deterministic 201-byte stand-in for a wallet stake ciphertext.
+func sct(seed byte) []byte {
+	b := make([]byte, privacy.WalletStakeCiphertextBytes)
+	for i := range b {
+		b[i] = seed ^ byte(i)
+	}
+	return b
 }
 
 type msgVec struct {
@@ -174,7 +188,7 @@ func main() {
 		"reg": hx(privacy.TagReg), "asset": hx(privacy.TagAsset), "signal": hx(privacy.TagSignal),
 		"bytes": hx(privacy.TagBytes), "scope": hx(privacy.TagScope), "affiliate": hx(privacy.TagAffiliate), "referral": hx(privacy.TagReferral),
 		"stake": hx(privacy.TagStake), "spc": hx(privacy.TagSPC), "snf": hx(privacy.TagSNF), "otag": hx(privacy.TagOTag),
-		"snfl": hx(privacy.TagSNFL), "vnf": hx(privacy.TagVNF),
+		"snfl": hx(privacy.TagSNFL), "vnf": hx(privacy.TagVNF), "slabel": hx(privacy.TagSLabel), "debtl": hx(privacy.TagDebtL),
 		"gen": hx(orchard.TagGen), "cv_r": hx(orchard.TagCvR), "bsig": hx(orchard.TagBsig), "bundle": hx(orchard.TagBundle),
 	}
 	val := "earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
@@ -217,7 +231,14 @@ func main() {
 		"reg_pinned": hx(privacy.RegistrationBinding("earth-1", u(1), u(2), []byte("anml"), u(3), []byte("erth"), fr.Element{})),
 		"reg_testnet": hx(privacy.RegistrationBinding("earth-testnet-1", u(1), u(2), []byte("anml"), u(3), []byte("erth"), fr.Element{})),
 		"spc":       hx(spc),
-		"stake_cm":  hx(privacy.StakeCM(privacy.AssetID(stakingtypes.DerthDenom(val)), 1_800_000, spc)),
+		"stake_cm":  hx(privacy.StakeCM(privacy.AssetID(stakingtypes.DerthDenom(val)), 1_800_000, spc, fr.Element{})),
+		"stake_label": hx(privacy.StakeLabel(fe(1009), 1_790_000_000, 400_000)),
+		"stake_cm_labelled": hx(privacy.StakeCM(privacy.AssetID(stakingtypes.DerthDenom(val)), 1_800_000, spc, privacy.StakeLabel(fe(1009), 1_790_000_000, 400_000))),
+		"debt_leaf": hx(privacy.DebtLeaf(fe(1010), fe(1011), 4_000_000_000, 123_456)),
+		// zk/debt TestNoirParity's pins (= privacy_core test_go_parity_debt).
+		"debt_leaf_1_2_3_4": hx(privacy.DebtLeaf(u(1), u(2), 3, 4)),
+		"stake_label_4d4b": hx(privacy.StakeLabel(u(0x4d4b), 1000, 200)),
+		"stake_cm_1_2_3_4": hx(privacy.StakeCM(u(1), 2, u(3), u(4))),
 		"stake_nf":  hx(privacy.StakeNF(nk, rho, 4_000_000_000)),
 		"otag_salt": hx(fe(1006)),
 		"otag":      hx(privacy.OwnerTag(opk, fe(1006))),
@@ -303,6 +324,67 @@ func main() {
 		out["indexed"] = map[string]any{
 			"empty_root": hx(indexed.EmptyRoot), "values": values, "roots": iroots, "witnesses": wits,
 		}
+	}
+
+	// ---- the slash debt tree (zk/debt) --------------------------------------
+	{
+		type wit struct {
+			Key          string   `json:"key"`
+			Exposed      uint64   `json:"exposed"`
+			Retained     uint64   `json:"retained"`
+			LowKey       string   `json:"low_key"`
+			LowNextKey   string   `json:"low_next_key"`
+			LowNextIndex uint64   `json:"low_next_index"`
+			LowRetained  uint64   `json:"low_retained"`
+			LowIndex     uint64   `json:"low_index"`
+			LowPath      []string `json:"low_path"`
+		}
+		type row struct {
+			Key      string `json:"key"`
+			Retained uint64 `json:"retained"`
+		}
+		var rows []debt.Row
+		var rowsJ []row
+		droots := map[string]string{"0": hx(debt.EmptyRoot)}
+		for i := uint64(0); i < 9; i++ {
+			rows = append(rows, debt.Row{Key: fe(9000 + i), Retained: 1_000 * (i + 1)})
+		}
+		// A later slash rewrites row 2's retained in place (insertion order kept).
+		rows = append(rows, debt.Row{Key: fe(9002), Retained: 7})
+		dt := debt.NewMem()
+		for i, r := range rows {
+			_, err := dt.Set(r.Key, r.Retained)
+			must(err)
+			rr, _ := dt.Root()
+			droots[fmt.Sprint(i+1)] = hx(rr)
+		}
+		final := map[fr.Element]uint64{}
+		var order []fr.Element
+		for _, r := range rows {
+			if _, ok := final[r.Key]; !ok {
+				order = append(order, r.Key)
+			}
+			final[r.Key] = r.Retained
+		}
+		for _, k := range order {
+			rowsJ = append(rowsJ, row{hx(k), final[k]})
+		}
+		root, _ := dt.Root()
+		var wits []wit
+		for _, k := range []fr.Element{fe(9002), fe(9005), fe(9500), fe(9501), u(1)} {
+			w, err := dt.Lookup(k)
+			must(err)
+			r, ok := w.Retained(k, 50_000, root)
+			if !ok {
+				panic("debt witness does not verify")
+			}
+			p := make([]string, len(w.Path))
+			for i := range w.Path {
+				p[i] = hx(w.Path[i])
+			}
+			wits = append(wits, wit{hx(k), 50_000, r, hx(w.Low.Key), hx(w.Low.NextKey), w.Low.NextIndex, w.Low.Retained, w.Index, p})
+		}
+		out["debt"] = map[string]any{"empty_root": hx(debt.EmptyRoot), "roots_by_write": droots, "rows": rowsJ, "root": hx(root), "witnesses": wits}
 	}
 
 	must(t.Update(5, fr.Element{}))
@@ -534,21 +616,21 @@ func main() {
 	add("propose_removal", &assemblytypes.MsgProposeRemoval{Fee: fee(81, 2000), Membership: membership(81), OptionId: 3})
 	add("vote_removal", &assemblytypes.MsgVoteRemoval{Fee: fee(82, 2000), Membership: membership(82), OptionId: 3, Option: assemblytypes.VoteOption(2)})
 
-	add("delegate", &stakingtypes.MsgDelegate{Bundle: fee(90, 502000), Validator: val, Amount: 500000, Stake: stakeProof(90, 0, 0, true)})
-	add("restake", &stakingtypes.MsgRestake{Bundle: fee(95, 2000), Validator: val, Stake: stakeProof(95, 2, 1, false)})
-	// Chain 48b631c: the undelegation names its payout (pc 6, ciphertext 7); no stake note is minted.
-	add("undelegate", &stakingtypes.MsgUndelegate{Bundle: fee(100, 2000), Validator: val, Amount: 400000, Stake: stakeProof(100, 1, 1, false), Pc: fb(101), Ciphertext: bct(101)})
-	add("undelegate_whole", &stakingtypes.MsgUndelegate{Bundle: fee(102, 2000), Validator: val, Amount: 400000, Stake: stakeProof(102, 2, 0, false), Pc: fb(103), Ciphertext: bct(103)})
+	// Chain dff3a9b: the proof merges the credited derth into the owner's note (a padding input when it holds none).
+	add("delegate", &stakingtypes.MsgDelegate{Bundle: fee(90, 502000), Validator: val, Amount: 500000, Derth: 449_995, Stake: stakeProof(90, 1, true, false, true)})
+	add("delegate_young", &stakingtypes.MsgDelegate{Bundle: fee(91, 502000), Validator: val, Amount: 500000, Derth: 449_995, Stake: stakeProof(91, 1, true, false, false)})
+	add("restake", &stakingtypes.MsgRestake{Bundle: fee(95, 2000), Validator: val, Stake: stakeProof(95, 2, true, false, true)})
+	// The undelegation names its payout (pc 6, ciphertext 7); the proof's output is the change or a zero note.
+	add("undelegate", &stakingtypes.MsgUndelegate{Bundle: fee(100, 2000), Validator: val, Amount: 400000, Stake: stakeProof(100, 1, true, false, true), Pc: fb(101), Ciphertext: bct(101)})
+	add("undelegate_whole", &stakingtypes.MsgUndelegate{Bundle: fee(102, 2000), Validator: val, Amount: 400000, Stake: stakeProof(102, 2, true, false, true), Pc: fb(103), Ciphertext: bct(103)})
 	// Wave 3 (F3): canonical LegacyDec weights only.
 	opts := []*govv1.WeightedVoteOption{{Option: govv1.OptionYes, Weight: "0.700000000000000000"}, {Option: govv1.OptionNo, Weight: "0.300000000000000000"}}
-	// Chain 48b631c: four vote nullifier slots, the used ones first, then zeros.
+	// Chain dff3a9b: two vote nullifier slots, the used ones first, then zeros; the current debt root.
 	zero := make([]byte, 32)
 	add("stake_vote", &stakingtypes.MsgStakeVote{Bundle: fee(120, 2000), ProposalId: 5, Validator: val, Options: opts, Weight: 400000, Proof: []byte{0x70, 0x7e},
-		VoteNullifiers: [][]byte{fb(121), zero, zero, zero}})
-	add("stake_vote_four", &stakingtypes.MsgStakeVote{Bundle: fee(122, 2000), ProposalId: 5, Validator: val, Options: opts, Weight: 1_230_000, Proof: []byte{0x70, 0x7e},
-		VoteNullifiers: [][]byte{fb(123), fb(124), fb(125), fb(126)}})
+		VoteNullifiers: [][]byte{fb(121), zero}, DebtRoot: privacy.FieldBytes(debt.EmptyRoot)})
 	add("stake_vote_two", &stakingtypes.MsgStakeVote{Bundle: fee(127, 2000), ProposalId: 6, Validator: val, Options: opts, Weight: 999, Proof: []byte{0x70, 0x7e},
-		VoteNullifiers: [][]byte{fb(128), fb(129), zero, zero}})
+		VoteNullifiers: [][]byte{fb(128), fb(129)}, DebtRoot: fb(130)})
 	// RoundVoteWeight (C-L3): three significant digits, rounded down.
 	rw := map[string]string{}
 	for _, w := range []uint64{1, 999, 1000, 1009, 123_456, 399_999_999, 1_000_000_000_000, 18_446_744_073_709_551_615, 9_223_372_036_854_775_807} {
@@ -556,17 +638,51 @@ func main() {
 	}
 	out["round_vote_weight"] = rw
 	splits := []allocationtypes.AllocationWeight{{OptionId: 2, Percent: 100}}
-	add("lock_position", &stakingtypes.MsgLockPosition{Bundle: fee(140, 2000), Validator: val, Amount: 400000, Splits: splits, Stake: stakeProof(140, 1, 1, false)})
-	add("update_position", &stakingtypes.MsgUpdatePosition{Bundle: fee(150, 2000), PositionId: 9, Splits: splits, Stake: stakeProof(150, 0, 0, false)})
-	add("unlock_position", &stakingtypes.MsgUnlockPosition{Bundle: fee(160, 2000), PositionId: 9, Stake: stakeProof(160, 0, 0, true)})
-	add("position_vote", &stakingtypes.MsgPositionVote{Bundle: fee(170, 2000), PositionId: 9, ProposalId: 5, Options: opts, Stake: stakeProof(170, 0, 0, false)})
-	sp := stakeProof(100, 1, 1, false)
+	add("lock_position", &stakingtypes.MsgLockPosition{Bundle: fee(140, 2000), Validator: val, Amount: 400000, Splits: splits, Stake: stakeProof(140, 1, true, false, true)})
+	add("update_position", &stakingtypes.MsgUpdatePosition{Bundle: fee(150, 2000), PositionId: 9, Splits: splits, Stake: stakeProof(150, 0, false, false, true)})
+	add("unlock_position", &stakingtypes.MsgUnlockPosition{Bundle: fee(160, 2000), PositionId: 9, Stake: stakeProof(160, 1, true, false, true)})
+	add("position_vote", &stakingtypes.MsgPositionVote{Bundle: fee(170, 2000), PositionId: 9, ProposalId: 5, Options: opts, Stake: stakeProof(170, 0, false, false, true)})
+	val2raw := make([]byte, 20)
+	for i := range val2raw {
+		val2raw[i] = byte(i + 1)
+	}
+	val2, err := addresscodec.NewBech32Codec("earthvaloper").BytesToString(val2raw)
+	must(err)
+	add("redelegate", &stakingtypes.MsgRedelegate{Bundle: fee(175, 2000), SrcValidator: val, DstValidator: val2, Amount: 400000,
+		Stake: stakeProof(175, 1, true, true, true), DstDerth: 380_000, MoveTime: 1_790_000_123})
+	sp := stakeProof(175, 1, true, true, true)
 	sf := sp.StakeFields()
 	sfs := make([]string, len(sf))
 	for i := range sf {
 		sfs[i] = hx(sf[i])
 	}
-	out["stake_fields_undelegate"] = sfs
+	out["stake_fields_redelegate"] = sfs
+	// The circuits' public inputs as the chain lays them out (StakeProof.PublicInputs, VotePublicInputs).
+	{
+		pis := map[string][]string{}
+		for name, m := range map[string]stakingtypes.StakeMsg{
+			"delegate":   &stakingtypes.MsgDelegate{Validator: val, Amount: 500000, Derth: 449_995, Stake: stakeProof(90, 1, true, false, true)},
+			"undelegate": &stakingtypes.MsgUndelegate{Validator: val, Amount: 400000, Stake: stakeProof(100, 1, true, false, true)},
+			"redelegate": &stakingtypes.MsgRedelegate{SrcValidator: val, DstValidator: val2, Amount: 400000, Stake: stakeProof(175, 1, true, true, true), DstDerth: 380_000, MoveTime: 1_790_000_123},
+		} {
+			p := m.StakeProofOf()
+			in := p.PublicInputs(m.StakeLanes(), fe(77))
+			ss := make([]string, len(in))
+			for i := range in {
+				ss[i] = hex.EncodeToString(in[i])
+			}
+			pis[name] = ss
+		}
+		vm := &stakingtypes.MsgStakeVote{ProposalId: 6, Validator: val, Weight: 999, VoteNullifiers: [][]byte{fb(128), fb(129)}, DebtRoot: fb(130)}
+		vin := vm.VotePublicInputs(fb(131), fb(132), fe(77))
+		vs := make([]string, len(vin))
+		for i := range vin {
+			vs[i] = hex.EncodeToString(vin[i])
+		}
+		pis["stake_vote"] = vs
+		out["public_inputs"] = pis
+		out["validator2"] = val2
+	}
 
 	// x/dex note paths.
 	add("note_swap", &dextypes.MsgNoteSwap{Bundle: bundle(180, shieldedtypes.ValueBalance{Denom: "uanml", Amount: 300000}, shieldedtypes.ValueBalance{Denom: "uerth", Amount: 2000}),
@@ -599,15 +715,16 @@ func main() {
 		copy(bn.Memo[:], "golden memo")
 		note, err := privacy.EncryptBlindNote(bn, ekPub, esk)
 		must(err)
-		stake, err := privacy.EncryptBlindStakeNote(bn, ekPub, esk)
-		must(err)
 		opk := privacy.OwnerPK(u(7))
-		spc := bn.SPC(opk)
+		spc := privacy.StakePC(opk, bn.Rho, bn.Rcm)
 		out["blind"] = map[string]string{
 			"ek": hex.EncodeToString(ek[:]), "esk": hex.EncodeToString(esk[:]), "ek_pub": hex.EncodeToString(ekPub[:]),
 			"owner_pk": hx(opk), "rho": hx(bn.Rho), "rcm": hx(bn.Rcm), "memo": "golden memo",
-			"note_ct": hex.EncodeToString(note), "stake_ct": hex.EncodeToString(stake),
-			"spc": hx(spc), "stake_cm_derth_1800000": hx(privacy.StakeCM(privacy.AssetID(stakingtypes.DerthDenom(val)), 1_800_000, spc)),
+			"note_ct": hex.EncodeToString(note),
+			"spc": hx(spc), "stake_cm_derth_1800000": hx(privacy.StakeCM(privacy.AssetID(stakingtypes.DerthDenom(val)), 1_800_000, spc, fr.Element{})),
+			"wallet_stake_ciphertext_bytes": fmt.Sprint(privacy.WalletStakeCiphertextBytes),
+			// The wallet stake note golden's labelled cm: label (0x4d4b, 1000, 200).
+			"stake_cm_derth_1800000_labelled": hx(privacy.StakeCM(privacy.AssetID(stakingtypes.DerthDenom(val)), 1_800_000, spc, privacy.StakeLabel(u(0x4d4b), 1000, 200))),
 		}
 	}
 

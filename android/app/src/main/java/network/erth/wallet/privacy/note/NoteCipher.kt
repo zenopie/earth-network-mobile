@@ -44,17 +44,19 @@ import java.security.SecureRandom
  * CM(asset, value, PC(owner_pk, rho, rcm)) is the note's cm, with the asset
  * and value the chain published for that position.
  *
- * "earth stake note v1", for a stake note a stake proof creates (a restake's
- * outputs, an undelegation's or a lock's change). Stake notes are
+ * "earth stake note v2", for every stake note (ORCHARD_DESIGN 20: each is
+ * a stake proof's output; the chain mints none). Stake notes are
  * owner-locked, so it is always encrypted to the wallet's own address, for
  * its other devices and for recovery from the mnemonic:
  *
- *     ct    = epk (32) || ChaCha20-Poly1305(key, nonce = 0^12, aad = empty, pt)      153 bytes
- *     key   = HKDF-SHA256(ikm = X25519(esk, ek_pub), salt = "earth.stake.v1", info = epk || cm)
- *     pt    = 0x03 || asset_id (32) || amount (u64 BE) || rho (32) || rcm (32)
+ *     ct    = epk (32) || ChaCha20-Poly1305(key, nonce = 0^12, aad = empty, pt)      201 bytes
+ *     key   = HKDF-SHA256(ikm = X25519(esk, ek_pub), salt = "earth.stake.v2", info = epk || cm)
+ *     pt    = 0x04 || asset_id (32) || amount (u64 BE) || rho (32) || rcm (32)
+ *             || move_key (32) || move_time (u64 BE) || exposed (u64 BE)
  *
- * accepted only if StakeCM(asset, amount, StakePC(owner_pk, rho, rcm)) is
- * the note's cm.
+ * The label fields are zero for an unlabelled note, so the length says
+ * nothing about a label. Accepted only if StakeCM(asset, amount,
+ * StakePC(owner_pk, rho, rcm), label) is the note's cm.
  */
 object NoteCipher {
     const val VERSION: Byte = 1
@@ -66,10 +68,11 @@ object NoteCipher {
     const val BLIND_PLAINTEXT_BYTES = 1 + 32 + 32 + MEMO_BYTES
     const val BLIND_CIPHERTEXT_BYTES = 32 + BLIND_PLAINTEXT_BYTES + 16
     private val BLIND_SALT = "earth.note.v2".toByteArray()
-    const val STAKE_VERSION: Byte = 3
-    const val STAKE_PLAINTEXT_BYTES = 1 + 32 + 8 + 32 + 32
+    const val STAKE_VERSION: Byte = 4
+    const val STAKE_PLAINTEXT_BYTES = 1 + 32 + 8 + 32 + 32 + 32 + 8 + 8
+    /** The chain's WalletStakeCiphertextBytes (201): every stake proof output's. */
     const val STAKE_CIPHERTEXT_BYTES = 32 + STAKE_PLAINTEXT_BYTES + 16
-    private val STAKE_SALT = "earth.stake.v1".toByteArray()
+    private val STAKE_SALT = "earth.stake.v2".toByteArray()
     private val rng = SecureRandom()
 
     /** Encrypts [note] to [to]; cm is the note's commitment under to's owner key. */
@@ -167,40 +170,6 @@ object NoteCipher {
         }
     }
 
-    // ---- blind stake ciphertext (chain zk/privacy EncryptBlindStakeNote) ----
-
-    /**
-     * The blind stake ciphertext of a stake note the chain will mint to
-     * spc = StakePC(owner_pk, [rho], [rcm]) (StakeProof.spc_ciphertext): as v2,
-     * under salt "earth.stake.v1" and version 0x03, 177 bytes.
-     */
-    fun encryptBlindStake(rho: Fr, rcm: Fr, ekPub: ByteArray, memo: ByteArray = ByteArray(0)): ByteArray =
-        sealBlind(X25519PrivateKeyParameters(rng), ekPub, blindPlaintext(rho, rcm, memo, STAKE_VERSION), STAKE_SALT)
-
-    /** Deterministic blind stake encryption: for golden vectors only. */
-    internal fun encryptBlindStakeWith(esk: ByteArray, rho: Fr, rcm: Fr, ekPub: ByteArray, memo: ByteArray = ByteArray(0)): ByteArray =
-        sealBlind(X25519PrivateKeyParameters(esk, 0), ekPub, blindPlaintext(rho, rcm, memo, STAKE_VERSION), STAKE_SALT)
-
-    /**
-     * A minted stake note: opens [ct] (177 bytes) with our ek and accepts it
-     * only if StakeCM(AssetID([denom]), [amount], StakePC(owner_pk, rho, rcm))
-     * is [cm], with the denom and amount the chain published. (rho, rcm) or null.
-     */
-    fun tryDecryptBlindStake(ct: ByteArray, cm: Fr, denom: String, amount: Long, keys: PrivacyKeys): Pair<Fr, Fr>? =
-        tryDecryptBlindStake(ct, cm, denom, amount, keys.ek(), keys.ownerPk)
-
-    internal fun tryDecryptBlindStake(ct: ByteArray, cm: Fr, denom: String, amount: Long, ek: X25519PrivateKeyParameters, ownerPk: Fr): Pair<Fr, Fr>? =
-        tryOpenBlindStake(ct, cm, denom, amount, ek, ownerPk)?.let { (rho, rcm, _) -> rho to rcm }
-
-    /** [tryDecryptBlindStake] with the memo (trailing zeros dropped). */
-    fun tryOpenBlindStake(ct: ByteArray, cm: Fr, denom: String, amount: Long, keys: PrivacyKeys): Triple<Fr, Fr, ByteArray>? =
-        tryOpenBlindStake(ct, cm, denom, amount, keys.ek(), keys.ownerPk)
-
-    internal fun tryOpenBlindStake(ct: ByteArray, cm: Fr, denom: String, amount: Long, ek: X25519PrivateKeyParameters, ownerPk: Fr): Triple<Fr, Fr, ByteArray>? {
-        val (rho, rcm, memo) = openBlind(ct, ek, STAKE_SALT, STAKE_VERSION) ?: return null
-        return if (Privacy.stakeCm(Privacy.assetId(denom), amount, Privacy.stakePc(ownerPk, rho, rcm)) == cm) Triple(rho, rcm, memo) else null
-    }
-
     /**
      * A v2 note: opens [ct] with our ek, and accepts it only if the secrets
      * with the chain-published [denom] and [value] recompute [cm] under our
@@ -217,10 +186,12 @@ object NoteCipher {
 
     // ---- stake notes ----
 
-    /** A stake note's opening, as its stake ciphertext carries it. */
-    data class StakeOpening(val asset: Fr, val amount: Long, val rho: Fr, val rcm: Fr)
+    /** A stake note's opening, as its stake ciphertext carries it: [label] null for an unlabelled note. */
+    data class StakeOpening(val asset: Fr, val amount: Long, val rho: Fr, val rcm: Fr, val label: StakeLabel? = null) {
+        fun cm(ownerPk: Fr): Fr = Privacy.stakeCm(asset, amount, Privacy.stakePc(ownerPk, rho, rcm), StakeLabel.hash(label))
+    }
 
-    /** Encrypts a stake note of [ownerPk] to [ekPub] (the wallet's own). */
+    /** Encrypts a stake note to [ekPub] (the wallet's own); [cm] its commitment. */
     fun encryptStake(o: StakeOpening, ekPub: ByteArray, cm: Fr): ByteArray =
         sealStake(X25519PrivateKeyParameters(rng), ekPub, cm, stakePlaintext(o))
 
@@ -236,24 +207,39 @@ object NoteCipher {
     }
 
     private fun stakePlaintext(o: StakeOpening): ByteArray = ByteBuffer.allocate(STAKE_PLAINTEXT_BYTES)
-        .put(STAKE_VERSION).put(o.asset.toBytes()).putLong(o.amount).put(o.rho.toBytes()).put(o.rcm.toBytes()).array()
+        .put(STAKE_VERSION).put(o.asset.toBytes()).putLong(o.amount).put(o.rho.toBytes()).put(o.rcm.toBytes())
+        .put((o.label?.moveKey ?: Fr.ZERO).toBytes()).putLong(o.label?.moveTime ?: 0L).putLong(o.label?.exposed ?: 0L)
+        .array()
 
     /** The stake note if [ct] opens with our ek for [cm] and recomputes it under our owner key; else null. */
-    fun tryDecryptStake(ct: ByteArray, cm: Fr, keys: PrivacyKeys): StakeOpening? {
+    fun tryDecryptStake(ct: ByteArray, cm: Fr, keys: PrivacyKeys): StakeOpening? = tryDecryptStake(ct, cm, keys.ek(), keys.ownerPk)
+
+    internal fun tryDecryptStake(ct: ByteArray, cm: Fr, ek: X25519PrivateKeyParameters, ownerPk: Fr): StakeOpening? {
         if (ct.size != STAKE_CIPHERTEXT_BYTES) return null
         return try {
             val epk = ct.copyOf(32)
             val shared = ByteArray(32)
-            X25519Agreement().apply { init(keys.ek()) }.calculateAgreement(X25519PublicKeyParameters(epk, 0), shared, 0)
+            X25519Agreement().apply { init(ek) }.calculateAgreement(X25519PublicKeyParameters(epk, 0), shared, 0)
             val pt = aead(false, hkdf(shared, STAKE_SALT, epk + cm.toBytes()), ct.copyOfRange(32, ct.size))
             if (pt.size != STAKE_PLAINTEXT_BYTES || pt[0] != STAKE_VERSION) return null
             val b = ByteBuffer.wrap(pt, 1, STAKE_PLAINTEXT_BYTES - 1)
-            val asset = Fr.fromBytes(ByteArray(32).also { b.get(it) })
+            fun field() = Fr.fromBytes(ByteArray(32).also { b.get(it) })
+            val asset = field()
             val amount = b.long
-            val rho = Fr.fromBytes(ByteArray(32).also { b.get(it) })
-            val rcm = Fr.fromBytes(ByteArray(32).also { b.get(it) })
-            if (Privacy.stakeCm(asset, amount, Privacy.stakePc(keys.ownerPk, rho, rcm)) != cm) null
-            else StakeOpening(asset, amount, rho, rcm)
+            val rho = field()
+            val rcm = field()
+            val moveKey = field()
+            val moveTime = b.long
+            val exposed = b.long
+            // An unlabelled note carries zeros; a label names its move and a
+            // positive exposure within the note (as the circuit requires).
+            val label = when {
+                moveKey.isZero && moveTime == 0L && exposed == 0L -> null
+                moveKey.isZero || moveTime == 0L || exposed <= 0L || amount < exposed -> return null
+                else -> StakeLabel(moveKey, moveTime, exposed)
+            }
+            val o = StakeOpening(asset, amount, rho, rcm, label)
+            if (o.cm(ownerPk) != cm) null else o
         } catch (e: Exception) {
             null
         }

@@ -34,6 +34,9 @@ object Privacy {
     // The stake nullifier indexed tree and stake votes (circuits/vote, ORCHARD_DESIGN 15).
     val TAG_SNFL = tag("earth.snfl")
     val TAG_VNF = tag("earth.vnf")
+    // Stake note slash labels and the slash debt tree (circuits/stake, circuits/vote; ORCHARD_DESIGN 20).
+    val TAG_SLABEL = tag("earth.slabel")
+    val TAG_DEBTL = tag("earth.debtl")
     // Wallet-defined (PRIVACY_FORMATS.md 3a): the registration record note's tag.
     val TAG_RECTAG = tag("earth.rectag")
     // Wallet-defined (PRIVACY_FORMATS.md 1): an unlock's closed owner-tag counter.
@@ -83,8 +86,26 @@ object Privacy {
     /** A stake note's hidden owner: H(TAG_SPC, owner_pk, rho, rcm). */
     fun stakePc(ownerPk: Fr, rho: Fr, rcm: Fr): Fr = h(TAG_SPC, ownerPk, rho, rcm)
 
-    /** A stake note: H(TAG_STAKE, AssetID(stake denom), amount, spc). */
-    fun stakeCm(asset: Fr, amount: Long, spc: Fr): Fr = h(TAG_STAKE, asset, u64(amount), spc)
+    /**
+     * A stake note: H(TAG_STAKE, AssetID(stake denom), amount, spc, label),
+     * label 0 for an ordinary note or [stakeLabel] of the redelegation whose
+     * exposure it holds (ORCHARD_DESIGN 20.2).
+     */
+    fun stakeCm(asset: Fr, amount: Long, spc: Fr, label: Fr): Fr = h(TAG_STAKE, asset, u64(amount), spc, label)
+
+    /**
+     * A stake note's slash label: H(TAG_SLABEL, move_key, move_time,
+     * exposed). The note holds [exposed] derth a redelegation credited
+     * ([moveKey]: its credit nullifier; [moveTime]: the unix seconds it
+     * named) while a slash of its source may still cut it.
+     */
+    fun stakeLabel(moveKey: Fr, moveTime: Long, exposed: Long): Fr = h(TAG_SLABEL, moveKey, u64(moveTime), u64(exposed))
+
+    /** A slash debt tree leaf: H(TAG_DEBTL, key, next_key, next_index, retained), next_index a u32. */
+    fun debtLeaf(key: Fr, nextKey: Fr, nextIndex: Long, retained: Long): Fr {
+        require(nextIndex in 0..0xffffffffL) { "next_index is a u32" }
+        return h(TAG_DEBTL, key, nextKey, u64(nextIndex), u64(retained))
+    }
 
     /** A stake note's nullifier: H(TAG_SNF, nk, rho, position), position a u32. */
     fun stakeNf(nk: Fr, rho: Fr, position: Long): Fr {

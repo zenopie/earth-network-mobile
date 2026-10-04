@@ -20,6 +20,7 @@ import network.erth.earth.proto.shielded.MsgSend
 import network.erth.earth.proto.shieldedstaking.MsgDelegate
 import network.erth.earth.proto.shieldedstaking.MsgLockPosition
 import network.erth.earth.proto.shieldedstaking.MsgPositionVote
+import network.erth.earth.proto.shieldedstaking.MsgRedelegate
 import network.erth.earth.proto.shieldedstaking.MsgRestake
 import network.erth.earth.proto.shieldedstaking.MsgStakeVote
 import network.erth.earth.proto.shieldedstaking.MsgUndelegate
@@ -29,6 +30,7 @@ import network.erth.wallet.privacy.keys.PrivacyKeys
 import network.erth.wallet.privacy.keys.ShieldedAddress
 import network.erth.wallet.privacy.note.OwnedNote
 import network.erth.wallet.privacy.note.OwnedStakeNote
+import network.erth.wallet.privacy.note.StakeLabel
 import network.erth.wallet.privacy.prove.MembershipWitness
 import network.erth.wallet.privacy.prove.VoteSlot
 import network.erth.wallet.privacy.prove.VoteWitness
@@ -56,6 +58,9 @@ import network.erth.wallet.privacy.tx.StakeSelection
 import network.erth.wallet.privacy.tx.TxResult
 import network.erth.wallet.privacy.tx.VoteWitnessSpec
 import network.erth.wallet.privacy.zk.IndexedTree
+import network.erth.wallet.privacy.zk.DebtTree
+import network.erth.wallet.privacy.zk.Merkle
+import network.erth.wallet.privacy.chain.PrivacyQueries
 import network.erth.wallet.privacy.zk.Fr
 import network.erth.wallet.privacy.zk.Privacy
 import network.erth.wallet.privacy.handles.HandleEntry
@@ -125,6 +130,22 @@ interface PrivacyChainReads {
         val caretakerLeaseHoldUntil: Long = 0,
     )
 
+    /**
+     * x/shieldedstaking Query/DebtTree{start, limit} (chain dff3a9b): the
+     * slash debt tree's rows from leaf start+1 in insertion order (each with
+     * its latest retained), its size (sentinel included, 0 before the first
+     * row) and current root, the label window and the clear_before a proof
+     * may name now. The whole tree, paged: nothing names a move of ours.
+     */
+    data class DebtTreePage(val rows: List<Pair<Fr, Long>>, val size: Long, val root: Fr, val windowSeconds: Long, val clearBefore: Long)
+
+    /**
+     * x/shieldedstaking Query/Validator: the live backing and derth supply
+     * (rate = backing / supply), and the ERTH waiting to be delegated at the
+     * epoch's end (what a redelegation moves out of first).
+     */
+    data class ValidatorBook(val backing: java.math.BigInteger, val supply: java.math.BigInteger, val pendingDelegation: java.math.BigInteger = java.math.BigInteger.ZERO)
+
     fun personhoodParams(): PersonhoodParams
     fun leaseBounds(): LeaseBounds
     fun ballotInputs(proposalId: Long = 0, optionId: Long = 0): BallotInputs
@@ -133,6 +154,16 @@ interface PrivacyChainReads {
     fun positions(): List<Position>
     /** x/shieldedstaking Query/StakeNullifierTree{start, limit} (at most 1000 a page). */
     fun stakeNullifierTree(start: Long, limit: Int): NfTreePage
+    /** x/shieldedstaking Query/DebtTree{start, limit} (at most 1000 a page). */
+    fun debtTree(start: Long, limit: Int): DebtTreePage
+    /**
+     * x/shieldedstaking Query/Validator for [valoper]: what a delegation or a
+     * redelegation's credit is quoted at. The validator is named by the msg
+     * itself, so asking says nothing the tx does not.
+     */
+    fun validatorBook(valoper: String): ValidatorBook
+    /** x/shieldedstaking params.min_delegation (uerth, and the least derth one may credit). */
+    fun minDelegation(): Long
 
     /**
      * About when an undelegation booked in [epoch] is paid, from chain-wide
@@ -219,9 +250,6 @@ class PrivacyWallet(
 
     /** A note the chain will mint to us: fresh secrets, their v2 ciphertext to our own address. */
     private fun mint(denom: String): NoteOut = NoteOut.mintToSelf(keys, denom)
-
-    /** A stake note the chain will mint to us: spc_mint's fresh secrets and their blind stake ciphertext. */
-    private fun stakeMint(): Pair<Pair<Fr, Fr>, ByteArray> = StakePlan.selfMint(keys)
 
     private fun today(): Long = now() / SECONDS_PER_DAY
 
@@ -1175,86 +1203,332 @@ class PrivacyWallet(
         }
     }
 
-    // ---- private staking (owner-locked stake notes) -----------------------------
+    // ---- private staking (owner-locked stake notes, one per validator) ------
 
-    /** The stake tree's latest root (anchors a stake proof; unchecked when it spends nothing). */
-    private fun stakeAnchor(): Fr = if (store.stakeTree.size == 0L) Fr.ZERO else store.stakeTree.root()
-
-    private fun stakePlan(
-        denom: String?,
-        spends: List<OwnedStakeNote>,
-        outAmounts: List<Long>,
-        vOut: Long,
-        /** A self-mint (StakePlan.selfMint) for a msg the chain mints a stake note for; null: throwaway secrets, no ciphertext. */
-        mint: Pair<Pair<Fr, Fr>, ByteArray>? = null,
-        salt: Fr = StakePlan.throwaway().first,
-        anchor: Fr = stakeAnchor(),
-        paths: List<List<Fr>> = spends.map { store.stakeTree.path(it.position) },
-    ): StakePlan = StakePlan(
-        keys.nk, denom, spends, paths, outAmounts.filter { it > 0 }.map { StakePlan.out(keys, denom!!, it) },
-        mint?.first ?: StakePlan.throwaway(), salt, anchor, vOut, mint?.second ?: ByteArray(0),
-    )
+    /**
+     * The stake tree's latest root: every stake proof's anchor, the empty
+     * tree's root before the first note (the chain records it at its first
+     * block, and a first delegation pads its input against it).
+     */
+    private fun stakeAnchor(): Fr = store.stakeTree.root()
 
     /** Stake notes of [denom] this wallet can spend now. */
     fun spendableStake(denom: String): List<OwnedStakeNote> = store.state.stakeNotes.filter { it.spendable && it.denom == denom }
 
     /**
-     * Stakes [amount] uerth with [validator]: the bundle releases it (and the
-     * fee) into the module, the chain mints derth at the live rate as a stake
-     * note to our stake self-mint pc, delegated at the epoch's end.
+     * The chain's slash debt now (Query/DebtTree, ORCHARD_DESIGN 20.6): its
+     * root and size, the label window and the clear_before a proof may name.
+     * The rows ([tree]) are read only when a label is cleared or voted, and
+     * then whole (the indexer's stream, else the chain's pages), checked
+     * against [root]: nothing asked names a move of this wallet.
      */
-    fun delegate(validator: String, amount: Long): TxResult {
+    inner class DebtView internal constructor(val root: Fr, val size: Long, val windowSeconds: Long, val clearBefore: Long) {
+        val tree: DebtTree by lazy { debtTreeAt(root, size) }
+
+        /** Whether [l]'s window has closed: a proof naming [clearBefore] clears it. */
+        fun clearable(l: StakeLabel): Boolean = java.lang.Long.compareUnsigned(l.moveTime, clearBefore) < 0
+
+        /** What [l]'s exposure is worth now: its row's retained, or all of it when the move was never slashed. */
+        fun retained(l: StakeLabel): Long = tree.retainedOf(l.moveKey)?.coerceIn(0, l.exposed) ?: l.exposed
+    }
+
+    /** Reads the chain's debt view (one page of Query/DebtTree: its root, window and clear_before). */
+    fun debtView(): DebtView {
+        val p = reads.debtTree(0, 1)
+        require(p.size in 0 until Merkle.CAPACITY) { "debt tree size ${p.size}" }
+        require(p.windowSeconds in 0..PrivacyQueries.MAX_DURATION_S) { "label window ${p.windowSeconds}" }
+        if (p.windowSeconds > 0 && store.state.labelWindowSeconds != p.windowSeconds) synchronized(store) {
+            store.state.labelWindowSeconds = p.windowSeconds
+            store.save()
+        }
+        return DebtView(p.root, p.size, p.windowSeconds, p.clearBefore)
+    }
+
+    private val debtTrees = LinkedHashMap<Fr, DebtTree>()
+
+    /**
+     * The debt tree whose root is [root] ([size] leaves, sentinel included):
+     * the indexer's whole stream first, the chain's own pages when it does
+     * not rebuild [root] (an indexer behind, or lying).
+     */
+    private fun debtTreeAt(root: Fr, size: Long): DebtTree {
+        checkCaches()
+        return synchronized(debtTrees) { debtTreeLocked(root, size) }
+    }
+
+    private fun debtTreeLocked(root: Fr, size: Long): DebtTree {
+        debtTrees[root]?.let { return it }
+        val n = maxOf(0L, size - 1)
+        require(n < Int.MAX_VALUE) { "debt tree size $size" }
+        val sources = listOf<() -> List<Pair<Fr, Long>>>(
+            { indexerDebtRows(n.toInt()) },
+            { lcdDebtRows(n.toInt()) },
+        )
+        for (read in sources) {
+            val rows = runCatching(read).getOrNull() ?: continue
+            val t = runCatching { DebtTree.build(rows) }.getOrNull() ?: continue
+            if (t.root() == root) {
+                debtTrees[root] = t
+                while (debtTrees.size > 2) debtTrees.remove(debtTrees.keys.first())
+                return t
+            }
+        }
+        throw IllegalStateException("the slash debt rows served do not rebuild the chain's debt root; sync and try again")
+    }
+
+    /** The first [n] debt rows from the indexer's stream (aligned pages from leaf 0; the sentinel is never a row). */
+    private fun indexerDebtRows(n: Int): List<Pair<Fr, Long>> {
+        val out = ArrayList<Pair<Fr, Long>>(n)
+        var from = 0L
+        while (out.size < n) {
+            val page = indexer.debtRows(from, DEBT_PAGE)
+            if (page.rows.size > DEBT_PAGE) throw WalletSync.Inconsistent("the indexer sent ${page.rows.size} debt rows in a page of $DEBT_PAGE")
+            for ((index, key, retained) in page.rows) {
+                if (index != out.size + 1L) throw WalletSync.Inconsistent("debt row $index out of order")
+                if (out.size >= n) break
+                out.add(key to retained)
+            }
+            if (page.rows.isEmpty()) break
+            from += DEBT_PAGE
+        }
+        check(out.size == n) { "only ${out.size} of the chain's $n debt rows were served" }
+        return out
+    }
+
+    /** The first [n] debt rows from the chain's Query/DebtTree pages. */
+    private fun lcdDebtRows(n: Int): List<Pair<Fr, Long>> {
+        val out = ArrayList<Pair<Fr, Long>>(n)
+        while (out.size < n) {
+            val page = reads.debtTree(out.size.toLong(), minOf(n - out.size, LCD_DEBT_PAGE))
+            if (page.rows.isEmpty()) break
+            out.addAll(page.rows.take(minOf(LCD_DEBT_PAGE, n - out.size)))
+        }
+        check(out.size == n) { "only ${out.size} of the chain's $n debt rows were served" }
+        return out
+    }
+
+    /** The label window as last read (0: never): for showing when moved stake may move again. */
+    val labelWindowSeconds: Long get() = store.state.labelWindowSeconds
+
+    /** When [l]'s exposure may leave its note (unix seconds): after move_time + the label window. */
+    fun movableAfter(l: StakeLabel, windowSeconds: Long = labelWindowSeconds): Long = Handles.satAdd(l.moveTime, windowSeconds)
+
+    /**
+     * What [n] may give up now (ORCHARD_DESIGN 20.6): its amount; for a
+     * labelled note with its window open, the amount less the exposure (the
+     * exposure stays in place); with the window closed, less the exposure
+     * plus what it retains (the proof clears it).
+     */
+    private fun freeOf(n: OwnedStakeNote, d: DebtView): Long {
+        val l = n.label ?: return n.amount
+        return if (d.clearable(l)) n.amount - l.exposed + d.retained(l) else n.amount - l.exposed
+    }
+
+    /** Why a move of exposed stake waits: the earliest date one of [notes]' open labels frees its exposure. */
+    private fun lockedText(notes: List<OwnedStakeNote>, d: DebtView): String? {
+        val until = notes.mapNotNull { it.label }.filter { !d.clearable(it) }.minOfOrNull { movableAfter(it, d.windowSeconds) } ?: return null
+        return "moved stake can move again after ${dateText(until)}: until then a slash of the validator it left can still reach it, so it stays where it is (the rest of this stake moves freely)"
+    }
+
+    /** One validator's stake as this wallet holds it. */
+    data class StakeHolding(
+        val validator: String,
+        /** derth held (every spendable note). */
+        val derth: Long,
+        /** derth that may leave now (what undelegating, locking or moving can take). */
+        val free: Long,
+        /** Moved-in derth whose window is open, and when the first of it may move again (null: none). */
+        val locked: Long,
+        val lockedUntil: Long?,
+        /** Notes held here: more than one can be merged ([restake]). */
+        val notes: Int,
+        /** Whether two of them can merge now (at most one labelled). */
+        val mergeable: Boolean,
+    )
+
+    /**
+     * This wallet's stake per validator. [d] (null) reads the chain's debt
+     * view only when a label is held; without it a closed window counts as
+     * still open (nothing is shown as movable that is not).
+     */
+    fun stakeHoldings(d: DebtView? = null): List<StakeHolding> {
+        val notes = store.state.stakeNotes.filter { it.spendable && it.denom.startsWith(DERTH_PREFIX) }
+        val view = d ?: if (notes.any { it.label != null }) runCatching { debtView() }.getOrNull() else null
+        return notes.groupBy { it.denom }.toSortedMap().map { (denom, ns) ->
+            val open = ns.mapNotNull { it.label }.filter { view == null || !view.clearable(it) }
+            StakeHolding(
+                validator = parseDerth(denom),
+                derth = Amounts.satSum(ns) { it.amount },
+                free = Amounts.satSum(ns) { n -> view?.let { freeOf(n, it) } ?: (n.amount - (n.label?.exposed ?: 0L)) },
+                locked = Amounts.satSum(open) { it.exposed },
+                lockedUntil = open.minOfOrNull { movableAfter(it, view?.windowSeconds ?: labelWindowSeconds) },
+                notes = ns.size,
+                mergeable = ns.size >= 2 && ns.count { it.label == null } >= 1,
+            )
+        }
+    }
+
+    /**
+     * The clear_before and debt root every stake proof names (circuit audit
+     * L-1: also when it clears nothing, so a clearing proof looks like any
+     * other), and the clear of [l] when its window has closed.
+     */
+    private fun clearOf(l: StakeLabel?, d: DebtView): StakePlan.Clear {
+        if (d.clearBefore == 0L) return StakePlan.Clear.NONE
+        if (l == null || !d.clearable(l)) return StakePlan.Clear(d.clearBefore, d.root)
+        val w = d.tree.witness(l.moveKey) ?: throw IllegalStateException("no debt witness for a move key")
+        val r = w.retained(l.moveKey, l.exposed, d.root) ?: throw IllegalStateException("the debt tree does not read this stake's move")
+        return StakePlan.Clear(d.clearBefore, d.root, w, r)
+    }
+
+    /**
+     * Lane A of [denom]: [spends] (at most one labelled) merged with [vIn]
+     * less [vOut] into one note back to us (the change, or a zero note), the
+     * label kept or cleared ([clearOf]).
+     */
+    private fun laneA(
+        denom: String,
+        spends: List<OwnedStakeNote>,
+        vIn: Long,
+        vOut: Long,
+        d: DebtView,
+        salt: Fr = StakePlan.freshSalt(),
+        credit: StakePlan.Credit? = null,
+    ): StakePlan {
+        val l = spends.firstNotNullOfOrNull { it.label }
+        val clear = clearOf(l, d)
+        var amount = Amounts.exactSum(spends) { it.amount }
+        if (clear.clears) amount = amount - l!!.exposed + clear.retained
+        amount = Math.subtractExact(Math.addExact(amount, vIn), vOut)
+        require(amount >= 0) { "insufficient stake" }
+        val out = StakePlan.out(keys, denom, amount, if (clear.clears) null else l)
+        return StakePlan(keys.nk, denom, spends, spends.map { store.stakeTree.path(it.position) }, out, vIn, vOut, clear, credit, salt, stakeAnchor())
+    }
+
+    /** What a lane A clear gives up: the slash's cut of the cleared exposure (0 when nothing is cleared, or nothing was cut). */
+    private fun haircutOf(p: StakePlan): Long {
+        if (!p.clear.clears) return 0
+        val l = p.spends.firstNotNullOf { it.label }
+        return l.exposed - p.clear.retained
+    }
+
+    /** The chain refused nothing yet, but what the sheet showed no longer holds: show it again. */
+    class QuoteChanged(message: String) : IllegalStateException(message)
+
+    /**
+     * derth bought for [value] uerth at [book]'s live rate, less a margin for
+     * the rate's drift until the tx's block (ORCHARD_DESIGN 20.8): the
+     * chain refuses a credit the value does not buy, in its ante, at no cost.
+     */
+    private fun creditFor(value: java.math.BigInteger, book: PrivacyChainReads.ValidatorBook): Long {
+        if (book.supply.signum() == 0) {
+            check(book.backing.signum() == 0) { "this validator's book is settling (no derth, some backing); try again after the epoch ends" }
+            return value.min(java.math.BigInteger.valueOf(Long.MAX_VALUE)).toLong()
+        }
+        check(book.backing.signum() > 0) { "this validator's stake is backed by nothing (slashed to zero)" }
+        val buys = value.multiply(book.supply).divide(book.backing)
+        val margin = buys.multiply(java.math.BigInteger.valueOf(CREDIT_MARGIN_PPM)).add(java.math.BigInteger.valueOf(999_999)).divide(java.math.BigInteger.valueOf(1_000_000))
+        val q = buys.subtract(margin)
+        return if (q.signum() <= 0) 0L else q.min(java.math.BigInteger.valueOf(Long.MAX_VALUE)).toLong()
+    }
+
+    /**
+     * A delegation's quote (ORCHARD_DESIGN 20.8), shown on its confirm sheet:
+     * [derth] credited to our note at [validator] for [amount] uerth, and the
+     * [haircut] a merge clearing a moved-in label takes (0: none).
+     */
+    data class DelegateQuote(val validator: String, val amount: Long, val derth: Long, val haircut: Long)
+
+    fun quoteDelegate(validator: String, amount: Long): DelegateQuote {
         require(amount > 0)
-        val stake = stakePlan(derthDenom(validator), emptyList(), emptyList(), 0, mint = stakeMint())
+        val min = reads.minDelegation()
+        if (amount < min) throw IllegalArgumentException("a private delegation is at least ${min}uerth")
+        val derth = creditFor(java.math.BigInteger.valueOf(amount), reads.validatorBook(validator))
+        if (derth < min || derth <= 0) throw IllegalArgumentException("${amount}uerth buys less than the least derth a delegation may credit; stake more")
+        val d = debtView()
+        val plan = laneA(derthDenom(validator), StakeSelection.merge(spendableStake(derthDenom(validator))) { freeOf(it, d) }, derth, 0, d)
+        return DelegateQuote(validator, amount, derth, haircutOf(plan))
+    }
+
+    /**
+     * Stakes [q].amount uerth with its validator (ORCHARD_DESIGN 20): the
+     * bundle releases it (and the fee) into the module; the stake proof
+     * merges the quoted derth into our note there (up to two of them, a
+     * labelled one cleared once its window closed), or pads its input when we
+     * hold none, so a first delegation looks like a top-up. A rate that
+     * outran the quote is refused in the ante: nothing spent, nothing paid.
+     */
+    fun delegate(q: DelegateQuote): TxResult {
+        val denom = derthDenom(q.validator)
+        val d = debtView()
+        val stake = laneA(denom, StakeSelection.merge(spendableStake(denom)) { freeOf(it, d) }, q.derth, 0, d)
+        if (haircutOf(stake) > q.haircut) throw QuoteChanged("a slash reached stake you moved to this validator since the quote; review it again")
         return run { fee ->
             // The fee is the bundle's uerth balance less amount.
-            val b = bundle(release = mapOf(FEE to Math.addExact(amount, fee)))
+            val b = bundle(release = mapOf(FEE to Math.addExact(q.amount, fee)))
             Assembled(listOf(b), stake) { bs, sp, _ ->
-                MsgDelegate.newBuilder().setBundle(bs[0]).setValidator(validator).setAmount(amount).setStake(sp).build()
+                MsgDelegate.newBuilder().setBundle(bs[0]).setValidator(q.validator).setAmount(q.amount).setDerth(q.derth).setStake(sp!!).build()
             }
         }
     }
 
+    /** Stakes [amount] uerth with [validator] at a quote taken now. */
+    fun delegate(validator: String, amount: Long): TxResult = delegate(quoteDelegate(validator, amount))
+
     /**
-     * Merges or splits stake notes of [validator]: spends [notes] (1-2) and
-     * creates notes of [amounts] (1-2, summing to theirs), all ours. Stake
-     * moves in at most two notes a proof, so a balance spread over more is
-     * merged first.
+     * Merges two of our notes at [validator] (MsgRestake, ORCHARD_DESIGN
+     * 20.3): needed only for a note made beside a labelled one (a move into a
+     * validator where ours was labelled) or by another device. At most one
+     * labelled; a closed window clears. One user tap; nothing merges by itself.
      */
-    fun restake(validator: String, notes: List<OwnedStakeNote>, amounts: List<Long>): TxResult {
+    fun restake(validator: String): TxResult {
         val denom = derthDenom(validator)
-        require(notes.size in 1..2 && amounts.size in 1..2 && amounts.all { it > 0 })
-        require(Amounts.exactSum(notes) { it.amount } == Amounts.exactSum(amounts) { it }) { "a restake keeps the amount" }
-        val stake = stakePlan(denom, notes, amounts, 0)
+        val d = debtView()
+        val two = StakeSelection.merge(spendableStake(denom)) { freeOf(it, d) }
+        require(two.size == 2) {
+            if (spendableStake(denom).size >= 2) "these notes each hold stake moved here recently; they merge once one of their windows closes"
+            else "nothing to merge"
+        }
+        val stake = laneA(denom, two, 0, 0, d)
         return run { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
-                MsgRestake.newBuilder().setBundle(bs[0]).setValidator(validator).setStake(sp).build()
+                MsgRestake.newBuilder().setBundle(bs[0]).setValidator(validator).setStake(sp!!).build()
             }
         }
     }
 
-    /** derth denoms held in more than one stake note, with their note counts. */
+    /** derth denoms held in more than one stake note that can merge now. */
     fun stakeMergeable(): Map<String, Int> =
         store.state.stakeNotes.filter { it.spendable && it.denom.startsWith(DERTH_PREFIX) }
-            .groupBy { it.denom }.mapValues { it.value.size }.filter { (_, n) -> n >= 2 }
+            .groupBy { it.denom }.filter { (_, ns) -> ns.size >= 2 && ns.any { it.label == null } }.mapValues { it.value.size }
 
-    /** Merges the two smallest stake notes of [denom] (derth/<valoper>) into one. */
-    fun mergeStake(denom: String): TxResult {
-        val two = spendableStake(denom).sortedBy { it.amount }.take(2)
-        require(two.size == 2) { "nothing to merge" }
-        return restake(parseDerth(denom), two, listOf(Amounts.exactSum(two) { it.amount }))
-    }
+    /** Merges two stake notes of [denom] (derth/<valoper>) into one. */
+    fun mergeStake(denom: String): TxResult = restake(parseDerth(denom))
 
     /**
-     * Undelegates [amount] derth/[validator] (chain 48b631c, ORCHARD_DESIGN
-     * 18.1): the stake proof spends it (change back to us) and the msg names
-     * where the chain pays it out, a fresh pool note opening of our own
-     * (pc and its v2 amount-blind ciphertext). At maturity the chain mints the
-     * ERTH there by itself, as one note or, past 2^63-1, several sharing that
-     * ciphertext; sync finds them by trial decryption like any minted note.
-     * Nothing to claim, nothing sent later. No stake note is minted: the
-     * proof's spc_mint is a throwaway pc of ours (proven, unused) and its
-     * spc_ciphertext is empty.
+     * What leaving [amount] derth/[validator] (an undelegation or a lock)
+     * spends: the notes whose free value covers it, refused up front when
+     * the exposure a window keeps in place is what it would take.
+     */
+    private fun leave(validator: String, amount: Long, d: DebtView, salt: Fr = StakePlan.freshSalt(), credit: StakePlan.Credit? = null): StakePlan {
+        val denom = derthDenom(validator)
+        val notes = spendableStake(denom)
+        val ins = StakeSelection.cover(notes, amount, { freeOf(it, d) }) { lockedText(notes, d) }
+        return laneA(denom, ins, 0, amount, d, salt, credit)
+    }
+
+    /** What leaving [amount] derth/[validator] costs beyond its fee: a cleared label's slash cut (0: none). Refuses as the tx would. */
+    fun leaveHaircut(validator: String, amount: Long): Long = haircutOf(leave(validator, amount, debtView()))
+
+    /**
+     * Undelegates [amount] derth/[validator] (ORCHARD_DESIGN 18.1, 20): the
+     * stake proof spends it (the change, or a zero note when nothing is left,
+     * back to us) and the msg names where the chain pays it out, a fresh pool
+     * note opening of our own (pc and its v2 amount-blind ciphertext). At
+     * maturity the chain mints the ERTH there by itself, as one note or, past
+     * 2^63-1, several sharing that ciphertext; sync finds them by trial
+     * decryption like any minted note. Nothing to claim, nothing sent later.
+     * Moved-in derth whose window is open cannot leave: refused up front.
      *
      * The undelegation is remembered locally ([PendingUnbond]) from the
      * moment the node takes the tx, with its epoch, value and payout id from
@@ -1262,10 +1536,9 @@ class PrivacyWallet(
      * shows while it waits. The chain's per-id payout query is never asked
      * (it would tie this wallet's IP to the undelegation).
      */
-    fun undelegate(validator: String, amount: Long): TxResult {
-        val denom = derthDenom(validator)
-        val ins = StakeSelection.cover(spendableStake(denom), amount)
-        val stake = stakePlan(denom, ins, listOf(Amounts.exactSum(ins) { it.amount } - amount), amount)
+    fun undelegate(validator: String, amount: Long, maxHaircut: Long = Long.MAX_VALUE): TxResult {
+        val stake = leave(validator, amount, debtView())
+        if (haircutOf(stake) > maxHaircut) throw QuoteChanged("a slash reached stake you moved to this validator since the sheet was shown; review it again")
         val payout = mint(FEE)
         val pc = payout.pc
         val r = run(
@@ -1273,12 +1546,82 @@ class PrivacyWallet(
             rejected = { hash -> dropUnbond(hash) },
         ) { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
-                MsgUndelegate.newBuilder().setBundle(bs[0]).setValidator(validator).setAmount(amount).setStake(sp)
+                MsgUndelegate.newBuilder().setBundle(bs[0]).setValidator(validator).setAmount(amount).setStake(sp!!)
                     .setPc(ByteString.copyFrom(pc.toBytes())).setCiphertext(ByteString.copyFrom(payout.ciphertext)).build()
             }
         }
         confirmUnbond(r)
         return r
+    }
+
+    /**
+     * A move's quote (MsgRedelegate, ORCHARD_DESIGN 19-20), shown on its
+     * confirm sheet: [amount] derth/[src] worth [value] uerth at src's live
+     * rate arrives as [dstDerth] derth/[dst] (dst's live rate, less the
+     * margin and what may stay behind in src's book), merged into our
+     * unlabelled note there ([merges]) or a new note; [haircut] is a cleared
+     * label's slash cut on the src side (0: none). The credited derth is
+     * labelled: it cannot move again until the label window
+     * ([windowSeconds]) has passed.
+     */
+    data class MoveQuote(
+        val src: String,
+        val dst: String,
+        val amount: Long,
+        val value: Long,
+        val dstDerth: Long,
+        val haircut: Long,
+        val merges: Boolean,
+        val windowSeconds: Long,
+    )
+
+    /** The note at [dst] a move's credit merges into: our largest unlabelled one there (none: the lane pads, making a second note beside a labelled one). */
+    private fun creditTarget(dst: String): OwnedStakeNote? =
+        spendableStake(derthDenom(dst)).filter { it.label == null }.maxWithOrNull(compareBy<OwnedStakeNote> { it.amount }.thenBy { -it.position })
+
+    fun quoteMove(src: String, dst: String, amount: Long): MoveQuote {
+        require(amount > 0)
+        require(src != dst) { "move stake to another validator" }
+        val d = debtView()
+        val plan = leave(src, amount, d)
+        val min = reads.minDelegation()
+        val a = reads.validatorBook(src)
+        check(a.supply.signum() > 0 && java.math.BigInteger.valueOf(amount) <= a.supply) { "more derth than this validator has" }
+        val u = java.math.BigInteger.valueOf(amount).multiply(a.backing).divide(a.supply)
+        if (u < java.math.BigInteger.valueOf(min)) throw IllegalArgumentException("this stake is worth ${u}uerth, less than the ${min}uerth a move must carry")
+        // What arrives at dst: all of it when src's queue covers it, else up
+        // to 0.001 ERTH may stay in src's book and x/staking may truncate a
+        // uerth (chain redelegate.go bondedDust).
+        val arrives = if (u <= a.pendingDelegation) u else (u - java.math.BigInteger.valueOf(BONDED_DUST + 1)).max(java.math.BigInteger.ZERO)
+        val credit = creditFor(arrives, reads.validatorBook(dst))
+        if (credit < min || credit <= 0) throw IllegalArgumentException("this move would credit less than the least derth a move may credit; move more")
+        return MoveQuote(src, dst, amount, u.min(java.math.BigInteger.valueOf(Long.MAX_VALUE)).toLong(), credit, haircutOf(plan), creditTarget(dst) != null, d.windowSeconds)
+    }
+
+    /**
+     * Moves [q].amount derth from [q].src to [q].dst with no unbonding gap
+     * (MsgRedelegate; the user's one approved addition to the freeze). Lane A
+     * spends our src notes (free value only: moved-in stake whose window is
+     * open stays put, refused up front) with the change back; the credit lane
+     * merges the quoted derth/dst into our unlabelled note there (or pads),
+     * labelled with this move: move key = the lane's nullifier, move_time =
+     * the chain's latest block time (the chain takes it within 600 s before
+     * its block), exposed = the credit. A refusal (the rates outran the
+     * quote, move_time too old) costs nothing: the ante runs before any spend.
+     */
+    fun redelegate(q: MoveQuote): TxResult {
+        val d = debtView()
+        val moveTime = roots.latestBlock()?.time?.takeIf { it > 0 } ?: throw IllegalStateException("the node did not say its latest block time; try again")
+        val target = creditTarget(q.dst)
+        val credit = StakePlan.credit(keys, derthDenom(q.dst), target, target?.let { store.stakeTree.path(it.position) }, q.dstDerth, moveTime)
+        val stake = leave(q.src, q.amount, d, credit = credit)
+        if (haircutOf(stake) > q.haircut) throw QuoteChanged("a slash reached stake you moved to this validator since the quote; review it again")
+        return run { fee ->
+            Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
+                MsgRedelegate.newBuilder().setBundle(bs[0]).setSrcValidator(q.src).setDstValidator(q.dst).setAmount(q.amount)
+                    .setStake(sp!!).setDstDerth(q.dstDerth).setMoveTime(moveTime).build()
+            }
+        }
     }
 
     /** Undelegations of this wallet whose payout has not arrived yet, oldest first. */
@@ -1332,19 +1675,32 @@ class PrivacyWallet(
     }
 
     /**
+     * What a note votes (ORCHARD_DESIGN 20.4): its amount, or for a labelled
+     * note its amount less the slash cut of its exposure under the CURRENT
+     * debt tree (a slash after the snapshot counts).
+     */
+    private fun voteValue(n: OwnedStakeNote, d: DebtView?): Long {
+        val l = n.label ?: return n.amount
+        val view = d ?: return n.amount - l.exposed
+        return n.amount - l.exposed + view.retained(l)
+    }
+
+    /**
      * Votes this wallet's stake at [validator] on [proposalId] (ORCHARD_DESIGN
-     * 18.2): one msg, one vote proof for up to [PrivateMsgs.MAX_VOTE_NOTES] of
-     * its derth notes (the largest eligible ones), one weight, their sum
+     * 18.2, 20.4): one msg, one vote proof for up to [PrivateMsgs.MAX_VOTE_NOTES]
+     * of its derth notes (the largest eligible ones), one weight, their value
      * rounded down to three significant digits ([voteWeight]). The proof
      * shows every note under the proposal's snapshot root, its spend
      * nullifier absent from the snapshot's stake nullifier tree (rebuilt here
-     * and checked against nf_root), and each note's vote nullifier; unused
-     * slots carry 0. Nothing is spent: the notes vote on every other open
-     * proposal and are spent as usual. The fee bundle is against the pool's
-     * current roots. Each note's (proposal, vote nullifier) is remembered from
-     * the moment the node accepts the tx, so no note votes twice. A validator
-     * with more notes than one vote holds votes the rest in another msg
-     * ([stakeVoteItems] says how many), a second public weight the user chose.
+     * and checked against nf_root), a labelled note's value under the current
+     * debt root, and each note's vote nullifier; unused slots carry 0.
+     * Nothing is spent: a note spent since the snapshot (a top-up, a move)
+     * still votes the value it held then, its opening kept for that; the
+     * merged note it became cannot vote on this proposal. The fee bundle is
+     * against the pool's current roots. Each note's (proposal, vote
+     * nullifier) is remembered from the moment the node accepts the tx, so no
+     * note votes twice. A validator with more notes than one vote holds votes
+     * the rest in another msg ([stakeVoteItems] says how many).
      *
      * A note the wallet does not know already voted (a restored wallet) is
      * refused by the chain before anything is sent (1119 at simulate, naming
@@ -1375,6 +1731,8 @@ class PrivacyWallet(
         val nfRoot = snap.nfRoot ?: throw IllegalStateException("this proposal's snapshot has no stake nullifier root; it takes no stake vote")
         val candidates = eligible(proposalId, snap).filter { it.denom == denom }.sortedWith(VOTE_ORDER)
         if (candidates.isEmpty()) throw AlreadyVoted()
+        // Every vote names the current debt root (the chain checks it is current), labelled notes or not.
+        val d = debtView()
         val nfs = snapshotNullifiers(snap)
         val chosen = ArrayList<OwnedStakeNote>()
         val slots = ArrayList<VoteSlot>()
@@ -1389,16 +1747,21 @@ class PrivacyWallet(
                 if (note.spentHeight != null && snap.height > 0 && note.spentHeight <= snap.height) continue
                 throw IllegalStateException("the proposal's snapshot nullifier tree holds a note's nullifier, but sync saw no spend before the snapshot; sync again")
             }
+            // A labelled note's value is read from the debt tree under the current root.
+            val debt = note.label?.let { l -> d.tree.witness(l.moveKey) ?: throw IllegalStateException("no debt witness for a move key") } ?: DebtTree.Witness.NONE
+            val slot = VoteSlot(note.amount, note.rho, note.rcm, note.position, tree.pathAt(note.position, snap.treeSize), low, note.label, debt)
+            // A note slashed to nothing votes nothing.
+            if ((slot.value(d.root) ?: 0L) <= 0L) continue
             chosen.add(note)
-            slots.add(VoteSlot(note.amount, note.rho, note.rcm, note.position, tree.pathAt(note.position, snap.treeSize), low))
+            slots.add(slot)
         }
         if (chosen.isEmpty()) throw SpentBeforeSnapshot()
-        val weight = voteWeight(Amounts.satSum(chosen) { it.amount })
+        val weight = voteWeight(Amounts.satSum(slots) { it.value(d.root)!! })
         val used = chosen.map { Privacy.voteNf(keys.nk, it.rho, it.position, proposalId) }
         val vnfs = used + List(PrivateMsgs.MAX_VOTE_NOTES - used.size) { Fr.ZERO }
         val asset = Privacy.assetId(denom)
         val vote = VoteWitnessSpec(vnfs) { sighash ->
-            VoteWitness(keys.nk, slots, snap.root, nfRoot, asset, weight, proposalId, sighash)
+            VoteWitness(keys.nk, slots, snap.root, nfRoot, d.root, asset, weight, proposalId, sighash)
         }
         // Whether the tx reached a mempool (and so may have landed, fee paid).
         var sent = false
@@ -1409,7 +1772,8 @@ class PrivacyWallet(
             ) { fee ->
                 Assembled(listOf(feeBundle(fee)), vote = vote) { bs, _, _ ->
                     MsgStakeVote.newBuilder().setBundle(bs[0]).setProposalId(proposalId).setValidator(validator)
-                        .addAllOptions(PrivateMsgs.canonicalOptions(options)).setWeight(weight).build()
+                        .addAllOptions(PrivateMsgs.canonicalOptions(options)).setWeight(weight)
+                        .setDebtRoot(ByteString.copyFrom(d.root.toBytes())).build()
                 }
             }
             used.forEach { recordVote(StakeVoteRecord(proposalId, it, r.hash, null, confirmed = true)) }
@@ -1444,6 +1808,7 @@ class PrivacyWallet(
         if (g != cacheGenesis) {
             snapshots.clear()
             synchronized(nfValues) { nfValues.clear(); nfTrees.clear() }
+            synchronized(debtTrees) { debtTrees.clear() }
             cacheGenesis = g
         }
     }
@@ -1598,10 +1963,12 @@ class PrivacyWallet(
         val snap = snapshot(proposalId)
         val notes = eligible(proposalId, snap)
         val ps = votingPositions(positions, snap)
+        val d = if (notes.any { it.label != null }) runCatching { debtView() }.getOrNull() else null
         val noteWeight = notes.groupBy { it.denom }.entries.fold(0L) { acc, (denom, ns) ->
             val rate = snap.rates[parseDerth(denom)] ?: BigDecimal.ONE
             ns.sortedWith(VOTE_ORDER).chunked(PrivateMsgs.MAX_VOTE_NOTES).fold(acc) { a, part ->
-                Amounts.satAdd(a, derthValue(voteWeight(Amounts.satSum(part) { it.amount }), rate))
+                val v = Amounts.satSum(part) { voteValue(it, d) }
+                if (v <= 0) a else Amounts.satAdd(a, derthValue(voteWeight(v), rate))
             }
         }
         val total = Amounts.satAdd(noteWeight, Amounts.satSum(ps) { derthValue(it.derth, snap.rates[it.validator] ?: BigDecimal.ONE) })
@@ -1664,8 +2031,10 @@ class PrivacyWallet(
             is StakeVoteItem.Validator -> {
                 val part = eligible(proposalId, snap).filter { it.denom == derthDenom(item.validator) }
                     .sortedWith(VOTE_ORDER).take(PrivateMsgs.MAX_VOTE_NOTES)
-                if (part.isEmpty()) null
-                else VotePreview(part.size, derthValue(voteWeight(Amounts.satSum(part) { it.amount }), snap.rates[item.validator] ?: BigDecimal.ONE))
+                val d = if (part.any { it.label != null }) runCatching { debtView() }.getOrNull() else null
+                val v = Amounts.satSum(part) { voteValue(it, d) }
+                if (part.isEmpty() || v <= 0) null
+                else VotePreview(part.size, derthValue(voteWeight(v), snap.rates[item.validator] ?: BigDecimal.ONE))
             }
             is StakeVoteItem.Position -> positions().firstOrNull { it.first.id == item.id }?.first
                 ?.let { VotePreview(0, derthValue(it.derth, snap.rates[it.validator] ?: BigDecimal.ONE)) }
@@ -1674,7 +2043,7 @@ class PrivacyWallet(
 
     /**
      * Casts [item] as the last sync left things: a validator's next vote (up
-     * to four notes) or a position's. Null when there is nothing left of it
+     * to two notes) or a position's. Null when there is nothing left of it
      * to cast (its notes already voted on this proposal, or were spent before
      * its snapshot; the position is gone).
      */
@@ -1721,23 +2090,25 @@ class PrivacyWallet(
 
     /** Locks [amount] derth/[validator] into a new position split by [splits], under a fresh owner tag. */
     fun lockPosition(validator: String, amount: Long, splits: Map<Long, Long>): TxResult {
-        val denom = derthDenom(validator)
-        val ins = StakeSelection.cover(spendableStake(denom), amount)
+        val d = debtView()
+        // Refused up front, before a counter is taken, when moved-in stake whose window is open would have to leave.
+        leave(validator, amount, d)
         positions() // a restored wallet's counter starts past every tag it already holds
         val counter = synchronized(this) { store.state.nextOtagCounter.also { store.state.nextOtagCounter = it + 1; store.save() } }
-        val stake = stakePlan(denom, ins, listOf(Amounts.exactSum(ins) { it.amount } - amount), amount, salt = keys.otagSalt(counter))
+        val stake = leave(validator, amount, d, salt = keys.otagSalt(counter))
         val w = weights(splits)
         return run { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
                 MsgLockPosition.newBuilder().setBundle(bs[0]).setValidator(validator).setAmount(amount)
-                    .addAllSplits(w).setStake(sp).build()
+                    .addAllSplits(w).setStake(sp!!).build()
             }
         }
     }
 
-    private fun ownerPlan(position: PrivacyChainReads.Position, counter: Int, mint: Pair<Pair<Fr, Fr>, ByteArray>? = null): StakePlan {
+    /** A position's own proof (its update, its vote): no notes, the position's owner tag, the chain's current clear_before and debt root. */
+    private fun ownerPlan(position: PrivacyChainReads.Position, counter: Int): StakePlan {
         check(keys.ownerTag(counter) == position.ownerTag) { "position ${position.id} is not owned by tag $counter" }
-        return stakePlan(null, emptyList(), emptyList(), 0, mint = mint, salt = keys.otagSalt(counter))
+        return StakePlan(keys.nk, null, emptyList(), emptyList(), null, 0, 0, clearOf(null, debtView()), null, keys.otagSalt(counter), stakeAnchor())
     }
 
     fun updatePosition(position: PrivacyChainReads.Position, counter: Int, splits: Map<Long, Long>): TxResult {
@@ -1745,21 +2116,27 @@ class PrivacyWallet(
         val w = weights(splits)
         return run { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
-                MsgUpdatePosition.newBuilder().setBundle(bs[0]).setPositionId(position.id).addAllSplits(w).setStake(sp).build()
+                MsgUpdatePosition.newBuilder().setBundle(bs[0]).setPositionId(position.id).addAllSplits(w).setStake(sp!!).build()
             }
         }
     }
 
     /**
-     * Closes [position]; its derth comes back as a stake note to our stake
-     * self-mint pc, whose memo names the closed counter (K11) so no restore
-     * ever locks under its tag again.
+     * Closes [position]: the stake proof (its owner tag) merges the
+     * position's derth into our note at its validator, or pads when we hold
+     * none there (ORCHARD_DESIGN 20.3). The fee bundle carries a value-0
+     * record note to ourselves naming the closed counter (K11), so no
+     * restore ever locks under its tag again.
      */
     fun unlockPosition(position: PrivacyChainReads.Position, counter: Int): TxResult {
-        val stake = ownerPlan(position, counter, mint = StakePlan.selfMint(keys, WalletSync.unlockMemo(keys.nk, counter)))
+        check(keys.ownerTag(counter) == position.ownerTag) { "position ${position.id} is not owned by tag $counter" }
+        val denom = derthDenom(position.validator)
+        val d = debtView()
+        val stake = laneA(denom, StakeSelection.merge(spendableStake(denom)) { freeOf(it, d) }, position.derth, 0, d, salt = keys.otagSalt(counter))
+        val record = NoteOut.to(keys.address, FEE, 0, WalletSync.unlockMemo(keys.nk, counter))
         return run { fee ->
-            Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
-                MsgUnlockPosition.newBuilder().setBundle(bs[0]).setPositionId(position.id).setStake(sp).build()
+            Assembled(listOf(bundle(outputs = listOf(record), release = mapOf(FEE to fee))), stake) { bs, sp, _ ->
+                MsgUnlockPosition.newBuilder().setBundle(bs[0]).setPositionId(position.id).setStake(sp!!).build()
             }
         }
     }
@@ -1769,7 +2146,7 @@ class PrivacyWallet(
         return run(accepted = { hash, _ -> accepted(hash) }) { fee ->
             Assembled(listOf(feeBundle(fee)), stake) { bs, sp, _ ->
                 MsgPositionVote.newBuilder().setBundle(bs[0]).setPositionId(position.id).setProposalId(proposalId)
-                    .addAllOptions(PrivateMsgs.canonicalOptions(options)).setStake(sp).build()
+                    .addAllOptions(PrivateMsgs.canonicalOptions(options)).setStake(sp!!).build()
             }
         }
     }
@@ -2056,6 +2433,27 @@ class PrivacyWallet(
         /** Stake nullifier leaves asked of the indexer a page, and of the LCD (its maximum). */
         const val NF_PAGE = WalletSync.PAGE_SIZE
         const val LCD_NF_PAGE = 1000
+
+        /** Debt rows asked of the indexer a page (a size it serves), and of the LCD (its maximum). */
+        const val DEBT_PAGE = 1000
+        const val LCD_DEBT_PAGE = 1000
+
+        /**
+         * The margin a credit is quoted with for the rate's drift until its
+         * block (ORCHARD_DESIGN 20.8: ~10 ppm covers minutes on a chain with
+         * real stake), in ppm of the derth the value buys. A quote the rate
+         * outran is refused in the ante at no cost, and retried.
+         */
+        const val CREDIT_MARGIN_PPM = 10L
+
+        /** What of a redelegation's value beyond the source's queue may stay in its book (chain bondedDust, 0.001 ERTH). */
+        const val BONDED_DUST = 1_000L
+
+        /** A unix time as the wallet shows it in a sentence: "2026-10-25 14:03 UTC". */
+        fun dateText(unix: Long): String =
+            java.text.SimpleDateFormat("yyyy-MM-dd HH:mm 'UTC'", java.util.Locale.ROOT)
+                .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+                .format(java.util.Date(unix.coerceIn(0, 253_402_300_799) * 1000))
 
         /** Positions created before the block the proposal entered voting at (all, when unknown). */
         fun votingPositions(positions: List<PrivacyChainReads.Position>, snap: PrivacyChainReads.Snapshot) =

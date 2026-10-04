@@ -9,6 +9,8 @@ import network.erth.wallet.privacy.keys.ShieldedAddress
 import network.erth.wallet.privacy.note.NoteCipher
 import network.erth.wallet.privacy.note.NotePlaintext
 import network.erth.wallet.privacy.note.OwnedNote
+import network.erth.wallet.privacy.note.OwnedStakeNote
+import network.erth.wallet.privacy.Amounts
 import network.erth.wallet.privacy.prove.ActionWitness
 import network.erth.wallet.privacy.zk.Fr
 import network.erth.wallet.privacy.zk.Grumpkin
@@ -272,27 +274,52 @@ object NoteSelection {
     }
 }
 
-/** Picks stake notes: a stake proof spends at most two. */
+/**
+ * Picks stake notes for lane A of a stake proof (circuits/stake v2): at most
+ * two inputs, at most one of them labelled (ORCHARD_DESIGN 20.6). [free] is
+ * what a note may give up: its amount, or for a labelled note its amount less
+ * the exposure (the window still open) or less the exposure plus what the
+ * debt tree says it retains (the window closed: the proof clears it).
+ */
 object StakeSelection {
+    private fun pairs(c: List<OwnedStakeNote>): List<List<OwnedStakeNote>> {
+        val out = ArrayList<List<OwnedStakeNote>>()
+        for (i in c.indices) for (j in i + 1 until c.size) if (c[i].label == null || c[j].label == null) out.add(listOf(c[i], c[j]))
+        return out
+    }
+
     /**
-     * Notes covering [amount]: the smallest single one that does, else the
-     * pair with the smallest sufficient sum. A balance spread over more than
-     * two notes is refused: the user merges first (PrivacyWallet.mergeStake,
-     * its own tx), never the wallet on its own.
+     * What a merge spends (a delegation's, an unlock's, a restake's): up to
+     * two of [notes], at most one labelled, the most value first. Empty when
+     * there is none (the proof pads).
      */
-    fun cover(notes: List<network.erth.wallet.privacy.note.OwnedStakeNote>, amount: Long): List<network.erth.wallet.privacy.note.OwnedStakeNote> {
+    fun merge(notes: List<OwnedStakeNote>, free: (OwnedStakeNote) -> Long): List<OwnedStakeNote> {
+        val c = notes.filter { it.spendable }.sortedWith(compareByDescending<OwnedStakeNote> { free(it) }.thenBy { it.position })
+        if (c.size <= 1) return c
+        return pairs(c).maxWithOrNull(compareBy<List<OwnedStakeNote>> { Amounts.satSum(it, free) }.thenBy { -it.sumOf { n -> n.position } })
+            ?: listOf(c.first())
+    }
+
+    /**
+     * Notes whose free value covers [amount]: the smallest single one that
+     * does, else the pair with the smallest sufficient free sum. Refused when
+     * none does: [locked] names the exposure the window keeps in place (the
+     * caller explains it), else the stake is spread over more notes than one
+     * proof spends, or short.
+     */
+    fun cover(notes: List<OwnedStakeNote>, amount: Long, free: (OwnedStakeNote) -> Long, locked: () -> String? = { null }): List<OwnedStakeNote> {
         require(amount > 0)
-        val c = notes.filter { it.spendable }.sortedBy { it.amount }
-        c.firstOrNull { it.amount >= amount }?.let { return listOf(it) }
-        var best: List<network.erth.wallet.privacy.note.OwnedStakeNote>? = null
-        var bestSum = Long.MAX_VALUE
-        for (i in c.indices) for (j in i + 1 until c.size) {
-            val s = network.erth.wallet.privacy.Amounts.satAdd(c[i].amount, c[j].amount)
-            if (s >= amount && s < bestSum) { best = listOf(c[i], c[j]); bestSum = s }
-        }
-        return best ?: throw NoteSelection.Insufficient(
-            if (network.erth.wallet.privacy.Amounts.satSum(c) { it.amount } >= amount) "this stake is spread over more than two notes; merge them on the Notes screen first (one fee each), then try again"
-            else "insufficient stake",
+        val c = notes.filter { it.spendable }.sortedWith(compareBy<OwnedStakeNote> { free(it) }.thenBy { it.position })
+        c.firstOrNull { free(it) >= amount }?.let { return listOf(it) }
+        pairs(c).filter { Amounts.satSum(it, free) >= amount }.minWithOrNull(compareBy { Amounts.satSum(it, free) })?.let { return it }
+        val held = Amounts.satSum(c) { it.amount }
+        val freeAll = Amounts.satSum(c, free)
+        throw NoteSelection.Insufficient(
+            when {
+                freeAll < amount && held >= amount -> locked() ?: "part of this stake was moved here recently and cannot move again yet"
+                freeAll >= amount -> "this stake is spread over more notes than one transaction spends; merge them first (one fee each), then try again"
+                else -> "insufficient stake"
+            },
         )
     }
 }

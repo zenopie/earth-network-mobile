@@ -81,8 +81,8 @@ class Assembled(
     /** The pool notes the msg spends. */
     val spends: List<OwnedNote> get() = bundles.flatMap { it.spends }
 
-    /** The stake notes the msg spends. */
-    val stakeSpends: List<OwnedStakeNote> get() = stake?.spends.orEmpty()
+    /** The stake notes the msg spends: lane A's and the credit lane's (a move's destination note). */
+    val stakeSpends: List<OwnedStakeNote> get() = stake?.let { it.spends + listOfNotNull(it.credit?.spend) }.orEmpty()
 }
 
 /** A membership proof's statement, waiting for the sighash (its signal). */
@@ -91,8 +91,8 @@ class MembershipWitnessSpec(private val make: (signal: Fr) -> MembershipWitness)
 }
 
 /**
- * A vote proof's statement, waiting for the sighash; [vnfs] (all four slots,
- * the used ones first, then zeros) are known before: the sighash binds them.
+ * A vote proof's statement, waiting for the sighash; [vnfs] (both slots, the
+ * used ones first, then zeros) are known before: the sighash binds them.
  */
 class VoteWitnessSpec(val vnfs: List<Fr>, private val make: (sighash: Fr) -> VoteWitness) {
     init {
@@ -232,22 +232,26 @@ class PrivateTxEngine(
     }
 
     /**
-     * The chain's wallet format rules (fced976 round 2), checked before
-     * broadcast: every action's output ciphertext exactly 217 bytes (dummies
-     * too); a stake proof's ciphertexts exactly two, entry i empty iff
-     * commitment i is zero, a non-empty one exactly 153 bytes.
+     * The chain's wallet format rules, checked before broadcast: every
+     * action's output ciphertext exactly 217 bytes (dummies too); a stake
+     * proof's every field 32 bytes, exactly two lane A nullifiers, and a
+     * 201-byte wallet stake ciphertext exactly for each non-zero commitment
+     * (chain dff3a9b); debt_root zero exactly when clear_before is 0.
      */
     private fun checkShape(msg: MessageLite) {
         for (b in PrivateMsgs.bundles(msg)) for (a in b.actionsList) {
             check(a.ciphertext.size() == network.erth.wallet.privacy.note.NoteCipher.CIPHERTEXT_BYTES) { "an action ciphertext is ${a.ciphertext.size()} bytes" }
         }
         PrivateMsgs.stake(msg)?.let { p ->
-            check(p.ciphertextsCount == 2 && p.commitmentsCount == 2) { "a stake proof carries two ciphertext slots" }
-            for (i in 0..1) {
-                val zero = Fr.fromBytes(p.getCommitments(i).toByteArray()).isZero
-                val n = p.getCiphertexts(i).size()
-                check(if (zero) n == 0 else n == network.erth.wallet.privacy.note.NoteCipher.STAKE_CIPHERTEXT_BYTES) { "stake ciphertext $i is $n bytes" }
+            check(p.nullifiersCount == 2) { "a stake proof carries two nullifiers" }
+            for (f in p.nullifiersList + listOf(p.anchor, p.ownerTag, p.commitment, p.creditNullifier, p.creditCommitment, p.debtRoot)) {
+                check(f.size() == 32) { "a stake proof field is ${f.size()} bytes" }
             }
+            for ((cm, ct) in listOf(p.commitment to p.ciphertext, p.creditCommitment to p.creditCiphertext)) {
+                val zero = Fr.fromBytes(cm.toByteArray()).isZero
+                check(if (zero) ct.isEmpty else ct.size() == network.erth.wallet.privacy.note.NoteCipher.STAKE_CIPHERTEXT_BYTES) { "a stake ciphertext is ${ct.size()} bytes" }
+            }
+            check((p.clearBefore == 0L) == Fr.fromBytes(p.debtRoot.toByteArray()).isZero) { "debt_root is zero exactly when clear_before is 0" }
         }
     }
 
@@ -316,9 +320,10 @@ class PrivateTxEngine(
         for (i in 0 until actionsCount) setActions(i, getActions(i).toBuilder().setNullifier(randomField()))
     }.build()
 
-    /** A stake proof's nullifiers, each non-zero one replaced (a zero marks an unused slot and stays). */
+    /** A stake proof's nullifiers (lane A's and the credit lane's), each non-zero one replaced (a zero marks an unused slot and stays). */
     private fun randomNullifiers(p: StakeProof): StakeProof = p.toBuilder().apply {
         for (i in 0 until nullifiersCount) if (!Fr.fromBytes(getNullifiers(i).toByteArray()).isZero) setNullifiers(i, randomField())
+        if (!Fr.fromBytes(creditNullifier.toByteArray()).isZero) setCreditNullifier(randomField())
     }.build()
 
     /** The membership's real root and nullifier (the chain checks both before any proof), a placeholder proof. */
@@ -370,10 +375,14 @@ class PrivateTxEngine(
         /** One action: its proof (2,000,000) and two note writes (150,000 each). */
         const val ACTION_GAS = 2_300_000L
         /**
-         * A stake proof: its proof, four note writes and, since the stake
-         * nullifier tree is indexed, two more per nullifier slot (ORCHARD_DESIGN 15).
+         * A stake proof: its proof (2,000,000), two note writes per lane A
+         * nullifier slot and one for its output (the indexed nullifier tree
+         * rewrites two paths an insert), and the msg's base (at most 400,000;
+         * chain dff3a9b PrivateActionGas).
          */
-        const val STAKE_GAS = 3_200_000L
+        const val STAKE_GAS = 3_150_000L
+        /** A credit lane's (a redelegation's) writes, and MsgRedelegate's base beyond [STAKE_GAS]'s (700,000). */
+        const val CREDIT_GAS = 3 * 150_000L + 300_000L
         /**
          * A stake vote's fixed part: gasVote (250,000) and its proof; the
          * chain adds a note write for the vote and one per used vote
@@ -396,7 +405,10 @@ class PrivateTxEngine(
         fun estimateGas(msg: MessageLite, a: Assembled, txBytes: Int): Long {
             var g = BASE_GAS + TX_BYTE_GAS * txBytes
             for (b in PrivateMsgs.bundles(msg)) g += BUNDLE_GAS + ACTION_GAS * b.actionsCount
-            if (PrivateMsgs.stake(msg) != null) g += STAKE_GAS
+            PrivateMsgs.stake(msg)?.let { p ->
+                g += STAKE_GAS
+                if (!Fr.fromBytes(p.creditNullifier.toByteArray()).isZero) g += CREDIT_GAS
+            }
             if (a.membership != null) g += MEMBERSHIP_GAS
             a.vote?.let { g += VOTE_GAS + (1L + it.used) * NOTE_GAS }
             if (msg is network.erth.earth.proto.personhood.MsgRegister) g += REGISTER_GAS

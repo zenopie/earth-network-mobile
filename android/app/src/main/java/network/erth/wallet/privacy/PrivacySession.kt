@@ -194,5 +194,11 @@ object PrivacySession {
         override fun positions() = PrivacyQueries.positions().map {
             PrivacyChainReads.Position(it.id, it.validator, it.derth, it.ownerTag, it.splits, it.createdHeight)
         }
+
+        override fun debtTree(start: Long, limit: Int) = PrivacyQueries.debtTree(start, limit)
+
+        override fun validatorBook(valoper: String) = PrivacyQueries.validatorBook(valoper)
+
+        override fun minDelegation(): Long = PrivacyQueries.minDelegation()
     }
 }

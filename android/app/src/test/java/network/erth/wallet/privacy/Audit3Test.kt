@@ -47,6 +47,9 @@ class Audit3Test {
         override fun snapshot(proposalId: Long) = chain.snapshotRead(proposalId)
         override fun stakeNullifierTree(start: Long, limit: Int) = chain.nfTreeRead(start, limit)
         override fun positions() = chain.positionReads()
+        override fun debtTree(start: Long, limit: Int) = chain.debtTreeRead(start, limit)
+        override fun validatorBook(valoper: String) = chain.validatorBookRead(valoper)
+        override fun minDelegation() = chain.minDelegation
     }
 
     private fun wallet(chain: FakeChain, indexer: PrivacyIndexer = chain, store: PrivacyStore = PrivacyStore.memory(), roots: ChainRoots = chain) =
@@ -195,9 +198,8 @@ class Audit3Test {
         a.sync()
         a.delegate(v1, 1_000_000)
         a.sync()
-        val other = StakePlan.selfMint(PrivacyKeys.fromMnemonic("legal winner thank year wave sausage worth useful legal winner thank yellow"))
-        chain.mintStake(PrivacyWallet.derthDenom(v1), 7, Privacy.stakePc(Fr.of(5), other.first.first, other.first.second), other.second)
-        chain.emptyBlock()
+        // Someone else's stake lands after this wallet's sync.
+        chain.plantStake(PrivacyKeys.fromMnemonic("legal winner thank year wave sausage worth useful legal winner thank yellow"), PrivacyWallet.derthDenom(v1), 7)
         chain.openProposal(1)
         val e = assertThrows(PrivacyWallet.SyncFirst::class.java) { a.stakeVote(1, v1, yes) }
         assertTrue(e.message!!.contains("sync first"))

@@ -41,6 +41,9 @@ class Fix7Test {
         override fun snapshot(proposalId: Long) = chain.snapshotRead(proposalId)
         override fun stakeNullifierTree(start: Long, limit: Int) = chain.nfTreeRead(start, limit)
         override fun positions() = chain.positionReads()
+        override fun debtTree(start: Long, limit: Int) = chain.debtTreeRead(start, limit)
+        override fun validatorBook(valoper: String) = chain.validatorBookRead(valoper)
+        override fun minDelegation() = chain.minDelegation
         override fun unbondDueBy(epoch: Long) = due(epoch)
     }
 
@@ -107,9 +110,9 @@ class Fix7Test {
         val m = chain.lastMsg as network.erth.earth.proto.shieldedstaking.MsgUndelegate
         assertEquals(32, m.pc.size())
         assertEquals(network.erth.wallet.privacy.note.NoteCipher.BLIND_CIPHERTEXT_BYTES, m.ciphertext.size())
-        assertTrue(m.stake.spcCiphertext.isEmpty)
-        // spc_mint is a throwaway pc of ours: never the payout's pc.
-        assertFalse(m.stake.spcMint == m.pc)
+        // Chain dff3a9b: lane A's output (the change) with its 201-byte ciphertext; no credit lane.
+        assertEquals(network.erth.wallet.privacy.note.NoteCipher.STAKE_CIPHERTEXT_BYTES, m.stake.ciphertext.size())
+        assertTrue(Fr.fromBytes(m.stake.creditCommitment.toByteArray()).isZero && m.stake.creditCiphertext.isEmpty)
         // The change is the proof's own output; nothing minted into the stake tree.
         assertEquals(stakeRows + 1, chain.stakeRows.size)
         val u = a.pendingUnbonds.single()
@@ -124,7 +127,9 @@ class Fix7Test {
     fun aSplitPayoutIsFoundWhole() {
         val chain = FakeChain()
         val a = staked(chain)
-        a.undelegate(vB, 900_000)
+        // The whole note: the proof's output is a zero note.
+        val all = a.stakeBalances().getValue(PrivacyWallet.derthDenom(vB))
+        a.undelegate(vB, all)
         val pc = Fr.fromBytes((chain.lastMsg as network.erth.earth.proto.shieldedstaking.MsgUndelegate).pc.toByteArray())
         a.sync()
         val before = bal(a)
@@ -132,8 +137,9 @@ class Fix7Test {
         val txs = chain.txs.size
         a.sync()
         assertEquals(txs, chain.txs.size)
-        assertEquals(1_000_000L, bal(a) - before)
+        assertEquals(all * 10 / 9, bal(a) - before)
         assertEquals(3, a.notes.count { it.note.pc(a.keys.ownerPk) == pc })
+        assertTrue(a.stakeNotes.none { it.spendable })
         assertTrue(a.pendingUnbonds.isEmpty())
         // A restored wallet finds the payout by trial decryption alone.
         val restored = wallet(chain)
@@ -180,31 +186,36 @@ class Fix7Test {
     }
 
     @Test
-    fun aVoteHasFourSlotsAndTenPublicInputs() {
+    fun aVoteHasTwoSlotsAndNinePublicInputs() {
         val chain = FakeChain()
         val a = staked(chain)
+        // A top-up merges into the one note.
         a.delegate(vB, 500_000); a.sync()
+        val note = a.stakeNotes.single { it.unspent }
         chain.openProposal(7)
         a.sync()
         a.stakeVote(7, vB, yes)
         val m = chain.lastMsg as network.erth.earth.proto.shieldedstaking.MsgStakeVote
-        assertEquals(4, m.voteNullifiersCount)
+        assertEquals(2, m.voteNullifiersCount)
         val vs = m.voteNullifiersList.map { Fr.fromBytes(it.toByteArray()) }
-        assertEquals(listOf(false, false, true, true), vs.map { it.isZero })
+        assertEquals(listOf(false, true), vs.map { it.isZero })
+        assertEquals(chain.debtRoot(), Fr.fromBytes(m.debtRoot.toByteArray()))
         val w = chain.prover.allVotes.last()
-        assertEquals(10, w.publicInputs().size)
+        assertEquals(9, w.publicInputs().size)
         assertEquals(vs, w.vnfs)
         val inputs = w.noirInputs()
-        for (k in listOf("amount", "rho", "rcm", "pos", "path", "low_value", "low_next_value", "low_next_index", "low_index", "low_path", "vnf")) {
-            assertEquals(k, 4, (inputs.getValue(k) as List<*>).size)
+        for (k in listOf("amount", "rho", "rcm", "pos", "path", "move_key", "move_time", "exposed", "low_value", "low_next_value",
+            "low_next_index", "low_index", "low_path", "debt_low_key", "debt_low_next_key", "debt_low_next_index", "debt_low_retained",
+            "debt_low_index", "debt_low_path", "vnf")) {
+            assertEquals(k, 2, (inputs.getValue(k) as List<*>).size)
         }
-        assertEquals(listOf("0x0", "0x0"), (inputs.getValue("amount") as List<*>).drop(2))
-        assertEquals(32, ((inputs.getValue("path") as List<*>)[3] as List<*>).size)
-        assertEquals(m.weight, PrivacyWallet.voteWeight(900_000 + 450_000))
+        assertEquals(listOf("0x0"), (inputs.getValue("amount") as List<*>).drop(1))
+        assertEquals(32, ((inputs.getValue("path") as List<*>)[1] as List<*>).size)
+        assertEquals(m.weight, PrivacyWallet.voteWeight(note.amount))
         dumpWitnesses(chain, "fix7VoteSlots")
-        // The msg's own checks: four slots, used first, distinct.
+        // The msg's own checks: two slots, used first, distinct.
         assertThrows(IllegalArgumentException::class.java) {
-            PrivateMsgs.withVote(m, vs.take(3), ByteArray(0))
+            PrivateMsgs.withVote(m, vs.take(1), ByteArray(0))
         }
     }
 
@@ -219,7 +230,7 @@ class Fix7Test {
         // The same note twice; more weight than the notes.
         assertThrows(IllegalArgumentException::class.java) { w.copy(slots = w.slots + w.slots).check() }
         assertThrows(IllegalArgumentException::class.java) { w.copy(weight = w.slots.sumOf { it.amount } + 1).check() }
-        assertThrows(IllegalArgumentException::class.java) { w.copy(slots = List(5) { w.slots[0] }) }
+        assertThrows(IllegalArgumentException::class.java) { w.copy(slots = List(3) { w.slots[0] }) }
         assertTrue(VoteWitness.MAX_NOTES == PrivateMsgs.MAX_VOTE_NOTES)
     }
 
@@ -239,7 +250,9 @@ class Fix7Test {
         val chain = FakeChain()
         val a = staked(chain)
         a.delegate(vB, 500_000); a.sync()
-        a.restake(vB, a.spendableStake(PrivacyWallet.derthDenom(vB)), listOf(1_350_000)); a.sync()
+        // A second note (another device's) merged by a restake.
+        chain.plantStake(a.keys, PrivacyWallet.derthDenom(vB), 50_000); a.sync()
+        a.restake(vB); a.sync()
         chain.openProposal(9); a.sync()
         a.stakeVote(9, vB, yes); a.sync()
         a.undelegate(vB, 100_000); a.sync()
@@ -251,11 +264,11 @@ class Fix7Test {
 
     @Test
     fun voteGasEstimateCountsItsNotes() {
-        fun spec(used: Int) = VoteWitnessSpec(List(4) { if (it < used) Fr.of(it + 1L) else Fr.ZERO }) { error("unused") }
+        fun spec(used: Int) = VoteWitnessSpec(List(2) { if (it < used) Fr.of(it + 1L) else Fr.ZERO }) { error("unused") }
         val msg = network.erth.earth.proto.shieldedstaking.MsgStakeVote.getDefaultInstance()
         val g1 = PrivateTxEngine.estimateGas(msg, Assembled(emptyList(), vote = spec(1)) { _, _, _ -> msg }, 0)
-        val g4 = PrivateTxEngine.estimateGas(msg, Assembled(emptyList(), vote = spec(4)) { _, _, _ -> msg }, 0)
-        assertEquals(3 * PrivateTxEngine.NOTE_GAS, g4 - g1)
+        val g2 = PrivateTxEngine.estimateGas(msg, Assembled(emptyList(), vote = spec(2)) { _, _, _ -> msg }, 0)
+        assertEquals(PrivateTxEngine.NOTE_GAS, g2 - g1)
         assertEquals(PrivateTxEngine.BASE_GAS + PrivateTxEngine.BUNDLE_GAS + 250_000 + 2_000_000 + 2 * PrivateTxEngine.NOTE_GAS, g1)
     }
 

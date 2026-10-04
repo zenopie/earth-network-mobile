@@ -21,6 +21,7 @@ import network.erth.earth.proto.shielded.MsgSend
 import network.erth.earth.proto.shieldedstaking.MsgDelegate
 import network.erth.earth.proto.shieldedstaking.MsgLockPosition
 import network.erth.earth.proto.shieldedstaking.MsgPositionVote
+import network.erth.earth.proto.shieldedstaking.MsgRedelegate
 import network.erth.earth.proto.shieldedstaking.MsgRestake
 import network.erth.earth.proto.shieldedstaking.MsgStakeVote
 import network.erth.earth.proto.shieldedstaking.MsgUndelegate
@@ -66,6 +67,7 @@ object PrivateMsgs {
     const val UPDATE_POSITION = "/earth.shieldedstaking.v1.MsgUpdatePosition"
     const val UNLOCK_POSITION = "/earth.shieldedstaking.v1.MsgUnlockPosition"
     const val POSITION_VOTE = "/earth.shieldedstaking.v1.MsgPositionVote"
+    const val REDELEGATE = "/earth.shieldedstaking.v1.MsgRedelegate"
     const val NOTE_SWAP = "/earth.dex.v1.MsgNoteSwap"
     const val ADD_LIQUIDITY_SHIELDED = "/earth.dex.v1.MsgAddLiquidityShielded"
     const val REMOVE_LIQUIDITY_SHIELDED = "/earth.dex.v1.MsgRemoveLiquidityShielded"
@@ -218,6 +220,7 @@ object PrivateMsgs {
         is MsgUpdatePosition -> listOf(msg.bundle)
         is MsgUnlockPosition -> listOf(msg.bundle)
         is MsgPositionVote -> listOf(msg.bundle)
+        is MsgRedelegate -> listOf(msg.bundle)
         is MsgNoteSwap -> listOf(msg.bundle)
         is MsgAddLiquidityShielded -> listOf(msg.bundle)
         is MsgRemoveLiquidityShielded -> listOf(msg.bundle)
@@ -225,7 +228,7 @@ object PrivateMsgs {
     }
 
     /** Vote nullifier slots in every MsgStakeVote (x/shieldedstaking MaxVoteNotes, circuits/vote MAX_NOTES). */
-    const val MAX_VOTE_NOTES = 4
+    const val MAX_VOTE_NOTES = 2
 
     /**
      * A stake vote with its vote nullifiers and proof set (the sighash binds
@@ -250,19 +253,33 @@ object PrivateMsgs {
         is MsgUpdatePosition -> msg.stake
         is MsgUnlockPosition -> msg.stake
         is MsgPositionVote -> msg.stake
+        is MsgRedelegate -> msg.stake
         else -> null
     }
 
+    /** A msg's stake proof with [p] in its place (the engine swaps placeholders for quotes). */
+    fun withStake(msg: MessageLite, p: StakeProof): MessageLite = when (msg) {
+        is MsgDelegate -> msg.toBuilder().setStake(p).build()
+        is MsgRestake -> msg.toBuilder().setStake(p).build()
+        is MsgUndelegate -> msg.toBuilder().setStake(p).build()
+        is MsgLockPosition -> msg.toBuilder().setStake(p).build()
+        is MsgUpdatePosition -> msg.toBuilder().setStake(p).build()
+        is MsgUnlockPosition -> msg.toBuilder().setStake(p).build()
+        is MsgPositionVote -> msg.toBuilder().setStake(p).build()
+        is MsgRedelegate -> msg.toBuilder().setStake(p).build()
+        else -> throw IllegalArgumentException("no stake proof: ${msg.javaClass.simpleName}")
+    }
+
     /**
-     * StakeFields: anchor, nf_0, nf_1, cm_0, cm_1, Bytes(ct_0), Bytes(ct_1),
-     * spc_mint, owner_tag, Bytes(spc_ciphertext) (an absent ciphertext is
-     * Bytes of nothing).
+     * StakeFields: anchor, nf_0, nf_1, cm, Bytes(ct), credit_nf, credit_cm,
+     * Bytes(credit_ct), owner_tag, clear_before, debt_root (an absent
+     * ciphertext is Bytes of nothing).
      */
     fun stakeFields(p: StakeProof): List<Fr> = listOf(
         fieldOrZero(p.anchor), fieldOrZero(p.nullifiersList.getOrNull(0)), fieldOrZero(p.nullifiersList.getOrNull(1)),
-        fieldOrZero(p.commitmentsList.getOrNull(0)), fieldOrZero(p.commitmentsList.getOrNull(1)),
-        bytes(p.ciphertextsList.getOrNull(0) ?: ByteString.EMPTY), bytes(p.ciphertextsList.getOrNull(1) ?: ByteString.EMPTY),
-        fieldOrZero(p.spcMint), fieldOrZero(p.ownerTag), bytes(p.spcCiphertext),
+        fieldOrZero(p.commitment), bytes(p.ciphertext),
+        fieldOrZero(p.creditNullifier), fieldOrZero(p.creditCommitment), bytes(p.creditCiphertext),
+        fieldOrZero(p.ownerTag), u(p.clearBefore), fieldOrZero(p.debtRoot),
     )
 
     /** The bundles' summed uerth balance (shielded UerthBalance). */
@@ -308,14 +325,14 @@ object PrivateMsgs {
         is MsgVoteProposal -> listOf(u(msg.proposalId), u(msg.optionValue.toLong()))
         is MsgProposeRemoval -> listOf(u(msg.optionId))
         is MsgVoteRemoval -> listOf(u(msg.optionId), u(msg.optionValue.toLong()))
-        is MsgDelegate -> stakeFields(msg.stake) + listOf(bytes(msg.validator), u(msg.amount))
+        is MsgDelegate -> stakeFields(msg.stake) + listOf(bytes(msg.validator), u(msg.amount), u(msg.derth))
         is MsgRestake -> stakeFields(msg.stake) + listOf(bytes(msg.validator))
         is MsgUndelegate -> stakeFields(msg.stake) + listOf(bytes(msg.validator), u(msg.amount), f(msg.pc), bytes(msg.ciphertext))
         // A vote carries no stake proof (ORCHARD_DESIGN 15, 18.2): its vote proof's statement is the chain's.
         is MsgStakeVote -> {
             require(msg.voteNullifiersCount == MAX_VOTE_NOTES) { "a stake vote carries exactly $MAX_VOTE_NOTES vote nullifiers" }
             listOf(u(msg.proposalId), bytes(msg.validator), Privacy.bytes(optionsBytes(msg.optionsList)), u(msg.weight)) +
-                msg.voteNullifiersList.map { f(it) }
+                msg.voteNullifiersList.map { f(it) } + listOf(f(msg.debtRoot))
         }
         is MsgLockPosition -> stakeFields(msg.stake) + listOf(
             bytes(msg.validator), u(msg.amount), Privacy.bytes(splitsBytes(msg.splitsList)),
@@ -324,6 +341,9 @@ object PrivateMsgs {
         is MsgUnlockPosition -> stakeFields(msg.stake) + listOf(u(msg.positionId))
         is MsgPositionVote -> stakeFields(msg.stake) + listOf(
             u(msg.positionId), u(msg.proposalId), Privacy.bytes(optionsBytes(msg.optionsList)),
+        )
+        is MsgRedelegate -> stakeFields(msg.stake) + listOf(
+            bytes(msg.srcValidator), bytes(msg.dstValidator), u(msg.amount), u(msg.dstDerth), u(msg.moveTime),
         )
         is MsgNoteSwap -> listOf(
             bytes(msg.denomIn), u(msg.amountIn), bytes(msg.denomOut), u(msg.minAmountOut), f(msg.pc), bytes(msg.ciphertext),
@@ -374,6 +394,7 @@ object PrivateMsgs {
         is MsgUpdatePosition -> UPDATE_POSITION
         is MsgUnlockPosition -> UNLOCK_POSITION
         is MsgPositionVote -> POSITION_VOTE
+        is MsgRedelegate -> REDELEGATE
         is MsgNoteSwap -> NOTE_SWAP
         is MsgAddLiquidityShielded -> ADD_LIQUIDITY_SHIELDED
         is MsgRemoveLiquidityShielded -> REMOVE_LIQUIDITY_SHIELDED

@@ -34,11 +34,13 @@ class AmountsTest {
         assertEquals(0L, PrivacyWallet.derthValue(5, BigDecimal("-1")))
     }
 
+    /** A stake row is [position, height, cm, ciphertext] (format 2, chain dff3a9b); an older row's extra columns are ignored, never trusted. */
     @Test
-    fun hugeStakeRowAmountIsSkippedNotACrash() {
+    fun stakeRowsCarryNoPublicAmount() {
         val page = JSONObject(
-            """{"notes":[[0,1,"${"00".repeat(32)}",null,"derth/x","18446744073709551615",null]],"next_pos":1,"complete":true,"synced_height":1}""",
+            """{"format":2,"notes":[[0,1,"${"00".repeat(32)}","AAAA"],[1,1,"${"00".repeat(32)}",null,"derth/x","18446744073709551615",null]],"next_pos":2,"complete":true,"synced_height":1}""",
         )
-        assertNull(HttpPrivacyIndexer.parseStakeNotes(page).rows.single().amount)
+        val rows = HttpPrivacyIndexer.parseStakeNotes(page).rows
+        assertEquals(listOf(3, 0), rows.map { it.ciphertext.size })
     }
 }

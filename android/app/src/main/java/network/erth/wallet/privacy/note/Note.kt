@@ -113,12 +113,34 @@ object Denoms {
 }
 
 /**
+ * A stake note's slash label (ORCHARD_DESIGN 20.6): the note holds [exposed]
+ * derth a private redelegation credited, the move [moveKey] (its credit
+ * nullifier) named at [moveTime] (unix seconds). Until the move's window
+ * closes (moveTime + the chain's label window) a slash of the move's source
+ * may still cut it, and it cannot leave the note; after, any lane-A proof
+ * clears it at what the slash debt tree says it is worth.
+ */
+data class StakeLabel(val moveKey: Fr, val moveTime: Long, val exposed: Long) {
+    init {
+        require(!moveKey.isZero && moveTime > 0 && exposed > 0) { "a label names its move, time and a positive exposure" }
+    }
+
+    val hash: Fr get() = Privacy.stakeLabel(moveKey, moveTime, exposed)
+
+    companion object {
+        /** The label field of a stake commitment: 0 for none. */
+        fun hash(l: StakeLabel?): Fr = l?.hash ?: Fr.ZERO
+    }
+}
+
+/**
  * A stake note the wallet owns (x/shieldedstaking's stake tree): delegated
- * stake (derth/<valoper>).
- * Owner-locked: it can be merged, split, undelegated, voted or locked by its
- * owner, never sent.
+ * stake (derth/<valoper>). One per validator as a rule (every delegation,
+ * unlock and redelegation merges into it); a second appears only beside a
+ * labelled note or from another device. Owner-locked: it can be merged,
+ * undelegated, redelegated, voted or locked by its owner, never sent.
  *
- *     spc = H(TAG_SPC, owner_pk, rho, rcm)    cm = H(TAG_STAKE, AssetID(denom), amount, spc)
+ *     spc = H(TAG_SPC, owner_pk, rho, rcm)    cm = H(TAG_STAKE, AssetID(denom), amount, spc, label)
  *     nf  = H(TAG_SNF, nk, rho, position)
  */
 data class OwnedStakeNote(
@@ -136,6 +158,8 @@ data class OwnedStakeNote(
     val pendingUntil: Long? = null,
     /** The spending tx's hash (see OwnedNote.pendingTx). */
     val pendingTx: String? = null,
+    /** The redelegation exposure it holds, null for an unlabelled note. */
+    val label: StakeLabel? = null,
 ) {
     val unspent: Boolean get() = spentHeight == null
     val spendable: Boolean get() = unspent && pendingAt == null && amount > 0

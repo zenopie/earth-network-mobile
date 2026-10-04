@@ -45,6 +45,9 @@ class WalletFlowTest {
         override fun snapshot(proposalId: Long) = chain.snapshotRead(proposalId)
         override fun stakeNullifierTree(start: Long, limit: Int) = chain.nfTreeRead(start, limit)
         override fun positions() = chain.positionReads()
+        override fun debtTree(start: Long, limit: Int) = chain.debtTreeRead(start, limit)
+        override fun validatorBook(valoper: String) = chain.validatorBookRead(valoper)
+        override fun minDelegation() = chain.minDelegation
     }
 
     /** Pauses the wallet asked for (stake votes), in milliseconds. */
@@ -123,10 +126,12 @@ class WalletFlowTest {
         assertEquals(1_000_000L, chain.unshieldedTo(receiver))
         assertTrue(bal(a, "uerth") < before - 1_000_000)
 
-        // Stake: a derth stake note, minted to our stake pc.
+        // Stake: the quoted derth (9/10 at the fake's rate, less the drift margin) in a note of ours, its input padded.
         a.delegate(validator, 2_000_000)
         a.sync()
-        assertEquals(1_800_000L, bal(a, derth))
+        val q1 = (chain.lastMsg as network.erth.earth.proto.shieldedstaking.MsgDelegate).derth
+        assertEquals(1_800_000L - (1_800_000L * PrivacyWallet.CREDIT_MARGIN_PPM + 999_999) / 1_000_000, q1)
+        assertEquals(q1, bal(a, derth))
         assertEquals(1, a.stakeNotes.size)
         // Owner-locked: stake cannot be sent or unshielded.
         assertThrows(IllegalArgumentException::class.java) { a.send(b.address, derth, 1) }
@@ -137,15 +142,16 @@ class WalletFlowTest {
         chain.openProposal(9)
         val fresh = wallet(chain, alice)
         fresh.sync()
-        // A later stake note moves the stake tree past the snapshot.
+        // A top-up after the snapshot merges into the note (spending it).
         fresh.delegate(validator, 100_000)
         fresh.sync()
+        val q2 = (chain.lastMsg as network.erth.earth.proto.shieldedstaking.MsgDelegate).derth
         fresh.castStakeVote(9, fresh.stakeVoteItems(9).single(), yes)
         fresh.sync()
-        assertEquals(Triple(9L, validator, 1_800_000L), chain.stakeVotes.single())
-        assertEquals(1_890_000L, bal(fresh, derth))
-        assertEquals(2, fresh.stakeNotes.size)
-        // Final: the note voted on 9, the later one is not in its snapshot.
+        // The old note votes the value it held at the snapshot; the merged one is not in it.
+        assertEquals(Triple(9L, validator, PrivacyWallet.voteWeight(q1)), chain.stakeVotes.single())
+        assertEquals(q1 + q2, bal(fresh, derth))
+        assertEquals(1, fresh.stakeNotes.count { it.unspent })
         assertTrue(fresh.stakeVoteItems(9).isEmpty())
 
         // A wallet restored from the mnemonic alone sees the same balances,
@@ -245,22 +251,30 @@ class WalletFlowTest {
         assertTrue(bal(a, "uanml") > t0)
         assertTrue(bal(a, "uerth") > e0 - 10_000)
 
-        // Staking: delegate twice (two stake notes), restake them into one.
+        // Staking: delegate twice without a sync between (as two devices
+        // would): each pads its input, two notes; the user merges them.
         a.delegate(validator, 1_000_000)
         a.delegate(validator, 1_000_000)
         a.sync()
-        assertEquals(1_800_000L, bal(a, derth))
+        val held = bal(a, derth)
+        assertEquals(2 * (900_000L - 9), held)
         assertEquals(2, a.stakeNotes.count { it.spendable })
         assertEquals(mapOf(derth to 2), a.stakeMergeable())
         a.mergeStake(derth)
         a.sync()
-        assertEquals(1_800_000L, bal(a, derth))
+        assertEquals(held, bal(a, derth))
+        assertEquals(1, a.stakeNotes.count { it.spendable })
+        assertTrue(a.stakeMergeable().isEmpty())
+        // One note per validator: the next delegation merges into it.
+        a.delegate(validator, 100_000); a.sync()
+        val total = bal(a, derth)
+        assertEquals(held + 90_000 - 1, total)
         assertEquals(1, a.stakeNotes.count { it.spendable })
 
         // Groundworks: lock a position (owner tag), re-split, vote, unlock.
         a.lockPosition(validator, 1_000_000, mapOf(2L to 60L, 5L to 40L))
         a.sync()
-        assertEquals(800_000L, bal(a, derth))
+        assertEquals(total - 1_000_000, bal(a, derth))
         val (pos, tag) = a.positions().single()
         assertEquals(mapOf(2L to 60L, 5L to 40L), pos.splits)
         a.updatePosition(pos, tag, mapOf(2L to 100L))
@@ -269,24 +283,28 @@ class WalletFlowTest {
         assertEquals(9L, chain.positionVotes.single().second)
         // Only its owner can move it.
         assertThrows(IllegalStateException::class.java) { b.updatePosition(pos, 0, mapOf(2L to 100L)) }
+        // Unlocking merges the position's derth back into the note; the fee bundle records the closed counter (K11).
         a.unlockPosition(a.positions().single().first, tag)
         a.sync()
         assertTrue(a.positions().isEmpty())
-        assertEquals(1_800_000L, bal(a, derth))
+        assertEquals(total, bal(a, derth))
+        assertEquals(1, a.stakeNotes.count { it.spendable })
+        val restoredA = wallet(chain, alice)
+        restoredA.sync()
+        assertEquals(tag, restoredA.store.state.closedOtagMax)
 
-        // Stake votes: every derth note from before the snapshot, one vote
-        // per validator (up to four notes), one weight: their rounded sum.
+        // Stake votes: the derth note from before the snapshot, one vote per validator, its rounded amount.
         a.sync()
         chain.openProposal(11)
         val weight = a.stakeVoteWeight(11, emptyList())
         val notes = a.stakeNotes.filter { it.spendable && it.denom == derth }
-        assertTrue(notes.size in 2..4)
+        assertEquals(1, notes.size)
         assertEquals(notes.size, weight.notes)
         assertEquals(PrivacyWallet.voteWeight(notes.sumOf { it.amount }), weight.uerth)
         val voted = a.stakeVoteItems(11).mapNotNull { a.castStakeVote(11, it, yes) }
         assertEquals(1, voted.size)
         a.sync()
-        assertEquals(1_800_000L, bal(a, derth))
+        assertEquals(total, bal(a, derth))
         assertEquals(PrivacyWallet.voteWeight(notes.sumOf { it.amount }), chain.stakeVotes.single().third)
         assertEquals(listOf(notes.size), chain.stakeVoteSlots)
 
@@ -304,13 +322,13 @@ class WalletFlowTest {
         a.voteRemoval(3, yes = true)
         assertEquals(3L, chain.removalVotes.single().first)
 
-        // Unstake (two notes, change back as a created stake note): the msg
+        // Unstake (the note, change back as a created stake note): the msg
         // names a pool note of ours; at maturity the chain pays it there by
         // itself (chain 48b631c), and the wallet sends nothing more.
         a.sync()
         a.undelegate(validator, 1_000_000)
         a.sync()
-        assertEquals(800_000L, bal(a, derth))
+        assertEquals(total - 1_000_000, bal(a, derth))
         val u = a.pendingUnbonds.single()
         assertEquals(listOf(1_111_111L, 4L, 1L), listOf(u.value, u.epoch, u.payoutId))
         val erthPre = bal(a, "uerth")

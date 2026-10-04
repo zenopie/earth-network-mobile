@@ -21,6 +21,7 @@ import network.erth.earth.proto.shielded.MsgSend
 import network.erth.earth.proto.shieldedstaking.MsgDelegate
 import network.erth.earth.proto.shieldedstaking.MsgLockPosition
 import network.erth.earth.proto.shieldedstaking.MsgPositionVote
+import network.erth.earth.proto.shieldedstaking.MsgRedelegate
 import network.erth.earth.proto.shieldedstaking.MsgRestake
 import network.erth.earth.proto.shieldedstaking.MsgStakeVote
 import network.erth.earth.proto.shieldedstaking.MsgUndelegate
@@ -54,6 +55,8 @@ import network.erth.wallet.privacy.sync.StakeSnapshotRow
 import network.erth.wallet.privacy.sync.StakeSnapshotsPage
 import network.erth.wallet.privacy.prove.VoteWitness
 import network.erth.wallet.privacy.zk.IndexedTree
+import network.erth.wallet.privacy.zk.DebtTree
+import network.erth.wallet.privacy.sync.DebtRowsPage
 import network.erth.wallet.privacy.tx.PrivateChain
 import network.erth.wallet.privacy.tx.PrivateMsgs
 import network.erth.wallet.privacy.tx.Prover
@@ -106,6 +109,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     val stakeNullifiers = LinkedHashMap<Fr, Long>()
     /** The stake nullifier indexed tree's values in insertion order (leaf i + 1), ORCHARD_DESIGN 15. */
     val stakeNfValues = ArrayList<Fr>()
+    /** Every stake root the chain recorded (the empty tree's at the first block, chain dff3a9b). */
     val stakeRoots = HashSet<Fr>()
     /** Proposal snapshots: note root and size, nullifier tree root and size (sentinel included), block. */
     data class Snap(val proposalId: Long, val root: Fr, val treeSize: Long, val nfRoot: Fr, val nfSize: Long, val height: Long)
@@ -178,6 +182,79 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     /** The fake's epoch and derth rate (uerth per derth = 10/9 at delegation: 9/10 minted). */
     val epoch = 4L
 
+    // ---- x/shieldedstaking books, moves and the slash debt (chain dff3a9b) ----
+
+    /** Each validator's live book (backing, supply): rate 10/9 uerth per derth unless a test sets one. */
+    val books = HashMap<String, Pair<BigInteger, BigInteger>>()
+    fun book(v: String): Pair<BigInteger, BigInteger> = books[v] ?: (BigInteger.valueOf(10_000_000_000_000) to BigInteger.valueOf(9_000_000_000_000))
+    /** ERTH queued for delegation per validator (what a move leaves first): 0 unless a test sets it. */
+    val queues = HashMap<String, BigInteger>()
+    var minDelegation = 1L
+    /** Applied to every book's backing just before a tx's credit check: the rate moving between quote and block. */
+    var rateDriftPpm = 0L
+    /** x/staking's longest unbonding time (MaxUnbonding); the label window adds 600 s. */
+    var maxUnbondingSeconds = 21L * 86_400
+    val labelWindow: Long get() = maxUnbondingSeconds + 600
+    fun clearBefore(): Long = if (now <= labelWindow) 0 else now - labelWindow
+    /** Open moves: key -> (src, dst, move_time, credited). */
+    data class Move(val key: Fr, val src: String, val dst: String, val moveTime: Long, val credited: Long)
+    val moves = LinkedHashMap<Fr, Move>()
+    /** The slash debt tree's rows in insertion order, each with its latest retained. */
+    val debtRows = LinkedHashMap<Fr, Long>()
+    fun debtTree(): DebtTree = DebtTree.build(debtRows.entries.map { it.key to it.value })
+    fun debtRoot(): Fr = debtTree().root()
+    /** A slash of the move's source reaches it: its exposure now worth [retained] (a row written in the next block's BeginBlock). */
+    fun slashMove(key: Fr, retained: Long) {
+        val m = moves.getValue(key)
+        require(retained in 0..m.credited)
+        debtRows[key] = minOf(retained, debtRows[key] ?: Long.MAX_VALUE)
+        block()
+    }
+    /** Every Query/DebtTree page asked (start), and every /debt_rows page (from_index). */
+    val debtAsks = ArrayList<String>()
+    /** Whether the indexer serves /debt_rows (false: an older indexer; the wallet reads the chain's pages). */
+    var indexerDebtRows = true
+    /** Set to make the indexer's debt stream lie about a retained (the root check must catch it). */
+    var forgeDebtRetained: Long? = null
+
+    /** Query/DebtTree. */
+    fun debtTreeRead(start: Long, limit: Int): PrivacyChainReads.DebtTreePage {
+        debtAsks.add("chain:$start")
+        val rows = debtRows.entries.drop(start.toInt()).take(minOf(limit, 1000)).map { it.key to it.value }
+        return PrivacyChainReads.DebtTreePage(rows, if (debtRows.isEmpty()) 0 else debtRows.size + 1L, debtRoot(), labelWindow, clearBefore())
+    }
+
+    fun validatorBookRead(v: String): PrivacyChainReads.ValidatorBook =
+        book(v).let { (b, sup) -> PrivacyChainReads.ValidatorBook(b, sup, queues[v] ?: BigInteger.ZERO) }
+
+    override fun debtRows(fromIndex: Long, limit: Int): DebtRowsPage {
+        if (!indexerDebtRows) throw IndexerBaseMoved("no /debt_rows (test)")
+        debtAsks.add("indexer:$fromIndex")
+        val n = aligned("debt_rows", fromIndex, limit)
+        val all = debtRows.entries.toList()
+        val rows = (maxOf(fromIndex, 1L) until fromIndex + n).takeWhile { it <= all.size }.map {
+            val e = all[(it - 1).toInt()]
+            Triple(it, e.key, forgeDebtRetained ?: e.value)
+        }
+        val full = fromIndex + n <= all.size + 1L
+        return DebtRowsPage(rows, if (full) fromIndex + n else (rows.lastOrNull()?.first?.plus(1) ?: maxOf(fromIndex, 1L)), full,
+            if (all.isEmpty()) 0 else all.size + 1L, debtRoot())
+    }
+
+    /** floor(value x S / B) at [v]'s book (with the drift a test set), the chain's derthFor. */
+    private fun buys(v: String, value: BigInteger): BigInteger {
+        val (b0, sup) = book(v)
+        val b = b0 + b0 * BigInteger.valueOf(rateDriftPpm) / BigInteger.valueOf(1_000_000)
+        return if (sup.signum() == 0) value else value * sup / b
+    }
+
+    private fun checkCredit(v: String, value: BigInteger, credit: Long) {
+        val buys = buys(v, value)
+        require(buys >= BigInteger.valueOf(minDelegation)) { "the value buys $buys derth, less than the minimum (code 1103)" }
+        require(credit >= minDelegation) { "credits less than the minimum (code 1103)" }
+        require(BigInteger.valueOf(credit) <= buys) { "the delegation buys $buys derth at the live rate, less than the $credit it credits (the rate moved since the proof: re-quote with a margin)" }
+    }
+
     // ---- chain ----
 
     /** Ends the block being built: its roots become anchors. Writes land at [height], the block in progress. */
@@ -186,7 +263,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         noteRootSizes[noteTree.root()] = noteTree.size
         noteRootHeights.putIfAbsent(noteTree.root(), height)
         noteAt[height] = TreeState(noteTree.size, if (noteTree.size == 0L) null else noteTree.root())
-        if (stakeTree.size > 0) stakeRoots.add(stakeTree.root())
+        stakeRoots.add(stakeTree.root())
         identityAt[height] = TreeState(identityTree.size, if (identityTree.size == 0L) null else identityTree.root())
         stakeAt[height] = TreeState(stakeTree.size, if (stakeTree.size == 0L) null else stakeTree.root())
         blockTimes[height] = now
@@ -223,11 +300,18 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
      */
     fun mintSplit(denom: String, values: List<Long>, pc: Fr, ct: ByteArray): List<Long> = values.map { mint(denom, it, pc, ct) }
 
-    fun mintStake(denom: String, amount: Long, spc: Fr, ct: ByteArray): Long {
-        require(ct.size == NoteCipher.BLIND_CIPHERTEXT_BYTES) { "a minted stake note needs its blind stake ciphertext" }
-        val cm = Privacy.stakeCm(Privacy.assetId(denom), amount, spc)
+    /**
+     * A stake note of [keys]'s owner made elsewhere (another device's proof,
+     * another owner's): its commitment and wallet stake ciphertext appended
+     * as a proof output would, and the block ended.
+     */
+    fun plantStake(keys: network.erth.wallet.privacy.keys.PrivacyKeys, denom: String, amount: Long, label: network.erth.wallet.privacy.note.StakeLabel? = null): Long {
+        val o = NoteCipher.StakeOpening(Privacy.assetId(denom), amount, network.erth.wallet.privacy.note.NotePlaintext.randomField(), network.erth.wallet.privacy.note.NotePlaintext.randomField(), label)
+        val cm = o.cm(keys.ownerPk)
         val pos = stakeTree.append(cm)
-        stakeRows.add(StakeNoteRow(pos, height, cm, ct, denom, amount, spc))
+        stakeRows.add(StakeNoteRow(pos, height, cm, NoteCipher.encryptStake(o, keys.ekPub, cm)))
+        validators.add(PrivacyWallet.parseDerth(denom))
+        block()
         return pos
     }
 
@@ -311,7 +395,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         simulated++
         val m = check(tx, simulate = true).first
         PrivateMsgs.bundles(m).forEach { b -> b.actionsList.forEach { simulatedNullifiers.add(f(it.nullifier)) } }
-        PrivateMsgs.stake(m)?.nullifiersList?.forEach { simulatedNullifiers.add(f(it)) }
+        PrivateMsgs.stake(m)?.let { p -> (p.nullifiersList + listOf(p.creditNullifier)).forEach { simulatedNullifiers.add(f(it)) } }
         return gasOf(m)
     }
 
@@ -405,6 +489,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             PrivateMsgs.UPDATE_POSITION -> MsgUpdatePosition.parseFrom(any.value)
             PrivateMsgs.UNLOCK_POSITION -> MsgUnlockPosition.parseFrom(any.value)
             PrivateMsgs.POSITION_VOTE -> MsgPositionVote.parseFrom(any.value)
+            PrivateMsgs.REDELEGATE -> MsgRedelegate.parseFrom(any.value)
             PrivateMsgs.BIND_HANDLE -> MsgBindHandle.parseFrom(any.value)
             PrivateMsgs.MOVE_HANDLE -> MsgMoveHandle.parseFrom(any.value)
             PrivateMsgs.MOVE_CARETAKER -> MsgMoveCaretaker.parseFrom(any.value)
@@ -483,31 +568,23 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         require(PrivateMsgs.totalFee(m) > 0)
     }
 
-    /** Whether the msg has the chain mint a stake note to spc_mint (its blind stake ciphertext is then required). */
-    private fun mintsStake(m: MessageLite) = m is MsgDelegate || m is MsgUnlockPosition
+    private fun lanes(m: MessageLite): ChainLayout.Lanes = ChainLayout.lanes(m) { id -> positions.getValue(id).let { it.validator to it.derth } }
 
-    /** The stake proof's chain-supplied publics: asset, v_out. */
-    private fun stakeStatement(m: MessageLite): Pair<String?, Long> = when (m) {
-        is MsgDelegate -> PrivacyWallet.derthDenom(m.validator) to 0L
-        is MsgRestake -> PrivacyWallet.derthDenom(m.validator) to 0L
-        is MsgUndelegate -> PrivacyWallet.derthDenom(m.validator) to m.amount
-        is MsgLockPosition -> PrivacyWallet.derthDenom(m.validator) to m.amount
-        else -> null to 0L
-    }
 
-    private fun spent(p: StakeProof) = p.nullifiersList.map(::f).filter { !it.isZero }
-    private fun created(p: StakeProof) = p.commitmentsList.withIndex().filter { !f(it.value).isZero }
+    private fun spent(p: StakeProof) = (p.nullifiersList + listOf(p.creditNullifier)).map(::f).filter { !it.isZero }
 
-    /** Shape per msg: (min spends, may create). */
+    /** The chain's shape rule: a note-moving msg spends in its first slot and creates; a crediting one uses its credit lane; the rest are zero. */
     private fun stakeShape(m: MessageLite, p: StakeProof) {
-        val (minSpends, creates) = when (m) {
-            is MsgDelegate, is MsgUpdatePosition, is MsgUnlockPosition, is MsgPositionVote -> 0 to false
-            else -> 1 to true
+        val notes = m !is MsgUpdatePosition && m !is MsgPositionVote
+        val credit = m is MsgRedelegate
+        if (notes) {
+            require(!f(p.getNullifiers(0)).isZero) { "the stake proof spends a note (or pads with its own nullifier) in its first slot" }
+            require(!f(p.commitment).isZero) { "the stake proof creates a note (the merged note, the change or a zero note)" }
+        } else {
+            require(f(p.getNullifiers(0)).isZero && f(p.getNullifiers(1)).isZero && f(p.commitment).isZero) { "the stake proof spends and creates nothing for this msg" }
         }
-        val n = spent(p).size
-        require(if (minSpends == 0) n == 0 else n >= minSpends) { "stake proof spends $n" }
-        require(creates || created(p).isEmpty()) { "stake proof creates" }
-        if (m is MsgRestake) require(created(p).isNotEmpty())
+        if (credit) require(!f(p.creditNullifier).isZero && !f(p.creditCommitment).isZero) { "the credit lane spends (or pads) and creates" }
+        else require(f(p.creditNullifier).isZero && f(p.creditCommitment).isZero) { "this msg credits no second asset" }
     }
 
     /** A ballot's max_predecessor (x/assembly: opened - 86400; the fake opens ballots as it is asked). */
@@ -640,6 +717,21 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             is MsgAddLiquidityShielded -> if (m.minShares.isNotEmpty()) {
                 require(shares(rem.getValue("uerth"), rem.getValue("uanml")) >= BigInteger(m.minShares)) { "below min_shares" }
             }
+            is MsgDelegate -> {
+                require(m.amount >= minDelegation) { "a delegation is at least ${minDelegation}uerth" }
+                checkCredit(m.validator, BigInteger.valueOf(m.amount), m.derth)
+            }
+            is MsgRedelegate -> {
+                require(m.srcValidator != m.dstValidator) { "source and destination are the same validator (code 1120)" }
+                require(m.moveTime in 1..now && now - m.moveTime <= 600) { "move_time ${m.moveTime} is not within 600s before the block time $now (name a recent block's time)" }
+                val (bA, sA) = book(m.srcValidator)
+                val u = BigInteger.valueOf(m.amount) * bA / sA
+                require(u >= BigInteger.valueOf(minDelegation)) { "the redelegation is worth less than the minimum (code 1103)" }
+                // What arrives: dust beyond the queue stays with the source (bondedDust), x/staking truncates a uerth.
+                val q = queues[m.srcValidator] ?: BigInteger.ZERO
+                val arrived = if (u <= q) u else (u - BigInteger.valueOf(1001)).max(BigInteger.ZERO)
+                checkCredit(m.dstValidator, arrived, m.dstDerth)
+            }
             is MsgUpdatePosition -> require(positions.getValue(m.positionId).ownerTag == f(m.stake.ownerTag)) { "not the position's owner" }
             is MsgUnlockPosition -> require(positions.getValue(m.positionId).ownerTag == f(m.stake.ownerTag)) { "not the position's owner" }
             is MsgPositionVote -> {
@@ -655,8 +747,8 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 require(m.weight in 1..Long.MAX_VALUE) { "weight must be positive" }
                 // Chain C-L3: at most three significant digits.
                 require(PrivacyWallet.voteWeight(m.weight) == m.weight) { "weight has more than 3 significant digits" }
-                // Chain 48b631c: exactly four slots, used ones first (at least one), distinct, zeros after.
-                require(m.voteNullifiersCount == PrivateMsgs.MAX_VOTE_NOTES) { "a stake vote carries exactly 4 vote nullifiers" }
+                // Chain dff3a9b: exactly two slots, used ones first (at least one), distinct, zeros after.
+                require(m.voteNullifiersCount == PrivateMsgs.MAX_VOTE_NOTES) { "a stake vote carries exactly 2 vote nullifiers" }
                 require(m.voteNullifiersList.all { it.size() == 32 }) { "vote_nullifiers" }
                 val vs = m.voteNullifiersList.map(::f)
                 val used = vs.takeWhile { !it.isZero }
@@ -717,13 +809,14 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         require(m.toByteArray().contentEquals(body.getMessages(0).value.toByteArray())) { "msg bytes are not canonical" }
         // Every action's output ciphertext exactly 217 bytes, dummies included.
         for (b in PrivateMsgs.bundles(m)) for (a in b.actionsList) require(a.ciphertext.size() == NoteCipher.CIPHERTEXT_BYTES) { "action ciphertext ${a.ciphertext.size()} bytes" }
-        // Stake proofs: exactly two ciphertext slots, empty iff the commitment is zero, else 153 bytes.
+        // Stake proofs (chain dff3a9b): every field 32 bytes, a 201-byte ciphertext exactly for a non-zero commitment.
         PrivateMsgs.stake(m)?.let { p ->
-            require(p.ciphertextsCount == 2) { "stake proof has ${p.ciphertextsCount} ciphertexts" }
-            for (i in 0..1) {
-                val n = p.getCiphertexts(i).size()
-                require(if (f(p.getCommitments(i)).isZero) n == 0 else n == NoteCipher.STAKE_CIPHERTEXT_BYTES) { "stake ciphertext $i: $n bytes" }
+            require(p.nullifiersCount == 2) { "a stake proof carries exactly two nullifiers" }
+            for (b in p.nullifiersList + listOf(p.anchor, p.ownerTag, p.commitment, p.creditNullifier, p.creditCommitment, p.debtRoot)) require(b.size() == 32) { "a stake field of ${b.size()} bytes" }
+            for ((cm, ct) in listOf(p.commitment to p.ciphertext, p.creditCommitment to p.creditCiphertext)) {
+                require(if (f(cm).isZero) ct.isEmpty else ct.size() == NoteCipher.STAKE_CIPHERTEXT_BYTES) { "stake ciphertext: ${ct.size()} bytes" }
             }
+            require((p.clearBefore == 0L) == f(p.debtRoot).isZero) { "debt_root is zero when clear_before is 0 (the proof clears no label)" }
         }
         // The tx fields every private sighash binds (the ante records them).
         val txf = PrivateMsgs.TxFields(body.memo, body.timeoutHeight, auth.fee.gasLimit)
@@ -751,32 +844,28 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
 
         val stake = PrivateMsgs.stake(m)
         if (stake != null) {
-            require(stake.nullifiersCount == 2 && stake.commitmentsCount == 2 && stake.ciphertextsCount <= 2)
             require(stake.proof.size() == PROOF_BYTES) { "a stake proof is exactly $PROOF_BYTES bytes" }
-            if (mintsStake(m)) require(stake.spcCiphertext.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES) { "spc_ciphertext required" }
-            else require(stake.spcCiphertext.isEmpty) { "spc_ciphertext only for a msg that mints" }
             stakeShape(m, stake)
             val nfs = spent(stake)
             require(nfs.none { it in stakeNullifiers }) { "stake nullifier spent" }
-            require(nfs.toSet().size == nfs.size)
+            require(nfs.toSet().size == nfs.size) { "duplicate stake nullifier" }
             if (nfs.isNotEmpty()) require(f(stake.anchor) in stakeRoots) { "unknown stake anchor" }
+            if (stake.clearBefore != 0L) {
+                require(stake.clearBefore <= clearBefore()) { "clear_before ${stake.clearBefore} is after ${clearBefore()}: labels newer than that may still be slashed" }
+                require(f(stake.debtRoot) == debtRoot()) { "debt root is not the current slash debt root (a slash reached a redelegation since: re-prove)" }
+            }
             if (!simulate) {
                 val w = prover.stakes.removeFirstOrNull() ?: error("no stake proof")
-                val (denom, vOut) = stakeStatement(m)
-                val expect = listOf(f(stake.anchor), denom?.let(Privacy::assetId) ?: Fr.ZERO) +
-                    stake.nullifiersList.map(::f) + stake.commitmentsList.map(::f) +
-                    listOf(Privacy.u64(0), Privacy.u64(vOut), f(stake.spcMint), f(stake.ownerTag), sighash)
-                require(w.publicInputs() == expect) { "stake proof is for other public inputs" }
+                require(w.publicInputs() == ChainLayout.stakePublicInputs(stake, lanes(m), sighash)) { "stake proof is for other public inputs" }
             }
         }
         if (m is MsgStakeVote) {
             require(m.proof.size() == PROOF_BYTES) { "a vote proof is exactly $PROOF_BYTES bytes" }
             val snap = snapshots[m.proposalId] ?: error("no open snapshot for proposal ${m.proposalId}")
+            require(m.debtRoot.size() == 32 && f(m.debtRoot) == debtRoot()) { "debt root is not the current slash debt root (a slash reached a redelegation since: re-prove)" }
             if (!simulate) {
                 val w = prover.votes.removeFirstOrNull() ?: error("no vote proof")
-                val expect = listOf(snap.root, snap.nfRoot, Privacy.assetId(PrivacyWallet.derthDenom(m.validator)),
-                    Privacy.u64(m.weight), Privacy.u64(m.proposalId)) + m.voteNullifiersList.map(::f) + listOf(sighash)
-                require(w.publicInputs() == expect) { "vote proof is for other public inputs" }
+                require(w.publicInputs() == ChainLayout.votePublicInputs(m, snap.root, snap.nfRoot, sighash)) { "vote proof is for other public inputs" }
             }
         }
         val membership = membershipOf(m)
@@ -802,16 +891,18 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             val pos = noteTree.append(cm)
             notes.add(NoteRow(pos, height, cm, a.ciphertext.toByteArray(), null))
         }
+        val stakePositions = ArrayList<Long>()
         if (stake != null) {
             spent(stake).forEach { stakeNullifiers[it] = height; stakeNfValues.add(it) }
-            for ((i, cm) in created(stake)) {
+            for ((cm, ct) in listOf(stake.commitment to stake.ciphertext, stake.creditCommitment to stake.creditCiphertext)) {
                 val c = f(cm)
+                if (c.isZero) continue
                 val pos = stakeTree.append(c)
-                stakeRows.add(StakeNoteRow(pos, height, c, stake.getCiphertexts(i).toByteArray(), null, null, null))
+                stakeRows.add(StakeNoteRow(pos, height, c, ct.toByteArray()))
+                stakePositions.add(pos)
             }
         }
         val events = ArrayList<Pair<String, Map<String, String>>>()
-        val spcMint = stake?.let { f(it.spcMint) }
         when (m) {
             is MsgSend -> if (rem.isNotEmpty()) rem.forEach { (d, v) -> unshielded.getOrPut(m.receiver) { HashMap() }.merge(d, v, Long::plus) }
             is MsgRegister -> {
@@ -848,8 +939,18 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             }
             is MsgClaimAnml -> mint("uanml", 1_000_000, f(m.pc), m.ciphertext.toByteArray())
             is MsgVoteProposal -> votes.add(m.proposalId to m.optionValue)
-            is MsgDelegate -> mintStake(PrivacyWallet.derthDenom(m.validator), m.amount * 9 / 10, spcMint!!, stake.spcCiphertext.toByteArray())
+            is MsgDelegate -> {
+                validators.add(m.validator)
+                events.add("shieldedstaking_delegate" to mapOf("validator" to m.validator, "amount" to m.amount.toString(), "derth" to m.derth.toString()))
+            }
             is MsgRestake -> {}
+            is MsgRedelegate -> {
+                val key = f(m.stake.creditNullifier)
+                validators.add(m.srcValidator); validators.add(m.dstValidator)
+                moves[key] = Move(key, m.srcValidator, m.dstValidator, m.moveTime, m.dstDerth)
+                events.add("shieldedstaking_redelegate" to mapOf("src_validator" to m.srcValidator, "dst_validator" to m.dstValidator,
+                    "derth" to m.amount.toString(), "credited" to m.dstDerth.toString(), "move_key" to key.toHex(), "move_time" to m.moveTime.toString()))
+            }
             is MsgUndelegate -> {
                 // Booked at the live rate and queued: the chain pays it at maturity by itself.
                 val id = nextPayoutId++
@@ -892,10 +993,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 positions[id] = Pos(id, m.validator, m.amount, f(m.stake.ownerTag), m.splitsList.associate { it.optionId to it.percent }, height)
             }
             is MsgUpdatePosition -> positions.getValue(m.positionId).splits = m.splitsList.associate { it.optionId to it.percent }
-            is MsgUnlockPosition -> {
-                val p = positions.remove(m.positionId)!!
-                mintStake(PrivacyWallet.derthDenom(p.validator), p.derth, spcMint!!, stake.spcCiphertext.toByteArray())
-            }
+            is MsgUnlockPosition -> positions.remove(m.positionId)!!
             is MsgPositionVote -> positionVotes.add(m.positionId to m.proposalId)
             is MsgSetCaretaker -> {
                 val n = f(m.membership.nullifier)
@@ -1027,6 +1125,11 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
 
     override fun stakeNullifierSpent(nf: Fr): Boolean = nf in stakeNullifiers
 
+    /** Every validator a private delegation or move named (x/staking's validators, as the LCD lists them). */
+    val validators = LinkedHashSet<String>()
+
+    override fun validatorOperators(): List<String> = validators.toList()
+
     /** The chain's tip as the LCD reports it; tests move it ahead of the indexer. */
     var tipAhead = 0L
 
@@ -1130,6 +1233,41 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         positions.values.map { PrivacyChainReads.Position(it.id, it.validator, it.derth, it.ownerTag, it.splits, it.createdHeight) }
 
     fun unshieldedTo(receiver: String, denom: String = "uerth"): Long = unshielded[receiver]?.get(denom) ?: 0
+}
+
+/**
+ * The chain's layout of the stake and vote circuits' public inputs
+ * (x/shieldedstaking StakeProof.PublicInputs with each msg's StakeLanes, and
+ * MsgStakeVote.VotePublicInputs), pinned to the chain's own output by
+ * PrivateMsgsTest; FakeChain checks every witness against it.
+ */
+object ChainLayout {
+    /** What the chain supplies a stake proof: lane A's denom, v_in, v_out; the credit lane's denom, cr_v_in, cr_move_time. */
+    data class Lanes(val denom: String?, val vIn: Long, val vOut: Long, val crDenom: String? = null, val crVIn: Long = 0, val crMoveTime: Long = 0)
+
+    /** [position] names an unlocked position's validator and derth (the keeper fills an unlock's lanes in). */
+    fun lanes(m: MessageLite, position: (Long) -> Pair<String, Long> = { error("no position") }): Lanes = when (m) {
+        is MsgDelegate -> Lanes(PrivacyWallet.derthDenom(m.validator), m.derth, 0)
+        is MsgRestake -> Lanes(PrivacyWallet.derthDenom(m.validator), 0, 0)
+        is MsgUndelegate -> Lanes(PrivacyWallet.derthDenom(m.validator), 0, m.amount)
+        is MsgLockPosition -> Lanes(PrivacyWallet.derthDenom(m.validator), 0, m.amount)
+        is MsgUnlockPosition -> position(m.positionId).let { (v, d) -> Lanes(PrivacyWallet.derthDenom(v), d, 0) }
+        is MsgRedelegate -> Lanes(PrivacyWallet.derthDenom(m.srcValidator), 0, m.amount, PrivacyWallet.derthDenom(m.dstValidator), m.dstDerth, m.moveTime)
+        else -> Lanes(null, 0, 0)
+    }
+
+    private fun f(b: ByteString): Fr = Fr.fromBytes(b.toByteArray())
+
+    fun stakePublicInputs(p: StakeProof, l: Lanes, sighash: Fr): List<Fr> = listOf(
+        f(p.anchor), l.denom?.let(Privacy::assetId) ?: Fr.ZERO, f(p.getNullifiers(0)), f(p.getNullifiers(1)),
+        f(p.commitment), Privacy.u64(l.vIn), Privacy.u64(l.vOut), Privacy.u64(p.clearBefore), f(p.debtRoot),
+        l.crDenom?.let(Privacy::assetId) ?: Fr.ZERO, f(p.creditNullifier), f(p.creditCommitment), Privacy.u64(l.crVIn),
+        Privacy.u64(l.crMoveTime), f(p.ownerTag), sighash,
+    )
+
+    fun votePublicInputs(m: MsgStakeVote, noteRoot: Fr, nfRoot: Fr, sighash: Fr): List<Fr> =
+        listOf(noteRoot, nfRoot, f(m.debtRoot), Privacy.assetId(PrivacyWallet.derthDenom(m.validator)), Privacy.u64(m.weight), Privacy.u64(m.proposalId)) +
+            m.voteNullifiersList.map(::f) + listOf(sighash)
 }
 
 /**

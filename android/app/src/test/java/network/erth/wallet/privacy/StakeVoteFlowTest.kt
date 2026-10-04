@@ -19,14 +19,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Stake votes without spending (ORCHARD_DESIGN 15, 18.2), the chain's
- * TestStakeVoteConcurrentProposals and TestStakeVoteManyNotesOneWeight as
- * wallet flows against [FakeChain]: one vote per validator carrying up to
- * four notes with one weight (their rounded sum), on two concurrently open
- * proposals, unlinkable vote nullifiers, a second vote refused (locally, and
- * by the chain for a restored wallet), a note spent before the snapshot left
- * out, one restaked after it still voting while its outputs cannot, a fifth
- * note in a second vote; the indexer's nullifier stream and the LCD fallback.
+ * Stake votes without spending (ORCHARD_DESIGN 15, 18.2, 20.4) as wallet
+ * flows against [FakeChain]: one vote per validator carrying up to two notes
+ * with one weight (their rounded value), on two concurrently open proposals,
+ * unlinkable vote nullifiers, a second vote refused (locally, and by the
+ * chain for a restored wallet), a note spent before the snapshot left out, a
+ * note merged by a top-up after it still voting the value it held then while
+ * the merged note cannot, a third note in a second vote, a labelled note at
+ * its value after a slash (the current debt root); the indexer's nullifier
+ * stream and the LCD fallback.
  */
 class StakeVoteFlowTest {
     private val alice = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
@@ -47,6 +48,9 @@ class StakeVoteFlowTest {
         override fun snapshot(proposalId: Long) = chain.snapshotRead(proposalId)
         override fun stakeNullifierTree(start: Long, limit: Int) = chain.nfTreeRead(start, limit)
         override fun positions() = chain.positionReads()
+        override fun debtTree(start: Long, limit: Int) = chain.debtTreeRead(start, limit)
+        override fun validatorBook(valoper: String) = chain.validatorBookRead(valoper)
+        override fun minDelegation() = chain.minDelegation
     }
 
     private fun wallet(chain: FakeChain, indexer: PrivacyIndexer = chain, store: PrivacyStore = PrivacyStore.memory()) =
@@ -57,50 +61,42 @@ class StakeVoteFlowTest {
         chain.shield("uerth", amount, o.pc, o.ciphertext)
     }
 
-    private fun PrivacyWallet.newest(): OwnedStakeNote = stakeNotes.maxByOrNull { it.position }!!
-
     private fun PrivacyWallet.note(position: Long): OwnedStakeNote = stakeNotes.first { it.position == position }
 
-    private fun delegate(a: PrivacyWallet, amount: Long): OwnedStakeNote {
-        a.delegate(vB, amount); a.sync()
-        return a.newest()
-    }
+    private fun PrivacyWallet.live(): List<OwnedStakeNote> = stakeNotes.filter { it.unspent && it.denom == derth }
 
-    /** Restakes [n] into two notes; returns them. */
-    private fun restakeAll(a: PrivacyWallet, n: OwnedStakeNote): List<OwnedStakeNote> {
-        val before = a.stakeNotes.map { it.position }.toSet()
-        a.restake(vB, listOf(n), listOf(n.amount / 2, n.amount - n.amount / 2)); a.sync()
-        return a.stakeNotes.filter { it.position !in before }
-    }
+    private class Scenario(val chain: FakeChain, val a: PrivacyWallet, val n: OwnedStakeNote, val p: OwnedStakeNote)
 
-    private class Scenario(val chain: FakeChain, val a: PrivacyWallet, val n: OwnedStakeNote, val k: OwnedStakeNote, val m: OwnedStakeNote, val m1: List<OwnedStakeNote>)
-
-    /** n, k, m delegated; m restaked (spent) before proposals 1 and 2 open together. */
+    /**
+     * n delegated (a first delegation pads its input), p a second note of
+     * ours at the same validator (another device's), before proposals 1 and
+     * 2 open together.
+     */
     private fun scenario(chain: FakeChain = FakeChain()): Scenario {
         val a = wallet(chain)
         repeat(12) { funded(chain, a, 2_000_000) }
         a.sync()
-        val n = delegate(a, 1_111_111)
-        val k = delegate(a, 666_666)
-        val m = delegate(a, 333_333)
-        val m1 = restakeAll(a, m)
+        a.delegate(vB, 1_111_111); a.sync()
+        val n = a.live().single()
+        chain.plantStake(a.keys, derth, 300_000); a.sync()
+        val p = a.live().single { it.position != n.position }
         val s1 = chain.openProposal(1)
         val s2 = chain.openProposal(2)
-        assertEquals(2L, s1.nfSize) // the sentinel and m's nullifier
+        assertEquals(2L, s1.nfSize) // the sentinel and the first delegation's padding nullifier
         assertEquals(s1.nfRoot, s2.nfRoot)
         a.sync()
-        return Scenario(chain, a, n, k, a.note(m.position), m1)
+        return Scenario(chain, a, n, p)
     }
 
     /** The vote's notes, by position, as its witness carried them. */
     private fun FakeChain.lastVotePositions(): Set<Long> = prover.allVotes.last().slots.map { it.pos }.toSet()
 
     @Test
-    fun oneVoteCarriesEveryNoteOnTwoConcurrentProposals() {
+    fun oneVoteCarriesBothNotesOnTwoConcurrentProposals() {
         val sc = scenario()
         val (chain, a, n) = Triple(sc.chain, sc.a, sc.n)
-        val eligible = listOf(sc.n, sc.k) + sc.m1
-        assertEquals(listOf(PrivacyWallet.StakeVoteItem.Validator(vB, 4)), a.stakeVoteItems(1))
+        val eligible = listOf(sc.n, sc.p)
+        assertEquals(listOf(PrivacyWallet.StakeVoteItem.Validator(vB, 2)), a.stakeVoteItems(1))
         val proofsBefore = chain.prover.allStakes.size
         a.stakeVote(1, vB, yes)
         assertEquals(eligible.map { it.position }.toSet(), chain.lastVotePositions())
@@ -112,14 +108,14 @@ class StakeVoteFlowTest {
         assertTrue(a.note(n.position).spendable)
         // Unlinkable: a vote nullifier per note and proposal, none a spend nullifier.
         val vnfs = chain.voteNullifiers.map { it.second }
-        assertEquals(8, vnfs.toSet().size)
+        assertEquals(4, vnfs.toSet().size)
         assertTrue(eligible.none { it.nf in vnfs })
         assertNotEquals(Privacy.voteNf(a.keys.nk, n.rho, n.position, 1), Privacy.voteNf(a.keys.nk, n.rho, n.position, 2))
-        // One weight per vote: the notes' sum rounded down to 3 significant figures.
+        // One weight per vote: the notes' sum rounded down to 3 significant figures, and the current debt root.
         val w = PrivacyWallet.voteWeight(eligible.sumOf { it.amount })
         assertEquals(listOf(Triple(1L, vB, w), Triple(2L, vB, w)), chain.stakeVotes)
-        assertEquals(listOf(4, 4), chain.stakeVoteSlots)
-        assertEquals(1_890_000L, w) // 999,999 + 599,999 + 299,999 (two halves)
+        assertEquals(listOf(2, 2), chain.stakeVoteSlots)
+        assertEquals(chain.debtRoot(), chain.prover.allVotes.last().debtRoot)
 
         // Again on 1: refused here, nothing broadcast.
         val sims = chain.simulated
@@ -127,86 +123,138 @@ class StakeVoteFlowTest {
         assertEquals(sims, chain.simulated)
         assertTrue(a.stakeVoteItems(1).isEmpty())
         assertTrue(a.stakeVoteItems(2).isEmpty())
-        assertNull(a.castStakeVote(1, PrivacyWallet.StakeVoteItem.Validator(vB, 4), yes))
+        assertNull(a.castStakeVote(1, PrivacyWallet.StakeVoteItem.Validator(vB, 2), yes))
 
         // n is still an ordinary note: it undelegates.
         a.undelegate(vB, 10_000); a.sync()
         dumpWitnesses(chain, "stakeVoteConcurrent")
     }
 
+    /** A note a top-up merged before the snapshot is spent under nf_root: the merged note votes in its place. */
     @Test
     fun spentBeforeTheSnapshotIsLeftOut() {
-        val sc = scenario()
-        val (chain, a) = sc.chain to sc.a
-        // m's nullifier is under nf_root: it is no candidate; its outputs, from before the snapshot, are.
+        val chain = FakeChain()
+        val a = wallet(chain)
+        repeat(6) { funded(chain, a, 2_000_000) }
+        a.sync()
+        a.delegate(vB, 1_111_111); a.sync()
+        val n = a.live().single()
+        a.delegate(vB, 500_000); a.sync()
+        val merged = a.live().single()
+        assertEquals(n.amount + (chain.lastMsg as network.erth.earth.proto.shieldedstaking.MsgDelegate).derth, merged.amount)
+        chain.openProposal(1)
+        a.sync()
+        assertEquals(listOf(PrivacyWallet.StakeVoteItem.Validator(vB, 1)), a.stakeVoteItems(1))
         a.stakeVote(1, vB, no)
-        assertFalse(sc.m.position in chain.lastVotePositions())
-        assertTrue(sc.m1.all { it.position in chain.lastVotePositions() })
+        assertEquals(setOf(merged.position), chain.lastVotePositions())
         dumpWitnesses(chain, "stakeVoteSpentBefore")
     }
 
+    /**
+     * The snapshot rule (ORCHARD_DESIGN 20.4): a top-up after the snapshot
+     * spends both notes into one; the old notes still vote the value they
+     * held (their openings kept), the merged note, not under the snapshot
+     * root, cannot. No unit votes twice.
+     */
     @Test
-    fun restakedAfterTheSnapshotStillVotesItsOutputsCannot() {
+    fun toppedUpAfterTheSnapshotVotesThePreexistingValue() {
         val sc = scenario()
         val (chain, a) = sc.chain to sc.a
-        val k1 = restakeAll(a, sc.k)
-        assertTrue(a.note(sc.k.position).spentHeight != null)
-        // k itself still votes (its nullifier went in after nf_root); its outputs are not under the note root.
-        assertEquals(listOf(PrivacyWallet.StakeVoteItem.Validator(vB, 4)), a.stakeVoteItems(1))
+        a.delegate(vB, 700_000); a.sync()
+        val merged = a.live().single()
+        assertTrue(a.note(sc.n.position).spentHeight != null && a.note(sc.p.position).spentHeight != null)
+        assertEquals(listOf(PrivacyWallet.StakeVoteItem.Validator(vB, 2)), a.stakeVoteItems(1))
         a.stakeVote(1, vB, abstain)
         val voted = chain.lastVotePositions()
-        assertTrue(sc.k.position in voted)
-        assertTrue(k1.none { it.position in voted })
-        assertEquals(Triple(1L, vB, PrivacyWallet.voteWeight((listOf(sc.n, sc.k) + sc.m1).sumOf { it.amount })), chain.stakeVotes.single())
-        dumpWitnesses(chain, "stakeVoteRestakedAfter")
+        assertEquals(setOf(sc.n.position, sc.p.position), voted)
+        assertFalse(merged.position in voted)
+        assertEquals(Triple(1L, vB, PrivacyWallet.voteWeight(sc.n.amount + sc.p.amount)), chain.stakeVotes.single())
+        // A proposal opened after the top-up sees the merged note alone.
+        chain.openProposal(3); a.sync()
+        assertEquals(listOf(PrivacyWallet.StakeVoteItem.Validator(vB, 1)), a.stakeVoteItems(3))
+        a.stakeVote(3, vB, yes)
+        assertEquals(setOf(merged.position), chain.lastVotePositions())
+        dumpWitnesses(chain, "stakeVoteToppedUpAfter")
     }
 
-    /** Five notes at one validator: the largest four in one vote, the fifth in a second (the user's choice: two weights). */
+    /** Three notes at one validator: the largest two in one vote, the third in a second (the user's choice: two weights). */
     @Test
-    fun aFifthNoteVotesInASecondPart() {
+    fun aThirdNoteVotesInASecondPart() {
         val chain = FakeChain()
         val a = wallet(chain)
-        repeat(12) { funded(chain, a, 2_000_000) }
+        repeat(6) { funded(chain, a, 2_000_000) }
         a.sync()
-        val ns = listOf(1_111_111L, 666_666, 333_333, 222_222, 111_111).map { delegate(a, it) }
+        a.delegate(vB, 1_111_111); a.sync()
+        chain.plantStake(a.keys, derth, 666_666)
+        chain.plantStake(a.keys, derth, 111_111)
         chain.openProposal(1)
         a.sync()
+        val ns = a.live().sortedByDescending { it.amount }
         val item = a.stakeVoteItems(1).single() as PrivacyWallet.StakeVoteItem.Validator
-        assertEquals(5, item.notes)
+        assertEquals(3, item.notes)
         assertEquals(2, item.parts)
-        assertEquals(PrivacyWallet.VotePreview(4, PrivacyWallet.voteWeight(ns.take(4).sumOf { it.amount })), a.stakeVotePreview(1, item))
+        assertEquals(PrivacyWallet.VotePreview(2, PrivacyWallet.voteWeight(ns.take(2).sumOf { it.amount })), a.stakeVotePreview(1, item))
         assertNotNull(a.castStakeVote(1, item, yes))
-        assertEquals(ns.take(4).map { it.position }.toSet(), chain.lastVotePositions())
+        assertEquals(ns.take(2).map { it.position }.toSet(), chain.lastVotePositions())
         a.sync()
-        assertEquals(PrivacyWallet.VotePreview(1, PrivacyWallet.voteWeight(ns[4].amount)), a.stakeVotePreview(1, item))
+        assertEquals(PrivacyWallet.VotePreview(1, PrivacyWallet.voteWeight(ns[2].amount)), a.stakeVotePreview(1, item))
         assertNotNull(a.castStakeVote(1, item, yes))
-        assertEquals(setOf(ns[4].position), chain.lastVotePositions())
+        assertEquals(setOf(ns[2].position), chain.lastVotePositions())
         assertNull(a.castStakeVote(1, item, yes))
-        assertEquals(listOf(4, 1), chain.stakeVoteSlots)
-        assertEquals(listOf(PrivacyWallet.voteWeight(ns.take(4).sumOf { it.amount }), PrivacyWallet.voteWeight(ns[4].amount)),
-            chain.stakeVotes.map { it.third })
-        dumpWitnesses(chain, "stakeVoteFiveNotes")
+        assertEquals(listOf(2, 1), chain.stakeVoteSlots)
+        dumpWitnesses(chain, "stakeVoteThreeNotes")
     }
 
-    /** Votes at two validators: one msg each, each its own weight. */
+    /** Votes at two validators: one msg each, each its own weight; a second delegation to one merged into its note. */
     @Test
     fun oneVotePerValidator() {
         val chain = FakeChain()
         val a = wallet(chain)
         repeat(6) { funded(chain, a, 2_000_000) }
         a.sync()
-        val vC = "earthvaloper1qyqszqgpqyqszqgpqyqszqgpqyqszqgpjnp7du"
+        val vC = Vectors.json.getString("validator2")
         a.delegate(vB, 1_000_000); a.sync()
         a.delegate(vC, 2_000_000); a.sync()
         a.delegate(vC, 500_000); a.sync()
         chain.openProposal(3)
         a.sync()
         val items = a.stakeVoteItems(3)
-        assertEquals(listOf(PrivacyWallet.StakeVoteItem.Validator(vB, 1), PrivacyWallet.StakeVoteItem.Validator(vC, 2)), items)
+        assertEquals(listOf(PrivacyWallet.StakeVoteItem.Validator(vB, 1), PrivacyWallet.StakeVoteItem.Validator(vC, 1)), items)
         items.forEach { assertNotNull(a.castStakeVote(3, it, yes)); a.sync() }
-        assertEquals(listOf(Triple(3L, vB, 900_000L), Triple(3L, vC, PrivacyWallet.voteWeight(1_800_000L + 450_000L))), chain.stakeVotes)
-        assertEquals(listOf(1, 2), chain.stakeVoteSlots)
+        val atB = a.stakeNotes.single { it.denom == derth && it.unspent }.amount
+        val atC = a.stakeNotes.single { it.denom == PrivacyWallet.derthDenom(vC) && it.unspent }.amount
+        assertEquals(listOf(Triple(3L, vB, PrivacyWallet.voteWeight(atB)), Triple(3L, vC, PrivacyWallet.voteWeight(atC))), chain.stakeVotes)
+        assertEquals(listOf(1, 1), chain.stakeVoteSlots)
         dumpWitnesses(chain, "stakeVoteTwoValidators")
+    }
+
+    /**
+     * A labelled note (stake moved in) votes its amount less the slash cut
+     * of its exposure under the CURRENT debt tree: a slash after the
+     * snapshot counts.
+     */
+    @Test
+    fun aLabelledNoteVotesItsValueAfterASlash() {
+        val chain = FakeChain()
+        val a = wallet(chain)
+        repeat(6) { funded(chain, a, 2_000_000) }
+        a.sync()
+        val vA = Vectors.json.getString("validator2")
+        a.delegate(vA, 2_000_000); a.sync()
+        a.redelegate(a.quoteMove(vA, vB, 1_000_000)); a.sync()
+        val l = a.live().single()
+        val label = l.label!!
+        assertEquals(l.amount, label.exposed)
+        chain.openProposal(1)
+        // The source is slashed after the snapshot: the move's exposure is worth 60% now.
+        chain.slashMove(label.moveKey, label.exposed * 6 / 10)
+        a.sync()
+        a.stakeVote(1, vB, yes)
+        val w = chain.prover.allVotes.last()
+        assertEquals(chain.debtRoot(), w.debtRoot)
+        assertEquals(label, w.slots.single().label)
+        assertEquals(Triple(1L, vB, PrivacyWallet.voteWeight(l.amount - label.exposed + label.exposed * 6 / 10)), chain.stakeVotes.single())
+        dumpWitnesses(chain, "stakeVoteLabelled")
     }
 
     /**
@@ -221,9 +269,9 @@ class StakeVoteFlowTest {
         val restored = wallet(sc.chain)
         restored.sync()
         val before = sc.chain.height
-        assertNull(restored.castStakeVote(1, PrivacyWallet.StakeVoteItem.Validator(vB, 4), no))
+        assertNull(restored.castStakeVote(1, PrivacyWallet.StakeVoteItem.Validator(vB, 2), no))
         assertEquals(before, sc.chain.height)
-        assertEquals(4, restored.store.state.stakeVotes.count { it.confirmed && it.proposalId == 1L })
+        assertEquals(2, restored.store.state.stakeVotes.count { it.confirmed && it.proposalId == 1L })
         assertTrue(restored.stakeVoteItems(1).isEmpty())
     }
 
@@ -232,21 +280,24 @@ class StakeVoteFlowTest {
     fun restoredWalletVotesWhatIsLeft() {
         val chain = FakeChain()
         val a = wallet(chain)
-        repeat(12) { funded(chain, a, 2_000_000) }
+        repeat(6) { funded(chain, a, 2_000_000) }
         a.sync()
-        val ns = listOf(1_111_111L, 666_666, 333_333, 222_222, 111_111).map { delegate(a, it) }
+        a.delegate(vB, 1_111_111); a.sync()
+        chain.plantStake(a.keys, derth, 666_666)
+        chain.plantStake(a.keys, derth, 111_111)
         chain.openProposal(1)
         a.sync()
+        val ns = a.live().sortedByDescending { it.amount }
         a.stakeVote(1, vB, yes)
         val restored = wallet(chain)
         restored.sync()
-        assertEquals(listOf(PrivacyWallet.StakeVoteItem.Validator(vB, 5)), restored.stakeVoteItems(1))
+        assertEquals(listOf(PrivacyWallet.StakeVoteItem.Validator(vB, 3)), restored.stakeVoteItems(1))
         val before = chain.height
-        assertNotNull(restored.castStakeVote(1, PrivacyWallet.StakeVoteItem.Validator(vB, 5), no))
-        // One block: the four refusals were simulations, nothing paid.
+        assertNotNull(restored.castStakeVote(1, PrivacyWallet.StakeVoteItem.Validator(vB, 3), no))
+        // One block: the two refusals were simulations, nothing paid.
         assertEquals(before + 1, chain.height)
-        assertEquals(setOf(ns[4].position), chain.lastVotePositions())
-        assertEquals(5, restored.store.state.stakeVotes.count { it.confirmed })
+        assertEquals(setOf(ns[2].position), chain.lastVotePositions())
+        assertEquals(3, restored.store.state.stakeVotes.count { it.confirmed })
     }
 
     /** A vote whose tx failed in its block is forgotten: its notes vote again. */
@@ -255,9 +306,9 @@ class StakeVoteFlowTest {
         val sc = scenario()
         sc.chain.failInBlockNext = 1
         assertThrows(java.io.IOException::class.java) { sc.a.stakeVote(1, vB, yes) }
-        assertEquals(4, sc.a.store.state.stakeVotes.count { !it.confirmed })
+        assertEquals(2, sc.a.store.state.stakeVotes.count { !it.confirmed })
         sc.a.sync()
-        assertEquals(listOf(PrivacyWallet.StakeVoteItem.Validator(vB, 4)), sc.a.stakeVoteItems(1))
+        assertEquals(listOf(PrivacyWallet.StakeVoteItem.Validator(vB, 2)), sc.a.stakeVoteItems(1))
         sc.a.stakeVote(1, vB, yes)
         assertEquals(1, sc.chain.stakeVotes.size)
     }
