@@ -24,9 +24,17 @@ object ChainErrors {
         // Chain 203d3b2 (audit 5): x/dex refuses at start a withdrawal whose note leg is above 16 notes' worth.
         Known("dex", 1101, "the most one withdrawal pays as notes",
             "That withdrawal is too large to be paid as private notes in one go. Withdraw in smaller parts.", byText = true),
-        // MsgShield refuses a denom the bank has send-disabled.
+        // A denom the bank has send-disabled is refused at every pool edge
+        // (chain 48b631c, audit 6 A-L2): shield, unshield, a dex note swap,
+        // a private delegation's ERTH, a module mint into the pool.
         Known("bank", 5, "send transactions are disabled",
-            "Transfers of this token are switched off on the chain, so it cannot be shielded now.", byText = true),
+            "Transfers of this token are switched off on the chain, so it can't enter or leave private notes right now: no shielding, unshielding, note swaps or private staking with it. Notes you already hold still move privately.", byText = true),
+        // Chain 48b631c (audit 6, B6-1): a switch stays under its Document Signer.
+        Known("personhood", 1127, "identity switch must be proven under the live registration's document signer",
+            "This switch was refused. A switch must be proven with the same passport you registered with, and this one was signed by a different issuing key."),
+        // The signer's (or country's) daily cap; a switch counts against its signer's.
+        Known("personhood", 1113, "daily registration limit reached",
+            "Today's limit for passports from this issuer has been reached. Try again tomorrow."),
         // MsgMoveHandle moves only a live handle.
         Known("personhood", 1116, "renew it before moving it",
             "That handle is past its expiry (in its renewal period), and only a live handle can be moved. Renew it first, then move it.", byText = true),

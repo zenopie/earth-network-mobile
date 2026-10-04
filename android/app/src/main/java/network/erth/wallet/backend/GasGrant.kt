@@ -143,7 +143,8 @@ object GasGrant {
         Log.w(TAG, "/gas/register refused: $code")
         val message = json?.optString("message")?.takeIf { it.isNotBlank() }
         if (json == null) Log.w(TAG, "not JSON: ${response.take(80)}")
-        return Result.Refused(message ?: UNAVAILABLE)
+        // The chain's own reason, in plain words where the app has them (1127, 1113).
+        return Result.Refused(message?.let { network.erth.wallet.chain.ChainErrors.explain(it) ?: it } ?: UNAVAILABLE)
     }
 
     /**
