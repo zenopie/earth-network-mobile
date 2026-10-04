@@ -18,14 +18,10 @@ object EarthRest {
 
     /**
      * [get] of the state at block [height] (the gRPC gateway's
-     * `x-cosmos-block-height` header); a pruned height answers an error.
-     */
-    fun getAt(path: String, height: Long): Pair<Int, String> = getFrom(Constants.EARTH_LCD_URL, path, height)
-
-    /**
-     * [getAt], with the height the node says it answered at (its
-     * `x-cosmos-block-height` response header; null when absent). A caller
-     * pinning state to a height checks the two agree (K9).
+     * `x-cosmos-block-height` request header; a pruned height answers an
+     * error), with the height the node says it answered at (the same
+     * response header; null when absent). A caller pinning state to a height
+     * checks the two agree.
      */
     fun getAtEcho(path: String, height: Long): Triple<Int, String, Long?> {
         var echo: Long? = null

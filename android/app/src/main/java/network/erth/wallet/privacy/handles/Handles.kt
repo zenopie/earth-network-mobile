@@ -20,13 +20,6 @@ object Handles {
     const val DEFAULT_LEASE_SECONDS = 365L * 86_400
     const val DEFAULT_RENEWAL_SECONDS = 30L * 86_400
 
-    /** x/personhood errors a handle msg may meet (codespace personhood). */
-    const val ERR_NO_REFERRER = 1121
-    const val ERR_HANDLE_TAKEN = 1122
-    const val ERR_HANDLE_MOVED_OUT = 1125
-    const val ERR_CARETAKER_MOVED_OUT = 1126
-    const val CODESPACE = "personhood"
-
     /** Whether [h] is a handle as the chain spells one (ValidateHandle). */
     fun valid(h: String): Boolean {
         if (h.length !in MIN_LEN..MAX_LEN) return false

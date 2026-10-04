@@ -98,32 +98,6 @@ object WalletCrypto {
     }
 
     /**
-     * Secure version: derive ECKey from a mnemonic char array, same
-     * m/44'/118'/0'/0/0 path as deriveKeyFromMnemonic.
-     *
-     * More secure only in degree: it avoids holding the mnemonic in a String
-     * the caller owns. bitcoinj still builds Strings internally, so this
-     * narrows the window rather than closing it.
-     */
-    fun deriveKeyFromSecureMnemonic(mnemonicChars: CharArray): ECKey {
-        return try {
-            // Convert char array to string only temporarily for processing
-            var mnemonic: String? = String(mnemonicChars)
-            val words = mnemonic!!.trim().split("\\s+".toRegex())
-
-            // Clear the temporary string immediately
-            mnemonic = null
-
-            val seed = DeterministicSeed(words, null, "", 0L)
-            val chain = DeterministicKeyChain.builder().seed(seed).build()
-            val path = HDUtils.parsePath("M/44H/118H/0H/0/0")
-            ECKey.fromPrivate(chain.getKeyByPath(path, true).privKey)
-        } catch (e: Exception) {
-            throw RuntimeException("Secure key derivation failed", e)
-        }
-    }
-
-    /**
      * Get earth address from ECKey
      */
     fun getAddress(key: ECKey): String {

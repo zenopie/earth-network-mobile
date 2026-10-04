@@ -94,13 +94,6 @@ class Fr internal constructor(internal val m: IntArray) : Comparable<Fr> {
             return of(v)
         }
 
-        /** Big-endian bytes read as an integer, which must be below p. */
-        fun fromUnsignedBytes(b: ByteArray): Fr {
-            val v = BigInteger(1, b)
-            require(v < MODULUS) { "value exceeds the field" }
-            return of(v)
-        }
-
         /** 64 bytes reduced mod p: a uniform field element from uniform bytes. */
         fun fromWideBytes(b: ByteArray): Fr {
             require(b.size >= 48) { "need at least 48 bytes for a uniform reduction" }

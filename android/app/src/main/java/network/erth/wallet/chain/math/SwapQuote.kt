@@ -165,10 +165,6 @@ object SwapMath {
         return Triple(shares, e, t)
     }
 
-    /** x/dex ErrPoolCap: a reserve, share supply or input past 2^120 (code 1120, codespace dex). */
-    const val ERR_POOL_CAP = 1120
-    val POOL_CAP: BigInteger = BigInteger.ONE.shiftLeft(120)
-
     /**
      * The floor a swap accepts at a tolerance of [bps] basis points.
      * Truncating, so rounding only ever moves the floor down.

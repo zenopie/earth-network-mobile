@@ -143,8 +143,9 @@ object SoftwareEncryption {
 
             // Zero the intermediate buffer. `result` itself cannot be wiped —
             // it is an immutable String and lives until the GC collects it,
-            // which is the reason callers hand the mnemonic straight to
-            // deriveKeyFromSecureMnemonic rather than holding it. The key is
+            // which is the reason callers use the mnemonic inside one
+            // operation (SecureWalletManager.executeWithMnemonic) rather
+            // than holding it. The key is
             // not zeroed for the reason given in encrypt().
             decryptedBytes.fill(0)
 

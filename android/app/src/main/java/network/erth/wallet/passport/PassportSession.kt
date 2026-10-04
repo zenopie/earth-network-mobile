@@ -73,17 +73,6 @@ object PassportSession {
         /** The chip read but would not produce what the proof needs. */
         data object NoSod : Failure
 
-        /**
-         * No wallet to bind the proof to.
-         *
-         * The circuit's `address` input carries the registration binding (the
-         * wallet's identity commitment and the notes the registration pays),
-         * so a proof cannot be produced before a wallet exists. Reachable only
-         * if the passport flow is entered before setup, which the UI does not
-         * offer.
-         */
-        data object NoWallet : Failure
-
         data class Error(val cause: Throwable) : Failure
     }
 
