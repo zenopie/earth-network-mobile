@@ -931,7 +931,8 @@ class PrivacyWallet(
      * identity's leaf ([near]), in the same tx; the rest of the tree is
      * searched only if it is not there. Local: nothing asked names it.
      */
-    fun successionIndex(idcOld: Fr, idcNew: Fr, near: Long): Long? = synchronized(store) {
+    // Under the wallet's lock, which a sync holds while it appends to the tree.
+    fun successionIndex(idcOld: Fr, idcNew: Fr, near: Long): Long? = synchronized(this) {
         val want = Privacy.successionLeaf(idcOld, idcNew)
         val tree = store.identityTree
         if (near in 0 until tree.size && tree.leaf(near) == want) return near
@@ -979,8 +980,11 @@ class PrivacyWallet(
      * that succeeded this one under the same passport, once its registration
      * has landed and while it is still the passport's live one: how a switch
      * keeps its vote. This wallet pays the fee. This identity may never cast
-     * one again (ErrCaretakerMovedOut, 1126).
+     * one again (ErrCaretakerMovedOut, 1126). The whole move holds the
+     * wallet's lock, as iOS's does: no sync appends to the identity tree
+     * while its statement is read from it.
      */
+    @Synchronized
     fun moveCaretaker(to: Successor, recorder: MoveRecorder? = null): TxResult {
         check(caretakerLive()) { "this identity holds no live caretaker vote to move" }
         checkNoMove(PendingMove.CARETAKER)
@@ -1218,11 +1222,15 @@ class PrivacyWallet(
     /**
      * Hands this identity's handle (lease unchanged) to [to], the identity
      * that succeeded it under the same passport (see [moveCaretaker]). This
-     * identity may never claim one again (ErrHandleMovedOut, 1125).
+     * identity may never claim one again (ErrHandleMovedOut, 1125). Holds
+     * the wallet's lock throughout, like [moveCaretaker].
      */
-    fun moveHandle(to: Successor, recorder: MoveRecorder? = null): TxResult {
+    @Synchronized
+    fun moveHandle(to: Successor, recorder: MoveRecorder? = null, expected: String? = null): TxResult {
         val handle = store.state.handle
         check(handle.isNotEmpty()) { "this identity holds no handle to move" }
+        // The handle the confirm sheet named: refused if this identity's is no longer that one.
+        if (expected != null) check(handle == expected) { "this identity's handle is no longer @$expected; nothing was sent" }
         checkNoMove(PendingMove.HANDLE)
         // MsgMoveHandle refuses a handle that is not live (its renewal period).
         handleExpiresAt().takeIf { it > 0 }?.let { if (it <= chainNow()) throw HandleNotMovable(handle) }

@@ -352,9 +352,11 @@ class PrivateTxEngine(
             val vnfs = if (placeholders) v.vnfs.map { Fr.fromBytes(randomField().toByteArray()) } else v.vnfs
             PrivateMsgs.withVote(msg, vnfs, PLACEHOLDER)
         } ?: a.move?.let { mv ->
-            // A quote's move nullifiers are random, as a membership's: the node learns nothing before the user confirms.
-            fun nf(real: Fr) = if (placeholders) Fr.fromBytes(randomField().toByteArray()) else real
-            PrivateMsgs.withMove(msg, PLACEHOLDER, mv.root, nf(mv.oldNullifier), nf(mv.newNullifier))
+            // The real root and nullifiers even in a quote, as a membership's:
+            // the chain's simulate checks both nullifiers' state (the handle or
+            // caretaker vote the old one holds) before any proof, so random ones
+            // could never simulate. The tx reveals them anyway.
+            PrivateMsgs.withMove(msg, PLACEHOLDER, mv.root, mv.oldNullifier, mv.newNullifier)
         } ?: msg
     }
 

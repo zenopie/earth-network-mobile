@@ -1318,12 +1318,15 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// Hands this identity's handle (lease unchanged) to `to`, the identity
     /// that succeeded it under the same passport (see `moveCaretaker`). This
     /// identity may never claim one again (ErrHandleMovedOut, 1125).
-    public func moveHandle(to: Successor, recorder: MoveRecorder? = nil) async throws -> TxResult {
+    /// `expected`: the handle the confirm sheet named; the move is refused if
+    /// this identity's handle is no longer that one.
+    public func moveHandle(to: Successor, recorder: MoveRecorder? = nil, expected: String? = nil) async throws -> TxResult {
         let mx = await maxActions()
         let t = await chainNow()
         return try await locked {
             let handle = store.state.handle
             try require(!handle.isEmpty, "this identity holds no handle to move")
+            if let expected { try require(handle == expected, "this identity's handle is no longer @\(expected); nothing was sent") }
             try checkNoMove(PendingMove.handleKind)
             // MsgMoveHandle refuses a handle that is not live (its renewal period).
             let exp = handleExpiresAtLocked()

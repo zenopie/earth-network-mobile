@@ -435,6 +435,8 @@ internal fun EarthContent(
                         action = if (handle) "Bring @${offer.handle} to this identity" else "Bring your Caretaker split to this identity",
                         msgTypeUrl = if (handle) PrivateMsgs.MOVE_HANDLE else PrivateMsgs.MOVE_CARETAKER,
                         balanceUerth = 0L,
+                        // Not this wallet: the fee comes out of the identity this one replaced.
+                        rows = listOf("Fee paid by" to "${offer.fromName} (its private ERTH)"),
                     ),
                     // The previous wallet pays: its private ERTH.
                     shieldedErth = offer.feeErth,
@@ -446,7 +448,7 @@ internal fun EarthContent(
                         val from = PrivacySession.walletAt(ctx, offer.fromIndex)
                         from.sync()
                         val rec = PrivacySession.recorderFor(ctx, PrivacySession.storeIdOf(to.keys))
-                        (if (handle) from.moveHandle(to, rec) else from.moveCaretaker(to, rec)).hash
+                        (if (handle) from.moveHandle(to, rec, expected = offer.handle) else from.moveCaretaker(to, rec)).hash
                     },
                 )
             }

@@ -471,9 +471,11 @@ public struct PrivateTxEngine: Sendable {
         }
         var msg = try a.build(bundles, stake, try a.membership.map { try placeholderMembership($0, placeholders: placeholders) })
         if let mv = a.move {
-            // A quote's move nullifiers are random, as a membership's: the node learns nothing before the user confirms.
-            func nf(_ real: Fr) -> Fr { placeholders ? NotePlaintext.randomField() : real }
-            msg = try Self.withMove(msg, proof: Self.placeholder, root: mv.root, old: nf(mv.oldNullifier), new: nf(mv.newNullifier))
+            // The real root and nullifiers even in a quote, as a membership's:
+            // the chain's simulate checks both nullifiers' state (the handle or
+            // caretaker vote the old one holds) before any proof, so random ones
+            // could never simulate. The tx reveals them anyway.
+            msg = try Self.withMove(msg, proof: Self.placeholder, root: mv.root, old: mv.oldNullifier, new: mv.newNullifier)
         }
         // A quote's vote nullifiers are random too: the node learns nothing
         // of the notes before the user confirms.

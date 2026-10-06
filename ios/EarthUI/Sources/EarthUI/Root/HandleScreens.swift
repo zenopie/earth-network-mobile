@@ -373,14 +373,17 @@ struct MoveOfferCard: View {
     /// wallet's store before the broadcast.
     private func bring(handle: Bool) {
         let from = offer.fromIndex
-        var d = TxController.Details.private(action: handle ? "Bring @\(offer.handle) to this identity" : "Bring your Caretaker split to this identity", rows: [])
+        let expected = offer.handle
+        // Not this wallet: the fee comes out of the identity this one replaced.
+        var d = TxController.Details.private(action: handle ? "Bring @\(offer.handle) to this identity" : "Bring your Caretaker split to this identity",
+                                             rows: [("Fee paid by", "\(offer.fromName) (its private ERTH)")])
         d.payerErth = offer.feeErth
         tx.requestPrivate(d, host: .identity, onSuccess: { await model.syncPrivacy(); await refresh() }) { _ in
             let to = try model.selfAsSuccessor()
             let p = try model.predecessorWallet(from)
             try await p.sync()
             let rec = model.moveRecorder(for: to.keys)
-            return handle ? try await p.moveHandle(to: to, recorder: rec) : try await p.moveCaretaker(to: to, recorder: rec)
+            return handle ? try await p.moveHandle(to: to, recorder: rec, expected: expected) : try await p.moveCaretaker(to: to, recorder: rec)
         }
     }
 }
