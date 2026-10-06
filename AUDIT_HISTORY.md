@@ -341,3 +341,42 @@ so non-PIN unlock failures read as a wrong PIN; `tools/certcheck` does not
 build against the current chain and compares the nullifier where the DSC
 commitment is meant; `circuits/.gitignore` keeps the variant fixtures'
 Prover.toml files out of git.
+
+## Final audit fixes (chain f3ef15b, 2026-10-06)
+
+The final pre-relaunch audit's mobile findings (MC-*, MK-*), with
+Android/iOS parity.
+
+- **Funds and spend safety.** Android Unstake is enabled by private stake
+  (MC-08). "Not sent" is decided by the submit alone: a dropped connection
+  while waiting for the block asks for the hash again and otherwise reports
+  an unknown outcome, with the spent notes left marked (MC-09). A stake
+  note is never skipped because the validator list could not be read (the
+  sync fails before its cursor moves; MC-04). A same-chain reset carries
+  pending marks by nullifier (MC-05). Deposit min_shares is priced off the
+  settled ERTH reserve, recovered from SimulateSwapExactIn, and a missing
+  share supply refuses the deposit (MC-01, MC-02). Vote previews use the
+  live book rate (MC-10).
+- **At rest.** Each wallet's state.json is sealed (AES-256-GCM) under a data
+  key kept inside the vault (MK-07); the vault records its key derivation
+  (format 2) and re-seals at the current parameters. Formats in
+  PRIVACY_FORMATS ("State at rest", "Vault key derivation").
+- **Unlock and session.** Android's lockout is re-read until it clears
+  (MK-01); iOS reports real unlock failures and shows the reachability
+  banner (MK-02, MK-06); iOS locks on device lock and before suspension
+  (MK-13); a failed biometric-only setup is no longer a dead end (MK-03).
+- **Network.** Settings → Network: the user's own LCD/RPC, checked to be
+  earth-1, https except a local node (refused in code, which supersedes the
+  debug-only network config). With a no-logs policy on Earth's node, this
+  is the answer to MC-03 (PRIVACY_FORMATS 18); the polling is unchanged.
+- **Smaller.** Bech32 checksum on Android sends (MK-04), full address on a
+  handle payment's sheet (MK-14), iOS clipboard local-only with expiry
+  (MK-12), iOS circuit inflate capped (MK-10), passport logs type-only and
+  release strips debug logs (MK-11), iOS signs only with the wallet on
+  screen (MK-15), the dead per-DSC query, Fr.fromHex sign, gas poll fee,
+  ProtoFields bound (MC-06, MC-07, MC-11, MC-12), governance copy (both
+  chambers), certcheck's commitment API and signal, circuits/.gitignore.
+- **Accepted.** A referrer planted through an explicit intent to the
+  exported launcher (MK-09: indistinguishable from a tapped link; shown and
+  editable at registration). iOS keeps the phrases resident while unlocked
+  (the session secret alone opens the vault either way).
