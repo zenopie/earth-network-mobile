@@ -2,7 +2,6 @@ package network.erth.wallet.privacy.prove
 
 import android.content.Context
 import android.os.SystemClock
-import android.util.Log
 import com.noirandroid.lib.Circuit
 import network.erth.wallet.passport.NoirProver
 import network.erth.wallet.privacy.zk.Fr
@@ -20,7 +19,6 @@ import network.erth.wallet.privacy.zk.Fr
  * checked against the witness's own, and only the body is sent.
  */
 object PrivacyProver {
-    private const val TAG = "PrivacyProver"
 
     /** Expected body size of a bb v5.0.0 UltraHonk proof, whatever the circuit. */
     const val PROOF_BYTES = 14_656
@@ -89,11 +87,10 @@ object PrivacyProver {
 
     private val loaded = HashMap<Kind, Loaded>()
 
-    /** Last prove times in ms, for the settings screen and the device test. */
+    /** Last prove times in ms, for the device test. */
     @Volatile var lastActionMs: Long = 0; private set
     @Volatile var lastStakeMs: Long = 0; private set
     @Volatile var lastMembershipMs: Long = 0; private set
-    @Volatile var lastVoteMs: Long = 0; private set
 
     @Synchronized
     private fun load(context: Context, k: Kind): Loaded = loaded.getOrPut(k) {
@@ -103,20 +100,11 @@ object PrivacyProver {
         Loaded(c, c.getVerificationKey())
     }
 
-    /**
-     * A proof's duration, logged in debug builds only: in a
-     * release log it would say when and how long this wallet proved what.
-     */
-    private fun timing(context: Context, kind: String, ms: Long) {
-        if (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) Log.i(TAG, "$kind proved in ${ms}ms")
-    }
-
     fun proveAction(context: Context, w: ActionWitness): ByteArray {
         w.check()
         val t0 = SystemClock.elapsedRealtime()
         return prove(context, Kind.ACTION, w.noirInputs(), w.publicInputs()).also {
             lastActionMs = SystemClock.elapsedRealtime() - t0
-            timing(context, "action", lastActionMs)
         }
     }
 
@@ -125,7 +113,6 @@ object PrivacyProver {
         val t0 = SystemClock.elapsedRealtime()
         return prove(context, Kind.STAKE, w.noirInputs(), w.publicInputs()).also {
             lastStakeMs = SystemClock.elapsedRealtime() - t0
-            timing(context, "stake", lastStakeMs)
         }
     }
 
@@ -134,17 +121,12 @@ object PrivacyProver {
         val t0 = SystemClock.elapsedRealtime()
         return prove(context, Kind.MEMBERSHIP, w.noirInputs(), w.publicInputs()).also {
             lastMembershipMs = SystemClock.elapsedRealtime() - t0
-            timing(context, "membership", lastMembershipMs)
         }
     }
 
     fun proveVote(context: Context, w: VoteWitness): ByteArray {
         w.check()
-        val t0 = SystemClock.elapsedRealtime()
-        return prove(context, Kind.VOTE, w.noirInputs(), w.publicInputs()).also {
-            lastVoteMs = SystemClock.elapsedRealtime() - t0
-            timing(context, "vote", lastVoteMs)
-        }
+        return prove(context, Kind.VOTE, w.noirInputs(), w.publicInputs())
     }
 
     private fun prove(context: Context, k: Kind, inputs: Map<String, Any>, expected: List<Fr>): ByteArray {

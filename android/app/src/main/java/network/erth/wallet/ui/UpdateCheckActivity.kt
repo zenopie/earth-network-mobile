@@ -17,24 +17,17 @@ import network.erth.wallet.R
 import network.erth.wallet.referral.Referral
 
 /**
- * Activity that checks for updates from Google Play Store before the app starts
- * This ensures users are notified about available updates at launch
+ * The launcher: offers a Play Store update, if there is one, before the app
+ * starts, then hands over to [MainActivity].
  */
 class UpdateCheckActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "UpdateCheckActivity"
         private const val UPDATE_REQUEST_CODE = 123
-        private const val EXTRA_TEST_MODE = "test_mode"
     }
 
-    /** The fake update prompt, on a debuggable build only: this activity is exported. */
-    private fun testMode(): Boolean =
-        (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0 &&
-            runCatching { intent.getBooleanExtra(EXTRA_TEST_MODE, false) }.getOrDefault(false)
-
     private lateinit var appUpdateManager: AppUpdateManager
-    private var updateAvailable = false
 
     private lateinit var appLogo: android.widget.ImageView
     private lateinit var statusText: TextView
@@ -54,7 +47,6 @@ class UpdateCheckActivity : AppCompatActivity() {
         Referral.fromIntent(this, intent)
         Referral.captureInstallReferrer(this)
 
-        // Initialize views
         appLogo = findViewById(R.id.app_logo)
         statusText = findViewById(R.id.status_text)
         descriptionText = findViewById(R.id.description_text)
@@ -62,13 +54,10 @@ class UpdateCheckActivity : AppCompatActivity() {
         skipButton = findViewById(R.id.skip_button)
         progressBar = findViewById(R.id.progress_bar)
 
-        // Hide logo initially while checking
         appLogo.visibility = View.GONE
 
-        // Initialize update manager
         appUpdateManager = AppUpdateManagerFactory.create(this)
 
-        // Setup button listeners
         updateButton.setOnClickListener {
             startUpdate()
         }
@@ -77,66 +66,29 @@ class UpdateCheckActivity : AppCompatActivity() {
             proceedToMainApp()
         }
 
-        // Start update check
         checkForUpdates()
     }
 
-    /**
-     * Check Google Play Store for available updates
-     */
     private fun checkForUpdates() {
-        // Check if test mode is enabled
-        if (testMode()) {
-            Log.d(TAG, "Test mode enabled - showing update prompt")
-            showUpdatePrompt(99)
-            return
-        }
-
-        Log.d(TAG, "Checking for updates from Play Store...")
         statusText.text = "Checking for updates..."
         progressBar.visibility = View.VISIBLE
         updateButton.visibility = View.GONE
         skipButton.visibility = View.GONE
 
         appUpdateManager.appUpdateInfo.addOnSuccessListener { appUpdateInfo ->
-            val updateAvailability = appUpdateInfo.updateAvailability()
-            Log.d(TAG, "Update availability: $updateAvailability")
-
-            when (updateAvailability) {
-                UpdateAvailability.UPDATE_AVAILABLE -> {
-                    // Update is available
-                    updateAvailable = true
-                    showUpdatePrompt(appUpdateInfo.availableVersionCode())
-                }
-                UpdateAvailability.UPDATE_NOT_AVAILABLE -> {
-                    // No update available
-                    Log.d(TAG, "No update available")
-                    proceedToMainApp()
-                }
-                UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS -> {
-                    // An update is already in progress
-                    Log.d(TAG, "Update already in progress")
-                    startImmediateUpdate()
-                }
-                else -> {
-                    // Unknown state, proceed to app
-                    Log.d(TAG, "Unknown update state, proceeding to app")
-                    proceedToMainApp()
-                }
+            when (appUpdateInfo.updateAvailability()) {
+                UpdateAvailability.UPDATE_AVAILABLE -> showUpdatePrompt()
+                UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS -> startImmediateUpdate()
+                else -> proceedToMainApp()
             }
         }.addOnFailureListener { exception ->
             Log.e(TAG, "Failed to check for updates", exception)
-            // On failure, proceed to app anyway (don't block user)
+            // A failed check never blocks the app.
             proceedToMainApp()
         }
     }
 
-    /**
-     * Show update prompt to user
-     */
-    private fun showUpdatePrompt(availableVersionCode: Int) {
-        Log.d(TAG, "Update available: version $availableVersionCode")
-
+    private fun showUpdatePrompt() {
         progressBar.visibility = View.GONE
         appLogo.visibility = View.VISIBLE
         statusText.text = "Update Available"
@@ -148,22 +100,11 @@ class UpdateCheckActivity : AppCompatActivity() {
         skipButton.text = "Skip"
     }
 
-    /**
-     * Start the update process
-     */
     private fun startUpdate() {
-        // In test mode, just log and don't actually update
-        if (testMode()) {
-            Log.d(TAG, "Test mode - user clicked Update Now (would normally open Play Store)")
-            proceedToMainApp()
-            return
-        }
-
         appUpdateManager.appUpdateInfo.addOnSuccessListener { appUpdateInfo ->
             if (appUpdateInfo.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE) {
                 startImmediateUpdate()
             } else {
-                // Update no longer available, proceed to app
                 proceedToMainApp()
             }
         }.addOnFailureListener { exception ->
@@ -172,9 +113,7 @@ class UpdateCheckActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Start immediate update flow (blocks until update completes)
-     */
+    /** The immediate update flow: Play blocks the app until it completes. */
     private fun startImmediateUpdate() {
         appUpdateManager.appUpdateInfo.addOnSuccessListener { appUpdateInfo ->
             if (appUpdateInfo.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE
@@ -205,7 +144,6 @@ class UpdateCheckActivity : AppCompatActivity() {
      * Proceed to the app: [MainActivity], the one shell.
      */
     private fun proceedToMainApp() {
-        Log.d(TAG, "Proceeding to main app")
         val intent = Intent(this, MainActivity::class.java)
         // No extras forwarded. This activity is exported, so
         // they are any app's; MainActivity reads none (a referral link is
@@ -219,21 +157,11 @@ class UpdateCheckActivity : AppCompatActivity() {
 
         if (requestCode == UPDATE_REQUEST_CODE) {
             when (resultCode) {
-                RESULT_OK -> {
-                    // Update succeeded, app will restart
-                    Log.d(TAG, "Update completed successfully")
-                    // App will restart automatically
-                }
-                RESULT_CANCELED -> {
-                    // User canceled the update
-                    Log.d(TAG, "Update canceled by user")
-                    // Check if update is still available
-                    checkForUpdates()
-                }
+                // Play restarts the app once the update is installed.
+                RESULT_OK -> Unit
+                RESULT_CANCELED -> checkForUpdates()
                 else -> {
-                    // Update failed
                     Log.e(TAG, "Update failed with result code: $resultCode")
-                    // Proceed to app anyway
                     proceedToMainApp()
                 }
             }
@@ -243,10 +171,9 @@ class UpdateCheckActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
 
-        // Check if an update is already in progress
+        // Resume an update that was interrupted.
         appUpdateManager.appUpdateInfo.addOnSuccessListener { appUpdateInfo ->
             if (appUpdateInfo.updateAvailability() == UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS) {
-                // Resume the update if it was interrupted
                 startImmediateUpdate()
             }
         }

@@ -3,7 +3,6 @@ package network.erth.wallet.referral
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.util.Log
 import com.android.installreferrer.api.InstallReferrerClient
 import com.android.installreferrer.api.InstallReferrerStateListener
 import network.erth.wallet.privacy.handles.Handles
@@ -41,7 +40,6 @@ object Referral {
     // A new key: a referrer address captured by an older version names no handle.
     private const val KEY_HANDLE = "referrer_handle"
     private const val KEY_CHECKED = "install_referrer_checked"
-    private const val TAG = "Referral"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -114,9 +112,7 @@ object Referral {
                         val raw = client.installReferrer.installReferrer.orEmpty()
                         val parsed = Uri.parse("?$raw").getQueryParameter("referrer")
                             ?: raw.takeIf { Handles.parse(it) != null }
-                        if (record(app, parsed)) {
-                            Log.i(TAG, "install referrer captured")
-                        }
+                        record(app, parsed)
                     }
                     // Marked checked on any terminal response, including
                     // NOT_SUPPORTED — retrying a store that cannot answer just

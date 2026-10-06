@@ -154,9 +154,7 @@ object DeviceBinding {
                     }
                     .build()
                 generator.init(spec)
-                val secret = generator.generateKey()
-                Log.i(TAG, "device binding key created (strongbox=$strongBox)")
-                return secret
+                return generator.generateKey()
             } catch (e: Exception) {
                 Log.w(TAG, "device binding key generation failed (strongbox=$strongBox): ${e.message}")
             }
