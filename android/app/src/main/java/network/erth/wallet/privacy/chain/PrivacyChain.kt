@@ -1,7 +1,7 @@
 package network.erth.wallet.privacy.chain
 
 import network.erth.wallet.chain.EarthRest
-import network.erth.wallet.chain.EarthTx
+import network.erth.wallet.chain.TxUnconfirmedException
 import network.erth.wallet.chain.Fees
 import network.erth.wallet.privacy.tx.PrivateChain
 import network.erth.wallet.privacy.tx.TxResult
@@ -322,9 +322,25 @@ object RestPrivateChain : PrivateChain {
     override fun broadcast(tx: ByteArray, accepted: (hash: String) -> Unit): TxResult {
         val hash = UnsignedTx.submit(tx)
         accepted(hash)
-        EarthTx.awaitCommit(hash)
-        return fetch(hash)
+        // CheckTx took it, so nothing that fails from here says it was not
+        // sent. A dropped connection while waiting is answered by asking for
+        // the hash again; still unanswered, the outcome is unknown
+        // (TxUnconfirmedException): the spent notes stay marked until
+        // WalletSync.releaseStalePending settles the hash, so no retry can
+        // spend them twice.
+        repeat(COMMIT_POLLS) { i ->
+            val r = try { this.tx(hash) } catch (e: Exception) { null }
+            if (r != null) {
+                if (r.code != 0) throw IOException("tx failed (code ${r.code}): ${r.log}")
+                return r
+            }
+            if (i < COMMIT_POLLS - 1) Thread.sleep(COMMIT_POLL_MS)
+        }
+        throw TxUnconfirmedException(hash)
     }
+
+    private const val COMMIT_POLLS = 20
+    private const val COMMIT_POLL_MS = 800L
 
     override fun tx(hash: String): TxResult? {
         val (code, _) = EarthRest.get("/cosmos/tx/v1beta1/txs/$hash")

@@ -310,9 +310,12 @@ public final class TxController {
             pending = again
             return
         } catch let EarthClient.Error.notCommitted(hash) {
-            // Not `onSuccess`: that clears the form, and the user may need what
-            // they typed if this never lands.
+            // Still `onSuccess`, as on Android: it clears the form and
+            // refreshes, and a filled-in send left on screen invites sending
+            // it again while the first may yet land.
+            if runPrivate != nil { model.publishPrivacy() }
             outcome = .unconfirmed(action: details.action, hash: hash)
+            await onSuccess?()
             await model.refresh()
         } catch {
             outcome = .failed(action: details.action, reason: model.describe(error))

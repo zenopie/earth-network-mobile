@@ -230,10 +230,17 @@ class PrivateTxEngine(
         // mempool (CheckTx's code, no connection at all) undoes the mark.
         val hash = UnsignedTx.hash(raw)
         accepted(hash, a, timeout)
+        // Whether the node took it: decided by the submit alone. Once it has,
+        // a failure while waiting for the block (a dropped connection
+        // included) leaves the marks for the chain to settle by hash.
+        var submitted = false
         val result = try {
-            chain.broadcast(raw) { nodeHash -> check(nodeHash.equals(hash, ignoreCase = true)) { "the node names the tx $nodeHash, not $hash" } }
+            chain.broadcast(raw) { nodeHash ->
+                submitted = true
+                check(nodeHash.equals(hash, ignoreCase = true)) { "the node names the tx $nodeHash, not $hash" }
+            }
         } catch (e: Exception) {
-            if (e is UnsignedTx.TxRejected || e is java.net.ConnectException) rejected(hash, a)
+            if (!submitted && (e is UnsignedTx.TxRejected || e is java.net.ConnectException)) rejected(hash, a)
             throw e
         }
         return result to a

@@ -518,9 +518,23 @@ public struct RESTPrivateChain: PrivateChain {
         }
         guard let hash = j.tx_response.txhash.string else { throw EarthClient.Error.notCommitted(hash: "") }
         accepted(hash)
-        _ = try await EarthClient(rest: rest).awaitCommit(hash)
-        return try await fetch(hash)
+        // CheckTx took it, so nothing that fails from here says it was not
+        // sent. A dropped connection while waiting is answered by asking for
+        // the hash again; still unanswered, the outcome is unknown
+        // (notCommitted): the spent notes stay marked until
+        // WalletSync.releaseStalePending settles the hash, so no retry can
+        // spend them twice.
+        for i in 0 ..< Self.commitPolls {
+            if let r = try? await self.tx(hash) {
+                guard r.code == 0 else { throw EarthClient.Error.executionFailed(code: Int(r.code), log: r.log) }
+                return r
+            }
+            if i < Self.commitPolls - 1 { try? await Task.sleep(for: .milliseconds(800)) }
+        }
+        throw EarthClient.Error.notCommitted(hash: hash)
     }
+
+    private static let commitPolls = 20
 
     public func tx(_ hash: String) async throws -> TxResult? {
         do {

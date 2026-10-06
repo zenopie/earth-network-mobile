@@ -332,14 +332,25 @@ public struct PrivateTxEngine: Sendable {
         // mempool (CheckTx's code, no connection at all) undoes the mark.
         let hash = UnsignedTx.hash(raw)
         accepted(hash, a, timeout)
+        // Whether the node took it: decided by the submit alone. Once it has,
+        // a failure while waiting for the block (a dropped connection
+        // included) leaves the marks for the chain to settle by hash.
+        let submitted = SubmitFlag()
         do {
-            let r = try await chain.broadcast(raw) { _ in }
+            let r = try await chain.broadcast(raw) { _ in submitted.set() }
             guard r.hash.uppercased() == hash else { throw PrivacyError("the node names the tx \(r.hash), not \(hash)") }
             return (r, a)
         } catch {
-            if error is UnsignedTx.TxRejected || Self.neverSent(error) { rejected(hash, a) }
+            if !submitted.isSet, error is UnsignedTx.TxRejected || Self.neverSent(error) { rejected(hash, a) }
             throw error
         }
+    }
+
+    private final class SubmitFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = false
+        func set() { lock.withLock { value = true } }
+        var isSet: Bool { lock.withLock { value } }
     }
 
     /// No connection was ever made: the tx reached no node.
