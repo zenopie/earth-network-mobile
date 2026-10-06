@@ -447,6 +447,17 @@ zero[32] = `0b59baa35b9dc267744f0ccb4e3b0255c1fc512460d91130c6bc19fb2668568d`.
   activated_at is the registration block's time; predecessor_at the time of
   the switch or re-entry that made the leaf (its activated_at), 0 for a
   passport never registered before. Vectors `derive.leaf`, `leaf_pred`.
+
+  **Succession leaves** share the tree: when a passport whose last
+  registration (live or lapsed) was to idc_old registers to idc_new ≠ idc_old
+  (a switch, or a re-entry), the chain appends, right after the new identity
+  leaf,
+
+      succession = H(TAG_SUCC, idc_old, idc_new)      TAG_SUCC = Tag("earth.succ")
+
+  It is never zeroed. The wallet takes it from the indexer's stream like any
+  other leaf (no membership proof can use it: another tag and arity). The
+  move circuit proves a move along one (§9, §14).
 - **Stake tree** (x/shieldedstaking, append-only): stake note cms.
 - **Stake nullifier tree** (`zk/indexed`): an indexed (sorted) tree; leaf i
   = H(TAG_SNFL, value, next_value, next_index), leaf 0 the sentinel (value
@@ -473,7 +484,7 @@ checked against the chain's root.
 SRS (circuit sizes 2^13 to 2^15) and compiled with nargo 1.0.0-beta.22; `bb write_vk` of
 every bundled circuit equals the chain genesis's verifying key. Every proof
 is exactly 14,656 bytes. Prover kinds split these public-input counts:
-action 6, stake 16, membership 8, vote 9.
+action 6, stake 16, membership 8, vote 9, move 5.
 
 **action** (one spend and one output of a bundle):
 
@@ -552,6 +563,25 @@ id_secret, scope), dsc_key ≠ excluded_dsc, country ≠ excluded_country
 unless that is 0, activated_at ≤ max_activation, predecessor_at ≤
 max_predecessor, and binds signal (the msg's sighash). "No bound" is 2^63 −
 1 (`Privacy.NO_BOUND`). Vector `membership_public_inputs`.
+
+**move** (a handle or caretaker split passes to the same passport's next
+identity; MsgMoveHandle, MsgMoveCaretaker):
+
+    private: old_secret, new_secret, succession_index (u32), succession_siblings[32],
+             dsc_key, country, activated_at (u64), predecessor_at (u64),
+             leaf_index (u32), siblings[32]
+    public:  root, scope, old_nullifier, new_nullifier, signal
+
+Proves H(TAG_SUCC, H(TAG_ID, old_secret), H(TAG_ID, new_secret)) is in the
+identity tree at root (at succession_index), the successor's identity leaf
+H(TAG_LEAF, H(TAG_ID, new_secret), dsc_key, country, activated_at,
+predecessor_at) is too (at leaf_index; the successor's own registration
+record gives those fields), old_nullifier = H(TAG_SN, old_secret, scope),
+new_nullifier = H(TAG_SN, new_secret, scope), and binds signal (the msg's
+sighash). scope is Scope("handle") for MsgMoveHandle and Scope("caretaker")
+for MsgMoveCaretaker; root is a recent identity root (as a membership's).
+The prover needs both identity secrets: the old wallet's and the new
+wallet's, both on the phone. 8,362 gates (2^14).
 
 **passport** (`lean_poa_*`, 33 variants; registration only): one circuit per
 DSC key type (RSA-2048/3072/4096; ECDSA P-224/256/384/521, brainpoolP224r1/
@@ -826,9 +856,9 @@ proof it carries. `StakeFields` (every stake-proof msg, first):
 | `/earth.personhood.v1.MsgRegister` | idc, pc_anml, Bytes(ct_anml), pc_erth, Bytes(ct_erth), affiliate, Bytes(signature_algorithm), each public signal as a field |
 | `/earth.personhood.v1.MsgClaimAnml` | U64(day), pc, Bytes(ct) |
 | `/earth.personhood.v1.MsgSetCaretaker` | per entry U64(option_id), U64(percent) (max_predecessor is not a sighash field) |
-| `/earth.personhood.v1.MsgMoveCaretaker` | new_owner |
+| `/earth.personhood.v1.MsgMoveCaretaker` | (none) |
 | `/earth.personhood.v1.MsgBindHandle` | Bytes(handle), owner_pk, Bytes(ek_pub) of the address (release: Bytes(""), 0, Bytes("")) |
-| `/earth.personhood.v1.MsgMoveHandle` | Bytes(handle), new_owner |
+| `/earth.personhood.v1.MsgMoveHandle` | Bytes(handle) |
 | `/earth.assembly.v1.MsgVoteProposal` | U64(proposal_id), U64(option) |
 | `/earth.assembly.v1.MsgProposeRemoval` | U64(option_id) |
 | `/earth.assembly.v1.MsgVoteRemoval` | U64(option_id), U64(option) |
@@ -871,9 +901,10 @@ reserved numbers are never written):
                              reserved 11-14
     MsgClaimAnml             fee 1, membership 2, day 3, pc 4, ciphertext 5
     MsgSetCaretaker          fee 1, membership 2, percentages 3, max_predecessor 5; reserved 4
-    MsgMoveCaretaker         fee 1, membership 2, new_owner 3
+    MsgMoveCaretaker         fee 1, move 2
+    MoveProof                proof 1, root 2, old_nullifier 3, new_nullifier 4
     MsgBindHandle            fee 1, membership 2, handle 3, address 4, max_predecessor 6; reserved 5
-    MsgMoveHandle            fee 1, membership 2, handle 3, new_owner 4
+    MsgMoveHandle            fee 1, move 2, handle 3
     MsgVoteProposal          fee 1, membership 2, proposal_id 3, option 4   (YES 1, NO 2)
     MsgProposeRemoval        fee 1, membership 2, option_id 3
     MsgVoteRemoval           fee 1, membership 2, option_id 3, option 4
@@ -1035,12 +1066,11 @@ a leading @). MsgBindHandle: holding a handle, the same handle renews it
 (lease now + handle_lease_seconds, the address may change), another changes
 to it (the old one is freed at once); holding none, a claim; handle and
 address both empty: release at once. The address is canonical lowercase
-`erthz1…`. MsgMoveHandle hands the handle to `new_owner = H(TAG_SN,
-new_id_secret, Scope("handle"))`, only while it is live. **Moves are
-pending a chain change:** the current chain (genesis a381e2c9) removed
-MsgMoveHandle and MsgMoveCaretaker (errors 1125 and 1126 too), and is
-re-adding both behind a same-passport move circuit; the wallet keeps its
-move flow and formats below until that prover is wired. Without moves,
+`erthz1…`. MsgMoveHandle hands a live handle to the successor identity's
+`new_nullifier = H(TAG_SN, new_id_secret, Scope("handle"))` with a move
+proof (§9; genesis 01298d6b): only along the chain's succession leaf from
+the holder's identity to the same passport's next one, while that successor
+is live. A failed proof is error 1129 (invalid move proof). Without a move,
 after a switch the old identity's handle and split persist, unchangeable,
 until their leases end, and the new identity claims or casts under the
 predecessor bound. Lifecycle: live
@@ -1057,7 +1087,8 @@ nullifier that holds it, 64 hex digits.
 clears the split (1-20 options, percent summing to 100); it lapses at
 expires_at (the `set_caretaker` event; R = caretaker_vote_seconds, default
 365 days) unless cast again. MsgMoveCaretaker hands the live split and its
-expiry to `H(TAG_SN, new_id_secret, Scope("caretaker"))`.
+expiry to the successor's `H(TAG_SN, new_id_secret, Scope("caretaker"))`,
+with a move proof in the caretaker scope.
 
 **Lease bounds [chain].** `GET /earth/personhood/v1/lease_bounds` (int64s as
 strings): block_time, activation_margin_seconds, handle_lease_seconds (the
@@ -1148,11 +1179,15 @@ that would change the held handle is refused locally, and address cards are
 hidden while a handle is held.
 
 **Moves and switching identity [wallet].** A switch is the same passport
-registered from another wallet on the phone. Before it, the old wallet may
-move its handle (only a live one; `HandleNotMovable` otherwise, and the
-switch screen says why) and its live caretaker split to the new identity's
-nullifiers in those scopes, computed from the other wallet's keys, with
-state records to both (§6). Without moves, the new identity waits until
+registered from another wallet on the phone. **A move comes after the
+switch:** the move proof needs the succession leaf the switch appends and
+the new identity's live leaf, so once the new registration has landed (and
+its block's identity root is recorded), the phone proves the move with both
+wallets' identity secrets and moves the handle (only a live one;
+`HandleNotMovable` otherwise, and the switch screen says why) and the live
+caretaker split to the new identity's nullifiers, with state records to
+both (§6). It must do so while the new identity is still the passport's
+live one (before any further switch). Without moves, the new identity waits until
 everything its predecessor could hold has lapsed (lease + 1 day). The mover
 records `*_moved_out` and never casts or claims again.
 
