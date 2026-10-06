@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- HTTPS only. Debug builds add cleartext to a local LCD
-         (src/debug/res/xml); a release build never has it, so no endpoint
-         left pointing at loopback can be served by another app on the device. -->
-    <base-config cleartextTrafficPermitted="false">
+    <!-- Cleartext is not refused here but in code (chain/NodeConfig, EarthRest):
+         every built-in endpoint is https, and the only http:// the app will
+         open is the user's own node at a loopback or private-network address,
+         chosen in Settings -> Network with a warning. This file cannot name a
+         LAN address range, so it cannot draw that line itself. -->
+    <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system"/>
         </trust-anchors>

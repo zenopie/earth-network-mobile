@@ -407,6 +407,8 @@ internal fun EarthContent(
 
         EarthRoute.Security -> SecurityScreen(modifier = inset)
 
+        EarthRoute.Network -> network.erth.wallet.ui.settings.NetworkScreen(onChanged = onRefresh, modifier = inset)
+
         EarthRoute.About -> AboutScreen(
             version = version,
             onPrivacyPolicy = { onOpenUrl("https://erth.network/privacy") },
@@ -1468,6 +1470,12 @@ private fun settingsItems(nav: EarthNavController, state: WalletUiState?, person
             subtitle = "PIN and biometrics",
             icon = R.drawable.ic_lock,
             onClick = { nav.push(EarthRoute.Security) },
+        ),
+        SettingsItem(
+            title = "Network",
+            subtitle = if (network.erth.wallet.chain.NodeConfig.current.isDefault) "Earth's node" else "Your node",
+            icon = R.drawable.ic_home_explore,
+            onClick = { nav.push(EarthRoute.Network) },
         ),
         SettingsItem(
             title = "About",

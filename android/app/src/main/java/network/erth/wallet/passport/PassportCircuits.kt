@@ -41,6 +41,8 @@ object PassportCircuits {
     @Synchronized
     private fun fetch(context: Context, variant: PassportVariants.Variant): ByteArray {
         val url = PassportVariants.get(context).downloadBase + variant.id + ".json.gz"
+        // The platform permits cleartext (for a user's own LAN node); this does not need it.
+        if (!url.startsWith("https://")) throw CircuitUnavailableException("circuit download: not https")
         val c = URL(url).openConnection() as HttpURLConnection
         c.instanceFollowRedirects = false
         c.connectTimeout = 15_000

@@ -1517,6 +1517,19 @@ the wallet build on, or show as verified, trees the chain does not have; an
 operator controlling both could still lie consistently (it could not forge
 spends: every proof is checked by the validators).
 
+**Who sees the wallet's requests.** The wallet's chain reads include its own
+transparent address (balances, a validator operator's self-bond, its tx
+search), and its private txs are simulated and broadcast through the same
+node, from the same IP, in the same session. Whoever runs that node, or
+holds its access logs, could tie the two. The defence is operational, not in
+the request pattern: Earth's node keeps no request logs, and Settings →
+Network points an install at the user's own node (`NodeConfig.kt` /
+`NodeSettings.swift`), through which every chain query and broadcast then
+goes. The backend (indexer, handle directory, gas grant, fetched circuits)
+is not a node and stays at api.erth.network; it never learns the
+transparent address (the indexer streams are whole-chain, the gas grant
+body carries neither address).
+
 **Sync generations.** Before a sync's first request the wallet bumps its
 sync generation, clears "verified" and persists both; only the root checks
 at the end of that same sync mark that generation verified. Every private

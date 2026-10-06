@@ -29,6 +29,9 @@ class App : Application() {
 
         AutoLock.install(this)
 
+        // The node the user chose (Settings -> Network), before anything queries the chain.
+        network.erth.wallet.chain.NodeConfig.load(this)
+
         // Before anything else can read it: earlier builds left the unlock
         // secret's bare SHA-256 on disk, which for a PIN is the PIN.
         runCatching { SessionManager.purgeLegacyPinHash(this) }

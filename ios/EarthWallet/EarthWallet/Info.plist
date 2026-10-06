@@ -28,6 +28,16 @@
 	<string>Read your passport's chip to prove you are a unique human.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Read the printed lines at the bottom of your passport, to unlock its chip.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<!-- For a user's own node on this phone or their local network, chosen
+		     in Settings > Network with a warning. EarthRest refuses http:// to
+		     anything else; every built-in endpoint is https. -->
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Connect to your own Earth node on your local network, if you choose one in Settings.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Unlock your wallet and approve transactions.</string>
 	<key>UILaunchScreen</key>

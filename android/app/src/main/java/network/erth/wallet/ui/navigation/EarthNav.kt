@@ -59,6 +59,8 @@ sealed interface EarthRoute {
     data object Settings : EarthRoute
     data object About : EarthRoute
     data object Security : EarthRoute
+    /** Which node the wallet queries and broadcasts through. */
+    data object Network : EarthRoute
     /**
      * The chain's own state: blocks, validators, how many humans.
      *

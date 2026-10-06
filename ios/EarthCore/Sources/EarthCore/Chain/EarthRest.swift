@@ -1,6 +1,7 @@
 import Foundation
 
-/// The LCD (cosmos gRPC-gateway) client. All chain I/O goes through here.
+/// The LCD (cosmos gRPC-gateway) client. All chain I/O goes through here, to
+/// the node `NodeSettings` names.
 ///
 /// Mirrors `EarthRest.kt`, with one deliberate difference: a non-2xx is thrown
 /// rather than returned. Kotlin's callers each re-implemented the same
@@ -16,6 +17,8 @@ public struct EarthRest: Sendable {
         case rpcUnavailable
         /// The response ran past `maxBodyBytes`.
         case tooLarge(Int)
+        /// http:// to anything but the user's own local node.
+        case cleartextRefused(String)
     }
 
     /// The most any response is read to: a node or proxy streaming without
@@ -85,27 +88,50 @@ public struct EarthRest: Sendable {
         return (Data(out), status, response as? HTTPURLResponse)
     }
 
-    public let lcd: URL
-    public let rpc: URL?
+    /// A node fixed at init; nil follows `NodeSettings.current`, read per
+    /// request, so a node chosen in Settings applies to every client at once.
+    private let pinned: NodeSettings.Node?
+    /// Settings probing a node before it is saved: its local http is allowed.
+    private let allowLocal: Bool
     private let session: URLSession
 
-    public init(lcd: URL = Constants.lcdURL, rpc: URL? = Constants.rpcURL) {
-        self.lcd = lcd
-        self.rpc = rpc
+    public var lcd: URL { pinned?.lcd ?? NodeSettings.current.lcd }
+    public var rpc: URL? { pinned != nil ? pinned?.rpc : NodeSettings.current.rpc }
+
+    /// The node the user chose (Earth's unless they chose their own).
+    public init() {
+        self.init(pinned: nil, allowLocal: false)
+    }
+
+    public init(lcd: URL, rpc: URL?, allowLocal: Bool = false) {
+        self.init(pinned: NodeSettings.Node(lcd: lcd, rpc: rpc), allowLocal: allowLocal)
+    }
+
+    private init(pinned: NodeSettings.Node?, allowLocal: Bool) {
+        self.pinned = pinned
+        self.allowLocal = allowLocal
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 20
         config.timeoutIntervalForResource = 30
         self.session = Self.session(config)
     }
 
+    /// Plain http:// only to the user's own node at a local address
+    /// (`NodeSettings.allowed`). Everything built in is https.
+    private func checked(_ base: URL) throws -> URL {
+        let ok = allowLocal ? NodeSettings.problem(base) == nil : NodeSettings.allowed(base)
+        guard ok else { throw Error.cleartextRefused(base.absoluteString) }
+        return base
+    }
+
     public func get(_ path: String) async throws -> JSON {
-        try await request(URLRequest(url: try lcd.appendingPath(path)))
+        try await request(URLRequest(url: try checked(lcd).appendingPath(path)))
     }
 
     /// `get` of the state at block `height` (the gRPC gateway's
     /// `x-cosmos-block-height` header); a pruned height answers an error.
     public func get(_ path: String, height: UInt64) async throws -> JSON {
-        var r = URLRequest(url: try lcd.appendingPath(path))
+        var r = URLRequest(url: try checked(lcd).appendingPath(path))
         r.setValue(String(height), forHTTPHeaderField: "x-cosmos-block-height")
         return try await request(r)
     }
@@ -114,7 +140,7 @@ public struct EarthRest: Sendable {
     /// `x-cosmos-block-height` response header; nil when absent). A caller
     /// pinning state to a height checks the two agree.
     public func getEcho(_ path: String, height: UInt64) async throws -> (JSON, UInt64?) {
-        guard let url = lcd.appendingPathChecked(path) else { throw Error.missing(path) }
+        guard let url = try checked(lcd).appendingPathChecked(path) else { throw Error.missing(path) }
         var r = URLRequest(url: url)
         r.setValue(String(height), forHTTPHeaderField: "x-cosmos-block-height")
         let (data, status, resp) = try await Self.boundedResponse(session, r)
@@ -128,11 +154,11 @@ public struct EarthRest: Sendable {
     /// of blocks in a single request. Callers must tolerate it being absent.
     public func getRPC(_ path: String) async throws -> JSON {
         guard let rpc else { throw Error.rpcUnavailable }
-        return try await request(URLRequest(url: try rpc.appendingPath(path)))
+        return try await request(URLRequest(url: try checked(rpc).appendingPath(path)))
     }
 
     public func postJSON(_ path: String, body: [String: Any]) async throws -> JSON {
-        var request = URLRequest(url: try lcd.appendingPath(path))
+        var request = URLRequest(url: try checked(lcd).appendingPath(path))
         request.httpMethod = "POST"
         request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)

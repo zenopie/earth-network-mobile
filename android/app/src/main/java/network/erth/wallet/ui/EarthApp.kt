@@ -398,6 +398,7 @@ private fun EarthRoute.title(): String = when (this) {
     EarthRoute.Activity -> "Activity"
     EarthRoute.Settings -> "Settings"
     EarthRoute.Security -> "Unlocking"
+    EarthRoute.Network -> "Network"
     EarthRoute.About -> "About"
     is EarthRoute.Stream -> if (human) "Caretaker Fund" else "Groundworks Fund"
     EarthRoute.Proposals -> "Proposals"

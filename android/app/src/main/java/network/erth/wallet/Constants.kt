@@ -14,9 +14,11 @@ object Constants {
     // hostname is stable across redeploys — Akash reassigns external ports on
     // every new lease, which is exactly what the tunnel exists to hide.
     //
-    // For a locally-served chain instead: "http://127.0.0.1:1317" with
+    // The default only: Settings -> Network points an install at the user's own
+    // node (chain/NodeConfig), which every query and broadcast then uses. For
+    // a locally-served chain, set "http://127.0.0.1:1317" there with
     // `adb reverse tcp:1317 tcp:1317` on a USB device, or "http://10.0.2.2:1317"
-    // on the emulator. Both are allowed by network_security_config.xml.
+    // on the emulator.
     const val EARTH_LCD_URL = "https://lcd.erth.network"
 
     // CometBFT RPC base. Only the explorer uses it, and only for the one thing
@@ -24,12 +26,10 @@ object Constants {
     // (`/blockchain?minHeight=&maxHeight=`). Everything else goes through the
     // LCD, and the explorer falls back to the LCD if this is unreachable — a
     // deployment that exposes only the REST port stays fully functional.
-    // The tunnel fronts the RPC on 443, so it is reached over HTTPS and
-    // network_security_config.xml's cleartext ban holds. Empty disables it:
-    // the explorer then reads blocks one at a time from the LCD.
-    //
-    // For a locally-served chain: "http://127.0.0.1:26657" with
-    // `adb reverse tcp:26657 tcp:26657`, or "http://10.0.2.2:26657".
+    // The tunnel fronts the RPC on 443, so it is reached over HTTPS (EarthRest
+    // refuses http:// to anything but the user's own local node). Empty disables it:
+    // the explorer then reads blocks one at a time from the LCD. The default
+    // only, like the LCD's.
     const val EARTH_RPC_URL = "https://rpc.erth.network"
 
     // The backend: the privacy indexer and handle directory (checked against

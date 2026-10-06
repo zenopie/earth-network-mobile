@@ -47,7 +47,8 @@ javalite.
 
 | File | Responsibility |
 |------|----------------|
-| `EarthRest.kt` | `get` / `postJson` over the LCD, `getRpc` for CometBFT RPC. |
+| `EarthRest.kt` | `get` / `postJson` over the LCD, `getRpc` for CometBFT RPC, to the node `NodeConfig` names. |
+| `NodeConfig.kt` | The node in use: Earth's, or the user's own (Settings → Network), checked to be earth-1 before it is saved. https only, except the user's own node at a local address. |
 | `EarthTx.kt` | Account lookup → `TxBody` / `AuthInfo` / `SignDoc` → sign → broadcast `TxRaw`. |
 | `Fees.kt` | Gas price and fee for a gas limit. |
 | `Bank.kt` | Balances, supply, `msgSend`. |
@@ -109,6 +110,14 @@ SecureWalletManager.executeWithMnemonic(context) { mnemonic ->
 
 ## Configuration
 
-Endpoints, chain id and denoms are in `Constants.kt`. The LCD is
-`https://lcd.erth.network`; the file's comments explain how to point it at a
-local chain.
+Endpoints, chain id and denoms are in `Constants.kt`. The LCD
+`https://lcd.erth.network` and its RPC are defaults: Settings → Network
+(`chain/NodeConfig.kt`, iOS `NodeSettings.swift`) points an install at the
+user's own node, and every chain query and broadcast then goes there. That,
+with a no-logs policy on Earth's node, is the answer to a node operator
+seeing the wallet's transparent-address reads beside its private broadcasts
+(PRIVACY_FORMATS §18). The backend (`https://api.erth.network`: privacy
+indexer, handle directory, gas grant, fetched circuits) is not configurable.
+Cleartext is refused in code (EarthRest), not by the network security
+config, which cannot name a LAN range: http:// is allowed only to the user's
+own node at a loopback or private address.

@@ -14,7 +14,7 @@ struct SettingsSheet: View {
     @State private var route: Route?
 
     enum Route: String, Identifiable {
-        case identity, handle, notes, wallets, security, explorer, activity, about
+        case identity, handle, notes, wallets, security, network, explorer, activity, about
         var id: String { rawValue }
     }
 
@@ -38,6 +38,8 @@ struct SettingsSheet: View {
                         row("Wallets", "wallet.bifold", subtitle: model.walletName, route: .wallets)
                         divider
                         row("Unlocking", "lock", subtitle: methodName, route: .security)
+                        divider
+                        row("Network", "network", subtitle: NodeSettings.current.isDefault ? "Earth's node" : "Your node", route: .network)
                         divider
                         row("Explorer", "safari",
                             subtitle: "Blocks, validators and registrations", route: .explorer)
@@ -72,6 +74,7 @@ struct SettingsSheet: View {
                 case .notes: NotesScreen().earthThemed()
                 case .wallets: WalletsScreen().earthThemed()
                 case .security: SecurityScreen().earthThemed()
+                case .network: NetworkScreen().earthThemed()
                 case .explorer: ExploreScreen().earthThemed()
                 case .activity: ActivityScreen().earthThemed()
                 case .about: AboutScreen().earthThemed()
