@@ -510,6 +510,17 @@ amount 0 publishes 0 or its own would-be nullifier; an output of amount 0
 publishes 0 or a zero note's commitment. Vectors `public_inputs.delegate`,
 `undelegate`, `redelegate`.
 
+**Stake padding [chain, ORCHARD_DESIGN 8.3].** A msg that moves notes
+(Delegate, Undelegate, Redelegate, Restake, Lock, Unlock) spends in both
+lane-A slots: nf_0 and nf_1 are both non-zero, else the chain refuses the
+proof's shape. A slot holding none of the wallet's notes is a padding
+input (amount 0, a fresh random rho and rcm, pos 0, path zero) publishing
+its own would-be nullifier H(TAG_SNF, nk, rho, 0), so a merge of two notes
+looks like a spend of one (a zero nf_1 used to show a single spend, and a
+second note at a validator mostly sits beside a labelled redelegation
+credit). Position updates and votes still use neither slot (nf_0 = nf_1 =
+0). The circuit is unchanged.
+
 **vote** (MAX_NOTES = 2 stake notes of one validator on one proposal,
 nothing spent; ORCHARD_DESIGN 4.2, 8.5):
 
@@ -553,6 +564,25 @@ variant has the same public inputs `current_date` (u32 YYMMDD), `address`
 `dsc_key` commitment. The wallet sends them as MsgRegister.public_signals,
 decimal, in that order: [current_date, address, nullifier, dsc_key].
 `signature_algorithm` is the variant id.
+
+**Proof date [chain + wallet].** The wallet always proves on today's UTC
+date. The chain accepts current_date within current_date_max_skew_seconds
+(48 h) of the block time and records it as Registration.proof_date (field
+9, unix seconds at midnight UTC). A switch (the passport live under another
+idc) must be proven on a strictly later date than the live registration's
+proof_date, else error 1128 (ErrSwitchProofStale): a passport switches at
+most once per UTC day, and the wallet says so ("try again tomorrow"). The
+check is in the ante, so a refused switch costs nothing.
+
+**Keeping a sent registration's identity [wallet].** A registration's bytes
+are public once broadcast, and one that failed or was refused may still
+land while its current_date is within the skew. From just before the
+broadcast the wallet records `registration_keep_until` (iOS
+`registrationKeepUntil`) = current_date (unix) + 172,800 in the wallet's
+state; until then that wallet counts as possibly registered (a switch
+target's "already has a registration" warning), and its identity, so its
+recovery phrase, must be kept. A reset or genesis switch of the synced
+data carries it.
 
 **Variant selection [wallet].** From EF.SOD: the LDS security object's
 hashAlgorithm (H_dg), SignerInfo digestAlgorithm (H_ec), signatureAlgorithm
@@ -750,7 +780,15 @@ The wallet sets memo "" except on an unshield, which may carry a user memo
 last block, and a proposer leaves out a tx whose anchor lapsed by its
 block's time. Before laying out a private tx the wallet reads its local
 root's record (`/earth/shielded/v1/roots/{root}`: `valid`, `expires_at`, 0
-for the latest root); one lapsing within 1,800 s of the LCD tip's time
+for the latest root); the chain computes `expires_at` as the root's
+`superseded_at` (RootRecord field 5: the time of the block whose root
+replaced it, 0 while it is the latest) + root_window_seconds, so a root
+stays an anchor for the full window after it stops being the latest,
+however long it was the latest; `time` (when it was recorded) no longer
+bounds it. The stake tree's StakeRoot has the same `superseded_at` (field
+5) and window rule; the wallet anchors stake proofs to its synced stake
+tree's root, which is the chain's latest or was superseded within the
+window. The wallet never computes an expiry from `time`. One lapsing within 1,800 s of the LCD tip's time
 makes it sync first (a newer root), and if that is still too old the tx is
 refused before anything is proven (Android SyncFirst, iOS AnchorTooOld). A
 node that does not say `expires_at` leaves the chain's own check.
@@ -998,7 +1036,14 @@ a leading @). MsgBindHandle: holding a handle, the same handle renews it
 to it (the old one is freed at once); holding none, a claim; handle and
 address both empty: release at once. The address is canonical lowercase
 `erthz1…`. MsgMoveHandle hands the handle to `new_owner = H(TAG_SN,
-new_id_secret, Scope("handle"))`, only while it is live. Lifecycle: live
+new_id_secret, Scope("handle"))`, only while it is live. **Moves are
+pending a chain change:** the current chain (genesis a381e2c9) removed
+MsgMoveHandle and MsgMoveCaretaker (errors 1125 and 1126 too), and is
+re-adding both behind a same-passport move circuit; the wallet keeps its
+move flow and formats below until that prover is wired. Without moves,
+after a switch the old identity's handle and split persist, unchangeable,
+until their leases end, and the new identity claims or casts under the
+predecessor bound. Lifecycle: live
 until expires_at; then until renewal_until (= expires_at +
 handle_renewal_seconds, param 26, default 30 days) reserved to its owner and
 not resolving; then free. handle_lease_seconds is param 27 (default 365
