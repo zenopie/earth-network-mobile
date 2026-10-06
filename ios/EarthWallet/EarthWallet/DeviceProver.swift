@@ -18,7 +18,7 @@ import ProverGate
 enum DeviceProver {
 
     static func install() {
-        // The register-circuit variants (circuits/variants.json), which the
+        // The register-circuit variants (passport_variants.json), which the
         // domain layer selects from but cannot read out of the bundle itself.
         PassportVariants.installed = variants
         PassportProving.install(prove, ready: { passportFits })
@@ -49,9 +49,9 @@ enum DeviceProver {
         var errorDescription: String? {
             switch self {
             case let .circuitMissing(name):
-                // Reachable only if a passport selects a circuit the bundle
-                // does not carry, which means the folder reference and
-                // `Certificate.swift`'s table have drifted apart.
+                // Reachable only if a passport selects a circuit neither the
+                // bundle nor the fetch can supply: the folder reference and
+                // passport_variants.json have drifted apart.
                 return "This build has no \(name) circuit, so this passport's signature algorithm cannot be proved."
             case .srsTooSmall:
                 return PassportProving.relaunchToRegister

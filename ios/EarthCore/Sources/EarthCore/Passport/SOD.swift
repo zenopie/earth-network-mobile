@@ -20,7 +20,6 @@ public struct SOD {
         case noSigner
         case noCertificate
         case noContent
-        case noSignedAttributes
     }
 
     public static let signedDataOID = "1.2.840.113549.1.7.2"

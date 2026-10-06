@@ -386,10 +386,8 @@ struct ProposalDetailScreen: View {
     /// them to show one would be nineteen wasted round trips on a screen that
     /// may never be opened.
     ///
-    /// `nil` means this chain has no assembly, which is every node older than
-    /// v0.9.0. The whole second house is hidden in that case rather than shown
-    /// empty — before the upgrade there genuinely is only one, and explaining a
-    /// house that does not exist yet would be worse than saying nothing.
+    /// `nil` when the tally could not be read; the second house is then
+    /// hidden rather than shown empty.
     @State private var assembly: Assembly.Tally?
     /// This wallet's stake-vote weight on the proposal, at the snapshot's
     /// rates. Nil until read (or when the proposal is not open).

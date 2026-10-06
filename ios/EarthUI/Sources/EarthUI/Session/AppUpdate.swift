@@ -10,12 +10,11 @@ import Observation
 /// say so. Hence a dismissible banner rather than a gate.
 ///
 /// This is deliberately *soft*. It cannot stop a stale build from being used,
-/// which matters because a build can go stale in a way the user cannot see —
-/// on 2026-09-09 an iOS build one day older than a circuit recompile failed
-/// registration with a chain error about DSC binding, which means nothing to
-/// the person holding the phone. Closing that hole needs a minimum-version
-/// check served by the backend, which knows what the chain currently accepts;
-/// the store's version number does not.
+/// and a build can go stale in a way the user cannot see: one built against
+/// circuits older than the chain's fails registration with a chain error that
+/// means nothing to the person holding the phone. Closing that hole needs a
+/// minimum-version check served by the backend, which knows what the chain
+/// currently accepts; the store's version number does not.
 public enum AppUpdate {
 
     /// A newer version, and where to get it.

@@ -53,13 +53,7 @@ public enum Assembly {
 
 public extension EarthClient {
 
-    /// The human tally on a proposal, or `nil` if this chain has no assembly.
-    ///
-    /// `nil` is the expected answer before the v0.9.0 upgrade lands, not an
-    /// error: the endpoint does not exist on an older node, and a wallet that
-    /// shipped ahead of the upgrade — as it must, or nobody could vote when it
-    /// arrives — has to render a proposal without a second house and without
-    /// an error message about it.
+    /// The human tally on a proposal, or `nil` when it cannot be read.
     func assemblyTally(proposalID: UInt64) async -> Assembly.Tally? {
         guard let json = try? await rest.get(
             "/earth/assembly/v1/proposal_tally/\(proposalID)"

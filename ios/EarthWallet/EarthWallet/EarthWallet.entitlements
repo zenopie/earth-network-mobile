@@ -9,9 +9,7 @@
 
 	     TAG needs the "Near Field Communication Tag Reading" capability enabled
 	     on the App ID, which is self-service in the developer portal but paid
-	     accounts only: a free Personal Team cannot turn it on, which is why
-	     this file did not exist until the Apple Developer Program enrolment
-	     landed. The applet this talks to (A0000002471001, the ICAO eMRTD
+	     accounts only: a free Personal Team cannot turn it on. The applet this talks to (A0000002471001, the ICAO eMRTD
 	     application identifier) is declared in Info.plist alongside
 	     NFCReaderUsageDescription; both are required and iOS refuses the
 	     session if either is missing. -->

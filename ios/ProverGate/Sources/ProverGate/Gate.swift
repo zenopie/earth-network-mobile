@@ -86,14 +86,12 @@ public enum Gate {
         report.record("proof size", result.proof.count == PrivacyCircuitProver.proofBytes ? .passed : .failed,
                       "\(result.proof.count) bytes")
 
-        // Against the circuit's own ABI, not against `numPublicInputs`. Checking
-        // the constant against itself is what let a06180a through: making
-        // `address` a public input took every variant from three public inputs
-        // to four, and this check passed unchanged while splitProof kept the old
-        // framing -- so the dsc_key stayed glued to the front of the proof body
-        // and the chain rejected every registration with "dsc key index 3 out of
-        // range". The ABI is the ground truth: bb flattens the public parameters
-        // first, then the return values.
+        // Against the circuit's own ABI, not against `numPublicInputs`: checking
+        // the constant against itself cannot catch a circuit whose public-input
+        // count changed, which leaves the dsc_key glued to the front of the
+        // proof body and the chain rejecting every registration with "dsc key
+        // index 3 out of range". The ABI is the ground truth: bb flattens the
+        // public parameters first, then the return values.
         let declared = try Self.declaredPublicInputCount(manifest: manifest)
         let countAgrees = result.publicSignals.count == declared
             && declared == LeanPoaProver.numPublicInputs

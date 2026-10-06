@@ -20,7 +20,6 @@ public enum Constants {
     /// Cosmos default. Not a custom coin type — do not "fix" this to 529.
     public static let coinType: UInt32 = 118
     public static let gasDenom = "uerth"
-    public static let personhoodDenom = "uanml"
     /// Both denominations are 6dp.
     public static let denomExponent = 6
 

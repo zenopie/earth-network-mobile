@@ -113,12 +113,6 @@ public final class PrivacyCircuitProver: @unchecked Sendable {
             case .vote: 9
             }
         }
-
-        /// The largest privacy circuit (gates: membership 5,659, action
-        /// 8,098, stake 16,242, vote 21,716 with two labelled slots): its
-        /// SRS holds the others. Vote is a 2^15 circuit, the others 2^14;
-        /// all fit the bundled 2^15 + 1 points.
-        public static let largest: Kind = .vote
     }
 
     public enum Failure: Error, CustomStringConvertible {

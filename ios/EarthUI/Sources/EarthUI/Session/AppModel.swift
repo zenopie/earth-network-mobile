@@ -927,10 +927,6 @@ public final class AppModel {
     /// `valoper`'s commission (nil: not in the list).
     public func commission(of valoper: String) -> Double? { validatorNames[valoper]?.commission }
 
-    /// Gas the account can actually pay with. A new human has none of it, which
-    /// is what the gas gate exists for.
-    public var hasGas: Bool { balance(.erth) > 0 }
-
     public var totalStaked: BigInt {
         delegations.reduce(BigInt(0)) { $0 + (BigInt($1.amount) ?? 0) }
     }

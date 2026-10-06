@@ -10,7 +10,8 @@ enum EarthAsset {
     static let logo = load("logo")
     static let erthLogo = load("erth_logo")
     static let anml = load("anml")
-    static let erth = load("coin_erth")
+    /// The ERTH coin is the logo itself.
+    static let erth = erthLogo
 
     private static func load(_ name: String) -> Image? {
         UIImage(named: name, in: .module, with: nil).map(Image.init(uiImage:))

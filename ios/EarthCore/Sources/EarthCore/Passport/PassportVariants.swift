@@ -54,11 +54,6 @@ public struct PassportVariants: Decodable {
 
     public func variant(id: String) -> Variant? { variants.first { $0.id == id } }
 
-    /// The smallest SRS tier covering a 2^log2 circuit.
-    public func srsTier(for log2: Int) -> (log2: Int, srs: Srs)? {
-        srs.compactMap { k, v in Int(k).map { ($0, v) } }.filter { $0.0 >= log2 }.min { $0.0 < $1.0 }
-    }
-
     /// The manifest the app bundles, installed at launch; the domain layer
     /// cannot reach the bundle itself.
     nonisolated(unsafe) public static var installed: PassportVariants?

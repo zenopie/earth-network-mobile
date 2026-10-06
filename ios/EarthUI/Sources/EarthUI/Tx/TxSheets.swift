@@ -109,11 +109,9 @@ struct TxConfirmSheet: View {
 
     /// Whether the balance covers this transaction's fee.
     ///
-    /// Against the fee, not against zero. `model.hasGas` asks whether the
-    /// account holds any ERTH at all, which says nothing about whether it holds
-    /// enough: an account with 2,000 uerth cannot pay for a claim across two
-    /// validators, and would have been shown a Confirm button that fails at
-    /// broadcast.
+    /// Against the fee, not against zero: holding some ERTH says nothing about
+    /// holding enough, and a Confirm button that fails at broadcast is worse
+    /// than none.
     private var funded: Bool {
         guard let needed = BigInt(details.feeUerth) else { return true }
         // A private action pays from shielded ERTH, not the account.

@@ -9,7 +9,6 @@ import Foundation
 public struct Certificate {
 
     public enum Error: Swift.Error, Equatable {
-        case unsupportedKeyAlgorithm(String)
         case malformedECPoint(String)
     }
 

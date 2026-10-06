@@ -54,8 +54,7 @@ struct SwapScreen: View {
                 details
                 if quote != nil && !erthIn {
                     // The fee is paid from private ERTH whichever way the swap
-                    // goes (the chain's one fee rule: only an unbonding claim
-                    // pays from its output).
+                    // goes.
                     Spacer().frame(height: theme.space.x8)
                     Text(noErthForFee
                          ? "The network fee is paid in ERTH, and you hold too little private ERTH to pay it."

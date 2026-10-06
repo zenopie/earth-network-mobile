@@ -19,22 +19,20 @@ public enum LeanPoaProver {
     /// Public-input positions in the lean_poa circuit. Public signals are
     /// [current_date, address, nullifier, dsc_key]: current_date and address are
     /// the declared public inputs, and bb appends the circuit's return values
-    /// after them. address binds the proof to the wallet it was made for -- see
-    /// circuits/lean_poa/SECURITY.md finding #9.
+    /// after them. address binds the proof to the registration it is broadcast
+    /// in -- see circuits/poa_core/SECURITY.md.
     ///
     /// These must match PassportProver.kt's constants and the chain's
     /// `nullifier_index` / `dsc_key_index` params. They are not free-standing:
     /// a wrong count leaves the trailing public inputs glued to the front of the
     /// proof body and short-changes public_signals, which the chain rejects with
     /// "dsc key index 3 out of range: proof public inputs do not match".
-    public static let currentDateIndex = 0
-    public static let addressIndex = 1
     public static let nullifierIndex = 2
     public static let numPublicInputs = 4
 
     /// SRS size hint. Must cover the circuit's domain (next power of two >= gate
-    /// count); lean_poa is ~130k gates -> 2^17, provisioned to 2^18 to be safe.
-    /// Matches SRS_SIZE in PassportProver.kt.
+    /// count): 2^18, the bundled variants' tier. The fetched variants are 2^19
+    /// and 2^20; Android passes each variant's own `log2_circuit_size`.
     public static let srsSize: UInt32 = 1 << 18
 
     /// bb proof flavor. Matches the `"ultra_honk"` the Android side passes and
@@ -67,12 +65,11 @@ public enum LeanPoaProver {
     /// Loads a compiled Noir circuit (the JSON emitted by `nargo compile`) and
     /// provisions its SRS.
     ///
-    /// `size` is the SRS provisioning hint. The default is `srsSize`, which is
-    /// what the gate proves lean_poa with and what Android passes. Pass `nil`
-    /// to size the SRS from the circuit's own gate count instead — which is
-    /// what the app does, because it ships seven circuits of very different
-    /// sizes and barretenberg **only honours the first SRS initialization of a
-    /// process**. A hint that is too small for the circuit a passport selects
+    /// `size` is the SRS provisioning hint. The default is `srsSize`, the
+    /// bundled tier. Pass `nil` to size the SRS from the circuit's own gate
+    /// count instead — which is what the app does, because its passport
+    /// circuits span three size tiers and barretenberg **only honours the
+    /// first SRS initialization of a process**. A hint that is too small for the circuit a passport selects
     /// cannot be corrected afterwards; deriving it from the bytecode cannot be
     /// wrong.
     ///

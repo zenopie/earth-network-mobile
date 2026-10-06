@@ -100,28 +100,4 @@ public extension EarthClient {
         }
         return out
     }
-
-    // --- messages ---
-
-    /// A vote on `proposalID`.
-    ///
-    /// Weighted by bonded stake alone. An address with nothing delegated can
-    /// broadcast this successfully and move the tally by nothing, so the screen
-    /// says so rather than letting it look like a vote that failed.
-    func msgVote(voter: String, proposalID: UInt64, option: Gov.Vote) -> ProtoAny {
-        Msg.Vote(proposalID: proposalID, voter: voter, option: option)
-            .asAny(typeURL: Msg.Vote.typeURL)
-    }
-
-    @discardableResult
-    func vote(
-        key: EarthKey,
-        proposalID: UInt64,
-        option: Gov.Vote
-    ) async throws -> String {
-        try await broadcast(
-            [msgVote(voter: key.address, proposalID: proposalID, option: option)],
-            key: key
-        )
-    }
 }
