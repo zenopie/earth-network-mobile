@@ -129,7 +129,7 @@ struct HandleScreen: View {
         HStack(spacing: theme.space.x8) {
             EarthButton(title: model.handleEntry.map { $0.address != model.shieldedAddress } == true ? "Renew to this wallet" : "Renew for 1 year") { renew() }
             EarthButton(title: copied ? "Copied" : "Copy link", role: .secondary) {
-                UIPasteboard.general.string = "Pay me privately on Earth: @\(model.handle) · join with https://erth.network/ref/\(model.handle)"
+                Clipboard.copy("Pay me privately on Earth: @\(model.handle) · join with https://erth.network/ref/\(model.handle)")
                 copied = true
             }
         }

@@ -52,7 +52,7 @@ struct ReceiveSheet: View {
                         .padding(.horizontal, theme.space.gutter)
 
                     EarthButton(title: copied ? "Copied" : "Copy address", role: .secondary) {
-                        UIPasteboard.general.string = shown
+                        Clipboard.copy(shown)
                         copied = true
                     }
                     .padding(.horizontal, theme.space.gutter)
