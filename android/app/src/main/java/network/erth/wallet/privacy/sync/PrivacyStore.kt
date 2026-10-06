@@ -167,6 +167,13 @@ data class PendingMove(
 }
 
 /**
+ * A spend mark carried across a store reset, keyed by the note's nullifier:
+ * a tx still in the mempool keeps its notes unspendable while the resync
+ * finds them again (WalletSync applies it to the note it re-finds).
+ */
+data class CarriedMark(val at: Long, val until: Long?, val tx: String?)
+
+/**
  * What the wallet keeps between syncs: cursors into each indexer stream, its
  * own notes, its registration, and its own txs' bookkeeping. Small; the
  * trees live beside it in per-level files.
@@ -260,6 +267,8 @@ class PrivacyState {
      */
     var labelWindowSeconds: Long = 0
     val stakeNotes: MutableList<OwnedStakeNote> = ArrayList()
+    /** Pending marks a reset carried, by nullifier hex, until the resync re-finds their notes. */
+    val carriedMarks: MutableMap<String, CarriedMark> = HashMap()
     /** Every denom seen in a public amount: resolves the asset ids ciphertexts carry. */
     val denoms: MutableSet<String> = sortedSetOf()
 
@@ -320,6 +329,11 @@ class PrivacyState {
         put("label_window_seconds", labelWindowSeconds)
         put("stake_notes", JSONArray().apply { stakeNotes.forEach { put(stakeJson(it)) } })
         put("denoms", JSONArray(denoms.toList()))
+        put("carried_marks", JSONArray().apply {
+            carriedMarks.forEach { (nf, m) ->
+                put(JSONObject().put("nf", nf).put("at", m.at).put("until", m.until ?: JSONObject.NULL).put("tx", m.tx ?: JSONObject.NULL))
+            }
+        })
     }
 
     companion object {
@@ -388,6 +402,11 @@ class PrivacyState {
             labelWindowSeconds = j.optLong("label_window_seconds")
             j.optJSONArray("stake_notes")?.let { a -> for (i in 0 until a.length()) stakeNotes.add(stakeFromJson(a.getJSONObject(i))) }
             j.optJSONArray("denoms")?.let { a -> for (i in 0 until a.length()) denoms.add(a.getString(i)) }
+            j.optJSONArray("carried_marks")?.let { a ->
+                for (i in 0 until a.length()) a.getJSONObject(i).let {
+                    carriedMarks[it.getString("nf")] = CarriedMark(it.getLong("at"), opt(it, "until"), optString(it, "tx"))
+                }
+            }
         }
 
         private fun splitJson(m: Map<Long, Long>) = JSONObject().apply { m.forEach { (k, v) -> put(k.toString(), v) } }
@@ -535,6 +554,10 @@ class PrivacyStore private constructor(private val dir: File?) {
                 pendingUnbonds.addAll(old.pendingUnbonds)
                 stakeVotes.addAll(old.stakeVotes)
                 labelWindowSeconds = old.labelWindowSeconds
+                // Notes a tx in flight spends stay unspendable through the resync.
+                carriedMarks.putAll(old.carriedMarks)
+                for (n in old.notes) if (n.unspent && n.pendingAt != null) carriedMarks[n.nf.toHex()] = CarriedMark(n.pendingAt, n.pendingUntil, n.pendingTx)
+                for (n in old.stakeNotes) if (n.unspent && n.pendingAt != null) carriedMarks[n.nf.toHex()] = CarriedMark(n.pendingAt, n.pendingUntil, n.pendingTx)
             } else if (old.chainId == null) {
                 // Never synced: what a switch moved to this identity was
                 // recorded for the chain the app follows (PrivacySession.recorderFor).

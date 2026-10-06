@@ -500,11 +500,13 @@ object LcdChainRoots : network.erth.wallet.privacy.sync.ChainRoots {
 
     /**
      * Every validator with a book or an x/staking record, from the
-     * validator list (the one the sync that asks just read; read now when
-     * there is none), at most Denoms.MAX.
+     * validator list read now (whole, as every sync reads it): asked only for
+     * a stake note no held denom names, which a cached list from before its
+     * validator existed would leave unnamed. At most Denoms.MAX; null when
+     * the list cannot be read.
      */
     override fun validatorOperators(): List<String>? = runCatching {
-        (PrivacyQueries.cachedValidators ?: PrivacyQueries.validators()).validators.map { it.validator }
+        PrivacyQueries.validators().validators.map { it.validator }
             .take(network.erth.wallet.privacy.note.Denoms.MAX)
     }.getOrNull()
 

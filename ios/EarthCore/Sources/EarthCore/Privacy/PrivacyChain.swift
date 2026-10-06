@@ -649,11 +649,12 @@ public struct LCDChainRoots: ChainRoots {
     }
 
     /// Every validator with a book or an x/staking record, from the
-    /// validator list (the one the sync that asks just read; read now when
-    /// there is none), at most Denoms.max.
+    /// validator list read now (whole, as every sync reads it): asked only for
+    /// a stake note no held denom names, which a cached list from before its
+    /// validator existed would leave unnamed. At most Denoms.max; nil when
+    /// the list cannot be read.
     public func validatorOperators() async -> [String]? {
-        let list: PrivacyReads.ValidatorList?
-        if let cached = PrivacyQueries.cachedValidators { list = cached } else { list = try? await PrivacyQueries(rest: rest).validators() }
+        let list = try? await PrivacyQueries(rest: rest).validators()
         return list.map { Array($0.validators.map(\.validator).prefix(Denoms.max)) }
     }
 

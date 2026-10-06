@@ -209,6 +209,15 @@ public struct PendingMove: Codable, Equatable, Sendable {
     }
 }
 
+/// A spend mark carried across a store reset, keyed by the note's nullifier:
+/// a tx still in the mempool keeps its notes unspendable while the resync
+/// finds them again (WalletSync applies it to the note it re-finds).
+public struct CarriedMark: Codable, Equatable, Sendable {
+    public var at: Int64
+    public var until: UInt64?
+    public var tx: String?
+}
+
 /// What the wallet keeps between syncs: cursors into each indexer stream, its
 /// own notes, its registration, and its own txs' bookkeeping. Small; the
 /// trees live beside it in per-level files. Ports PrivacyState in
@@ -296,6 +305,8 @@ public struct PrivacyState: Codable, Sendable {
     /// A uniform sample of identity row heights (registration blocks): a record's LCD cover set is drawn from it.
     public var identityHeights: [UInt64] = []
     public var identityRowsSeen: UInt64 = 0
+    /// Pending marks a reset carried, by nullifier hex, until the resync re-finds their notes.
+    public var carriedMarks: [String: CarriedMark] = [:]
 
     public init() {}
 
@@ -305,7 +316,7 @@ public struct PrivacyState: Codable, Sendable {
              pendingUnbonds, nextOtagCounter, stakeNext, stakeHeight, stakeNullifiersNext, stakeNotes, denoms, closedOtagMax,
              syncGeneration, verifiedGeneration, verifiedHeight, stakeVotes, identityHeights, identityRowsSeen,
              handleSetAt, caretakerSplitUnknown, handleRecordPos, caretakerRecordPos, voidRecordHeights, pendingMoves, switchTarget,
-             handleExpiresAt, handleExpiresFor, labelWindowSeconds
+             handleExpiresAt, handleExpiresFor, labelWindowSeconds, carriedMarks
     }
 
     /// Tolerates a state file from before the stake tree (missing keys keep their defaults).
@@ -337,6 +348,7 @@ public struct PrivacyState: Codable, Sendable {
         voidRecordHeights = try v(.voidRecordHeights, []); pendingMoves = try v(.pendingMoves, []); switchTarget = try v(.switchTarget, "")
         handleExpiresAt = try v(.handleExpiresAt, 0); handleExpiresFor = try v(.handleExpiresFor, "")
         labelWindowSeconds = try v(.labelWindowSeconds, 0)
+        carriedMarks = try v(.carriedMarks, [:])
     }
 }
 
@@ -506,6 +518,10 @@ public final class PrivacyStore {
             s.caretakerExpiresAt = old.caretakerExpiresAt; s.caretakerMovedOut = old.caretakerMovedOut
             s.handle = old.handle; s.handleMovedOut = old.handleMovedOut
             Self.keepHandleState(old, &s)
+            // Notes a tx in flight spends stay unspendable through the resync.
+            s.carriedMarks = old.carriedMarks
+            for n in old.notes where n.unspent { if let at = n.pendingAt { s.carriedMarks[n.nf.hex] = CarriedMark(at: at, until: n.pendingUntil, tx: n.pendingTx) } }
+            for n in old.stakeNotes where n.unspent { if let at = n.pendingAt { s.carriedMarks[n.nf.hex] = CarriedMark(at: at, until: n.pendingUntil, tx: n.pendingTx) } }
         } else if old.chainID == nil {
             // Never synced: what a switch moved to this identity was
             // recorded for the chain the app follows (PrivacyWallet.recordIncoming).

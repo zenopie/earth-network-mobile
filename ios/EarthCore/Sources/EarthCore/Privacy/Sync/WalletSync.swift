@@ -666,6 +666,9 @@ public final class WalletSync {
         // waits (its leaves are kept) for a sync that verifies. Once a sync,
         // after every pass: the record search is budgeted per sync.
         if verified {
+            // The resync reached the verified tip: a carried mark whose note
+            // it did not find again has nothing left to hold.
+            store.mutate { $0.carriedMarks = [:] }
             await matchRecords()
             resolvePending()
             // An identity from before (or a reset) whose leaf this verified tree holds is verified now.
@@ -874,7 +877,10 @@ public final class WalletSync {
             if !rows.isEmpty {
                 store.noteTree.appendAll(rows.map(\.cm))
                 for r in rows {
-                    if let n = open(r) {
+                    if var n = open(r) {
+                        if let c = store.mutate({ $0.carriedMarks.removeValue(forKey: n.nf.hex) }) {
+                            n.pendingAt = c.at; n.pendingUntil = c.until; n.pendingTx = c.tx
+                        }
                         found.append(n)
                         store.mutate { $0.notes.append(n) }
                     }
@@ -1109,15 +1115,23 @@ public final class WalletSync {
             let tree = store.stakeTree
             let rows = try fresh("stake note", page.rows, from: from, held: store.state.stakeNext, { $0.position }) { tree.leaf($0.position) == $0.cm }
             if !rows.isEmpty {
-                store.stakeTree.appendAll(rows.map(\.cm))
                 let opened = rows.compactMap { r in Self.openStake(r, keys: keys).map { (r, $0) } }
                 // derth/<valoper> by the chain's validator list, read once, only when a note of ours needs it.
+                // Before anything is appended: a list that cannot be read fails the sync
+                // here, so the cursor never passes a note of ours it could not name.
                 if !validatorsRead, opened.contains(where: { assetDenoms.resolve($0.1.asset).hasPrefix(NotePlaintext.unresolvedPrefix) }) {
+                    guard let ops = await chain.validatorOperators() else {
+                        throw PrivacyError("the validator list could not be read, so a stake note of this wallet cannot be named yet")
+                    }
                     validatorsRead = true
-                    for op in (await chain.validatorOperators() ?? []).prefix(Denoms.max) { assetDenoms.learn("derth/\(op)") }
+                    for op in ops.prefix(Denoms.max) { assetDenoms.learn("derth/\(op)") }
                 }
+                store.stakeTree.appendAll(rows.map(\.cm))
                 for (r, o) in opened {
-                    if let n = ownedStake(r, o) {
+                    if var n = ownedStake(r, o) {
+                        if let c = store.mutate({ $0.carriedMarks.removeValue(forKey: n.nf.hex) }) {
+                            n.pendingAt = c.at; n.pendingUntil = c.until; n.pendingTx = c.tx
+                        }
                         found.append(n)
                         store.mutate { $0.stakeNotes.append(n) }
                     }

@@ -1,5 +1,6 @@
 package network.erth.wallet.privacy.sync
 
+import java.io.IOException
 import network.erth.wallet.privacy.keys.PrivacyKeys
 import network.erth.wallet.privacy.note.AssetDenoms
 import network.erth.wallet.privacy.note.Denoms
@@ -678,6 +679,9 @@ class WalletSync(
         // waits (its leaves are kept) for a sync that verifies. Once a sync,
         // after every pass: the record search is budgeted per sync.
         if (verified) {
+            // The resync reached the verified tip: a carried mark whose note
+            // it did not find again has nothing left to hold.
+            s.carriedMarks.clear()
             matchRecords(s)
             resolvePending(s)
             // An identity from before (or a reset) whose leaf this verified tree holds is verified now.
@@ -887,7 +891,10 @@ class WalletSync(
                 // page's notes again on the retry.
                 val mine = rows.mapNotNull { r -> openTotal(r) }
                 store.noteTree.appendAll(rows.map { it.cm })
-                for (n in mine) { found.add(n); s.notes.add(n) }
+                for (m in mine) {
+                    val n = s.carriedMarks.remove(m.nf.toHex())?.let { c -> m.copy(pendingAt = c.at, pendingUntil = c.until, pendingTx = c.tx) } ?: m
+                    found.add(n); s.notes.add(n)
+                }
                 s.notesNext += rows.size
             }
             s.notesHeight = maxOf(s.notesHeight, page.syncedHeight)
@@ -1094,7 +1101,10 @@ class WalletSync(
                 // As syncNotes: opened first, a bad row skipped.
                 val mine = rows.mapNotNull { r -> try { openStake(r) } catch (e: RuntimeException) { null } }
                 store.stakeTree.appendAll(rows.map { it.cm })
-                for (n in mine) { found.add(n); s.stakeNotes.add(n) }
+                for (m in mine) {
+                    val n = s.carriedMarks.remove(m.nf.toHex())?.let { c -> m.copy(pendingAt = c.at, pendingUntil = c.until, pendingTx = c.tx) } ?: m
+                    found.add(n); s.stakeNotes.add(n)
+                }
                 s.stakeNext += rows.size
             }
             s.stakeHeight = maxOf(s.stakeHeight, page.syncedHeight)
@@ -1122,13 +1132,17 @@ class WalletSync(
      * derth/<valoper> for a stake note's asset id: known already, or found
      * among the chain's validators (read at most once a sync; each candidate
      * learned only as the hash of its own name). Null: no validator's (a stake
-     * note of an asset the wallet cannot name is not one it can use).
+     * note of an asset the wallet cannot name is not one it can use). A list
+     * that cannot be read throws an IOException, which the row loop does not
+     * swallow: the sync fails before the cursor passes a note it could not name.
      */
     private fun stakeDenom(asset: Fr): String? {
         assetDenoms.resolve(asset).takeIf { !it.startsWith(NotePlaintext.UNRESOLVED_PREFIX) }?.let { return it }
         if (!validatorsRead) {
+            val ops = runCatching { chain.validatorOperators() }.getOrNull()
+                ?: throw IOException("the validator list could not be read, so a stake note of this wallet cannot be named yet")
             validatorsRead = true
-            runCatching { chain.validatorOperators() }.getOrNull()?.forEach { op -> assetDenoms.learn("derth/$op") }
+            ops.forEach { op -> assetDenoms.learn("derth/$op") }
         }
         return assetDenoms.resolve(asset).takeIf { !it.startsWith(NotePlaintext.UNRESOLVED_PREFIX) }
     }
