@@ -309,3 +309,35 @@ Tests: nargo 165 variant tests + 21 poa_core; Android 245; iOS EarthCore
 Not done: an on-device measurement of the 2^19 and 2^20 tiers; the
 androidTest PrivacyProverDeviceTest was already out of date and does not
 compile (unrelated).
+
+## Pre-relaunch cleanup (2026-10-06)
+
+Cleanup only, ahead of the full security audit: no circuit, wire-format,
+key-derivation, storage-format or crypto change.
+
+- **Removed flows.** The transparent Claim rewards (the chain refuses an
+  operator's MsgWithdrawDelegatorReward and nobody else can hold a
+  transparent delegation) on both platforms, with its msg builders and the
+  unused transparent delegate/undelegate builders and protos. A
+  self-bond's delegations, unbondings and pending rewards are still shown.
+- **Removed dead code.** Explorer's validator set and slashing reads, unread
+  fields (the passport scan's MRZ data, DG1 and SOD among them), unobserved
+  view-model flows, never-thrown error cases, unused glyphs, images,
+  dimens, design-system components and dependencies, `tools/registry-builder`
+  and the uncompilable `PrivacyProverDeviceTest`.
+- **Logging.** The debug-only update test mode and the Log.d/Log.i trail
+  are gone. A wallet-storage parse failure no longer carries the parser's
+  message or cause, which could quote the decrypted storage (mnemonics
+  included) into SessionManager's error log.
+- **Comments and docs** describe the current chain (6d3500a): current
+  ORCHARD_DESIGN sections, no commit-hash, audit-wave or v0.9.0-upgrade
+  narration, the tiered passport SRS and 16 + 17 variants.
+
+Found and not fixed (cleanup only; see the cleanup report): Android's
+Unstake button is enabled only by transparent delegations, so private
+stake cannot be unstaked from Earn; the Android unlock lockout never
+clears without recreating the screen; iOS never shows `AppModel.lastError`,
+so non-PIN unlock failures read as a wrong PIN; `tools/certcheck` does not
+build against the current chain and compares the nullifier where the DSC
+commitment is meant; `circuits/.gitignore` keeps the variant fixtures'
+Prover.toml files out of git.
