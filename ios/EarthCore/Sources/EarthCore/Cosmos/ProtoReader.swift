@@ -42,8 +42,10 @@ public struct ProtoFields {
                 for k in 0 ..< 8 { v |= UInt64(b[i + k]) << UInt64(8 * k) }
                 i += 8; value = .fixed64(v)
             case 2:
-                let n = Int(try varint())
-                guard n >= 0, i + n <= b.count else { throw Error.truncated }
+                // Bounded as a UInt64 first: Int(_:) traps past Int.max, and i + n can overflow.
+                let len = try varint()
+                guard len <= UInt64(b.count - i) else { throw Error.truncated }
+                let n = Int(len)
                 value = .bytes(Data(b[i ..< i + n])); i += n
             case 5:
                 guard i + 4 <= b.count else { throw Error.truncated }

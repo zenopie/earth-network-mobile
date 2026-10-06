@@ -2108,12 +2108,22 @@ class PrivacyWallet(
                 val d = if (part.any { it.label != null }) runCatching { debtView() }.getOrNull() else null
                 val v = Amounts.satSum(part) { voteValue(it, d) }
                 if (part.isEmpty() || v <= 0) null
-                else VotePreview(part.size, derthValue(voteWeight(v), snap.rates[item.validator] ?: BigDecimal.ONE))
+                else rateFor(snap, item.validator)?.let { VotePreview(part.size, derthValue(voteWeight(v), it)) }
             }
             is StakeVoteItem.Position -> positions().firstOrNull { it.first.id == item.id }?.first
-                ?.let { VotePreview(0, derthValue(it.derth, snap.rates[it.validator] ?: BigDecimal.ONE)) }
+                ?.let { p -> rateFor(snap, p.validator)?.let { VotePreview(0, derthValue(p.derth, it)) } }
         }
     }
+
+    /**
+     * ERTH per derth of [validator] for a vote preview: the snapshot's, which
+     * a snapshot with a seq does not carry, else the live book's (backing /
+     * supply, Query/Validators read whole). Null when neither is known: the
+     * sheet then shows no ERTH figure rather than the derth count as one.
+     */
+    private fun rateFor(snap: PrivacyChainReads.Snapshot, validator: String): BigDecimal? = snap.rates[validator]
+        ?: runCatching { reads.validators().of(validator) }.getOrNull()?.takeIf { it.supply.signum() > 0 }
+            ?.let { BigDecimal(it.backing).divide(BigDecimal(it.supply), 18, java.math.RoundingMode.DOWN) }
 
     /**
      * Casts [item] as the last sync left things: a validator's next vote (up

@@ -2432,23 +2432,27 @@ public final class PrivacyWallet: @unchecked Sendable {
     /// This wallet's weight on `proposalID`: per validator, its eligible derth
     /// notes in votes of up to `MsgStakeVote.maxVoteNotes` (each the rounded
     /// `voteWeight` of its notes' sum), and every position created before the
-    /// snapshot's block, each at its validator's rate at the snapshot (1
-    /// where it names none).
+    /// snapshot's block, each at its validator's rate (`rateFor`: the
+    /// snapshot's, else the live book's; a validator with neither adds nothing).
     public func stakeVoteWeight(proposalID: UInt64, positions: [PrivacyReads.Position]) async throws -> StakeWeight {
         let snap = try await snapshot(proposalID: proposalID)
+        let books = snap.rates.isEmpty ? try? await reads.validators() : nil
         let notes = await eligible(proposalID, snap)
         let ps = Self.votingPositions(positions, snapshot: snap)
         let d = notes.contains(where: { $0.label != nil }) ? try? await locked { try await debtView(notes, always: true) } : nil
         var total: UInt64 = 0
         for (denom, ns) in Dictionary(grouping: notes, by: \.denom) {
-            let rate = snap.rates[(try? Self.parseDerth(denom)) ?? ""] ?? 1
+            guard let rate = Self.rateFor(snap, (try? Self.parseDerth(denom)) ?? "", books) else { continue }
             for part in Self.parts(ns.sorted(by: Self.voteOrder)) {
                 let v = part.reduce(UInt64(0)) { Snapshot.satAdd63($0, Self.voteValue($1, d)) }
                 guard v > 0, let w = try? Self.voteWeight(v) else { continue }
                 total = PrivateMsgs.saturatingAdd(total, Self.derthValue(w, rate: rate))
             }
         }
-        for p in ps { total = PrivateMsgs.saturatingAdd(total, Self.derthValue(p.derth, rate: snap.rates[p.validator] ?? 1)) }
+        for p in ps {
+            guard let rate = Self.rateFor(snap, p.validator, books) else { continue }
+            total = PrivateMsgs.saturatingAdd(total, Self.derthValue(p.derth, rate: rate))
+        }
         return StakeWeight(notes: notes.count, positionIDs: Set(ps.map(\.id)), uerth: total)
     }
 
@@ -2505,11 +2509,27 @@ public final class PrivacyWallet: @unchecked Sendable {
             let value = part.reduce(UInt64(0)) { Snapshot.satAdd63($0, Self.voteValue($1, d)) }
             guard value > 0 else { return nil }
             let w = try Self.voteWeight(value)
-            return VotePreview(notes: part.count, uerth: Self.derthValue(w, rate: snap.rates[v] ?? 1))
+            let books = snap.rates[v] == nil ? try? await reads.validators() : nil
+            guard let rate = Self.rateFor(snap, v, books) else { return nil }
+            return VotePreview(notes: part.count, uerth: Self.derthValue(w, rate: rate))
         case let .position(id, _):
             guard let p = try await positions().first(where: { $0.position.id == id })?.position else { return nil }
-            return VotePreview(notes: 0, uerth: Self.derthValue(p.derth, rate: snap.rates[p.validator] ?? 1))
+            let books = snap.rates[p.validator] == nil ? try? await reads.validators() : nil
+            guard let rate = Self.rateFor(snap, p.validator, books) else { return nil }
+            return VotePreview(notes: 0, uerth: Self.derthValue(p.derth, rate: rate))
         }
+    }
+
+    /// ERTH per derth of `validator` for a vote's ERTH figure: the
+    /// snapshot's, which a snapshot with a seq does not carry, else the live
+    /// book's (backing / supply, Query/Validators read whole). Nil when
+    /// neither is known: no ERTH figure rather than the derth count as one.
+    static func rateFor(_ snap: PrivacyReads.Snapshot, _ validator: String, _ books: PrivacyReads.ValidatorList?) -> Decimal? {
+        if let r = snap.rates[validator] { return r }
+        guard let book = books?[validator], book.supply > 0,
+              let backing = Decimal(string: book.backing.description), let supply = Decimal(string: book.supply.description)
+        else { return nil }
+        return backing / supply
     }
 
     /// Casts `item` as the last sync left things: a validator's next vote (up

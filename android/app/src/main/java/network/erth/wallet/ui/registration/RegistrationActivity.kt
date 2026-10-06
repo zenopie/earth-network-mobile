@@ -303,7 +303,7 @@ class RegistrationActivity : ComponentActivity() {
                                     repeat(GAS_POLL_ATTEMPTS) {
                                         delay(GAS_POLL_INTERVAL_MS)
                                         refreshBalance()
-                                        if (balanceUerth >= REGISTER_FEE) return@launch
+                                        if (balanceUerth >= registerFee) return@launch
                                     }
                                 } finally {
                                     awaitingGas = false

@@ -25,15 +25,6 @@ public extension EarthClient {
         return json.count.int64(default: 0)
     }
 
-    /// How many humans registered with a given Document Signer (hex dsc_key).
-    func registrations(byDSC dscKeyHex: String) async -> Int64 {
-        let key = dscKeyHex.hasPrefix("0x") ? String(dscKeyHex.dropFirst(2)) : dscKeyHex
-        guard let json = try? await rest.get(
-            "/earth/personhood/v1/registrations_by_dsc/\(key)"
-        ) else { return 0 }
-        return json.count.int64(default: 0)
-    }
-
     // No messages: registration and the ANML claim are private
     // (PrivacyWallet.register / claimAnml), unlinkable to any address, so
     // "am I registered" comes from the wallet's own synced identity tree.

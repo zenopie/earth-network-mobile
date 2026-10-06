@@ -89,6 +89,8 @@ class Fr internal constructor(internal val m: IntArray) : Comparable<Fr> {
 
         fun fromHex(h: String): Fr {
             val s = h.removePrefix("0x")
+            // Hex digits only: BigInteger(s, 16) also takes a sign ("-1" is p - 1 after reduction).
+            require(s.isNotEmpty() && s.length <= 64 && s.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) { "not a field element in hex" }
             val v = BigInteger(s, 16)
             require(v < MODULUS) { "not a canonical field element" }
             return of(v)
