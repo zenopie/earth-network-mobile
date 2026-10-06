@@ -92,8 +92,6 @@ class AssetDenoms(known: Collection<String> = emptyList()) {
         return true
     }
 
-    fun denoms(): Set<String> = byId.values.toSet()
-
     fun resolve(asset: Fr): String = byId[asset] ?: (NotePlaintext.UNRESOLVED_PREFIX + asset.toHex())
 }
 
@@ -113,7 +111,7 @@ object Denoms {
 }
 
 /**
- * A stake note's slash label (ORCHARD_DESIGN 20.6): the note holds [exposed]
+ * A stake note's slash label (ORCHARD_DESIGN 8.7): the note holds [exposed]
  * derth a private redelegation credited, the move [moveKey] (its credit
  * nullifier) named at [moveTime] (unix seconds). Until the move's window
  * closes (moveTime + the chain's label window) a slash of the move's source

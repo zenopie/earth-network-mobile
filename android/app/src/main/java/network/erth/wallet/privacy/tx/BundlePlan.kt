@@ -113,8 +113,6 @@ class BundlePlan(val actions: List<PlannedAction>, val anchor: Fr, private val n
         net.filterValues { it.signum() > 0 }.map { (d, v) -> d to v.longValueExact() }
     }
 
-    fun balance(denom: String): Long = balances.firstOrNull { it.first == denom }?.second ?: 0
-
     /** The owned notes this bundle spends. */
     val spends: List<OwnedNote> get() = actions.mapNotNull { it.spend.note }
 
@@ -276,7 +274,7 @@ object NoteSelection {
 
 /**
  * Picks stake notes for lane A of a stake proof (circuits/stake v2): at most
- * two inputs, at most one of them labelled (ORCHARD_DESIGN 20.6). [free] is
+ * two inputs, at most one of them labelled (ORCHARD_DESIGN 8.7). [free] is
  * what a note may give up: its amount, or for a labelled note its amount less
  * the exposure (the window still open) or less the exposure plus what the
  * debt tree says it retains (the window closed: the proof clears it).

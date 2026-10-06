@@ -6,7 +6,6 @@ import cosmos.base.v1beta1.CoinOuterClass
 import cosmos.tx.v1beta1.Tx
 import network.erth.wallet.Constants
 import network.erth.wallet.chain.EarthRest
-import network.erth.wallet.chain.EarthTx
 import okio.ByteString.Companion.toByteString
 import org.json.JSONObject
 import java.io.IOException
@@ -63,9 +62,6 @@ object UnsignedTx {
         if (code !in 200..299) throw IOException("simulate failed ($code): ${message(resp)}")
         return JSONObject(resp).getJSONObject("gas_info").getString("gas_used").toLong()
     }
-
-    /** Broadcasts and waits for the block. Returns the tx hash; throws on any non-zero code. */
-    fun broadcast(txBytes: ByteArray): String = EarthTx.awaitCommit(submit(txBytes))
 
     /** Broadcasts (sync mode): the tx hash once CheckTx accepted it; throws on any non-zero code. */
     fun submit(txBytes: ByteArray): String {
