@@ -23,8 +23,6 @@ import androidx.compose.material3.RippleDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import network.erth.wallet.ui.designsystem.LocalKeyboardManager
-import network.erth.wallet.ui.designsystem.rememberKeyboardManager
 import network.erth.wallet.ui.designsystem.theme.balances.LocalBalancesAvailable
 import network.erth.wallet.ui.designsystem.theme.colors.LightEarthColorsInternal
 import network.erth.wallet.ui.designsystem.theme.colors.LocalEarthColors
@@ -65,7 +63,6 @@ fun ZcashTheme(
         LocalEarthTypography provides EarthTypographyInternal,
         LocalRippleConfiguration provides MaterialRippleConfig,
         LocalBalancesAvailable provides balancesAvailable,
-        LocalKeyboardManager provides rememberKeyboardManager()
     ) {
         ProvideDimens {
             MaterialTheme(
