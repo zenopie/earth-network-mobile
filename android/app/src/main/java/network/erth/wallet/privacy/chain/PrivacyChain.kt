@@ -299,13 +299,18 @@ object PrivacyQueries {
 
     /** Every Groundworks position (public); the wallet finds its own by owner tag. */
     fun positions(): List<Position> {
+        // Each id once (the first served): a page repeated by a proxy or a
+        // node must not count a position twice.
         val out = ArrayList<Position>()
+        val seen = HashSet<Long>()
+        val keys = HashSet<String>()
         var key: String? = null
         do {
             val j = get("/earth/shieldedstaking/v1/positions" + (key?.let { "?pagination.key=" + java.net.URLEncoder.encode(it, "UTF-8") } ?: ""))
             val a = j.optJSONArray("positions")
             if (a != null) for (i in 0 until a.length()) {
                 val p = a.getJSONObject(i)
+                if (!seen.add(p.long("id"))) continue
                 val splits = p.optJSONArray("splits")
                 out.add(
                     Position(
@@ -320,6 +325,7 @@ object PrivacyQueries {
                 )
             }
             key = j.optJSONObject("pagination")?.optString("next_key")?.takeIf { it.isNotEmpty() && it != "null" }
+            if (key != null && !keys.add(key)) throw IOException("the node's positions listing repeats a page")
         } while (key != null)
         return out
     }

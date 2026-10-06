@@ -892,7 +892,8 @@ public final class AppModel {
         let queries = PrivacyQueries(rest: client.rest)
         if let mine = try? await w.positions() {
             positions = mine.map { OwnedPosition(position: $0.position, counter: $0.counter) }
-            groundworksLeases = Dictionary(uniqueKeysWithValues: await w.groundworksLeases(mine.map(\.position)).map { ($0.positionID, $0) })
+            // First per id: a duplicate the node served must not trap here.
+            groundworksLeases = Dictionary(await w.groundworksLeases(mine.map(\.position)).map { ($0.positionID, $0) }, uniquingKeysWith: { a, _ in a })
         }
         await refreshStakeHoldings()
         await refreshRemovalBallots()

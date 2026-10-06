@@ -468,9 +468,13 @@ public struct PrivacyQueries: PrivacyChainReads {
         return PrivacyReads.StakingTiming(epochSeconds: es > 0 ? min(es, Self.maxDurationSeconds) : 86_400, unbondingSeconds: seconds)
     }
 
-    /// Every Groundworks position (public); the wallet finds its own by owner tag.
+    /// Every Groundworks position (public); the wallet finds its own by owner
+    /// tag. Each id once (the first served): a page repeated by a proxy or a
+    /// node must not count a position twice.
     public func positions() async throws -> [PrivacyReads.Position] {
         var out: [PrivacyReads.Position] = []
+        var seen = Set<UInt64>()
+        var keys = Set<String>()
         var key: String?
         repeat {
             let path = "/earth/shieldedstaking/v1/positions" +
@@ -479,12 +483,14 @@ public struct PrivacyQueries: PrivacyChainReads {
             for p in j.positions.array {
                 var splits: [UInt64: UInt64] = [:]
                 for s in p.splits.array { splits[s.option_id.uint64(default: 0)] = s.percent.uint64(default: 0) }
+                guard seen.insert(p.id.uint64(default: 0)).inserted else { continue }
                 out.append(PrivacyReads.Position(id: p.id.uint64(default: 0), validator: p.validator.string(default: ""),
                                                  derth: p.derth.uint64(default: 0), ownerTag: try field(p.owner_tag),
                                                  splits: splits, createdHeight: p.created_height.uint64(default: 0),
                                                  splitExpiresAt: max(0, p.split_expires_at.int64(default: 0))))
             }
             key = j.pagination.next_key.string.flatMap { $0.isEmpty || $0 == "null" ? nil : $0 }
+            if let k = key, !keys.insert(k).inserted { throw PrivacyError("the node's positions listing repeats a page") }
         } while key != nil
         return out
     }
