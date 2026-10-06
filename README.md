@@ -8,7 +8,7 @@ private: every private transaction is proven on the phone.
 
     android/    the Android app: Kotlin + Jetpack Compose (behavioural reference)
     ios/        the iOS app: see ios/README.md
-    circuits/   Noir circuits: passport registration, action, stake, vote, membership
+    circuits/   Noir circuits: passport registration, action, stake, vote, membership, move
     tools/      vector generator, proof checker, Go ground-truth checks, registry builder
 
 | Document | What it is |

@@ -380,3 +380,35 @@ Android/iOS parity.
   exported launcher (MK-09: indistinguishable from a tapped link; shown and
   editable at registration). iOS keeps the phrases resident while unlocked
   (the session secret alone opens the vault either way).
+
+## Moves restored behind the move circuit (chain 95dc61b, genesis 01298d6b, 2026-10-06)
+
+The chain's B-4 decision: MsgMoveHandle and MsgMoveCaretaker are back,
+gated by circuits/move (d474ebf), which proves a succession leaf
+H(TAG_SUCC, idc_old, idc_new) and the successor's live leaf under one
+recent root. Android and iOS in parity.
+
+- **Circuit.** move.json bundled (b079abe); `bb write_vk` equals the genesis
+  move key; variants.py lists move among the workspace members.
+- **Flow.** A move comes after the switch, while the new identity is the
+  passport's live one. The old identity's wallet proves it with both
+  identity secrets and pays the fee (a switched registration mints nothing
+  to the new wallet); the pending-move bookkeeping (both stores before the
+  broadcast, settled by hash) is unchanged. succession_index is the new
+  leaf's index + 1, else a local search. A zeroed or skipped successor, or
+  another passport's identity, is refused before anything is laid out.
+  The switch screen no longer moves anything; Identity in the new wallet
+  offers "Bring your handle / Caretaker split to this identity" for the
+  predecessor found among the phone's wallets by its succession leaf, and
+  both screens say a lost-phrase switch cannot move (d10ffb5, 450545e).
+- **Wire.** MoveProof{proof, root, old_nullifier, new_nullifier};
+  MsgMoveHandle{fee, move, handle} (sighash Bytes(handle)),
+  MsgMoveCaretaker{fee, move} (none). Golden vectors regenerated from the
+  chain (b162d7d); txcheck decodes the Swift-built move txs (b725e7a).
+- **Proofs.** fixture_move (9224bad): nargo executes it, bb proves and
+  verifies it with the genesis key, ProverGate proves it and every dumped
+  move witness, and tools/chainverify (the chain's verifier) accepts the
+  Swift proofs.
+- **Keep window.** A sent registration is kept for the chain's
+  current_date_max_skew_seconds (read before the broadcast, at least 48 h,
+  at most a year and a day) instead of a constant (67878c2, 47dfac6).

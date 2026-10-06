@@ -65,15 +65,15 @@ javalite.
 
 | Package | Responsibility |
 |---------|----------------|
-| `PrivacyWallet.kt` | Every private action: send, swap, liquidity, stake, unstake, move, votes, registration, claims, handles. |
-| `PrivacySession.kt` | The selected wallet's `PrivacyWallet`, built from its mnemonic and kept for the session. |
+| `PrivacyWallet.kt` | Every private action: send, swap, liquidity, stake, unstake, move, votes, registration, claims, handles, and the handle and caretaker moves a switch's old identity makes to its successor (move proofs). |
+| `PrivacySession.kt` | The selected wallet's `PrivacyWallet`, built from its mnemonic and kept for the session; another wallet's on demand (a switch's predecessor), and the move offer it finds by the succession leaf. |
 | `Reminders.kt` | Recurring actions (ANML claim, caretaker refresh, handle renewal) are reminded, never run unasked. |
 | `keys/` | Shielded key derivation and the shielded address. |
 | `note/` | Note plaintexts and their ciphertexts. |
 | `zk/` | Field, Poseidon2, Grumpkin, Merkle, indexed and debt trees; the chain's derivations. |
 | `sync/` | Indexer client, local store, wallet sync, restore, root verification against the LCD. |
 | `tx/` | Bundle and stake planning, private msg encoding, the unsigned tx and its engine. |
-| `prove/` | Witnesses and the on-device prover for action, stake, vote and membership. |
+| `prove/` | Witnesses and the on-device prover for action, stake, vote, membership and move. |
 | `chain/`, `handles/` | Private-chain queries and the chain roots sync checks against; handles and their directory. |
 
 ## Every write goes through TxController
@@ -103,7 +103,7 @@ SecureWalletManager.executeWithMnemonic(context) { mnemonic ->
 | `govern/`, `personhood/`, `explore/` | Proposals and allocations, registration status, the explorer. |
 | `onboarding/`, `unlock/`, `settings/` | First wallet, PIN and biometric unlock, settings. |
 | `registration/` | The passport flow: MRZ camera → confirm → NFC → prove → register. |
-| `privacy/` | Shielded balances and actions, handle screens. |
+| `privacy/` | Shielded balances and actions, handle screens, the identity switch and the post-switch move offer. |
 | `tx/` | Confirm, pending and result sheets, and `TxController`. |
 | `components/`, `theme/` | Shared Earth composables and the Earth theme. |
 | `designsystem/` | Vendored Zodl design library; see [LICENSES.md](LICENSES.md). |

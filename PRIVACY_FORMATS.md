@@ -581,7 +581,14 @@ new_nullifier = H(TAG_SN, new_secret, scope), and binds signal (the msg's
 sighash). scope is Scope("handle") for MsgMoveHandle and Scope("caretaker")
 for MsgMoveCaretaker; root is a recent identity root (as a membership's).
 The prover needs both identity secrets: the old wallet's and the new
-wallet's, both on the phone. 8,362 gates (2^14).
+wallet's, both on the phone. 8,362 gates (2^14). Bundled as
+`assets/circuits/move.json` (Android and iOS share the folder);
+`bb write_vk` of it equals genesis 01298d6b's `move` key. The engine sets
+the msg's MoveProof (root, both nullifiers, proof) once proven; a quote lays
+out random nullifiers, as for a membership. `fixture_move` (test resources)
+is a wallet witness of a post-switch handle move: nargo executes it, bb and
+Swoirenberg prove it, and the chain's verifier (tools/chainverify) accepts
+the proof under the genesis key.
 
 **passport** (`lean_poa_*`, 33 variants; registration only): one circuit per
 DSC key type (RSA-2048/3072/4096; ECDSA P-224/256/384/521, brainpoolP224r1/
@@ -608,8 +615,13 @@ check is in the ante, so a refused switch costs nothing.
 are public once broadcast, and one that failed or was refused may still
 land while its current_date is within the skew. From just before the
 broadcast the wallet records `registration_keep_until` (iOS
-`registrationKeepUntil`) = current_date (unix) + 172,800 in the wallet's
-state; until then that wallet counts as possibly registered (a switch
+`registrationKeepUntil`) = current_date (unix) + the skew in the wallet's
+state, the skew being the chain's current_date_max_skew_seconds (x/personhood
+params, field 7, read from `/earth/personhood/v1/params` before the
+broadcast) taken in [172,800, 366 days]: never below the default 48 h (a
+node that says nothing, or 0, gets 48 h; a shorter window would only mean
+keeping longer than needed), never above the year governance may set plus a
+day; until then that wallet counts as possibly registered (a switch
 target's "already has a registration" warning), and its identity, so its
 recovery phrase, must be kept. A reset or genesis switch of the synced
 data carries it.
@@ -783,8 +795,11 @@ ERTH note for its fee.
    default schedule: 100,000 + 10 per tx byte + per bundle 100,000 +
    2,300,000 per action; + 3,150,000 for a stake proof (+ 750,000 for a
    credit lane and 1,024 × 5,000 + 128 × 20,000 for MsgRedelegate's
-   x/staking record at its worst); + 2,150,000 for a membership; +
-   3,600,000 for MsgRegister; + 2,250,000 + (1 + 2) × 150,000 (both slots, padding included) for
+   x/staking record at its worst); + 2,150,000 for a membership or a move
+   proof (+ 3 × 150,000 for MsgMoveHandle, + 5 × 150,000 for
+   MsgMoveCaretaker: four and six note writes); + 3,300,000 + 6 × 150,000
+   for MsgRegister (six note writes, the sixth the succession leaf a switch
+   or re-entry appends); + 2,250,000 + (1 + 2) × 150,000 (both slots, padding included) for
    a stake vote; + 8 × 150,000 for MsgBindHandle (a bind is priced as nine
    note writes). x/shielded's gas prices are capped (proof 10M, note 1M,
    bundle 1M). A node asking more is refused (FeeAboveCap; nothing proven
@@ -1184,10 +1199,33 @@ switch:** the move proof needs the succession leaf the switch appends and
 the new identity's live leaf, so once the new registration has landed (and
 its block's identity root is recorded), the phone proves the move with both
 wallets' identity secrets and moves the handle (only a live one;
-`HandleNotMovable` otherwise, and the switch screen says why) and the live
-caretaker split to the new identity's nullifiers, with state records to
-both (§6). It must do so while the new identity is still the passport's
-live one (before any further switch). Without moves, the new identity waits until
+`HandleNotMovable` otherwise) and the live caretaker split to the new
+identity's nullifiers, with state records to both (§6). It must do so while
+the new identity is still the passport's live one (before any further
+switch).
+
+- **Who proves and pays.** The old identity's wallet builds the move: it
+  holds what moves, and a switched registration mints nothing to the new
+  wallet, so the fee comes from the old wallet's private ERTH. It syncs
+  first, then takes, from its own identity tree (verified against the chain
+  at that sync), the new identity's leaf at the index the new wallet's
+  registration record names (`Successor`: the new wallet's keys and its
+  IdentityRecord) and the succession leaf. A zeroed successor leaf (it
+  switched again or lapsed), a leaf that does not match the record, or no
+  succession from this identity to that one is refused before anything is
+  laid out (`MoveNotPossible`).
+- **succession_index.** The chain appends the succession leaf in the same
+  tx, right after the new identity leaf, so the wallet looks at the new
+  leaf's index + 1 first and searches the rest of its local tree only if it
+  is not there. Nothing asked names either leaf.
+- **The offer.** Identity in the new wallet looks among this phone's other
+  wallets for the one whose idc forms a succession leaf with its own in its
+  local tree (at most one: the passport's previous identity), syncs that
+  wallet, and offers "Bring your handle @… to this identity" and "Bring your
+  Caretaker split to this identity" for what it still holds, with the fee
+  shown against that wallet's ERTH. A switch from a wallet whose phrase is
+  lost finds nothing to offer: the move proof needs its secret. The switch
+  screen itself moves nothing and says so. Without moves, the new identity waits until
 everything its predecessor could hold has lapsed (lease + 1 day). The mover
 records `*_moved_out` and never casts or claims again.
 
@@ -1200,8 +1238,8 @@ records `*_moved_out` and never casts or claims again.
   sync, and "Check the moves again"); a committed one is applied, and its
   state records settle it too. A failed write to the new wallet's store is
   kept for a retry.
-- The UI shows a move as done only once confirmed and does not offer
-  "register there" while one is in doubt.
+- The UI shows a move as done only once confirmed; a move in doubt is
+  shown as pending on the offer, with "Check the moves again".
 - The first confirmed move fixes the target wallet (by store id); a move in
   flight holds it only while in flight, and a refused, failed or expired
   one frees it. A target whose identity moved a handle or split away, or
@@ -1211,7 +1249,8 @@ records `*_moved_out` and never casts or claims again.
   the phrase is shown only after a fresh PIN or biometric unlock (counted
   against the unlock backoff), dropped when the screen is paused or left,
   and the backup box can be ticked only once it was shown. It explains that
-  a lost wallet's handle and vote cannot be moved.
+  a lost wallet's handle and vote cannot be moved, and that a target whose
+  identity already moved one away, or holds one, cannot take a move.
 
 ## 15. Staking
 
