@@ -140,6 +140,11 @@ struct TabsView: View {
             if let available = update.available {
                 UpdateBanner(available: available) { update.dismiss() }
             }
+            if let lastError = model.lastError {
+                ErrorBanner(text: lastError)
+                    .padding(.horizontal, theme.space.gutter)
+                    .padding(.vertical, theme.space.x4)
+            }
             Group {
                 switch model.tab {
                 case .wallet: WalletScreen()

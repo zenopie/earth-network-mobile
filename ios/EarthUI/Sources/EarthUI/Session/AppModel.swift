@@ -245,12 +245,27 @@ public final class AppModel {
         phase = store.exists ? .locked : .setup
     }
 
+    /// How an unlock attempt ended, so the lock screen can say what actually
+    /// happened: a Keychain error or an unreadable vault is not a wrong PIN,
+    /// and telling a user so sends them hunting for a PIN they never forgot.
+    public enum UnlockOutcome: Equatable {
+        case unlocked
+        case wrongPin
+        /// The prompt was dismissed. Not a guess, so nothing is counted.
+        case cancelled
+        /// Another attempt is in flight, or the backoff is running.
+        case busy
+        /// The biometric secret is gone; `biometricsInvalidated` says why.
+        case invalidated
+        case failed(String)
+    }
+
     /// Unlock with the PIN.
     ///
     /// A wrong PIN is counted, because four digits is 10,000 combinations and
     /// the only thing making that a secret is how many guesses are allowed.
-    public func unlock(pin: String) async -> Bool {
-        guard !UnlockAttempts.status().lockedOut, !unlocking else { return false }
+    public func unlock(pin: String) async -> UnlockOutcome {
+        guard !UnlockAttempts.status().lockedOut, !unlocking else { return .busy }
         unlocking = true
         defer { unlocking = false }
 
@@ -275,21 +290,22 @@ public final class AppModel {
             openPrivacy()
             phase = .ready
             await refresh()
-            return true
+            return .unlocked
         } catch {
             switch error {
             case WalletStore.Error.wrongPin:
                 UnlockAttempts.recordFailure()
+                return .wrongPin
             case WalletStore.Error.authenticationFailed:
                 // A dismissed prompt is not a wrong PIN, and counting it as
                 // one would lock someone out for tapping cancel.
-                break
+                return .cancelled
             case WalletStore.Error.biometricsInvalidated:
                 biometricsInvalidated = true
+                return .invalidated
             default:
-                lastError = describe(error)
+                return .failed(describe(error))
             }
-            return false
         }
     }
 
@@ -377,8 +393,8 @@ public final class AppModel {
     ///
     /// Only for a wallet sealed under the prompt alone. A two-factor wallet
     /// goes through the PIN path, which asks for both.
-    public func unlockWithBiometrics() async -> Bool {
-        guard method == .biometrics, !unlocking else { return false }
+    public func unlockWithBiometrics() async -> UnlockOutcome {
+        guard method == .biometrics, !unlocking else { return .busy }
         unlocking = true
         defer { unlocking = false }
 
@@ -398,18 +414,17 @@ public final class AppModel {
             openPrivacy()
             phase = .ready
             await refresh()
-            return true
+            return .unlocked
         } catch {
             // A cancelled prompt is not a failure worth reporting — the PIN
             // pad is still on screen behind it, and on a biometrics-only
             // wallet the button is still there to try again.
-            if case WalletStore.Error.authenticationFailed = error { return false }
+            if case WalletStore.Error.authenticationFailed = error { return .cancelled }
             if case WalletStore.Error.biometricsInvalidated = error {
                 biometricsInvalidated = true
-                return false
+                return .invalidated
             }
-            lastError = describe(error)
-            return false
+            return .failed(describe(error))
         }
     }
 

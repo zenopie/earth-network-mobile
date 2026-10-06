@@ -343,7 +343,7 @@ struct UnlockScreen: View {
                 // wallet it is raised after the PIN instead, so a button
                 // offering it here would promise a door that does not exist.
                 Button("Use \(WalletStore.biometryName)") {
-                    Task { _ = await model.unlockWithBiometrics() }
+                    Task { show(await model.unlockWithBiometrics()) }
                 }
                 .font(EarthType.body)
                 .foregroundStyle(theme.colors.accentInk)
@@ -362,7 +362,7 @@ struct UnlockScreen: View {
             // the app — and a second prompt would stack on the first.
             if model.method == .biometrics, !prompted {
                 prompted = true
-                _ = await model.unlockWithBiometrics()
+                show(await model.unlockWithBiometrics())
             }
             // The lockout starts partway through this loop's life, so the
             // loop cannot be conditional on it — but the state it writes can
@@ -380,12 +380,22 @@ struct UnlockScreen: View {
     }
 
     private func submit(_ pin: String) {
-        Task {
-            if await model.unlock(pin: pin) || model.biometricsInvalidated { return }
-            status = UnlockAttempts.status()
-            error = status.lockedOut
-                ? nil
-                : "Incorrect PIN. \(status.attemptsLeft) attempts left."
+        Task { show(await model.unlock(pin: pin)) }
+    }
+
+    /// Only a wrong PIN is reported as one: a cancelled prompt or a vault
+    /// that will not open says so, and costs no attempt.
+    private func show(_ outcome: AppModel.UnlockOutcome) {
+        status = UnlockAttempts.status()
+        switch outcome {
+        case .unlocked, .invalidated, .busy:
+            error = nil
+        case .wrongPin:
+            error = status.lockedOut ? nil : "Incorrect PIN. \(status.attemptsLeft) attempts left."
+        case .cancelled:
+            error = model.method.usesPin ? "Not confirmed. Enter your PIN to try again." : nil
+        case let .failed(message):
+            error = message
         }
     }
 }
@@ -442,6 +452,13 @@ struct ConfirmIdentity: View {
             if model.method == .biometrics, !prompted {
                 prompted = true
                 attempt(pin: nil)
+            }
+            // A lockout tripped here leaves the keypad disabled, so re-read
+            // it until it clears, as the lock screen does.
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                let latest = UnlockAttempts.status()
+                if latest.lockedOut || status.lockedOut { status = latest }
             }
         }
     }
