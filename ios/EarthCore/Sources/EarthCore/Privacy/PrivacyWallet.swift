@@ -225,13 +225,6 @@ public final class PrivacyWallet: @unchecked Sendable {
     public func identityStatus() -> WalletSync.IdentityStatus { snapshot.identityStatus }
     /// A committed registration whose leaf is not matched yet (nil: none), and why, if it failed.
     public var pendingRegistration: PendingRegistration? { snapshot.pendingRegistration }
-    /// Until when a registration this wallet broadcast can still land (nil:
-    /// none can any more). Its identity, so its recovery phrase, must be kept
-    /// until then, and the wallet counts as possibly registered.
-    public func registrationMayLandUntil() -> Int64? {
-        let t = snapshot.registrationKeepUntil
-        return t > now() ? t : nil
-    }
 
     /// x/shielded max_actions_per_bundle, read from the chain (the last value on a read failure).
     public func maxActions() async -> Int {

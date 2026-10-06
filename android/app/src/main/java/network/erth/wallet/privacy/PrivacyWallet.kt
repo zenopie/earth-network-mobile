@@ -299,13 +299,6 @@ class PrivacyWallet(
 
     fun identityStatus(): WalletSync.IdentityStatus = WalletSync(indexer, store, keys, chainId, roots, now).identityStatus()
 
-    /**
-     * Until when a registration this wallet broadcast can still land (null:
-     * none can any more). Its identity, so its recovery phrase, must be kept
-     * until then, and the wallet counts as possibly registered.
-     */
-    fun registrationMayLandUntil(): Long? = store.state.registrationKeepUntil.takeIf { it > now() }
-
     /** A committed registration whose leaf is not matched yet (null: none), and why, if it failed. */
     val pendingRegistration: PendingRegistration? get() = store.state.pendingRegistration
 
