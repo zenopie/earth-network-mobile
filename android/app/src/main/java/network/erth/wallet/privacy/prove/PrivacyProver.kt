@@ -1,7 +1,6 @@
 package network.erth.wallet.privacy.prove
 
 import android.content.Context
-import android.os.SystemClock
 import com.noirandroid.lib.Circuit
 import network.erth.wallet.passport.NoirProver
 import network.erth.wallet.privacy.zk.Fr
@@ -87,11 +86,6 @@ object PrivacyProver {
 
     private val loaded = HashMap<Kind, Loaded>()
 
-    /** Last prove times in ms, for the device test. */
-    @Volatile var lastActionMs: Long = 0; private set
-    @Volatile var lastStakeMs: Long = 0; private set
-    @Volatile var lastMembershipMs: Long = 0; private set
-
     @Synchronized
     private fun load(context: Context, k: Kind): Loaded = loaded.getOrPut(k) {
         val json = context.assets.open("circuits/${k.file}.json").bufferedReader().use { it.readText() }
@@ -102,26 +96,17 @@ object PrivacyProver {
 
     fun proveAction(context: Context, w: ActionWitness): ByteArray {
         w.check()
-        val t0 = SystemClock.elapsedRealtime()
-        return prove(context, Kind.ACTION, w.noirInputs(), w.publicInputs()).also {
-            lastActionMs = SystemClock.elapsedRealtime() - t0
-        }
+        return prove(context, Kind.ACTION, w.noirInputs(), w.publicInputs())
     }
 
     fun proveStake(context: Context, w: StakeWitness): ByteArray {
         w.check()
-        val t0 = SystemClock.elapsedRealtime()
-        return prove(context, Kind.STAKE, w.noirInputs(), w.publicInputs()).also {
-            lastStakeMs = SystemClock.elapsedRealtime() - t0
-        }
+        return prove(context, Kind.STAKE, w.noirInputs(), w.publicInputs())
     }
 
     fun proveMembership(context: Context, w: MembershipWitness): ByteArray {
         w.check()
-        val t0 = SystemClock.elapsedRealtime()
-        return prove(context, Kind.MEMBERSHIP, w.noirInputs(), w.publicInputs()).also {
-            lastMembershipMs = SystemClock.elapsedRealtime() - t0
-        }
+        return prove(context, Kind.MEMBERSHIP, w.noirInputs(), w.publicInputs())
     }
 
     fun proveVote(context: Context, w: VoteWitness): ByteArray {
