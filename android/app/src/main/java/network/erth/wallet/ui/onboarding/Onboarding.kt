@@ -332,7 +332,9 @@ fun UnlockSetupFlow(
     }
 
     when (method) {
-        null -> ChooseUnlockMethod(
+        // BIOMETRIC too: while its prompt is up the OS draws over this, and if
+        // the setup then fails the choices have to work again, not dead-end.
+        null, UnlockMethod.BIOMETRIC -> ChooseUnlockMethod(
             biometricsUsable = biometricsUsable,
             error = error,
             onChoose = { chosen ->
@@ -356,13 +358,6 @@ fun UnlockSetupFlow(
             modifier = modifier,
         )
 
-        // The prompt is up; the OS is drawing over this.
-        UnlockMethod.BIOMETRIC -> ChooseUnlockMethod(
-            biometricsUsable = biometricsUsable,
-            error = error,
-            onChoose = {},
-            modifier = modifier,
-        )
     }
 }
 
