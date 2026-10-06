@@ -15,7 +15,6 @@ import network.erth.wallet.privacy.chain.PrivacyQueries
 import network.erth.wallet.ui.components.shortAddress
 import network.erth.wallet.wallet.SecureWalletManager
 
-/** Everything the Earn screen shows, resolved together. */
 /** One delegation, resolved for display. */
 data class DelegationRow(
     val validatorOperator: String,
@@ -149,30 +148,6 @@ class EarnViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
         }
-    }
-
-    // --- messages, for TxController to build at confirm time ---
-
-    fun delegate(validator: String, amountUerth: Long) = { ctx: android.content.Context ->
-        val delegator = SecureWalletManager.getWalletAddress(ctx).orEmpty()
-        listOf(Staking.msgDelegate(delegator, validator, amountUerth.toString()))
-    }
-
-    fun undelegate(validator: String, amountUerth: Long) = { ctx: android.content.Context ->
-        val delegator = SecureWalletManager.getWalletAddress(ctx).orEmpty()
-        listOf(Staking.msgUndelegate(delegator, validator, amountUerth.toString()))
-    }
-
-    /**
-     * Claim from every validator at once.
-     *
-     * One message per validator in a single transaction, so the fee is paid
-     * once. Claiming validator by validator would cost the fee each time, and
-     * with rewards this small that can exceed what is being claimed.
-     */
-    fun claimAll(validators: List<String>) = { ctx: android.content.Context ->
-        val delegator = SecureWalletManager.getWalletAddress(ctx).orEmpty()
-        validators.map { Staking.msgWithdrawReward(delegator, it) }
     }
 
     /**

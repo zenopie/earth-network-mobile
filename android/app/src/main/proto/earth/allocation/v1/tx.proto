@@ -8,8 +8,8 @@ option java_multiple_files = true;
 // gogoproto/cosmos_proto annotations omitted so protobuf-javalite generates
 // cleanly on Android).
 //
-// One engine, two streams. Every message names the stream it acts on; the two
-// share no state, so an option id only means something together with a stream.
+// One engine, two streams. The two share no state, so an option id only means
+// something together with a stream.
 
 enum StreamId {
   STREAM_ID_UNSPECIFIED = 0;
@@ -22,16 +22,4 @@ enum StreamId {
 message AllocationWeight {
   uint64 option_id = 1;
   uint64 percent = 2;
-}
-
-message MsgSetAllocations {
-  string creator = 1;
-  StreamId stream = 2;
-  repeated AllocationWeight percentages = 3;
-}
-
-message MsgClaimAllocation {
-  string creator = 1;
-  StreamId stream = 2;
-  uint64 option_id = 3;
 }

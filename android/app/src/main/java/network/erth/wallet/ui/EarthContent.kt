@@ -299,24 +299,6 @@ internal fun EarthContent(
                     run = { ctx -> PrivacySession.wallet(ctx).restake(validator).hash },
                 )
             },
-            onClaim = {
-                val validators = earnState?.delegations?.map { it.validatorOperator }.orEmpty()
-                // One withdraw per validator, so the gas scales with how many
-                // you delegate to.
-                val claimGas = TxController.DEFAULT_GAS_LIMIT + 150_000L * validators.size
-                tx.request(
-                    details = TxConfirmDetails(
-                        action = "Claim rewards",
-                        msgTypeUrl = "/cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward",
-                        balanceUerth = loaded.balanceUerth,
-                        amountLabel = "Rewards",
-                        amountValue = "${formatUerth(earnState?.rewardsUerth ?: 0)} ERTH",
-                    ),
-                    gasLimit = claimGas,
-                    onSuccess = onRefresh,
-                    build = earn.claimAll(validators),
-                )
-            },
             modifier = inset,
           )
         }

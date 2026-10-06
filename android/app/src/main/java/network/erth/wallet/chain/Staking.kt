@@ -1,14 +1,9 @@
 package network.erth.wallet.chain
 
-import com.google.protobuf.Any as ProtoAny
-import cosmos.base.v1beta1.CoinOuterClass
-import cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward
-import cosmos.staking.v1beta1.MsgDelegate
-import cosmos.staking.v1beta1.MsgUndelegate
 import network.erth.wallet.Constants
 import org.json.JSONObject
 
-/** Native x/staking + x/distribution queries and messages. */
+/** Native x/staking + x/distribution queries. */
 object Staking {
 
     data class Validator(
@@ -24,16 +19,7 @@ object Staking {
         val validator: String,
         val balance: String,
         val completionTime: String,
-        /**
-         * Height the entry was created at. Cancelling addresses an entry by
-         * (validator, creationHeight) — unbonding entries have no id — so this
-         * must be carried through or the cancel cannot be built.
-         */
-        val creationHeight: Long,
     )
-
-    private fun uerth(amount: String) =
-        CoinOuterClass.Coin.newBuilder().setDenom(Constants.UERTH_DENOM).setAmount(amount).build()
 
     // --- queries ---
 
@@ -100,7 +86,6 @@ object Staking {
                     UnbondingEntry(
                         validator = validator,
                         balance = e.optString("balance", "0"),
-                        creationHeight = e.optString("creation_height", "0").toLongOrNull() ?: 0L,
                         completionTime = e.optString("completion_time", ""),
                     )
                 )
@@ -123,30 +108,4 @@ object Staking {
         }
         return "0"
     }
-
-    // --- messages ---
-
-    fun msgDelegate(delegator: String, validator: String, amountUerth: String): ProtoAny =
-        EarthTx.anyOf(
-            "/cosmos.staking.v1beta1.MsgDelegate",
-            MsgDelegate.newBuilder()
-                .setDelegatorAddress(delegator).setValidatorAddress(validator).setAmount(uerth(amountUerth))
-                .build()
-        )
-
-    fun msgUndelegate(delegator: String, validator: String, amountUerth: String): ProtoAny =
-        EarthTx.anyOf(
-            "/cosmos.staking.v1beta1.MsgUndelegate",
-            MsgUndelegate.newBuilder()
-                .setDelegatorAddress(delegator).setValidatorAddress(validator).setAmount(uerth(amountUerth))
-                .build()
-        )
-
-    fun msgWithdrawReward(delegator: String, validator: String): ProtoAny =
-        EarthTx.anyOf(
-            "/cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward",
-            MsgWithdrawDelegatorReward.newBuilder()
-                .setDelegatorAddress(delegator).setValidatorAddress(validator)
-                .build()
-        )
 }

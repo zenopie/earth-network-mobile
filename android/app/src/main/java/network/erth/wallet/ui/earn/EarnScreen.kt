@@ -27,7 +27,6 @@ import network.erth.wallet.chain.math.StakingApr
 import network.erth.wallet.ui.components.EarthLabel
 import network.erth.wallet.ui.components.EarthListRow
 import network.erth.wallet.ui.components.EarthSegmented
-import network.erth.wallet.ui.components.brandButtonColors
 import network.erth.wallet.ui.designsystem.component.EarthButton
 import network.erth.wallet.ui.designsystem.component.EarthButtonDefaults
 import network.erth.wallet.ui.designsystem.component.EarthHorizontalDivider
@@ -56,18 +55,15 @@ import network.erth.wallet.ui.theme.EarthTheme
  * shape of their address panel instead: a large-radius card carrying the
  * figures, with the actions beneath.
  *
- * Staked and claimable lead because the common question is how much rather
- * than with whom. Claim is disabled at zero rather than hidden: a button that
- * comes and goes as rewards accrue is harder to find than one that is always in
- * the same place, and its disabled state answers "is there anything to claim"
- * without being pressed.
+ * Staked leads because the common question is how much rather than with whom.
+ * There is no claim: private stake compounds into its validator's rate, and a
+ * validator's self-bond rewards compound into the self-bond at the epoch end.
  */
 @Composable
 fun EarnScreen(
     state: EarnUiState?,
     onStake: () -> Unit,
     onUnstake: () -> Unit,
-    onClaim: () -> Unit,
     modifier: Modifier = Modifier,
     /** Private stake (derth notes and positions) at its validators' live rates, in uerth. */
     privateStakedUerth: Long = 0L,
@@ -130,7 +126,7 @@ fun EarnScreen(
             EarthLabel("Staked")
             AmountOrShimmer(state?.let { it.stakedUerth + privateStakedUerth }, shimmer, EarthColors.Text.textPrimary)
             Spacer(Modifier.height(dimens.space12))
-            EarthLabel("Claimable rewards")
+            EarthLabel("Pending rewards")
             AmountOrShimmer(state?.rewardsUerth, shimmer, EarthAccent.ink)
 
             val apr = state?.let { StakingApr.base(it.totalBondedUerth) }
@@ -167,14 +163,6 @@ fun EarnScreen(
         }
 
         Spacer(Modifier.height(dimens.space16))
-        EarthButton(
-            text = "Claim rewards",
-            onClick = onClaim,
-            enabled = (state?.rewardsUerth ?: 0) > 0,
-            modifier = Modifier.fillMaxWidth(),
-            colors = brandButtonColors(),
-        )
-        Spacer(Modifier.height(dimens.space8))
         Row(Modifier.fillMaxWidth()) {
             EarthButton(
                 text = "Stake",

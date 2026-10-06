@@ -586,7 +586,7 @@ private fun LazyListScope.portfolio(
         item { PositionRow("Staked", "Delegated · earning", "${formatUerth(stakedUerth)} ERTH") }
     }
     if (rewardsUerth > 0) {
-        item { PositionRow("Rewards", "Claimable", "${formatUerth(rewardsUerth)} ERTH") }
+        item { PositionRow("Rewards", "Pending", "${formatUerth(rewardsUerth)} ERTH") }
     }
     if (unbondingUerth > 0) {
         // Named apart rather than folded into staked: it is neither spendable

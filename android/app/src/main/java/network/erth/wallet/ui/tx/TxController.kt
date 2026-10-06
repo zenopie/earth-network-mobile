@@ -199,14 +199,12 @@ class TxController : ViewModel() {
          *
          * Subtracting one minimum fee is not enough: staking the maximum would
          * leave exactly [DEFAULT_FEE_UERTH] — one 400,000-gas transaction and
-         * nothing more — so the next thing a staker wants to do, claiming
-         * rewards across validators, would be unaffordable and the account
-         * stranded.
+         * nothing more — so the next action would be unaffordable and the
+         * account stranded.
          *
-         * A million gas covers the realistic follow-ups: claim across a few
-         * validators, then unstake. At 0.005uerth that is 5,000 uerth — small
-         * against a stake, and the difference between an account that can act
-         * and one that cannot.
+         * A million gas covers the realistic follow-ups. At 0.005uerth that is
+         * 5,000 uerth — small against a stake, and the difference between an
+         * account that can act and one that cannot.
          *
          * Deliberately NOT applied to sending: emptying an account on purpose
          * should be allowed to empty it, less the fee.

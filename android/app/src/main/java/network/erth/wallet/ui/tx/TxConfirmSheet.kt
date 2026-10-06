@@ -28,7 +28,7 @@ import network.erth.wallet.ui.theme.EarthTheme
 data class TxConfirmDetails(
     /** In the user's words: "Stake ERTH". */
     val action: String,
-    /** What the chain sees: "/cosmos.staking.v1beta1.MsgDelegate". */
+    /** What the chain sees: "/earth.shieldedstaking.v1.MsgDelegate". */
     val msgTypeUrl: String,
     /**
      * What the node will charge. Filled in by [TxController.request] from the

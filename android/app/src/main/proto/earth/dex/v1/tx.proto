@@ -7,20 +7,8 @@ option java_multiple_files = true;
 import "cosmos/base/v1beta1/coin.proto";
 import "earth/shielded/v1/tx.proto";
 
-// Clean proto3 mirrors of the earth chain's x/dex messages (wire-compatible).
-
-message MsgSwap {
-  string creator = 1;
-  cosmos.base.v1beta1.Coin token_in = 2;
-  string denom_out = 3;
-  string min_amount_out = 4;
-}
-
-message MsgCreatePool {
-  string creator = 1;
-  cosmos.base.v1beta1.Coin amount_a = 2;
-  cosmos.base.v1beta1.Coin amount_b = 3;
-}
+// Clean proto3 mirrors of the earth chain's x/dex messages the wallet sends
+// (wire-compatible).
 
 message MsgAddLiquidity {
   string creator = 1;
