@@ -28,6 +28,15 @@ object SessionManager {
     private const val KEY_DEVICE_IV = "device_iv"
 
     private const val KEY_WALLETS_ENCRYPTED = "wallets_encrypted"
+
+    // The blob's format and the key derivation it was sealed with (format 2;
+    // a format-1 blob has neither field and was sealed at Kdf.LEGACY).
+    private const val KEY_FORMAT = "format"
+    private const val BLOB_FORMAT = 2
+    private const val KEY_KDF = "kdf"
+    private const val KEY_KDF_ITERATIONS = "kdf_iterations"
+
+    private const val DATA_KEY_BYTES = 32
     private const val KEY_SELECTED_WALLET = "selected_wallet_index"
 
     // An unsalted SHA-256 of the unlock secret, written by earlier builds in
@@ -46,6 +55,7 @@ object SessionManager {
     val active: StateFlow<Boolean> = _active.asStateFlow()
     private var sessionPin: String? = null
     private var versionedWalletStorage: WalletStorageVersion.VersionedWalletStorage? = null
+    private var dataKey: ByteArray? = null
     private var otherPrefsData = mutableMapOf<String, Any?>()
 
     /**
@@ -67,8 +77,12 @@ object SessionManager {
 
             // Load encrypted wallet data
             val encryptedWalletsJson = softwarePrefs.getString(KEY_WALLETS_ENCRYPTED, null)
+            var reseal = false
             if (encryptedWalletsJson != null) {
                 val encryptedData = parseSoftwareEncryptedData(encryptedWalletsJson)
+                // Sealed at older key-derivation parameters: re-sealed at the
+                // current ones below, now that the secret is known to work.
+                reseal = encryptedData.kdf != SoftwareEncryption.Kdf.CURRENT
                 // The decrypt is the PIN check. Nothing else on disk can confirm
                 // a guess, so an offline attacker pays the full PBKDF2 cost per
                 // try. A failed GCM tag here is the wrong secret; anything that
@@ -85,6 +99,25 @@ object SessionManager {
                 versionedWalletStorage = WalletStorageVersion.parseWalletStorage(decryptedStorageJson)
             } else {
                 versionedWalletStorage = WalletStorageVersion.createVersionedStorage(JSONArray())
+            }
+
+            // The private data stores' key: made once, kept in the sealed
+            // storage. Storage from before it existed gets one now.
+            val storage = versionedWalletStorage!!
+            val key = storage.dataKey?.let { Base64.decode(it, Base64.NO_WRAP) }?.takeIf { it.size == DATA_KEY_BYTES }
+            if (key == null) {
+                val fresh = ByteArray(DATA_KEY_BYTES).also { java.security.SecureRandom().nextBytes(it) }
+                versionedWalletStorage = storage.copy(dataKey = Base64.encodeToString(fresh, Base64.NO_WRAP))
+                dataKey = fresh
+                // A new key must be on disk before anything is sealed with
+                // it, so this save is not optional (with no blob yet, seal()
+                // writes it with the first wallet).
+                if (encryptedWalletsJson != null) saveVersionedStorageToEncryption(context, pin)
+            } else {
+                dataKey = key
+                // Only the parameters are old: the wallet opens either way,
+                // so a failed re-seal waits for the next save.
+                if (reseal) runCatching { saveVersionedStorageToEncryption(context, pin) }
             }
 
             purgeLegacyPinHash(context)
@@ -150,6 +183,16 @@ object SessionManager {
         return java.security.MessageDigest.isEqual(secret.toByteArray(Charsets.UTF_8), held.toByteArray(Charsets.UTF_8))
     }
 
+    /**
+     * The key every wallet's private data store is sealed with
+     * (PrivacyStore): a copy, available only while a session is open.
+     */
+    @Synchronized
+    fun dataKey(): ByteArray {
+        requireActive()
+        return (dataKey ?: throw IllegalStateException("No data key")).copyOf()
+    }
+
     /** The session's wallet list: a copy, written back with [saveWallets]. */
     fun wallets(): JSONArray {
         requireActive()
@@ -197,6 +240,8 @@ object SessionManager {
 
     private fun clearSession() {
         sessionPin = null
+        dataKey?.fill(0)
+        dataKey = null
 
         versionedWalletStorage = null
         otherPrefsData.clear()
@@ -238,6 +283,9 @@ object SessionManager {
         if (!json.has(KEY_DEVICE_IV)) {
             throw Exception("Stored wallet is not bound to this device and cannot be opened")
         }
+        if (json.optInt(KEY_FORMAT, 1) > BLOB_FORMAT) {
+            throw Exception("Stored wallet was written by a newer version of this app")
+        }
 
         val wrapped = DeviceBinding.Wrapped(
             ciphertext = Base64.decode(json.getString("ciphertext"), Base64.DEFAULT),
@@ -256,7 +304,14 @@ object SessionManager {
             SoftwareEncryption.EncryptedData(
                 ciphertext = ciphertext,
                 iv = Base64.decode(json.getString("iv"), Base64.DEFAULT),
-                salt = Base64.decode(json.getString("salt"), Base64.DEFAULT)
+                salt = Base64.decode(json.getString("salt"), Base64.DEFAULT),
+                // Recorded since format 2; a blob without them was sealed at
+                // the parameters every blob had before (LEGACY).
+                kdf = if (json.has(KEY_KDF)) {
+                    SoftwareEncryption.Kdf(json.getString(KEY_KDF), json.getInt(KEY_KDF_ITERATIONS))
+                } else {
+                    SoftwareEncryption.Kdf.LEGACY
+                },
             )
         } catch (e: Exception) {
             throw Exception("Failed to parse software encrypted data", e)
@@ -332,6 +387,9 @@ object SessionManager {
             put(KEY_DEVICE_IV, Base64.encodeToString(wrapped.iv, Base64.DEFAULT))
             put("iv", Base64.encodeToString(encryptedData.iv, Base64.DEFAULT))
             put("salt", Base64.encodeToString(encryptedData.salt, Base64.DEFAULT))
+            put(KEY_FORMAT, BLOB_FORMAT)
+            put(KEY_KDF, encryptedData.kdf.id)
+            put(KEY_KDF_ITERATIONS, encryptedData.kdf.iterations)
         }
 
         val softwarePrefs = softwarePrefs(context)

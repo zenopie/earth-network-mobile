@@ -26,6 +26,10 @@ object WalletStorageVersion {
     private const val KEY_METADATA = "metadata"
     private const val KEY_CREATED_AT = "created_at"
     private const val KEY_LAST_MIGRATION = "last_migration"
+    // The key the wallets' private data stores are sealed with (base64, 32
+    // bytes): inside this blob, so it opens exactly when the wallet does,
+    // whatever the unlock method, and survives a change of method.
+    private const val KEY_DATA_KEY = "data_key"
 
     /**
      * Data class representing versioned wallet storage
@@ -33,13 +37,16 @@ object WalletStorageVersion {
     data class VersionedWalletStorage(
         val version: Int,
         val wallets: JSONArray,
-        val metadata: JSONObject = JSONObject()
+        val metadata: JSONObject = JSONObject(),
+        /** Base64 of the private data stores' key; null in storage from before it existed. */
+        val dataKey: String? = null,
     ) {
         fun toJSON(): JSONObject {
             return JSONObject().apply {
                 put(KEY_VERSION, version)
                 put(KEY_WALLETS, wallets)
                 put(KEY_METADATA, metadata)
+                dataKey?.let { put(KEY_DATA_KEY, it) }
             }
         }
     }
@@ -82,7 +89,7 @@ object WalletStorageVersion {
             val metadata = json.optJSONObject(KEY_METADATA) ?: JSONObject()
 
 
-            val storage = VersionedWalletStorage(version, wallets, metadata)
+            val storage = VersionedWalletStorage(version, wallets, metadata, json.optString(KEY_DATA_KEY).ifEmpty { null })
 
             // Check if migration is needed
             when {

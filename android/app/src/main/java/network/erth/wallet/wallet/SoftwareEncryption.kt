@@ -15,7 +15,8 @@ import javax.crypto.spec.SecretKeySpec
 /**
  * SoftwareEncryption
  *
- * AES-GCM under a key derived from the unlock secret with PBKDF2.
+ * AES-GCM under a key derived from the unlock secret with PBKDF2, the
+ * derivation's id and iteration count stored with every blob ([Kdf]).
  *
  * How much this is worth depends entirely on what the secret is, and it is
  * worth being blunt about the weak end. Against a four-digit PIN the search
@@ -40,14 +41,35 @@ object SoftwareEncryption {
     private const val GCM_IV_LENGTH = 12
     private const val GCM_TAG_LENGTH = 16
     private const val KEY_LENGTH = 32 // 256 bits
-    // OWASP's figure for PBKDF2-HMAC-SHA256. The iOS vault stretches its PIN
-    // 200,000 times with SHA-512 (WalletStore.swift), which is at the matching
-    // recommendation for that hash.
-    //
-    // The count is not stored with a blob, and every blob was sealed at this
-    // one (it was set before release). Changing it without recording the
-    // count that sealed each blob makes every existing wallet undecryptable.
-    private const val PBKDF2_ITERATIONS = 600_000
+    /**
+     * The key derivation a blob was sealed with: recorded beside it, so the
+     * parameters can change without stranding a wallet sealed under the old
+     * ones. A blob is read with its own, and re-sealed with [CURRENT] the
+     * next time the session saves (SessionManager does so on unlock).
+     */
+    data class Kdf(val id: String, val iterations: Int) {
+        init {
+            require(id == PBKDF2_SHA256) { "unknown key derivation $id" }
+            // A ceiling so a damaged blob cannot hang the unlock; a floor so
+            // nothing is ever sealed or accepted at a trivial count.
+            require(iterations in MIN_ITERATIONS..MAX_ITERATIONS) { "iteration count $iterations out of range" }
+        }
+
+        companion object {
+            const val PBKDF2_SHA256 = "pbkdf2-hmac-sha256"
+            const val MIN_ITERATIONS = 100_000
+            const val MAX_ITERATIONS = 10_000_000
+
+            // OWASP's figure for PBKDF2-HMAC-SHA256. The iOS vault stretches
+            // its PIN 200,000 times with SHA-512 (WalletStore.swift), which is
+            // at the matching recommendation for that hash.
+            val CURRENT = Kdf(PBKDF2_SHA256, 600_000)
+
+            // What a blob written before the parameters were recorded was
+            // sealed with: every one, since this count was set before release.
+            val LEGACY = Kdf(PBKDF2_SHA256, 600_000)
+        }
+    }
 
     /**
      * Data class for software encrypted data
@@ -55,7 +77,8 @@ object SoftwareEncryption {
     data class EncryptedData(
         val ciphertext: ByteArray,
         val iv: ByteArray,
-        val salt: ByteArray
+        val salt: ByteArray,
+        val kdf: Kdf = Kdf.CURRENT,
     ) {
         override fun equals(other: Any?): Boolean {
             if (this === other) return true
@@ -66,6 +89,7 @@ object SoftwareEncryption {
             if (!ciphertext.contentEquals(other.ciphertext)) return false
             if (!iv.contentEquals(other.iv)) return false
             if (!salt.contentEquals(other.salt)) return false
+            if (kdf != other.kdf) return false
 
             return true
         }
@@ -88,8 +112,8 @@ object SoftwareEncryption {
             val salt = ByteArray(16)
             SecureRandom().nextBytes(salt)
 
-            // Derive key from PIN + salt using PBKDF2
-            val key = deriveKeyFromPin(pin, salt)
+            // Derive key from PIN + salt using PBKDF2, at the current parameters
+            val key = deriveKeyFromPin(pin, salt, Kdf.CURRENT)
 
             // Generate random IV
             val iv = ByteArray(GCM_IV_LENGTH)
@@ -113,7 +137,8 @@ object SoftwareEncryption {
             EncryptedData(
                 ciphertext = ciphertext,
                 iv = iv,
-                salt = salt
+                salt = salt,
+                kdf = Kdf.CURRENT,
             )
 
         } catch (e: Exception) {
@@ -128,8 +153,8 @@ object SoftwareEncryption {
     @Throws(Exception::class)
     fun decrypt(encryptedData: EncryptedData, pin: String, context: Context): String {
         return try {
-            // Derive the same key using stored salt and PIN
-            val key = deriveKeyFromPin(pin, encryptedData.salt)
+            // Derive the same key using the blob's own salt and parameters
+            val key = deriveKeyFromPin(pin, encryptedData.salt, encryptedData.kdf)
 
             // Decrypt
             val cipher = Cipher.getInstance(TRANSFORMATION)
@@ -159,10 +184,10 @@ object SoftwareEncryption {
      * Derive encryption key from PIN using PBKDF2 with salt
      */
     @Throws(Exception::class)
-    private fun deriveKeyFromPin(pin: String, salt: ByteArray): SecretKey {
+    private fun deriveKeyFromPin(pin: String, salt: ByteArray, kdf: Kdf): SecretKey {
         return try {
             val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-            val spec = PBEKeySpec(pin.toCharArray(), salt, PBKDF2_ITERATIONS, KEY_LENGTH * 8)
+            val spec = PBEKeySpec(pin.toCharArray(), salt, kdf.iterations, KEY_LENGTH * 8)
             val key = factory.generateSecret(spec)
 
             // Clear the PIN from the spec
