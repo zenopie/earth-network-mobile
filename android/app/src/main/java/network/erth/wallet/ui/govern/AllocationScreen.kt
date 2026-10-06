@@ -49,7 +49,7 @@ data class AllocationSlice(
  * are grouped together because both are voting and separated by a heading
  * because they are not the same vote: the streams steer an emission
  * continuously by personhood or stake, proposals change the chain itself for a
- * fixed period by bonded stake alone.
+ * fixed period, decided by bonded stake and the human chamber together.
  */
 @Composable
 fun AllocationScreen(
@@ -121,7 +121,7 @@ fun AllocationScreen(
         Spacer(Modifier.height(dimens.space8))
         GovernRow(
             title = "Proposals",
-            detail = "Changes to the chain itself, voted on by staked ERTH.",
+            detail = "Changes to the chain itself: staked ERTH and two thirds of the humans who vote must both agree.",
             status = state?.proposals?.let { proposals ->
                 val live = proposals.count { it.status == "PROPOSAL_STATUS_VOTING_PERIOD" }
                 when {

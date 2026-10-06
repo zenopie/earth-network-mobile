@@ -30,8 +30,9 @@ import network.erth.wallet.ui.theme.EarthTheme
  *
  * The two are both called governance and are genuinely different: allocation
  * votes steer an emission continuously and are weighted by personhood or stake,
- * while these change the chain itself, run for a fixed period and are weighted
- * by bonded stake alone. Keeping them on one screen but visibly apart is what
+ * while these change the chain itself, run for a fixed period and pass only
+ * with both chambers: bonded stake, and two thirds of the human votes cast
+ * (x/assembly). Keeping them on one screen but visibly apart is what
  * stops "I voted" meaning two things.
  */
 @Composable
@@ -54,7 +55,7 @@ fun ProposalList(
             proposals.isEmpty() -> Text(
                 text = "No proposals yet. Anything that changes the chain itself " +
                     "— parameters, upgrades, spending from the community pool — " +
-                    "is proposed here and voted on by staked ERTH.",
+                    "is proposed here. It passes only with both staked ERTH and two thirds of the verified humans who vote.",
                 style = EarthTypography.textSm,
                 color = EarthColors.Text.textTertiary,
             )

@@ -20,9 +20,9 @@ import network.erth.wallet.ui.theme.EarthTheme
  * Chain proposals.
  *
  * Its own screen rather than a section under the streams, because it is the
- * other kind of governance rather than more of the same: bonded stake decides
- * these, they run for a fixed period, and they change the chain itself instead
- * of steering an emission.
+ * other kind of governance rather than more of the same: bonded stake and the
+ * human chamber decide these together, they run for a fixed period, and they
+ * change the chain itself instead of steering an emission.
  */
 @Composable
 fun ProposalsScreen(
@@ -42,9 +42,9 @@ fun ProposalsScreen(
         Spacer(Modifier.height(dimens.space8))
         Text(
             text = "Parameters, upgrades and spending from the community pool. " +
-                "Voting power is bonded ERTH, so staking is what gives you a say " +
-                "here — unlike the emission streams, where being a verified human " +
-                "counts on its own.",
+                "Each passes only with both chambers: a stake vote weighted by bonded " +
+                "ERTH, and two thirds of the human votes cast, one per verified " +
+                "human. A proposal no human votes on fails.",
             style = EarthTypography.textSm,
             color = EarthColors.Text.textSecondary,
         )

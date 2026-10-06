@@ -273,7 +273,7 @@ struct ProposalsScreen: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: theme.space.x8) {
                     if proposals.isEmpty {
-                        Text("No proposals yet. Anything that changes the chain itself — parameters, upgrades, spending from the community pool — is proposed here and voted on by staked ERTH.")
+                        Text("No proposals yet. Anything that changes the chain itself — parameters, upgrades, spending from the community pool — is proposed here. It passes only with both staked ERTH and two thirds of the verified humans who vote.")
                             .font(EarthType.bodySmall)
                             .foregroundStyle(theme.colors.textTertiary)
                     } else {

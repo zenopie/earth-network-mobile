@@ -14,7 +14,7 @@ import SwiftUI
 /// are grouped together because both are voting and separated by a heading
 /// because they are not the same vote: the streams steer an emission
 /// continuously by personhood or stake, proposals change the chain itself for a
-/// fixed period by bonded stake alone.
+/// fixed period, decided by bonded stake and the human chamber together.
 struct GovernScreen: View {
     @Environment(\.earth) private var theme
     @Environment(AppModel.self) private var model
@@ -78,7 +78,7 @@ struct GovernScreen: View {
                 Spacer().frame(height: theme.space.x8)
                 GovernRow(
                     title: "Proposals",
-                    detail: "Changes to the chain itself, voted on by staked ERTH.",
+                    detail: "Changes to the chain itself: staked ERTH and two thirds of the humans who vote must both agree.",
                     status: proposalStatus,
                     loading: !streams.loaded
                 ) { route = .proposals }
