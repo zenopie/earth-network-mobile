@@ -336,9 +336,10 @@ fn test_tags_distinct() {
         TAG_SLABEL,
         TAG_DEBTL,
         TAG_VPAD,
+        TAG_SUCC,
     ];
-    for i in 0..21 {
-        for j in 0..21 {
+    for i in 0..22 {
+        for j in 0..22 {
             if i != j {
                 assert(t[i] != t[j]);
             }
