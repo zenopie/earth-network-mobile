@@ -94,8 +94,8 @@ class LeaseBoundsTest : WalletTest() {
         chain.now += 86_400
         val c = wallet(chain, carol)
         switched(chain, c, passport = "502")
-        // (the handle moves before the switch in the app; here it is recorded as moved in)
-        val nfC = b.newOwner(c.keys, Privacy.handleScope())
+        // (as MsgMoveHandle after the switch would; here it is recorded as moved in)
+        val nfC = Privacy.scopeNullifier(c.keys.idSecret, Privacy.handleScope())
         chain.handles["bobby"] = chain.handles.getValue("bobby").copy(nullifier = nfC)
         c.adoptMoved("bobby", null, 0)
         c.reconcileHandle(mapOf("bobby" to entry(chain, "bobby")!!), chain.now + 1)
@@ -112,7 +112,7 @@ class LeaseBoundsTest : WalletTest() {
         assertTrue("$e", e is PrivacyWallet.HandleNotLive && e.message!!.contains("renewal period"))
         assertEquals(sent, chain.txs.size)
         // ... and it cannot be moved either.
-        val m = runCatching { c.moveHandle(c.newOwner(PrivacyKeys.fromMnemonic(alice), Privacy.handleScope())) }.exceptionOrNull()
+        val m = runCatching { c.moveHandle(PrivacyWallet.Successor(PrivacyKeys.fromMnemonic(alice), c.store.state.identity!!)) }.exceptionOrNull()
         assertTrue("$m", m is PrivacyWallet.HandleNotMovable)
         assertEquals(sent, chain.txs.size)
         dumpWitnesses(chain, "fix6HandleRenewal")
@@ -127,7 +127,7 @@ class LeaseBoundsTest : WalletTest() {
         chain.now += 86_400
         val c = wallet(chain, carol)
         switched(chain, c, passport = "602")
-        chain.handles["bobby"] = chain.handles.getValue("bobby").copy(nullifier = b.newOwner(c.keys, Privacy.handleScope()))
+        chain.handles["bobby"] = chain.handles.getValue("bobby").copy(nullifier = Privacy.scopeNullifier(c.keys.idSecret, Privacy.handleScope()))
         c.adoptMoved("bobby", null, 0)
         assertEquals(0L, c.handleExpiresAt())
         chain.now += chain.handleLease + 10
@@ -150,7 +150,7 @@ class LeaseBoundsTest : WalletTest() {
         // The split moved to c (as MsgMoveCaretaker would), then lapses unswept.
         val exp = chain.now + 3 * 86_400
         val nfB = Privacy.scopeNullifier(b.keys.idSecret, Privacy.caretakerScope())
-        val nfC = b.newOwner(c.keys, Privacy.caretakerScope())
+        val nfC = Privacy.scopeNullifier(c.keys.idSecret, Privacy.caretakerScope())
         chain.caretakerVotes[nfC] = chain.caretakerVotes.remove(nfB)!!
         chain.caretakerExpiry.remove(nfB); chain.caretakerExpiry[nfC] = exp
         c.adoptMoved(null, mapOf(1L to 100L), exp)

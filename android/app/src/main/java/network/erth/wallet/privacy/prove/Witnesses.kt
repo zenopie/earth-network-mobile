@@ -339,6 +339,72 @@ data class MembershipWitness(
 }
 
 /**
+ * circuits/move: a handle or caretaker split passes from the identity behind
+ * [oldSecret] to the one behind [newSecret], which succeeded it under the
+ * same passport. The succession leaf H(TAG_SUCC, idc_old, idc_new) is at
+ * [successionIndex] and the successor's live identity leaf at [leafIndex],
+ * both under [root]; [scope] is the msg's (handle or caretaker) and
+ * [signal] its sighash. Public inputs: root, scope, old_nullifier,
+ * new_nullifier, signal.
+ */
+data class MoveWitness(
+    val oldSecret: Fr,
+    val newSecret: Fr,
+    val successionIndex: Long,
+    val successionSiblings: List<Fr>,
+    val dscKey: Fr,
+    val country: Fr,
+    val activatedAt: Long,
+    val predecessorAt: Long,
+    val leafIndex: Long,
+    val siblings: List<Fr>,
+    val root: Fr,
+    val scope: Fr,
+    val signal: Fr,
+) {
+    init {
+        require(successionSiblings.size == Merkle.DEPTH && siblings.size == Merkle.DEPTH)
+        require(activatedAt >= 0 && predecessorAt >= 0) { "a time is a u64 below 2^63" }
+        require(successionIndex in 0..0xffffffffL && leafIndex in 0..0xffffffffL)
+    }
+
+    val oldNullifier: Fr by lazy { Privacy.scopeNullifier(oldSecret, scope) }
+    val newNullifier: Fr by lazy { Privacy.scopeNullifier(newSecret, scope) }
+
+    val succession: Fr get() = Privacy.successionLeaf(Privacy.idc(oldSecret), Privacy.idc(newSecret))
+    val leaf: Fr get() = Privacy.identityLeaf(Privacy.idc(newSecret), dscKey, country, activatedAt, predecessorAt)
+
+    /** What the circuit will assert, checked before spending seconds on a proof that cannot verify. */
+    fun check() {
+        require(Merkle.rootFromPath(succession, successionIndex, successionSiblings) == root) { "no succession from this identity to the new one in the tree at this root" }
+        require(Merkle.rootFromPath(leaf, leafIndex, siblings) == root) { "the new identity's leaf is not live in the tree at this root" }
+        require(oldNullifier != newNullifier) { "a move needs two identities" }
+    }
+
+    fun publicInputs(): List<Fr> = listOf(root, scope, oldNullifier, newNullifier, signal)
+
+    fun noirInputs(): Map<String, Any> = mapOf(
+        "old_secret" to oldSecret.toNoir(),
+        "new_secret" to newSecret.toNoir(),
+        "succession_index" to hex(successionIndex),
+        "succession_siblings" to successionSiblings.map { it.toNoir() },
+        "dsc_key" to dscKey.toNoir(),
+        "country" to country.toNoir(),
+        "activated_at" to hex(activatedAt),
+        "predecessor_at" to hex(predecessorAt),
+        "leaf_index" to hex(leafIndex),
+        "siblings" to siblings.map { it.toNoir() },
+        "root" to root.toNoir(),
+        "scope" to scope.toNoir(),
+        "old_nullifier" to oldNullifier.toNoir(),
+        "new_nullifier" to newNullifier.toNoir(),
+        "signal" to signal.toNoir(),
+    )
+
+    fun proverToml(): String = toml(noirInputs())
+}
+
+/**
  * One used slot of a vote witness: a derth stake note under the proposal's
  * snapshot note root, the low leaf proving its spend nullifier absent from
  * the snapshot stake nullifier tree, and, for a labelled note, the debt tree

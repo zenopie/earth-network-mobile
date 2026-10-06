@@ -14,6 +14,7 @@ import network.erth.earth.proto.personhood.MsgBindHandle
 import network.erth.earth.proto.personhood.MsgClaimAnml
 import network.erth.earth.proto.personhood.MsgMoveCaretaker
 import network.erth.earth.proto.personhood.MsgMoveHandle
+import network.erth.earth.proto.personhood.MoveProof
 import network.erth.earth.proto.personhood.MsgRegister
 import network.erth.earth.proto.personhood.MsgSetCaretaker
 import network.erth.earth.proto.shielded.Bundle
@@ -257,6 +258,28 @@ object PrivateMsgs {
         else -> throw IllegalArgumentException("not a stake vote: ${msg.javaClass.simpleName}")
     }
 
+    /** The msg's move proof, if it carries one. */
+    fun move(msg: MessageLite): MoveProof? = when (msg) {
+        is MsgMoveHandle -> msg.move
+        is MsgMoveCaretaker -> msg.move
+        else -> null
+    }
+
+    /**
+     * A move msg with its move proof's body, root and nullifiers set (the sighash
+     * binds neither: the proof binds the sighash, and the nullifiers are its
+     * public inputs, which the chain lays out from the msg).
+     */
+    fun withMove(msg: MessageLite, proof: ByteArray, root: Fr, oldNullifier: Fr, newNullifier: Fr): MessageLite {
+        fun mp(m: MoveProof) = m.toBuilder().setProof(ByteString.copyFrom(proof)).setRoot(ByteString.copyFrom(root.toBytes()))
+            .setOldNullifier(ByteString.copyFrom(oldNullifier.toBytes())).setNewNullifier(ByteString.copyFrom(newNullifier.toBytes())).build()
+        return when (msg) {
+            is MsgMoveHandle -> msg.toBuilder().setMove(mp(msg.move)).build()
+            is MsgMoveCaretaker -> msg.toBuilder().setMove(mp(msg.move)).build()
+            else -> throw IllegalArgumentException("not a move: ${msg.javaClass.simpleName}")
+        }
+    }
+
     /** The msg's stake proof, if it carries one. */
     fun stake(msg: MessageLite): StakeProof? = when (msg) {
         is MsgDelegate -> msg.stake
@@ -316,8 +339,9 @@ object PrivateMsgs {
         is MsgClaimAnml -> listOf(u(msg.day), f(msg.pc), bytes(msg.ciphertext))
         is MsgSetCaretaker -> msg.percentagesList.flatMap { listOf(u(it.optionId), u(it.percent)) }
         is MsgBindHandle -> bindHandleFields(msg)
-        is MsgMoveHandle -> listOf(bytes(msg.handle), f(msg.newOwner))
-        is MsgMoveCaretaker -> listOf(f(msg.newOwner))
+        // The move proof binds the sighash; its nullifiers are its own public inputs.
+        is MsgMoveHandle -> listOf(bytes(msg.handle))
+        is MsgMoveCaretaker -> emptyList()
         is MsgVoteProposal -> listOf(u(msg.proposalId), u(msg.optionValue.toLong()))
         is MsgProposeRemoval -> listOf(u(msg.optionId))
         is MsgVoteRemoval -> listOf(u(msg.optionId), u(msg.optionValue.toLong()))

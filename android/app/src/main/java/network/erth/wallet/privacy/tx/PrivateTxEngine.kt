@@ -9,6 +9,7 @@ import network.erth.wallet.privacy.note.OwnedNote
 import network.erth.wallet.privacy.note.OwnedStakeNote
 import network.erth.wallet.privacy.prove.ActionWitness
 import network.erth.wallet.privacy.prove.MembershipWitness
+import network.erth.wallet.privacy.prove.MoveWitness
 import network.erth.wallet.privacy.prove.StakeWitness
 import network.erth.wallet.privacy.prove.VoteWitness
 import network.erth.wallet.privacy.zk.Fr
@@ -20,6 +21,7 @@ interface Prover {
     fun proveAction(w: ActionWitness): ByteArray
     fun proveStake(w: StakeWitness): ByteArray
     fun proveMembership(w: MembershipWitness): ByteArray
+    fun proveMove(w: MoveWitness): ByteArray
     fun proveVote(w: VoteWitness): ByteArray
 }
 
@@ -77,6 +79,11 @@ class Assembled(
     val membership: MembershipWitnessSpec? = null,
     val vote: VoteWitnessSpec? = null,
     /**
+     * A move proof's statement (MsgMoveHandle, MsgMoveCaretaker): the engine
+     * sets the msg's MoveProof (root, nullifiers, proof) on the built msg.
+     */
+    val move: MoveWitnessSpec? = null,
+    /**
      * Gas declared beyond the simulation and its headroom: what the chain
      * may charge by the tx's block that it did not when simulated (a move's
      * pair reaching its entry cap: PrivacyWallet.redelegateHeadroom).
@@ -94,6 +101,22 @@ class Assembled(
 /** A membership proof's statement, waiting for the sighash (its signal). */
 class MembershipWitnessSpec(private val make: (signal: Fr) -> MembershipWitness) {
     fun witness(signal: Fr): MembershipWitness = make(signal)
+}
+
+/**
+ * A move proof's statement, waiting for the sighash (its signal). The root
+ * and both nullifiers are fixed before it: the chain checks them before any
+ * proof, and a quote lays them out too.
+ */
+class MoveWitnessSpec(private val make: (signal: Fr) -> MoveWitness) {
+    private val probe = make(Fr.ZERO)
+    val root: Fr get() = probe.root
+    val oldNullifier: Fr get() = probe.oldNullifier
+    val newNullifier: Fr get() = probe.newNullifier
+
+    fun witness(signal: Fr): MoveWitness = make(signal).also {
+        check(it.root == root && it.oldNullifier == oldNullifier && it.newNullifier == newNullifier) { "the move witness is for another statement" }
+    }
 }
 
 /**
@@ -216,6 +239,9 @@ class PrivateTxEngine(
         val built = a.build(bundles, stake, membership)
         val msg = a.vote?.let { v ->
             PrivateMsgs.withVote(built, v.vnfs, proofSized(prover.proveVote(v.witness(sighash).also { it.check() })))
+        } ?: a.move?.let { mv ->
+            val w = mv.witness(sighash).also { it.check() }
+            PrivateMsgs.withMove(built, proofSized(prover.proveMove(w)), w.root, w.oldNullifier, w.newNullifier)
         } ?: built
         check(PrivateMsgs.sighash(msg, chainId, tx) == sighash)
         check(PrivateMsgs.totalFee(msg) == q.fee) { "the msg must pay exactly the quoted fee" }
@@ -325,6 +351,10 @@ class PrivateTxEngine(
         return a.vote?.let { v ->
             val vnfs = if (placeholders) v.vnfs.map { Fr.fromBytes(randomField().toByteArray()) } else v.vnfs
             PrivateMsgs.withVote(msg, vnfs, PLACEHOLDER)
+        } ?: a.move?.let { mv ->
+            // A quote's move nullifiers are random, as a membership's: the node learns nothing before the user confirms.
+            fun nf(real: Fr) = if (placeholders) Fr.fromBytes(randomField().toByteArray()) else real
+            PrivateMsgs.withMove(msg, PLACEHOLDER, mv.root, nf(mv.oldNullifier), nf(mv.newNullifier))
         } ?: msg
     }
 
@@ -417,12 +447,23 @@ class PrivateTxEngine(
         /** One note write (x/shielded note_gas default). */
         const val NOTE_GAS = 150_000L
         /**
+         * A move's writes beyond the one in [MEMBERSHIP_GAS] (a move proof
+         * costs what a membership proof does): the chain prices MsgMoveHandle
+         * as four note writes, MsgMoveCaretaker as six.
+         */
+        const val MOVE_HANDLE_EXTRA_GAS = 3 * NOTE_GAS
+        const val MOVE_CARETAKER_EXTRA_GAS = 5 * NOTE_GAS
+        /**
          * MsgBindHandle's writes beyond the one in [MEMBERSHIP_GAS]: the chain
          * prices a bind as nine note writes.
          */
         const val BIND_HANDLE_EXTRA_GAS = 8 * NOTE_GAS
-        /** MsgRegister: the passport proof (3,000,000), the DSC chain (300,000) and two minted notes. */
-        const val REGISTER_GAS = 3_600_000L
+        /**
+         * MsgRegister: the passport proof (3,000,000), the DSC chain (300,000)
+         * and six note-sized writes (the leaf, the minted notes, the records,
+         * and the succession leaf a switch or re-entry appends).
+         */
+        const val REGISTER_GAS = 3_300_000L + 6 * NOTE_GAS
 
         /** The wallet's estimate of [msg]'s gas from its shape alone. */
         fun estimateGas(msg: MessageLite, a: Assembled, txBytes: Int): Long {
@@ -433,6 +474,7 @@ class PrivateTxEngine(
                 if (!Fr.fromBytes(p.creditNullifier.toByteArray()).isZero) g += CREDIT_GAS + REDELEGATE_RECORD_GAS
             }
             if (a.membership != null) g += MEMBERSHIP_GAS
+            if (a.move != null) g += MEMBERSHIP_GAS + if (msg is network.erth.earth.proto.personhood.MsgMoveCaretaker) MOVE_CARETAKER_EXTRA_GAS else MOVE_HANDLE_EXTRA_GAS
             a.vote?.let { g += VOTE_GAS + (1L + it.vnfs.size) * NOTE_GAS }
             if (msg is network.erth.earth.proto.personhood.MsgRegister) g += REGISTER_GAS
             if (msg is network.erth.earth.proto.personhood.MsgBindHandle) g += BIND_HANDLE_EXTRA_GAS

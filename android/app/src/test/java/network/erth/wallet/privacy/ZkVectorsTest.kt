@@ -76,7 +76,7 @@ class ZkVectorsTest {
     fun tagsAssetsBytesCountry() {
         val tags = json.getJSONObject("tags")
         val mine = mapOf(
-            "id" to Privacy.TAG_ID, "owner" to Privacy.TAG_OWNER, "leaf" to Privacy.TAG_LEAF, "sn" to Privacy.TAG_SN,
+            "id" to Privacy.TAG_ID, "owner" to Privacy.TAG_OWNER, "leaf" to Privacy.TAG_LEAF, "succ" to Privacy.TAG_SUCC, "sn" to Privacy.TAG_SN,
             "pc" to Privacy.TAG_PC, "cm" to Privacy.TAG_CM, "nf" to Privacy.TAG_NF, "reg" to Privacy.TAG_REG,
             "asset" to Privacy.TAG_ASSET, "signal" to Privacy.TAG_SIGNAL, "bytes" to Privacy.TAG_BYTES, "scope" to Privacy.TAG_SCOPE, "affiliate" to Privacy.TAG_AFFILIATE, "referral" to Privacy.TAG_REFERRAL,
             "stake" to Privacy.TAG_STAKE, "spc" to Privacy.TAG_SPC, "snf" to Privacy.TAG_SNF, "otag" to Privacy.TAG_OTAG,
@@ -113,6 +113,8 @@ class ZkVectorsTest {
         assertEquals(d.getString("leaf"), Privacy.identityLeaf(idc, fr(d.getString("leaf_dsc")), Privacy.countryField("DE"), 1_790_000_000, 0).toHex())
         // A switched or re-entered identity's leaf commits to predecessor_at.
         assertEquals(d.getString("leaf_pred"), Privacy.identityLeaf(idc, fr(d.getString("leaf_dsc")), Privacy.countryField("DE"), 1_790_000_000, 1_790_000_000).toHex())
+        // The succession leaf a switch to another identity appends (circuits/move).
+        assertEquals(d.getString("succession"), Privacy.successionLeaf(idc, Privacy.idc(fr(d.getString("succession_new_secret")))).toHex())
         assertEquals(d.getString("sn"), Privacy.scopeNullifier(idSecret, Privacy.claimScope(20360)).toHex())
         val pc = Privacy.pc(opk, rho, rcm)
         assertEquals(d.getString("pc"), pc.toHex())

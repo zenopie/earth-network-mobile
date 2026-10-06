@@ -104,7 +104,7 @@ fun HandleScreen(
         val e = state.handleEntry
         val movingOut = state.outgoingMoves.any { it.kind == PendingMove.HANDLE && !it.confirmed }
         if (movingOut) {
-            Note("A move of @${state.handle} to another wallet was sent and is waiting for the chain. Check it on Switch identity.")
+            Note("A move of @${state.handle} to the identity that replaced this one was sent and is waiting for the chain. Check it on Identity in the new wallet.")
             Spacer(Modifier.height(dimens.space12))
         }
         if (state.incomingMoves.any { it.kind == PendingMove.HANDLE }) {
@@ -229,29 +229,23 @@ fun HandleScreen(
 /**
  * A voluntary switch of identity: the same passport registered from another
  * of this phone's wallets. The chain zeroes this wallet's leaf and makes a
- * new one there. What this identity holds (its handle, its caretaker vote)
- * can be moved to the new identity first, so it keeps them with no wait;
- * otherwise the new identity waits until they lapse (up to a year).
+ * new one there. Once the switch has landed, the new identity can bring this
+ * one's handle and caretaker vote over ([MoveOfferCard], on Identity in the
+ * new wallet): a move proves knowledge of both identities' secrets, so it
+ * comes after the switch and needs both recovery phrases on this phone.
  *
- * A move counts as done only once the chain confirmed it; the
- * new wallet's recovery phrase is shown only after a fresh unlock and is
- * dropped when the screen is paused or left; the backup box needs the
- * phrase shown first; the first move fixes the target.
+ * The new wallet's recovery phrase is shown only after a fresh unlock and
+ * is dropped when the screen is paused or left; the backup box needs the
+ * phrase shown first.
  */
 @Composable
 fun SwitchIdentityScreen(
-    state: PersonalState?,
     wallets: List<SecureWalletManager.WalletInfo>,
     currentIndex: Int,
-    onMove: (targetIndex: Int, moveHandle: Boolean, moveCaretaker: Boolean) -> Unit,
     onContinue: (targetIndex: Int) -> Unit,
     onCreateWallet: () -> Unit,
     /** The recovery phrase of the wallet at an index, read for display only (after a fresh unlock). */
     revealPhrase: (Int) -> String?,
-    /** Settles moves in flight by their tx and retries recording them in the new wallet. */
-    onCheckMoves: () -> Unit,
-    /** The wallet index this identity's moves already went to (null: none yet). */
-    frozenTarget: Int?,
     /** What the chosen target already holds, as a warning (null: nothing). */
     targetWarning: String?,
     onTargetChange: (Int) -> Unit,
@@ -259,13 +253,10 @@ fun SwitchIdentityScreen(
 ) {
     val dimens = EarthTheme.dimens
     var target by remember { mutableStateOf<Int?>(null) }
-    var moveHandle by remember { mutableStateOf(true) }
-    var moveCaretaker by remember { mutableStateOf(true) }
     var backedUp by remember { mutableStateOf(false) }
     var phrase by remember { mutableStateOf<String?>(null) }
     var revealedFor by remember { mutableStateOf<Int?>(null) }
     var confirming by remember { mutableStateOf(false) }
-    LaunchedEffect(frozenTarget) { frozenTarget?.let { if (target != it) { target = it; phrase = null; onTargetChange(it) } } }
     // The phrase lives only while the screen is in front: gone on pause and when left.
     val owner = LocalLifecycleOwner.current
     DisposableEffect(owner) {
@@ -289,99 +280,48 @@ fun SwitchIdentityScreen(
         Spacer(Modifier.height(dimens.space8))
         Note(
             "Switching moves your personhood to another wallet: register the same passport there and " +
-                "this wallet stops counting as you. Your handle and caretaker vote can move with you first, " +
-                "so the new identity keeps them at once. Anything not moved stays with this wallet until it " +
-                "lapses, and the new identity cannot claim a handle or cast a caretaker vote until then " +
+                "this wallet stops counting as you. Once the switch lands, open Identity in the new wallet " +
+                "to bring your handle and caretaker vote over; each is a private move proven with both " +
+                "wallets' recovery phrases, which stay on this phone. Do it before switching again: a move " +
+                "goes only to the passport's live identity. Anything not moved stays with this wallet until " +
+                "it lapses, and the new identity cannot claim a handle or cast a caretaker vote until then " +
                 "(up to a year).",
         )
         Spacer(Modifier.height(dimens.space8))
         Note(
-            "If you ever lose a wallet, nothing it holds can be moved: a new identity waits out its handle " +
-                "and caretaker vote. Back up every wallet's recovery phrase.",
+            "A switch from a wallet whose recovery phrase is lost cannot move anything: the move needs " +
+                "that wallet's secret. Its handle and caretaker vote wait out their leases. Back up every " +
+                "wallet's recovery phrase.",
         )
         Spacer(Modifier.height(dimens.space16))
         EarthLabel("Switch to")
         val others = wallets.filter { it.index != currentIndex }
         if (others.isEmpty()) Note("You have no other wallet on this phone. Create one first.")
         others.forEach { w ->
-            val selectable = frozenTarget == null || frozenTarget == w.index
             fun pick() {
-                if (!selectable || target == w.index) return
+                if (target == w.index) return
                 target = w.index; phrase = null; backedUp = false
                 onTargetChange(w.index)
             }
             Row(
-                Modifier.fillMaxWidth().clickable(enabled = selectable) { pick() }.padding(vertical = dimens.space8),
+                Modifier.fillMaxWidth().clickable { pick() }.padding(vertical = dimens.space8),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Checkbox(checked = target == w.index, onCheckedChange = { pick() }, enabled = selectable)
+                Checkbox(checked = target == w.index, onCheckedChange = { pick() })
                 Column {
                     Text(w.name, style = EarthTypography.textMd, color = EarthColors.Text.textPrimary)
                     Text(Handles.truncate(w.address, 10, 6), style = EarthTypography.textXs, color = EarthColors.Text.textTertiary)
                 }
             }
         }
-        if (frozenTarget != null) Note("This identity already moved to that wallet, so the switch goes there.")
         targetWarning?.let { Note(it) }
-        if (frozenTarget == null) EarthButton(
+        EarthButton(
             text = "Create a new wallet",
             onClick = onCreateWallet,
             modifier = Modifier.fillMaxWidth(),
             colors = EarthButtonDefaults.secondaryColors(),
         )
         Spacer(Modifier.height(dimens.space16))
-        val now = System.currentTimeMillis() / 1000
-        val outgoing = state?.outgoingMoves.orEmpty()
-        val handleInFlight = outgoing.any { it.kind == PendingMove.HANDLE && !it.confirmed }
-        val voteInFlight = outgoing.any { it.kind == PendingMove.CARETAKER && !it.confirmed }
-        val inFlight = handleInFlight || voteInFlight
-        val unrecorded = outgoing.any { !it.recorded }
-        val handleMoved = state?.handleMovedOut == true
-        val voteMoved = state?.caretakerMovedOut == true
-        // Only a live handle moves (not one in its renewal period).
-        val handleInRenewal = state?.handleEntry?.let { it.statusAt(now) == HandleEntry.RENEWAL } == true
-        val holdsHandle = state?.handle?.isNotEmpty() == true && !handleInFlight && !handleInRenewal
-        val holdsVote = !voteInFlight && (state?.caretakerExpiresAt ?: 0L) > now &&
-            (state?.caretakerSplit?.isNotEmpty() == true || state?.caretakerSplitUnknown == true)
-        fun suffix(moved: Boolean, flying: Boolean) = when {
-            flying -> " (sent, waiting for the chain)"
-            moved -> " (moved)"
-            else -> ""
-        }
-        if (holdsHandle || handleInRenewal || holdsVote || inFlight || handleMoved || voteMoved) {
-            EarthLabel("Move first")
-            if (handleInRenewal && !handleInFlight) {
-                Note("@${state?.handle} is past its expiry (in its renewal period): only a live handle can be moved. Renew it first to move it.")
-            }
-            if (holdsHandle || handleInFlight || handleMoved) Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = moveHandle && holdsHandle, onCheckedChange = { moveHandle = it }, enabled = holdsHandle)
-                val name = state?.handle?.takeIf { it.isNotEmpty() } ?: outgoing.firstOrNull { it.kind == PendingMove.HANDLE }?.handle.orEmpty()
-                Text("Move " + (if (name.isNotEmpty()) "@$name" else "my handle") + suffix(handleMoved, handleInFlight), style = EarthTypography.textSm, color = EarthColors.Text.textPrimary)
-            }
-            if (holdsVote || voteInFlight || voteMoved) Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = moveCaretaker && holdsVote, onCheckedChange = { moveCaretaker = it }, enabled = holdsVote)
-                Text("Move my caretaker vote" + suffix(voteMoved, voteInFlight), style = EarthTypography.textSm, color = EarthColors.Text.textPrimary)
-            }
-            Note("Each move is a private transaction with its own fee. Once moved, this identity can never hold one again.")
-            if (inFlight) {
-                Spacer(Modifier.height(dimens.space8))
-                Note("A move was sent but the chain has not confirmed it yet. Check again before switching; the new wallet already counts it as pending.")
-            }
-            if (unrecorded) {
-                Spacer(Modifier.height(dimens.space8))
-                Note("The new wallet has not recorded a move yet. It finds it on its own when it syncs; you can also record it now.")
-            }
-            if (inFlight || unrecorded) {
-                Spacer(Modifier.height(dimens.space8))
-                EarthButton(
-                    text = "Check the moves again",
-                    onClick = onCheckMoves,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = EarthButtonDefaults.secondaryColors(),
-                )
-            }
-            Spacer(Modifier.height(dimens.space8))
-        }
         val shown = phrase
         if (shown != null) {
             // Kept out of screenshots and the recents thumbnail while shown.
@@ -414,24 +354,72 @@ fun SwitchIdentityScreen(
         }
         Spacer(Modifier.height(dimens.space16))
         val t = target
-        val ready = t != null && backedUp && canTick && !inFlight
-        val pendingMoves = (holdsHandle && moveHandle) || (holdsVote && moveCaretaker)
-        if (pendingMoves) {
+        EarthButton(
+            text = "Switch: register there",
+            onClick = { if (t != null) onContinue(t) },
+            enabled = t != null && backedUp && canTick,
+            modifier = Modifier.fillMaxWidth(),
+            colors = brandButtonColors(),
+        )
+    }
+}
+
+/**
+ * After a switch has landed: what the identity this one replaced (another
+ * wallet on this phone, same passport) still holds, and a move for each.
+ * Each move is proven with both identities' secrets and paid from the
+ * previous wallet's private ERTH; it shows as done only once confirmed.
+ */
+@Composable
+fun MoveOfferCard(
+    offer: network.erth.wallet.privacy.PrivacySession.MoveOffer,
+    onBringHandle: () -> Unit,
+    onBringVote: () -> Unit,
+    onCheckMoves: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val dimens = EarthTheme.dimens
+    val handleInFlight = offer.inFlight.any { it.kind == PendingMove.HANDLE && !it.confirmed }
+    val voteInFlight = offer.inFlight.any { it.kind == PendingMove.CARETAKER && !it.confirmed }
+    Column(modifier.fillMaxWidth()) {
+        EarthLabel("From your previous identity")
+        Spacer(Modifier.height(dimens.space8))
+        Note(
+            "This identity replaced the one in ${offer.fromName}. You can bring what it holds here with no wait, " +
+                "while this is still the passport's live identity. The fee comes from ${offer.fromName}'s private ERTH.",
+        )
+        Spacer(Modifier.height(dimens.space8))
+        if (offer.handle.isNotEmpty() && !handleInFlight) {
+            if (offer.handleLive) EarthButton(
+                text = "Bring your handle @${offer.handle} to this identity",
+                onClick = onBringHandle,
+                modifier = Modifier.fillMaxWidth(),
+                colors = brandButtonColors(),
+            ) else Note("@${offer.handle} is in its renewal period: only a live handle can move, and the old identity can no longer renew it.")
+            Spacer(Modifier.height(dimens.space8))
+        }
+        if (offer.voteLive && !voteInFlight) {
             EarthButton(
-                text = "Move to the new wallet",
-                onClick = { if (t != null) onMove(t, moveHandle && holdsHandle, moveCaretaker && holdsVote) },
-                enabled = ready,
+                text = "Bring your Caretaker split to this identity",
+                onClick = onBringVote,
                 modifier = Modifier.fillMaxWidth(),
                 colors = brandButtonColors(),
             )
-        } else {
+            Spacer(Modifier.height(dimens.space8))
+        }
+        if (offer.inFlight.isNotEmpty()) {
+            Note(
+                if (handleInFlight || voteInFlight) "A move was sent and the chain has not confirmed it yet; this identity already counts it as pending."
+                else "A confirmed move has not been recorded in this wallet yet. It finds it on its own when it syncs; you can also record it now.",
+            )
+            Spacer(Modifier.height(dimens.space8))
             EarthButton(
-                text = "Switch: register there",
-                onClick = { if (t != null) onContinue(t) },
-                enabled = ready,
+                text = "Check the moves again",
+                onClick = onCheckMoves,
                 modifier = Modifier.fillMaxWidth(),
-                colors = brandButtonColors(),
+                colors = EarthButtonDefaults.secondaryColors(),
             )
         }
+        Note("Once moved, the previous identity can never hold a handle or caretaker vote again.")
     }
 }

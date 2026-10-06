@@ -40,6 +40,8 @@ import network.erth.wallet.privacy.sync.StakeVoteRecord
 import network.erth.wallet.privacy.sync.ChainRoots
 import network.erth.wallet.privacy.sync.IdentityRecord
 import network.erth.wallet.privacy.sync.PendingMove
+import network.erth.wallet.privacy.tx.MoveWitnessSpec
+import network.erth.wallet.privacy.prove.MoveWitness
 import network.erth.wallet.privacy.sync.PendingRegistration
 import network.erth.wallet.privacy.sync.PrivacyIndexer
 import network.erth.wallet.privacy.sync.PrivacyStore
@@ -915,33 +917,87 @@ class PrivacyWallet(
     }
 
     /**
-     * The nullifier [other]'s identity proves in [scope]: what a move names
-     * as new_owner, H(TAG_SN, new_id_secret, scope). Computed from the other
-     * wallet's keys on this phone; it says nothing about the passport.
+     * The identity that succeeded this one under the same passport, on this
+     * phone: another wallet's keys (derived from its recovery phrase) and its
+     * registration as its own store records it. A move proves knowledge of
+     * both identity secrets, so a wallet whose phrase is lost can move nothing.
      */
-    fun newOwner(other: PrivacyKeys, scope: Fr): Fr = Privacy.scopeNullifier(other.idSecret, scope)
+    data class Successor(val keys: PrivacyKeys, val identity: IdentityRecord)
+
+    /** A move cannot be made to that identity (nothing was sent). */
+    class MoveNotPossible(message: String) : IllegalStateException(message)
 
     /**
-     * Hands the live caretaker split (and its expiry) to [newOwner], the
-     * caretaker-scope nullifier of the identity that is to hold it: how a
-     * switch of identity keeps its vote. This identity may never cast one
-     * again (ErrCaretakerMovedOut, 1126).
+     * Where the succession leaf H(TAG_SUCC, [idcOld], [idcNew]) sits in the
+     * local identity tree, or null. The chain appends it right after the new
+     * identity's leaf ([near]), in the same tx; the rest of the tree is
+     * searched only if it is not there. Local: nothing asked names it.
      */
-    fun moveCaretaker(newOwner: Fr, target: PrivacyKeys? = null, recorder: MoveRecorder? = null): TxResult {
+    fun successionIndex(idcOld: Fr, idcNew: Fr, near: Long): Long? = synchronized(store) {
+        val want = Privacy.successionLeaf(idcOld, idcNew)
+        val tree = store.identityTree
+        if (near in 0 until tree.size && tree.leaf(near) == want) return near
+        var i = tree.size - 1
+        while (i >= 0) { if (tree.leaf(i) == want) return i; i-- }
+        null
+    }
+
+    /**
+     * The move proof's statement in [scope] from this identity to [to]: the
+     * succession leaf (this identity, [to]) and [to]'s live leaf, both under
+     * the local tree's root (verified at the last sync, so one the chain
+     * recorded; a move goes out within the root window of it).
+     */
+    private fun moveStatement(scope: Fr, to: Successor): MoveWitnessSpec {
+        val id = to.identity
+        val newIdc = to.keys.idc
+        require(newIdc != keys.idc) { "a move goes to another identity" }
+        val leaf = Privacy.identityLeaf(newIdc, id.dscKey, id.country, id.activatedAt, id.predecessorAt)
+        val tree = store.identityTree
+        if (id.leafIndex >= tree.size) throw SyncFirst("this wallet has not synced the new identity's registration yet: sync, then try again")
+        when (tree.leaf(id.leafIndex)) {
+            leaf -> {}
+            Fr.ZERO -> throw MoveNotPossible("the new identity is no longer the passport's live one (it switched again or lapsed): a move goes only to the live successor")
+            else -> throw MoveNotPossible("the new wallet's registration record does not match the identity tree; sync it, then try again")
+        }
+        val si = successionIndex(keys.idc, newIdc, id.leafIndex + 1)
+            ?: throw MoveNotPossible("that identity did not directly succeed this one under this passport: a move goes only to the identity the passport registered next")
+        val root = tree.root()
+        val sp = tree.path(si)
+        val lp = tree.path(id.leafIndex)
+        val oldSecret = keys.idSecret
+        val newSecret = to.keys.idSecret
+        return MoveWitnessSpec { signal ->
+            MoveWitness(
+                oldSecret = oldSecret, newSecret = newSecret, successionIndex = si, successionSiblings = sp,
+                dscKey = id.dscKey, country = id.country, activatedAt = id.activatedAt, predecessorAt = id.predecessorAt,
+                leafIndex = id.leafIndex, siblings = lp, root = root, scope = scope, signal = signal,
+            )
+        }
+    }
+
+    /**
+     * Hands the live caretaker split (and its expiry) to [to], the identity
+     * that succeeded this one under the same passport, once its registration
+     * has landed and while it is still the passport's live one: how a switch
+     * keeps its vote. This wallet pays the fee. This identity may never cast
+     * one again (ErrCaretakerMovedOut, 1126).
+     */
+    fun moveCaretaker(to: Successor, recorder: MoveRecorder? = null): TxResult {
         check(caretakerLive()) { "this identity holds no live caretaker vote to move" }
-        require(newOwner != Privacy.scopeNullifier(keys.idSecret, Privacy.caretakerScope())) { "the new owner is this identity" }
-        target?.let { require(newOwner == newOwner(it, Privacy.caretakerScope())) { "new_owner is not the target wallet's" } }
         checkNoMove(PendingMove.CARETAKER)
         val s = store.state
         val move = PendingMove(PendingMove.CARETAKER, "", 0, incoming = false, split = s.caretakerSplit,
             splitUnknown = s.caretakerSplitUnknown, expiresAt = caretakerExpiresAt(), target = recorder?.targetId.orEmpty())
         // State records: moved out for this identity, held (split, expiry) for the new one.
-        val outs = listOf(stateRecord(keys) { WalletSync.caretakerMemo(it, WalletSync.RECORD_MOVED_OUT) }) +
-            listOfNotNull(target?.let { t -> stateRecord(t) { WalletSync.caretakerMemo(it, WalletSync.RECORD_HOLDS, move.expiresAt, if (move.splitUnknown) emptyMap() else move.split) } })
-        val m = membership(Privacy.caretakerScope(), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, Privacy.NO_BOUND)
+        val outs = listOf(
+            stateRecord(keys) { WalletSync.caretakerMemo(it, WalletSync.RECORD_MOVED_OUT) },
+            stateRecord(to.keys) { WalletSync.caretakerMemo(it, WalletSync.RECORD_HOLDS, move.expiresAt, if (move.splitUnknown) emptyMap() else move.split) },
+        )
+        val mv = moveStatement(Privacy.caretakerScope(), to)
         val r = moveRun(move, recorder) { fee ->
-            Assembled(listOf(bundle(outs, mapOf(FEE to fee))), membership = m) { bs, _, mem ->
-                MsgMoveCaretaker.newBuilder().setFee(bs[0]).setMembership(mem).setNewOwner(ByteString.copyFrom(newOwner.toBytes())).build()
+            Assembled(listOf(bundle(outs, mapOf(FEE to fee))), move = mv) { bs, _, _ ->
+                MsgMoveCaretaker.newBuilder().setFee(bs[0]).build()
             }
         }
         synchronized(this) { confirmMove(r.hash) }
@@ -976,7 +1032,7 @@ class PrivacyWallet(
             // The target a confirmed move went to, or one a move
             // still in flight names; a refused, failed or expired move frees it.
             val fixed = switchTargetNow()
-            check(fixed.isEmpty() || fixed == rc.targetId) { "this identity already moved to another wallet; switch to that one" }
+            check(fixed.isEmpty() || fixed == rc.targetId) { "this identity's moves already went to another wallet's identity" }
             rc.refusal(move)?.let { throw IllegalStateException(it) }
         }
         return run(
@@ -1162,27 +1218,26 @@ class PrivacyWallet(
     }
 
     /**
-     * Hands this identity's handle (lease unchanged) to [newOwner], the
-     * handle-scope nullifier of the identity that is to hold it. This
+     * Hands this identity's handle (lease unchanged) to [to], the identity
+     * that succeeded it under the same passport (see [moveCaretaker]). This
      * identity may never claim one again (ErrHandleMovedOut, 1125).
      */
-    fun moveHandle(newOwner: Fr, target: PrivacyKeys? = null, recorder: MoveRecorder? = null): TxResult {
+    fun moveHandle(to: Successor, recorder: MoveRecorder? = null): TxResult {
         val handle = store.state.handle
         check(handle.isNotEmpty()) { "this identity holds no handle to move" }
-        require(newOwner != Privacy.scopeNullifier(keys.idSecret, Privacy.handleScope())) { "the new owner is this identity" }
-        target?.let { require(newOwner == newOwner(it, Privacy.handleScope())) { "new_owner is not the target wallet's" } }
         checkNoMove(PendingMove.HANDLE)
         // MsgMoveHandle refuses a handle that is not live (its renewal period).
         handleExpiresAt().takeIf { it > 0 }?.let { if (it <= chainNow()) throw HandleNotMovable(handle) }
         val move = PendingMove(PendingMove.HANDLE, "", 0, incoming = false, handle = handle, target = recorder?.targetId.orEmpty())
         // State records: moved out for this identity, held for the new one.
-        val outs = listOf(stateRecord(keys) { WalletSync.handleMemo(it, WalletSync.RECORD_MOVED_OUT) }) +
-            listOfNotNull(target?.let { t -> stateRecord(t) { WalletSync.handleMemo(it, WalletSync.RECORD_HOLDS, handle) } })
-        val m = membership(Privacy.handleScope(), Fr.ZERO, Fr.ZERO, Privacy.NO_BOUND, Privacy.NO_BOUND)
+        val outs = listOf(
+            stateRecord(keys) { WalletSync.handleMemo(it, WalletSync.RECORD_MOVED_OUT) },
+            stateRecord(to.keys) { WalletSync.handleMemo(it, WalletSync.RECORD_HOLDS, handle) },
+        )
+        val mv = moveStatement(Privacy.handleScope(), to)
         val r = moveRun(move, recorder) { fee ->
-            Assembled(listOf(bundle(outs, mapOf(FEE to fee))), membership = m) { bs, _, mem ->
-                MsgMoveHandle.newBuilder().setFee(bs[0]).setMembership(mem).setHandle(handle)
-                    .setNewOwner(ByteString.copyFrom(newOwner.toBytes())).build()
+            Assembled(listOf(bundle(outs, mapOf(FEE to fee))), move = mv) { bs, _, _ ->
+                MsgMoveHandle.newBuilder().setFee(bs[0]).setHandle(handle).build()
             }
         }
         synchronized(this) { confirmMove(r.hash) }

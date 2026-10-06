@@ -68,8 +68,6 @@ data class PersonalState(
     val outgoingMoves: List<PendingMove> = emptyList(),
     /** Moves to this identity the chain has not confirmed yet. */
     val incomingMoves: List<PendingMove> = emptyList(),
-    /** The store id of the wallet this identity's moves went to ("" none yet). */
-    val switchTarget: String = "",
 )
 
 /**
@@ -162,7 +160,6 @@ class PrivacyActionsViewModel(app: Application) : AndroidViewModel(app) {
                 addressed = addressed,
                 outgoingMoves = st.pendingMoves.filter { !it.incoming },
                 incomingMoves = st.pendingMoves.filter { it.incoming },
-                switchTarget = st.switchTarget,
             )
         }
     }

@@ -54,8 +54,13 @@ fun PersonhoodScreen(
     /** Opens the handle screen; [handle] is this identity's ("" for none). */
     onHandle: () -> Unit = {},
     handle: String = "",
-    /** Opens the identity switch (moving the handle and caretaker vote first). */
+    /** Opens the identity switch. */
     onSwitch: () -> Unit = {},
+    /** After a switch: what the identity this one replaced can bring here (null: nothing). */
+    moveOffer: network.erth.wallet.privacy.PrivacySession.MoveOffer? = null,
+    onBringHandle: () -> Unit = {},
+    onBringVote: () -> Unit = {},
+    onCheckMoves: () -> Unit = {},
 ) {
     val dimens = EarthTheme.dimens
     val shape = RoundedCornerShape(EarthDimensions.Radius.radius3xl)
@@ -149,6 +154,11 @@ fun PersonhoodScreen(
                 colors = network.erth.wallet.ui.designsystem.component.EarthButtonDefaults.secondaryColors(),
             )
 
+            if (moveOffer != null && moveOffer.anything) {
+                Spacer(Modifier.height(dimens.space24))
+                network.erth.wallet.ui.privacy.MoveOfferCard(moveOffer, onBringHandle, onBringVote, onCheckMoves)
+            }
+
             // There is no way to leave from here: the chain has no
             // MsgUnregister. Retiring a registration would free its nullifier,
             // and Register pays the registration reward to any nullifier that
@@ -156,15 +166,15 @@ fun PersonhoodScreen(
             // reward pool repeatedly.
             //
             // Moving a registration still works: register the same passport
-            // from another wallet. The switch screen moves the handle and the
-            // caretaker vote there first, so the new identity keeps them.
+            // from another wallet. Once that lands, the new wallet brings the
+            // handle and caretaker vote over with move proofs (MoveOfferCard).
             Spacer(Modifier.height(dimens.space32))
             Text(
                 text = "Your registration stays with this wallet until it " +
                     "expires. To move it to another wallet, switch identity: " +
-                    "your handle and caretaker vote move first, then you " +
-                    "register the same passport there. Nothing is paid the " +
-                    "second time. A passport can switch once per day (UTC).",
+                    "register the same passport there, then bring your handle " +
+                    "and caretaker vote over from the new wallet. Nothing is " +
+                    "paid the second time. A passport can switch once per day (UTC).",
                 style = EarthTypography.textSm,
                 color = EarthColors.Text.textTertiary,
                 textAlign = TextAlign.Center,

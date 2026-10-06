@@ -68,12 +68,26 @@ message MsgSetCaretaker {
   uint64 max_predecessor = 5;
 }
 
-// Hands the prover's live caretaker split to new_owner, the caretaker-scope
-// nullifier of the identity that is to hold it. sighash fields: new_owner.
+// MoveProof is a move circuit proof (circuits/move): its prover knows the
+// identity secrets of an identity and of the identity that succeeded it under
+// the same passport (the chain's succession leaf H(TAG_SUCC, idc_old, idc_new)
+// and the successor's live identity leaf are both in the tree at root).
+// Public inputs, in order: root, scope (the msg's), old_nullifier,
+// new_nullifier, signal (the msg's sighash). The chain defines it in
+// registration.proto; the same package, so the wire is the same.
+message MoveProof {
+  bytes proof = 1;
+  bytes root = 2;
+  bytes old_nullifier = 3;
+  bytes new_nullifier = 4;
+}
+
+// Hands the live caretaker split of old_nullifier, percentages and expiry
+// unchanged, to new_nullifier, its successor under the same passport, in the
+// caretaker scope. sighash fields: none beyond the fee bundle's.
 message MsgMoveCaretaker {
   earth.shielded.v1.Bundle fee = 1;
-  Membership membership = 2;
-  bytes new_owner = 3;
+  MoveProof move = 2;
 }
 
 // Claims, renews, changes or (both empty) releases the prover's handle.
@@ -88,11 +102,11 @@ message MsgBindHandle {
   uint64 max_predecessor = 6;
 }
 
-// Hands the prover's handle to new_owner, the handle-scope nullifier of the
-// identity that is to hold it. sighash fields: Bytes(handle), new_owner.
+// Hands a live handle, lease unchanged, from old_nullifier to new_nullifier,
+// its successor under the same passport, in the handle scope. sighash
+// fields: Bytes(handle).
 message MsgMoveHandle {
   earth.shielded.v1.Bundle fee = 1;
-  Membership membership = 2;
+  MoveProof move = 2;
   string handle = 3;
-  bytes new_owner = 4;
 }

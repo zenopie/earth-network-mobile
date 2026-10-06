@@ -39,8 +39,19 @@ object PrivacySession {
         val address = SecureWalletManager.getWalletAddress(app) ?: throw IllegalStateException("no wallet")
         current?.let { (a, w) -> if (a == address) return w }
         val keys = SecureWalletManager.executeWithMnemonic(app) { PrivacyKeys.fromMnemonic(it) }
+        val w = walletFor(app, keys)
+        current = address to w
+        return w
+    }
+
+    /**
+     * The [PrivacyWallet] of [keys] (the selected wallet's, or another of
+     * this phone's): one per store id per process.
+     */
+    @Synchronized
+    private fun walletFor(app: Context, keys: PrivacyKeys): PrivacyWallet {
         val id = storeId(keys)
-        wallets[id]?.let { w -> current = address to w; return w }
+        wallets[id]?.let { return it }
         val w = PrivacyWallet(
             keys = keys,
             store = PrivacyStore.shared(app.filesDir, id, network.erth.wallet.wallet.SessionManager.dataKey()),
@@ -52,9 +63,11 @@ object PrivacySession {
             roots = network.erth.wallet.privacy.chain.LcdChainRoots,
         )
         wallets[id] = w
-        current = address to w
         return w
     }
+
+    /** The private side of the wallet at [index] (another of this phone's wallets). Blocking. */
+    fun walletAt(context: Context, index: Int): PrivacyWallet = walletFor(context.applicationContext, keysOf(context, index))
 
     /**
      * A wallet's store directory: named by a hash of the owner key, not the
@@ -112,13 +125,78 @@ object PrivacySession {
         }
     }
 
-    /** Retries recording every move of the selected wallet whose target write failed; returns how many remain unrecorded. */
-    fun retryMoveRecords(context: Context): Int {
-        val w = wallet(context)
+    /** Retries recording every move of [w] (default: the selected wallet) whose target write failed; returns how many remain unrecorded. */
+    fun retryMoveRecords(context: Context, w: PrivacyWallet = wallet(context)): Int {
         for (p in w.outgoingMoves().filter { !it.recorded && it.target.isNotEmpty() }) {
             if (runCatching { recorderFor(context, p.target).record(p.copy(incoming = true, target = "", recorded = true)) }.isSuccess) w.markRecorded(p.txHash)
         }
         return w.outgoingMoves().count { !it.recorded }
+    }
+
+    /**
+     * What the identity this wallet's registration succeeded (another wallet
+     * on this phone, same passport) holds that a move can bring here: shown
+     * after a switch lands. Null when this identity is not live, or no wallet
+     * on the phone is its predecessor (a switch from a lost phrase: nothing
+     * can move, as the move proof needs both identity secrets).
+     */
+    data class MoveOffer(
+        /** The predecessor's wallet index and name. */
+        val fromIndex: Int,
+        val fromName: String,
+        /** Its handle ("" none) and whether it is live (only a live one moves). */
+        val handle: String,
+        val handleLive: Boolean,
+        /** Whether it holds a live caretaker vote, and until when. */
+        val voteLive: Boolean,
+        val voteExpiresAt: Long,
+        /** Its moves already sent and not yet confirmed (or not recorded here). */
+        val inFlight: List<network.erth.wallet.privacy.sync.PendingMove>,
+        /** Its shielded ERTH: the moves' fees come out of it. */
+        val feeErth: Long,
+    ) {
+        val anything: Boolean get() = handle.isNotEmpty() || voteLive || inFlight.isNotEmpty()
+    }
+
+    /**
+     * Finds the predecessor among this phone's wallets by the succession leaf
+     * the chain appended for this identity's registration (searched in this
+     * wallet's own tree: nothing asked names it), syncs that wallet, and says
+     * what it holds. Blocking (a sync).
+     */
+    fun moveOffer(context: Context): MoveOffer? {
+        val app = context.applicationContext
+        val w = wallet(app)
+        val id = w.store.state.identity?.takeIf { it.verified } ?: return null
+        if (w.identityStatus() != network.erth.wallet.privacy.sync.WalletSync.IdentityStatus.LIVE) return null
+        val selected = SecureWalletManager.getSelectedWalletIndex()
+        for (info in SecureWalletManager.listWallets()) {
+            if (info.index == selected) continue
+            val keys = runCatching { keysOf(app, info.index) }.getOrNull() ?: continue
+            if (keys.idc == w.keys.idc) continue
+            w.successionIndex(keys.idc, w.keys.idc, id.leafIndex + 1) ?: continue
+            val p = walletFor(app, keys)
+            runCatching { p.sync() }
+            runCatching { p.resolvePendingMoves() }
+            val st = p.store.state
+            val now = System.currentTimeMillis() / 1000
+            val handleExp = p.handleExpiresAt()
+            return MoveOffer(
+                fromIndex = info.index, fromName = info.name,
+                handle = st.handle, handleLive = st.handle.isNotEmpty() && (handleExp == 0L || handleExp > now),
+                voteLive = p.caretakerLive(), voteExpiresAt = p.caretakerExpiresAt(),
+                inFlight = p.outgoingMoves().filter { !it.confirmed || !it.recorded },
+                feeErth = p.poolBalances()[PrivacyWallet.FEE] ?: 0L,
+            )
+        }
+        return null
+    }
+
+    /** This (selected) wallet's identity as the successor a move from another wallet names. */
+    fun selfAsSuccessor(context: Context): PrivacyWallet.Successor {
+        val w = wallet(context.applicationContext)
+        val id = w.store.state.identity?.takeIf { it.verified } ?: throw IllegalStateException("this wallet's registration has not been verified yet; sync, then try again")
+        return PrivacyWallet.Successor(w.keys, id)
     }
 
     /** What a switch target already holds: a registration, a handle. */
@@ -156,6 +234,7 @@ object PrivacySession {
         override fun proveAction(w: ActionWitness): ByteArray = PrivacyProver.proveAction(context, w)
         override fun proveStake(w: StakeWitness): ByteArray = PrivacyProver.proveStake(context, w)
         override fun proveMembership(w: MembershipWitness): ByteArray = PrivacyProver.proveMembership(context, w)
+        override fun proveMove(w: network.erth.wallet.privacy.prove.MoveWitness): ByteArray = PrivacyProver.proveMove(context, w)
         override fun proveVote(w: network.erth.wallet.privacy.prove.VoteWitness): ByteArray = PrivacyProver.proveVote(context, w)
     }
 

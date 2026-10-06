@@ -19,6 +19,7 @@ import network.erth.earth.proto.personhood.Membership
 import network.erth.earth.proto.personhood.MsgBindHandle
 import network.erth.earth.proto.personhood.MsgMoveCaretaker
 import network.erth.earth.proto.personhood.MsgMoveHandle
+import network.erth.earth.proto.personhood.MoveProof
 import network.erth.earth.proto.personhood.MsgClaimAnml
 import network.erth.earth.proto.personhood.MsgRegister
 import network.erth.earth.proto.personhood.MsgSetCaretaker
@@ -100,6 +101,11 @@ class PrivateMsgsTest {
         .setProof(ByteString.copyFrom(byteArrayOf(0xbe.toByte(), 0xef.toByte(), seed.toByte())))
         .setRoot(fb(seed + 100)).setNullifier(fb(seed + 101)).build()
 
+    /** main.go moveProof. */
+    private fun moveProof(seed: Long): MoveProof = MoveProof.newBuilder()
+        .setProof(ByteString.copyFrom(byteArrayOf(0x30, 0x7e, seed.toByte())))
+        .setRoot(fb(seed + 100)).setOldNullifier(fb(seed + 101)).setNewNullifier(fb(seed + 102)).build()
+
     private val validator = "earthvaloper1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
     private fun derth() = "derth/$validator"
     private fun opts() = listOf(
@@ -136,13 +142,13 @@ class PrivateMsgsTest {
                 .addAllPercentages(listOf(w(1, 60), w(7, 40))).setMaxPredecessor(1_750_000_000).build(),
             "set_caretaker_no_bound" to MsgSetCaretaker.newBuilder().setFee(fee(61, 2000)).setMembership(membership(61))
                 .addAllPercentages(listOf(w(2, 100))).setMaxPredecessor(Privacy.NO_BOUND).build(),
-            "move_caretaker" to MsgMoveCaretaker.newBuilder().setFee(fee(62, 2000)).setMembership(membership(62)).setNewOwner(fb(63)).build(),
+            "move_caretaker" to MsgMoveCaretaker.newBuilder().setFee(fee(62, 2000)).setMove(moveProof(62)).build(),
             "bind_handle" to MsgBindHandle.newBuilder().setFee(fee(70, 2000)).setMembership(membership(70))
                 .setHandle("alice-01").setAddress(zaddr).setMaxPredecessor(1_750_000_000).build(),
             "bind_handle_release" to MsgBindHandle.newBuilder().setFee(fee(71, 2000)).setMembership(membership(71))
                 .setMaxPredecessor(Privacy.NO_BOUND).build(),
-            "move_handle" to MsgMoveHandle.newBuilder().setFee(fee(72, 2000)).setMembership(membership(72))
-                .setHandle("alice-01").setNewOwner(fb(73)).build(),
+            "move_handle" to MsgMoveHandle.newBuilder().setFee(fee(72, 2000)).setMove(moveProof(72))
+                .setHandle("alice-01").build(),
             "vote_proposal" to MsgVoteProposal.newBuilder().setFee(fee(80, 2000)).setMembership(membership(80))
                 .setProposalId(5).setOption(VoteOption.VOTE_OPTION_YES).build(),
             "propose_removal" to MsgProposeRemoval.newBuilder().setFee(fee(81, 2000)).setMembership(membership(81))
@@ -272,6 +278,26 @@ class PrivateMsgsTest {
         assertEquals(8, ins.length())
         assertEquals(Privacy.NO_BOUND, v.getLong("max_activation"))
         for (i in mine.indices) assertEquals("input $i", ins.getString(i), mine[i].toHex())
+    }
+
+    /** The move proof's public inputs (8acf58f): root, scope, old_nullifier, new_nullifier, signal. */
+    @Test
+    fun movePublicInputsMatchTheChain() {
+        val v = json.getJSONObject("move_public_inputs")
+        val ins = v.getJSONArray("inputs")
+        fun h(k: String) = Fr.fromHex(v.getString(k))
+        assertEquals(Privacy.handleScope(), h("scope"))
+        val m = msgs["move_handle"] as MsgMoveHandle
+        assertEquals(h("root"), Fr.fromBytes(m.move.root.toByteArray()))
+        assertEquals(h("old_nullifier"), Fr.fromBytes(m.move.oldNullifier.toByteArray()))
+        assertEquals(h("new_nullifier"), Fr.fromBytes(m.move.newNullifier.toByteArray()))
+        val mine = listOf(h("root"), h("scope"), h("old_nullifier"), h("new_nullifier"), h("signal"))
+        assertEquals(5, ins.length())
+        for (i in mine.indices) assertEquals("input $i", ins.getString(i), mine[i].toHex())
+        // The witness lays them out the same way.
+        val z = List(32) { Fr.ZERO }
+        val w = network.erth.wallet.privacy.prove.MoveWitness(fe(1), fe(2), 0, z, Fr.ZERO, Fr.ZERO, 0, 0, 1, z, h("root"), h("scope"), h("signal"))
+        assertEquals(listOf(h("root"), h("scope"), Privacy.scopeNullifier(fe(1), h("scope")), Privacy.scopeNullifier(fe(2), h("scope")), h("signal")), w.publicInputs())
     }
 
     /** A bind's address must be canonical; a release binds Bytes(""), 0, Bytes(""). */

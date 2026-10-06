@@ -25,6 +25,7 @@ class HandlesTest {
     private val alice = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
     private val bob = "legal winner thank year wave sausage worth useful legal winner thank yellow"
     private val carol = "letter advice cage absurd amount doctor acoustic avoid letter advice cage above"
+    private val dave = "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong"
 
     private fun reads(chain: FakeChain) = object : PrivacyChainReads {
         override fun personhoodParams() = PrivacyChainReads.PersonhoodParams(chain.caretakerLease, 3_600, chain.handleLease, chain.handleRenewal)
@@ -200,7 +201,7 @@ class HandlesTest {
     }
 
     @Test
-    fun switchMovesTheHandleAndCaretakerVoteFirst() {
+    fun theNewIdentityBringsTheHandleAndCaretakerVoteAfterTheSwitch() {
         val chain = FakeChain()
         val a = wallet(chain, alice)
         register(chain, a, passport = "999")
@@ -211,29 +212,45 @@ class HandlesTest {
         val split = a.store.state.caretakerSplit
         val exp = a.caretakerExpiresAt()
         assertTrue(a.caretakerLive())
-
-        // The new wallet on this phone: its handle- and caretaker-scope nullifiers.
         val bKeys = PrivacyKeys.fromMnemonic(bob)
-        a.moveHandle(a.newOwner(bKeys, Privacy.handleScope()))
+
+        // Before the switch there is no succession: nothing can move to B.
+        val b = wallet(chain, bob)
+        val early = runCatching { a.moveHandle(PrivacyWallet.Successor(bKeys, a.store.state.identity!!.copy(leafIndex = 0))) }.exceptionOrNull()
+        assertTrue("$early", early is PrivacyWallet.MoveNotPossible)
+
+        // The switch: the same passport from the new wallet. Its leaf has a predecessor,
+        // and the chain appended the succession (A, B) right after it.
+        register(chain, b, passport = "999")
+        val id = b.store.state.identity!!
+        assertEquals(id.activatedAt, id.predecessorAt)
+        assertEquals(Privacy.successionLeaf(a.keys.idc, bKeys.idc), chain.identityTree.leaf(id.leafIndex + 1))
         a.sync()
-        a.moveCaretaker(a.newOwner(bKeys, Privacy.caretakerScope()))
+        assertEquals(WalletSync.IdentityStatus.ZEROED, a.identityStatus())
+        // Both wallets' trees hold it (the identity stream carries it like any leaf).
+        assertEquals(id.leafIndex + 1, b.successionIndex(a.keys.idc, bKeys.idc, id.leafIndex + 1))
+        assertEquals(id.leafIndex + 1, a.successionIndex(a.keys.idc, bKeys.idc, 0))
+
+        // A (the old identity, which pays) proves the moves with both secrets.
+        val to = PrivacyWallet.Successor(bKeys, id)
+        a.moveHandle(to)
+        a.sync()
+        a.moveCaretaker(to)
         a.sync()
         assertTrue(a.store.state.handleMovedOut && a.store.state.caretakerMovedOut)
         assertEquals(Privacy.scopeNullifier(bKeys.idSecret, Privacy.handleScope()), chain.handles.getValue("alice").nullifier)
         assertEquals(exp, chain.caretakerExpiry.getValue(Privacy.scopeNullifier(bKeys.idSecret, Privacy.caretakerScope())))
+        val mv = chain.prover.allMoves.last()
+        assertEquals(id.leafIndex + 1, mv.successionIndex)
+        assertEquals(id.leafIndex, mv.leafIndex)
         // The old identity can never hold them again.
         assertThrows(IllegalStateException::class.java) { a.setCaretaker(mapOf(2L to 100L)) }
         assertThrows(IllegalStateException::class.java) { a.bindHandle("alice-again") }
 
-        // The switch: the same passport from the new wallet. Its leaf has a predecessor.
-        val b = wallet(chain, bob)
-        b.adoptMoved("alice", split, exp)
-        register(chain, b, passport = "999")
-        a.sync()
-        assertEquals(WalletSync.IdentityStatus.ZEROED, a.identityStatus())
-        val id = b.store.state.identity!!
-        assertEquals(id.activatedAt, id.predecessorAt)
-        // What moved is renewed and refreshed at once (no bound: it holds them).
+        // B finds both in its state records and renews and refreshes at once (no bound: it holds them).
+        b.sync()
+        assertEquals("alice", b.store.state.handle)
+        assertEquals(split, b.store.state.caretakerSplit)
         b.bindHandle("alice")
         assertEquals(b.address.encode(), entry(chain, "alice")!!.address)
         assertEquals(Privacy.NO_BOUND, chain.prover.allMemberships.last().maxPredecessor)
@@ -241,6 +258,37 @@ class HandlesTest {
         b.setCaretaker(mapOf(1L to 50L, 2L to 50L))
         assertEquals(mapOf(1L to 50L, 2L to 50L), chain.caretakerVotes[Privacy.scopeNullifier(bKeys.idSecret, Privacy.caretakerScope())])
         dumpWitnesses(chain, "switchMoves")
+    }
+
+    @Test
+    fun aMoveGoesOnlyToTheLiveDirectSuccessor() {
+        val chain = FakeChain()
+        val a = wallet(chain, alice)
+        register(chain, a, passport = "998")
+        a.bindHandle("alice"); a.sync()
+        // Another passport's identity: no succession links A to it.
+        val c = wallet(chain, carol)
+        register(chain, c, passport = "997")
+        a.sync()
+        val before = chain.txs.size
+        val e = runCatching { a.moveHandle(PrivacyWallet.Successor(c.keys, c.store.state.identity!!)) }.exceptionOrNull()
+        assertTrue("$e", e is PrivacyWallet.MoveNotPossible && e.message!!.contains("did not directly succeed"))
+        assertEquals(before, chain.txs.size)
+        // A -> B -> D: B switched on, so B is no longer live and D is not A's direct successor.
+        val b = wallet(chain, bob)
+        register(chain, b, passport = "998")
+        val bId = b.store.state.identity!!
+        chain.now += 86_400
+        val d = wallet(chain, dave)
+        register(chain, d, passport = "998")
+        a.sync()
+        val sent = chain.txs.size
+        val zeroed = runCatching { a.moveHandle(PrivacyWallet.Successor(b.keys, bId)) }.exceptionOrNull()
+        assertTrue("$zeroed", zeroed is PrivacyWallet.MoveNotPossible && zeroed.message!!.contains("no longer the passport's live one"))
+        val skip = runCatching { a.moveHandle(PrivacyWallet.Successor(d.keys, d.store.state.identity!!)) }.exceptionOrNull()
+        assertTrue("$skip", skip is PrivacyWallet.MoveNotPossible && skip.message!!.contains("did not directly succeed"))
+        assertEquals(sent, chain.txs.size)
+        assertEquals("alice", a.store.state.handle)
     }
 
     @Test

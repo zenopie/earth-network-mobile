@@ -22,6 +22,7 @@ import network.erth.wallet.R
 import network.erth.wallet.chain.Assembly
 import network.erth.wallet.privacy.Amounts
 import network.erth.wallet.privacy.PrivacySession
+import network.erth.wallet.privacy.sync.PendingMove
 import network.erth.wallet.privacy.chain.PrivacyQueries
 import network.erth.wallet.wallet.SecureWalletManager
 import network.erth.wallet.privacy.PrivacyWallet
@@ -68,7 +69,6 @@ import network.erth.wallet.ui.privacy.PersonalState
 import network.erth.wallet.ui.privacy.SwitchIdentityScreen
 import network.erth.wallet.privacy.Reminders
 import network.erth.wallet.privacy.handles.Handles
-import network.erth.wallet.privacy.zk.Privacy
 import network.erth.wallet.ui.privacy.RemovalBallotsScreen
 import network.erth.wallet.chain.math.SwapMath
 import cosmos.gov.v1.WeightedVoteOption
@@ -420,6 +420,35 @@ internal fun EarthContent(
 
         EarthRoute.Personhood -> {
             LaunchedEffect(Unit) { privacy.refresh() }
+            // After a switch: what the identity this one replaced can bring here (it syncs that wallet).
+            var moveOffer by remember { mutableStateOf<PrivacySession.MoveOffer?>(null) }
+            var offerTick by remember { mutableStateOf(0) }
+            LaunchedEffect(loaded.registered, offerTick) {
+                moveOffer = if (!loaded.registered) null else withContext(Dispatchers.IO) { runCatching { PrivacySession.moveOffer(context) }.getOrNull() }
+            }
+            fun bring(kind: String) {
+                val offer = moveOffer ?: return
+                val handle = kind == PendingMove.HANDLE
+                tx.requestPrivate(
+                    details = TxConfirmDetails(
+                        action = if (handle) "Bring @${offer.handle} to this identity" else "Bring your Caretaker split to this identity",
+                        msgTypeUrl = if (handle) PrivateMsgs.MOVE_HANDLE else PrivateMsgs.MOVE_CARETAKER,
+                        balanceUerth = 0L,
+                    ),
+                    // The previous wallet pays: its private ERTH.
+                    shieldedErth = offer.feeErth,
+                    onSuccess = { offerTick++; privacy.refreshPersonal() },
+                    run = { ctx ->
+                        // Proven with both identities' secrets: this wallet's (the successor)
+                        // and the previous one's, which builds and pays for the tx.
+                        val to = PrivacySession.selfAsSuccessor(ctx)
+                        val from = PrivacySession.walletAt(ctx, offer.fromIndex)
+                        from.sync()
+                        val rec = PrivacySession.recorderFor(ctx, PrivacySession.storeIdOf(to.keys))
+                        (if (handle) from.moveHandle(to, rec) else from.moveCaretaker(to, rec)).hash
+                    },
+                )
+            }
             PersonhoodScreen(
                 registered = loaded.registered,
                 anmlBalance = loaded.anmlBalance,
@@ -428,6 +457,25 @@ internal fun EarthContent(
                 onHandle = { nav.push(EarthRoute.Handle) },
                 onSwitch = { nav.push(EarthRoute.SwitchIdentity) },
                 handle = personal?.handle.orEmpty(),
+                moveOffer = moveOffer,
+                onBringHandle = { bring(PendingMove.HANDLE) },
+                onBringVote = { bring(PendingMove.CARETAKER) },
+                onCheckMoves = {
+                    scope.launch {
+                        withContext(Dispatchers.IO) {
+                            moveOffer?.let { o ->
+                                runCatching {
+                                    val from = PrivacySession.walletAt(context, o.fromIndex)
+                                    from.resolvePendingMoves()
+                                    PrivacySession.retryMoveRecords(context, from)
+                                }
+                            }
+                            runCatching { PrivacySession.wallet(context).resolvePendingMoves() }
+                        }
+                        offerTick++
+                        privacy.refreshPersonal()
+                    }
+                },
                 modifier = inset,
             )
         }
@@ -493,88 +541,27 @@ internal fun EarthContent(
 
         EarthRoute.SwitchIdentity -> {
             LaunchedEffect(Unit) { privacy.refreshPersonal(); wallets.refresh() }
-            // The wallet this identity's moves went to, by store id, and what a chosen target already holds.
-            var frozenTarget by remember { mutableStateOf<Int?>(null) }
+            // What a chosen target already holds.
             var targetWarning by remember { mutableStateOf<String?>(null) }
-            val switchTarget = personal?.switchTarget.orEmpty()
             val walletList = walletsState?.wallets.orEmpty()
-            LaunchedEffect(switchTarget, walletList.size) {
-                frozenTarget = if (switchTarget.isEmpty()) null else withContext(Dispatchers.IO) {
-                    walletList.firstOrNull { w -> runCatching { PrivacySession.storeIdOf(context, w.index) }.getOrNull() == switchTarget }?.index
-                }
-            }
             fun check(idx: Int) {
                 scope.launch {
                     val info = withContext(Dispatchers.IO) { runCatching { PrivacySession.targetInfo(context, idx) }.getOrNull() }
-                    // What the wallet refuses to move there, said up front.
+                    // What a move after the switch could not bring there, said up front.
                     targetWarning = when {
-                        info == null || info.storeId == switchTarget -> null
+                        info == null -> null
                         info.handleRefusal != null || info.voteRefusal != null ->
-                            listOfNotNull(info.handleRefusal?.let { "Your handle cannot move there: $it." }, info.voteRefusal?.let { "Your caretaker vote cannot move there: $it." }).joinToString(" ")
+                            listOfNotNull(info.handleRefusal?.let { "Your handle cannot be brought there: $it." }, info.voteRefusal?.let { "Your caretaker vote cannot be brought there: $it." }).joinToString(" ")
                         info.registered -> "That wallet has a registration, or sent one in the last two days that can still land. Switching to it replaces this identity with it; anything it holds stays with it."
                         else -> null
                     }
                 }
             }
             SwitchIdentityScreen(
-                state = personal,
                 wallets = walletList,
                 currentIndex = walletsState?.selectedIndex ?: SecureWalletManager.getSelectedWalletIndex(),
-                frozenTarget = frozenTarget,
                 targetWarning = targetWarning,
                 onTargetChange = ::check,
-                onMove = { target, moveHandle, moveCaretaker ->
-                    val handle = personal?.handle.orEmpty()
-                    // Each move names the new wallet's nullifier in that scope, derived
-                    // from its keys on this phone, and is recorded in its store before
-                    // the broadcast. Shown as moved only once confirmed.
-                    fun moveVote() = tx.requestPrivate(
-                        details = TxConfirmDetails(
-                            action = "Move caretaker vote to the new wallet",
-                            msgTypeUrl = PrivateMsgs.MOVE_CARETAKER,
-                            balanceUerth = 0L,
-                        ),
-                        shieldedErth = loaded.shieldedErthUerth,
-                        onSuccess = { privacy.refreshPersonal() },
-                        run = { ctx ->
-                            val other = PrivacySession.keysOf(ctx, target)
-                            val w = PrivacySession.wallet(ctx)
-                            w.moveCaretaker(w.newOwner(other, Privacy.caretakerScope()), other,
-                                PrivacySession.recorderFor(ctx, PrivacySession.storeIdOf(other))).hash
-                        },
-                    )
-                    val handleConfirmed = java.util.concurrent.atomic.AtomicBoolean(false)
-                    if (moveHandle) tx.requestPrivate(
-                        details = TxConfirmDetails(
-                            action = "Move @$handle to the new wallet",
-                            msgTypeUrl = PrivateMsgs.MOVE_HANDLE,
-                            balanceUerth = 0L,
-                        ),
-                        shieldedErth = loaded.shieldedErthUerth,
-                        onSuccess = {
-                            privacy.refreshPersonal()
-                            // Only after the chain confirmed the handle's move (an unconfirmed one also lands here).
-                            if (moveCaretaker && handleConfirmed.get()) moveVote()
-                        },
-                        run = { ctx ->
-                            val other = PrivacySession.keysOf(ctx, target)
-                            val w = PrivacySession.wallet(ctx)
-                            val r = w.moveHandle(w.newOwner(other, Privacy.handleScope()), other,
-                                PrivacySession.recorderFor(ctx, PrivacySession.storeIdOf(other)))
-                            handleConfirmed.set(true)
-                            r.hash
-                        },
-                    ) else if (moveCaretaker) moveVote()
-                },
-                onCheckMoves = {
-                    scope.launch {
-                        withContext(Dispatchers.IO) {
-                            runCatching { PrivacySession.wallet(context).resolvePendingMoves() }
-                            runCatching { PrivacySession.retryMoveRecords(context) }
-                        }
-                        privacy.refreshPersonal()
-                    }
-                },
                 onContinue = { target ->
                     // The new wallet registers the same passport: the chain
                     // treats it as a switch (this wallet's leaf is zeroed).

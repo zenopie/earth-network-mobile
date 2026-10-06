@@ -13,6 +13,8 @@ import network.erth.earth.proto.personhood.Membership
 import network.erth.earth.proto.personhood.MsgBindHandle
 import network.erth.earth.proto.personhood.MsgMoveCaretaker
 import network.erth.earth.proto.personhood.MsgMoveHandle
+import network.erth.earth.proto.personhood.MoveProof
+import network.erth.wallet.privacy.prove.MoveWitness
 import network.erth.earth.proto.personhood.MsgClaimAnml
 import network.erth.earth.proto.personhood.MsgRegister
 import network.erth.earth.proto.personhood.MsgSetCaretaker
@@ -167,6 +169,10 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     val handleAsks = ArrayList<String>()
     /** Passports ever registered: a re-registration's leaf has a predecessor (x/personhood PassportsSeen). */
     val passportsSeen = HashSet<String>()
+    /** Each passport's last registered idc (PassportsSeen's value): a registration to another appends a succession leaf. */
+    val passportLastIdc = HashMap<String, Fr>()
+    /** Succession leaves: index -> (idc_old, idc_new). */
+    val successions = LinkedHashMap<Long, Pair<Fr, Fr>>()
     /** Each leaf's predecessor_at. */
     val predecessorOf = HashMap<Long, Long>()
     /** Referral notes minted (handle, pc). */
@@ -484,7 +490,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         if (rejectNext > 0) {
             // The proofs made for it never reach the chain.
             rejectNext--
-            prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear(); prover.votes.clear()
+            prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear(); prover.votes.clear(); prover.moves.clear()
             throw network.erth.wallet.privacy.tx.UnsignedTx.TxRejected(19, "broadcast refused (test)")
         }
         val hash = network.erth.wallet.privacy.tx.UnsignedTx.hash(tx)
@@ -493,14 +499,14 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             dropNext--
             check(tx, simulate = true)
             accepted(hash)
-            prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear(); prover.votes.clear()
+            prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear(); prover.votes.clear(); prover.moves.clear()
             throw java.io.IOException("tx not committed (test)")
         }
         if (failInBlockNext > 0) {
             failInBlockNext--
             check(tx, simulate = true)
             accepted(hash)
-            prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear(); prover.votes.clear()
+            prover.actions.clear(); prover.stakes.clear(); prover.memberships.clear(); prover.votes.clear(); prover.moves.clear()
             block()
             txs[hash] = TxResult(hash, height - 1, now, emptyList(), code = 5, log = "failed in block (test)")
             throw java.io.IOException("tx failed (code 5)")
@@ -610,12 +616,19 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 require(m.handle.isEmpty() == m.address.isEmpty()) { "a bind names a handle and an address; a release neither" }
                 if (m.address.isNotEmpty()) require(network.erth.wallet.privacy.keys.ShieldedAddress.decode(m.address).encode() == m.address) { "address not canonical" }
             }
-            is MsgMoveHandle -> { only(null); require(m.newOwner != m.membership.nullifier) { "new_owner is the prover" } }
-            is MsgMoveCaretaker -> { only(null); require(m.newOwner != m.membership.nullifier) { "new_owner is the prover" } }
+            is MsgMoveHandle -> { only(null); moveShape(m.move); require(network.erth.wallet.privacy.handles.Handles.valid(m.handle)) { "handle" } }
+            is MsgMoveCaretaker -> { only(null); moveShape(m.move) }
             is MsgClaimAnml -> { only(null); require(m.ciphertext.size() == NoteCipher.BLIND_CIPHERTEXT_BYTES) }
             else -> only(null)
         }
         require(PrivateMsgs.totalFee(m) > 0)
+    }
+
+    /** MoveProof.ValidateBasic: the proof's length, canonical fields, two distinct nullifiers. */
+    private fun moveShape(p: MoveProof) {
+        require(p.proof.size() == PROOF_BYTES) { "a move proof is exactly $PROOF_BYTES bytes" }
+        require(p.root.size() == 32 && p.oldNullifier.size() == 32 && p.newNullifier.size() == 32) { "a move field is 32 bytes" }
+        require(p.oldNullifier != p.newNullifier) { "old and new nullifier are the same" }
     }
 
     private fun lanes(m: MessageLite): ChainLayout.Lanes = ChainLayout.lanes(m) { id -> positions.getValue(id).let { it.validator to it.derth } }
@@ -692,15 +705,6 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             }
             Triple(Privacy.caretakerScope(), Privacy.NO_BOUND, m.maxPredecessor)
         }
-        is MsgMoveCaretaker -> {
-            val n = nf(m.membership)
-            val exp = caretakerExpiry[n] ?: error("the prover holds no caretaker split")
-            require(exp > now) { "the prover's caretaker split has lapsed" }
-            val o = f(m.newOwner)
-            require(!caretakerHolds(o)) { "new_owner already holds a caretaker split" }
-            require(o !in caretakerMovedOut) { "this identity moved its caretaker split away (code 1126)" }
-            Triple(Privacy.caretakerScope(), Privacy.NO_BOUND, Privacy.NO_BOUND)
-        }
         is MsgBindHandle -> {
             val n = nf(m.membership)
             val holds = handleOf(n) != null
@@ -715,15 +719,6 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
             } else require(holds) { "the prover holds no handle to release" }
             Triple(Privacy.handleScope(), Privacy.NO_BOUND, m.maxPredecessor)
         }
-        is MsgMoveHandle -> {
-            val n = nf(m.membership)
-            require(handles[m.handle]?.nullifier == n) { "the prover does not hold ${m.handle}" }
-            require(now < handles.getValue(m.handle).expiresAt) { "\"${m.handle}\" is not live (renewal): renew it before moving it" }
-            val o = f(m.newOwner)
-            require(handleOf(o) == null) { "new_owner already holds a handle" }
-            require(o !in handleMovedOut) { "this identity moved its handle away (code 1125)" }
-            Triple(Privacy.handleScope(), Privacy.NO_BOUND, Privacy.NO_BOUND)
-        }
         is MsgProposeRemoval -> Triple(Privacy.proposeRemovalScope(m.optionId, now / 86_400), Privacy.NO_BOUND, now / 86_400 * 86_400 - 86_400)
         is MsgVoteRemoval -> Triple(Privacy.removalScope(removalBallots.getValue(m.optionId)), Privacy.NO_BOUND, ballotMaxPredecessor())
         else -> null
@@ -733,11 +728,33 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
         is MsgClaimAnml -> m.membership
         is MsgVoteProposal -> m.membership
         is MsgSetCaretaker -> m.membership
-        is MsgMoveCaretaker -> m.membership
         is MsgBindHandle -> m.membership
-        is MsgMoveHandle -> m.membership
         is MsgProposeRemoval -> m.membership
         is MsgVoteRemoval -> m.membership
+        else -> null
+    }
+
+    /**
+     * A move's statement (x/personhood checkMoveHandle / checkMoveCaretaker):
+     * the scope its msg fixes, after the holder and recipient checks.
+     */
+    private fun moveStatement(m: MessageLite): Fr? = when (m) {
+        is MsgMoveCaretaker -> {
+            val n = f(m.move.oldNullifier); val o = f(m.move.newNullifier)
+            val exp = caretakerExpiry[n] ?: error("old_nullifier holds no caretaker split")
+            require(exp > now) { "old_nullifier's caretaker split has lapsed" }
+            require(!caretakerHolds(o)) { "new_nullifier already holds a caretaker split" }
+            require(o !in caretakerMovedOut) { "this identity moved its caretaker split away (code 1126)" }
+            Privacy.caretakerScope()
+        }
+        is MsgMoveHandle -> {
+            val n = f(m.move.oldNullifier); val o = f(m.move.newNullifier)
+            require(handles[m.handle]?.nullifier == n) { "old_nullifier does not hold ${m.handle}" }
+            require(now < handles.getValue(m.handle).expiresAt) { "\"${m.handle}\" is not live (renewal): renew it before moving it" }
+            require(handleOf(o) == null) { "new_nullifier already holds a handle" }
+            require(o !in handleMovedOut) { "this identity moved its handle away (code 1125)" }
+            Privacy.handleScope()
+        }
         else -> null
     }
 
@@ -943,6 +960,17 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 require(w.publicInputs() == expect) { "membership proof is for other public inputs" }
             }
         }
+        PrivateMsgs.move(m)?.let { mv ->
+            require(f(mv.root) in identityRoots) { "unknown identity anchor" }
+            val scope = moveStatement(m)!!
+            if (!simulate) {
+                val w = prover.moves.removeFirstOrNull() ?: error("no move proof")
+                val expect = listOf(f(mv.root), scope, f(mv.oldNullifier), f(mv.newNullifier), sighash)
+                require(w.publicInputs() == expect) { "invalid move proof (code 1129): it is for other public inputs" }
+                // What the circuit proves of the tree: a succession leaf and the successor's live leaf at that root.
+                require(successions.values.any { (a, b) -> a == Privacy.idc(w.oldSecret) && b == Privacy.idc(w.newSecret) }) { "invalid move proof (code 1129): not a succession" }
+            }
+        }
         precheck(m, rem)
         if (simulate) return m to emptyList()
         actionCounts.add(bundles.sumOf { it.actionsCount })
@@ -984,6 +1012,12 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 predecessorOf[idx] = pred
                 identityRows.add(IdentityRow(idx, height, identityTree.leaf(idx), null, now))
                 registeredIdc[idx] = f(m.idc); passportOf[idx] = m.publicSignalsList[2]
+                // The succession from the passport's last identity, right after the new leaf (never zeroed).
+                passportLastIdc.put(m.publicSignalsList[2], f(m.idc))?.takeIf { it != f(m.idc) }?.let { old ->
+                    val si = identityTree.append(Privacy.successionLeaf(old, f(m.idc)))
+                    identityRows.add(IdentityRow(si, height, identityTree.leaf(si), null, now))
+                    successions[si] = old to f(m.idc)
+                }
                 mint("uanml", 1_000_000, f(m.pcAnml), m.ciphertextAnml.toByteArray())
                 if (!switched) {
                     mint("uerth", 5_000_000, f(m.pcErth), m.ciphertextErth.toByteArray())
@@ -1065,10 +1099,10 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 events.add("set_caretaker" to mapOf("expires_at" to (forgeCaretakerExpiry ?: caretakerExpiry[n] ?: 0L).toString()))
             }
             is MsgMoveCaretaker -> {
-                val n = f(m.membership.nullifier); val o = f(m.newOwner)
+                val n = f(m.move.oldNullifier); val o = f(m.move.newNullifier)
                 caretakerVotes[o] = caretakerVotes.remove(n)!!; caretakerExpiry[o] = caretakerExpiry.remove(n)!!
                 caretakerMovedOut.add(n)
-                events.add("move_caretaker" to mapOf("expires_at" to caretakerExpiry.getValue(o).toString()))
+                events.add("move_caretaker" to mapOf("nullifier" to o.toHex(), "previous_nullifier" to n.toHex(), "expires_at" to caretakerExpiry.getValue(o).toString()))
             }
             is MsgBindHandle -> {
                 val n = f(m.membership.nullifier)
@@ -1082,9 +1116,10 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
                 }
             }
             is MsgMoveHandle -> {
-                val n = f(m.membership.nullifier)
-                handles[m.handle] = handles.getValue(m.handle).copy(nullifier = f(m.newOwner))
+                val n = f(m.move.oldNullifier); val o = f(m.move.newNullifier)
+                handles[m.handle] = handles.getValue(m.handle).copy(nullifier = o)
                 handleMovedOut.add(n)
+                events.add("handle_moved" to mapOf("handle" to m.handle, "nullifier" to o.toHex(), "owner" to o.toHex(), "previous_owner" to n.toHex()))
             }
             is MsgProposeRemoval -> removalBallots[m.optionId] = 100L + m.optionId
             is MsgVoteRemoval -> removalVotes.add(Triple(m.optionId, f(m.membership.nullifier), m.optionValue))
@@ -1344,6 +1379,7 @@ fun dumpWitnesses(chain: FakeChain, test: String) {
     chain.prover.allActions.forEachIndexed { i, w -> write("action", i, w.proverToml()) }
     chain.prover.allStakes.forEachIndexed { i, w -> write("stake", i, w.proverToml()) }
     chain.prover.allMemberships.forEachIndexed { i, w -> write("membership", i, w.proverToml()) }
+    chain.prover.allMoves.forEachIndexed { i, w -> write("move", i, w.proverToml()) }
     chain.prover.allVotes.forEachIndexed { i, w -> write("vote", i, w.proverToml()) }
 }
 
@@ -1363,6 +1399,8 @@ class CheckingProver : Prover {
     val allActions = ArrayList<ActionWitness>()
     val allStakes = ArrayList<StakeWitness>()
     val allMemberships = ArrayList<MembershipWitness>()
+    val moves = ArrayDeque<MoveWitness>()
+    val allMoves = ArrayList<MoveWitness>()
 
     override fun proveAction(w: ActionWitness): ByteArray {
         w.check()
@@ -1382,6 +1420,12 @@ class CheckingProver : Prover {
         w.check()
         memberships.add(w); allMemberships.add(w)
         return ByteArray(14_656) { 2 }
+    }
+
+    override fun proveMove(w: MoveWitness): ByteArray {
+        w.check()
+        moves.add(w); allMoves.add(w)
+        return ByteArray(14_656) { 5 }
     }
 
     override fun proveVote(w: VoteWitness): ByteArray {

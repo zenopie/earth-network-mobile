@@ -14,6 +14,8 @@ object Privacy {
     val TAG_OWNER = tag("earth.owner")
     val TAG_LEAF = tag("earth.leaf")
     val TAG_SN = tag("earth.sn")
+    // The identity tree's succession leaf (circuits/move): the chain's record that one identity succeeded another under one passport.
+    val TAG_SUCC = tag("earth.succ")
     val TAG_PC = tag("earth.pc")
     val TAG_CM = tag("earth.cm")
     val TAG_NF = tag("earth.nf")
@@ -65,6 +67,14 @@ object Privacy {
      */
     fun identityLeaf(idc: Fr, dscKey: Fr, country: Fr, activatedAt: Long, predecessorAt: Long): Fr =
         h(TAG_LEAF, idc, dscKey, country, u64(activatedAt), u64(predecessorAt))
+
+    /**
+     * H(TAG_SUCC, idc_old, idc_new): the leaf the chain appends right after
+     * idc_new's identity leaf when a passport last registered to idc_old
+     * registers to idc_new (a switch, or a re-entry). Never zeroed; a move
+     * proof (circuits/move) shows one.
+     */
+    fun successionLeaf(idcOld: Fr, idcNew: Fr): Fr = h(TAG_SUCC, idcOld, idcNew)
 
     /** ISO 3166-1 alpha-2 as two big-endian ASCII bytes; anything else is 0 (unknown). */
     fun countryField(cc: String): Fr {

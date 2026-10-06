@@ -7,7 +7,7 @@ import network.erth.wallet.privacy.zk.Fr
 
 /**
  * On-device proofs of the privacy circuits (circuits/membership,
- * circuits/action, circuits/stake, circuits/vote), through the same noir_android build as
+ * circuits/move, circuits/action, circuits/stake, circuits/vote), through the same noir_android build as
  * [network.erth.wallet.passport.PassportProver] — bb v5.0.0, in lockstep
  * with the chain's verifier; never float that pin.
  *
@@ -24,12 +24,14 @@ object PrivacyProver {
 
     internal enum class Kind(val file: String, val srsSize: Int, val publicInputs: Int) {
         // Every kind asks the same SRS: bb honours only a process's first SRS
-        // initialization, so whichever proves first sizes it for all four.
+        // initialization, so whichever proves first sizes it for all five.
         // The hint must be at least the largest circuit's dyadic size: vote
         // (21,716 gates with two labelled slots) is a 2^15
-        // circuit; membership 5,659, action 8,098 and stake 16,242 are 2^14.
+        // circuit; membership 5,659, move 8,362, action 8,098 and stake 16,242 are 2^14.
         // The bundled 2^15 + 1 points cover them all.
         MEMBERSHIP("membership", SRS_SIZE, 8),
+        // root, scope, old_nullifier, new_nullifier, signal.
+        MOVE("move", SRS_SIZE, 5),
         ACTION("action", SRS_SIZE, 6),
         // anchor, asset, nf_0, nf_1, cm_out, v_in, v_out, clear_before,
         // debt_root, cr_asset, cr_nf, cr_cm, cr_v_in, cr_move_time, otag, sighash.
@@ -107,6 +109,11 @@ object PrivacyProver {
     fun proveMembership(context: Context, w: MembershipWitness): ByteArray {
         w.check()
         return prove(context, Kind.MEMBERSHIP, w.noirInputs(), w.publicInputs())
+    }
+
+    fun proveMove(context: Context, w: MoveWitness): ByteArray {
+        w.check()
+        return prove(context, Kind.MOVE, w.noirInputs(), w.publicInputs())
     }
 
     fun proveVote(context: Context, w: VoteWitness): ByteArray {

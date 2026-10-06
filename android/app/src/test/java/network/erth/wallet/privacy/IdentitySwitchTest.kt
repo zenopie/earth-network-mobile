@@ -10,10 +10,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Switching identity: moves of a handle and a caretaker split are recorded
- * in both wallets before the broadcast, settled by the chain's word, undone
- * when they did not happen, and the switch target is fixed only by a
- * confirmed move.
+ * Switching identity: once the switch lands, the old identity's wallet moves
+ * its handle and caretaker split to the new identity with move proofs (both
+ * secrets on the phone). Each move is recorded in both wallets before the
+ * broadcast, settled by the chain's word, undone when it did not happen, and
+ * the switch target is fixed only by a confirmed move.
  */
 class IdentitySwitchTest : WalletTest() {
     /** Records moves into [store] as the app does for another wallet on the phone; [failFirst] makes the first write fail. */
@@ -32,16 +33,29 @@ class IdentitySwitchTest : WalletTest() {
         override fun refusal(move: PendingMove): String? = PrivacyWallet.targetRefusal(store.state, move.kind, now())
     }
 
+    /**
+     * A registers [passport] and binds "alice"; B (on [bStore]) then switches to
+     * the same passport. Returns A (synced past the switch, funded for fees),
+     * B, and B as the successor a move names.
+     */
+    private fun switched(chain: FakeChain, passport: String, bStore: PrivacyStore = PrivacyStore.memory(), split: Boolean = false): Triple<PrivacyWallet, PrivacyWallet, PrivacyWallet.Successor> {
+        val a = wallet(chain, alice)
+        register(chain, a, passport)
+        a.bindHandle("alice"); a.sync()
+        if (split) { a.setCaretaker(mapOf(1L to 100L)); a.sync() }
+        val b = wallet(chain, bob, bStore)
+        register(chain, b, passport)
+        a.sync()
+        return Triple(a, b, PrivacyWallet.Successor(b.keys, b.store.state.identity!!))
+    }
+
     @Test
     fun anUnconfirmedMoveStaysPendingInBothWalletsUntilTheChainSays() {
         val chain = FakeChain()
-        val a = wallet(chain, alice)
-        register(chain, a, "999")
-        a.bindHandle("alice"); a.sync()
-        val bKeys = PrivacyKeys.fromMnemonic(bob)
         val bStore = PrivacyStore.memory()
+        val (a, _, to) = switched(chain, "999", bStore)
         chain.unconfirmedNext = 1
-        val e = runCatching { a.moveHandle(a.newOwner(bKeys, Privacy.handleScope()), bKeys, Recorder(bStore, { chain.now })) }.exceptionOrNull()
+        val e = runCatching { a.moveHandle(to, Recorder(bStore, { chain.now })) }.exceptionOrNull()
         assertTrue("$e", e is network.erth.wallet.chain.TxUnconfirmedException)
         // Not shown as moved: the mover still holds it, pending; the new wallet already has it, pending.
         assertEquals("alice", a.store.state.handle)
@@ -65,18 +79,14 @@ class IdentitySwitchTest : WalletTest() {
     @Test
     fun aMoveThatDidNotHappenIsUndoneInBothWallets() {
         val chain = FakeChain()
-        val a = wallet(chain, alice)
-        register(chain, a, "999")
-        a.bindHandle("alice"); a.sync()
-        val bKeys = PrivacyKeys.fromMnemonic(bob)
-        val owner = a.newOwner(bKeys, Privacy.handleScope())
+        val (a, _, to) = switched(chain, "999")
         for (mode in listOf("reject", "fail", "drop")) {
             // Fees of a tx that may have landed stay pending until its timeout: fresh funds each round.
             a.shieldOutput("uerth", 5_000_000).let { chain.shield("uerth", 5_000_000, it.pc, it.ciphertext) }
             a.sync()
             val bStore = PrivacyStore.memory()
             when (mode) { "reject" -> chain.rejectNext = 1; "fail" -> chain.failInBlockNext = 1; else -> chain.dropNext = 1 }
-            assertTrue(runCatching { a.moveHandle(owner, bKeys, Recorder(bStore, { chain.now })) }.isFailure)
+            assertTrue(runCatching { a.moveHandle(to, Recorder(bStore, { chain.now })) }.isFailure)
             val b = wallet(chain, bob, bStore)
             if (mode == "drop") chain.tipAhead = 100
             a.resolvePendingMoves(); b.resolvePendingMoves()
@@ -89,20 +99,17 @@ class IdentitySwitchTest : WalletTest() {
             a.sync()
         }
         // And the handle still moves after all that.
-        a.moveHandle(owner, bKeys, Recorder(PrivacyStore.memory(), { chain.now }))
+        a.moveHandle(to, Recorder(PrivacyStore.memory(), { chain.now }))
         assertTrue(a.store.state.handleMovedOut)
     }
 
     @Test
     fun recordingInTheNewWalletIsRetryableAndItsSyncFindsTheMoveAnyway() {
         val chain = FakeChain()
-        val a = wallet(chain, alice)
-        register(chain, a, "999")
-        a.bindHandle("alice"); a.sync()
-        val bKeys = PrivacyKeys.fromMnemonic(bob)
         val bStore = PrivacyStore.memory()
+        val (a, _, to) = switched(chain, "999", bStore)
         val rec = Recorder(bStore, { chain.now }, failFirst = true)
-        a.moveHandle(a.newOwner(bKeys, Privacy.handleScope()), bKeys, rec)
+        a.moveHandle(to, rec)
         // Moved (confirmed), not yet recorded there: kept for a retry.
         assertTrue(a.store.state.handleMovedOut)
         val p = a.outgoingMoves().single()
@@ -120,19 +127,16 @@ class IdentitySwitchTest : WalletTest() {
     @Test
     fun restoredSwitchedIdentityRenewsWhatMovedToIt() {
         val chain = FakeChain()
-        val a = wallet(chain, alice)
-        register(chain, a, "999")
-        a.bindHandle("alice"); a.sync()
-        a.setCaretaker(mapOf(1L to 100L)); a.sync()
-        val bKeys = PrivacyKeys.fromMnemonic(bob)
         val bStore = PrivacyStore.memory()
-        val rec = Recorder(bStore, { chain.now })
-        a.moveHandle(a.newOwner(bKeys, Privacy.handleScope()), bKeys, rec); a.sync()
-        a.moveCaretaker(a.newOwner(bKeys, Privacy.caretakerScope()), bKeys, rec); a.sync()
-        assertTrue(a.outgoingMoves().isEmpty())
-        val b = wallet(chain, bob, bStore)
-        register(chain, b, "999")
+        val (a, b, to) = switched(chain, "999", bStore, split = true)
         assertTrue(b.store.state.identity!!.predecessorAt > 0)
+        val rec = Recorder(bStore, { chain.now })
+        a.moveHandle(to, rec); a.sync()
+        a.moveCaretaker(to, rec); a.sync()
+        assertTrue(a.outgoingMoves().isEmpty())
+        // Recorded in B's store at once.
+        assertEquals("alice", bStore.state.handle)
+        assertEquals(mapOf(1L to 100L), bStore.state.caretakerSplit)
 
         // B restored from its phrase alone: the moved-in records say what it holds.
         val b2 = wallet(chain, bob)
@@ -157,19 +161,16 @@ class IdentitySwitchTest : WalletTest() {
     @Test
     fun aRefusedMoveDoesNotFixTheSwitchTarget() {
         val chain = FakeChain()
-        val a = wallet(chain, alice)
-        register(chain, a, "602")
-        a.bindHandle("alice"); a.sync()
-        val bKeys = PrivacyKeys.fromMnemonic(bob)
         val bStore = PrivacyStore.memory()
+        val (a, _, to) = switched(chain, "602", bStore)
         chain.rejectNext = 1
-        runCatching { a.moveHandle(a.newOwner(bKeys, Privacy.handleScope()), bKeys, CheckingRecorder(bStore, { chain.now }, "b")) }
+        runCatching { a.moveHandle(to, CheckingRecorder(bStore, { chain.now }, "b")) }
         assertEquals("", a.store.state.switchTarget)
         assertEquals("", bStore.state.handle)
         // A target that already holds a handle is refused before anything is laid out.
         val cStore = PrivacyStore.memory().also { it.state.handle = "taken" }
         val sent = chain.txs.size
-        val e = runCatching { a.moveHandle(a.newOwner(bKeys, Privacy.handleScope()), bKeys, CheckingRecorder(cStore, { chain.now }, "c")) }.exceptionOrNull()
+        val e = runCatching { a.moveHandle(to, CheckingRecorder(cStore, { chain.now }, "c")) }.exceptionOrNull()
         assertTrue("$e", e is IllegalStateException && e.message!!.contains("already holds"))
         assertEquals(sent, chain.txs.size)
         // A target fixed in an older store with no move behind it is freed.
@@ -177,7 +178,7 @@ class IdentitySwitchTest : WalletTest() {
         a.resolvePendingMoves()
         assertEquals("", a.store.state.switchTarget)
         // Confirmed: fixed to that target.
-        a.moveHandle(a.newOwner(bKeys, Privacy.handleScope()), bKeys, CheckingRecorder(bStore, { chain.now }, "b"))
+        a.moveHandle(to, CheckingRecorder(bStore, { chain.now }, "b"))
         assertEquals("b", a.store.state.switchTarget)
     }
 }
