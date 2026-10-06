@@ -103,7 +103,7 @@ data class StakeIn(
 }
 
 /**
- * The stake circuit's witness (circuits/stake v2, ORCHARD_DESIGN 20.2): two
+ * The stake circuit's witness (circuits/stake v2, ORCHARD_DESIGN 4.1): two
  * lanes of one owner (nk), every real input under [anchor].
  *
  * Lane A ([asset]): up to two inputs (at most one labelled), one output;
@@ -371,7 +371,7 @@ data class VoteSlot(
 }
 
 /**
- * The vote circuit's witness (circuits/vote v2, ORCHARD_DESIGN 20.4): up to
+ * The vote circuit's witness (circuits/vote v2, ORCHARD_DESIGN 4.2): up to
  * [MAX_NOTES] derth stake notes of one owner (one nk) at one validator, each
  * under the proposal's snapshot note root with its spend nullifier absent
  * from the snapshot stake nullifier tree, and one weight, 0 < weight <= the

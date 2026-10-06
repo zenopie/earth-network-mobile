@@ -106,7 +106,7 @@ class FakeChain(val chainId: String = "earth-1", var now: Long = 1_790_000_000L)
     val stakeRows = ArrayList<StakeNoteRow>()
     val stakeTree = MerkleTree(MemNodeStore())
     val stakeNullifiers = LinkedHashMap<Fr, Long>()
-    /** The stake nullifier indexed tree's values in insertion order (leaf i + 1), ORCHARD_DESIGN 15. */
+    /** The stake nullifier indexed tree's values in insertion order (leaf i + 1), ORCHARD_DESIGN 3.4. */
     val stakeNfValues = ArrayList<Fr>()
     /** Every stake root the chain recorded (the empty tree's at the first block). */
     val stakeRoots = HashSet<Fr>()

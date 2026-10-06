@@ -138,7 +138,7 @@ class WalletFlowTest {
         assertThrows(IllegalArgumentException::class.java) { a.unshield(receiver, derth, 1) }
 
         // A stake vote against a snapshot taken right after: the note proves
-        // itself unspent at the snapshot and is not spent (ORCHARD_DESIGN 15).
+        // itself unspent at the snapshot and is not spent (ORCHARD_DESIGN 8.5).
         chain.openProposal(9)
         val fresh = wallet(chain, alice)
         fresh.sync()

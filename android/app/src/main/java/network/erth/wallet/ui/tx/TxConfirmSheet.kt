@@ -72,11 +72,9 @@ data class TxConfirmDetails(
 /**
  * The confirmation sheet, and the app's gas gate.
  *
- * Earth is transparent and contract-free, so this shows what the chain will
- * actually receive — the message type and the fee — rather than a contract
- * call. Showing both the human action and the message type lets the two be
- * checked against each other, which is the whole argument for a chain without
- * contracts.
+ * This shows what the chain will actually receive — the message type and the
+ * fee — beside the human action, so the two can be checked against each
+ * other.
  *
  * When the balance cannot cover the fee it says where the fee comes from and
  * how to fill it: shielded ERTH for a private action, the public account's

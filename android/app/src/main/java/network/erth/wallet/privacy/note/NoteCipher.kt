@@ -44,7 +44,7 @@ import java.security.SecureRandom
  * CM(asset, value, PC(owner_pk, rho, rcm)) is the note's cm, with the asset
  * and value the chain published for that position.
  *
- * "earth stake note v2", for every stake note (ORCHARD_DESIGN 20: each is
+ * "earth stake note v2", for every stake note (ORCHARD_DESIGN 8.1: each is
  * a stake proof's output; the chain mints none). Stake notes are
  * owner-locked, so it is always encrypted to the wallet's own address, for
  * its other devices and for recovery from the mnemonic:

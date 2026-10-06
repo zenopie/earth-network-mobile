@@ -107,8 +107,8 @@ data class RegRecord(
 enum class RecordStatus { OPEN, MATCHED, EXHAUSTED }
 
 /**
- * An undelegation of this wallet whose payout has not arrived (chain
- * 48b631c, ORCHARD_DESIGN 18.1): recorded when the node takes the tx
+ * An undelegation of this wallet whose payout has not arrived
+ * (ORCHARD_DESIGN 8.4): recorded when the node takes the tx
  * ([until] its timeout_height), confirmed with the committed event's
  * [epoch], [value] (uerth) and [payoutId], dropped once a note to [pc] is
  * synced (paid) or the tx failed. Local only: what the wallet shows while it
@@ -130,7 +130,7 @@ data class PendingUnbond(
 )
 
 /**
- * A stake vote this wallet cast (ORCHARD_DESIGN 15): its proposal and vote
+ * A stake vote this wallet cast (ORCHARD_DESIGN 8.5): its proposal and vote
  * nullifier, recorded the moment the node accepted the tx ([confirmed]
  * false, with its hash and timeout_height) and confirmed once committed or
  * refused as already voted. One note votes once per proposal.

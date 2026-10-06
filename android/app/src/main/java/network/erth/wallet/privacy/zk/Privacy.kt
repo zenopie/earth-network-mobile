@@ -31,11 +31,11 @@ object Privacy {
     val TAG_SPC = tag("earth.spc")
     val TAG_SNF = tag("earth.snf")
     val TAG_OTAG = tag("earth.otag")
-    // The stake nullifier indexed tree and stake votes (circuits/vote, ORCHARD_DESIGN 15).
+    // The stake nullifier indexed tree and stake votes (circuits/vote, ORCHARD_DESIGN 3.4, 8.5).
     val TAG_SNFL = tag("earth.snfl")
     val TAG_VNF = tag("earth.vnf")
     val TAG_VPAD = tag("earth.vpad")
-    // Stake note slash labels and the slash debt tree (circuits/stake, circuits/vote; ORCHARD_DESIGN 20).
+    // Stake note slash labels and the slash debt tree (circuits/stake, circuits/vote; ORCHARD_DESIGN 3.3, 3.5).
     val TAG_SLABEL = tag("earth.slabel")
     val TAG_DEBTL = tag("earth.debtl")
     // Wallet-defined (PRIVACY_FORMATS.md §6): the registration record note's tag.
@@ -90,7 +90,7 @@ object Privacy {
     /**
      * A stake note: H(TAG_STAKE, AssetID(stake denom), amount, spc, label),
      * label 0 for an ordinary note or [stakeLabel] of the redelegation whose
-     * exposure it holds (ORCHARD_DESIGN 20.2).
+     * exposure it holds (ORCHARD_DESIGN 3.3).
      */
     fun stakeCm(asset: Fr, amount: Long, spc: Fr, label: Fr): Fr = h(TAG_STAKE, asset, u64(amount), spc, label)
 

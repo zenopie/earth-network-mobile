@@ -111,12 +111,10 @@ object Bech32 {
     /**
      * Decodes a bech32 address to its payload bytes, verifying the checksum.
      *
-     * Added for the register circuit: it takes the registrant's account as a
-     * public input, so the prover needs the twenty raw address bytes rather
-     * than the bech32 string the rest of the app passes around. A wrong address
-     * here does not fail loudly at proving time -- it produces a proof the chain
-     * refuses as bound to somebody else -- so the checksum is verified rather
-     * than assumed.
+     * Private msgs carry raw address bytes (an unshield's receiver, a module
+     * account check), not the bech32 string the rest of the app passes
+     * around, and a wrong address does not fail loudly, so the checksum is
+     * verified rather than assumed.
      */
     fun decode(addr: String): ByteArray {
         require(addr == addr.lowercase()) { "bech32 must be lowercase" }

@@ -16,7 +16,7 @@ import "earth/shielded/v1/tx.proto";
 // credit_cm, Bytes(credit_ct), owner_tag, clear_before, debt_root), then the
 // msg's own fields. No msg names a fee: it is the bundle's uerth balance less
 // what the msg moves (a delegation's amount). The chain mints no stake note
-// (chain dff3a9b, ORCHARD_DESIGN 20): every one is a stake proof's output.
+// (ORCHARD_DESIGN 8.1): every one is a stake proof's output.
 
 // StakeProof is a circuits/stake v2 proof and its public values: lane A
 // (asset; nullifiers, commitment) and the credit lane (credit_*). The chain
@@ -88,7 +88,7 @@ message MsgUndelegate {
 // themselves.
 
 // Up to two stake notes of one owner at one validator vote with ONE weight,
-// without being spent (ORCHARD_DESIGN 20.4): proof is circuits/vote against
+// without being spent (ORCHARD_DESIGN 8.5): proof is circuits/vote against
 // the proposal's snapshot (note root, nullifier tree root) and the CURRENT
 // slash debt root (a labelled note votes its value after slashes).
 // vote_nullifiers: exactly two, the used slots' H(TAG_VNF, nk, rho,
@@ -155,7 +155,7 @@ message MsgPositionVote {
 }
 
 // Moves amount of the owner's derth/<src_validator> to dst_validator with no
-// unbonding gap (ORCHARD_DESIGN 20.3, 20.5): lane A spends derth/<src>
+// unbonding gap (ORCHARD_DESIGN 8.3, 8.7): lane A spends derth/<src>
 // (v_out = amount, the change or a zero note back); the credit lane merges
 // dst_derth into the owner's unlabelled derth/<dst> note (or pads), labelled
 // with the move (move_key = credit_nullifier, move_time, exposed =

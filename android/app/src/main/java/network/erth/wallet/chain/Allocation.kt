@@ -10,10 +10,10 @@ import org.json.JSONObject
  * share no state: ids, totals and epochs are per stream, so an option id only
  * means something together with the stream it belongs to.
  *
- *   HUMAN   — the Caretaker Fund. One human, one vote; requires a live
- *             proof-of-personhood registration (see [Personhood]).
- *   CAPITAL — the Deflation Fund. Weighted by bonded stake, and kept in step
- *             with it by the chain's staking hooks.
+ *   CARETAKER   — the Caretaker Fund. One human, one vote; requires a live
+ *                 proof-of-personhood registration (see [Personhood]).
+ *   GROUNDWORKS — the Deflation Fund. Weighted by private stake positions
+ *                 (privacy/PrivacyWallet lockPosition / updatePosition).
  */
 object Allocation {
 

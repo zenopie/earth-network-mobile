@@ -11,8 +11,8 @@ import org.json.JSONObject
  * are weighted by personhood or stake, while these proposals change the chain
  * itself, run for a fixed period and are weighted by bonded stake alone.
  *
- * Stake alone decides nothing, though. Since v0.9.0 the same proposal is also
- * voted in [Assembly], the human house, and needs two thirds there before the
+ * Stake alone decides nothing, though. The same proposal is also voted in
+ * [Assembly], the human house, and needs two thirds there before the
  * result below is allowed to take effect. This object stays unaware of that on
  * purpose — the two houses are separate tallies over separate state, and
  * merging them here would make one of them look like a detail of the other.

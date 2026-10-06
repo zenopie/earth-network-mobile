@@ -15,7 +15,7 @@ import network.erth.wallet.privacy.zk.Merkle
 import network.erth.wallet.privacy.zk.Privacy
 
 /**
- * One stake proof laid out (circuits/stake v2, ORCHARD_DESIGN 20): lane A
+ * One stake proof laid out (circuits/stake v2, ORCHARD_DESIGN 4.1): lane A
  * spends up to two of this wallet's notes of [denom] (or pads its first slot)
  * and creates one note back to it (the merged note, the change, or a zero
  * note), crediting [vIn] and releasing [vOut]; the credit lane ([credit])

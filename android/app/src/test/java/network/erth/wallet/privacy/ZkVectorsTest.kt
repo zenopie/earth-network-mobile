@@ -145,7 +145,7 @@ class ZkVectorsTest {
         assertEquals(d.getString("stake_nf"), Privacy.stakeNf(nk, rho, 4_000_000_000).toHex())
         assertEquals(fe(1006), fr(d.getString("otag_salt")))
         assertEquals(d.getString("otag"), Privacy.ownerTag(opk, fe(1006)).toHex())
-        // Stake votes (ORCHARD_DESIGN 15), and the design's golden values (= Noir test_go_parity).
+        // Stake votes (ORCHARD_DESIGN 8.5), and the design's golden values (= Noir test_go_parity).
         assertEquals(d.getString("nf_leaf_1_2_3"), Privacy.nfLeaf(Fr.of(1), Fr.of(2), 3).toHex())
         assertEquals("0cdc3a81748c6389efaa3a6c29b7f4609a8e9f860230b70413e8bef512978276", d.getString("nf_leaf_1_2_3"))
         assertEquals(d.getString("nf_leaf"), Privacy.nfLeaf(fe(1007), fe(1008), 4_000_000_000).toHex())

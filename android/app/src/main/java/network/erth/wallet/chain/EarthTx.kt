@@ -19,7 +19,8 @@ import java.io.IOException
  * Core cosmos transaction plumbing for the earth chain: query the signer account,
  * assemble a SIGN_MODE_DIRECT tx from a list of messages, sign it with the app's
  * [TransactionSigner] (secp256k1), and broadcast the TxRaw. Feature modules
- * ([Bank], [Dex], [Allocation], [Staking], [Personhood]) only build the message `Any`s.
+ * ([Bank], [Dex]) only build the message `Any`s; private txs are unsigned
+ * (privacy/tx/UnsignedTx).
  */
 object EarthTx {
 

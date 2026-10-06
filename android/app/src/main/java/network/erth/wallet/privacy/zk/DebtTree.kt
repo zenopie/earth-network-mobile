@@ -1,7 +1,7 @@
 package network.erth.wallet.privacy.zk
 
 /**
- * The slash debt tree (chain zk/debt, ORCHARD_DESIGN 20.6): an indexed
+ * The slash debt tree (chain zk/debt, ORCHARD_DESIGN 3.5): an indexed
  * (sorted) tree on the depth-32 Poseidon2 Merkle tree with one row per
  * SLASHED redelegation, leaf i = H(TAG_DEBTL, key, next_key, next_index,
  * retained), leaf 0 the sentinel (0, smallest key, its index, 0). A move

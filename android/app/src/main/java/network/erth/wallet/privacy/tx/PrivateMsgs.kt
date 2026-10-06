@@ -311,7 +311,7 @@ object PrivateMsgs {
         is MsgDelegate -> stakeFields(msg.stake) + listOf(bytes(msg.validator), u(msg.amount), u(msg.derth))
         is MsgRestake -> stakeFields(msg.stake) + listOf(bytes(msg.validator))
         is MsgUndelegate -> stakeFields(msg.stake) + listOf(bytes(msg.validator), u(msg.amount), f(msg.pc), bytes(msg.ciphertext))
-        // A vote carries no stake proof (ORCHARD_DESIGN 15, 18.2): its vote proof's statement is the chain's.
+        // A vote carries no stake proof (ORCHARD_DESIGN 8.5): its vote proof's statement is the chain's.
         is MsgStakeVote -> {
             require(msg.voteNullifiersCount == MAX_VOTE_NOTES) { "a stake vote carries exactly $MAX_VOTE_NOTES vote nullifiers" }
             listOf(u(msg.proposalId), bytes(msg.validator), Privacy.bytes(optionsBytes(msg.optionsList)), u(msg.weight)) +

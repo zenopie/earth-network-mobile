@@ -115,8 +115,8 @@ fun EarthApp(
     }
 
     // Each tab loads when it is first shown rather than all at once on start.
-    // Five tabs' worth of queries against one node on launch is a slow launch,
-    // and four of them are for screens nobody may open.
+    // Four tabs' worth of queries against one node on launch is a slow launch,
+    // and most of them are for screens nobody may open.
     LaunchedEffect(nav.currentTab, walletEpoch) {
         when (nav.currentTab) {
             // The portfolio values private stake at the live rates and lists
@@ -165,7 +165,7 @@ fun EarthApp(
      * Switch to another wallet, or re-key after creating one.
      *
      * Forget first, then reload. Tabs that are not on screen are cleared too
-     * and reload when next shown — refetching five tabs' worth of queries for
+     * and reload when next shown — refetching four tabs' worth of queries for
      * screens that may never be opened is what the per-tab loading exists to
      * avoid.
      *

@@ -97,8 +97,8 @@ class MainActivity : FragmentActivity() {
                         )
                     }
 
-                    // EarthApp owns the view models now — each tab loads when
-                    // it is first shown rather than all five on launch.
+                    // EarthApp owns the view models: each tab loads when it is
+                    // first shown rather than all of them on launch.
                     else -> EarthApp(
                         version = "Version $version",
                         onOpenUrl = ::openUrl,

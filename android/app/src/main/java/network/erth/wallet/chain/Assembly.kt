@@ -54,13 +54,7 @@ object Assembly {
     }
 
     /**
-     * The human tally on a proposal, or null if this chain has no assembly.
-     *
-     * Null is the expected answer before the v0.9.0 upgrade lands, not an
-     * error: the endpoint does not exist on an older node, and a wallet that
-     * shipped ahead of the upgrade — as it must, or nobody could vote when it
-     * arrives — has to render a proposal without a second house and without an
-     * error message about it.
+     * The human tally on a proposal, or null when it cannot be read.
      */
     fun tally(proposalId: Long): Tally? {
         val (code, body) = EarthRest.get("/earth/assembly/v1/proposal_tally/$proposalId")

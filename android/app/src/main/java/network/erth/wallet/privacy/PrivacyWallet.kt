@@ -562,7 +562,7 @@ class PrivacyWallet(
      */
     fun unshield(receiver: String, denom: String, amount: Long, feeFromAmount: Boolean = false, memo: String = ""): TxResult {
         requireTransferable(denom)
-        // Wave 3 (B/F2): the chain refuses an unshield to any module account.
+        // The chain refuses an unshield to any module account.
         PrivateMsgs.moduleAccountOf(network.erth.wallet.crypto.Bech32.decode(receiver))?.let {
             throw IllegalArgumentException("$receiver is the $it module account; it cannot receive an unshield")
         }
@@ -1283,7 +1283,7 @@ class PrivacyWallet(
     fun spendableStake(denom: String): List<OwnedStakeNote> = store.state.stakeNotes.filter { it.spendable && it.denom == denom }
 
     /**
-     * The chain's slash debt now (Query/DebtTree, ORCHARD_DESIGN 20.6): its
+     * The chain's slash debt now (Query/DebtTree, ORCHARD_DESIGN 8.7): its
      * root and size, the label window and the clear_before a proof may name.
      * The rows ([tree]) are read only when a label is cleared or voted, and
      * then whole (the indexer's stream, else the chain's pages), checked
@@ -1381,7 +1381,7 @@ class PrivacyWallet(
     fun movableAfter(l: StakeLabel, windowSeconds: Long = labelWindowSeconds): Long = Handles.satAdd(l.moveTime, windowSeconds)
 
     /**
-     * What [n] may give up now (ORCHARD_DESIGN 20.6): its amount; for a
+     * What [n] may give up now (ORCHARD_DESIGN 8.7): its amount; for a
      * labelled note with its window open, the amount less the exposure (the
      * exposure stays in place); with the window closed, less the exposure
      * plus what it retains (the proof clears it).
@@ -1484,7 +1484,7 @@ class PrivacyWallet(
 
     /**
      * derth bought for [value] uerth at [book]'s live rate, less a margin for
-     * the rate's drift until the tx's block (ORCHARD_DESIGN 20.8): the
+     * the rate's drift until the tx's block (ORCHARD_DESIGN 12.2): the
      * chain refuses a credit the value does not buy, in its ante, at no cost.
      */
     private fun creditFor(value: java.math.BigInteger, book: PrivacyChainReads.ValidatorQuote): Long {
@@ -1500,7 +1500,7 @@ class PrivacyWallet(
     }
 
     /**
-     * A delegation's quote (ORCHARD_DESIGN 20.8), shown on its confirm sheet:
+     * A delegation's quote (ORCHARD_DESIGN 12.2), shown on its confirm sheet:
      * [derth] credited to our note at [validator] for [amount] uerth, and the
      * [haircut] a merge clearing a moved-in label takes (0: none).
      */
@@ -1519,7 +1519,7 @@ class PrivacyWallet(
     }
 
     /**
-     * Stakes [q].amount uerth with its validator (ORCHARD_DESIGN 20): the
+     * Stakes [q].amount uerth with its validator (ORCHARD_DESIGN 8.1): the
      * bundle releases it (and the fee) into the module; the stake proof
      * merges the quoted derth into our note there (up to two of them, a
      * labelled one cleared once its window closed), or pads its input when we
@@ -1614,7 +1614,7 @@ class PrivacyWallet(
     }
 
     /**
-     * Undelegates [amount] derth/[validator] (ORCHARD_DESIGN 18.1, 20): the
+     * Undelegates [amount] derth/[validator] (ORCHARD_DESIGN 8.4): the
      * stake proof spends it (the change, or a zero note when nothing is left,
      * back to us) and the msg names where the chain pays it out, a fresh pool
      * note opening of our own (pc and its v2 amount-blind ciphertext). At
@@ -1648,7 +1648,7 @@ class PrivacyWallet(
     }
 
     /**
-     * A move's quote (MsgRedelegate, ORCHARD_DESIGN 19-20), shown on its
+     * A move's quote (MsgRedelegate, ORCHARD_DESIGN 8.7), shown on its
      * confirm sheet: [amount] derth/[src] worth [value] uerth at src's live
      * rate arrives as [dstDerth] derth/[dst] (dst's live rate, less the
      * margin and what may stay behind in src's book), merged into our
@@ -1699,7 +1699,7 @@ class PrivacyWallet(
 
     /**
      * Moves [q].amount derth from [q].src to [q].dst with no unbonding gap
-     * (MsgRedelegate; the user's one approved addition to the freeze). Lane A
+     * (MsgRedelegate). Lane A
      * spends our src notes (free value only: moved-in stake whose window is
      * open stays put, refused up front) with the change back; the credit lane
      * merges the quoted derth/dst into our unlabelled note there (or pads),
@@ -1774,7 +1774,7 @@ class PrivacyWallet(
     }
 
     /**
-     * What a note votes (ORCHARD_DESIGN 20.4): its amount, or for a labelled
+     * What a note votes (ORCHARD_DESIGN 8.5): its amount, or for a labelled
      * note its amount less the slash cut of its exposure under the CURRENT
      * debt tree (a slash after the snapshot counts).
      */
@@ -1989,7 +1989,7 @@ class PrivacyWallet(
     private val nfTrees = LinkedHashMap<Fr, IndexedTree>()
 
     /**
-     * The stake nullifier tree at [snap] (ORCHARD_DESIGN 15, wallet format 3):
+     * The stake nullifier tree at [snap] (ORCHARD_DESIGN 3.4):
      * its first nf_size - 1 values in insertion order, from the indexer's
      * stream by leaf index (full ranges only: nothing names a note of ours),
      * the chain's Query/StakeNullifierTree for whatever the indexer lacks,
@@ -2198,7 +2198,7 @@ class PrivacyWallet(
     /**
      * Closes [position]: the stake proof (its owner tag) merges the
      * position's derth into our note at its validator, or pads when we hold
-     * none there (ORCHARD_DESIGN 20.3). The fee bundle carries a value-0
+     * none there (ORCHARD_DESIGN 8.3). The fee bundle carries a value-0
      * record note to ourselves naming the closed counter, so no
      * restore ever locks under its tag again.
      */
@@ -2322,8 +2322,8 @@ class PrivacyWallet(
          * The most a withdrawal's note-paid leg may be worth when it starts:
          * a quarter of the most a split payout carries, so the pool can move
          * 4x against the provider before maturity, as x/dex allows for its
-         * own cap. Exactly x/dex's maxWithdrawalNoteLeg (chain
-         * 8ed1278): MaxSplitNotes / 4 = 32 notes of MaxNoteValue (2^63 - 1),
+         * own cap. Exactly x/dex's maxWithdrawalNoteLeg:
+         * MaxSplitNotes / 4 = 32 notes of MaxNoteValue (2^63 - 1),
          * paid as several notes, each one this wallet can hold (Amounts).
          */
         val MAX_WITHDRAWAL_NOTE_LEG: java.math.BigInteger =
@@ -2514,7 +2514,7 @@ class PrivacyWallet(
 
         /**
          * The margin a credit is quoted with for the rate's drift until its
-         * block (ORCHARD_DESIGN 20.8: ~10 ppm covers minutes on a chain with
+         * block (ORCHARD_DESIGN 12.2: ~10 ppm covers minutes on a chain with
          * real stake), in ppm of the derth the value buys. A quote the rate
          * outran is refused in the ante at no cost, and retried.
          */

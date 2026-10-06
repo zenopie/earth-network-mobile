@@ -94,9 +94,7 @@ data class AllocationUiState(
      * voted" rather than "this is no longer recorded". What ended a closed
      * proposal is in its [Gov.Proposal.failedReason] instead.
      *
-     * Missing means the chain has no assembly — the expected answer on a node
-     * older than v0.9.0, which the wallet has to render without complaining
-     * about, since it ships before the upgrade it is preparing for.
+     * Missing means the tally could not be read.
      */
     val assemblyTallies: Map<Long, Assembly.Tally> = emptyMap(),
 )

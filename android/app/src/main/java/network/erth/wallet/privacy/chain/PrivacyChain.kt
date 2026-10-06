@@ -133,8 +133,8 @@ object PrivacyQueries {
             maxActivation = j.long("max_activation"),
             round = j.long("round"),
             ballotId = j.long("ballot_id"),
-            // Absent from a node older than the predecessor change: 0, which
-            // only a fresh registrant meets (never a vote the chain refuses).
+            // 0 when absent, which only a fresh registrant meets (never a
+            // vote the chain refuses).
             maxPredecessor = j.long("max_predecessor"),
         )
     }
